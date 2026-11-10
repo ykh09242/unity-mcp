@@ -543,6 +543,12 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     def _discard_socket_state(cls, websocket: WebSocket) -> None:
+        # Fence progress before waking failed attempts: an old guard can resume
+        # before the command owner has had a turn to detach its binding.
+        for entry in cls._pending.values():
+            progress = entry.get("progress_owner")
+            if entry.get("result_socket") is websocket and progress is not None:
+                progress.detach(entry["progress_source"])
         session_id = getattr(websocket.state, "plugin_session_id", None)
         if isinstance(session_id, str):
             revision = cls._editor_states.change_token(session_id)
@@ -1857,6 +1863,9 @@ class PluginHub(WebSocketEndpoint):
             if not budget.execution_evidence().dispatched:
                 result["data"]["dispatch"] = "not_dispatched"
             return result
+        finally:
+            if _progress is not None:
+                _progress.close()
 
     @classmethod
     async def _admit_command_response(
@@ -2422,6 +2431,7 @@ class PluginHub(WebSocketEndpoint):
             generation = getattr(websocket.state, "plugin_generation", None)
 
         send_task: asyncio.Task | None = None
+        bound: ProgressSource | None = None
         canceled = False
         try:
             msg = ExecuteCommandMessage(
@@ -2522,6 +2532,7 @@ class PluginHub(WebSocketEndpoint):
                 )
                 if progress.bind(bound):
                     entry["progress_owner"] = progress
+                    entry["progress_source"] = bound
                     entry["progress_generation"] = generation
                     entry["progress_frames"] = 0
                     payload["progress"] = CommandProgressRequest().model_dump()
@@ -2671,9 +2682,10 @@ class PluginHub(WebSocketEndpoint):
             canceled = budget.dispatched
             raise
         finally:
-            # Progress ends at response/cancellation, never actual worker cleanup.
-            if _progress is not None:
-                _progress.close()
+            # Each wire attempt releases its binding. Only the enclosing logical
+            # command closes the sink, including terminal/error/cancel paths.
+            if _progress is not None and bound is not None:
+                _progress.detach(bound)
             # Release synchronously on the owner loop before cancellation-sensitive
             # I/O cleanup. AnyIO level cancellation can interrupt every await here.
             cls._pending.pop(command_id, None)
@@ -3780,7 +3792,10 @@ class PluginHub(WebSocketEndpoint):
             return
         # A single sender rechecks the captured fresh authority before every SDK
         # notification. No SDK call, journal I/O or Future settlement under Hub lock.
-        progress.offer(CommandProgressUpdate(message.completed, message.total, message.stage))
+        progress.offer(
+            CommandProgressUpdate(message.completed, message.total, message.stage),
+            source=entry["progress_source"],
+        )
 
     async def _reject_invalid_result(self, websocket, command_id, candidate) -> None:
         cls = type(self)
@@ -3864,7 +3879,7 @@ class PluginHub(WebSocketEndpoint):
             entry = work.entry
             future = entry["future"]
             if entry.get("progress_owner") is not None:
-                entry["progress_owner"].close()
+                entry["progress_owner"].detach(entry["progress_source"])
             resume = entry.get("resume")
             # Unwrapping changes resume state. Stage it until the nested
             # arbitration proof has also validated and the owner is still current.

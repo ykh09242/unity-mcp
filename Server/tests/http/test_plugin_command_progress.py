@@ -21,6 +21,7 @@ import uvicorn
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.middleware import Middleware
+from starlette.websockets import WebSocket, WebSocketState
 
 from core.config import config
 from core.local_auth import LOCAL_AUTH_HEADER
@@ -542,3 +543,252 @@ async def test_progress_fixture_surfaces_failure_before_dispatch(
         async with _held_hub_progress(command_hub, progress_api):
             pytest.fail("A failed command must not produce a ready fixture")
     assert not PluginHub._pending
+
+
+@asynccontextmanager
+async def _resumable_batch_progress(hub, api):
+    ctx, sent = RecordingContext(), asyncio.Queue()
+    hub.websocket.state.plugin_features = frozenset(
+        {"command_progress_v1", "command_resume_v1", "native_arbitration_v1"}
+    )
+    hub.websocket.state.plugin_resume_generation = "e" * 32
+    hub.websocket.state.plugin_arbitration_generation = "a" * 32
+
+    async def hold(message):
+        hub.sent.append(message)
+        if message["type"] == "execute":
+            sent.put_nowait(message)
+
+    hub.websocket.send_json = hold
+    async with api.foreground_progress(ctx):
+        sink = api.claim_command_progress(total=2)
+        task = asyncio.create_task(
+            PluginHub.send_command(
+                "session",
+                "batch_execute",
+                {"commands": [{"tool": "manage_scene", "params": {"action": "save"}}] * 2},
+                _progress=sink,
+            )
+        )
+        try:
+            yield ctx, sink, task, sent
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def _resume_batch_result(hub, command, state):
+    waiting = state in {"queued", "executing"}
+    await hub.endpoint._handle_command_result(
+        hub.websocket,
+        CommandResultMessage(
+            id=command["id"],
+            result={
+                "command_resume": {
+                    "version": 1,
+                    "invocation_id": command["resume"]["invocation_id"],
+                    "editor_session_id": command["resume"]["editor_session_id"],
+                    "state": state,
+                },
+                "payload": {
+                    "native_arbitration": {
+                        **command["arbitration"],
+                        "disposition": "not_started" if waiting else "started",
+                        "retryable": waiting,
+                        **({"reason": "operation_busy"} if waiting else {}),
+                    },
+                    "payload": FINAL,
+                },
+            },
+        ),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["queued", "executing"])
+async def test_resumed_batch_reports_progress_on_same_logical_request(
+    command_hub, progress_api, state
+):
+    fixture = SimpleNamespace(hub=command_hub)
+    async with _resumable_batch_progress(command_hub, progress_api) as (ctx, sink, call, sent):
+        first = await asyncio.wait_for(sent.get(), watchdog_timeout())
+        if state == "executing":
+            await _progress(fixture, first)
+            assert (await asyncio.wait_for(ctx.received.get(), watchdog_timeout()))[:2] == (1, 2)
+        await _resume_batch_result(command_hub, first, state)
+        resumed = await asyncio.wait_for(sent.get(), watchdog_timeout())
+        assert resumed["resume"] == {
+            **first["resume"],
+            "action": "resume" if state == "queued" else "status",
+        }
+        assert "progress" in resumed, "Nonterminal reply permanently closed the logical reporter"
+        await _progress(fixture, first, completed=2)
+        await _progress(fixture, resumed, completed=1 if state == "queued" else 2)
+        assert (await asyncio.wait_for(ctx.received.get(), watchdog_timeout()))[:2] == (
+            1 if state == "queued" else 2,
+            2,
+        )
+        await _resume_batch_result(command_hub, resumed, "completed")
+        assert await asyncio.wait_for(call, watchdog_timeout()) == FINAL
+        assert not sink.offer(progress_api.CommandProgressUpdate(2, 2, "batch_items"))
+        assert first["id"] not in PluginHub._pending and resumed["id"] not in PluginHub._pending
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["cancel", "invalid_reply"])
+async def test_resumed_progress_terminal_failure_closes_logical_sink(
+    command_hub, progress_api, ending
+):
+    fixture = SimpleNamespace(hub=command_hub)
+    async with _resumable_batch_progress(command_hub, progress_api) as (ctx, sink, call, sent):
+        first = await asyncio.wait_for(sent.get(), watchdog_timeout())
+        await _resume_batch_result(command_hub, first, "queued")
+        resumed = await asyncio.wait_for(sent.get(), watchdog_timeout())
+        assert "progress" in resumed
+        if ending == "cancel":
+            call.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await call
+        else:
+            await command_hub.endpoint._handle_command_result(
+                command_hub.websocket,
+                CommandResultMessage(id=resumed["id"], result={"success": True}),
+            )
+            assert (await call)["data"]["reason"] == "outcome_unknown"
+        await _progress(fixture, resumed)
+        await _sender_turns()
+        assert not sink.offer(progress_api.CommandProgressUpdate(1, 2, "batch_items"))
+        assert ctx.calls == []
+        assert not PluginHub._pending
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held_guard", [False, True])
+async def test_reload_detaches_scheduled_progress_before_old_guard_can_close_reporter(
+    command_hub, progress_api, monkeypatch, held_guard
+):
+    entered, release = asyncio.Event(), asyncio.Event()
+    bound = []
+
+    def source(**kwargs):
+        original = kwargs["guard"]
+
+        async def delayed_guard():
+            entered.set()
+            await release.wait()
+            return await original()
+
+        if not bound:
+            kwargs["guard"] = delayed_guard
+        result = progress_api.ProgressSource(**kwargs)
+        bound.append(result)
+        return result
+
+    if held_guard:
+        monkeypatch.setattr("transport.plugin_hub.ProgressSource", source)
+    fixture = SimpleNamespace(hub=command_hub)
+    async with _resumable_batch_progress(command_hub, progress_api) as (ctx, _, call, sent):
+        first = await asyncio.wait_for(sent.get(), watchdog_timeout())
+        old = command_hub.websocket
+        replacement = SimpleNamespace(**vars(old))
+        replacement.state = SimpleNamespace(**vars(old.state))
+        replacement.state.plugin_session_id = "replacement"
+        replacement.state.plugin_generation = "replacement-generation"
+        await _progress(fixture, first)
+        if held_guard:
+            await await_signal(entered, "old progress guard entered")
+        release.set()
+        await command_hub.endpoint.on_disconnect(old, 1006)
+        command_hub.websocket = replacement
+        PluginHub._connections["replacement"] = replacement
+        await command_hub.registry.register("replacement", "Fixture", "hash", "6000.3")
+        resumed = await asyncio.wait_for(sent.get(), watchdog_timeout())
+        assert "progress" in resumed
+        assert ctx.calls == []
+        await _progress(fixture, resumed, completed=2)
+        assert (await asyncio.wait_for(ctx.received.get(), watchdog_timeout()))[:2] == (2, 2)
+        await _resume_batch_result(command_hub, resumed, "completed")
+        assert await asyncio.wait_for(call, watchdog_timeout()) == FINAL
+
+
+@pytest.mark.asyncio
+async def test_disconnected_socket_guard_ahead_of_cleanup_keeps_logical_progress(
+    command_hub, progress_api, monkeypatch
+):
+    guard_waiting, disconnect_waiting = asyncio.Event(), asyncio.Event()
+
+    class ObservedLock(asyncio.Lock):
+        """Expose acquisition order while retaining the actual FIFO lock."""
+
+        async def acquire(self):
+            if self.locked():
+                if not guard_waiting.is_set():
+                    guard_waiting.set()
+                else:
+                    disconnect_waiting.set()
+            return await super().acquire()
+
+    lock = ObservedLock()
+    monkeypatch.setattr(PluginHub, "_lock", lock)
+    original_socket = command_hub.websocket
+    incoming = asyncio.Queue()
+    incoming.put_nowait({"type": "websocket.connect"})
+
+    async def send(_message):
+        return None
+
+    old = WebSocket(
+        {"type": "websocket", "state": vars(original_socket.state).copy()}, incoming.get, send
+    )
+    await old.accept()
+    command_hub.websocket = old
+    PluginHub._connections["session"] = old
+    fixture = SimpleNamespace(hub=command_hub)
+    async with _resumable_batch_progress(command_hub, progress_api) as (ctx, sink, call, sent):
+        first = await asyncio.wait_for(sent.get(), watchdog_timeout())
+        await _progress(fixture, first)
+        disconnect = None
+        try:
+            async with lock:
+                await await_signal(guard_waiting, "progress guard queued on hub lock")
+                # Starlette, not a fabricated field assignment, publishes this
+                # disconnect state before the endpoint can acquire the hub lock.
+                incoming.put_nowait({"type": "websocket.disconnect", "code": 1006})
+                event = await old.receive()
+                assert old.client_state is WebSocketState.DISCONNECTED
+                disconnect = asyncio.create_task(
+                    command_hub.endpoint.on_disconnect(old, event["code"])
+                )
+                await await_signal(disconnect_waiting, "disconnect queued behind progress guard")
+            await asyncio.wait_for(disconnect, watchdog_timeout())
+        finally:
+            if disconnect is not None:
+                disconnect.cancel()
+                await asyncio.gather(disconnect, return_exceptions=True)
+
+        replacement = SimpleNamespace(**vars(original_socket))
+        replacement.state = SimpleNamespace(**old.scope["state"])
+        replacement.state.plugin_session_id = "replacement"
+        replacement.state.plugin_generation = "replacement-generation"
+        replacement.send_json = old.send_json
+        command_hub.websocket = replacement
+        PluginHub._connections["replacement"] = replacement
+        await command_hub.registry.register("replacement", "Fixture", "hash", "6000.3")
+        resumed = await asyncio.wait_for(sent.get(), watchdog_timeout())
+        assert "progress" in resumed, "A failed attempt guard permanently closed logical progress"
+        assert ctx.calls == []
+        await command_hub.endpoint.on_receive(
+            old,
+            {
+                "type": "command_progress",
+                "id": first["id"],
+                "completed": 2,
+                "total": 2,
+                "stage": "batch_items",
+            },
+        )
+        await _progress(fixture, resumed, completed=2)
+        assert (await asyncio.wait_for(ctx.received.get(), watchdog_timeout()))[:2] == (2, 2)
+        await _resume_batch_result(command_hub, resumed, "completed")
+        assert await asyncio.wait_for(call, watchdog_timeout()) == FINAL
+        assert not sink.offer(progress_api.CommandProgressUpdate(2, 2, "batch_items"))

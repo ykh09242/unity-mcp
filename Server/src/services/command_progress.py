@@ -57,8 +57,11 @@ class ProgressSink:
     def bind(self, source: ProgressSource) -> bool:
         return self._reporter.bind(source)
 
-    def offer(self, update: CommandProgressUpdate) -> bool:
-        return self._reporter.offer(update, self._total)
+    def detach(self, source: ProgressSource) -> None:
+        self._reporter.detach(source)
+
+    def offer(self, update: CommandProgressUpdate, *, source: ProgressSource | None = None) -> bool:
+        return self._reporter.offer(update, self._total, source=source)
 
     def offer_from_thread(self, update: CommandProgressUpdate) -> None:
         self._reporter.offer(update, self._total)
@@ -84,6 +87,7 @@ class _Reporter:
         self._last_received = 0
         self._next_send_at = 0.0
         self._cancel: anyio.CancelScope | None = None
+        self._sending: tuple[ProgressSource, anyio.CancelScope] | None = None
 
     def claim(self, total: int) -> ProgressSink | None:
         with self._lock:
@@ -107,11 +111,28 @@ class _Reporter:
             self._source = source
             return True
 
-    def offer(self, update: CommandProgressUpdate, total: int) -> bool:
+    def detach(self, source: ProgressSource) -> None:
+        """Release only this attempt; retain the logical request's monotonic count."""
+        with self._lock:
+            if self._source is not source:
+                return
+            self._source = None
+            self._latest = None
+        self._loop.call_soon_threadsafe(self._cancel_detached, source)
+
+    def _cancel_detached(self, source: ProgressSource) -> None:
+        if self._sending is not None and self._sending[0] is source:
+            self._sending[1].cancel()
+
+    def offer(
+        self, update: CommandProgressUpdate, total: int, *, source: ProgressSource | None = None
+    ) -> bool:
         with self._lock:
             if (
                 self._closed
                 or self._source is None
+                or source is not None
+                and self._source is not source
                 or type(update.completed) is not int
                 or type(update.total) is not int
                 or update.total != total
@@ -131,9 +152,9 @@ class _Reporter:
             if not self._closed:
                 self._wake.set()
 
-    def close(self) -> None:
+    def close(self, source: ProgressSource | None = None) -> None:
         with self._lock:
-            if self._closed:
+            if self._closed or source is not None and self._source is not source:
                 return
             self._closed = True
             self._latest = None
@@ -176,13 +197,17 @@ class _Reporter:
                         else _NOTIFICATION_SECONDS
                     )
                     if remaining <= 0:
-                        self.close()
-                        return
+                        self.close(source)
+                        continue
                     try:
                         with anyio.move_on_after(min(_NOTIFICATION_SECONDS, remaining)) as send:
+                            self._sending = source, send
                             if not await source.guard():
-                                self.close()
-                                return
+                                # Guard loss ends this attempt's authority. The
+                                # logical command may still validate a continuation
+                                # before its owner closes the foreground reporter.
+                                self.detach(source)
+                                continue
                             with self._lock:
                                 if (
                                     self._closed
@@ -192,17 +217,17 @@ class _Reporter:
                                         and source.expires_at <= self._loop.time()
                                     )
                                 ):
-                                    return
+                                    continue
                                 self._next_send_at = self._loop.time() + _SEND_INTERVAL
                             await callback(update.completed, update.total, "Batch items settled")
                         if send.cancel_called:
-                            self.close()
-                            return
+                            self.close(source)
                     except Exception:
                         # Optional public callback/authorization boundary: never
                         # turn report failure into command failure or work retry.
-                        self.close()
-                        return
+                        self.close(source)
+                    finally:
+                        self._sending = None
             finally:
                 self._cancel = None
 

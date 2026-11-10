@@ -150,6 +150,55 @@ async def test_scope_exit_rejects_late_offers_and_clears_producer_context(progre
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("guard_result", [True, False, "error"])
+async def test_detached_guard_cannot_close_or_report_on_rebound_source(progress_api, guard_result):
+    ctx = RecordingContext()
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def old_guard():
+        entered.set()
+        await release.wait()
+        if guard_result == "error":
+            raise RuntimeError("old attempt ended")
+        return guard_result
+
+    async with progress_api.foreground_progress(ctx):
+        sink = progress_api.claim_command_progress(total=3)
+        old, current = source(progress_api, guard=old_guard), source(progress_api)
+        assert sink.bind(old)
+        assert sink.offer(progress_api.CommandProgressUpdate(1, 3, "batch_items"))
+        await await_signal(entered, "old guard entered")
+        sink.detach(old)
+        assert sink.bind(current)
+        sink.detach(old)  # Late old cleanup cannot detach the current attempt.
+        assert not sink.offer(progress_api.CommandProgressUpdate(1, 3, "batch_items"))
+        assert not sink.offer(progress_api.CommandProgressUpdate(3, 3, "batch_items"), source=old)
+        assert sink.offer(progress_api.CommandProgressUpdate(2, 3, "batch_items"), source=current)
+        release.set()
+        assert (await asyncio.wait_for(ctx.received.get(), watchdog_timeout()))[:2] == (2, 3)
+        assert [call[0] for call in ctx.calls] == [2]
+
+
+@pytest.mark.asyncio
+async def test_detach_cancels_old_callback_without_closing_logical_reporter(progress_api):
+    ctx = RecordingContext(blocked=True)
+    async with progress_api.foreground_progress(ctx):
+        sink = progress_api.claim_command_progress(total=2)
+        old = source(progress_api)
+        assert sink.bind(old)
+        assert sink.offer(progress_api.CommandProgressUpdate(1, 2, "batch_items"))
+        await await_signal(ctx.entered, "old SDK call entered")
+        sink.detach(old)
+        await await_signal(ctx.exited, "old SDK call cancelled")
+        assert ctx.active == 0
+        ctx.blocked = False
+        assert sink.bind(source(progress_api))
+        assert sink.offer(progress_api.CommandProgressUpdate(2, 2, "batch_items"))
+        assert (await ctx.received.get())[:2] == (1, 2)
+        assert (await asyncio.wait_for(ctx.received.get(), watchdog_timeout()))[:2] == (2, 2)
+
+
+@pytest.mark.asyncio
 async def test_slow_optional_send_is_cancelled_and_joined_on_scope_exit(progress_api):
     # Given: public SDK notification I/O that has begun but cannot complete.
     ctx = RecordingContext(blocked=True)
