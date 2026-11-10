@@ -23,6 +23,7 @@ from starlette.endpoints import WebSocketEndpoint
 from starlette.websockets import WebSocket, WebSocketState
 
 from services.execution_receipt_context import execution_owner, observe_native_result, own_future
+from services.execution_receipt_identity import ReceiptUnavailable
 from services.command_progress import (
     CAPABILITY as PROGRESS_CAPABILITY,
     MAX_PROGRESS_BYTES,
@@ -235,6 +236,7 @@ class _PendingResult:
 class _ResultWork:
     """Captured pending identity and capacity held through actual response work."""
 
+    command_id: str
     entry: dict[str, Any]  # The Hub's existing pending-entry boundary.
     pending: _PendingResult
     generation: str | None
@@ -279,6 +281,7 @@ class _IngressScope:
 
     work: _IngressWork | None = None
     discarded: bool = False
+    background_results: bool = False
 
 
 _ingress_scope: ContextVar[_IngressScope | None] = ContextVar("plugin_ingress_scope", default=None)
@@ -387,6 +390,9 @@ class PluginHub(WebSocketEndpoint):
     # Recovery callers may expire before eviction finishes. Keep one owned task
     # per registry/session until completion, and drain it during shutdown.
     _eviction_tasks: ClassVar[dict[tuple[int, str], asyncio.Task]] = {}
+    # Accepted results outlive socket/caller cancellation. Keep their actual
+    # owners across configure(), with both task counts and byte reservations.
+    _result_tasks: ClassVar[dict[asyncio.Task, _ResultWork]] = {}
     CLOSE_TIMEOUT = 5.0
     CANCEL_TIMEOUT = 1.0
     # Bound both retained tasks and their request/model/JSON working set. These
@@ -461,7 +467,7 @@ class PluginHub(WebSocketEndpoint):
     @classmethod
     def _transfer_pending(cls, generation: str, command_id: str) -> bool:
         entry = cls._pending.get(command_id)
-        if entry is None or entry["future"].done():
+        if entry is None or entry["future"].done() or entry.get("result_work") is not None:
             return False
         websocket = cls._connections.get(entry["session_id"])
         return (
@@ -649,7 +655,7 @@ class PluginHub(WebSocketEndpoint):
                 while websocket.application_state == WebSocketState.CONNECTED:
                     registered = getattr(websocket.state, "plugin_registered", False)
                     message = data = None
-                    frame = _IngressScope()
+                    frame = _IngressScope(background_results=True)
                     frame_token = _ingress_scope.set(frame)
                     try:
                         if registered:
@@ -1069,6 +1075,7 @@ class PluginHub(WebSocketEndpoint):
         ping_tasks = list(cls._ping_tasks.values())
         pending = list(cls._pending.values())
         eviction_tasks = list(cls._eviction_tasks.values())
+        result_tasks = list(cls._result_tasks)
         for websocket in connections:
             cls._discard_socket_state(websocket)
         cls._editor_states = EditorStateStore()
@@ -1108,6 +1115,17 @@ class PluginHub(WebSocketEndpoint):
             await registry.clear()
         await asyncio.gather(*(cls._close_websocket(ws) for ws in connections))
         await asyncio.gather(*eviction_tasks, return_exceptions=True)
+        # Socket retirement cannot cancel an accepted journal write. Shield the
+        # captured generation through actual completion, including repeated cancel.
+        with anyio.CancelScope(shield=True):
+            for task in result_tasks:
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
 
     @classmethod
     async def request_idle_shutdown(
@@ -3300,7 +3318,13 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     def _claim_result_work(
-        cls, websocket: WebSocket, command_id: str, *, large: bool, raw_charge: int = 0
+        cls,
+        websocket: WebSocket,
+        command_id: str,
+        *,
+        large: bool,
+        raw_charge: int = 0,
+        small_payload: dict[str, Any] | None = None,
     ) -> _ResultWork | None:
         """Claim one pending reply under the Hub lock, before any worker can queue."""
         entry = cls._pending.get(command_id)
@@ -3336,22 +3360,63 @@ class PluginHub(WebSocketEndpoint):
             ingress = None
         if entry.get("control_reserve") is True:
             charge = min(charge, cls.MAX_CONTROL_RESULT_BYTES)
-        if large and ingress is None:
+        background = scope is not None and scope.background_results
+        if background:
+            active = tuple(cls._result_tasks.values())
+            if (
+                len(active) >= cls.MAX_PENDING_COMMANDS
+                or sum(w.entry.get("user_id") == entry.get("user_id") for w in active)
+                >= cls.MAX_PENDING_PER_USER
+                or sum(w.entry["session_id"] == entry["session_id"] for w in active)
+                >= cls.MAX_PENDING_PER_SESSION
+            ):
+                entry["future"].set_result(response_limit_error("result_capacity"))
+                return None
+        if (large or background) and ingress is None:
             # Reserve the bounded graph ceiling before traversal/allocation. The
             # two shared response workers therefore cannot build an unbounded queue.
             charge = min(charge, cls._available_result_capacity(entry))
             if charge <= 0:
                 entry["future"].set_result(response_limit_error("result_capacity"))
                 return None
+            # The existing small-result path already measures on the loop. Use
+            # its exact charge before detaching, instead of occupying the large
+            # graph ceiling for every tiny reply while a journal write is held.
+            reserved = charge
+            if background and not large and small_payload is not None:
+                measured = response_size(
+                    small_payload,
+                    max_bytes=cls.MAX_RESULT_BYTES,
+                    max_depth=cls.MAX_RESULT_DEPTH,
+                    max_nodes=cls.MAX_RESULT_NODES,
+                    max_retained=charge,
+                )
+                if measured is None:
+                    entry["future"].set_result(
+                        response_limit_error(
+                            "result_capacity"
+                            if charge < cls.MAX_RESULT_RETAINED_BYTES
+                            else "result_payload_limit"
+                        )
+                    )
+                    return None
+                reserved = measured
+            elif background and large and not raw_charge and charge < cls.MAX_RESULT_RETAINED_BYTES:
+                # A decoded direct frame has no ingress owner to bound its graph.
+                # Do not park that graph behind a smaller reservation than the
+                # unmeasured worker ceiling.
+                entry["future"].set_result(response_limit_error("result_capacity"))
+                return None
             ledger = cls._retained_results
             key = "worker:" + str(uuid.uuid4())
             ledger[key] = {
-                "bytes": charge + raw_charge,
+                "bytes": reserved + raw_charge,
                 "user_id": entry.get("user_id"),
                 "session_id": entry["session_id"],
             }
             owner.entries.append((ledger, key))
         work = _ResultWork(
+            command_id,
             entry,
             _PendingResult.capture(entry),
             generation,
@@ -3365,6 +3430,77 @@ class PluginHub(WebSocketEndpoint):
             owner.on_release.append(entry["control_owner"].retain())
         entry["result_work"] = work
         return work
+
+    def _start_result_task(self, websocket, work, operation) -> None:
+        """Handoff only claimed/charged work; duplicates never create a task."""
+        cls = type(self)
+        receipt = work.entry.get("receipt_owner")
+        pin = None
+        try:
+            pin = receipt.acquire_worker() if receipt is not None else None
+            if work.entry.get("progress_owner") is not None:
+                work.entry["progress_owner"].close()
+            if work.ingress is not None:
+                # Dispatch still owns the raw frame. Move only its decoded graph
+                # so frame cleanup cannot release a running result's reservation.
+                work.owner.adopt(work.ingress.graph_owner)
+
+            async def run():
+                token = _ingress_scope.set(None)
+                try:
+                    await operation()
+                except ReceiptUnavailable:
+                    await self._fail_result_persistence(websocket, work)
+                except Exception as error:
+                    logger.error("Error handling plugin result (%s)", type(error).__name__)
+                finally:
+                    _ingress_scope.reset(token)
+
+            def finished(task):
+                # A task cancelled before its first instruction never enters a
+                # coroutine finally. Actual completion owns every release here.
+                cls._result_tasks.pop(task)
+                work.owner.release()
+                if work.entry.get("result_work") is work:
+                    work.entry.pop("result_work")
+                if pin is not None:
+                    pin.close()
+                if not task.cancelled():
+                    task.exception()
+
+            coroutine = run()
+            try:
+                task = asyncio.create_task(coroutine)
+            except BaseException:
+                coroutine.close()
+                raise
+            cls._result_tasks[task] = work
+            task.add_done_callback(finished)
+        except BaseException:
+            if pin is not None:
+                pin.close()
+            raise
+
+    async def _fail_result_persistence(self, websocket, work) -> None:
+        cls = type(self)
+        entry = work.entry
+        command_id = work.command_id
+        async with cls._authorized_socket_lock(websocket, work.lock):
+            if not cls._result_work_current(websocket, command_id, work):
+                return
+            receipt = entry.get("receipt_owner")
+            if receipt is not None:
+                receipt.mark_unknown()
+            entry["future"].set_result(
+                command_outcome_unknown(
+                    entry.get("command_type", "Unity command"),
+                    "command result persistence failed",
+                    session_id=entry["session_id"],
+                    command_id=command_id,
+                    phase="result_delivery",
+                    cause="result_persistence_failed",
+                )
+            )
 
     @classmethod
     def _result_work_current(cls, websocket: WebSocket, command_id: str, work: _ResultWork) -> bool:
@@ -3488,19 +3624,21 @@ class PluginHub(WebSocketEndpoint):
                 # the assembler. Cancel/disconnect may now discard its transfer
                 # without returning capacity that a running worker still owns.
                 assembler.discard(generation, command_id)
-            payload = await response_work(
-                lambda: cls._decode_large_result_outcome(completed, work.max_retained_bytes),
-                large=True,
-            )
-            completed = None
-            if isinstance(payload, _LargeResultFailure):
-                if payload.reason == "invalid_command_result":
-                    async with cls._authorized_socket_lock(websocket, lock):
-                        if cls._result_work_current(websocket, command_id, work):
-                            work.entry["future"].set_exception(RuntimeError(payload.reason))
-                    return
-                raise LargeResultProtocolError(payload.reason, payload.command_id)
-            await self._handle_command_result(websocket, payload, _work=work)
+            scope = _ingress_scope.get()
+            if scope is not None and scope.background_results:
+                self._start_result_task(
+                    websocket,
+                    work,
+                    lambda completed=completed, work=work: self._finish_large_result(
+                        websocket, completed, work
+                    ),
+                )
+                work = None
+                return
+            await self._finish_large_result(websocket, completed, work)
+        except ReceiptUnavailable:
+            if work is not None:
+                await self._fail_result_persistence(websocket, work)
         except LargeResultProtocolError as exc:
             if exc.reason in {
                 "result_capacity",
@@ -3528,10 +3666,32 @@ class PluginHub(WebSocketEndpoint):
                 if work.entry.get("result_work") is work:
                     work.entry.pop("result_work")
             if close_invalid:
-                completed = payload = start = data = None
+                completed = start = data = None
         if close_invalid:
             # Closing can suspend. Release rejected payloads and decoder tracebacks first.
             await websocket.close(code=4400, reason="Invalid large result transfer")
+
+    async def _finish_large_result(self, websocket, completed, work) -> None:
+        cls = type(self)
+        command_id = completed.command_id
+        payload = await response_work(
+            lambda: cls._decode_large_result_outcome(completed, work.max_retained_bytes),
+            large=True,
+        )
+        completed = None
+        if isinstance(payload, _LargeResultFailure):
+            async with cls._authorized_socket_lock(websocket, work.lock):
+                if not cls._result_work_current(websocket, command_id, work):
+                    return
+                if payload.reason == "invalid_command_result":
+                    work.entry["future"].set_exception(RuntimeError(payload.reason))
+                    return
+                if payload.reason in {"result_capacity", "result_transfer_timeout"}:
+                    work.entry["future"].set_result(response_limit_error(payload.reason))
+                    return
+            await websocket.close(code=4400, reason="Invalid large result transfer")
+            return
+        await self._handle_command_result(websocket, payload, _work=work)
 
     async def _handle_command_progress(self, websocket: WebSocket, data: dict[str, Any]) -> None:
         """Drop invalid/late optional observations without changing command state."""
@@ -3618,14 +3778,27 @@ class PluginHub(WebSocketEndpoint):
             if _candidate is not None and not _candidate.matches(cls._pending.get(payload.id)):
                 return
             work = _work or cls._claim_result_work(
-                websocket, payload.id, large=needs_response_worker(payload.result)
+                websocket,
+                payload.id,
+                large=needs_response_worker(payload.result),
+                small_payload=payload.result,
             )
             if work is None:
                 return
+        handed_off = False
         try:
+            scope = _ingress_scope.get()
+            if _work is None and scope is not None and scope.background_results:
+                self._start_result_task(
+                    websocket, work, lambda: self._deliver_command_result(websocket, payload, work)
+                )
+                handed_off = True
+                return
             await self._deliver_command_result(websocket, payload, work)
+        except ReceiptUnavailable:
+            await self._fail_result_persistence(websocket, work)
         finally:
-            if _work is None:
+            if _work is None and not handed_off:
                 # response_work only unwinds after its actual worker exits, even
                 # when receive/caller cancellation is repeated while it runs.
                 work.owner.release()

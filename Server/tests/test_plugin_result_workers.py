@@ -15,6 +15,447 @@ from transport import plugin_hub as hub_module
 from transport.models import CommandResultMessage, PongMessage
 from transport.large_result_assembler import LargeResultProtocolError
 from transport.plugin_registry import PluginRegistry
+from services.execution_receipt_identity import ReceiptUnavailable
+
+
+class HeldReceipt:
+    def __init__(self, *, fail=False, fail_pin=False):
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = []
+        self.pins = 0
+        self.unknown = False
+        self.fail = fail
+        self.fail_pin = fail_pin
+
+    def acquire_worker(self):
+        if self.fail_pin:
+            raise ReceiptUnavailable("private pin failure detail")
+        self.pins += 1
+
+        def close():
+            self.pins -= 1
+
+        return SimpleNamespace(close=close)
+
+    def mark_unknown(self):
+        self.unknown = True
+
+    async def observe_async(self, **values):
+        self.calls.append(values)
+        self.entered.set()
+        await self.release.wait()
+        if self.fail:
+            raise ReceiptUnavailable("private storage failure detail")
+
+
+async def dispatch_peer(hub):
+    """Use production dispatch/decode/on_receive; only replace the ASGI peer."""
+    cls = type(hub)
+    cls._connections.clear()
+    queue = asyncio.Queue()
+    connected, pong = asyncio.Event(), asyncio.Event()
+    peer = SimpleNamespace(queue=queue, pong=pong, socket=None, messages=[])
+
+    async def receive():
+        return await queue.get()
+
+    async def send(message):
+        peer.messages.append(message)
+        if message["type"] == "websocket.send":
+            payload = json.loads(message["text"])
+            if payload["type"] == "pong":
+                pong.set()
+            elif payload["type"] == "ping":
+                await queue.put(
+                    {
+                        "type": "websocket.receive",
+                        "text": json.dumps(
+                            {
+                                "type": "pong",
+                                "session_id": "owned",
+                                "challenge": payload["challenge"],
+                            }
+                        ),
+                    }
+                )
+
+    async def connect(socket):
+        await socket.accept()
+        socket.state.plugin_registered = True
+        socket.state.plugin_session_id = "owned"
+        socket.state.plugin_generation = "owned"
+        socket.state.plugin_features = {
+            hub_module.HEARTBEAT_CAPABILITY,
+            hub_module.LARGE_RESULT_CAPABILITY,
+        }
+        socket.state.plugin_heartbeat_challenge = None
+        cls._connections["owned"] = socket
+        cls._last_pong["owned"] = hub_module.time.monotonic()
+        peer.socket = socket
+        connected.set()
+
+    hub.scope = {"type": "websocket", "path": "/hub", "headers": [], "query_string": b""}
+    hub.receive, hub.send, hub.on_connect = receive, send, connect
+    await queue.put({"type": "websocket.connect"})
+    peer.task = asyncio.create_task(hub.dispatch())
+    await await_signal(connected, "production dispatch connected", producers=(peer.task,))
+    return peer
+
+
+async def peer_frame(peer, payload):
+    await peer.queue.put({"type": "websocket.receive", "text": json.dumps(payload)})
+
+
+async def peer_result(peer, result, *, kind="small", command_id=COMMAND_ID):
+    message = {"type": "command_result", "id": command_id, "result": result}
+    if kind != "large":
+        await peer_frame(peer, message)
+        return
+    raw = json.dumps(message).encode()
+    chunks = frames(raw, command_id)
+    await peer_frame(
+        peer,
+        {
+            "type": "result_start",
+            "id": command_id,
+            "total_bytes": len(raw),
+            "chunk_count": len(chunks),
+        },
+    )
+    for frame in chunks:
+        await peer.queue.put({"type": "websocket.receive", "bytes": frame})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["small", "ingress", "large"])
+async def test_dispatch_handles_same_socket_control_while_receipt_is_held(owned_hub, kind):
+    hub, _ = owned_hub
+    cls = type(hub)
+    receipt = HeldReceipt()
+    future = asyncio.get_running_loop().create_future()
+    cls._pending[COMMAND_ID] = {
+        "future": future,
+        "session_id": "owned",
+        "user_id": None,
+        "receipt_owner": receipt,
+    }
+    peer = await dispatch_peer(hub)
+    result = (
+        {"ok": True} if kind == "small" else {"text": "x" * (300000 if kind == "large" else 96000)}
+    )
+    try:
+        await peer_result(peer, result, kind=kind)
+        await await_signal(receipt.entered, "receipt persistence entered", producers=(peer.task,))
+        if kind == "large":
+            await peer_result(peer, result, kind=kind)
+        await peer_frame(peer, {"type": "ping", "challenge": "a" * 32})
+        await asyncio.wait_for(peer.pong.wait(), 0.5)
+        assert not future.done()
+        assert cls._connections["owned"] is peer.socket
+        assert cls._retained_results.total_bytes > 0
+        assert len(receipt.calls) == 1
+        assert cls._large_results.retained_bytes == 0
+        receipt.release.set()
+        assert await asyncio.wait_for(asyncio.shield(future), watchdog_timeout()) == result
+    finally:
+        receipt.release.set()
+        await settled()
+        peer.task.cancel()
+        await asyncio.gather(peer.task, return_exceptions=True)
+        future.cancel()
+        cls._retained_results.pop(COMMAND_ID, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ending", ["cancel", "disconnect", "reconnect", "replacement", "reconfigure", "shutdown"]
+)
+@pytest.mark.parametrize("fail", [False, True])
+async def test_dispatch_result_keeps_actual_owners_and_fences_late_delivery(
+    owned_hub, ending, fail
+):
+    hub, _ = owned_hub
+    cls = type(hub)
+    receipt = HeldReceipt(fail=fail)
+    future = asyncio.get_running_loop().create_future()
+    entry = {"future": future, "session_id": "owned", "user_id": None, "receipt_owner": receipt}
+    cls._pending[COMMAND_ID] = entry
+    peer = await dispatch_peer(hub)
+    shutdown = None
+    replacement = None
+    try:
+        await peer_result(peer, {"text": "x" * 96000})
+        await await_signal(receipt.entered, "held accepted result", producers=(peer.task,))
+        charge = cls._retained_results.total_bytes
+        assert charge > 0 and receipt.pins == 1
+        worker = next(task for task, work in cls._result_tasks.items() if work.entry is entry)
+        # A duplicate must never observe twice or replace the first accepted graph.
+        await peer_result(peer, {"ok": "duplicate"})
+        await peer_frame(peer, {"type": "ping", "challenge": "b" * 32})
+        await await_signal(peer.pong, "duplicate passed by dispatch", producers=(peer.task,))
+        assert len(receipt.calls) == 1
+        if ending == "cancel":
+            cls._pending.pop(COMMAND_ID)
+            future.cancel()
+            peer.task.cancel()
+        elif ending == "disconnect":
+            await peer.queue.put({"type": "websocket.disconnect", "code": 1000})
+        elif ending == "reconnect":
+            peer.socket.state.plugin_generation = "replacement"
+        elif ending == "replacement":
+            replacement = asyncio.get_running_loop().create_future()
+            cls._pending[COMMAND_ID] = {**entry, "future": replacement}
+        elif ending == "reconfigure":
+            cls.configure(PluginRegistry())
+        else:
+            shutdown = asyncio.create_task(cls.shutdown())
+        await settled()
+        assert not worker.done()
+        assert receipt.pins == 1
+        assert cls._retained_results.total_bytes == charge
+        if shutdown is not None:
+            assert not shutdown.done(), "Shutdown abandoned accepted persistence"
+        receipt.release.set()
+        await asyncio.wait_for(asyncio.shield(worker), watchdog_timeout())
+        if shutdown is not None:
+            await asyncio.wait_for(shutdown, watchdog_timeout())
+        assert cls._retained_results.total_bytes == 0
+        assert receipt.pins == 0
+        assert not receipt.unknown, "A stale result rewrote the receipt owner"
+        if replacement is not None:
+            assert not replacement.done()
+        if future.done() and not future.cancelled():
+            assert isinstance(future.exception(), hub_module.PluginDisconnectedError)
+        else:
+            assert not future.done() or future.cancelled()
+    finally:
+        receipt.release.set()
+        await settled()
+        peer.task.cancel()
+        await asyncio.gather(peer.task, return_exceptions=True)
+        if shutdown is not None:
+            await asyncio.gather(shutdown, return_exceptions=True)
+        if future.done() and not future.cancelled():
+            future.exception()
+        future.cancel()
+        if replacement is not None:
+            replacement.cancel()
+        if cls._large_results is None:
+            cls.configure(PluginRegistry())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "limit",
+    [
+        "MAX_PENDING_COMMANDS",
+        "MAX_PENDING_PER_USER",
+        "MAX_PENDING_PER_SESSION",
+        "MAX_RETAINED_RESULT_BYTES",
+        "MAX_RETAINED_RESULT_BYTES_PER_USER",
+        "MAX_RETAINED_RESULT_BYTES_PER_SESSION",
+    ],
+)
+async def test_dispatch_result_capacity_counts_detached_work_until_actual_exit(
+    owned_hub, monkeypatch, limit
+):
+    hub, _ = owned_hub
+    cls = type(hub)
+    monkeypatch.setattr(
+        cls, limit, 1 if "PENDING" in limit else hub_module.response_size({"ok": True})
+    )
+    receipt = HeldReceipt()
+    loop = asyncio.get_running_loop()
+    original, refused = loop.create_future(), loop.create_future()
+    entry = {"future": original, "session_id": "owned", "user_id": None, "receipt_owner": receipt}
+    cls._pending[COMMAND_ID] = entry
+    peer = await dispatch_peer(hub)
+    try:
+        await peer_result(peer, {"ok": True})
+        await await_signal(receipt.entered, "capacity owner entered", producers=(peer.task,))
+        worker = next(task for task, work in cls._result_tasks.items() if work.entry is entry)
+        # A caller stopping its wait does not return task or graph capacity.
+        cls._pending.pop(COMMAND_ID)
+        original.cancel()
+        cls._pending["second"] = {"future": refused, "session_id": "owned", "user_id": None}
+        await peer_result(peer, {"ok": True}, command_id="second")
+        result = await asyncio.wait_for(asyncio.shield(refused), watchdog_timeout())
+        assert result["data"]["reason"] == "result_capacity"
+        assert not worker.done() and receipt.pins == 1
+        assert len([w for w in cls._result_tasks.values() if w.lock is cls._lock]) == 1
+        receipt.release.set()
+        await worker
+        assert cls._retained_results.total_bytes == 0
+    finally:
+        receipt.release.set()
+        await settled()
+        peer.task.cancel()
+        await asyncio.gather(peer.task, return_exceptions=True)
+        original.cancel()
+        refused.cancel()
+
+
+@pytest.mark.asyncio
+async def test_receipt_failure_settles_current_result_with_unknown_outcome(owned_hub):
+    hub, socket = owned_hub
+    socket.state.plugin_registered = True
+    receipt = HeldReceipt(fail=True)
+    receipt.release.set()
+    future = asyncio.get_running_loop().create_future()
+    type(hub)._pending[COMMAND_ID] = {
+        "future": future,
+        "session_id": "owned",
+        "user_id": None,
+        "receipt_owner": receipt,
+        "command_type": "manage_gameobject",
+    }
+    try:
+        await hub.on_receive(
+            socket, {"type": "command_result", "id": COMMAND_ID, "result": {"ok": True}}
+        )
+        assert future.done(), "Persistence failure left the command waiting for its timeout"
+        result = future.result()
+        assert result["success"] is False
+        assert result["data"]["reason"] == "outcome_unknown"
+        assert result["data"]["cause"] == "result_persistence_failed"
+        assert "not_dispatched" not in json.dumps(result)
+        assert "private storage" not in json.dumps(result)
+        assert receipt.unknown
+    finally:
+        future.cancel()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_pin", [False, True])
+@pytest.mark.parametrize("kind", ["small", "large"])
+async def test_dispatch_persistence_failure_is_prompt_and_sanitized(owned_hub, fail_pin, kind):
+    hub, _ = owned_hub
+    cls = type(hub)
+    receipt = HeldReceipt(fail=True, fail_pin=fail_pin)
+    receipt.release.set()
+    future = asyncio.get_running_loop().create_future()
+    cls._pending[COMMAND_ID] = {
+        "future": future,
+        "session_id": "owned",
+        "user_id": None,
+        "receipt_owner": receipt,
+        "command_type": "manage_gameobject",
+    }
+    peer = await dispatch_peer(hub)
+    try:
+        await peer_result(peer, {"text": "x" * 300000} if kind == "large" else {}, kind=kind)
+        result = await asyncio.wait_for(asyncio.shield(future), watchdog_timeout())
+        assert result["data"]["reason"] == "outcome_unknown"
+        assert result["data"]["cause"] == "result_persistence_failed"
+        assert result["hint"] == "inspect_state_before_retry"
+        assert "private" not in json.dumps(result)
+        assert "not_dispatched" not in json.dumps(result)
+        await settled()
+        assert receipt.pins == 0
+        assert cls._retained_results.total_bytes == cls._raw_results.total_bytes == 0
+    finally:
+        peer.task.cancel()
+        await asyncio.gather(peer.task, return_exceptions=True)
+        future.cancel()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["ingress", "large"])
+async def test_dispatch_keeps_control_responsive_during_result_preparation(
+    owned_hub, monkeypatch, kind
+):
+    hub, _ = owned_hub
+    cls = type(hub)
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), Event()
+    future = loop.create_future()
+    cls._pending[COMMAND_ID] = {"future": future, "session_id": "owned", "user_id": None}
+    native = hub_module.response_size if kind == "ingress" else cls._decode_large_result_outcome
+
+    def held(*args, **kwargs):
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(watchdog_timeout())
+        return native(*args, **kwargs)
+
+    if kind == "ingress":
+        monkeypatch.setattr(hub_module, "response_size", held)
+    else:
+        monkeypatch.setattr(cls, "_decode_large_result_outcome", held)
+    peer = await dispatch_peer(hub)
+    try:
+        expected = {"text": "x" * 300000}
+        await peer_result(peer, expected, kind=kind)
+        await await_signal(entered, "result preparation worker", producers=(peer.task,))
+        await peer_frame(peer, {"type": "ping", "challenge": "c" * 32})
+        await await_signal(peer.pong, "control passed held preparation", producers=(peer.task,))
+        assert not future.done()
+        release.set()
+        assert await asyncio.wait_for(asyncio.shield(future), watchdog_timeout()) == expected
+    finally:
+        release.set()
+        await settled()
+        peer.task.cancel()
+        await asyncio.gather(peer.task, return_exceptions=True)
+        future.cancel()
+        cls._retained_results.pop(COMMAND_ID, None)
+
+
+@pytest.mark.asyncio
+async def test_held_results_accept_same_socket_heartbeat_pongs_and_small_concurrency(
+    owned_hub, monkeypatch
+):
+    hub, _ = owned_hub
+    cls = type(hub)
+    receipt = HeldReceipt()
+    peer = await dispatch_peer(hub)
+    futures = []
+    ping = None
+    try:
+        for index in range(4):
+            command_id = str(index)
+            future = asyncio.get_running_loop().create_future()
+            futures.append(future)
+            cls._pending[command_id] = {
+                "future": future,
+                "session_id": "owned",
+                "user_id": None,
+                "receipt_owner": receipt,
+            }
+            await peer_result(peer, {"ok": True}, command_id=command_id)
+        await peer_frame(peer, {"type": "ping", "challenge": "d" * 32})
+        await await_signal(peer.pong, "all small results accepted", producers=(peer.task,))
+        await settled()
+        assert len(receipt.calls) == 4
+        assert receipt.pins == 4
+        assert cls._retained_results.total_bytes == 4 * hub_module.response_size({"ok": True})
+        touched = asyncio.Event()
+        original_touch = cls._registry.touch
+
+        async def touch(session_id):
+            await original_touch(session_id)
+            touched.set()
+
+        monkeypatch.setattr(cls._registry, "touch", touch)
+        monkeypatch.setattr(cls, "PING_INTERVAL", 0.01)
+        ping = asyncio.create_task(cls._ping_loop("owned", peer.socket))
+        await await_signal(touched, "immediate peer pong consumed", producers=(peer.task, ping))
+        assert peer.socket.state.plugin_heartbeat_challenge is None
+        assert cls._connections["owned"] is peer.socket
+        assert not any(future.done() for future in futures)
+        receipt.release.set()
+        assert await asyncio.gather(*futures) == [{"ok": True}] * 4
+    finally:
+        receipt.release.set()
+        await settled()
+        if ping is not None:
+            ping.cancel()
+            await ping
+        peer.task.cancel()
+        await asyncio.gather(peer.task, return_exceptions=True)
+        for index, future in enumerate(futures):
+            future.cancel()
+            cls._retained_results.pop(str(index), None)
 
 
 @pytest.mark.asyncio

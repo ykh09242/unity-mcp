@@ -249,7 +249,7 @@ async def test_dispatch_transfers_graph_charge_but_retains_raw_frame_until_handl
     async def on_receive(socket, data):
         before = cls._retained_results.total_bytes
         await original_receive(socket, data)
-        assert future.result() == expected
+        assert await future == expected
         assert response_size(expected) < cls._retained_results.total_bytes < before
         handled.set()
         await finish_handler.wait()
