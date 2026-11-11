@@ -16,6 +16,12 @@ RUN = frozenset({Permission.RUN})
 COMPILE = frozenset({Permission.EDIT, Permission.RUN})
 
 
+def test_script_identity_observation_requires_read_without_compile_or_edit_authority():
+    assert (
+        required_permissions("manage_script_quality", {"action": "identity"}, native=True) == READ
+    )
+
+
 @pytest.mark.parametrize("action", ["animator_set_parameter", "animator_set_enabled"])
 def test_animator_runtime_only_requires_explicit_top_level_boolean(action):
     for native, key in ((False, "runtime_only"), (True, "runtimeOnly"), (True, "runtime_only")):

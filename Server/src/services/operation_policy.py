@@ -82,6 +82,7 @@ POLICY_RULES: Final = (
     ),
     PolicyRule("manage_build", ("status", "cancel"), CONTROL, public=True),
     PolicyRule("manage_script_quality", ("capabilities", "status", "cancel"), CONTROL, public=True),
+    PolicyRule("manage_script_quality", ("identity",), SHARED_READ),
     PolicyRule(
         "manage_verification", ("profiles", "status", "cancel", "report"), CONTROL, public=True
     ),

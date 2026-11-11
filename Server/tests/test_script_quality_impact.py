@@ -195,3 +195,43 @@ def test_guid_move_preserves_declaration_comparison_but_duplicate_guid_is_ambigu
     assert declaration_changes(result(), current)["complete"]
     current["selected_files"].append(deepcopy(current["selected_files"][0]))
     assert not declaration_changes(result(), current)["complete"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity_state", ["absent", "present", "relocated", "indeterminate"])
+async def test_baseline_only_script_is_observed_before_classifying_deletion(identity_state):
+    baseline = result()
+    current = result()
+    current["selected_files"][0].update(path="Assets/Survivor.cs", guid="9" * 32)
+    current["declarations"] = []
+    graph = SimpleNamespace(execute=AsyncMock(return_value=graph_page()))
+
+    async def observe(request):
+        if request["action"] == "identity":
+            return {"success": True, "data": {"state": identity_state}}
+        assert request["expected_missing"] is True
+        assert request["script_guid"] == "b" * 32
+        return {"success": True, "data": {"assets": [], "coverage_gaps": []}}
+
+    native = AsyncMock(side_effect=observe)
+    page = await inspect_script_impact(
+        None,
+        current,
+        baseline,
+        options={"analysis_id": "e" * 32},
+        owner=("u", "p"),
+        secret=b"secret",
+        graph=graph,
+        native=native,
+    )
+    assert native.call_args_list[0].args[0]["action"] == "identity"
+    assert page["script_identity"]["state"] == identity_state
+    if identity_state == "absent":
+        assert any(row["change"] == "script_removed" for row in page["changes"])
+        assert page["findings"][0]["script_path"] == "Assets/C.cs"
+        assert page["findings"][0]["certainty"] == "potential_reference"
+        assert "deleted_script_reference_coverage" in page["coverage_gaps"]
+    else:
+        assert not page["changes"]
+        assert "baseline_script_deletion_unconfirmed" in page["coverage_gaps"]
+        graph.execute.assert_not_awaited()

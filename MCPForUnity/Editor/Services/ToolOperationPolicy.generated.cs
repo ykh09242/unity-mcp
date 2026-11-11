@@ -99,6 +99,7 @@ namespace MCPForUnity.Editor.Services
             { "manage_script_quality\n1capabilities", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
             { "manage_script_quality\n1status", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
             { "manage_script_quality\n1cancel", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
+            { "manage_script_quality\n1identity", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "manage_verification\n1profiles", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
             { "manage_verification\n1status", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
             { "manage_verification\n1cancel", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },

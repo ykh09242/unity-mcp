@@ -69,6 +69,48 @@ async def test_read_operations_do_not_install_refresh_or_broaden_scope(quality):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["before", "after", None])
+async def test_impact_binds_both_live_observations_to_retained_analysis(
+    quality, monkeypatch, drift
+):
+    import services.script_quality.impact as module
+
+    service, target, send = quality
+    identity = "e" * 32
+    current = {"source_token": "a" * 64, "project_id": "p"}
+    service.jobs[identity] = SimpleNamespace(owner=target.scope.key, retained=True)
+    monkeypatch.setattr(
+        service.results, "read", lambda key, *args, **kwargs: current if key == identity else None
+    )
+    inspect = AsyncMock(return_value={"complete": True})
+    monkeypatch.setattr(module, "inspect_script_impact", inspect)
+    observations = 0
+
+    async def respond(*args, **kwargs):
+        nonlocal observations
+        assert args[2] == "get_compile_job"
+        assert args[3]["observe_source"] is True
+        observations += 1
+        changed = (drift == "before" and observations == 1) or (
+            drift == "after" and observations == 2
+        )
+        return {
+            "success": True,
+            "source_freshness": {
+                **current,
+                "source_token": "b" * 64 if changed else "a" * 64,
+                "coverage": {"complete": True},
+            },
+        }
+
+    send.side_effect = respond
+    response = await service.execute(None, "impact", {"analysis_id": identity})
+    assert response["success"] is (drift is None)
+    assert send.await_count == (1 if drift == "before" else 2)
+    assert inspect.await_count == (0 if drift == "before" else 1)
+
+
+@pytest.mark.asyncio
 async def test_missing_explicit_selection_never_dispatches(quality):
     service, _, send = quality
     response = await service.execute(None, "analyze", {})

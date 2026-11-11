@@ -66,6 +66,15 @@ reflection and nested prefab override details remain explicit limitations.
 Pages bind to source and graph revision; changed revisions invalidate cursors.
 No scene/prefab is opened, saved or migrated by impact inspection.
 
+Baseline-only script identities remain in impact pages even when current analysis
+selects surviving files. A bounded native observation must confirm that the old
+script and metadata are absent and that its GUID has not moved. Omitted live files,
+replaced paths, remaining metadata and unresolved identities are not deletions.
+Source snapshots before and after the join must match the retained analysis.
+For confirmed deletions, retained incoming graph edges and the baseline's serialized
+members are reported; `deleted_script_reference_coverage` remains an explicit gap
+because an import may remove dangling GUID dependencies from Unity's graph.
+
 ## Bounds and lifetime
 
 One host process and two queued jobs are admitted per Editor. Context source is

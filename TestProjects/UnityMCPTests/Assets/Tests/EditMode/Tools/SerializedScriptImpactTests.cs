@@ -23,6 +23,57 @@ namespace MCPForUnityTests.Editor.Tools
             + GuidValue
             + ", type: 3}\n  count: 2\n  clicked:\n    m_PersistentCalls:\n      m_Calls:\n      - m_Target: {fileID: 42}\n        m_MethodName: Click\n";
 
+        [TestCase("absent")]
+        [TestCase("present")]
+        [TestCase("indeterminate")]
+        public void BaselineIdentityChecksActualAbsenceAndRetainsDeletedScriptReferences(string state)
+        {
+            string stem = "MCPDeletedImpact_" + Guid.NewGuid().ToString("N");
+            string script = "Assets/" + stem + ".cs",
+                asset = "Assets/" + stem + ".prefab";
+            string scriptDisk = Path.Combine(Application.dataPath, stem + ".cs"),
+                assetDisk = Path.Combine(Application.dataPath, stem + ".prefab");
+            try
+            {
+                File.WriteAllText(assetDisk, Text);
+                if (state == "present")
+                    File.WriteAllText(scriptDisk, "class " + stem + " {}");
+                if (state == "indeterminate")
+                    File.WriteAllText(scriptDisk + ".meta", "guid: " + GuidValue);
+                var request = new JObject
+                {
+                    ["action"] = "identity",
+                    ["script_path"] = script,
+                    ["script_guid"] = GuidValue,
+                };
+                var identity = JObject.FromObject(ManageScriptQuality.HandleCommand(request));
+                Assert.That((bool)identity["success"], Is.True);
+                Assert.That((string)identity["data"]["state"], Is.EqualTo(state));
+                request["action"] = "impact";
+                request["source_hash"] = new string('c', 64);
+                request["expected_missing"] = true;
+                request["assets"] = new JArray(asset);
+                var members = Members;
+                foreach (var member in members)
+                    member["container"] = "global::" + stem;
+                request["members"] = members;
+                var result = JObject.FromObject(ManageScriptQuality.HandleCommand(request));
+                Assert.That((bool)result["success"], Is.EqualTo(state == "absent"));
+                if (state == "absent")
+                {
+                    Assert.That((string)result["data"]["source_state"], Is.EqualTo("absent"));
+                    Assert.That(result["data"]["assets"][0]["members"].Count(), Is.EqualTo(2));
+                    File.WriteAllText(scriptDisk, "class " + stem + " {}");
+                    Assert.That((bool)JObject.FromObject(ManageScriptQuality.HandleCommand(request))["success"], Is.False);
+                }
+            }
+            finally
+            {
+                foreach (string path in new[] { scriptDisk, scriptDisk + ".meta", assetDisk, assetDisk + ".meta" })
+                    File.Delete(path);
+            }
+        }
+
         [Test]
         public void TextEvidenceConfirmsFieldAndLocallyBoundPersistentCall()
         {

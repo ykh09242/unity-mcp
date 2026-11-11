@@ -414,6 +414,7 @@
     },
     "script-quality-impact": {
       "methods": [
+        "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.BaselineIdentityChecksActualAbsenceAndRetainsDeletedScriptReferences",
         "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.TextEvidenceConfirmsFieldAndLocallyBoundPersistentCall",
         "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.CrossFileOrMissingTargetsNeverConfirmAMethod",
         "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.DuplicateFileIdsCannotBindPersistentTargets",

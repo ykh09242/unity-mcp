@@ -91,7 +91,28 @@ class ScriptQualityService:
             async def native(parameters):
                 return await self._send(target, instance, parameters, deadline)
 
+            async def check_source():
+                observation = await self._send(
+                    target,
+                    instance,
+                    {"compile_id": uuid4().hex, "observe_source": True},
+                    deadline,
+                    command="get_compile_job",
+                )
+                source = observation.get("source_freshness", {})
+                if (
+                    observation.get("success") is not True
+                    or source.get("coverage", {}).get("complete") is not True
+                    or not current.get("source_token")
+                    or any(
+                        source.get(key) != current.get(key)
+                        for key in ("project_id", "source_token")
+                    )
+                ):
+                    raise ValueError("impact_source_changed_or_unavailable")
+
             try:
+                await check_source()
                 result = await asyncio.wait_for(
                     inspect_script_impact(
                         ctx,
@@ -105,8 +126,9 @@ class ScriptQualityService:
                         ),
                         native=native,
                     ),
-                    30,
+                    max(0, deadline - monotonic()),
                 )
+                await check_source()
                 if not target.is_current():
                     raise ValueError("analysis_target_changed")
                 return {"success": True, "data": result}
@@ -243,13 +265,13 @@ class ScriptQualityService:
                     self.results.settle(job_id, owner)
         return response
 
-    async def _send(self, target, instance, params, deadline):
+    async def _send(self, target, instance, params, deadline, *, command="manage_script_quality"):
         remaining = deadline - monotonic()
         if remaining <= 0:
             raise TimeoutError()
         check = None
         if target.authorize_public is not None:
-            check = await target.authorize_public("manage_script_quality", params)
+            check = await target.authorize_public(command, params)
             check()
         if not target.is_current():
             raise InconsistentResult("analysis_target_changed")
@@ -257,7 +279,7 @@ class ScriptQualityService:
             send_with_unity_instance(
                 async_send_command_with_retry,
                 instance,
-                "manage_script_quality",
+                command,
                 params,
                 retry_on_reload=False,
                 _deadline=deadline,

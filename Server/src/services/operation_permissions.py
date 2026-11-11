@@ -294,7 +294,7 @@ _ACTIONS: Final = {
         Permission.RUN: _names("start"),
     },
     "manage_script_quality": {
-        Permission.READ: _names("capabilities status cancel impact"),
+        Permission.READ: _names("capabilities status cancel impact identity"),
         Permission.RUN: _names("analyze capture_baseline"),
     },
     "manage_profiler": {

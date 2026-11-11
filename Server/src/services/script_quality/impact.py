@@ -122,18 +122,60 @@ async def inspect_script_impact(ctx, current, baseline, *, options, owner, secre
         state = _decode(options["cursor"], secret)
         if state.get("view") != view:
             raise ValueError("invalid_impact_cursor")
-    files = current["selected_files"]
+    # Retain baseline-only identities independently of analyzable current documents.
+    # Omission from a selection never establishes deletion: native disk/database
+    # observation below must confirm absence, within the service's source fence.
+    selected = current["selected_files"]
+    identities = {row.get("guid") or row["path"] for row in selected}
+    missing = []
+    if (
+        baseline
+        and baseline.get("complete") is True
+        and baseline.get("stale") is False
+        and baseline.get("project_id") == current.get("project_id")
+    ):
+        missing = [
+            row
+            for row in baseline["selected_files"]
+            if (row.get("guid") or row["path"]) not in identities
+        ]
+    files = missing + selected
     if type(state.get("file")) is not int or not 0 <= state["file"] < len(files):
         raise ValueError("invalid_impact_cursor")
     file = files[state["file"]]
     gaps = [] if delta["complete"] else ["change_comparison_unavailable"]
     changes = [row for row in delta["changes"] if row["path"] == file["path"]]
+    expected_missing = state["file"] < len(missing)
+    identity = None
+    if expected_missing:
+        observation = await native(
+            {"action": "identity", "script_path": file["path"], "script_guid": file.get("guid")}
+        )
+        identity = observation.get("data", {}) if observation.get("success") is True else {}
+        if identity.get("state") == "absent":
+            # A known script disappeared; surviving declarations are not needed
+            # to retain its old serialized members and persistent-call names.
+            changes = [
+                {**row, "change": "script_removed"}
+                for row in baseline.get("declarations", [])
+                if row["path"] == file["path"]
+                and (row["kind"] == "method" or row.get("serialized"))
+            ]
+            if not changes:
+                changes = [{"path": file["path"], "kind": "script", "change": "script_removed"}]
+            # Unity dependency providers may drop dangling GUIDs on import.
+            # Retained incoming edges are evidence, never an exhaustive scan.
+            gaps.append("deleted_script_reference_coverage")
+        else:
+            gaps.append("baseline_script_deletion_unconfirmed")
     if len(changes) > 128:
         changes = changes[:128]
         gaps.append("member_limit")
     findings, graph_status, revision = [], {}, state["revision"]
     continuation = None
-    if not file.get("guid"):
+    if expected_missing and (identity or {}).get("state") != "absent":
+        pass
+    elif not file.get("guid"):
         gaps.append("script_guid_unavailable")
     else:
         query = {
@@ -178,10 +220,12 @@ async def inspect_script_impact(ctx, current, baseline, *, options, owner, secre
                 "script_path": file["path"],
                 "script_guid": file["guid"],
                 "source_hash": file["bytes_sha256"],
+                **({"expected_missing": True} if expected_missing else {}),
                 "assets": assets,
                 "members": [
                     {"name": row["name"], "kind": row["kind"], "container": row["container"]}
                     for row in changes
+                    if row["kind"] in {"field", "method"}
                 ],
             }
         )
@@ -233,6 +277,7 @@ async def inspect_script_impact(ctx, current, baseline, *, options, owner, secre
         "analysis_id": options["analysis_id"],
         "baseline_id": options.get("baseline_id"),
         "source_token": current["source_token"],
+        "script_identity": identity,
         "graph_revision": revision,
         "graph_status": graph_status,
         "findings": findings,

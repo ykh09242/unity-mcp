@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using UnityEditor;
 
 namespace MCPForUnity.Editor.Services.ScriptQuality
 {
@@ -15,6 +16,57 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
     internal static class SerializedScriptImpact
     {
         private static Match Match(string value, string pattern) => Regex.Match(value, pattern, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+
+        internal static JObject ObserveIdentity(JObject request)
+        {
+            string path = ScriptSelection.Canonical((string)request["script_path"]);
+            string guid = (string)request["script_guid"];
+            if (guid == null || !Match(guid, "^[a-f0-9]{32}$").Success)
+                throw new ArgumentException("invalid_script_guid");
+            string physical = ScriptSelection.Physical(path);
+            string state;
+            bool Exists(string candidate)
+            {
+                try
+                {
+                    File.GetAttributes(candidate);
+                    return true;
+                }
+                catch (FileNotFoundException)
+                {
+                    return false;
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    return false;
+                }
+            }
+            try
+            {
+                if (Exists(physical))
+                    state = "present";
+                else if (Exists(SafePathUtility.ResolveWithinRoot(Path.GetDirectoryName(physical), physical + ".meta")))
+                    state = "indeterminate";
+                else
+                {
+                    string mapped = AssetDatabase.GUIDToAssetPath(guid);
+                    // Unity can retain the old path for a deleted asset until Editor exit.
+                    // A different mapping must never be classified as a deletion.
+                    state = !string.IsNullOrEmpty(mapped) && !string.Equals(mapped, path, StringComparison.Ordinal) ? "relocated" : "absent";
+                }
+            }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is System.Security.SecurityException)
+            {
+                state = "indeterminate";
+            }
+            return new JObject
+            {
+                ["path"] = path,
+                ["guid"] = guid,
+                ["state"] = state,
+                ["basis"] = "disk_absence_and_asset_database_identity",
+            };
+        }
 
         internal static JObject Read(JObject request)
         {
@@ -40,9 +92,22 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 )
                     throw new ArgumentException("invalid_impact_member");
             }
-            var source = ScriptSelection.Resolve(new JObject { ["paths"] = new JArray(request["script_path"]) }).Files.Single();
-            if (source.Hash != (string)request["source_hash"] || source.Guid == null || source.Guid != (string)request["script_guid"])
-                throw new InvalidOperationException("impact_source_changed");
+            if (request["expected_missing"] != null && request["expected_missing"].Type != JTokenType.Boolean)
+                throw new ArgumentException("expected_missing_must_be_boolean");
+            bool missing = (bool?)request["expected_missing"] == true;
+            ScriptSelection.Source source;
+            if (missing)
+            {
+                if ((string)ObserveIdentity(request)["state"] != "absent")
+                    throw new InvalidOperationException("impact_source_changed");
+                source = new ScriptSelection.Source { Path = (string)request["script_path"], Guid = (string)request["script_guid"] };
+            }
+            else
+            {
+                source = ScriptSelection.Resolve(new JObject { ["paths"] = new JArray(request["script_path"]) }).Files.Single();
+                if (source.Hash != (string)request["source_hash"] || source.Guid == null || source.Guid != (string)request["script_guid"])
+                    throw new InvalidOperationException("impact_source_changed");
+            }
             var rows = new JArray();
             var gaps = new HashSet<string>(StringComparer.Ordinal);
             long total = 0;
@@ -96,15 +161,24 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 }
                 rows.Add(row);
             }
-            var after = ScriptSelection.Resolve(new JObject { ["paths"] = new JArray(source.Path) }).Files.Single();
-            if (source.Hash != after.Hash || source.Guid != after.Guid)
-                throw new InvalidOperationException("impact_source_changed");
+            if (missing)
+            {
+                if ((string)ObserveIdentity(request)["state"] != "absent")
+                    throw new InvalidOperationException("impact_source_changed");
+            }
+            else
+            {
+                var after = ScriptSelection.Resolve(new JObject { ["paths"] = new JArray(source.Path) }).Files.Single();
+                if (source.Hash != after.Hash || source.Guid != after.Guid)
+                    throw new InvalidOperationException("impact_source_changed");
+            }
             var result = new JObject
             {
                 ["assets"] = rows,
                 ["coverage_gaps"] = new JArray(gaps),
                 ["source_hash"] = source.Hash,
-                ["basis"] = "selected_source_and_serialized_bytes_rechecked",
+                ["source_state"] = missing ? "absent" : "present",
+                ["basis"] = missing ? "script_absence_and_serialized_bytes_rechecked" : "selected_source_and_serialized_bytes_rechecked",
                 ["observed_at_unix_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             };
             if (Encoding.UTF8.GetByteCount(result.ToString(Formatting.None)) > 480 * 1024)
