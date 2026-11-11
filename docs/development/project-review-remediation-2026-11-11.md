@@ -57,6 +57,26 @@ that root freed it. Formatting, correctness lint and canonical native capability
 generation checks passed for the final changed inputs. The server source pin was
 advanced again after these integration fixes.
 
+## Receiving CI follow-up
+
+The first receiving run at `9e89715a1` exposed three additional issues. Each
+correction received a fresh scoped specification and code-quality review with
+no remaining findings:
+
+| Commit | Resulting behavior and evidence |
+| --- | --- |
+| `d086409ac` | Archive checks accept genuinely absent optional uv digest metadata while preserving exact immutable URL and subdirectory checks. Local ZIP installation supplies a SHA256 fragment and the probe independently checks the bytes. Actual remote/local behavior and registration passed; an incorrect digest was refused by uv 0.13.7. All 54 archive/canary tests passed, including malformed, missing local proof and conflicting digest cases. |
+| `b663fcfba` | The macOS reference-graph job allows twenty minutes; Linux and Windows retain ten. Actual macOS dependency source builds consumed 238-275 seconds before testing. One job timed out while progressing; the other completed in 9m28s. Three platform-budget tests and workflow lint passed; dependency pins and tests were not weakened. |
+| `017e46eec` | Rejected synchronous submissions clear their ownership of the closed coroutine before returning. A stopped loop's queued callback can no longer retain it. The strengthened coroutine-and-payload weakref test failed against the old implementation on Python 3.12.16 and 3.14.10; the complete 26-case synchronous admission suite passed on each version after the fix. |
+
+The coroutine issue predates this refresh at `f2b34385e`. CPython 3.12 retained
+the payload while the closed coroutine remained owned; the observed 3.14 runtime
+released its payload earlier and hid the remaining coroutine ownership. The test
+now releases its own caller reference before checking both weakrefs, without GC,
+loop restart or extra waiting. Accepted-task ownership and the existing race
+fences remain covered. `89c69f636` advances the immutable server source to the
+reviewed fix while retaining the existing skill revision and product version.
+
 ## Codex connection sharing
 
 The [versioned sharing matrix](shared-connections.md) separates the actual Rust
@@ -100,6 +120,11 @@ require their corresponding real-surface scenarios.
 Counts describe individual selections and can overlap; they are not a sum of
 unique repository tests.
 
+- Full local validation at `9e89715a1` passed 15,174 Server tests with 33 skips,
+  its isolated HTTP child passed 2,748 with two skips, and tools passed 3,504
+  with 14 skips and 344 subtests. The later receiving-CI corrections have the
+  affected checks above; these older full-suite counts are not represented as a
+  rerun of the final source.
 - The isolated Windows Unity 6000.0.69f1 ownership/path selection passed 56/56
   native cases. The spool selection passed 27/27. Both exited normally with
   code 0; required NUnit cases, source-snapshot hashes and synthetic preference
@@ -137,9 +162,12 @@ reader for a later downgrade. No existing user database was migrated during
 this work.
 
 Local native execution used Windows Unity 6000.0.69f1, not Unity 2021. Docker was
-unavailable locally; its default-startup behavior is established only by an
-executed container job. Hosted CI results must be inspected for the actual
-receiving commit. The dependency report retains the unpatched low-severity
+unavailable locally; the candidate container job passed in the receiving
+[`9e89715a1` run](https://github.com/ykh09242/unity-mcp/actions/runs/42988861038/job/130416581682).
+That run also passed the Linux Codex protocol job and all nine jobs in the compile workflow;
+policy-skipped Unity/Player jobs do not establish native runtime execution.
+Hosted CI results must still be inspected for the final receiving commit.
+The dependency report retains the unpatched low-severity
 deepmerge advisory and the intentional compatibility/historical pin holds.
 
 ## Distribution consistency
