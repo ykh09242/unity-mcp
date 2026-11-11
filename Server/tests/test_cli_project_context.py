@@ -86,6 +86,21 @@ def test_context_timeout_preserves_canonical_default_and_explicit_precedence(
     assert set(transport[0][0].extensions["timeout"].values()) == {expected}
 
 
+@pytest.mark.parametrize("seconds", [1, 3, 17, 300])
+@pytest.mark.parametrize(
+    "command", [["status"], ["status", "--ready"], ["instances"], ["instance", "list"]]
+)
+def test_diagnostic_requests_respect_caller_timeout_and_existing_caps(transport, seconds, command):
+    # Exercise Click through the inert HTTP transport, including health and inventory.
+    result = CliRunner().invoke(cli, ["--timeout", str(seconds), "--format", "json", *command])
+    assert result.exit_code == (1 if command == ["status", "--ready"] else 0), result.output
+    requests, _, _ = transport
+    assert requests
+    for request in requests:
+        cap = 5 if request.url.path == "/health" else 10
+        assert set(request.extensions["timeout"].values()) == {min(seconds, cap)}
+
+
 def test_automatic_context_captures_root_and_exact_target_from_nested_cwd(
     transport, monkeypatch, tmp_path
 ):

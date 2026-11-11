@@ -318,7 +318,7 @@ async def check_connection(config: Optional[CLIConfig] = None) -> bool:
 
     try:
         async with _http_client(cfg) as client:
-            response = await client.get(url, timeout=5)
+            response = await client.get(url, timeout=min(cfg.timeout, 5))
             return response.status_code == 200
     except Exception:
         return False
@@ -344,7 +344,9 @@ async def list_unity_instances(config: Optional[CLIConfig] = None) -> Dict[str, 
 
     try:
         async with _http_client(cfg) as client:
-            response = await client.get(url, headers=_auth_headers(cfg), timeout=10)
+            response = await client.get(
+                url, headers=_auth_headers(cfg), timeout=min(cfg.timeout, 10)
+            )
             response.raise_for_status()
             data = response.json()
             if "instances" in data:
