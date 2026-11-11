@@ -75,7 +75,7 @@ class QualityStatusOptions(QualityJobOptions):
 class QualityImpactOptions(QualityOptions):
     analysis_id: QualityId
     baseline_id: QualityId | None = None
-    cursor: Annotated[str, Field(min_length=1, max_length=1024)] | None = None
+    cursor: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
     page_size: Annotated[int, Field(ge=1, le=500)] = 100
 
 

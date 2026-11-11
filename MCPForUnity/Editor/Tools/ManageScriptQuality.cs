@@ -20,12 +20,15 @@ namespace MCPForUnity.Editor.Tools
                     "analyze" or "capture_baseline" => new[] { "action", "job_id", "paths", "change_set_id", "include_suppressed", "timeout_seconds" },
                     "status" => new[] { "action", "job_id", "page_size", "cursor" },
                     "cancel" => new[] { "action", "job_id" },
+                    "impact" => new[] { "action", "script_path", "script_guid", "source_hash", "assets", "members" },
                     _ => throw new ArgumentException("unsupported_script_quality_action"),
                 };
                 if (parameters.Properties().Any(p => !allowed.Contains(p.Name)))
                     throw new ArgumentException("unknown_script_quality_parameter");
                 if (action == "capabilities")
                     return new SuccessResponse("Observed optional script diagnostics capability.", ScriptAnalysisHost.Capabilities());
+                if (action == "impact")
+                    return new SuccessResponse("Observed serialized script references without loading assets.", SerializedScriptImpact.Read(parameters));
                 string id = parameters["job_id"]?.Type == JTokenType.String ? (string)parameters["job_id"] : null;
                 if (!ScriptDiagnosticJobs.ValidId(id))
                     throw new ArgumentException("invalid_analysis_job_id");

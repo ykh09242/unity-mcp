@@ -77,10 +77,41 @@ class ScriptQualityService:
             if job.retained and action in {"status", "cancel"}:
                 return self._page(job_id, job, parsed)
         if action == "impact":
-            return self.error(
-                "impact_unavailable",
-                "Reference impact requires retained completed analysis evidence.",
-            )
+            from services.script_quality.impact import inspect_script_impact
+            from services.reference_graph.store import RevisionConflict
+
+            current = self.results.read(job_id, owner)
+            if current is None:
+                return self.error(
+                    "analysis_expired_or_evicted", "Completed analysis evidence is required."
+                )
+            baseline = self.results.read(parsed.get("baseline_id"), owner, baseline=True)
+            deadline = monotonic() + 30
+
+            async def native(parameters):
+                return await self._send(target, instance, parameters, deadline)
+
+            try:
+                result = await asyncio.wait_for(
+                    inspect_script_impact(
+                        ctx,
+                        current,
+                        baseline,
+                        options=parsed,
+                        owner=owner,
+                        secret=self._cursor_secret,
+                        graph=getattr(
+                            getattr(ctx, "fastmcp", None), "_reference_graph_service", None
+                        ),
+                        native=native,
+                    ),
+                    30,
+                )
+                if not target.is_current():
+                    raise ValueError("analysis_target_changed")
+                return {"success": True, "data": result}
+            except (ValueError, RevisionConflict, TimeoutError, ConnectionError) as error:
+                return self.error("impact_unavailable", str(error)[:2048])
         if action in {"analyze", "capture_baseline"}:
             if len(self.jobs) >= 512:
                 oldest = next((key for key, item in self.jobs.items() if item.terminal), None)

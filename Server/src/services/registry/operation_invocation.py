@@ -449,6 +449,15 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                 raise OperationScopeChanged()
             return None
 
+        # This reviewed composition owns admission for each native child. Holding
+        # its read lease while checked graph collection needs an exclusive child
+        # would either escalate the lease or deadlock that child's admission.
+        if trusted and name == "manage_script_quality" and params.get("action") == "impact":
+            refusal = await validate_target()
+            if refusal is not None:
+                return refusal_result(refusal)
+            return await call()
+
         if original_target.resume_generation is not None and active_operation() is None:
             try:
                 try:

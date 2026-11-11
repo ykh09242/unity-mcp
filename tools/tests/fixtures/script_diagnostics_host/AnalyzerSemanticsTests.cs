@@ -51,6 +51,34 @@ public class AnalyzerSemanticsTests
         };
 
     [Test]
+    public async Task DeclarationSummaryUsesSemanticSerializationAttributesAndSignatures()
+    {
+        var request = Request(
+            """
+            namespace UnityEngine.Serialization {
+                public class FormerlySerializedAsAttribute : System.Attribute {
+                    public FormerlySerializedAsAttribute(string name) {} }
+            }
+            class C : UnityEngine.MonoBehaviour {
+                [UnityEngine.SerializeField, UnityEngine.Serialization.FormerlySerializedAs("oldCount")]
+                private int count;
+                [System.NonSerialized] public int transient;
+                public static int shared;
+                public void Click(int value) {}
+            }
+            """
+        );
+        var result = await AnalyzerRunner.AnalyzeAsync(request);
+        var field = result.Declarations.Single(d => d.Kind == "field" && d.Name == "count");
+        Assert.That(field.Serialized, Is.True);
+        Assert.That(field.FormerNames, Is.EqualTo(new[] { "oldCount" }));
+        Assert.That(field.Type, Is.EqualTo("int"));
+        Assert.That(result.Declarations.Any(d => d.Kind == "field" && d.Name == "transient" && d.Serialized), Is.False);
+        Assert.That(result.Declarations.Any(d => d.Kind == "field" && d.Name == "shared" && d.Serialized), Is.False);
+        Assert.That(result.Declarations.Single(d => d.Name == "Click").Signature, Does.Contain("int"));
+    }
+
+    [Test]
     public async Task UnityNullPropagationUsesUnt0008()
     {
         var result = await AnalyzerRunner.AnalyzeAsync(Request("class C { string Read(UnityEngine.Object item) => item?.name; }"));

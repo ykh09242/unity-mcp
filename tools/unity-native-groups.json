@@ -1,6 +1,17 @@
 {
   "schema_version": 1,
   "groups": {
+    "script-impact": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.TextEvidenceConfirmsFieldAndLocallyBoundPersistentCall",
+        "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.CrossFileOrMissingTargetsNeverConfirmAMethod",
+        "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.DuplicateFileIdsCannotBindPersistentTargets",
+        "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.BinaryMissingScriptAndAmbiguousYamlRetainCoverageGaps",
+        "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.ImpactReadPreservesSceneStageAssetAndMetadataAndRefusesSourceDrift"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
     "script-quality": {
       "methods": [
         "MCPForUnityTests.Editor.Tools.ScriptQualityTests.SelectionRefusesUnadmittedPaths",

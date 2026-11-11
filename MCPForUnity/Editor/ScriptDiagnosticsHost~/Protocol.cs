@@ -48,6 +48,18 @@ public sealed record DiagnosticRow
     public string Assembly { get; init; } = "";
 }
 
+public sealed record DeclarationRow
+{
+    public string Path { get; init; } = "";
+    public string Container { get; init; } = "";
+    public string Kind { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string Type { get; init; } = "";
+    public string Signature { get; init; } = "";
+    public bool Serialized { get; init; }
+    public string[] FormerNames { get; init; } = [];
+}
+
 public sealed record AnalysisResult
 {
     public int Protocol { get; init; } = 1;
@@ -59,4 +71,7 @@ public sealed record AnalysisResult
     public string[] CoverageGaps { get; init; } = [];
     public string[] AnalyzerErrors { get; init; } = [];
     public Dictionary<string, string> Providers { get; init; } = [];
+    public DeclarationRow[] Declarations { get; init; } = [];
+    public bool DeclarationsComplete { get; init; }
+    public string[] DeclarationCoverageGaps { get; init; } = [];
 }

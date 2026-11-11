@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 
 namespace UnityMcp.ScriptDiagnostics;
@@ -76,6 +77,8 @@ public static class AnalyzerRunner
         var gaps = new List<string>();
         var failures = new ConcurrentQueue<string>();
         var primary = new List<DiagnosticRow>();
+        var declarations = new List<DeclarationRow>();
+        var declarationGaps = new List<string>();
         var context = new List<DiagnosticRow>();
         string root = Path.GetFullPath(request.ProjectRoot);
         var selected = request.SelectedPaths.Select(path => AnalyzerConfiguration.FullPath(root, path)).ToHashSet(PathComparer);
@@ -91,6 +94,7 @@ public static class AnalyzerRunner
             {
                 var project = projects[input.Name];
                 var compilation = await project.GetCompilationAsync(cancellation) ?? throw new InvalidDataException("compilation_context_unavailable");
+                CaptureDeclarations(compilation, root, selected, declarations, declarationGaps, cancellation);
                 var analysisOptions = new CompilationWithAnalyzersOptions(
                     project.AnalyzerOptions,
                     (exception, analyzer, _) => failures.Enqueue(analyzer.GetType().FullName + ": " + exception.Message),
@@ -177,7 +181,75 @@ public static class AnalyzerRunner
             CoverageGaps = gaps.Distinct().ToArray(),
             AnalyzerErrors = failures.ToArray(),
             Providers = Providers,
+            Declarations = declarations.ToArray(),
+            DeclarationsComplete = gaps.Count == 0 && failures.IsEmpty && declarationGaps.Count == 0,
+            DeclarationCoverageGaps = declarationGaps.Distinct().ToArray(),
         };
+    }
+
+    private static void CaptureDeclarations(
+        Compilation compilation,
+        string root,
+        HashSet<string> selected,
+        List<DeclarationRow> rows,
+        List<string> gaps,
+        CancellationToken cancellation
+    )
+    {
+        if (compilation.GetDiagnostics(cancellation).Any(d => d.Severity == DiagnosticSeverity.Error))
+            gaps.Add("compiler_errors");
+        foreach (var tree in compilation.SyntaxTrees.Where(tree => selected.Contains(tree.FilePath)))
+        {
+            var model = compilation.GetSemanticModel(tree);
+            foreach (var node in tree.GetRoot(cancellation).DescendantNodes())
+            {
+                ISymbol? symbol = node is VariableDeclaratorSyntax or MethodDeclarationSyntax ? model.GetDeclaredSymbol(node, cancellation) : null;
+                if (symbol is not IFieldSymbol && symbol is not IMethodSymbol)
+                    continue;
+                if (rows.Count >= 512 || JsonSerializer.SerializeToUtf8Bytes(rows).Length > 192 * 1024)
+                {
+                    gaps.Add("declaration_limit");
+                    return;
+                }
+                var attributes = symbol.GetAttributes();
+                bool Has(string name) => attributes.Any(a => a.AttributeClass?.ToDisplayString() == name);
+                var field = symbol as IFieldSymbol;
+                if (field != null && field.Type.TypeKind == TypeKind.Error)
+                    gaps.Add("unresolved_field_type");
+                var row = new DeclarationRow
+                {
+                    Path = Path.GetRelativePath(root, tree.FilePath).Replace('\\', '/'),
+                    Container = symbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                    Kind = field != null ? "field" : "method",
+                    Name = symbol.Name,
+                    Type = field?.Type.ToDisplayString() ?? ((IMethodSymbol)symbol).ReturnType.ToDisplayString(),
+                    Signature = symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                    Serialized =
+                        field != null
+                        && !field.IsStatic
+                        && !field.IsConst
+                        && !field.IsReadOnly
+                        && !Has("System.NonSerializedAttribute")
+                        && (field.DeclaredAccessibility == Accessibility.Public || Has("UnityEngine.SerializeField") || Has("UnityEngine.SerializeReference")),
+                    FormerNames = attributes
+                        .Where(a => a.AttributeClass?.ToDisplayString() == "UnityEngine.Serialization.FormerlySerializedAsAttribute")
+                        .SelectMany(a => a.ConstructorArguments)
+                        .Select(a => a.Value)
+                        .OfType<string>()
+                        .Distinct()
+                        .ToArray(),
+                };
+                if (
+                    JsonSerializer.SerializeToUtf8Bytes(row).Length > 8192
+                    || JsonSerializer.SerializeToUtf8Bytes(rows).Length + JsonSerializer.SerializeToUtf8Bytes(row).Length > 192 * 1024
+                )
+                {
+                    gaps.Add("declaration_limit");
+                    return;
+                }
+                rows.Add(row);
+            }
+        }
     }
 
     private static StringComparer PathComparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;

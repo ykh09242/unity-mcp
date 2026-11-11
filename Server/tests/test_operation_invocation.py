@@ -37,6 +37,26 @@ def boundary(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_script_impact_releases_outer_admission_before_checked_graph_children(boundary):
+    async def impact(ctx, action):
+        from services.registry.operation_context import active_operation
+
+        assert active_operation() is None
+        target = OperationTarget(OperationScope("local", "deadbeef", "g1"), lambda: True, True)
+        async with mod.operation_session(
+            mod.admission_for(target, OperationMode.EXCLUSIVE, expires_at=None)
+        ):
+            return "checked"
+
+    assert (
+        await mod.wrap_tool(impact, "manage_script_quality", "manage_script_quality")(
+            Context(), "impact"
+        )
+        == "checked"
+    )
+
+
+@pytest.mark.asyncio
 async def test_exclusive_invocation_fences_next_tools_preflight(boundary):
     entered, release = asyncio.Event(), asyncio.Event()
     effects = []
