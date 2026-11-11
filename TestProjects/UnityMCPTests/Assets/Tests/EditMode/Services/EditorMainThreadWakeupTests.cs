@@ -22,6 +22,68 @@ namespace MCPForUnityTests.Editor.Services
         private static readonly MethodInfo NativeTick = typeof(EditorMainThreadWakeup).GetMethod("NativeTick", BindingFlags.NonPublic | BindingFlags.Static);
         private static readonly MethodInfo Update = typeof(EditorMainThreadWakeup).GetMethod("Drain", BindingFlags.NonPublic | BindingFlags.Static);
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void BurstYieldsBetweenTicksAndPreservesFifo(bool nativeTick)
+        {
+            var calls = new System.Collections.Generic.List<int>();
+            var scheduled = new System.Collections.Generic.List<IDisposable>();
+            try
+            {
+                for (int i = 0; i < 200; i++)
+                {
+                    int index = i;
+                    scheduled.Add(EditorMainThreadWakeup.Schedule(() => calls.Add(index)));
+                }
+                (nativeTick ? NativeTick : Update).Invoke(null, null);
+                Assert.That(calls.Count, Is.InRange(1, 64), "One tick must yield before draining the callback burst.");
+                scheduled[150].Dispose();
+                for (int tick = 0; tick < 250 && calls.Count < 199; tick++)
+                    (nativeTick ? NativeTick : Update).Invoke(null, null);
+                CollectionAssert.AreEqual(Enumerable.Range(0, 200).Where(index => index != 150).ToArray(), calls);
+            }
+            finally
+            {
+                foreach (var callback in scheduled)
+                    callback.Dispose();
+            }
+        }
+
+        [Test]
+        public void SlowCallbackYieldsBeforeLaterWork()
+        {
+            int later = 0;
+            using var slow = EditorMainThreadWakeup.Schedule(() => Thread.Sleep(15));
+            using var next = EditorMainThreadWakeup.Schedule(() => later++);
+            Update.Invoke(null, null);
+            Assert.Zero(later, "Elapsed callback time must consume the tick budget.");
+            Update.Invoke(null, null);
+            Assert.AreEqual(1, later);
+        }
+
+        [Test]
+        public void ReentrantDrainCannotBypassTheTickBudgetOrRunNewCallbacks()
+        {
+            int later = 0;
+            IDisposable nested = null;
+            using var first = EditorMainThreadWakeup.Schedule(() =>
+            {
+                nested = EditorMainThreadWakeup.Schedule(() => later++);
+                Update.Invoke(null, null);
+            });
+            try
+            {
+                Update.Invoke(null, null);
+                Assert.Zero(later, "Newly scheduled work belongs to a later drain.");
+                Update.Invoke(null, null);
+                Assert.AreEqual(1, later);
+            }
+            finally
+            {
+                nested?.Dispose();
+            }
+        }
+
         [Test]
         public async Task StdioIngress_RunsFromActualNativeTickWithoutItsUpdateCallback()
         {

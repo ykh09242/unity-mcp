@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using MCPForUnity.Editor.Helpers;
@@ -17,6 +18,10 @@ namespace MCPForUnity.Editor.Services
         private static readonly Action RemoveTick;
         private static int _requested;
         private static int _stopped;
+        private static int _draining;
+        private static long _nextSequence;
+        private const int MaxCallbacksPerTick = 64;
+        private static readonly long TickBudget = Math.Max(1, Stopwatch.Frequency / 250);
         internal static event Action Pump;
         internal static bool NativeWakeAvailable => Signal != null;
         internal static string WakeMode => NativeWakeAvailable ? "native_tick" : "editor_update";
@@ -79,6 +84,7 @@ namespace MCPForUnity.Editor.Services
             {
                 if (_stopped != 0)
                     throw new InvalidOperationException("The Editor main-thread scheduler is shutting down.");
+                scheduled.Sequence = ++_nextSequence;
                 scheduled.Node = Pending.AddLast(scheduled);
             }
             Request();
@@ -98,32 +104,50 @@ namespace MCPForUnity.Editor.Services
 
         private static void Drain()
         {
-            Scheduled[] callbacks;
-            lock (Gate)
+            if (Interlocked.Exchange(ref _draining, 1) != 0)
+                return;
+            long started = Stopwatch.GetTimestamp();
+            try
             {
-                if (_stopped != 0 || Pending.Count == 0)
-                    return;
-                callbacks = new Scheduled[Pending.Count];
-                Pending.CopyTo(callbacks, 0);
-                Pending.Clear();
-                foreach (Scheduled scheduled in callbacks)
-                    scheduled.Node = null;
-            }
-            foreach (Scheduled scheduled in callbacks)
-            {
-                if (Volatile.Read(ref _stopped) != 0)
-                    scheduled.Clear();
-                else
+                long lastSequence;
+                lock (Gate)
+                    lastSequence = _nextSequence;
+                for (int count = 0; count < MaxCallbacksPerTick; count++)
                 {
+                    if (count > 0 && Stopwatch.GetTimestamp() - started >= TickBudget)
+                        break;
+                    Scheduled scheduled;
+                    lock (Gate)
+                    {
+                        if (_stopped != 0 || Pending.First == null || Pending.First.Value.Sequence > lastSequence)
+                            break;
+                        scheduled = Pending.First.Value;
+                        Pending.RemoveFirst();
+                        scheduled.Node = null;
+                    }
                     try
                     {
-                        scheduled.Invoke();
+                        if (Volatile.Read(ref _stopped) == 0)
+                            scheduled.Invoke();
+                        else
+                            scheduled.Clear();
                     }
                     catch (Exception exception)
                     {
                         UnityEngine.Debug.LogException(exception);
                     }
                 }
+            }
+            finally
+            {
+                Volatile.Write(ref _draining, 0);
+                // A bounded slice must arrange another native tick even if no new
+                // producer arrives. Public update remains the fallback pump.
+                bool remaining;
+                lock (Gate)
+                    remaining = _stopped == 0 && Pending.Count != 0;
+                if (remaining)
+                    Request();
             }
         }
 
@@ -147,6 +171,7 @@ namespace MCPForUnity.Editor.Services
         {
             private Action _callback;
             internal LinkedListNode<Scheduled> Node;
+            internal long Sequence;
 
             internal Scheduled(Action callback) => _callback = callback;
 
