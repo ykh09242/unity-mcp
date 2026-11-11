@@ -83,6 +83,25 @@ public class ProcessOwnershipTests
         }
     }
 
+    [Test]
+    public void HostRefusalKeepsBoundedStderrAndReapsBeforeReturning()
+    {
+        using var owner = new AnalysisHostProcess();
+        var error = Assert.CatchAsync<IOException>(async () =>
+            await owner.RunAsync(
+                "dotnet",
+                [typeof(AnalysisRequest).Assembly.Location, "--invalid"],
+                AppContext.BaseDirectory,
+                null,
+                true,
+                CancellationToken.None
+            )
+        );
+        Assert.That(error.Message, Does.Contain("unsupported_arguments"));
+        Assert.That(owner.ActiveProcessId, Is.Zero);
+        Assert.That(owner.Occupied, Is.Zero);
+    }
+
     private sealed class BlockingInput : MemoryStream
     {
         public override Task CopyToAsync(Stream destination, int bufferSize, CancellationToken cancellationToken) =>

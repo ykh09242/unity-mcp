@@ -1,6 +1,24 @@
 {
   "schema_version": 1,
   "groups": {
+    "script-quality": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.ScriptQualityTests.SelectionRefusesUnadmittedPaths",
+        "MCPForUnityTests.Editor.Tools.ScriptQualityTests.ExplicitSelectionIsRequiredAndDuplicatesAreRefused",
+        "MCPForUnityTests.Editor.Tools.ScriptQualityTests.DeletedSelectionNeverBecomesAnEmptyCleanRun",
+        "MCPForUnityTests.Editor.Tools.ScriptQualityTests.UnicodeBomAndMetadataAreReadWithoutModification",
+        "MCPForUnityTests.Editor.Tools.ScriptQualityTests.MissingImportedAssemblyContextIsExplicit",
+        "MCPForUnityTests.Editor.Tools.ScriptQualityTests.NativeBoundaryRejectsCallerOwnershipAndFormattingFields",
+        "MCPForUnityTests.Editor.Tools.ScriptQualityTests.NativeContextRunsPinnedDiagnosticsAndPreservesSelectedBytes",
+        "MCPForUnityTests.Editor.Tools.ScriptQualityTests.ChangedSourceEvidenceCannotBePublishedAsComplete",
+        "MCPForUnityTests.Editor.Tools.ScriptQualityTests.ResultPagesAreBoundedAndCursorsCannotCrossJobsOrSources",
+        "MCPForUnityTests.Editor.Tools.ScriptQualityTests.ContextReadsUncompiledBytesAndFlagsMissingSourceMembership",
+        "MCPForUnityTests.Editor.Tools.ScriptChangeSetTests.QualitySelectionReadsPreparedAndAppliedBytesWithoutWriting",
+        "MCPForUnityTests.Editor.Tools.ScriptChangeSetTests.QualitySelectionRefusesExternallyChangedChangeSetSources"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
     "source-freshness-admission": {
       "methods": [
         "MCPForUnityTests.Editor.Services.TestRunnerServiceLifecycleTests.SourceFreshnessAdmissionChecksTheTokenImmediatelyBeforeNativeExecution",

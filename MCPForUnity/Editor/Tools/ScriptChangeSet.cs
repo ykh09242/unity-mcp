@@ -66,6 +66,31 @@ namespace MCPForUnity.Editor.Tools
         }
 
         private static string CurrentDomain => _domainForTests?.Invoke() ?? Domain;
+
+        // Observe only: do not create a lease, refresh assets, or apply prepared contents.
+        internal static Dictionary<string, string> ReadSelection(string id)
+        {
+            if (!IsId(id))
+                throw new ArgumentException("invalid_change_set_id");
+            string manifest = SafePathUtility.ResolveWithinRoot(DirectoryFor(id), "manifest.json");
+            byte[] before = ReadBounded(manifest, MaxManifestBytes);
+            Plan plan = Load(id);
+            if (plan.Phase != "prepared" && plan.Phase != "applied")
+                throw new InvalidOperationException("change_set_not_stable");
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var entry in plan.Files)
+            {
+                Services.ScriptQuality.ScriptSelection.Canonical(entry.Path);
+                string expected = plan.Phase == "applied" ? entry.Candidate : entry.Original;
+                if (!Matches(entry, expected))
+                    throw new InvalidOperationException("change_set_source_changed");
+                result.Add(entry.Path, expected);
+            }
+            if (!before.SequenceEqual(ReadBounded(manifest, MaxManifestBytes)))
+                throw new InvalidOperationException("change_set_changed_during_observation");
+            return result;
+        }
+
         private static string ProjectRoot => System.IO.Path.GetFullPath(System.IO.Path.Combine(Application.dataPath, ".."));
         private static string RootDigest => Digest(Utf8.GetBytes(ProjectRoot));
         private static string StoreRoot =>

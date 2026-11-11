@@ -39,6 +39,7 @@ namespace MCPForUnity.Editor.Services
             { "manage_project_auditor", "MCPForUnity.Editor.Tools.ProjectAuditor.ManageProjectAuditor" },
             { "manage_scene", "MCPForUnity.Editor.Tools.ManageScene" },
             { "manage_script", "MCPForUnity.Editor.Tools.ManageScript" },
+            { "manage_script_quality", "MCPForUnity.Editor.Tools.ManageScriptQuality" },
             { "manage_ugui", "MCPForUnity.Editor.Tools.ManageUGUI" },
             { "manage_ui", "MCPForUnity.Editor.Tools.ManageUI" },
             { "query_physics", "MCPForUnity.Editor.Tools.Capabilities.QueryPhysics" },

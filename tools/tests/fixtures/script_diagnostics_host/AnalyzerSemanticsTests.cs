@@ -145,4 +145,61 @@ public class AnalyzerSemanticsTests
 
         public override void Initialize(AnalysisContext context) => throw new InvalidOperationException("fixture failure");
     }
+
+    [Test]
+    public async Task DefaultStyleHintsRemainAvailableWithoutProjectConfiguration()
+    {
+        var request = Request("class C { string Read(string item) => item == null ? null : item.ToString(); }");
+        request = request with { Assemblies = [request.Assemblies[0] with { Configs = [] }] };
+        var result = await AnalyzerRunner.AnalyzeAsync(request);
+        Assert.That(result.Diagnostics.Any(d => d.Id == "IDE0031"), Is.True);
+    }
+
+    [Test]
+    public async Task PartialDeclarationsAndInactiveBranchesUseTheCapturedContext()
+    {
+        var request = Request("partial class C { string Read() => value?.name; }\n#if OMITTED\nthis does not compile\n#endif");
+        request = request with
+        {
+            Assemblies =
+            [
+                request.Assemblies[0] with
+                {
+                    Sources = [.. request.Assemblies[0].Sources, new SourceInput("Assets/Partial.cs", "partial class C { UnityEngine.Object value; }")],
+                },
+            ],
+        };
+        var result = await AnalyzerRunner.AnalyzeAsync(request);
+        Assert.That(result.Complete, Is.True);
+        Assert.That(result.Diagnostics.Any(d => d.Id == "UNT0008"), Is.True);
+        Assert.That(result.Diagnostics.Any(d => d.Provider == "compiler" && d.Severity == "error"), Is.False);
+    }
+
+    [Test]
+    public async Task ReferencedProjectUsesCurrentSourceInsteadOfAnOldCompiledDll()
+    {
+        var request = Request("class C { string Read(CurrentDependency item) => item?.name; }");
+        var input = request.Assemblies[0];
+        request = request with
+        {
+            Assemblies =
+            [
+                input with
+                {
+                    Sources = [input.Sources[1]],
+                    ProjectReferences = ["Dependency"],
+                },
+                input with
+                {
+                    Name = "Dependency",
+                    Sources = [input.Sources[0], new("Assets/Dependency.cs", "public class CurrentDependency : UnityEngine.Object {}")],
+                    Configs = [],
+                },
+            ],
+        };
+        var result = await AnalyzerRunner.AnalyzeAsync(request);
+        Assert.That(result.Complete, Is.True, string.Join(",", result.CoverageGaps));
+        Assert.That(result.Diagnostics.Any(d => d.Id == "UNT0008"), Is.True);
+        Assert.That(result.Diagnostics.Any(d => d.Provider == "compiler" && d.Severity == "error"), Is.False);
+    }
 }

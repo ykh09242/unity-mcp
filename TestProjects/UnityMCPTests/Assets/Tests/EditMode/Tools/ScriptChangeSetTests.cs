@@ -119,6 +119,36 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void QualitySelectionReadsPreparedAndAppliedBytesWithoutWriting()
+        {
+            string id = Prepare();
+            string manifest = Path.Combine(storage, id, "manifest.json");
+            byte[] original = Bytes("First"),
+                savedManifest = File.ReadAllBytes(manifest);
+            Seed("UnrelatedDirty", false, "\n");
+            var selected = MCPForUnity.Editor.Services.ScriptQuality.ScriptSelection.Resolve(new JObject { ["change_set_id"] = id });
+            Assert.That(selected.Paths, Is.EqualTo(new[] { relative + "/First.cs", relative + "/Second.cs" }));
+            Assert.That(Bytes("First"), Is.EqualTo(original));
+            Assert.That(File.ReadAllBytes(manifest), Is.EqualTo(savedManifest));
+            Assert.That(File.Exists(Path.Combine(storage, id, "lease")), Is.False, "A diagnostic read must not create a lease file.");
+            Assert.That((bool)Command("apply_change_set", id)["success"], Is.True);
+            byte[] applied = Bytes("First");
+            selected = MCPForUnity.Editor.Services.ScriptQuality.ScriptSelection.Resolve(new JObject { ["change_set_id"] = id });
+            Assert.That(selected.Files[0].Text, Is.EqualTo(Candidate("First")));
+            Assert.That(Bytes("First"), Is.EqualTo(applied));
+        }
+
+        [Test]
+        public void QualitySelectionRefusesExternallyChangedChangeSetSources()
+        {
+            string id = Prepare();
+            File.AppendAllText(Path.Combine(folder, "First.cs"), "// external");
+            Assert.Throws<InvalidOperationException>(() =>
+                MCPForUnity.Editor.Services.ScriptQuality.ScriptSelection.Resolve(new JObject { ["change_set_id"] = id })
+            );
+        }
+
+        [Test]
         public void LargeChangeSetPreservesEverySourceThroughPreparationAndApply()
         {
             var files = new JArray();

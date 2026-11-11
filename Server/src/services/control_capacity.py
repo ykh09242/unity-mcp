@@ -18,6 +18,7 @@ _COMMANDS = frozenset(
     }
 )
 _ACTIONS = {
+    "manage_script_quality": frozenset({"capabilities", "status", "cancel"}),
     "manage_build": frozenset({"status", "cancel"}),
     "manage_project_auditor": frozenset({"availability", "status"}),
     "manage_packages": frozenset({"status", "ping"}),

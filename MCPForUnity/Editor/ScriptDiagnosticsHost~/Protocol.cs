@@ -8,6 +8,7 @@ public sealed record AssemblyInput
     public string LanguageVersion { get; init; } = "";
     public string[] Defines { get; init; } = [];
     public string[] References { get; init; } = [];
+    public string[] ProjectReferences { get; init; } = [];
     public SourceInput[] Sources { get; init; } = [];
     public SourceInput[] Configs { get; init; } = [];
     public SourceInput[] AdditionalFiles { get; init; } = [];

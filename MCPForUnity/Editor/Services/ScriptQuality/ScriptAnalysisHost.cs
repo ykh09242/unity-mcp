@@ -83,7 +83,18 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 ["reason"] = error ?? unavailable,
                 ["consent"] = consent.Enabled,
                 ["consent_scope"] = consent.Scope.ToString(),
-                ["installation"] = installation,
+                ["installation"] =
+                    installation == null
+                        ? null
+                        : new JObject
+                        {
+                            ["schema"] = installation["schema"],
+                            ["sdk"] = installation["sdk"],
+                            ["runtime"] = installation["runtime"],
+                            ["providers"] = installation["providers"],
+                            ["verified_at_unix_ms"] = installation["verified_at_unix_ms"],
+                            ["runtime_evidence"] = "verified_at_explicit_setup",
+                        },
                 ["setup_required"] = installation == null,
                 ["occupied"] = Owner.Occupied,
             };

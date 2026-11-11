@@ -79,6 +79,9 @@ public static class AnalyzerRunner
         var context = new List<DiagnosticRow>();
         string root = Path.GetFullPath(request.ProjectRoot);
         var selected = request.SelectedPaths.Select(path => AnalyzerConfiguration.FullPath(root, path)).ToHashSet(PathComparer);
+        using var workspace = new AdhocWorkspace();
+        var solution = AnalyzerConfiguration.CreateSolution(workspace, root, request.Assemblies);
+        var projects = solution.Projects.ToDictionary(project => project.Name, StringComparer.Ordinal);
         long bytes = 0;
         foreach (var input in request.Assemblies)
         {
@@ -86,8 +89,7 @@ public static class AnalyzerRunner
             gaps.AddRange(input.CoverageGaps);
             try
             {
-                using var workspace = new AdhocWorkspace();
-                var project = AnalyzerConfiguration.CreateProject(workspace, root, input);
+                var project = projects[input.Name];
                 var compilation = await project.GetCompilationAsync(cancellation) ?? throw new InvalidDataException("compilation_context_unavailable");
                 var analysisOptions = new CompilationWithAnalyzersOptions(
                     project.AnalyzerOptions,

@@ -66,6 +66,9 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                     RedirectStandardError = true,
                 };
                 AddArguments(info, arguments);
+                // Unity Mono's redirected StreamWriter can emit a BOM before BaseStream writes.
+                // Framed binary input must begin with the four length bytes on every runtime.
+                typeof(ProcessStartInfo).GetProperty("StandardInputEncoding")?.SetValue(info, new UTF8Encoding(false));
                 // Only the shipped host project is built; no inherited MSBuild import directories.
                 info.EnvironmentVariables["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
                 info.EnvironmentVariables["MSBUILDDISABLENODEREUSE"] = "1";
@@ -96,24 +99,26 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                     TaskContinuationOptions.OnlyOnFaulted,
                     TaskScheduler.Default
                 );
-                // An early pipe failure must not wait indefinitely for another blocked pipe.
+                // Observe an early pipe failure without canceling away its bounded stderr evidence.
+                var pipeFailure = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
                 foreach (var task in new Task[] { output, errors, write })
                     _ = task.ContinueWith(
-                        _ =>
-                        {
-                            try
-                            {
-                                linked.Cancel();
-                            }
-                            catch (ObjectDisposedException) { }
-                        },
+                        failed => pipeFailure.TrySetResult(failed.Exception.GetBaseException()),
                         CancellationToken.None,
                         TaskContinuationOptions.OnlyOnFaulted,
                         TaskScheduler.Default
                     );
-                await Task.WhenAny(io, canceled.Task).ConfigureAwait(false);
+                await Task.WhenAny(io, canceled.Task, pipeFailure.Task).ConfigureAwait(false);
                 cancellation.ThrowIfCancellationRequested();
                 _shutdown.Token.ThrowIfCancellationRequested();
+                if (pipeFailure.Task.IsCompleted || io.IsFaulted)
+                {
+                    var failure = pipeFailure.Task.IsCompleted ? pipeFailure.Task.Result : io.Exception.GetBaseException();
+                    TerminateAndReap(process);
+                    await Task.WhenAny(errors, Task.Delay(100)).ConfigureAwait(false);
+                    string detail = errors.Status == TaskStatus.RanToCompletion ? Encoding.UTF8.GetString(errors.Result) : "";
+                    throw new IOException(failure.Message + (detail.Length == 0 ? "" : ": " + detail), failure);
+                }
                 if (!io.IsCompleted)
                 {
                     if (output.IsFaulted)

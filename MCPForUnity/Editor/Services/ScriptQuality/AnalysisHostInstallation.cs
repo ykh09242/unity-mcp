@@ -189,6 +189,8 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 ["schema"] = Schema,
                 ["directory"] = id,
                 ["sdk"] = sdk,
+                ["runtime"] = result["providers"]?["runtime"],
+                ["verified_at_unix_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 ["providers"] = result["providers"],
                 ["hashes"] = hashes,
             };

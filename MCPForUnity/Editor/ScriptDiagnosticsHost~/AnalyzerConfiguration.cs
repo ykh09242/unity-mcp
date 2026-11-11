@@ -16,7 +16,26 @@ internal static class AnalyzerConfiguration
         return full;
     }
 
-    internal static Project CreateProject(AdhocWorkspace workspace, string root, AssemblyInput input)
+    internal static Solution CreateSolution(AdhocWorkspace workspace, string root, AssemblyInput[] inputs)
+    {
+        var solution = workspace.CurrentSolution;
+        var ids = new Dictionary<string, ProjectId>(StringComparer.Ordinal);
+        foreach (var input in inputs)
+        {
+            var project = CreateProject(solution, root, input);
+            ids.Add(input.Name, project.Id);
+            solution = project.Solution;
+        }
+        foreach (var input in inputs)
+        {
+            if (input.ProjectReferences.Any(name => !ids.ContainsKey(name)))
+                throw new InvalidDataException("source_dependency_unavailable");
+            solution = solution.WithProjectReferences(ids[input.Name], input.ProjectReferences.Select(name => new ProjectReference(ids[name])));
+        }
+        return solution;
+    }
+
+    private static Project CreateProject(Solution solution, string root, AssemblyInput input)
     {
         if (
             !LanguageVersionFacts.TryParse(input.LanguageVersion, out var language)
@@ -34,7 +53,7 @@ internal static class AnalyzerConfiguration
             reportSuppressedDiagnostics: true
         );
         var id = ProjectId.CreateNewId();
-        var solution = workspace.CurrentSolution.AddProject(
+        solution = solution.AddProject(
             ProjectInfo.Create(
                 id,
                 VersionStamp.Create(),
