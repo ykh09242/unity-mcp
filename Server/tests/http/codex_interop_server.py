@@ -2,9 +2,12 @@
 
 import json
 import os
+import time
 from pathlib import Path
+from uuid import uuid4
 
 import anyio
+from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware
 from fastmcp.tools.base import ToolResult
@@ -13,6 +16,45 @@ from mcp_types import TextContent
 import main
 from services.registry import mcp_for_unity_tool
 from tests.http.client_assurance_server import build_server as assurance_server
+
+STARTUP = uuid4().hex
+
+
+def observe(event: str, **values) -> None:
+    """Append bounded fixture evidence, never credentials or arbitrary tool arguments."""
+    # Each child owns its journal; Windows append handles do not serialize
+    # independent processes' writes to one shared JSONL file.
+    path = Path(os.environ["UNITY_MCP_INTEROP_OBSERVATIONS"]).with_name(
+        f"observations-{STARTUP}.jsonl"
+    )
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "event": event,
+                    "observed_ns": time.monotonic_ns(),
+                    "pid": os.getpid(),
+                    "startup": STARTUP,
+                    **values,
+                }
+            )
+            + "\n"
+        )
+
+
+@mcp_for_unity_tool(group=None, unity_target=None)
+async def interop_identity(ctx: Context) -> dict:
+    """Observe this process and request; host metadata grants no project authority."""
+    request = ctx.request_context
+    metadata = request.meta or {}
+    return {
+        "pid": os.getpid(),
+        "startup": STARTUP,
+        "protocol": request.protocol_version,
+        "request_id": request.request_id,
+        "meta": {key: metadata.get(key) for key in ("threadId", "interopRequest")},
+        "unity_instance": await ctx.get_state("unity_instance"),
+    }
 
 
 @mcp_for_unity_tool(group=None, unity_target=None)
@@ -37,20 +79,18 @@ async def interop_payload(size: int, unicode: bool = False) -> ToolResult:
 
 
 @mcp_for_unity_tool(group=None, unity_target=None)
-async def interop_slow() -> str:
+async def interop_slow(ctx: Context) -> str:
     """Observe whether the actual client's deadline cancels the in-flight tool."""
-    path = Path(os.environ["UNITY_MCP_INTEROP_OBSERVATIONS"])
-    with path.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps({"event": "slow_started"}) + "\n")
+    metadata = ctx.request_context.meta or {}
+    correlation = {"marker": metadata.get("interopRequest"), "thread": metadata.get("threadId")}
+    observe("slow_started", **correlation)
     try:
         await anyio.sleep(60)
     except anyio.get_cancelled_exc_class():
-        with path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"event": "slow_cancelled"}) + "\n")
+        observe("slow_cancelled", **correlation)
         raise
     finally:
-        with path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"event": "slow_finished"}) + "\n")
+        observe("slow_finished", **correlation)
     return "finished"
 
 
@@ -61,38 +101,27 @@ class ObserveInitialize(Middleware):
         ctx = context.fastmcp_context
         request = ctx.request_context if ctx is not None else None
         if request is not None:
-            with Path(os.environ["UNITY_MCP_INTEROP_OBSERVATIONS"]).open(
-                "a", encoding="utf-8"
-            ) as stream:
-                stream.write(
-                    json.dumps(
-                        {
-                            "event": "request",
-                            "method": context.method,
-                            "protocol": request.protocol_version,
-                        }
-                    )
-                    + "\n"
-                )
-        return await call_next(context)
+            observe("request", method=context.method, protocol=request.protocol_version)
+        result = await call_next(context)
+        capabilities = getattr(result, "capabilities", None)
+        if capabilities is not None:
+            values = capabilities.model_dump()
+            observe(
+                "advertisement",
+                method=context.method,
+                extensions=sorted(values.get("extensions") or {}),
+            )
+        return result
 
     async def on_initialize(self, context, call_next):
         result = await call_next(context)
         if result is not None:
-            with Path(os.environ["UNITY_MCP_INTEROP_OBSERVATIONS"]).open(
-                "a", encoding="utf-8"
-            ) as stream:
-                stream.write(
-                    json.dumps(
-                        {
-                            "event": "initialize",
-                            "requested": context.message.params.protocol_version,
-                            "negotiated": result.protocol_version,
-                            "client": context.message.params.client_info.model_dump(),
-                        }
-                    )
-                    + "\n"
-                )
+            observe(
+                "initialize",
+                requested=context.message.params.protocol_version,
+                negotiated=result.protocol_version,
+                client=context.message.params.client_info.model_dump(),
+            )
         return result
 
 
@@ -100,6 +129,7 @@ def build_server(*args, **kwargs):
     """Keep the real CLI, registry, authentication and response middleware."""
     server = assurance_server(*args, **kwargs)
     server.add_middleware(ObserveInitialize())
+    observe("process_started")
     return server
 
 

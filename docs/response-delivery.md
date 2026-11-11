@@ -100,6 +100,11 @@ handling and native execution are independent of this delivery cache.
 Handles belong to one running FastMCP server, authenticated principal and resolved
 Unity project. Legacy protocol handles also belong to the originating MCP session.
 Modern sessionless requests use the authenticated principal and project domain.
+Host thread metadata, including Codex `threadId`, does not partition this authority.
+Two modern callers in the same principal/project domain can use the same retained
+handle while its server process remains alive. Releasing one handle does not release
+another distinct result. See [shared connections](development/shared-connections.md)
+for actual-client lifetime checks and their project-routing evidence boundary.
 Remote reads check the current credential lease and require at least the grants
 captured with the original tool response. Task observations retain their existing
 read-grant requirement. Missing, expired, released and foreign handles all return

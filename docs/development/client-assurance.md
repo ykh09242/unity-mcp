@@ -102,7 +102,7 @@ require their own execution evidence; this suite does not claim those outcomes.
 `codex-rmcp-client` transport and decoder, not the Python client configured with a
 Codex name. The fixture starts the production CLI, registry and all normal
 middleware, adds the existing 512-tool catalog pressure, and registers small
-test-only echo, error, slow and payload tools. `manage_tools.describe` and the
+test-only identity, echo, error, slow and payload tools. `manage_tools.describe` and the
 production retained-response reader also execute through that client.
 
 ```powershell
@@ -112,8 +112,9 @@ Server/.venv/Scripts/python.exe tools/check_codex_interop.py `
 
 The machine-readable receipt records the exact binary version, legacy initialize
 exchange, actual per-request protocol, catalog count, deadline error and verified
-size cases. The Windows run on 2026-11-11 with Codex 0.167.1 passed all four
-protocol/transport cases. The earlier 2026-11-02 run is historical evidence for
+size cases. The Windows run on 2026-11-11 with Codex 0.167.1 passed all five
+protocol/transport/sharing cases described in the
+[versioned shared-connection matrix](shared-connections.md). The earlier 2026-11-02 run is historical evidence for
 0.166.0. The matrix uses both the legacy default and the installed experimental
 `mcp_2026_07_28` feature over stdio and locally authenticated streamable HTTP.
 Modern stdio also sets the supported `CODEX_MCP_PROTOCOL_VERSION=2026-07-28`
@@ -151,7 +152,7 @@ adoption or a native Unity Editor scenario.
 The dedicated [Codex interoperability workflow](../../.github/workflows/codex-interop.yml)
 uses the official release archive with its published SHA256 digest pinned in the
 workflow. The binary version check is mandatory; upgrading the pin requires
-rerunning all four protocol/transport cases and reviewing the observed protocol. Protocol
+rerunning all five protocol/transport/sharing cases and reviewing the observed protocol. Protocol
 contracts come from the installed experimental schema and the
 [official app-server documentation](https://learn.chatgpt.com/docs/app-server).
 The client implementation is documented by the
@@ -161,8 +162,13 @@ and the binary comes from the
 
 The pinned client's [protocol selection policy](https://github.com/openai/codex/blob/rust-v0.167.1/codex-rs/rmcp-client/src/protocol_mode.rs)
 requires both the feature and server opt-in for the explicit modern stdio mode
-used here. Pool-driven local stdio discovery is a separate mode; this four-case
-regression does not prove multi-chat connection sharing. `codex features
-list`, run inside the isolated temporary home, independently exposes the feature
-as under development in 0.167.1. This opt-in coverage does not imply that modern
-MCP is enabled in a user's default Codex configuration.
+used by the modern/private control. The fifth case enables `mcp_connection_sharing`
+through the actual feature-enablement RPC, keeps the ordinary modern feature false,
+and omits the protocol marker to exercise pool-driven discovery. Two ephemeral
+threads must return the same process PID/startup UUID, preserve their own request
+metadata, overlap calls, recover after a deadline, and retain common-domain handles
+after one owner unloads. Unloading the last owner must produce a new process for
+the next thread. HTTP multi-thread access is reported as an external shared server,
+not Codex stdio pooling. Optional `codex/connection-lease` advertisement is rejected.
+These explicit opt-ins do not imply that sharing or modern MCP is enabled in a
+user's default Codex configuration.

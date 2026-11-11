@@ -7,6 +7,7 @@ on:
       - Server/**
       - tools/check_codex_interop.py
       - tools/tests/test_check_codex_interop.py
+      - tools/tests/test_codex_interop_workflow.py
       - .github/workflows/codex-interop.yml
   workflow_dispatch: {}
   workflow_call:
@@ -48,6 +49,13 @@ jobs:
           enable-cache: false
       - name: Install locked test dependencies
         run: uv sync --directory Server --python 3.14 --locked --extra dev
+      - name: Verify concurrent client harness contracts
+        run: >-
+          uv run --directory Server --locked --extra dev python -m pytest
+          ../tools/tests/test_check_codex_interop.py ../tools/tests/test_codex_interop_workflow.py
+          -q -W error -p no:cacheprovider
+          -o asyncio_default_fixture_loop_scope=function
+          -o asyncio_default_test_loop_scope=function
       - name: Download checksum-pinned official Codex binary
         shell: bash
         run: |
