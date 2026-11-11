@@ -1,6 +1,6 @@
 # Encrypted fallback store regression
 
-Build and run with the existing .NET 9 SDK from the repository root, keeping all
+Build and run with the existing .NET 11 SDK from the repository root, keeping all
 build output and synthetic stores in an owned temporary directory:
 
 ```powershell

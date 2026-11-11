@@ -1,7 +1,7 @@
 # Managed allocation budgets
 
 This harness compiles the actual log buffer, compilation ledger, transport helpers and snapshot comparison with minimal
-Unity/data boundary stubs. It requires .NET 9 and an existing Newtonsoft.Json DLL.
+Unity/data boundary stubs. It requires .NET 11 and an existing Newtonsoft.Json DLL.
 It does not launch Unity. Native Editor tests separately cover behavior and
 serialization; these CLR allocation numbers are not Unity heap or RSS measurements.
 

@@ -39,7 +39,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: 11.0.100
           skip-lts-prepass: true
       - name: Verify instance lease and owned process interruption
         run: dotnet run --project tools/tests/fixtures/generation_journal/JournalHarness.csproj -- "${{ runner.temp }}/generation-journal"

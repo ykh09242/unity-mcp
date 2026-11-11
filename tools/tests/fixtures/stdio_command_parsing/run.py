@@ -89,7 +89,7 @@ def main():
     (output / "Harness.csproj").write_text(
         '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>'
         f"<DefineConstants>{'PREPARED' if prepared else ''}</DefineConstants>"
-        "<OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework>"
+        "<OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework>"
         "<Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings>"
         "<NoWarn>CS0649</NoWarn>"
         '</PropertyGroup><ItemGroup><Reference Include="Newtonsoft.Json">'

@@ -131,3 +131,8 @@ internal static class ManageScriptRefreshHelpers
 
     internal static void ScheduleScriptRefresh(string path) => throw new InvalidOperationException("Unexpected native refresh");
 }
+
+internal static class ManageUGUI
+{
+    internal static JObject NormalizeParameterAliases(JObject source) => throw new InvalidOperationException("Unexpected uGUI route");
+}

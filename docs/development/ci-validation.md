@@ -166,7 +166,7 @@ inputs retain full validation. The independent license-free compile workflow ret
 existing path/matrix policy. No branch-protection settings are changed automatically.
 
 For full beta validation, `codex-interop.yml` checks out the caller's commit and
-verifies the event SHA and Git checkout before starting the pinned Codex 0.166.0
+verifies the event SHA and Git checkout before starting the pinned Codex 0.167.1
 binary. The client uses an isolated configuration to exercise the server. The
 artifact name, job summary and `receiving_sha` in the execution receipt identify
 the tested commit. The same workflow also supports pull requests and manual runs.

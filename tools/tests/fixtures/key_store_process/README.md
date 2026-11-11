@@ -1,6 +1,6 @@
 # Key-store process lifetime regression
 
-Run from the repository root with the existing .NET 9 SDK/reference pack:
+Run from the repository root with the existing .NET 11 SDK/reference pack:
 
 ```powershell
 & tools/tests/fixtures/key_store_process/RunRegression.ps1

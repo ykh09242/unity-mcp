@@ -9,7 +9,7 @@ using BclProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 
 namespace WindowActions;
 
-public static class Program
+public static partial class Program
 {
     private static int passed;
     private static int failed;
@@ -27,56 +27,47 @@ public static class Program
         }
         selectedGroup = args.Length > 1 ? args[1] : "all";
         currentGroup = "process";
-        Run(
-            "1000 successful launches release every returned wrapper",
-            () =>
-            {
-                Process.Reset();
-                var action = new ClientAction();
-                action.configPathField.value = "synthetic-config.json";
-                for (int i = 0; i < 1000; i++)
-                    action.Open();
-                int outstanding = Process.Started.Count(x => !x.Disposed);
-                Console.WriteLine($"METRIC returned={Process.Started.Count} undisposed={outstanding}");
-                Equal(1000, Process.Started.Count);
-                Equal(0, outstanding);
-                Equal("synthetic-config.json", Process.Last.FileName);
-                Equal(true, Process.Last.UseShellExecute);
-            }
-        );
-        Run(
-            "shell association may return null",
-            () =>
-            {
-                Process.Reset();
-                Process.ReturnNull = true;
-                new ClientAction().Open();
-                Equal(0, McpLog.Errors);
-                Equal(0, Process.Started.Count);
-            }
-        );
-        Run(
-            "missing config displays existing dialog without launching",
-            () =>
-            {
-                Process.Reset();
-                File.Present = false;
-                new ClientAction().Open();
-                Equal(1, EditorUtility.Dialogs);
-                Equal(null, Process.Last);
-            }
-        );
-        Run(
-            "start failure keeps existing error handling",
-            () =>
-            {
-                Process.Reset();
-                Process.Throw = true;
-                new ClientAction().Open();
-                Equal(1, McpLog.Errors);
-                Equal(0, Process.Started.Count);
-            }
-        );
+        Run("1000 successful launches release every returned wrapper", () =>
+        {
+            Process.Reset();
+            var action = new ClientAction();
+            action.configPathField.value = "synthetic-config.json";
+            for (int i = 0; i < 1000; i++)
+                action.Open();
+            int outstanding = Process.Started.Count(x => !x.Disposed);
+            Console.WriteLine($"METRIC returned={Process.Started.Count} undisposed={outstanding}");
+            Equal(1000, Process.Started.Count);
+            Equal(0, outstanding);
+            Equal("synthetic-config.json", Process.Last.FileName);
+            Equal(true, Process.Last.UseShellExecute);
+        });
+        Run("shell association may return null", () =>
+        {
+            Process.Reset();
+            Process.ReturnNull = true;
+            new ClientAction().Open();
+            Equal(0, McpLog.Errors);
+            Equal(0, Process.Started.Count);
+        });
+        Run("missing config displays existing dialog without launching", () =>
+        {
+            Process.Reset();
+            File.Present = false;
+            new ClientAction().Open();
+            Equal(1, EditorUtility.Dialogs);
+            Equal(null, Process.Last);
+        });
+        Run("start failure keeps existing error handling", () =>
+        {
+            Process.Reset();
+            Process.Throw = true;
+            new ClientAction().Open();
+            Equal(1, McpLog.Errors);
+            Equal(0, Process.Started.Count);
+        });
+#if CURRENT_SERVER_SOURCE
+        return CurrentMain(args);
+#else
         currentGroup = "clear";
         foreach (string initial in new[] { "synthetic-url", "", "   ", null })
         {
@@ -84,72 +75,63 @@ public static class Program
             Run($"attached clear initial={initial ?? "<null>"} and repeated click notify once each", () => Clear(captured, true));
         }
         Run("detached clear preserves explicit notifications", () => Clear("synthetic-url", false));
-        Run(
-            "1000 repeated clears retain one subscription and one notification per click",
-            () =>
+        Run("1000 repeated clears retain one subscription and one notification per click", () =>
+        {
+            EditorPrefs.Deletes = 0;
+            var action = new AdvancedAction();
+            action.gitUrlOverride.SetValueWithoutNotify("synthetic-url");
+            action.Register();
+            int git = 0,
+                http = 0;
+            action.OnGitUrlChanged += () => git++;
+            action.OnHttpServerCommandUpdateRequested += () => http++;
+            for (int i = 0; i < 1000; i++)
+                action.clearGitUrlButton.Click();
+            Console.WriteLine($"METRIC clicks=1000 git_notifications={git} http_notifications={http} deletes={EditorPrefs.Deletes}");
+            Equal(1000, git);
+            Equal(1000, http);
+            Equal(1000, EditorPrefs.Deletes);
+        });
+        Run("ordinary text edit still persists and notifies", () =>
+        {
+            var action = new AdvancedAction();
+            action.Register();
+            int git = 0,
+                http = 0;
+            action.OnGitUrlChanged += () => git++;
+            action.OnHttpServerCommandUpdateRequested += () => http++;
+            action.gitUrlOverride.value = "  synthetic-url  ";
+            Equal("synthetic-url", EditorPrefs.Stored);
+            Equal(1, git);
+            Equal(1, http);
+        });
+        Run("subscriber exception still propagates and stops later notification", () =>
+        {
+            var action = new AdvancedAction();
+            action.gitUrlOverride.SetValueWithoutNotify("synthetic-url");
+            action.Register();
+            int git = 0,
+                http = 0;
+            action.OnGitUrlChanged += () =>
             {
-                EditorPrefs.Deletes = 0;
-                var action = new AdvancedAction();
-                action.gitUrlOverride.SetValueWithoutNotify("synthetic-url");
-                action.Register();
-                int git = 0,
-                    http = 0;
-                action.OnGitUrlChanged += () => git++;
-                action.OnHttpServerCommandUpdateRequested += () => http++;
-                for (int i = 0; i < 1000; i++)
-                    action.clearGitUrlButton.Click();
-                Console.WriteLine($"METRIC clicks=1000 git_notifications={git} http_notifications={http} deletes={EditorPrefs.Deletes}");
-                Equal(1000, git);
-                Equal(1000, http);
-                Equal(1000, EditorPrefs.Deletes);
-            }
-        );
-        Run(
-            "ordinary text edit still persists and notifies",
-            () =>
+                git++;
+                throw new InvalidOperationException("subscriber");
+            };
+            action.OnHttpServerCommandUpdateRequested += () => http++;
+            bool threw = false;
+            try
             {
-                var action = new AdvancedAction();
-                action.Register();
-                int git = 0,
-                    http = 0;
-                action.OnGitUrlChanged += () => git++;
-                action.OnHttpServerCommandUpdateRequested += () => http++;
-                action.gitUrlOverride.value = "  synthetic-url  ";
-                Equal("synthetic-url", EditorPrefs.Stored);
-                Equal(1, git);
-                Equal(1, http);
+                action.clearGitUrlButton.Click();
             }
-        );
-        Run(
-            "subscriber exception still propagates and stops later notification",
-            () =>
+            catch (InvalidOperationException ex)
             {
-                var action = new AdvancedAction();
-                action.gitUrlOverride.SetValueWithoutNotify("synthetic-url");
-                action.Register();
-                int git = 0,
-                    http = 0;
-                action.OnGitUrlChanged += () =>
-                {
-                    git++;
-                    throw new InvalidOperationException("subscriber");
-                };
-                action.OnHttpServerCommandUpdateRequested += () => http++;
-                bool threw = false;
-                try
-                {
-                    action.clearGitUrlButton.Click();
-                }
-                catch (InvalidOperationException ex)
-                {
-                    threw = ex.Message == "subscriber";
-                }
-                Equal(true, threw);
-                Equal(1, git);
-                Equal(0, http);
-                Equal("", action.gitUrlOverride.value);
+                threw = ex.Message == "subscriber";
             }
-        );
+            Equal(true, threw);
+            Equal(1, git);
+            Equal(0, http);
+            Equal("", action.gitUrlOverride.value);
+        });
         currentGroup = "browse";
         Run("browse changed valid path persists/notifies once", () => Browse("new-server", "old-server"));
         Run("browse same path preserves explicit notification", () => Browse("new-server", "new-server"));
@@ -173,6 +155,7 @@ public static class Program
         }
         Console.WriteLine($"RESULT passed={passed} failed={failed}");
         return failed == 0 ? 0 : 1;
+#endif
     }
 
     private static void Clear(string initial, bool attached)

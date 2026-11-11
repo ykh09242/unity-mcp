@@ -1,6 +1,26 @@
 using System;
 using System.Collections.Generic;
 
+namespace MCPForUnity.Editor.Services.Transport
+{
+    // Recovery diagnostics are outside the measured compilation-ledger boundary.
+    internal sealed class NativeRecoveryDetails
+    {
+        internal string Action { get; }
+
+        internal NativeRecoveryDetails(
+            string source,
+            string phase,
+            string reason,
+            string mode,
+            string action,
+            string message,
+            string jobId = null,
+            string generation = null
+        ) => Action = action;
+    }
+}
+
 namespace UnityEditor.Compilation
 {
     public enum CompilerMessageType
@@ -21,6 +41,18 @@ namespace UnityEditor.Compilation
 
 namespace UnityEditor
 {
+    public static class EditorApplication
+    {
+        public static event Action update
+        {
+            add { }
+            remove { }
+        }
+        public static bool isCompiling => false;
+        public static bool isUpdating => false;
+        public static double timeSinceStartup => 1;
+    }
+
     public static class SessionState
     {
         private static readonly Dictionary<string, string> Data = new Dictionary<string, string>();
@@ -30,6 +62,14 @@ namespace UnityEditor
         public static void SetString(string key, string value) => Data[key] = value;
 
         public static void EraseString(string key) => Data.Remove(key);
+    }
+}
+
+namespace MCPForUnity.Editor.Services
+{
+    internal static class EditorStateCache
+    {
+        internal static bool IsDomainReloadPending => false;
     }
 }
 

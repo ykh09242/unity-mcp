@@ -69,7 +69,7 @@ def test_credential_job_runs_both_isolated_runners_on_every_platform() -> None:
         next(step for step in steps if step.get("uses", "").startswith("actions/setup-dotnet@"))[
             "with"
         ]["dotnet-version"]
-        == "9.0.x"
+        == "11.0.100"
     )
     commands = []
     for step in steps:

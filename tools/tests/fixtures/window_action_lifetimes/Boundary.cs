@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace WindowActions;
 
 // Explicit test boundaries: UI value notifications model an attached panel; no real preferences/files are read.
-public sealed class TextField
+public sealed class TextField : VisualElement
 {
     private string current;
     private Action<Change> changed;
@@ -25,6 +25,42 @@ public sealed class TextField
     public void SetValueWithoutNotify(string value) => current = value;
 
     public void RegisterValueChangedCallback(Action<Change> callback) => changed += callback;
+
+    private readonly Dictionary<Type, Delegate> callbacks = new();
+
+    public void RegisterCallback<T>(Action<T> callback) => callbacks[typeof(T)] = callback;
+
+    public void Send<T>(T value) => ((Action<T>)callbacks[typeof(T)])(value);
+
+    public bool Contains(VisualElement element) => ReferenceEquals(this, element);
+}
+
+public class VisualElement
+{
+    private readonly Dictionary<string, Button> buttons = new();
+
+    public T Q<T>(string name)
+        where T : Button => (T)(buttons.TryGetValue(name, out var button) ? button : buttons[name] = new Button());
+}
+
+public sealed class FocusOutEvent
+{
+    public VisualElement relatedTarget;
+}
+
+public enum KeyCode
+{
+    Return,
+    KeypadEnter,
+    Escape,
+}
+
+public sealed class KeyDownEvent
+{
+    public KeyCode keyCode;
+    public bool Stopped;
+
+    public void StopPropagation() => Stopped = true;
 }
 
 public sealed class Change
@@ -32,8 +68,9 @@ public sealed class Change
     public string newValue;
 }
 
-public sealed class Button
+public class Button
 {
+    public bool enabledSelf = true;
     public event Action clicked;
 
     public void Click() => clicked?.Invoke();

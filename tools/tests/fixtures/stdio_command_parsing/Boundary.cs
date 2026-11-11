@@ -132,7 +132,8 @@ namespace MCPForUnity.Editor.Services.Transport
             CommandPhaseTiming timing,
             CommandProgressBuffer progress,
             CancellationToken admission,
-            CancellationToken owner
+            CancellationToken owner,
+            Func<Task> complete = null
         )
         {
             Captured = command;

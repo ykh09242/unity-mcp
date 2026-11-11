@@ -59,7 +59,7 @@ def main() -> int:
     string_case = escape((ROOT / "MCPForUnity/Editor/Helpers/StringCaseUtility.cs").as_posix())
     (output / "Harness.csproj").write_text(
         f"""<Project Sdk="Microsoft.NET.Sdk">
-<PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><ImplicitUsings>disable</ImplicitUsings></PropertyGroup>
+<PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework><ImplicitUsings>disable</ImplicitUsings></PropertyGroup>
 <ItemGroup><Compile Include="{response}"/><Compile Include="{string_case}"/><Reference Include="Newtonsoft.Json"><HintPath>{json_dll}</HintPath></Reference></ItemGroup>
 </Project>
 """,

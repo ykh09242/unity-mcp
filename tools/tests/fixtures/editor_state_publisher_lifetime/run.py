@@ -24,6 +24,7 @@ def main():
         parser.error("--output must be inside repository .tmp")
     output.mkdir(parents=True, exist_ok=True)
     legacy_publisher = False
+    generation_registration = False
     for path, target in (
         (PUBLISHER, "Publisher.cs"),
         (DISPATCHER, "Dispatcher.cs"),
@@ -76,13 +77,16 @@ internal static class TransportCommandDispatcher
                 + "\n}\n"
             )
         if path == TRANSPORT:
+            generation_registration = "private bool IsCurrentRegistration" in source
             sections = []
             for first, following in (
                 ("private sealed class ConnectionLoops", "// Callers hold _ownershipLock"),
                 ("private Task CancelOwnedAsync", "public Task<bool> VerifyAsync"),
                 ("private bool IsCurrentConnectionToken", "// Caller holds _ownershipLock."),
                 (
-                    "private async Task CompleteRegistrationAsync",
+                    "private bool IsCurrentRegistration"
+                    if generation_registration
+                    else "private async Task CompleteRegistrationAsync",
                     "private void PersistSessionIdIfCurrent",
                 ),
                 (
@@ -118,9 +122,12 @@ internal partial class TransportLifetimeBoundary
         .resolve(strict=True)
         .as_posix()
     )
+    defines = ["LEGACY_EDITOR_STATE"] if legacy_publisher else []
+    if generation_registration:
+        defines.append("GENERATION_REGISTRATION")
     (output / "Harness.csproj").write_text(
         f"""<Project Sdk="Microsoft.NET.Sdk">
-<PropertyGroup><DefineConstants>{"LEGACY_EDITOR_STATE" if legacy_publisher else ""}</DefineConstants><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+<PropertyGroup><DefineConstants>{";".join(defines)}</DefineConstants><OutputType>Exe</OutputType><TargetFramework>net11.0</TargetFramework><Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
 <ItemGroup><Compile Include="Frame.cs"/><Compile Include="Publisher.cs"/><Compile Include="Dispatcher.cs"/><Compile Include="Transport.cs"/><Compile Include="Program.cs"/><Compile Include="Boundary.cs"/><Reference Include="Newtonsoft.Json"><HintPath>{dll}</HintPath></Reference></ItemGroup>
 </Project>
 """,

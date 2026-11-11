@@ -64,7 +64,7 @@ internal static class Harness
             },
             32L * 1024 * 1024
         );
-        string oversized = new string('x', 33 * 1024 * 1024);
+        string oversized = new string('x', LargeResultWriter.MaxResultBytes + 1);
         Check(
             "oversized_wire_serialization",
             () =>

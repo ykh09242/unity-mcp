@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
@@ -12,9 +12,11 @@
     <Compile Include="SocketProbe.cs" />
     <Compile Include="../../../../MCPForUnity/Editor/Services/Transport/WebSocketMessageReader.cs" />
     <Compile Include="../../../../MCPForUnity/Editor/Services/Transport/BoundedResponseJson.cs" />
+    <Compile Include="../../../../MCPForUnity/Editor/Services/Transport/PlainObjectJsonWriter.cs" />
     <Compile Include="../../../../MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs" />
     <Compile Include="BoundaryStubs.cs" />
     <Compile Include="../../../../MCPForUnity/Runtime/PlayScenarios/PlayScenarioLogBuffer.cs" />
     <Compile Include="../../../../MCPForUnity/Editor/Services/CompilationJobTracker.cs" />
+    <Compile Include="../../../../MCPForUnity/Editor/Services/OwnedCompilationReservation.cs" />
   </ItemGroup>
 </Project>

@@ -51,8 +51,15 @@ def main():
             else (ROOT / path).read_text(encoding="utf-8")
         )
     method = block(sources["client"], "private void OnOpenFileClicked()")
-    value = block(sources["advanced"], "gitUrlOverride.RegisterValueChangedCallback(evt =>") + ");"
-    clear = block(sources["advanced"], "clearGitUrlButton.clicked += () =>") + ";"
+    current = "private void RegisterServerSourceCallbacks()" in sources["advanced"]
+    value = (
+        "RegisterServerSourceCallbacks();"
+        if current
+        else block(sources["advanced"], "gitUrlOverride.RegisterValueChangedCallback(evt =>") + ");"
+    )
+    clear = (
+        "" if current else block(sources["advanced"], "clearGitUrlButton.clicked += () =>") + ";"
+    )
     browse = block(sources["advanced"], "private void OnBrowseGitUrlClicked()")
     resolve = block(sources["advanced"], "private static string ResolveServerPath(string path)")
     print(
@@ -74,6 +81,8 @@ namespace WindowActions;
 public class ClientAction
 {
     public TextField configPathField = new();
+    public Button openFileButton = new();
+    private void OnCancelConfigurationPreviewClicked() { }
     public void Open() => OnOpenFileClicked();
 $method
 }
@@ -92,14 +101,53 @@ $value
 $clear
     }
 }
-""").substitute(method=method, value=value, clear=clear, browse=browse, resolve=resolve)
+""").substitute(
+        method=method,
+        value=value,
+        clear=clear,
+        browse=browse,
+        resolve=resolve,
+    )
+    if current:
+        methods = block(sources["advanced"], "private void RegisterServerSourceCallbacks()")
+        methods += block(sources["advanced"], "private bool CommitServerSource()")
+        fields = """
+    private bool serverSourceDraftDirty;
+    private Action<string> writeServerSource = value => { if(string.IsNullOrEmpty(value)) EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride); else EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, value); };
+    public VisualElement Root = new();
+    public string Status;
+    public bool StatusError;
+    private void SetServerSourceStatus(string message, bool error = false) { Status = message; StatusError = error; }
+    public void Apply() => Root.Q<Button>("apply-server-source-button").Click();
+"""
+        scaffold = scaffold.replace(
+            "public class AdvancedAction\n{", "public class AdvancedAction\n{" + fields + methods
+        )
+        helper_path = "MCPForUnity/Editor/Helpers/AssetPathUtility.cs"
+        helper_source = (
+            subprocess.check_output(
+                ["git", "show", f"{args.baseline}:{helper_path}"], cwd=ROOT
+            ).decode("utf-8")
+            if args.baseline
+            else (ROOT / helper_path).read_text(encoding="utf-8")
+        )
+        print(
+            f"SOURCE {helper_path} SHA256 {hashlib.sha256(helper_source.encode()).hexdigest()}",
+            flush=True,
+        )
+        scaffold += (
+            "\npublic static class AssetPathUtility {\n"
+            + block(helper_source, "internal static string ResolveLocalServerPath(string path)")
+            + "\n}\n"
+        )
     (output / "SelectedSource.cs").write_text(scaffold, encoding="utf-8")
     here = Path(__file__).parent
-    for name in ("Program.cs", "Boundary.cs"):
+    for name in ("Program.cs", "CurrentScenarios.cs", "Boundary.cs"):
         (output / name).write_bytes((here / name).read_bytes())
     (output / "WindowActions.csproj").write_text(
         '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType>'
-        "<TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings>"
+        "<TargetFramework>net11.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings>"
+        f"<DefineConstants>{'CURRENT_SERVER_SOURCE' if current else ''}</DefineConstants>"
         "<Nullable>disable</Nullable></PropertyGroup></Project>",
         encoding="utf-8",
     )

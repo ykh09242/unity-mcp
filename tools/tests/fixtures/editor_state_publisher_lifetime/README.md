@@ -1,6 +1,6 @@
 # Editor-state publisher completion lifetime
 
-This .NET 9 console fixture compiles the complete current `EditorStatePublisher.cs`
+This .NET 11 console fixture compiles the complete current `EditorStatePublisher.cs`
 with the actual immutable `EditorStateFrame` and the exact current
 `TransportCommandDispatcher.RunOnMainThreadAsync<T>` implementation. It also extracts
 the transport's connection capture, owner-token check, cancellation, registration,
@@ -32,6 +32,12 @@ completion/transport ownership failures with `--baseline ba0940b2`; this baselin
 intentionally exits 1. Older baselines must contain the transport methods named by the
 runner. Each run prints normalized publisher, dispatcher, and transport source SHA256
 values. The boundary also accepts the older JObject observation contract.
+Registration extraction and invocation select the source's matching contract:
+current sources include `IsCurrentRegistration` and its generation/settings
+arguments; historical sources retain the original two-argument registration.
+The ba0940b2 reproduction reaches all twenty-four assertions (fourteen pass and
+ten report the intended completion/transport ownership failures), rather than
+failing during source extraction or compilation.
 
 The twenty-four scenarios cover cancellation before/during/after synchronous creation,
 caller ownership, duplicate disposal, pre-cancellation, subscription and send failures,

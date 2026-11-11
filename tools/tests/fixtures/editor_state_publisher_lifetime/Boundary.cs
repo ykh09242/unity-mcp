@@ -25,6 +25,11 @@ internal partial class TransportLifetimeBoundary
 {
     private readonly object _ownershipLock = new();
     private readonly Dictionary<CancellationTokenSource, Task> _cancellations = new();
+    private readonly object _toolDiscoveryService = null;
+    private bool _disposed = false;
+#if GENERATION_REGISTRATION
+    private long _registrationGeneration;
+#endif
     private ClientWebSocket _socket;
     private CancellationTokenSource _connectionCts;
     private CommandAdmission _commandAdmission;
@@ -55,7 +60,11 @@ internal partial class TransportLifetimeBoundary
 
     internal Task StartRegistration()
     {
+#if GENERATION_REGISTRATION
+        _registrationTask = CompleteRegistrationAsync(new JObject(), _connectionCts.Token, ++_registrationGeneration, _toolSettingsRegistration);
+#else
         _registrationTask = CompleteRegistrationAsync(new JObject(), _connectionCts.Token);
+#endif
         return _registrationTask;
     }
 
@@ -105,6 +114,8 @@ internal partial class TransportLifetimeBoundary
     private sealed class ToolSettingsRegistration : IDisposable
     {
         internal Task Completion => Task.CompletedTask;
+
+        internal Task RequestAsync() => Task.CompletedTask;
 
         public void Dispose() { }
     }
