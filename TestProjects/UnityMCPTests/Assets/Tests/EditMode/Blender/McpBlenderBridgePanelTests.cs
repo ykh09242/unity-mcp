@@ -24,7 +24,7 @@ namespace MCPForUnityTests.Editor.Blender
     /// </summary>
     public class McpBlenderBridgePanelTests
     {
-        private const string UxmlPath = "Packages/com.coplaydev.unity-mcp/Editor/Windows/Components/AssetGen/McpAssetGenSection.uxml";
+        private const string UxmlRelativePath = "Editor/Windows/Components/AssetGen/McpAssetGenSection.uxml";
         private static readonly Color Green = new Color(0.4f, 0.8f, 0.4f);
         private static readonly Color Gray = new Color(0.7f, 0.7f, 0.7f);
 
@@ -84,8 +84,11 @@ namespace MCPForUnityTests.Editor.Blender
         /// <summary>Clones the Asset Gen UXML and builds the panel controller on its Blender block.</summary>
         private static VisualElement BuildPanel()
         {
-            var tree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(UxmlPath);
-            Assert.IsNotNull(tree, $"Asset Gen UXML not found at {UxmlPath}");
+            string packageRoot = AssetPathUtility.GetMcpPackageRootPath();
+            Assert.IsNotNull(packageRoot, "The installed MCP package root must resolve from its assembly or script asset.");
+            string uxmlPath = packageRoot + "/" + UxmlRelativePath;
+            var tree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(uxmlPath);
+            Assert.IsNotNull(tree, $"Asset Gen UXML not found at {uxmlPath}");
             VisualElement block = tree.CloneTree().Q<VisualElement>("blender-bridge-panel");
             Assert.IsNotNull(block, "blender-bridge-panel is missing from the UXML");
             new McpBlenderBridgePanel(block);
@@ -151,8 +154,14 @@ namespace MCPForUnityTests.Editor.Blender
             VisualElement block = BuildPanel();
             Assert.IsNull(block.Q(className: "warning-banner"), "The optional checkout must not look like a warning.");
             Assert.IsNull(block.Q("blender-not-configured"));
-            StringAssert.Contains("Sync Addon and Check Updates", block.Q<Label>("blender-fork-help").text);
-            Assert.IsFalse(block.Q<Button>("blender-sync-button").enabledSelf, "Sync Addon still needs a checkout.");
+            Assert.IsTrue(block.Query<Label>().ToList().Exists(label => label.text.Contains("Checkout (optional)")), "The checkout must be marked optional.");
+            StringAssert.Contains("Sync Addon and Check Updates", block.Q<TextField>("blender-fork-path").tooltip);
+            Button sync = block.Q<Button>("blender-sync-button");
+            Button updates = block.Q<Button>("blender-updates-button");
+            Assert.AreEqual("Sync Addon", sync.text);
+            Assert.AreEqual("Check Updates", updates.text);
+            Assert.IsFalse(sync.enabledSelf, "Sync Addon still needs a checkout.");
+            Assert.IsFalse(updates.enabledSelf, "Check Updates still needs a checkout.");
 
             Button import = block.Q<Button>("blender-import-button");
             Assert.AreEqual("Import Blender Selection (GLB)", import.text);
