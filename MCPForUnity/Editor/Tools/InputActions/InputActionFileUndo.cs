@@ -39,7 +39,7 @@ namespace MCPForUnity.Editor.Tools.InputActions
 
         internal static string Status(string path) => Records.Any(record => record.Path == path && record.Conflict) ? "conflict" : "ready";
 
-        internal static void Apply(string path, string guid, byte[] before, byte[] after)
+        internal static void Apply(string path, string guid, byte[] before, byte[] after, Action beforeCommit = null)
         {
             foreach (Record expired in Records.Where(record => !File.Exists(AssetPathUtility.GetFullAssetPath(record.Path))).ToArray())
             {
@@ -63,7 +63,7 @@ namespace MCPForUnity.Editor.Tools.InputActions
             Undo.RegisterCompleteObjectUndo(state, "Edit InputAction source");
             try
             {
-                Write(path, guid, before, after);
+                Write(path, guid, before, after, beforeCommit);
                 record.Applied = record.After;
                 state.Bytes = record.After;
                 Records.Add(record);
@@ -78,22 +78,24 @@ namespace MCPForUnity.Editor.Tools.InputActions
             }
         }
 
-        private static void Write(string path, string guid, byte[] expected, byte[] replacement)
+        private static void Write(string path, string guid, byte[] expected, byte[] replacement, Action beforeCommit = null)
         {
             string full = AssetPathUtility.GetFullAssetPath(path);
+            VerifyIdentity(path, full, guid);
+            AtomicAssetFile.Replace(full, replacement, AtomicAssetFile.Digest(expected), () =>
+            {
+                beforeCommit?.Invoke();
+                VerifyIdentity(path, full, guid);
+            });
+        }
+
+        private static void VerifyIdentity(string path, string full, string guid)
+        {
             if (AssetDatabase.AssetPathToGUID(path) != guid)
                 throw new InvalidOperationException("InputAction asset identity changed; no file restoration was attempted.");
             var meta = new FileInfo(full + ".meta");
             if (!meta.Exists || meta.Length > 16384 || !File.ReadAllLines(meta.FullName).Contains("guid: " + guid))
                 throw new InvalidOperationException("InputAction metadata identity changed; no source write was attempted.");
-            using var stream = File.Open(full, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            byte[] current = InputActionDocument.ReadStream(stream);
-            if (!current.SequenceEqual(expected))
-                throw new InvalidOperationException("InputAction source changed externally; conditional restoration was refused.");
-            stream.Position = 0;
-            stream.Write(replacement, 0, replacement.Length);
-            stream.SetLength(replacement.Length);
-            stream.Flush(true);
         }
 
         private static void Import(string path, string guid)

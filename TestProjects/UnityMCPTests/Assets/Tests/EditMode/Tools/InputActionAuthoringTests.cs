@@ -1,8 +1,10 @@
 using System;
+using System.Collections;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -110,6 +112,89 @@ namespace MCPForUnityTests.Editor.Tools
             var asset = AssetDatabase.LoadAssetAtPath(path, assetType);
             Assert.IsNotNull(asset, "The real Input System importer must produce a native asset.");
             return JObject.Parse((string)assetType.GetMethod("ToJson", Type.EmptyTypes).Invoke(asset, null));
+        }
+
+        [Test]
+        public void PublicationFailure_PreservesOriginalBytesAndReleasesUnusableUndoState()
+        {
+            CreateOneBinding();
+            string full = AssetPathUtility.GetFullAssetPath(path);
+            byte[] before = File.ReadAllBytes(full),
+                metadata = File.ReadAllBytes(full + ".meta");
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            Type undo = typeof(BatchExecute).Assembly.GetType("MCPForUnity.Editor.Tools.InputActions.InputActionFileUndo");
+            Type state = undo.Assembly.GetType("MCPForUnity.Editor.Tools.InputActions.InputActionUndoState");
+            var records = (ICollection)undo.GetField("Records", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            int recordCount = records.Count,
+                stateCount = UnityEngine.Resources.FindObjectsOfTypeAll(state).Length;
+            var marker = new GameObject("PublicationFailureUndoMarker");
+            try
+            {
+                Undo.IncrementCurrentGroup();
+                Undo.RegisterCompleteObjectUndo(marker.transform, "Publication failure boundary");
+                marker.transform.position = Vector3.right;
+                Undo.FlushUndoRecordObjects();
+                bool reachedPublication = false;
+                Action failPublication = () =>
+                {
+                    // Remove this attempt's complete stage so the real atomic publication fails.
+                    string stage = Directory.GetFiles(Path.GetDirectoryName(full), ".mcp-*.tmp").Single();
+                    Assert.Greater(new FileInfo(stage).Length, 0);
+                    File.Delete(stage);
+                    reachedPublication = true;
+                };
+                var error = Assert.Throws<TargetInvocationException>(() =>
+                    undo.GetMethod("Apply", BindingFlags.NonPublic | BindingFlags.Static)
+                        .Invoke(null, new object[] { path, guid, before, before.Concat(new byte[] { 10 }).ToArray(), failPublication })
+                );
+                Assert.IsInstanceOf<IOException>(error.InnerException);
+                Assert.IsTrue(reachedPublication);
+                CollectionAssert.AreEqual(before, File.ReadAllBytes(full));
+                CollectionAssert.AreEqual(metadata, File.ReadAllBytes(full + ".meta"));
+                Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+                Assert.AreEqual(recordCount, records.Count, "Failed publication must not retain a source restoration promise.");
+                Assert.AreEqual(
+                    stateCount,
+                    UnityEngine.Resources.FindObjectsOfTypeAll(state).Length,
+                    "Failed publication must clear native Undo and destroy its state."
+                );
+                Assert.IsEmpty(Directory.GetFiles(Path.GetDirectoryName(full), ".mcp-*"), "Known failed publication must leave no staging artifacts.");
+                Undo.PerformUndo();
+                Assert.AreEqual(Vector3.zero, marker.transform.position);
+                CollectionAssert.AreEqual(before, File.ReadAllBytes(full));
+                Undo.PerformRedo();
+                Assert.AreEqual(Vector3.right, marker.transform.position);
+                CollectionAssert.AreEqual(before, File.ReadAllBytes(full));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(marker);
+            }
+        }
+
+        [Test]
+        public void PublicationAdmission_RefusesExternalRenameWithoutOverwritingItsBytes()
+        {
+            CreateOneBinding();
+            string full = AssetPathUtility.GetFullAssetPath(path);
+            byte[] before = File.ReadAllBytes(full),
+                external = before.Concat(new byte[] { 10, 32 }).ToArray();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            Type undo = typeof(BatchExecute).Assembly.GetType("MCPForUnity.Editor.Tools.InputActions.InputActionFileUndo");
+            Action replaceExternally = () =>
+            {
+                File.Move(full, full + ".external-preimage");
+                File.WriteAllBytes(full, external);
+            };
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                undo.GetMethod("Apply", BindingFlags.NonPublic | BindingFlags.Static)
+                    .Invoke(null, new object[] { path, guid, before, before.Concat(new byte[] { 10 }).ToArray(), replaceExternally })
+            );
+            Assert.IsInstanceOf<IOException>(error.InnerException);
+            CollectionAssert.AreEqual(external, File.ReadAllBytes(full));
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(full + ".external-preimage"));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            Assert.IsEmpty(Directory.GetFiles(Path.GetDirectoryName(full), ".mcp-*"));
         }
 
         [Test]
