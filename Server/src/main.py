@@ -528,7 +528,7 @@ def _build_instructions(project_scoped_tools: bool) -> str:
         if project_scoped_tools
         else "Custom tools appear as standard tools after Unity connects."
     )
-    return f"""Unity Editor tools. Use the live schema and the smallest relevant observation before acting.
+    return f"""Unity Editor tools. Check live schemas and minimal relevant state before acting.
 
 Targeting and discovery:
 - Resolve the project through mcpforunity://instances. For ambiguous/multiple Editors, pass unity_instance=Name@hash on tools and _meta.unity_instance on resource reads. Modern sessionless clients require per-request targeting; only supported stateful clients can pin a default with set_active_instance.
@@ -548,7 +548,7 @@ Source edits:
 
 Keep context bounded:
 - Read only relevant skill references via the advertised skill://unity-mcp-orchestrator/SKILL.md resource when available. Do not dump every tool schema or whole project catalog.
-- Start with summaries and stop paging once the target is found: hierarchy page_size=50; components include_properties=false/page_size=10; asset search page_size=25/generate_preview=false. Fetch detailed properties, stacks, test failures or images only as needed. Prefer bounded Console reads and job summaries over repeatedly fetching full results; retain IDs/cursors for follow-up.
+- Start with summaries and stop paging once the target is found: hierarchy page_size=50; components include_properties=false/page_size=10; asset search page_size=25/generate_preview=false. Fetch detailed properties, stacks, test failures or images only as needed. Use bounded Console reads/job summaries; retain IDs/cursors for follow-up.
 """
 
 
