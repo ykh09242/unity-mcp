@@ -209,3 +209,107 @@ the new `maxInputLength` API, which was checked against installed official 7.2.0
 declarations/implementation. The raw-HTML lookup returned the HAST schema rather
 than hast-util-raw's API; the pinned upstream README above supplies that API.
 Exact versions and edges come from the regenerated lock and installed manifests.
+
+
+## Unity optional package profile
+
+Only the Unity 6000.0 optional `unity-six-lts` profile advances Splines from
+2.9.1 to 2.9.2. The exact official registry archive passes the existing digest
+and safe-extraction checks; package metadata requires Unity 2022.3 and its
+three dependency minimums fit the selected profile. The
+[official Splines changelog](https://docs.unity3d.com/Packages/com.unity.splines@2.9/changelog/CHANGELOG.html)
+covers scaled world evaluations, degenerate curvature, resolution-one queries
+and spline editing boundaries. No package API migration was required.
+
+Unity 2021.3 support and its editor-coroutines 1.0.1 pin remain; newer profiles
+retain 1.1.0. Editor-sourced modules, current integration pins, legacy snapshots
+and the optional Roslyn 4.12 contract retain their existing inputs. Profile and
+workflow contracts pass. This is registry/profile verification, not native
+Unity execution of the optional integration.
+
+## Managed SDK, Actions and container inputs
+
+Six active fixture projects and four current generated-project runners now target
+.NET 11.0. Five workflow SDK installations pin the installed stable SDK 11.0.100.
+The [.NET support policy](https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core)
+ends .NET 9 support on 2026-11-10. The historical transport benchmark retains
+net10.0, MCP 2.2.0 and Hosting 10.0.1. Dated net9.0 execution evidence remains
+historical. The journal's existing private SDK Newtonsoft.Json reference exists
+in SDK 11.0.100 and executes successfully; its private path remains an explicit
+future-SDK compatibility constraint. [CSharpier 1.4.0](https://github.com/belav/csharpier/releases/tag/1.4.0),
+published during this verification on 2026-11-11, supersedes the earlier 1.3.0
+registry result. Its CLI targets .NET 10/11 and drops .NET 8/9; the pinned tool,
+runner and formatting guide advance together and execute on .NET 11.0.100.
+The original 1.3.0 `Major` roll-forward check also passed before the new release
+was discovered. Touched-source formatting and all 56 formatter contracts pass.
+
+The initial read-only full formatting assessment found intentional 1.4 layout
+drift in 130 C# files. After reviewing the concrete preview, the user explicitly
+authorized that formatter migration as a separate commit. The canonical formatter
+applied only those 130 paths to their current contents: 3,645 added and 5,089
+removed lines across 53 package, 60 test-project and 17 tooling files, matching
+the approved preview with no unexpected drift. SDK Roslyn before/after checks
+preserve exact literal token text and non-whitespace comments/directives in all
+130 files; two files differ only by optional trailing commas. The four in-progress
+Task4 test files are outside this scope and their hashes remain unchanged.
+The subsequent full read-only formatting check passes all 1,395 Python and
+1,362 C# files. This verifies formatting and lexical preservation; it does not
+replace the separately recorded behavioral and native execution checks.
+
+Managed execution passes all six required harnesses and the four generated
+runners. Fixture-only maintenance restores omitted production source references
+and current boundary signatures. The allocation test uses the production
+maximum plus one byte while keeping all budgets and refusal assertions.
+The window fixture extracts current draft/explicit-commit callbacks, preserves
+single-notification and wrapper ownership checks, and retains its historical
+baseline branch. These are CLR/synthetic boundary checks, not Unity-native proof.
+
+Immutable Action uses and version comments advance together:
+
+| Action | Reviewed release | Source |
+| --- | --- | --- |
+| docker/login-action | 4.8.0 | [Release](https://github.com/docker/login-action/releases/tag/v4.8.0) |
+| anthropics/claude-code-action | 1.0.271 | [Release](https://github.com/anthropics/claude-code-action/releases/tag/v1.0.271) |
+| mikepenz/action-junit-report | 6.7.1 | [Release](https://github.com/mikepenz/action-junit-report/releases/tag/v6.7.1) |
+| softprops/action-gh-release | 3.0.4 | [Release](https://github.com/softprops/action-gh-release/releases/tag/v3.0.4) |
+
+The login change includes token-lifetime/dependency maintenance; Claude advances
+its vendored client/SDK; JUnit fixes annotation completeness, size limits and
+nested-suite reporting; release publishing receives maintenance updates. Existing
+credentials, permissions, inputs and publication routes are unchanged.
+Repo-stats stays at its existing commit, two commits ahead of stable 1.4.2;
+already-current Actions, uv 0.13.7 and actionlint 1.7.12 retain their pins.
+Cached actionlint passes all workflows.
+
+The Docker Python 3.14 slim multiarchitecture index advances to the official
+2026-11-08 rebuild, verified on 2026-11-11. The amd64 and arm64/v8 manifests and
+configuration digests match and both declare Python 3.14.10. Exact index/platform
+pins are recorded in [packaging inputs](../PACKAGING_INPUTS.md), with the
+[official tag metadata](https://hub.docker.com/v2/repositories/library/python/tags/3.14-slim)
+as the registry source. Packaging contracts pass. Docker is unavailable locally,
+so this verifies metadata rather than a container build/run. MCPB 2.1.2,
+unityci/base 3.2.2 and the existing floating Caddy 2 policy remain current;
+no image publication or deployment was performed.
+
+## Actual Codex client pin
+
+The actual-client runner, checksum-pinned Linux workflow and current assurance
+documentation advance from 0.166.0 to
+[Codex 0.167.1](https://github.com/openai/codex/releases/tag/rust-v0.167.1).
+The [official comparison](https://github.com/openai/codex/compare/rust-v0.166.0...rust-v0.167.1)
+was reviewed for MCP protocol selection, optional per-chat leases, scoped metadata
+hooks and hosted-App discovery. The optional lease extension is not advertised
+or adopted by this version update. Connection sharing assurance remains separate
+from the existing four single-chat client cases.
+
+The Windows execution on 2026-11-11 passes actual Rust Codex 0.167.1 over modern
+and legacy stdio and HTTP. All four discover the complete catalog, validate
+normal/Unicode/error/resource calls, propagate the configured tool deadline,
+recover on the same connection and reload, and reconstruct/hash-check retained
+8 MiB ASCII and 9 MiB Unicode payloads. Receipts observe protocols 2025-06-18 and
+2026-07-28 as selected. The older 2026-11-02 run remains historical evidence for
+0.166.0. Each run uses an isolated temporary home and offline provider with zero
+model turns, no user credentials/configuration and no sidebar chat. Source links
+were checked at their exact 0.167.1 paths, including the relocated client module
+and the retained protocol-mode module. No native Unity or desktop UI adoption
+claim follows from this managed/client evidence.
