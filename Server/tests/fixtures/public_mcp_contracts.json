@@ -3413,6 +3413,67 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "save_as_prefab": {
+                      "anyOf": [
+                        {
+                          "const": true
+                        },
+                        {
+                          "pattern": "^\\s*[tT][rR][uU][eE]\\s*$",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "save_as_prefab"
+                  ]
+                },
+                "then": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "prefab_path": {
+                          "pattern": "\\.[pP][rR][eE][fF][aA][bB](?![\\s\\S])",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "prefab_path"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "prefab_folder": {
+                          "pattern": "\\S",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "prefab_folder"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "prefab_path": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "pattern": "\\.[pP][rR][eE][fF][aA][bB](?![\\s\\S])",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "const": "create",
@@ -3477,15 +3538,8 @@
                 "default": null
               },
               "name": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
+                "pattern": "\\S",
+                "type": "string"
               },
               "parent": {
                 "anyOf": [
@@ -3694,7 +3748,8 @@
               }
             },
             "required": [
-              "action"
+              "action",
+              "name"
             ],
             "type": "object"
           },
@@ -28944,6 +28999,67 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "save_as_prefab": {
+                      "anyOf": [
+                        {
+                          "const": true
+                        },
+                        {
+                          "pattern": "^\\s*[tT][rR][uU][eE]\\s*$",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "save_as_prefab"
+                  ]
+                },
+                "then": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "prefab_path": {
+                          "pattern": "\\.[pP][rR][eE][fF][aA][bB](?![\\s\\S])",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "prefab_path"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "prefab_folder": {
+                          "pattern": "\\S",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "prefab_folder"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "prefab_path": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "pattern": "\\.[pP][rR][eE][fF][aA][bB](?![\\s\\S])",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "const": "create",
@@ -29008,15 +29124,8 @@
                 "default": null
               },
               "name": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
+                "pattern": "\\S",
+                "type": "string"
               },
               "parent": {
                 "anyOf": [
@@ -29225,7 +29334,8 @@
               }
             },
             "required": [
-              "action"
+              "action",
+              "name"
             ],
             "type": "object"
           },

@@ -5,6 +5,84 @@ from tests.sdk_scenarios import run_sdk_regression, sdk_scenario_host  # noqa: F
 
 
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+def test_focused_create_requires_name_and_conditional_prefab_destination_before_dispatch(mode):
+    run_sdk_regression(
+        r"""
+        import asyncio
+        from importlib import import_module
+        from unittest.mock import AsyncMock
+        from fastmcp import Client, FastMCP
+        from jsonschema import Draft202012Validator
+        from core.config import config
+        from services.tools import register_all_tools
+        from transport.response_limit_middleware import ResponseLimitMiddleware
+        module = import_module("services.tools.manage_gameobject")
+
+        async def scenario():
+            # Given: the actual focused and compatibility SDK registrations.
+            config.transport_mode = "stdio"
+            config.http_remote_hosted = False
+            module.preflight = AsyncMock(return_value=None)
+            module.get_unity_instance_from_context = AsyncMock(return_value="Fixture@hash")
+            send = module.send_with_unity_instance = AsyncMock(return_value={"success": True})
+            server = FastMCP("create-contract")
+            server.add_middleware(ResponseLimitMiddleware())
+            register_all_tools(server, project_scoped_tools=False)
+            server.enable(tags={"group:legacy"}, components={"tool"})
+            async with Client(server, mode=MODE) as client:
+                tools = {tool.name: tool for tool in await client.list_tools()}
+                validator = Draft202012Validator(tools["gameobject_create"].input_schema)
+                # When: required name or a requested prefab destination is missing/blank.
+                invalid = [
+                    {"action": "create", **name}
+                    for name in ({}, {"name": None}, {"name": ""}, {"name": " \t\n"})
+                ] + [
+                    {"action": "create", "name": "Owned", "save_as_prefab": flag, **destination}
+                    for flag in (True, "true", " TRUE ")
+                    for destination in (
+                        {}, {"prefab_path": None}, {"prefab_path": ""},
+                        {"prefab_folder": None}, {"prefab_folder": ""}, {"prefab_folder": " "},
+                        {"prefab_path": "Assets/Owned.asset"}, {"prefab_path": "Assets/Owned.prefab\n"},
+                        {"prefab_path": "", "prefab_folder": "Assets/Prefabs"},
+                    )
+                ]
+                for arguments in invalid:
+                    # Then: discovery and execution agree, without touching the Editor.
+                    assert not validator.is_valid(arguments), arguments
+                    result = await client.call_tool("gameobject_create", arguments, raise_on_error=False)
+                    assert result.is_error, (arguments, result)
+                send.assert_not_awaited()
+                module.preflight.assert_not_awaited()
+                for arguments in (
+                    {"action": "create", "name": "Owned"},
+                    {"action": "create", "name": "Owned", "prefab_path": "Assets/Owned.prefab"},
+                    {"action": "create", "name": "Owned", "save_as_prefab": False},
+                    {"action": "create", "name": "Owned", "save_as_prefab": "false"},
+                    {"action": "create", "name": "Owned", "save_as_prefab": True, "prefab_path": "Assets/Owned.prefab"},
+                    {"action": "create", "name": "Owned", "save_as_prefab": " TRUE ", "prefab_folder": "Assets/Prefabs"},
+                    {"action": "create", "name": "Owned", "save_as_prefab": True, "prefab_path": None, "prefab_folder": "Assets/Prefabs"},
+                    {"action": "create", "name": "Owned", "save_as_prefab": True, "prefab_path": "Assets/Owned.PREFAB"},
+                ):
+                    validator.validate(arguments)
+                    result = await client.call_tool("gameobject_create", arguments)
+                    assert result.structured_content["success"] is True, result
+                assert send.await_count == 8
+                # Compatibility actions retain optional names and source-name defaults.
+                legacy = Draft202012Validator(tools["manage_gameobject"].input_schema)
+                for arguments in (
+                    {"action": "duplicate", "target": "Owned"},
+                    {"action": "modify", "target": "Owned", "position": [1, 2, 3]},
+                ):
+                    legacy.validate(arguments)
+                    result = await client.call_tool("manage_gameobject", arguments)
+                    assert result.structured_content["success"] is True, result
+                assert send.await_count == 10
+        asyncio.run(scenario())
+        """.replace("MODE", repr(mode))
+    )
+
+
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
 def test_action_schemas_preserve_valid_requests_and_refuse_invalid_before_dispatch(mode):
     run_sdk_regression(
         """

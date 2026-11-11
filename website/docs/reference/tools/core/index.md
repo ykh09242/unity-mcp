@@ -18,7 +18,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`execute_menu_item`](./execute_menu_item.md)** — Inspect menu existence/availability evidence or invoke a menu by exact path.
 - **[`find_gameobjects`](./find_gameobjects.md)** — Search GameObjects by name, tag, layer, component, path or ID; returns IDs only. scene_scope=legacy (default) preserves method-dependent scene selection and numeric offsets. active uses SceneManager's reported active scene; all_loaded co…
 - **[`find_in_file`](./find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers and excerpts.
-- **[`gameobject_create`](./gameobject_create.md)** — Create a GameObject with transform, components and optional prefab output.
+- **[`gameobject_create`](./gameobject_create.md)** — Create a named GameObject with transform, components and optional prefab output. name must contain non-whitespace text. save_as_prefab=true requires a nonempty .prefab prefab_path or prefab_folder for the generated name.prefab destination.
 - **[`gameobject_edit`](./gameobject_edit.md)** — Modify a GameObject or delete all selector matches, including inactive objects, in the active scene or current prefab stage.
 - **[`get_compile_job`](./get_compile_job.md)** — Read compilation status, bounded diagnostics and the last successful compile by compile_id.
 - **[`get_sha`](./get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.

@@ -42,6 +42,7 @@ _PREVIEW_FORBIDDEN = tuple(
 )
 
 ACTION_RULES: dict[str, tuple[ActionRule, ...]] = {
+    "gameobject_create": (ActionRule("create", ("name",), example=(("name", "Example"),)),),
     "manage_components": (
         ActionRule("add"),
         ActionRule("remove"),
@@ -111,6 +112,20 @@ def action_input_error(name: str, arguments: dict) -> str | None:
             if arguments.get(field) is not None:
                 return f"Action '{rule.action}' does not accept parameter '{field}'."
         break
+    if name == "gameobject_create":
+        save = arguments.get("save_as_prefab")
+        if save is True or isinstance(save, str) and save.strip().lower() == "true":
+            path = arguments.get("prefab_path")
+            folder = arguments.get("prefab_folder")
+            if path is not None:
+                if (
+                    not isinstance(path, str)
+                    or not path.strip()
+                    or not path.lower().endswith(".prefab")
+                ):
+                    return "Parameter 'prefab_path' must be a nonempty .prefab path."
+            elif not isinstance(folder, str) or not folder.strip():
+                return "'prefab_path' or 'prefab_folder' is required when 'save_as_prefab' is true."
     return None
 
 
@@ -134,6 +149,46 @@ def action_input_schema(name: str, schema: dict) -> dict:
     rules = ACTION_RULES.get(name, ())
     if not rules:
         return schema
+    if name == "gameobject_create":
+        # The focused tool always creates; generic legacy actions retain their
+        # original nullable name and action-specific defaults.
+        path = {"type": "string", "pattern": r"\.[pP][rR][eE][fF][aA][bB](?![\s\S])"}
+        folder = {"type": "string", "pattern": r"\S"}
+        return {
+            **schema,
+            "required": list(dict.fromkeys([*schema.get("required", ()), "name"])),
+            "properties": {
+                **schema["properties"],
+                "name": {**schema["properties"]["name"], "type": "string", "pattern": r"\S"},
+            },
+            "allOf": [
+                *schema.get("allOf", ()),
+                {
+                    "if": {
+                        "required": ["save_as_prefab"],
+                        "properties": {
+                            "save_as_prefab": {
+                                "anyOf": [
+                                    {"const": True},
+                                    {"type": "string", "pattern": r"^\s*[tT][rR][uU][eE]\s*$"},
+                                ]
+                            }
+                        },
+                    },
+                    "then": {
+                        "anyOf": [
+                            {"required": ["prefab_path"], "properties": {"prefab_path": path}},
+                            {
+                                "required": ["prefab_folder"],
+                                "properties": {"prefab_folder": folder},
+                            },
+                        ],
+                        "properties": {"prefab_path": {"anyOf": [{"type": "null"}, path]}},
+                    },
+                },
+            ],
+            "examples": [rule.example_arguments() for rule in rules],
+        }
     if name == "manage_components":
         # Preserve the SDK's nullable value type: only presence is required for
         # a single write, so JSON null continues to clear object references.

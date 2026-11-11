@@ -60,6 +60,11 @@ def register_capability(capability: Capability, implementation: Callable) -> Cal
                 ],
                 default=inspect.Parameter.empty,
             )
+        if capability.name == "gameobject_create" and name == "name":
+            parameter = parameter.replace(
+                annotation=Annotated[str, Field(description="Nonempty initial GameObject name.")],
+                default=inspect.Parameter.empty,
+            )
         parameters.append(parameter)
     narrowed = signature.replace(parameters=parameters)
 

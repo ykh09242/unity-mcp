@@ -1,7 +1,7 @@
 ---
 title: gameobject_create
 sidebar_label: gameobject_create
-description: "Create a GameObject with transform, components and optional prefab output."
+description: "Create a named GameObject with transform, components and optional prefab output. name must contain non-whitespace text. save_as_prefab=true requires a nonempty .prefab prefab_path or prefab_folder for the generated name.prefab destination."
 ---
 
 # `gameobject_create`
@@ -14,14 +14,14 @@ description: "Create a GameObject with transform, components and optional prefab
 
 ## Description
 
-Create a GameObject with transform, components and optional prefab output.
+Create a named GameObject with transform, components and optional prefab output. name must contain non-whitespace text. save_as_prefab=true requires a nonempty .prefab prefab_path or prefab_folder for the generated name.prefab destination. Action inputs: create: requires name.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `action` | `Literal['create']` | yes | Feature action to perform. |
-| `name` | `str \| None` | — | GameObject name for 'create' (initial name) and 'modify' (rename) actions. |
+| `name` | `str` | yes | Nonempty initial GameObject name. |
 | `tag` | `str \| None` | — | Tag name - used for both 'create' (initial tag) and 'modify' (change tag) |
 | `parent` | `str \| None` | — | Parent GameObject reference - used for both 'create' (initial parent) and 'modify' (change parent) |
 | `position` | `list[float] \| dict[str, float] \| str \| None` | — | Position as [x, y, z] array, {x, y, z} object, or JSON string |

@@ -487,7 +487,11 @@ CAPABILITY_DESCRIPTIONS = {
     "manage_cameras": "Create or list cameras, select targets and configure lenses or priority.",
     "manage_cinemachine": "Configure Cinemachine brains, tracking, extensions and camera blends.",
     "capture_camera": "Capture Game or Scene views, including surround and orbit batches.",
-    "gameobject_create": "Create a GameObject with transform, components and optional prefab output.",
+    "gameobject_create": (
+        "Create a named GameObject with transform, components and optional prefab output. "
+        "name must contain non-whitespace text. save_as_prefab=true requires a nonempty "
+        ".prefab prefab_path or prefab_folder for the generated name.prefab destination."
+    ),
     "gameobject_edit": (
         "Modify a GameObject or delete all selector matches, including inactive objects, "
         "in the active scene or current prefab stage. Use by_id with a current instance ID "
