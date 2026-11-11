@@ -112,7 +112,7 @@ This beta checkout uses the following immutable server source. Unity and Python 
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/3eeee4b13561017fc525e810d8140f1872fb6676.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/c12936e90c0263c3b722d7130c29a8f4affda4f7.zip#subdirectory=Server",
         "mcp-for-unity",
         "--transport",
         "stdio"
