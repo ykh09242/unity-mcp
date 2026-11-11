@@ -17,6 +17,15 @@ namespace MCPForUnity.Editor.Clients
     /// <summary>CLI-based configurator (Claude Code).</summary>
     public abstract class ClaudeCliMcpConfigurator : McpClientConfiguratorBase
     {
+        // Only fixed operation/recovery text belongs in this exception, never CLI output.
+        public sealed class ConfigurationFailureException : InvalidOperationException
+        {
+            public bool CanRetry { get; }
+
+            public ConfigurationFailureException(string safeMessage, bool canRetry)
+                : base(safeMessage) => CanRetry = canRetry;
+        }
+
         private readonly string capturedUserConfigPath;
         private string pendingOwnershipProject,
             pendingOwnershipPath,
@@ -385,10 +394,14 @@ namespace MCPForUnity.Editor.Clients
         // on the main thread, after verifying that no newer operation/manual edit replaced it.
         internal void CompleteConfigurationOwnership() => PublishConfigurationOwnership(null);
 
-        private void PublishConfigurationOwnership(GeneratedClientConfigOwnership.AutomaticRefresh automatic)
+        // Setup completion must distinguish a matching final snapshot from a stale
+        // or missing capture; the existing publication-only callers may ignore it.
+        internal bool TryCompleteConfigurationOwnership() => PublishConfigurationOwnership(null);
+
+        private bool PublishConfigurationOwnership(GeneratedClientConfigOwnership.AutomaticRefresh automatic)
         {
             if (pendingOwnershipSnapshot == null)
-                return;
+                return false;
             string project = pendingOwnershipProject;
             string path = pendingOwnershipPath;
             string snapshot = pendingOwnershipSnapshot;
@@ -399,7 +412,11 @@ namespace MCPForUnity.Editor.Clients
                 && OwnershipSnapshot(ReadSelectedLocalRegistrations(project)) == snapshot
                 && (automatic == null || automatic.MatchesPriorReceipt(path))
             )
+            {
                 GeneratedClientConfigOwnership.Record("Claude", path, entry);
+                return true;
+            }
+            return false;
         }
 
         private static string OwnershipSnapshot(Dictionary<string, JObject> entries) =>
@@ -766,14 +783,15 @@ namespace MCPForUnity.Editor.Clients
             }
             catch (Exception error)
             {
+                bool canRetry = error is not TimeoutException;
                 string recovery =
-                    error is TimeoutException ? UncertainRecoveryMessage
+                    !canRetry ? UncertainRecoveryMessage
                     : !dispatched ? "The selected registration was not changed."
-                    : RecoverSelectedLocalRegistrations(claudePath, projectDir, pathPrepend, previous, authorize);
+                    : RecoverSelectedLocalRegistrations(claudePath, projectDir, pathPrepend, previous, authorize, out canRetry);
                 // CLI output/configuration can contain credentials. Report only the operation and recovery state.
                 string message = failure + " " + recovery;
                 client.SetStatus(McpStatus.Error, message);
-                throw new InvalidOperationException(message);
+                throw new ConfigurationFailureException(message, canRetry);
             }
         }
 
@@ -785,9 +803,11 @@ namespace MCPForUnity.Editor.Clients
             string projectDir,
             string pathPrepend,
             Dictionary<string, JObject> previous,
-            Action authorize
+            Action authorize,
+            out bool canRetry
         )
         {
+            canRetry = false;
             try
             {
                 foreach (var entry in previous)
@@ -809,6 +829,7 @@ namespace MCPForUnity.Editor.Clients
                     return "The local registration changed; its current entries were preserved. Inspect them before retrying.";
                 if (previous.Keys.Any(name => !final.ContainsKey(name)))
                     return "Claude CLI could not restore the previous local registration. Inspect the selected configuration before retrying.";
+                canRetry = true;
                 return previous.Count == 0 ? "No previous local registration needed recovery." : "Previous local registrations were preserved or restored.";
             }
             catch (TimeoutException)

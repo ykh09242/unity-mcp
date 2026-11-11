@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Constants;
@@ -58,6 +60,16 @@ namespace MCPForUnity.Editor.Windows
         private readonly Dictionary<string, Label> clientResultLabels = new();
         private Func<IReadOnlyList<IMcpClientConfigurator>> getClients = () => McpClientRegistry.All;
         private Action<IMcpClientConfigurator> configureClient = client => MCPServiceLocator.Client.ConfigureClient(client);
+        private Func<IMcpClientConfigurator, CancellationToken, Task<IMcpClientConfigurator>> configureClientAsync = null;
+        private CancellationTokenSource configurationLifetime = new();
+        private readonly HashSet<string> inspectionRequiredClients = new();
+        private readonly Queue<IMcpClientConfigurator> configurationQueue = new();
+        private Task<IMcpClientConfigurator> configurationTask;
+        private IMcpClientConfigurator configuringClient;
+        private Func<bool> configurationContextIsCurrent;
+        private bool configurationInProgress;
+        private int configurationSuccess,
+            configurationFailure;
         private Action finishSetup = null;
 
         private DependencyCheckResult _dependencyResult;
@@ -162,6 +174,8 @@ namespace MCPForUnity.Editor.Windows
 
         private void OnEnable()
         {
+            if (configurationLifetime.IsCancellationRequested)
+                configurationLifetime = new CancellationTokenSource();
             // Delay initial capture so ShowWindow can provide an existing result first.
             EditorApplication.delayCall += BeginInitialDependencyCheck;
             // Resume polling if a uv install was still in flight when the window was last disabled,
@@ -260,21 +274,23 @@ namespace MCPForUnity.Editor.Windows
 
         private void PopulateClientsList()
         {
+            skipClientsButton.SetEnabled(!configurationInProgress);
             clientsList.Clear();
             clientToggles.Clear();
             clientResultLabels.Clear();
-            configureSelectedButton.SetEnabled(true);
+            configureSelectedButton.SetEnabled(!configurationInProgress);
             foreach (var c in getClients())
             {
                 if (!c.IsInstalled)
                     continue;
                 bool configured = configuredClients.Contains(c.Id);
+                bool blocked = inspectionRequiredClients.Contains(c.Id);
                 var toggle = new Toggle(c.DisplayName)
                 {
-                    value = c.SupportsAutoConfigure && !configured && (!clientSelections.TryGetValue(c.Id, out bool selected) || selected),
+                    value = c.SupportsAutoConfigure && !configured && !blocked && (!clientSelections.TryGetValue(c.Id, out bool selected) || selected),
                     tooltip = c.GetConfigPath(),
                 };
-                toggle.SetEnabled(c.SupportsAutoConfigure && !configured);
+                toggle.SetEnabled(c.SupportsAutoConfigure && !configured && !blocked && !configurationInProgress);
                 toggle.RegisterValueChangedCallback(evt => clientSelections[c.Id] = evt.newValue);
                 clientToggles.Add((c, toggle));
                 clientsList.Add(toggle);
@@ -297,7 +313,12 @@ namespace MCPForUnity.Editor.Windows
             }
             else
                 configureSelectedButton.SetEnabled(
-                    clientToggles.Exists(item => item.client.SupportsAutoConfigure && !configuredClients.Contains(item.client.Id))
+                    !configurationInProgress
+                        && clientToggles.Exists(item =>
+                            item.client.SupportsAutoConfigure
+                            && !configuredClients.Contains(item.client.Id)
+                            && !inspectionRequiredClients.Contains(item.client.Id)
+                        )
                 );
         }
 
@@ -316,55 +337,238 @@ namespace MCPForUnity.Editor.Windows
 
         private void OnConfigureSelectedClicked()
         {
-            int success = 0,
-                failure = 0;
+            if (configurationInProgress || configurationLifetime.IsCancellationRequested)
+                return;
+            configurationSuccess = configurationFailure = 0;
+            configurationQueue.Clear();
             foreach (var (client, toggle) in clientToggles)
             {
-                if (!client.SupportsAutoConfigure || !toggle.value || configuredClients.Contains(client.Id))
-                    continue;
-                string result;
-                try
+                if (client.SupportsAutoConfigure && toggle.value && !configuredClients.Contains(client.Id) && !inspectionRequiredClients.Contains(client.Id))
+                    configurationQueue.Enqueue(client);
+            }
+            configurationInProgress = true;
+            configureSelectedButton.SetEnabled(false);
+            skipClientsButton.SetEnabled(false);
+            foreach (var (_, toggle) in clientToggles)
+                toggle.SetEnabled(false);
+            EditorApplication.update -= PollClientConfiguration;
+            EditorApplication.update += PollClientConfiguration;
+            PollClientConfiguration();
+        }
+
+        // Polling owns all UI changes on the Editor thread. Background work owns only
+        // a captured operation client, never the registry's shared mutable client.
+        private void PollClientConfiguration()
+        {
+            if (!configurationInProgress || configurationLifetime.IsCancellationRequested)
+                return;
+            while (true)
+            {
+                if (configurationTask != null)
                 {
-                    configureClient(client);
-                    if (ClientConfigurationService.IsConfigurationComplete(client.Status))
+                    if (!configurationTask.IsCompleted)
+                        return;
+                    string result;
+                    bool retry = true;
+                    bool contextCurrent = configurationContextIsCurrent?.Invoke() ?? true;
+                    if (
+                        contextCurrent
+                        && configurationTask.Status == TaskStatus.RanToCompletion
+                        && configurationTask.Result is ClaudeCliMcpConfigurator operation
+                    )
                     {
-                        success++;
-                        configuredClients.Add(client.Id);
-                        clientSelections[client.Id] = false;
-                        toggle.SetValueWithoutNotify(false);
-                        toggle.SetEnabled(false);
+                        try
+                        {
+                            if (!operation.TryCompleteConfigurationOwnership())
+                                throw new InvalidOperationException();
+                        }
+                        catch (Exception)
+                        {
+                            configurationTask = Task.FromException<IMcpClientConfigurator>(
+                                new ClaudeCliMcpConfigurator.ConfigurationFailureException(
+                                    "Configuration was written but its final state could not be verified. Inspect the selected local registration before retrying.",
+                                    false
+                                )
+                            );
+                        }
+                    }
+                    if (
+                        contextCurrent
+                        && configurationTask.Status == TaskStatus.RanToCompletion
+                        && ClientConfigurationService.IsConfigurationComplete(configurationTask.Result.Status)
+                    )
+                    {
+                        configurationSuccess++;
+                        configuredClients.Add(configuringClient.Id);
+                        retry = false;
                         result = "Configured. This client will not be repeated during retry.";
                     }
                     else
                     {
-                        failure++;
-                        clientSelections[client.Id] = true;
-                        result = "Configuration validation is incomplete. Check connection settings and client instructions, then retry.";
+                        configurationFailure++;
+                        var error = configurationTask.Exception?.GetBaseException();
+                        if (!contextCurrent)
+                        {
+                            retry = false;
+                            result =
+                                "Configuration settings changed while the operation was running. Wait for any CLI process to stop, then inspect the captured project's local registration before retrying.";
+                        }
+                        else if (error is ClaudeCliMcpConfigurator.ConfigurationFailureException recovery)
+                        {
+                            retry = recovery.CanRetry;
+                            result = recovery.Message;
+                        }
+                        else if (error is TimeoutException || configurationTask.IsCanceled)
+                        {
+                            retry = false;
+                            result =
+                                "Configuration outcome is uncertain. Wait for any CLI process to stop, then inspect the selected local registration before retrying.";
+                        }
+                        else
+                            result = "Configuration failed or validation is incomplete. Check client instructions, installation and permissions, then retry.";
+                        if (!retry)
+                        {
+                            inspectionRequiredClients.Add(configuringClient.Id);
+                            result += " After inspection, reopen Setup to start a new attempt.";
+                        }
                     }
+                    clientSelections[configuringClient.Id] = retry;
+                    clientResults[configuringClient.Id] = result;
+                    configurationTask = null;
+                    configuringClient = null;
+                    configurationContextIsCurrent = null;
                 }
-                catch (Exception)
+                if (configurationQueue.Count == 0)
+                    break;
+                configuringClient = configurationQueue.Dequeue();
+                clientsResult.text = "Configuring " + configuringClient.DisplayName + "...";
+                try
                 {
-                    failure++;
-                    clientSelections[client.Id] = true;
-                    result = "Configuration failed. Check the client installation and file permissions, then retry.";
+                    configurationTask =
+                        configureClientAsync != null
+                            ? configureClientAsync(configuringClient, configurationLifetime.Token)
+                            : BeginClientConfiguration(configuringClient, configurationLifetime.Token);
+                    if (configurationTask == null)
+                        throw new InvalidOperationException();
                 }
-                clientResults[client.Id] = result;
-                if (clientResultLabels.TryGetValue(client.Id, out var label))
-                    label.text = result;
+                catch (Exception error)
+                {
+                    configurationTask = Task.FromException<IMcpClientConfigurator>(error);
+                }
             }
-            clientsResult.text = success + " configured, " + failure + " failed in this attempt. ";
-            if (failure > 0)
+            configurationInProgress = false;
+            EditorApplication.update -= PollClientConfiguration;
+            PopulateClientsList();
+            skipClientsButton.SetEnabled(true);
+            clientsResult.text = configurationSuccess + " configured, " + configurationFailure + " failed in this attempt. ";
+            if (configurationFailure > 0)
             {
-                clientsResult.text += "Failed selections are kept. Retry them or choose Skip to finish without them.";
+                clientsResult.text +=
+                    inspectionRequiredClients.Count > 0
+                        ? "Some outcomes require inspection before another attempt. Review each result; choose Skip to finish without them."
+                        : "Failed selections are kept. Retry them or choose Skip to finish without them.";
                 configureSelectedButton.text = "Retry selected failures";
                 return;
             }
-            if (success == 0)
+            if (configurationSuccess == 0)
             {
                 clientsResult.text = "Select a client to configure, or choose Skip to finish.";
                 return;
             }
             CompleteSetup();
+        }
+
+        private Task<IMcpClientConfigurator> BeginClientConfiguration(IMcpClientConfigurator client, CancellationToken token)
+        {
+            if (client is ClaudeCliMcpConfigurator claude)
+                return ConfigureCapturedClaudeAsync(claude, token);
+            configureClient(client);
+            return Task.FromResult(client);
+        }
+
+        private async Task<IMcpClientConfigurator> ConfigureCapturedClaudeAsync(ClaudeCliMcpConfigurator client, CancellationToken token)
+        {
+            // Capture Editor APIs and preferences before yielding, following the main
+            // client section's operation-local/captured-values configuration pattern.
+            string project = ClaudeCliMcpConfigurator.GetClientProjectDir();
+            string executable = MCPServiceLocator.Paths.GetClaudeCliPath();
+            string userConfig = ClaudeCliMcpConfigurator.GetUserConfigPath();
+            var operation = client.CreateOperationClient(userConfig);
+            bool http = EditorConfigurationCache.Instance.UseHttpTransport;
+            var connection = http ? HttpEndpointUtility.CaptureConnectionSettings() : null;
+            var transport = HttpEndpointUtility.GetCurrentServerTransport();
+            string profile = http ? null : StartupToolProfile.Selection;
+            string uvx = null,
+                source = null,
+                package = null,
+                flags = null;
+            configurationContextIsCurrent = () =>
+            {
+                try
+                {
+                    var currentConnection = http ? HttpEndpointUtility.CaptureConnectionSettings() : null;
+                    if (!http)
+                    {
+                        var (currentUvx, currentSource, currentPackage) = AssetPathUtility.GetUvxCommandParts();
+                        if (uvx != currentUvx || source != currentSource || package != currentPackage)
+                            return false;
+                    }
+                    return project == ClaudeCliMcpConfigurator.GetClientProjectDir()
+                        && executable == MCPServiceLocator.Paths.GetClaudeCliPath()
+                        && userConfig == ClaudeCliMcpConfigurator.GetUserConfigPath()
+                        && http == EditorConfigurationCache.Instance.UseHttpTransport
+                        && transport == HttpEndpointUtility.GetCurrentServerTransport()
+                        && (
+                            http
+                                ? connection.McpRpcUrl == currentConnection.McpRpcUrl && connection.ApiKey == currentConnection.ApiKey
+                                : profile == StartupToolProfile.Selection
+                        );
+                }
+                catch
+                {
+                    return false;
+                }
+            };
+            string prepend =
+                Application.platform == RuntimePlatform.OSXEditor ? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+                : Application.platform == RuntimePlatform.LinuxEditor ? "/usr/local/bin:/usr/bin:/bin"
+                : null;
+            string executableDirectory = string.IsNullOrEmpty(executable) ? null : Path.GetDirectoryName(executable);
+            if (!string.IsNullOrEmpty(executableDirectory))
+                prepend = string.IsNullOrEmpty(prepend) ? executableDirectory : executableDirectory + ":" + prepend;
+            IList<string> fromArguments = null;
+            bool refresh = false;
+            if (!http)
+            {
+                (uvx, source, package) = AssetPathUtility.GetUvxCommandParts();
+                fromArguments = AssetPathUtility.GetBetaServerFromArgsList();
+                refresh = AssetPathUtility.ShouldForceUvxRefresh();
+                flags = await AssetPathUtility.GetUvxDevFlagsAsync(uvx, source, refresh, token);
+            }
+            token.ThrowIfCancellationRequested();
+            if (!configurationContextIsCurrent())
+                throw new OperationCanceledException();
+            await Task.Run(() =>
+            {
+                token.ThrowIfCancellationRequested();
+                operation.ConfigureWithCapturedValues(
+                    project,
+                    executable,
+                    prepend,
+                    http,
+                    connection?.McpRpcUrl,
+                    uvx,
+                    null,
+                    package,
+                    flags,
+                    connection?.Remote == true ? connection.ApiKey : null,
+                    transport,
+                    false,
+                    profile,
+                    fromArguments
+                );
+            });
+            return operation;
         }
 
         private void OnOpenPythonInstallClicked()
@@ -443,6 +647,29 @@ namespace MCPForUnity.Editor.Windows
 
         private void OnDisable()
         {
+            configurationLifetime.Cancel();
+            if (configuringClient != null)
+            {
+                inspectionRequiredClients.Add(configuringClient.Id);
+                clientSelections[configuringClient.Id] = false;
+                clientResults[configuringClient.Id] =
+                    "Configuration was interrupted. Wait for any CLI process to stop, then inspect the selected local registration. After inspection, reopen Setup to start a new attempt.";
+            }
+            configurationQueue.Clear();
+            configurationInProgress = false;
+            EditorApplication.update -= PollClientConfiguration;
+            // Observe faults without accessing a disposed window or publishing late UI state.
+            if (configurationTask != null)
+                _ = configurationTask.ContinueWith(
+                    task =>
+                    {
+                        _ = task.Exception;
+                    },
+                    TaskContinuationOptions.OnlyOnFaulted
+                );
+            configurationTask = null;
+            configuringClient = null;
+            configurationContextIsCurrent = null;
             EditorApplication.update -= PollUvInstall;
             EditorApplication.update -= PollDependencies;
             EditorApplication.delayCall -= BeginInitialDependencyCheck;

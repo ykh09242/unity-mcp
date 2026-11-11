@@ -18,6 +18,8 @@ using MCPForUnity.Editor.Windows;
 using MCPForUnity.Editor.Windows.Components.AssetGen;
 using MCPForUnity.Editor.Windows.Components.ClientConfig;
 using MCPForUnity.Editor.Windows.Components.Connection;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.UIElements;
@@ -35,6 +37,14 @@ namespace MCPForUnityTests.EditMode.Windows
         private const string Base = "Packages/com.ykh09242.unity-mcp/Editor/Windows/";
 
         private sealed class EvidenceWindow : EditorWindow { }
+
+        private sealed class SetupClaudeClient : ClaudeCliMcpConfigurator
+        {
+            internal SetupClaudeClient()
+                : base(new McpClient { name = "Synthetic Claude" }) { }
+
+            public override bool IsInstalled => true;
+        }
 
         private static void Set(object target, string name, object value)
         {
@@ -306,6 +316,173 @@ namespace MCPForUnityTests.EditMode.Windows
             }
         }
 
+        [TestCase("retryable")]
+        [TestCase("uncertain")]
+        [TestCase("cancelled")]
+        [TestCase("disposed")]
+        [TestCase("context-changed")]
+        [TestCase("context-changed-retryable-failure")]
+        public void PendingSetupConfigurationRemainsResponsiveAndOwnsItsCompletion(string outcome)
+        {
+            WithReadySetup(
+                (window, _) =>
+                {
+                    var client = new Client { Id = "synthetic-client" };
+                    var pending = new TaskCompletionSource<IMcpClientConfigurator>();
+                    int calls = 0,
+                        completed = 0;
+                    System.Threading.CancellationToken capturedToken = default;
+                    Set(window, "getClients", (Func<IReadOnlyList<IMcpClientConfigurator>>)(() => new[] { client }));
+                    Set(window, "finishSetup", (Action)(() => completed++));
+                    Set(
+                        window,
+                        "configureClientAsync",
+                        (Func<IMcpClientConfigurator, System.Threading.CancellationToken, Task<IMcpClientConfigurator>>)(
+                            (selected, token) =>
+                            {
+                                Assert.AreSame(client, selected);
+                                capturedToken = token;
+                                calls++;
+                                return calls == 1 ? pending.Task : Task.FromResult(selected);
+                            }
+                        )
+                    );
+                    Invoke(window, "ShowClientsStep");
+                    Invoke(window, "OnConfigureSelectedClicked");
+                    Invoke(window, "OnConfigureSelectedClicked");
+                    Invoke(window, "PollClientConfiguration");
+                    var root = window.rootVisualElement;
+                    Assert.AreEqual(1, calls, "Pending configuration must not submit twice.");
+                    Assert.IsFalse(root.Q<Button>("configure-selected-button").enabledSelf);
+                    Assert.IsFalse(root.Q<Button>("skip-clients-button").enabledSelf);
+                    StringAssert.Contains("Configuring", root.Q<Label>("clients-result").text);
+                    Assert.AreEqual(0, completed);
+                    if (outcome == "disposed")
+                    {
+                        string before = root.Q<Label>("clients-result").text;
+                        Invoke(window, "OnDisable");
+                        Assert.IsTrue(capturedToken.IsCancellationRequested);
+                        pending.SetResult(client);
+                        Invoke(window, "PollClientConfiguration");
+                        Assert.AreEqual(before, root.Q<Label>("clients-result").text, "A late result must not touch disposed UI.");
+                        Invoke(window, "OnEnable");
+                        Invoke(window, "ShowClientsStep");
+                    }
+                    else
+                    {
+                        if (outcome == "context-changed-retryable-failure")
+                        {
+                            Set(window, "configurationContextIsCurrent", (Func<bool>)(() => false));
+                            pending.SetException(
+                                new ClaudeCliMcpConfigurator.ConfigurationFailureException(
+                                    "Previous local registrations were restored; retry is available for the captured target.",
+                                    true
+                                )
+                            );
+                        }
+                        else if (outcome == "context-changed")
+                        {
+                            Set(window, "configurationContextIsCurrent", (Func<bool>)(() => false));
+                            pending.SetResult(client);
+                        }
+                        else if (outcome == "cancelled")
+                            pending.SetCanceled();
+                        else if (outcome == "uncertain")
+                            pending.SetException(
+                                new ClaudeCliMcpConfigurator.ConfigurationFailureException(
+                                    "Wait for the CLI to stop, then inspect the selected local registration before retrying.",
+                                    false
+                                )
+                            );
+                        else
+                            pending.SetException(new InvalidOperationException("synthetic-private-error"));
+                        Invoke(window, "PollClientConfiguration");
+                    }
+                    Assert.IsTrue(root.Q<Button>("skip-clients-button").enabledSelf);
+                    StringAssert.DoesNotContain("synthetic-private-error", root.Q<Label>("clients-result").text);
+                    Invoke(window, "OnConfigureSelectedClicked");
+                    Assert.AreEqual(outcome == "retryable" ? 2 : 1, calls);
+                    Assert.AreEqual(outcome == "retryable" ? 1 : 0, completed);
+                    if (outcome != "retryable")
+                    {
+                        Assert.IsFalse(root.Q<Button>("configure-selected-button").enabledSelf);
+                        Assert.That(root.Q("clients-list").Q<Label>(className: "help-text").text, Does.Contain("inspect"));
+                    }
+                }
+            );
+        }
+
+        [TestCase("matches")]
+        [TestCase("changed")]
+        [TestCase("missing")]
+        public void SetupCompletesOnlyWhenCapturedClaudeRegistrationStillMatches(string snapshot)
+        {
+            string directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mcp-setup-final-state-" + Guid.NewGuid().ToString("N"));
+            string project = System.IO.Path.Combine(directory, "project");
+            string configuration = System.IO.Path.Combine(directory, ".claude.json");
+            string identity = configuration + "|" + System.IO.Path.GetFullPath(project);
+            System.IO.Directory.CreateDirectory(project);
+            try
+            {
+                var expected = new JObject { ["type"] = "stdio", ["command"] = "synthetic-expected" };
+                var current = snapshot == "changed" ? new JObject { ["type"] = "stdio", ["command"] = "synthetic-concurrent" } : expected;
+                var document = new JObject
+                {
+                    ["projects"] = new JObject { [project] = new JObject { ["mcpServers"] = new JObject { ["UnityMCP"] = current } } },
+                };
+                string written = document.ToString(Formatting.None);
+                System.IO.File.WriteAllText(configuration, written);
+                WithReadySetup(
+                    (window, _) =>
+                    {
+                        var client = new SetupClaudeClient();
+                        var operation = client.CreateOperationClient(configuration);
+                        operation.Client.SetStatus(McpStatus.Configured);
+                        if (snapshot != "missing")
+                        {
+                            foreach (
+                                var field in new Dictionary<string, string>
+                                {
+                                    ["pendingOwnershipProject"] = project,
+                                    ["pendingOwnershipPath"] = identity,
+                                    ["pendingOwnershipSnapshot"] = new JObject { ["UnityMCP"] = expected }.ToString(Formatting.None),
+                                    ["pendingOwnershipEntry"] = expected.ToString(Formatting.None),
+                                }
+                            )
+                                typeof(ClaudeCliMcpConfigurator).GetField(field.Key, Instance).SetValue(operation, field.Value);
+                        }
+                        int completed = 0;
+                        var pending = new TaskCompletionSource<IMcpClientConfigurator>();
+                        Set(window, "getClients", (Func<IReadOnlyList<IMcpClientConfigurator>>)(() => new[] { client }));
+                        Set(window, "finishSetup", (Action)(() => completed++));
+                        Set(
+                            window,
+                            "configureClientAsync",
+                            (Func<IMcpClientConfigurator, System.Threading.CancellationToken, Task<IMcpClientConfigurator>>)((_, token) => pending.Task)
+                        );
+                        Invoke(window, "ShowClientsStep");
+                        Invoke(window, "OnConfigureSelectedClicked");
+                        pending.SetResult(operation);
+                        Invoke(window, "PollClientConfiguration");
+                        Assert.AreEqual(snapshot == "matches" ? 1 : 0, completed, "An earlier Configured status does not verify the final registration.");
+                        Assert.IsFalse(window.rootVisualElement.Q<Button>("configure-selected-button").enabledSelf);
+                        if (snapshot != "matches")
+                        {
+                            StringAssert.Contains("0 configured, 1 failed", window.rootVisualElement.Q<Label>("clients-result").text);
+                            Assert.That(window.rootVisualElement.Q("clients-list").Q<Label>(className: "help-text").text, Does.Contain("inspect"));
+                        }
+                        Assert.AreEqual(written, System.IO.File.ReadAllText(configuration), "Final verification preserves a concurrent registration.");
+                        Assert.AreEqual(snapshot == "matches", GeneratedClientConfigOwnership.Receipt("Claude", identity) != null);
+                    }
+                );
+            }
+            finally
+            {
+                GeneratedClientConfigOwnership.RestoreReceipt("Claude", identity, null);
+                System.IO.Directory.Delete(directory, true);
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void InvalidSavedSetupRemainsRetryableWithoutRepeatingValidatedPeers(bool allInvalid)
@@ -381,7 +558,10 @@ namespace MCPForUnityTests.EditMode.Windows
                     row.SetValueWithoutNotify(true);
                     Invoke(window, "OnConfigureSelectedClicked");
                     CollectionAssert.AreEqual(includeAutomatic ? new[] { "automatic" } : Array.Empty<string>(), configured);
-                    Assert.AreEqual(includeAutomatic, window.rootVisualElement.Q<Button>("configure-selected-button").enabledSelf);
+                    Assert.IsFalse(
+                        window.rootVisualElement.Q<Button>("configure-selected-button").enabledSelf,
+                        "Completed and manual-only clients cannot be submitted again."
+                    );
                 }
             );
         }
@@ -550,6 +730,11 @@ namespace MCPForUnityTests.EditMode.Windows
                 credentials.value = false;
                 var route = root.Q<Button>("provider-settings-audio-fal");
                 Assert.IsNotNull(route);
+                var sound = route.GetFirstAncestorOfType<Foldout>();
+                Assert.IsNotNull(sound);
+                Assert.AreEqual("Sound (fal.ai)", sound.text);
+                sound.value = true;
+                yield return null;
                 route.Focus();
                 yield return null;
                 using (var submit = NavigationSubmitEvent.GetPooled())
@@ -692,7 +877,9 @@ namespace MCPForUnityTests.EditMode.Windows
                 key.value = "synthetic-key";
                 AssetGenPrefs.SetSelectedModel("model", "tripo", "external-synthetic-model");
                 section.Refresh();
-                StringAssert.Contains("external-synthetic-model", root.Q("provider-model-model-tripo").Q<DropdownField>().value);
+                StringAssert.Contains("Saved model unavailable: external-synthetic-model", root.Q<Label>("model-current-model-tripo").text);
+                Assert.AreEqual("external-synthetic-model", AssetGenPrefs.GetSelectedModel("model", "tripo"));
+                Assert.AreEqual("Choose a matching model", root.Q("provider-model-model-tripo").Q<DropdownField>().value);
                 Assert.AreSame(key, root.Q<TextField>("provider-key-tripo"));
                 Assert.AreEqual("synthetic-key", key.value);
                 Assert.IsEmpty(transport.RecordedRequests);

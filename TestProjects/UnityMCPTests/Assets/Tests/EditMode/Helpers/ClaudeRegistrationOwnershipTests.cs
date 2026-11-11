@@ -164,9 +164,10 @@ namespace MCPForUnityTests.Editor.Helpers
                     return arguments.EndsWith(" unitymcp", StringComparison.Ordinal) ? false : RemoveLocal(arguments);
                 return Restore(arguments, previous);
             };
-            var error = Assert.Throws<InvalidOperationException>(Register);
+            var error = Assert.Throws<ClaudeCliMcpConfigurator.ConfigurationFailureException>(Register);
             Assert.IsTrue(JToken.DeepEquals(previous, LocalServers()));
             StringAssert.Contains("restored", error.Message);
+            Assert.IsTrue(error.CanRetry);
             Assert.That(configurator.Status, Is.EqualTo(McpStatus.Error));
             var config = JObject.Parse(File.ReadAllText(configPath));
             Assert.That((string)config["projects"][root]["mcpServers"]["UnityMCP"]["command"], Is.EqualTo("parent"));
@@ -186,10 +187,11 @@ namespace MCPForUnityTests.Editor.Helpers
                 WriteLocal(name, new JObject { ["type"] = "stdio", ["command"] = "concurrent-or-completed-add" });
                 return false;
             };
-            var error = Assert.Throws<InvalidOperationException>(Register);
+            var error = Assert.Throws<ClaudeCliMcpConfigurator.ConfigurationFailureException>(Register);
             Assert.That(configurator.Calls, Has.Count.EqualTo(2));
             Assert.That((string)LocalServers()[name]["command"], Is.EqualTo("concurrent-or-completed-add"));
             StringAssert.Contains("changed", error.Message);
+            Assert.IsFalse(error.CanRetry);
         }
 
         [TestCase(false)]
@@ -205,9 +207,10 @@ namespace MCPForUnityTests.Editor.Helpers
                     Restore(arguments, previous);
                 return false;
             };
-            var error = Assert.Throws<InvalidOperationException>(Register);
+            var error = Assert.Throws<ClaudeCliMcpConfigurator.ConfigurationFailureException>(Register);
             Assert.That(configurator.Calls, Has.Count.EqualTo(3));
             StringAssert.Contains(actuallyRestored ? "restored" : "could not restore", error.Message);
+            Assert.AreEqual(actuallyRestored, error.CanRetry);
             Assert.That(LocalServers().HasValues, Is.EqualTo(actuallyRestored));
         }
 
@@ -220,10 +223,30 @@ namespace MCPForUnityTests.Editor.Helpers
                     return RemoveLocal(arguments);
                 throw new TimeoutException("synthetic uncertainty");
             };
-            var error = Assert.Throws<InvalidOperationException>(Register);
+            var error = Assert.Throws<ClaudeCliMcpConfigurator.ConfigurationFailureException>(Register);
+            Assert.IsFalse(error.CanRetry);
             Assert.That(configurator.Calls, Has.Count.EqualTo(2));
             StringAssert.Contains("still be running", error.Message);
             StringAssert.Contains("not attempted", error.Message);
+        }
+
+        [Test]
+        public void UncertainRecoveryBlocksAnotherAutomaticAttempt()
+        {
+            int adds = 0;
+            configurator.Run = arguments =>
+            {
+                if (arguments.StartsWith("mcp remove ", StringComparison.Ordinal))
+                    return RemoveLocal(arguments);
+                if (++adds == 1)
+                    return false;
+                throw new TimeoutException("synthetic-private-error");
+            };
+            var error = Assert.Throws<ClaudeCliMcpConfigurator.ConfigurationFailureException>(Register);
+            Assert.IsFalse(error.CanRetry);
+            Assert.That(configurator.Calls, Has.Count.EqualTo(3));
+            StringAssert.Contains("recovery CLI may still be running", error.Message);
+            StringAssert.DoesNotContain("synthetic-private-error", error.Message);
         }
 
         [Test]
@@ -236,7 +259,7 @@ namespace MCPForUnityTests.Editor.Helpers
                 WriteLocal("unitymcp", new JObject { ["type"] = "stdio", ["command"] = "concurrent" });
                 return true;
             };
-            var error = Assert.Throws<InvalidOperationException>(Register);
+            var error = Assert.Throws<ClaudeCliMcpConfigurator.ConfigurationFailureException>(Register);
             Assert.That(configurator.Calls, Has.Count.EqualTo(1));
             Assert.That((string)LocalServers()["unitymcp"]["command"], Is.EqualTo("concurrent"));
             StringAssert.Contains("changed", error.Message);
