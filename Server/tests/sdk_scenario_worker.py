@@ -31,7 +31,9 @@ from fastmcp.server.dependencies import without_injected_parameters  # noqa: E40
 from fastmcp.server.sessions import session_id_parameter_names  # noqa: E402
 from fastmcp.tools.function_tool import _wrap_body_errors  # noqa: E402
 from fastmcp.utilities.types import get_cached_typeadapter  # noqa: E402
+from uncalled_for.annotations import _annotation_cache, _metadata_cache  # noqa: E402
 from uncalled_for.introspection import _parameter_cache, _signature_cache  # noqa: E402
+from uncalled_for.references import _reference_cache  # noqa: E402
 
 _ABSENT = object()
 _GLOBALS = [
@@ -104,9 +106,12 @@ def _reset():
     # Recompile/rewrap every case; fail visibly if the pinned SDK changes this interface.
     for cache in _CALLABLE_CACHES:
         cache.cache_clear()
-    # FastMCP's DI signature keys also hold each scenario function and its globals.
+    # FastMCP's DI caches key on scenario callables and retain their globals.
     _parameter_cache.clear()
     _signature_cache.clear()
+    _annotation_cache.clear()
+    _metadata_cache.clear()
+    _reference_cache.clear()
     gc.collect()
 
 
