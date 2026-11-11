@@ -36,11 +36,16 @@ internal static class LifecycleHarness
                         action.Action();
                     }
                     catch (InvalidOperationException error)
-                        when (action.Name.EndsWith(" delete") && error.Message.StartsWith("Credential removal could not be confirmed."))
+                        when (error.Message.StartsWith("Credential removal could not be confirmed.")
+                            || error.Message.StartsWith("Credential storage could not be confirmed.")
+                        )
                     {
                         refused = true;
                     }
-                    Require(refused == action.Name.EndsWith(" delete"), "Delete timeout did not report unconfirmed removal");
+                    Require(
+                        refused == (action.Name.EndsWith(" delete") || action.Name.EndsWith(" set")),
+                        "Mutation timeout did not report an unconfirmed result"
+                    );
                 }
                 int alive = FakeProcess.All.FindAll(p => p.Running).Count;
                 Console.WriteLine("TIMEOUT " + action.Name + ": alive=" + alive);
@@ -93,7 +98,7 @@ internal static class LifecycleHarness
             FakeProcess.Completes = false;
             FakeProcess.PendingReads = true;
             FakeProcess.PendingWrite = true;
-            new LinuxSecretToolKeyStore().Set("fixture", "fixture-input");
+            RequireSaveRefused(new LinuxSecretToolKeyStore());
             var process = FakeProcess.All[^1];
             Require(!process.Running && process.Disposed && process.StreamsDisposed, "Timed-out IO retained owned resources");
             Require(process.IO.TrueForAll(task => task.IsCompleted), "Pipe tasks remained pending after disposal");
@@ -102,10 +107,48 @@ internal static class LifecycleHarness
             Check(stage + " exception releases all acquired resources", () =>
             {
                 FakeProcess.FailureStage = stage;
-                new LinuxSecretToolKeyStore().Set("fixture", "fixture-input");
+                if (stage == "dispose")
+                    new LinuxSecretToolKeyStore().Set("fixture", "fixture-input");
+                else
+                    RequireSaveRefused(new LinuxSecretToolKeyStore());
                 var process = FakeProcess.All[^1];
                 Require(!process.Running && process.Disposed && process.StreamsDisposed, "Exception bypassed owned resource cleanup");
             });
+        foreach (bool mac in new[] { false, true })
+        {
+            foreach (bool replacing in new[] { false, true })
+            {
+                foreach (string failure in new[] { "nonzero", "start", "timeout" })
+                    Check((mac ? "mac" : "linux") + (replacing ? " replacement " : " initial save ") + failure + " refuses unconfirmed save", () =>
+                    {
+                        FakeProcess.TrackStoredValue = true;
+                        FakeProcess.StoredValue = replacing ? "fixture-old" : null;
+                        ISecureKeyStore store = mac ? new MacKeychainKeyStore() : new LinuxSecretToolKeyStore();
+                        Require(store.Has("fixture") == replacing, "Initial presence changed");
+                        FakeProcess.ErrorOutput = "fixture-input";
+                        FakeProcess.ExitStatus = failure == "nonzero" ? 9 : 0;
+                        FakeProcess.FailureStage = failure == "start" ? "start" : null;
+                        FakeProcess.Completes = failure != "timeout";
+                        RequireSaveRefused(store);
+                        FakeProcess.ExitStatus = 0;
+                        FakeProcess.FailureStage = null;
+                        FakeProcess.Completes = true;
+                        Require(store.Has("fixture") == replacing, "Failed save changed presence");
+                        Require(FakeProcess.StoredValue == (replacing ? "fixture-old" : null), "Failed save replaced stored value");
+                        Require(FakeProcess.All.TrueForAll(p => p.Disposed && p.StreamsDisposed && !p.Running), "Failed save retained owned resources");
+                    });
+                Check((mac ? "mac" : "linux") + (replacing ? " replacement" : " initial save") + " confirms success", () =>
+                {
+                    FakeProcess.TrackStoredValue = true;
+                    FakeProcess.StoredValue = replacing ? "fixture-old" : null;
+                    ISecureKeyStore store = mac ? new MacKeychainKeyStore() : new LinuxSecretToolKeyStore();
+                    store.Set("fixture", "fixture-input");
+                    Require(store.TryGet("fixture", out string value) && value == "fixture-input", "Successful save did not persist entered value");
+                    store.Set("fixture", "");
+                    Require(!store.Has("fixture"), "Empty save no longer deletes stored value");
+                });
+            }
+        }
         Console.WriteLine("RESULT: " + (checks - failures) + "/" + checks + " passed");
         return failures == 0 ? 0 : 1;
     }
@@ -121,6 +164,9 @@ internal static class LifecycleHarness
         FakeProcess.PendingReads = false;
         FakeProcess.PendingWrite = false;
         FakeProcess.FailureStage = null;
+        FakeProcess.TrackStoredValue = false;
+        FakeProcess.StoredValue = null;
+        FakeProcess.ErrorOutput = "";
         try
         {
             action();
@@ -137,6 +183,21 @@ internal static class LifecycleHarness
     {
         if (!condition)
             throw new InvalidOperationException(message);
+    }
+
+    private static void RequireSaveRefused(ISecureKeyStore store)
+    {
+        try
+        {
+            store.Set("fixture", "fixture-input");
+        }
+        catch (InvalidOperationException error)
+        {
+            Require(error.Message.StartsWith("Credential storage could not be confirmed."), "Save failure was not sanitized");
+            Require(!error.Message.Contains("fixture") && error.InnerException == null, "Save failure exposed input or process details");
+            return;
+        }
+        throw new InvalidOperationException("Unconfirmed save returned success");
     }
 }
 
@@ -171,6 +232,9 @@ namespace System.Diagnostics
         public static string FailureStage;
         public static int ExitStatus;
         public static string Output;
+        public static string ErrorOutput;
+        public static bool TrackStoredValue;
+        public static string StoredValue;
         public ProcessStartInfo StartInfo { get; set; }
         public bool Running;
         public bool Disposed;
@@ -182,8 +246,8 @@ namespace System.Diagnostics
         public string InputValue => writer?.Value.ToString();
         public bool StreamsDisposed => readers.TrueForAll(reader => reader.Closed) && (writer == null || writer.Closed && writer.Pipe.Closed);
         public StreamWriter StandardInput => writer ??= new Writer(this);
-        public StreamReader StandardOutput => GetReader(Output);
-        public StreamReader StandardError => FailureStage == "getter" ? throw new IOException("fixture getter failure") : GetReader("");
+        public StreamReader StandardOutput => GetReader(TrackStoredValue ? StoredValue ?? "" : Output);
+        public StreamReader StandardError => FailureStage == "getter" ? throw new IOException("fixture getter failure") : GetReader(ErrorOutput);
         public bool HasExited => !Running;
         public int ExitCode => Running ? throw new InvalidOperationException("Process has not exited") : ExitStatus;
 
@@ -206,7 +270,18 @@ namespace System.Diagnostics
         public bool WaitForExit(int timeout)
         {
             if (Completes || Kills != 0)
+            {
                 Running = false;
+                if (TrackStoredValue && Completes && ExitStatus == 0)
+                {
+                    if (StartInfo.ArgumentList.Contains("store"))
+                        StoredValue = InputValue;
+                    if (StartInfo.ArgumentList.Contains("add-generic-password"))
+                        StoredValue = StartInfo.ArgumentList[^1];
+                    if (StartInfo.ArgumentList.Contains("clear") || StartInfo.ArgumentList.Contains("delete-generic-password"))
+                        StoredValue = null;
+                }
+            }
             return !Running;
         }
 

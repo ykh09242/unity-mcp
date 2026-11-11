@@ -13,7 +13,7 @@ namespace MCPForUnity.Editor.Security
         /// <summary>Resolve the key for a provider id (e.g. "tripo"). Returns false when absent.</summary>
         bool TryGet(string providerId, out string apiKey);
 
-        /// <summary>Store (or overwrite) the key for a provider id. Empty/null deletes it.</summary>
+        /// <summary>Store (or overwrite) the key for a provider id. Empty/null deletes it. Throws when storage cannot be confirmed.</summary>
         void Set(string providerId, string apiKey);
 
         /// <summary>Remove the stored key for a provider id (no-op when absent).</summary>

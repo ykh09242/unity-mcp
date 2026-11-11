@@ -66,18 +66,15 @@ namespace MCPForUnity.Editor.Security
                 Delete(providerId);
                 return;
             }
-            try
-            {
-                var psi = NewPsi(redirectIn: true);
-                psi.ArgumentList.Add("store");
-                psi.ArgumentList.Add("--label=MCPForUnity AssetGen");
-                psi.ArgumentList.Add("service");
-                psi.ArgumentList.Add(Service);
-                psi.ArgumentList.Add("account");
-                psi.ArgumentList.Add(providerId);
-                KeyStoreProcess.Run(psi, apiKey);
-            }
-            catch { /* best effort */ }
+            var psi = NewPsi(redirectIn: true);
+            psi.ArgumentList.Add("store");
+            psi.ArgumentList.Add("--label=MCPForUnity AssetGen");
+            psi.ArgumentList.Add("service");
+            psi.ArgumentList.Add(Service);
+            psi.ArgumentList.Add("account");
+            psi.ArgumentList.Add(providerId);
+            if (KeyStoreProcess.Run(psi, apiKey).code != 0)
+                throw new InvalidOperationException("Credential storage could not be confirmed. Check secret-service access and retry.");
         }
 
         public void Delete(string providerId)

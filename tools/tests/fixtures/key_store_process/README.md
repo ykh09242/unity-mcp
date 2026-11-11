@@ -16,8 +16,11 @@ No fixture calls an operating-system credential service or uses actual keys.
   seven invocation paths, exposed-stream disposal, pending IO cleanup, start /
   stream setup / read / write / disposal failures, and existing value, stdin,
   structured-argument and nonzero-exit behavior.
-  Linux and macOS delete timeouts must report unconfirmed credential removal;
+  Linux and macOS save/delete timeouts must report an unconfirmed mutation;
   each of the 100 attempts still must dispose every process and exposed stream.
+  Initial saves and replacements also exercise nonzero exits, startup failures,
+  timeouts and successful writes with a synthetic retained key. Failed saves
+  report sanitized errors and cannot count an older key as a successful write.
 - `ProcessHarness` runs the production helper against real child processes of
   the fixture executable. It checks simultaneous output draining, 256 KiB full
   pipes, a 4 MiB blocked stdin write, timeout termination, failed startup and

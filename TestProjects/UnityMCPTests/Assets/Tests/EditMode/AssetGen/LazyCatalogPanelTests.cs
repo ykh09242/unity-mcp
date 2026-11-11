@@ -40,6 +40,29 @@ namespace MCPForUnityTests.Editor.AssetGen
             public void Delete(string id) { }
         }
 
+        private sealed class SaveKeys : ISecureKeyStore
+        {
+            public string Value;
+            public bool RefuseSave = true;
+
+            public bool Has(string id) => !string.IsNullOrEmpty(Value);
+
+            public bool TryGet(string id, out string key)
+            {
+                key = Value;
+                return Has(id);
+            }
+
+            public void Set(string id, string key)
+            {
+                if (RefuseSave)
+                    throw new InvalidOperationException("synthetic private process detail " + key);
+                Value = key;
+            }
+
+            public void Delete(string id) => Value = null;
+        }
+
         private FakeHttpTransport fal,
             router;
         private string directory;
@@ -362,6 +385,37 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         private sealed class CategoryWindow : EditorWindow { }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void FailedKeySaveRetainsDraftUntilConfirmedRetry(bool replacing)
+        {
+            var keys = new SaveKeys { Value = replacing ? "synthetic-old" : null };
+            SecureKeyStore.OverrideForTests(keys);
+            var root = ProviderRoot();
+            using var attached = new AttachedProviderRoot(root);
+            new McpAssetGenSection(root, new MemorySettings());
+            var field = root.Q<TextField>("provider-key-fal");
+            var status = root.Q("provider-credential-fal").Q<Label>(className: "provider-status");
+            var save = root.Q<Button>("provider-save-fal");
+            var invoke = typeof(Clickable).GetMethod("Invoke", BindingFlags.Instance | BindingFlags.NonPublic);
+            field.value = "  synthetic-replacement  ";
+            invoke.Invoke(save.clickable, new object[] { null });
+            Assert.AreEqual("  synthetic-replacement  ", field.value);
+            Assert.AreEqual(replacing ? "synthetic-old" : null, keys.Value);
+            StringAssert.Contains("Save failed", status.text);
+            StringAssert.DoesNotContain("synthetic", status.text);
+            Assert.IsFalse(status.ClassListContains("status-success"));
+            Assert.IsTrue(field.isPasswordField);
+            keys.RefuseSave = false;
+            invoke.Invoke(save.clickable, new object[] { null });
+            Assert.IsEmpty(field.value);
+            Assert.AreEqual("synthetic-replacement", keys.Value);
+            StringAssert.Contains("Key saved", status.text);
+            Assert.IsTrue(status.ClassListContains("status-success"));
+            Assert.IsEmpty(fal.RecordedRequests);
+            Assert.IsEmpty(router.RecordedRequests);
+        }
 
         [Test]
         public void ProviderCategoriesPreserveUserStateAcrossRefreshAndChildChanges()

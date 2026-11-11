@@ -534,7 +534,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
 
             row.Add(fieldRow);
 
-            // Persist the typed key, then clear the field so the secret is never displayed.
+            // A confirmed Set, rather than presence of an older key, determines save success.
             void SaveKeyFromField()
             {
                 string text = keyField.text?.Trim();
@@ -546,9 +546,16 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 try
                 {
                     SecureKeyStore.Current.Set(id, text);
-                    keyField.SetValueWithoutNotify(string.Empty);
-                    UpdateKeyStatus(statusLabel, id);
+                    bool environmentKey = SecureKeyStore.Current is EnvOverlayKeyStore overlay && overlay.HasEnvironmentKey(id);
                     RebuildIfSharedKey(id);
+                    keyField.SetValueWithoutNotify(string.Empty);
+                    SetStatus(
+                        statusLabel,
+                        environmentKey
+                            ? "Key saved · environment override remains active · authentication not checked"
+                            : "Key saved · authentication not checked",
+                        true
+                    );
                 }
                 catch (Exception)
                 {

@@ -39,7 +39,8 @@ namespace MCPForUnity.Editor.Security
                 return;
             }
             // -U overwrites an existing item for this service/account.
-            Run("add-generic-password", "-U", "-s", Service, "-a", providerId, "-w", apiKey);
+            if (Run("add-generic-password", "-U", "-s", Service, "-a", providerId, "-w", apiKey).code != 0)
+                throw new InvalidOperationException("Credential storage could not be confirmed. Check Keychain access and retry.");
         }
 
         public void Delete(string providerId)
