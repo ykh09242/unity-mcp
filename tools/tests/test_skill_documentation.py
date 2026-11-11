@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import re
 import unittest
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from urllib.parse import unquote, urlsplit
 
 
@@ -17,6 +19,65 @@ SKILLS = (
 )
 FENCES = re.compile(r"^```([^\n]*)\n(.*?)^```\s*$", re.MULTILINE | re.DOTALL)
 LINKS = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+
+def action_sequence(expression, tree, path, resolving=frozenset()):
+    """Resolve only static string sequences; never execute product code or imports."""
+    if isinstance(expression, (ast.List, ast.Tuple)):
+        values = [ast.literal_eval(value) for value in expression.elts]
+        if all(isinstance(value, str) for value in values):
+            return values
+    elif isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
+        return action_sequence(expression.left, tree, path, resolving) + action_sequence(
+            expression.right, tree, path, resolving
+        )
+    elif isinstance(expression, ast.Name):
+        key = (path.resolve(), expression.id)
+        if key in resolving:
+            raise ValueError(f"Cyclic action declaration: {expression.id}")
+        resolving = resolving | {key}
+        for statement in tree.body:
+            targets = (
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else [statement.target]
+                if isinstance(statement, ast.AnnAssign)
+                else []
+            )
+            if any(
+                isinstance(target, ast.Name) and target.id == expression.id for target in targets
+            ):
+                return action_sequence(statement.value, tree, path, resolving)
+            if not isinstance(statement, ast.ImportFrom) or statement.level or not statement.module:
+                continue
+            for alias in statement.names:
+                if (alias.asname or alias.name) != expression.id:
+                    continue
+                # Resolve source AST only for repository-local tool helper modules.
+                parts = statement.module.split(".")
+                if parts[:2] != ["services", "tools"] or len(parts) != 3:
+                    raise ValueError(f"Unsupported action import: {statement.module}")
+                folder = (ROOT / "Server/src/services/tools").resolve()
+                imported = (folder / (parts[2] + ".py")).resolve()
+                if not imported.is_relative_to(folder) or not imported.is_file():
+                    raise ValueError(f"Missing contained action declaration: {statement.module}")
+                imported_tree = ast.parse(imported.read_text(encoding="utf-8"))
+                return action_sequence(ast.Name(id=alias.name), imported_tree, imported, resolving)
+    raise ValueError(f"Unsupported static action expression: {ast.dump(expression)}")
+
+
+def literal_values(annotation, tree, path):
+    """Read literal members and explicitly starred static action declarations."""
+    members = (
+        annotation.slice.elts if isinstance(annotation.slice, ast.Tuple) else [annotation.slice]
+    )
+    values = set()
+    for member in members:
+        if isinstance(member, ast.Starred):
+            values.update(action_sequence(member.value, tree, path))
+        else:
+            values.add(ast.literal_eval(member))
+    return values
 
 
 def registered_contracts():
@@ -52,12 +113,7 @@ def registered_contracts():
                                 and isinstance(annotation.value, ast.Name)
                                 and annotation.value.id == "Literal"
                             ):
-                                values = (
-                                    annotation.slice.elts
-                                    if isinstance(annotation.slice, ast.Tuple)
-                                    else [annotation.slice]
-                                )
-                                literals[arg.arg] = {ast.literal_eval(value) for value in values}
+                                literals[arg.arg] = literal_values(annotation, tree, path)
                     tools[name] = (allowed, required, literals)
     # Focused tools are adapters declared in the catalog, not decorated functions.
     catalog = ROOT / "Server/src/services/registry/capability_catalog.py"
@@ -105,6 +161,50 @@ def validate_request(request, tools):
                 raise ValueError("Nested commands cannot select another Editor")
             # Batch dispatches native handlers; all examples here use their shared public keys.
             validate_request(command, tools)
+
+
+class LiteralMetadataParserTests(unittest.TestCase):
+    def test_starred_metadata_resolves_lists_concatenation_and_local_import_without_execution(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools = root / "Server/src/services/tools"
+            tools.mkdir(parents=True)
+            (tools / "shared.py").write_text(
+                'raise RuntimeError("must not execute")\nEXTRA = ["inspect"]\n', encoding="utf-8"
+            )
+            source = (
+                "from services.tools.shared import EXTRA as IMPORTED\n"
+                'BASE: list[str] = ["ping"]\nALL_ACTIONS = BASE + IMPORTED\n'
+                'action: Annotated[str, Literal["status", *ALL_ACTIONS]]\n'
+            )
+            tree = ast.parse(source)
+            annotation = tree.body[-1].annotation.slice.elts[1]
+            with patch(__name__ + ".ROOT", root):
+                values = literal_values(annotation, tree, tools / "fixture.py")
+
+        self.assertEqual(values, {"status", "ping", "inspect"})
+        contracts = {"fixture": ({"action"}, {"action"}, {"action": values})}
+        validate_request({"tool": "fixture", "params": {"action": "inspect"}}, contracts)
+        with self.assertRaises(ValueError):
+            validate_request({"tool": "fixture", "params": {"action": "invented"}}, contracts)
+
+    def test_starred_metadata_rejects_unsupported_or_cyclic_expressions(self):
+        for expression in (
+            'list(["ping"])',
+            '__import__("os").system("must not run")',
+            "UNKNOWN",
+            "ALL_ACTIONS",
+            '"ping"',
+            '[1, "ping"]',
+        ):
+            tree = ast.parse(f"ALL_ACTIONS = {expression}\naction: Literal[*ALL_ACTIONS]\n")
+            with self.subTest(expression=expression), self.assertRaises(ValueError):
+                literal_values(tree.body[-1].annotation, tree, Path(__file__))
+
+    def test_starred_metadata_rejects_nonlocal_imports(self):
+        tree = ast.parse("from external import ACTIONS\naction: Literal[*ACTIONS]\n")
+        with self.assertRaisesRegex(ValueError, "Unsupported action import"):
+            literal_values(tree.body[-1].annotation, tree, Path(__file__))
 
 
 class SkillDocumentationTests(unittest.TestCase):
