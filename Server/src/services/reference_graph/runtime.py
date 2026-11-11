@@ -49,8 +49,8 @@ def blocked_bindings(connection, identity, handles, admission, catalog):
     """Stream one indexed page lookup; retain only blocked handle IDs, not whole histories."""
     result = set()
     for row in connection.execute(
-        "SELECT b.* FROM graph_runtime_bindings b JOIN json_each(?) r ON b.handle=r.value WHERE b.session=?",
-        (_json(list(set(handles))), identity),
+        "SELECT b.* FROM graph_runtime_bindings b WHERE b.session=? AND b.handle IN (SELECT value FROM json_each(?))",
+        (identity, _json(list(set(handles)))),
     ):
         if row["handle"] not in result and not runtime_admitted(dict(row), admission, catalog):
             result.add(row["handle"])

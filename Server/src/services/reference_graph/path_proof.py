@@ -13,10 +13,28 @@ def initialize(connection):
     connection.execute("CREATE INDEX graph_query_proofs_page ON graph_query_proofs(job,seq)")
 
 
+def initialize_counters(connection):
+    """Backfill once in the caller's schema transaction; never cache authorization."""
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(graph_queries)")}
+    for name in ("proof_count", "proof_through"):
+        if name not in columns:
+            connection.execute(
+                f"ALTER TABLE graph_queries ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0"
+            )
+    connection.execute(
+        "UPDATE graph_queries SET proof_count=(SELECT count(*) FROM graph_query_proofs WHERE job=graph_queries.id),proof_through=(SELECT coalesce(max(seq),0) FROM graph_query_proofs WHERE job=graph_queries.id)"
+    )
+    connection.execute(
+        "CREATE TRIGGER IF NOT EXISTS graph_query_proof_insert AFTER INSERT ON graph_query_proofs BEGIN UPDATE graph_queries SET proof_count=proof_count+1,proof_through=max(proof_through,NEW.seq) WHERE id=NEW.job; END"
+    )
+    # Reclamation only deletes retired/finished proof. Keep its published high
+    # water mark unchanged so a partial cleanup cannot validate incomplete proof.
+
+
 def marker(connection, scope: str, job: str) -> dict:
     through, count = connection.execute(
-        "SELECT coalesce(max(seq),0),count(*) FROM graph_query_proofs WHERE job=?", (job,)
-    ).fetchone()
+        "SELECT proof_through,proof_count FROM graph_queries WHERE id=?", (job,)
+    ).fetchone() or (0, 0)
     return {"scope": scope, "through": through, "count": count}
 
 

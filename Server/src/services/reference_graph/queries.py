@@ -67,7 +67,7 @@ class GraphQueries:
                 "CREATE TABLE IF NOT EXISTS graph_queries_schema(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_queries_schema").fetchone()
-            if version and version[0] not in (1, 2, 3, 4, 5):
+            if version and version[0] not in (1, 2, 3, 4, 5, 6):
                 raise ValueError("Unsupported graph query schema")
             if version is None:
                 for statement in (
@@ -105,6 +105,9 @@ class GraphQueries:
                 # Empty work queues preserve existing jobs and legacy snapshots.
                 reclamation.initialize(connection)
                 connection.execute("UPDATE graph_queries_schema SET version=5")
+            if version is None or version[0] < 6:
+                path_proof.initialize_counters(connection)
+                connection.execute("UPDATE graph_queries_schema SET version=6")
             snapshot_storage.initialize(connection)
 
     @staticmethod

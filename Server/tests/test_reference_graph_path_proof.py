@@ -253,3 +253,123 @@ def test_legacy_inline_path_proof_migrates_without_losing_prior_evidence(protect
         "owner", "missing", direction="outgoing", limit=260, cursor=first["next_cursor"]
     )
     assert sum(map(len, path_proof.batches(store, result))) == 260
+
+
+def test_proof_counter_migration_backfills_transactionally_then_resumes(
+    protected_path, monkeypatch
+):
+    workspace, first = protected_path
+    store, job = workspace.store, first["query_id"]
+    with store._connect(write=True) as db:
+        db.execute("DROP TRIGGER IF EXISTS graph_query_proof_insert")
+        columns = {row[1] for row in db.execute("PRAGMA table_info(graph_queries)")}
+        for column in ("proof_count", "proof_through"):
+            if column in columns:
+                db.execute(f"ALTER TABLE graph_queries DROP COLUMN {column}")
+        db.execute("UPDATE graph_queries_schema SET version=5")
+    migrate = getattr(path_proof, "initialize_counters", lambda db: None)
+
+    def interrupted(db):
+        migrate(db)
+        raise InterruptedError("proof migration rollback")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(path_proof, "initialize_counters", interrupted, raising=False)
+        with pytest.raises(InterruptedError, match="migration"):
+            GraphQueries(store)
+    with store._connect() as db:
+        assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 5
+        assert "proof_count" not in {
+            row[1] for row in db.execute("PRAGMA table_info(graph_queries)")
+        }
+        assert (
+            db.execute("SELECT count(*) FROM graph_query_proofs WHERE job=?", (job,)).fetchone()[0]
+            == 260
+        )
+    queries = GraphQueries(GraphStore(store.path, store.scope))
+    with store._connect() as db:
+        assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 6
+        assert path_proof.marker(db, store.scope.key, job) == first["_search_proof"]
+    result = queries.path(
+        "owner", "missing", direction="outgoing", limit=260, cursor=first["next_cursor"]
+    )
+    assert result["_search_proof"] == first["_search_proof"]
+    assert (
+        queries.path(
+            "owner", "missing", direction="outgoing", limit=260, cursor=first["next_cursor"]
+        )
+        == result
+    )
+    assert sum(map(len, path_proof.batches(store, result))) == 260
+
+
+def test_proof_counters_ignore_duplicates_and_rollback_new_evidence(protected_path):
+    workspace, result = protected_path
+    store, job = workspace.store, result["query_id"]
+    with store._connect(write=True) as db:
+        row = db.execute(
+            "SELECT identity,payload FROM graph_query_proofs WHERE job=? LIMIT 1", (job,)
+        ).fetchone()
+        before = tuple(
+            db.execute(
+                "SELECT proof_count,proof_through FROM graph_queries WHERE id=?", (job,)
+            ).fetchone()
+        )
+        db.execute(
+            "INSERT OR IGNORE INTO graph_query_proofs(job,identity,payload) VALUES (?,?,?)",
+            (job, *row),
+        )
+        assert (
+            tuple(
+                db.execute(
+                    "SELECT proof_count,proof_through FROM graph_queries WHERE id=?", (job,)
+                ).fetchone()
+            )
+            == before
+        )
+    with pytest.raises(InterruptedError):
+        with store._connect(write=True) as db:
+            db.execute(
+                "INSERT INTO graph_query_proofs(job,identity,payload) VALUES (?,'new','{}')", (job,)
+            )
+            assert path_proof.marker(db, store.scope.key, job)["count"] == before[0] + 1
+            raise InterruptedError("page failed")
+    with store._connect() as db:
+        assert path_proof.marker(db, store.scope.key, job) == result["_search_proof"]
+        assert not db.execute(
+            "SELECT 1 FROM graph_query_proofs WHERE job=? AND identity='new'", (job,)
+        ).fetchone()
+
+
+def test_failed_path_page_rolls_back_proof_and_continuation_together(tmp_path, monkeypatch):
+    store = GraphStore.open(tmp_path, GraphScope("user", "editor", "project"))
+    queries = GraphQueries(store)
+    with store._connect(write=True) as db:
+        db.execute("INSERT INTO sources VALUES ('runtime:fixture',1,1,'{}')")
+        for index in range(3):
+            store._insert_edge(
+                db, "root", "runtime:fixture", Edge(f"n{index}", "runtime"), f"edge{index}"
+            )
+    first = queries.path("root", "missing", direction="outgoing", limit=1)
+
+    def fail(*args):
+        raise InterruptedError("page delivery admission")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(queries, "_finish_page", fail)
+        with pytest.raises(InterruptedError, match="page delivery"):
+            queries.path(
+                "root", "missing", direction="outgoing", limit=1, cursor=first["next_cursor"]
+            )
+    with store._connect() as db:
+        assert path_proof.marker(db, store.scope.key, first["query_id"]) == first["_search_proof"]
+        assert db.execute("SELECT count(*) FROM graph_query_proofs").fetchone()[0] == 1
+    reopened = GraphQueries(GraphStore(store.path, store.scope))
+    result = reopened.path(
+        "root", "missing", direction="outgoing", limit=1, cursor=first["next_cursor"]
+    )
+    assert result["_search_proof"]["count"] == 2
+    assert (
+        reopened.path("root", "missing", direction="outgoing", limit=1, cursor=first["next_cursor"])
+        == result
+    )

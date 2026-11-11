@@ -379,7 +379,7 @@ def test_query_schema_upgrade_preserves_existing_resumable_job(graph):
     upgraded = GraphQueries(store)
     assert upgraded.impact("a", direction="outgoing", limit=1, cursor=page["next_cursor"])
     with store._connect() as db:
-        assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 5
+        assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 6
         assert db.execute("SELECT abandoned FROM graph_queries").fetchone()[0] == 0
 
 

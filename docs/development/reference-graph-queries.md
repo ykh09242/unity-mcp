@@ -83,6 +83,13 @@ cursor sequentially. After completion, large traversal queues and visited rows a
 released automatically. Release the remaining job receipt explicitly when done.
 There is no automatic expiration that abandons an active large traversal.
 
+Path query schema version 6 maintains proof count and last sequence in the same
+transaction as proof insertion and page progress. Its one-time migration backfills
+existing jobs from retained proof rows; rollback preserves the previous schema and
+job state. Duplicate evidence does not increment the counters. These counters only
+avoid repeated SQL aggregation: every proof batch still rechecks current scope,
+revision, source and permission boundaries, including during replay.
+
 Shortest path edges are returned in **target-to-start** order to avoid materializing
 an arbitrarily deep path in memory. Reverse the accumulated path, or order its
 edges by ascending `depth`, for a start-to-target display. A tie chooses the first
