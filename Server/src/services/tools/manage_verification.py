@@ -24,7 +24,7 @@ from services.verification.service import VerificationService
         "No formatter, arbitrary command, scene switching, console clearing, focus change or replay. Unknown console loss prevents a clean pass. "
         "Reports last 30 minutes after settlement, bounded to 16 per owner/project and 64 shared; expired or restarted handles never rerun work."
     ),
-    annotations=ToolAnnotations(title="Manage Verification", destructiveHint=False),
+    annotations=ToolAnnotations(title="Manage Verification", destructiveHint=True),
 )
 async def manage_verification(
     ctx: Context,

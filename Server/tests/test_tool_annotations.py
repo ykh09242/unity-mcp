@@ -60,6 +60,8 @@ READ_ONLY = {
 }
 
 NON_DESTRUCTIVE = {
+    # Owns only temporary diagnostic jobs and baselines; no refresh or project/settings writes.
+    "manage_script_quality",
     # Reads/releases process-local response artifacts; no Unity calls, refresh or project writes.
     "read_response",
     # Owns a temporary preview scene; no prefab save, but edit-time callbacks may execute.

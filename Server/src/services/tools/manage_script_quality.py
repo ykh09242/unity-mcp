@@ -26,7 +26,7 @@ from services.script_quality.service import ScriptQualityService
         "Partial/stale/context diagnostics are distinct from a complete selected-file result."
     ),
     annotations=ToolAnnotations(
-        title="Manage Script Quality", readOnlyHint=True, destructiveHint=False
+        title="Manage Script Quality", readOnlyHint=False, destructiveHint=False
     ),
 )
 async def manage_script_quality(

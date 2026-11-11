@@ -19089,7 +19089,7 @@
         "manage_script_quality": {
           "annotations": {
             "destructiveHint": false,
-            "readOnlyHint": true
+            "readOnlyHint": false
           },
           "inputSchema": {
             "additionalProperties": false,
@@ -21647,7 +21647,7 @@
         },
         "manage_verification": {
           "annotations": {
-            "destructiveHint": false
+            "destructiveHint": true
           },
           "inputSchema": {
             "additionalProperties": false,
@@ -44832,7 +44832,7 @@
         "manage_script_quality": {
           "annotations": {
             "destructiveHint": false,
-            "readOnlyHint": true
+            "readOnlyHint": false
           },
           "inputSchema": {
             "additionalProperties": false,
@@ -47390,7 +47390,7 @@
         },
         "manage_verification": {
           "annotations": {
-            "destructiveHint": false
+            "destructiveHint": true
           },
           "inputSchema": {
             "additionalProperties": false,
