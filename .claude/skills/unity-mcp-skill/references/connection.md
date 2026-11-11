@@ -4,6 +4,8 @@
 
 Use the client's tools/resources/template inventory; do not invent prefixed names such as a particular client's `mcp__...` binding. The names below identify server capabilities, not names to assume are already callable.
 
+The default `core` catalog exposes focused tools such as `scene_inspect`, `scene_lifecycle`, `gameobject_create`, `gameobject_edit` and `asset_inspect`. Combined tools such as `manage_scene`, `manage_gameobject`, `manage_asset`, `manage_prefabs`, `manage_camera`, `manage_graphics`, `manage_physics` and `manage_ui` belong to the optional `legacy` compatibility group. Prefer the focused schema; activate `legacy` explicitly only when an existing integration needs its combined actions. Other optional groups are named in [tools-reference.md](tools-reference.md).
+
 If a tool is absent, check its group and the selected Editor's enabled tools. When advertised:
 
 ```json
@@ -40,7 +42,9 @@ Project custom tools may be advertised directly or through `execute_custom_tool`
 
 Read `mcpforunity://instances` when multiple projects or a stale selection make the target unclear. Prefer the returned full `Name@hash` identifier.
 
-For a stateful session, the selection tool stores a session default:
+Modern tools route explicitly with `unity_instance` on every request; modern resources use `_meta.unity_instance`. Modern `set_active_instance` refuses persistent selection. A sole available Editor can be selected automatically for that request, without creating a stored default.
+
+Only a stateful **legacy MCP session** can store a default through this compatibility call. This is an MCP connection's state, not a Codex chat or agent's private selection:
 
 ```json
 {"tool":"set_active_instance","params":{"instance":"MyProject@abc123"}}
@@ -48,11 +52,13 @@ For a stateful session, the selection tool stores a session default:
 
 For explicit per-request targeting, an advertised tool schema can include `unity_instance`:
 
+<!-- default-core:start -->
 ```json
-{"tool":"manage_scene","params":{"action":"get_active","unity_instance":"MyProject@abc123"}}
+{"tool":"scene_inspect","params":{"action":"get_active","unity_instance":"MyProject@abc123"}}
 ```
+<!-- default-core:end -->
 
-For resource requests, the server accepts `_meta.unity_instance`; use the client's supported metadata interface if available. Otherwise select a stateful session default before reading. Sessionless clients must supply request targeting and cannot rely on `set_active_instance` persisting. A selector changes that request, not the session default. In a batch, place `unity_instance` on the outer call only; nested commands cannot select different Editors.
+For resource requests, use the client's supported `_meta.unity_instance` interface. A legacy session can instead use its stored default; modern clients without resource metadata support must use an unambiguous sole Editor or report the targeting limit. A per-request selector does not change a stored legacy default. In a batch, place `unity_instance` on the outer call only; nested commands cannot select different Editors.
 
 Confirm `data.projectRoot` from `mcpforunity://project/info` against the user's intended project. A remote Editor's path is not evidence that the same path exists or is writable on the agent's host.
 

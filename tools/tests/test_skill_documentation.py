@@ -59,6 +59,21 @@ def registered_contracts():
                                 )
                                 literals[arg.arg] = {ast.literal_eval(value) for value in values}
                     tools[name] = (allowed, required, literals)
+    # Focused tools are adapters declared in the catalog, not decorated functions.
+    catalog = ROOT / "Server/src/services/registry/capability_catalog.py"
+    for node in ast.walk(ast.parse(catalog.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != "_feature":
+            continue
+        name, source, _, _, actions, parameters = map(ast.literal_eval, node.args[:6])
+        allowed, required, literals = tools[source]
+        admitted = {"action", *parameters.split()}
+        tools[name] = (
+            allowed & admitted,
+            (required & admitted) | {"action"},
+            {**literals, "action": set(actions.split())},
+        )
     return tools, resources
 
 

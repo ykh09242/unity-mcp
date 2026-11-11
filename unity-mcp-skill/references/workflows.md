@@ -2,6 +2,8 @@
 
 Choose the recipe relevant to the request. The JSON envelopes describe a logical tool and its arguments; invoke the corresponding exposed client tool rather than treating these as a separate API. Replace example names/paths/IDs with inspected targets.
 
+Examples without routing assume an unambiguous sole Editor. Otherwise add the selected `unity_instance` to every modern tool request and `_meta.unity_instance` to resource requests; follow [connection.md](connection.md). Optional operations below require their advertised group/tool to be available first.
+
 ## Concurrent Calls And Coordination
 
 Parallelize independent reads whose inputs and Editor target are already known. Keep dependencies ordered: inspect before choosing a target, wait for creation before using its returned ID, and verify a mutation after it settles. A read-looking name or discovery hint does not establish concurrency safety; supported connections classify the actual operation, including preflight and callback effects. Unknown/custom handlers are conservative.
@@ -12,6 +14,7 @@ Pending jobs can retain barriers through native cleanup after an initial respons
 
 ## Objects And Scenes
 
+<!-- default-core:start -->
 Find the target rather than replacing the whole scene:
 
 ```json
@@ -21,18 +24,29 @@ Find the target rather than replacing the whole scene:
 Read the returned ID through `mcpforunity://scene/gameobject/{instance_id}` and its components. If several objects match, resolve the intended scene/path. Then modify by ID:
 
 ```json
-{"tool":"manage_gameobject","params":{"action":"modify","target":"12345","search_method":"by_id","position":[0,1,0]}}
+{"tool":"gameobject_edit","params":{"action":"modify","target":"12345","search_method":"by_id","position":[0,1,0]}}
 ```
 
 A creation/duplicate response supplies the new identity; use it for subsequent component/material configuration. Prefab placement:
 
 ```json
-{"tool":"manage_gameobject","params":{"action":"create","name":"PlayerInstance","prefab_path":"Assets/Prefabs/Player.prefab","position":[0,0,0]}}
+{"tool":"gameobject_create","params":{"action":"create","name":"PlayerInstance","prefab_path":"Assets/Prefabs/Player.prefab","position":[0,0,0]}}
 ```
 
-If the request really is a new scene, inspect unsaved state before `manage_scene(action="create")`. Save only the requested scene/destination, and verify the full path; do not routinely create, save or close unrelated scenes. Inspect `manage_scene(action="get_loaded_scenes")` for additive workflows.
+If the request really is a new scene, inspect unsaved state before `scene_lifecycle(action="create")`. Save only the requested scene/destination, and verify the full path; do not routinely create, save or close unrelated scenes. Inspect loaded scenes for additive workflows:
+
+```json
+{"tool":"scene_inspect","params":{"action":"get_loaded_scenes"}}
+```
+
+Use the intended destination for an explicitly requested save:
+
+```json
+{"tool":"scene_lifecycle","params":{"action":"save","path":"Assets/Scenes/Requested.unity"}}
+```
 
 For large hierarchy/search results, use the continuation field actually returned by that action. Read small pages; stop when complete or if a cursor repeats. Do not assume `items`/`next_cursor` casing from a different resource.
+<!-- default-core:end -->
 
 ## Materials And Assets
 
@@ -50,7 +64,7 @@ Use the discovered renderer target and intended slot:
 
 A shared-material change affects other users of that asset. Choose instance/property-block behavior only when appropriate to the requested scope. Preserve occupied destination assets and GUIDs; do not overwrite an unrelated asset as error recovery. Inspect shader properties before assigning textures/integer values.
 
-Headless prefab editing and scene-instance editing are different. Inspect the prefab path/stage and use `manage_prefabs` for asset changes; instantiate via `manage_gameobject`. For texture/VFX/lighting edits, validate action-specific payloads and bounded sizes before applying them rather than copying another pipeline's settings.
+Headless prefab editing and scene-instance editing are different. Discover the optional `prefabs` group's `prefab_inspect`, `prefab_contents` or `prefab_stage` for asset work; instantiate via core `gameobject_create`. For texture/VFX/lighting edits, validate action-specific payloads and bounded sizes before applying them rather than copying another pipeline's settings.
 
 For scene-instance overrides, call `list_overrides` with the resolved instance target. Select the returned `overrideId` values for `revert_overrides` or `apply_overrides`; apply also requires the listed `prefab_path`. Scope follows the nearest nested instance root. Re-list after structural edits because IDs are editor-session identifiers. Do not infer apply-all from an empty selection; inspect rejected compound properties and structural dependencies before retrying.
 
@@ -62,11 +76,15 @@ Respect the project's existing UI framework. Read `mcpforunity://project/info` w
 
 UI Toolkit asset creation:
 
-```json
-{"tool":"manage_ui","params":{"action":"create","path":"Assets/UI/Status.uxml","contents":"<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:Label name=\"status\" text=\"Ready\" /></ui:UXML>"}}
-```
+Discover/activate the optional `ui` group before these examples. `ui_source`, `ui_document`, `ui_inspect`, `ui_element` and `ui_capture` split source, document, inspection, element and rendering operations.
 
-Create/link the intended USS with `manage_ui` and use `attach_ui_document` only after confirming its live schema and a suitable target/PanelSettings asset. Inspect `get_visual_tree` and `render_ui` for the resulting hierarchy/image where available. Preserve empty stylesheet content intentionally; it is not a missing-content error.
+<!-- optional-group:ui:start -->
+```json
+{"tool":"ui_source","params":{"action":"create","path":"Assets/UI/Status.uxml","contents":"<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:Label name=\"status\" text=\"Ready\" /></ui:UXML>"}}
+```
+<!-- optional-group:end -->
+
+Create/link the intended USS with `ui_source` and use `ui_document(action="attach_ui_document")` only after confirming its live schema and a suitable target/PanelSettings asset. Inspect `ui_inspect(action="get_visual_tree")` and `ui_capture(action="render_ui")` for the resulting hierarchy/image where available. Preserve empty stylesheet content intentionally; it is not a missing-content error.
 
 Choose `component_type="auto"` to preserve an existing UIDocument and prefer available PanelRenderer for new attachments. Use `"ui_document"` or `"panel_renderer"` to select explicitly, and keep the selection consistent for tree inspection, live modification, detach and render. PanelRenderer requires the supported Unity 6.5+ API; missing capability is a reported error, not permission to upgrade Unity. A root may be uninitialized; retry after the component is enabled and the UI loads.
 
@@ -97,7 +115,7 @@ Track ownership and lifetime for temporary resources and state changes. Arrange 
 
 ## Temporary Rendering Resources
 
-Prefer `manage_camera` capture or the UI rendering tool for supported screenshots. A warning such as `Releasing render texture that is set as Camera.targetTexture!` with `MCPDynamicCode.Execute` identifies cleanup in the submitted code; a successful tool response does not make that cleanup valid. Inspect available execution history and Console evidence without assuming the original snippet is retained.
+Prefer `capture_camera` (optional camera group) capture or the UI rendering tool for supported screenshots. A warning such as `Releasing render texture that is set as Camera.targetTexture!` with `MCPDynamicCode.Execute` identifies cleanup in the submitted code; a successful tool response does not make that cleanup valid. Inspect available execution history and Console evidence without assuming the original snippet is retained.
 
 When custom rendering is required, inspect the actual camera and render pipeline first. Save the camera's existing target and `RenderTexture.active`, then restore both in `finally` **before** releasing the texture. This synchronous ownership pattern is a cleanup template, not a complete capture implementation:
 
@@ -157,7 +175,7 @@ Build/package/asset-generation jobs likewise require their own returned ID/statu
 
 ## Verification And Recovery
 
-For script changes, follow [scripts.md](scripts.md). For visual changes, capture the relevant view with `manage_camera` or UI rendering rather than running every screenshot mode.
+For script changes, follow [scripts.md](scripts.md). For visual changes, capture the relevant view with `capture_camera` (optional camera group) or `ui_capture` (optional ui group) rather than running every screenshot mode.
 
 ```json
 {"tool":"read_console","params":{"action":"get","types":["error","warning"],"count":10,"include_stacktrace":true}}

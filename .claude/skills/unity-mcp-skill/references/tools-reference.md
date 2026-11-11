@@ -6,16 +6,20 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 
 | Request | Relevant logical tools | Important distinction |
 |---|---|---|
-| Scene state/save/load | `manage_scene` | Preserve unsaved/additive scenes; replacement is not a neutral setup action |
-| Find/edit objects | `find_gameobjects`, `manage_gameobject` | Search returns IDs; reuse an ID with `search_method="by_id"` |
+| Scene state/save/load | `scene_inspect`, `scene_lifecycle` | Core; preserve unsaved/additive scenes; replacement is not a neutral setup action |
+| Find/create/edit objects | `find_gameobjects`, `gameobject_create`, `gameobject_edit` | Core; search returns IDs; reuse an ID with `search_method="by_id"` |
+| Duplicate/position/place objects | `gameobject_duplicate`, `gameobject_positioning`, `gameobject_placement` | Optional scene group; inspect action-specific references and preview contracts |
 | Components | `manage_components` | Required type/target; explicit null differs from omitted value |
 | Scripts | `create_script`, `get_sha`, `apply_text_edits`, `script_apply_edits`, `validate_script`, `delete_script` | Read [scripts.md](scripts.md) for preview, concurrency and native-file checks |
-| Assets/prefabs | `manage_asset`, `manage_prefabs` | Inspect assigned AssetDatabase bundles with bounded pages; instantiate via `manage_gameobject`; list scene-instance overrides before selecting explicit override IDs to apply/revert |
+| Inspect assets | `asset_inspect` | Core; find paths and metadata before changes |
+| Asset changes/bundles | `asset_edit`, `asset_labels`, `asset_bundles`, `asset_reference_diagnostics` | Optional assets group; bounded AssetDatabase assignments and reference pages |
+| Prefabs | `prefab_inspect`, `prefab_create`, `prefab_contents`, `prefab_stage`, `prefab_overrides` | Optional prefabs group; instantiate via core gameobject_create; select explicit scene-instance override IDs |
 | Materials/shaders/textures | `manage_material`, `manage_shader`, `manage_texture` | `inspect_graph` reads supported `.shadergraph` structure; match the installed render pipeline and shader-declared property types for edits |
-| Cameras/graphics/lighting | `manage_camera`, `manage_graphics`, `manage_components` | Inspect lighting components and optional Cinemachine/URP/HDRP capabilities; do not assume availability |
-| Animation/physics/VFX | `manage_animation`, `manage_physics`, `manage_vfx` | Query identity/state before native mutations; inspect action-specific parameters |
+| Cameras/capture | `manage_cameras`, `manage_cinemachine`, `capture_camera` | Optional camera group; inspect Cinemachine and capture support |
+| Graphics/lighting | `manage_render_pipeline`, `manage_render_volumes`, `manage_light_baking`, `manage_components` | Optional graphics group except core components; inspect URP/HDRP capabilities |
+| Animation/physics/VFX | `manage_animation`, `query_physics`, `manage_rigidbody`, `manage_physics_joints`, `manage_vfx` | Optional animation, physics or vfx group; query identity/state before native mutations |
 | 2D sprite animation | `manage_sprite` | Inspect sheet dimensions and slices before reslicing; see the staged workflow below |
-| UI | `manage_ui`, `manage_ugui`, `manage_gameobject`, `manage_components` | UI Toolkit and uGUI use different asset/component workflows |
+| UI | `ui_source`, `ui_document`, `ui_inspect`, `ui_element`, `ui_capture`, `manage_ugui` | Optional ui group; uGUI can also use core GameObject/component tools |
 | Tests/input | `run_tests`, `get_test_job`, `manage_input` | Input simulation belongs to `testing`; direct uGUI event dispatch does not test raycast occlusion |
 | Tests in the current Play state | `manage_input`, `manage_components`, `execute_code` | Prefer a suitable dedicated tool; proactively use exposed, enabled and consented code execution for game-specific runtime work while preserving the session. See [current-state workflow](workflows.md#tests-in-the-current-play-state) |
 | Video capture | `manage_recording` | Query capabilities; start returns a job ID, status/stop require that ID; silent MP4 on supported interactive Windows/macOS Editors |
@@ -28,6 +32,8 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | Asset generation/import | `generate_image`, `generate_model`, `generate_audio`, `import_model`, `import_model_file`, `blender_bridge` | Confirm provider/model capabilities and consent; poll returned jobs and preserve source/destination assets |
 | Profiling/data assets | `manage_profiler`, `manage_scriptable_object` | Inspect optional dependencies and serialized fields; collect only requested data |
 
+Only `core` is enabled by default. Optional rows require their advertised group/tool selection when absent: `testing` for tests/input, `animation` for sprites, `docs` for API inspection, `scripting_ext` for data assets, `probuilder`, `profiling`, `asset_gen` or the selected tool's listed group. See [connection.md](connection.md) for selection support, Editor availability and the optional `legacy` combined schemas. A table entry does not establish that a tool is already callable.
+
 ## Sprite Sheets
 
 The `animation` group can expose `manage_sprite` when both Editor and server support it. Follow [connection.md](connection.md) for visibility; sessionless HTTP cannot persist group activation.
@@ -38,7 +44,7 @@ Use `setup_clips` then `setup_controller` for staged control, or `full_setup` on
 
 ## Common Shapes
 
-For assigned bundle metadata, use `manage_asset` actions `list_asset_bundles`,
+For assigned bundle metadata, discover optional `assets` tool `asset_bundles` with actions `list_asset_bundles`,
 `get_bundle_assets`, and `get_bundle_dependencies`. These inspect AssetDatabase
 assignments; they do not load or extract external bundle files. Use the exact returned
 bundle name and paginate results.
@@ -69,13 +75,17 @@ Batching reduces round trips for independent commands with known inputs; it has 
 
 Native batch dispatch accepts supported key normalization, but does not run every Python wrapper's aliases/validation. Use documented native-compatible parameters and avoid nested batches. Do not batch a later operation that needs an earlier returned ID unless that identity is already known. Inspect each result and skipped command before deciding whether a retry is safe.
 
+The nested `manage_gameobject` identifiers above are native batch handler IDs, not default MCP tool bindings. Direct calls use core `gameobject_create`; enabling a batch does not expose a hidden combined MCP tool.
+
 ## Capture And Playback
 
-Capture visual changes with the actual camera/capture capability:
+Discover the optional `camera` group's `capture_camera` before capturing visual changes:
 
+<!-- optional-group:camera:start -->
 ```json
-{"tool":"manage_camera","params":{"action":"screenshot","capture_source":"scene_view","view_target":"Player","include_image":true,"max_resolution":512}}
+{"tool":"capture_camera","params":{"action":"screenshot","capture_source":"scene_view","view_target":"Player","include_image":true,"max_resolution":512}}
 ```
+<!-- optional-group:end -->
 
 Image inclusion and file-output behavior depend on the chosen capture route. Inspect the returned image; a path/metadata acknowledgement does not prove the scene looks correct. Resolve an ID when names are ambiguous. Select actions and parameters from the exposed tool's schema; focused and legacy capture tools may differ.
 

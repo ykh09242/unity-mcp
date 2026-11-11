@@ -71,7 +71,7 @@ def _scoped_options(search_term, search_method, conditions, page_size, cursor, m
         "Limits: 32 scene entries, 4096 roots/scene, one root enumeration/page, 4096 managed traversal "
         "steps/page, 500 IDs and 16384 output bytes. Root preparation is accounted separately; "
         "native Unity calls are synchronous and not time-bounded. Restart after edits, expiry or reload. "
-        "Use mcpforunity://scene/gameobject/{id} for details or manage_gameobject for edits."
+        "Use mcpforunity://scene/gameobject/{id} for details or gameobject_edit for edits."
     ),
     annotations=ToolAnnotations(
         title="Find GameObjects",

@@ -34,7 +34,7 @@ _VALUE_DEFAULT = Field(default_factory=lambda: _VALUE_OMITTED)
         "and later properties are attempted. Results preserve request index and property name. "
         "For opt-in preview/expected_old/Undo compensation on supported native properties use "
         "manage_scene_edits. Arbitrary component callbacks cannot be made atomic. "
-        "For creating/deleting GameObjects themselves, use manage_gameobject instead."
+        "For creating/deleting GameObjects themselves, use gameobject_create/gameobject_edit instead."
     ),
     annotations=ToolAnnotations(
         title="Manage Components",
