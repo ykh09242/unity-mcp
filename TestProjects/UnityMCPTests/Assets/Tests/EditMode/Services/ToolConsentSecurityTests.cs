@@ -313,6 +313,99 @@ namespace MCPForUnityTests.Editor.Services
         }
     }
 
+    public class AssetDestinationConsentPathTests
+    {
+        private FieldInfo consent;
+        private object previousConsent;
+        private string relative;
+        private string full;
+
+        [SetUp]
+        public void SetUp()
+        {
+            consent = typeof(ManageScript).GetField("_explicitConsentForTests", BindingFlags.Static | BindingFlags.NonPublic);
+            previousConsent = consent.GetValue(null);
+            consent.SetValue(null, (Func<bool>)(() => false));
+            relative = "Assets/__McpDestinationConsent_" + Guid.NewGuid().ToString("N");
+            full = Path.Combine(UnityEngine.Application.dataPath, Path.GetFileName(relative));
+            Directory.CreateDirectory(full);
+            File.WriteAllText(Path.Combine(full, "Inert.txt"), "// harmless consent fixture\n");
+            AssetDatabase.ImportAsset(relative + "/Inert.txt", ImportAssetOptions.ForceSynchronousImport);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            consent.SetValue(null, previousConsent);
+            AssetDatabase.DeleteAsset(relative);
+            if (Directory.Exists(full))
+                Directory.Delete(full, true);
+            File.Delete(full + ".meta");
+        }
+
+        [TestCase("duplicate", ".cs.")]
+        [TestCase("move", ".cs.")]
+        [TestCase("rename", ".cs.")]
+        [TestCase("duplicate", ".cs ")]
+        [TestCase("move", ".cs ")]
+        [TestCase("rename", ".cs ")]
+        [TestCase("duplicate", ".dll.meta.")]
+        [TestCase("move", ".dll.meta.")]
+        [TestCase("rename", ".dll.meta.")]
+        public void AmbiguousExecutableDestinationsAreRefusedBeforeNativeMutation(string action, string suffix)
+        {
+            JObject response;
+            bool previousLogPolicy = UnityEngine.TestTools.LogAssert.ignoreFailingMessages;
+            try
+            {
+                // Invalid caller paths are logged by the existing handler error boundary.
+                UnityEngine.TestTools.LogAssert.ignoreFailingMessages = true;
+                response = Invoke(action, suffix);
+            }
+            finally
+            {
+                UnityEngine.TestTools.LogAssert.ignoreFailingMessages = previousLogPolicy;
+            }
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("Invalid asset path segment", response.ToString());
+            Assert.AreEqual("// harmless consent fixture\n", File.ReadAllText(Path.Combine(full, "Inert.txt")));
+            Assert.IsFalse(File.Exists(Path.Combine(full, "Probe" + suffix)));
+            Assert.IsFalse(File.Exists(Path.Combine(full, "Probe" + suffix.TrimEnd('.', ' '))));
+        }
+
+        [TestCase(".cs")]
+        [TestCase(".dll.meta")]
+        public void CanonicalExecutableDestinationsStillRequireConsent(string suffix)
+        {
+            JObject response = Invoke("duplicate", suffix);
+            Assert.AreEqual("script_consent_required", (string)response["code"]);
+            Assert.IsFalse(File.Exists(Path.Combine(full, "Probe" + suffix)));
+        }
+
+        [TestCase("duplicate")]
+        [TestCase("move")]
+        [TestCase("rename")]
+        public void OrdinaryAssetDestinationsRemainUsableWithoutScriptConsent(string action)
+        {
+            JObject response = Invoke(action, ".txt");
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("// harmless consent fixture\n", File.ReadAllText(Path.Combine(full, "Probe.txt")));
+            Assert.AreEqual(action == "duplicate", File.Exists(Path.Combine(full, "Inert.txt")));
+        }
+
+        private JObject Invoke(string action, string suffix) =>
+            JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["path"] = relative + "/Inert.txt",
+                        ["destination"] = relative + "/Probe" + suffix,
+                    }
+                )
+            );
+    }
+
     // Uses the real consent transaction with an isolated preference domain. It
     // never grants into the user's EditorPrefs or consumes Shared latch capacity.
     internal sealed class ScopedConsentTestState : IToolConsentStorage, IDisposable

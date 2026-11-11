@@ -25,6 +25,12 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("Assets/../Test.asset")]
         [TestCase("Assets//Test.asset")]
         [TestCase("Assets/./Test.asset")]
+        [TestCase("Assets/Probe.cs.")]
+        [TestCase("Assets/Probe.cs ")]
+        [TestCase("Assets/Probe.dll.meta.")]
+        [TestCase("Assets/Folder./Probe.asset")]
+        [TestCase("Assets/Folder /Probe.asset")]
+        [TestCase("Assets\\Folder.\\Probe.asset")]
         public void LegacySanitizerRejectsInvalidPathsBeforeTheAssetDatabase(string path) =>
             Assert.Throws<ArgumentException>(() => AssetPathUtility.SanitizeAssetPath(path));
 

@@ -20,7 +20,14 @@ namespace MCPForUnity.Runtime.Helpers
             if (normalized.StartsWith("/", StringComparison.Ordinal) || normalized.IndexOf(':') >= 0)
                 throw new ArgumentException("Rooted asset paths are not permitted.");
             foreach (string part in normalized.Split('/'))
-                if (part.Length == 0 || part == "." || part == ".." || part.IndexOfAny(new[] { '\0', '*', '?', '"', '<', '>', '|', '\r', '\n' }) >= 0)
+                if (
+                    part.Length == 0
+                    || part == "."
+                    || part == ".."
+                    || part.EndsWith(".", StringComparison.Ordinal)
+                    || part.EndsWith(" ", StringComparison.Ordinal)
+                    || part.IndexOfAny(new[] { '\0', '*', '?', '"', '<', '>', '|', '\r', '\n' }) >= 0
+                )
                     throw new ArgumentException("Invalid asset path segment.");
             if (normalized.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase))
             {
