@@ -45,7 +45,14 @@ def test_partition_preserves_every_existing_action_and_input_type():
                     schema = schemas[profile.name]
                     assert set(schema["properties"]) == {"action", "unity_instance", *profile.parameters}
                     for name in profile.parameters:
-                        assert schema["properties"][name] == schemas[source]["properties"][name], (profile.name, name)
+                        if (profile.name, name) == ("gameobject_create", "name"):
+                            assert schema["properties"][name] == {
+                                "description": "Nonempty initial GameObject name.",
+                                "type": "string", "pattern": r"\\S",
+                            }
+                            assert "name" in schema["required"]
+                        else:
+                            assert schema["properties"][name] == schemas[source]["properties"][name], (profile.name, name)
                     assert declared[profile.name]["unity_target"] == profile.name, profile.name
                     assert declared[profile.name]["group"] == profile.group
         asyncio.run(scenario())

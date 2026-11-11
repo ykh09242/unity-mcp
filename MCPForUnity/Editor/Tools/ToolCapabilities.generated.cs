@@ -267,7 +267,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("gameobject_create", AutoRegister = false, Group = "core",
-        DisplayName = "Create GameObjects", Description = "Create a GameObject with transform, components and optional prefab output.")]
+        DisplayName = "Create GameObjects", Description = "Create a named GameObject with transform, components and optional prefab output. name must contain non-whitespace text. save_as_prefab=true requires a nonempty .prefab prefab_path or prefab_folder for the generated name.prefab destination. Action inputs: create: requires name.")]
     public static class GameobjectCreate
     {
         private static readonly string[] Actions = { "create" };

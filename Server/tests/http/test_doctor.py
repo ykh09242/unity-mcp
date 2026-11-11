@@ -204,25 +204,28 @@ async def test_native_identity_fields_are_allowlisted(command_hub, payload):
 @pytest.mark.asyncio
 async def test_cold_stdio_direct_read_does_not_authenticate_or_dispatch(monkeypatch):
     from core.config import config
-    import services.capabilities as capabilities
+    import transport.legacy.unity_connection as legacy
     from services.doctor import query_doctor
 
     monkeypatch.setattr(config, "transport_mode", "stdio")
-    generations = []
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(legacy, "_unity_connection_pool", None)
 
-    async def no_generation(instance):
-        generations.append(instance)
-        return None
+    def forbidden(*args, **kwargs):
+        pytest.fail("cold diagnostics must not authenticate, discover or dispatch")
 
     async def state(key):
         return "Fixture@hash" if key == "unity_instance" else None
 
-    monkeypatch.setattr(capabilities, "get_authenticated_stdio_generation", no_generation)
+    monkeypatch.setattr(legacy, "get_unity_connection_pool", forbidden)
+    monkeypatch.setattr(legacy, "get_authenticated_stdio_generation", forbidden)
+    monkeypatch.setattr(legacy.UnityConnection, "connect", forbidden)
+    monkeypatch.setattr(legacy.UnityConnection, "send_command", forbidden)
     result = await query_doctor(SimpleNamespace(get_state=state, request_context=None))
     assert result.connection_verified is False
     assert result.checks["native_read"].status == "unknown"
     assert result.package.version is None
-    assert generations == ["Fixture@hash"]
+    assert legacy._unity_connection_pool is None
 
 
 @pytest.mark.asyncio

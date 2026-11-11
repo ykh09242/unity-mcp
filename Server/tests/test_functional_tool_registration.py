@@ -28,8 +28,8 @@ def test_features_register_once_after_sources_have_been_registered_with_sdk():
             assert {item.name for item in CAPABILITIES} <= set(declared)
             async with Client(derived, mode="legacy") as client:
                 tools = {tool.name: tool for tool in await client.list_tools()}
-                assert tools["gameobject_create"].inputSchema["required"] == ["action"]
-                assert "ctx" not in tools["gameobject_create"].inputSchema["properties"]
+                assert tools["gameobject_create"].input_schema["required"] == ["action", "name"]
+                assert "ctx" not in tools["gameobject_create"].input_schema["properties"]
         asyncio.run(scenario())
     """)
 
