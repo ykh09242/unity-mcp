@@ -17,7 +17,7 @@ description: "Edit C# source using operations scoped to the intended members or 
 Edit C# source using operations scoped to the intended members or text.
     Choose operations from the inspected source:
     - Method/class edits adapt to local indentation and line endings without changing string values.
-    - Range, anchor, regex, prepend and append payloads are literal: include all desired whitespace/newlines.
+    - Range, anchor, regex, prepend and append payloads are literal; whitespace outside the edited span is retained. Supply only the whitespace/newlines needed at its boundaries.
     - options.preview=true prepares complete proposed contents, target paths and hashes without applying changes.
     - options.mixed_order='request' prepares mixed edits in request order against the current buffer.
     - Ordered apply requires precondition_bytes_sha256 and candidate_bytes_sha256 from its preview; it commits once.

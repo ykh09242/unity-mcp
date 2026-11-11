@@ -542,6 +542,7 @@ State and execution:
 - For temporary state/resources, track ownership and lifetime. Arrange exception-safe restoration/cleanup after their last use with lifecycle-appropriate APIs; preserve requested results and unrelated runtime state.
 
 Source edits:
+- Preserve local spacing: inspect both edit boundaries, account for line endings outside the replaced span, and check the diff for unintended blank lines. Keep intentional blank lines and string contents intact.
 - Native application of script_apply_edits(options.preview=true) requires proven same-host/workspace provenance, a complete candidate, fresh original hash and exact UTF-8 candidate bytes. Read skill://unity-mcp-orchestrator/references/scripts.md for the full handoff if available; otherwise use direct Unity edits. Verify raw bytes and get_sha before validation/refresh; never apply a truncated diff or fabricate file events. After edits, wait for verified compilation and inspect read_console.
 - Verify installed Unity/package APIs and actual assets before writing code; use unity_reflect/unity_docs when available. Use exact returned targets, forward-slash asset paths and explicit save scope.
 

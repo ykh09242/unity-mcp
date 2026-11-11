@@ -225,6 +225,7 @@ def _is_script_directory(directory: str) -> bool:
         - For method/class operations, use script_apply_edits (safer, structured edits)
         - For pattern-based replacements, consider anchor operations in script_apply_edits
         - newText is literal: whitespace and line endings are preserved exactly, with no indentation or newline padding
+        - End positions are exclusive; line endings outside the range remain. Include a boundary newline in newText only when the intended result needs an additional one.
         - options.preview=true prepares a complete read-only proposal with target paths and hashes; older Unity packages reject the safe preview action and require an upgrade
         - Lines, columns are 1-indexed
         - Tabs count as 1 column"""

@@ -18,6 +18,16 @@ A structured proposal for an existing class/method:
 
 Names, members and replacements are task-specific examples, not a request to add this behavior. Text/range/regex payloads are literal: supply all intended whitespace and line endings. Structured method/class edits can adapt formatting. Mixed structured/text preview is unsupported; split the proposal or use the direct route after assessing partial application risk.
 
+## Preserve Spacing At Edit Boundaries
+
+Prefer `insert_method` and `replace_method` for whole methods. Supply the member without extra leading/trailing blank lines; structural edits adapt local indentation and line endings.
+
+For literal range, anchor or regex edits, inspect the text immediately before and after the selected span. The result is the unchanged prefix, the exact payload, then the unchanged suffix. Line endings and blank lines outside the span survive, so include only the separators needed to produce the intended spacing. The same boundary check applies to prepend/append and native file edits.
+
+For example, if a replacement span ends immediately after a method's `}` and the untouched suffix begins with `\n\n    void Next()`, end the replacement at `}` to retain the existing single blank line. Adding `\n` to that payload would create a second blank line. If the selected span also consumes a line ending, include that line ending in the replacement when it should remain. Apply the same reasoning to leading boundaries and CRLF files, preserving each `\r\n` pair.
+
+Inspect the preview when available and the actual diff after applying: preserve the existing spacing around neighboring members unless the requested change calls for different spacing. Correct only blank lines introduced unintentionally by this edit. Preserve intentional blank lines and whitespace inside strings, templates and fixtures; do not globally trim or collapse blank lines.
+
 ## Validate A Proposal
 
 `options.preview=true` prepares content only. It does not write files, apply edits or schedule refresh. Require a successful, complete, nontruncated proposal with both original/candidate contents, target identity and hashes. A no-op needs no application.
