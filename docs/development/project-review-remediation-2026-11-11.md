@@ -2,9 +2,9 @@
 
 The review started at `d3fa72d600a5731578660a3d0e0c9c7b8ff67cba` on `beta`.
 The changes implement all 16 original review items and add actual Codex shared
-connection assurance. Dependency updates preceded the behavior changes. Each
-dependency and behavior group received an independent specification and
-code-quality review before its task-sized commits.
+connection assurance. Dependency updates preceded the behavior changes. The
+dependency groups and original 16 remediation items received independent
+specification and code-quality reviews before their task-sized commits.
 
 The [dependency refresh report](dependency-refresh-2026-11-11.md) records exact
 versions, upstream release-note applicability, compatible holds and package
@@ -31,6 +31,31 @@ migration and its token, literal and comment preservation checks.
 | R14 | Source-pin PRs and beta pushes select one distribution canary; installed archive provenance must match the selected input. | `c078cbe37` | URL/subdirectory checks and independently hashed candidate ZIP controls, including valid legacy hash metadata. |
 | R15 | The offline container smoke preserves the shipped environment and entrypoint. | `9a9ea4517` | Command, deadline and exact-name cleanup controls; actual startup requires an executed container job. |
 | R16 | Shared asset-path validation rejects trailing ASCII spaces or dots in path segments. | `b7a1f5d0b` | Windows native reproduction established unconsented canonical `.cs` destination creation before the fix; fixed cases refuse it. This does not establish arbitrary code execution. |
+
+## Integration follow-up
+
+The whole-suite integration pass also exposed three existing defects that
+predated this refresh, plus SDK and test-fixture compatibility gaps. They were
+addressed in separate commits:
+
+| Commit | Resulting behavior |
+| --- | --- |
+| `ab8e53c23` | Internal mutation recovery retains the typed, in-process zero-dispatch proof. Public responses remain normalized, handler dictionaries cannot authorize replay, and the private option never reaches native dispatch. |
+| `35d8a30f3` | Failed large-result processing releases raw payload references and their charge before asynchronous socket close can suspend. Direct and detached processing preserve other generations' allocations and duplicate-result protection. |
+| `6344ea896` | CLI catalog construction no longer imports the material operation's server tool runtime; color execution still uses the shared normalizer. |
+| `1d0b439e5` | Isolated SDK scenarios clear the updated callable caches between cases, and diagnostic instrumentation accepts the reviewed FastMCP 4.1.8 runtime. The cache cleanup is confined to the test worker. |
+| `91e70f2d8` | Catalog, native generated descriptions and passive doctor expectations agree with the intentional creation and diagnostic contracts. |
+| `c12936e90` | CI tests inspect the generated bridge matrix, both canary alternatives and the actual compiler wrapper arguments, including failure propagation. |
+
+Focused executions passed 190 core retry/lifetime/isolation cases, 132 expanded
+lifetime/worker cases, 142 mutation-boundary cases, 21 doctor cases, seven catalog
+cases and 155 tooling cases. These selections overlap. The lifetime assertions
+retain their weak-reference checks and now cover detached processing; no garbage
+collection assertion was weakened. An isolated cache-root probe established that
+the new metadata cache retained a prior scenario's application and that releasing
+that root freed it. Formatting, correctness lint and canonical native capability
+generation checks passed for the final changed inputs. The server source pin was
+advanced again after these integration fixes.
 
 ## Codex connection sharing
 
