@@ -1,0 +1,142 @@
+name: Exact beta release qualification
+
+# Qualification never publishes. Ordinary license-free pushes retain their own
+# checks and explicitly skip native qualification; dispatch requires real evidence.
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [beta]
+    paths:
+      - MCPForUnity/**
+      - Server/**
+      - TestProjects/UnityMCPTests/**
+      - CustomTools/**
+      - manifest.json
+      - release-source-inputs.json
+      - tools/**
+      - .github/workflows/**
+      - .github/actions/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-qualification-${{ github.ref }}
+  # Native license owners must settle and return seats, even if beta advances.
+  cancel-in-progress: false
+
+jobs:
+  identity:
+    name: Identify exact receiving package and selected server
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Require trusted beta event
+        env:
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_EVENT: ${{ github.event_name }}
+        run: |
+          test "$SOURCE_REF" = refs/heads/beta
+          case "$SOURCE_EVENT" in push|workflow_dispatch) ;; *) exit 1 ;; esac
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify receiving SHA and committed selected-server pair
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 tools/bridge_pair_evidence.py plan --selection selected \
+            --report reports/qualification-pair.json --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qualification-pair-${{ github.sha }}-${{ github.run_attempt }}
+          path: reports/qualification-pair.json
+          if-no-files-found: error
+          retention-days: 30
+
+  bridge:
+    needs: [identity]
+    if: vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/e2e-bridge.yml
+    with:
+      ref: ${{ github.sha }}
+      pair_mode: selected
+      require_native: true
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+
+  reload:
+    needs: [identity, bridge]
+    if: vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/assetgen-reload-tests.yml
+    with:
+      ref: ${{ github.sha }}
+      run_assetgen_reload: true
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+
+  windows_vfx:
+    needs: [identity]
+    if: vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/unity-windows-vfx.yml
+    with:
+      ref: ${{ github.sha }}
+    # The reusable contract must explicitly receive the environment secret names.
+    # Activation still runs inside the protected windows-vfx job environment.
+    secrets:
+      WINDOWS_VFX_UNITY_EMAIL: ${{ secrets.WINDOWS_VFX_UNITY_EMAIL }}
+      WINDOWS_VFX_UNITY_PASSWORD: ${{ secrets.WINDOWS_VFX_UNITY_PASSWORD }}
+      WINDOWS_VFX_UNITY_SERIAL: ${{ secrets.WINDOWS_VFX_UNITY_SERIAL }}
+
+  distribution:
+    needs: [identity]
+    if: vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/distribution-canary.yml
+    with:
+      ref: ${{ github.sha }}
+
+  license_free:
+    name: Report unavailable native qualification
+    needs: [identity]
+    if: github.event_name == 'push' && vars.UNITY_RUN_LICENSED_TESTS != 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - run: |
+          echo 'Native release qualification is SKIPPED: licensed execution is disabled.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Ordinary license-free checks are not release qualification. No real bridge, reload or Windows VFX success is claimed.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Dispatch this workflow on reviewed beta with licensed execution enabled to require all evidence at that exact SHA.' >> "$GITHUB_STEP_SUMMARY"
+
+  qualification:
+    name: Require complete release qualification
+    needs: [identity, bridge, reload, windows_vfx, distribution]
+    if: always() && (vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every exact-SHA evidence job
+        id: require
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        shell: python
+        run: |
+          import json
+          import os
+
+          results = json.loads(os.environ['JOB_RESULTS'])
+          required = ('identity', 'bridge', 'reload', 'windows_vfx', 'distribution')
+          missing = [name for name in required if results.get(name, {}).get('result') != 'success']
+          if missing:
+              raise SystemExit('Release is NOT qualified: required evidence failed, was skipped or is missing: ' + ', '.join(missing))
+          print('Exact receiving SHA passed selected-server bridge, both real reload probes, Windows VFX and full distribution canary. No publication was performed.')

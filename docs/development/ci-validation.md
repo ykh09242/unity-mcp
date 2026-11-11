@@ -128,8 +128,9 @@ immutable `mcpServerSource` from the checked commit's `MCPForUnity/package.json`
 shared source-pin validator to require consistent launcher metadata. Scheduled runs use
 the default branch; manual runs use the selected workflow branch. The selected launcher
 commit and server archive commit appear separately in the run summary and retained report.
-Source-pin changes in PRs to main/beta and pushes to beta select one Linux/Python 3.11
-canary row. Scheduled and manual runs retain the complete matrix above. Candidate archive
+Source-pin changes in PRs to main/beta and pushes to beta select the complete matrix above,
+as do scheduled, manual and reusable qualification runs. Each platform executes the full
+installed behavior probe; a Linux-only archive smoke does not qualify a changed pin. Candidate archive
 coverage remains independent and continues to exercise the checked source commit.
 
 The canary creates an empty environment and installs that archive with fresh, unlocked
@@ -176,6 +177,49 @@ refusal assertions. Do not shorten production timeouts to accelerate tests. Loca
 serial unless workers are explicitly requested; avoid `-n auto` for these subprocess-heavy
 tests. The isolated HTTP subprocess uses four workers; the outer wrapper file occupies one
 server-suite worker while the child suite runs.
+
+### Exact beta release qualification
+
+[`release-qualification.yml`](../../.github/workflows/release-qualification.yml) is a
+read-only qualification entry point for the exact receiving beta SHA. Relevant package,
+server, test, helper and workflow changes select it on beta pushes; it can also be
+dispatched on reviewed beta. It rejects other refs and never creates a release, tag,
+publication or version commit. Every reused job checks out the caller's immutable
+`github.sha`, verifies its checkout, and records the package-selected server separately.
+
+With `UNITY_RUN_LICENSED_TESTS=true`, qualification requires all of these existing jobs:
+
+- The real E2E bridge using the receiving package and its installed immutable selected
+  server archive, with smoke, EditMode and strict PlayMode legs. The reusable
+  `require_native=true` input passes `--strict-playmode`, so any failing PlayMode
+  leg fails the harness and qualification. Ordinary bridge runs keep their existing
+  nonblocking PlayMode policy. Candidate checkout-server
+  results do not substitute for this selected pair.
+- Both AssetGen real domain reload probes, each in a fresh owned disposable project.
+- Windows VFX file-lock sentinels in the existing protected `windows-vfx` environment.
+- The complete five-row selected-server unlocked distribution canary described above.
+
+The final job runs even after dependency failure and requires every job to report actual
+success. The bridge's reusable required-evidence gate rejects a missing or skipped native
+matrix; the reload and VFX runners retain their required-case NUnit checks. A skipped,
+missing, cancelled or failed required job cannot qualify the commit. License seats are
+returned by the existing owners; qualification runs are not automatically cancelled on
+new pushes, and the Linux reload runs after the bridge has settled.
+
+An ordinary beta push with licensed execution disabled reports native qualification as
+**SKIPPED** and does not run the final qualification job. Its other license-free checks
+can still pass, but that is not release qualification. Explicit dispatch requests all
+evidence and fails when policy, credentials or native execution is unavailable. Linux
+callers forward only the four named Unity license secrets. The Windows caller explicitly
+passes only `WINDOWS_VFX_UNITY_EMAIL`, `WINDOWS_VFX_UNITY_PASSWORD` and
+`WINDOWS_VFX_UNITY_SERIAL`; the reusable contract requires all three names, and activation
+remains inside the protected `windows-vfx` environment. Required secret declarations
+verify name forwarding, while the existing activation helper rejects empty values.
+The entry point has no PR or `pull_request_target` trigger.
+Fork PRs retain their ordinary secret-free validation and never enter this qualification
+path. A later receiving commit requires its own qualification; earlier PR evidence is
+not reused as proof for it. Run URLs and artifacts must be inspected before any separately
+authorized publication; this workflow does not change publication automation.
 
 ### Conservative fork-beta selection
 

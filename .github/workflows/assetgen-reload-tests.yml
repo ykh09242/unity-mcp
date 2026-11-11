@@ -1,6 +1,23 @@
 name: AssetGen actual domain reload
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+      run_assetgen_reload:
+        type: boolean
+        default: false
+    secrets:
+      UNITY_LICENSE:
+        required: false
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+      UNITY_SERIAL:
+        required: false
   workflow_dispatch:
     inputs:
       run_assetgen_reload:
@@ -33,13 +50,14 @@ jobs:
       - name: Checkout exact dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.ref || github.sha }}
           lfs: true
           persist-credentials: false
 
       - name: Record source and select pinned Editor
         id: source
         env:
+          EXPECTED_SHA: ${{ inputs.ref || github.sha }}
           PROBE_ID: ${{ matrix.probe.id }}
           PROBE_METHOD: ${{ matrix.probe.method }}
         shell: python
@@ -54,7 +72,7 @@ jobs:
           from unity_ci import load_manifest
 
           checked = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
-          assert checked == os.environ['GITHUB_SHA'], 'Checkout must match the exact dispatched SHA'
+          assert checked == os.environ['EXPECTED_SHA'] == os.environ['GITHUB_SHA'], 'Checkout must match the exact event SHA'
           manifest = load_manifest(Path('tools/unity-versions.json'))
           output = Path('.tmp') / ('assetgen-reload-' + os.environ['PROBE_ID'])
           output.mkdir(parents=True, exist_ok=True)

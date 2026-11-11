@@ -23,19 +23,23 @@ def config():
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
 
-def test_real_reload_is_manual_opt_in_without_changing_the_mandatory_suite(config):
+def test_real_reload_requires_explicit_dispatch_or_reusable_opt_in(config):
     triggers = config.get("on", config.get(True))
-    assert set(triggers) == {"workflow_dispatch"}
+    assert set(triggers) == {"workflow_dispatch", "workflow_call"}
     inputs = triggers["workflow_dispatch"]["inputs"]
     assert inputs["run_assetgen_reload"]["type"] == "boolean"
     assert inputs["run_assetgen_reload"]["default"] is False
+    assert triggers["workflow_call"]["inputs"]["run_assetgen_reload"]["default"] is False
     job = config["jobs"]["reload"]
     assert job["if"] == "inputs.run_assetgen_reload"
     assert job["strategy"]["max-parallel"] == 1
     steps = {step.get("id", step.get("name")): step for step in job["steps"]}
-    assert steps["Checkout exact dispatched commit"]["with"]["ref"] == "${{ github.sha }}"
+    assert (
+        steps["Checkout exact dispatched commit"]["with"]["ref"]
+        == "${{ inputs.ref || github.sha }}"
+    )
     source = steps["source"]["run"]
-    assert "checked == os.environ['GITHUB_SHA']" in source
+    assert "checked == os.environ['EXPECTED_SHA'] == os.environ['GITHUB_SHA']" in source
     assert "load_manifest(Path('tools/unity-versions.json'))" in source
     prerequisites = steps["Require licensed execution prerequisites"]
     assert prerequisites["env"]["LICENSED_POLICY"] == "${{ vars.UNITY_RUN_LICENSED_TESTS }}"
@@ -85,6 +89,7 @@ def test_workflow_source_selector_checks_sha_before_creating_evidence(
         "PROBE_METHOD", config["jobs"]["reload"]["strategy"]["matrix"]["probe"][0]["method"]
     )
     monkeypatch.setenv("GITHUB_SHA", "a" * 40)
+    monkeypatch.setenv("EXPECTED_SHA", "a" * 40)
     output = tmp_path / "output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     checked = ("a" if checkout_matches else "b") * 40
@@ -93,7 +98,7 @@ def test_workflow_source_selector_checks_sha_before_creating_evidence(
         if checkout_matches:
             exec(program, {})
         else:
-            with pytest.raises(AssertionError, match="exact dispatched SHA"):
+            with pytest.raises(AssertionError, match="exact event SHA"):
                 exec(program, {})
     receipt = tmp_path / ".tmp/assetgen-reload-queued/source.json"
     assert receipt.is_file() is checkout_matches

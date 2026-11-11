@@ -1,6 +1,18 @@
 name: Windows VFX Assurance
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+    secrets:
+      WINDOWS_VFX_UNITY_EMAIL:
+        required: true
+      WINDOWS_VFX_UNITY_PASSWORD:
+        required: true
+      WINDOWS_VFX_UNITY_SERIAL:
+        required: true
   workflow_dispatch: {}
 
 permissions:
@@ -33,13 +45,15 @@ jobs:
         run: throw 'Set UNITY_RUN_LICENSED_TESTS to true to enable licensed assurance.'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
       - name: Verify immutable beta revision
         id: verify
+        env:
+          EXPECTED_SHA: ${{ inputs.ref || github.sha }}
         run: |
           $actual = git rev-parse HEAD
-          if ($env:GITHUB_REF -cne 'refs/heads/beta' -or $LASTEXITCODE -ne 0 -or $env:GITHUB_SHA -cnotmatch '^[0-9a-f]{40}$' -or $actual -cne $env:GITHUB_SHA) {
+          if ($env:GITHUB_REF -cne 'refs/heads/beta' -or $LASTEXITCODE -ne 0 -or $env:GITHUB_SHA -cnotmatch '^[0-9a-f]{40}$' -or $env:EXPECTED_SHA -cne $env:GITHUB_SHA -or $actual -cne $env:EXPECTED_SHA) {
             throw 'Checked-out revision must equal the dispatched beta commit.'
           }
           "Windows VFX source commit: $actual" >> $env:GITHUB_STEP_SUMMARY

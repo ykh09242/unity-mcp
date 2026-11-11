@@ -7,6 +7,26 @@ name: E2E Bridge Smoke (deterministic, no LLM)
 # releases. It still needs Unity license secrets to boot the Editor.
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+      pair_mode:
+        type: string
+        default: auto
+      require_native:
+        type: boolean
+        default: false
+    secrets:
+      UNITY_LICENSE:
+        required: false
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+      UNITY_SERIAL:
+        required: false
   workflow_dispatch:
     inputs:
       pair_mode:
@@ -45,8 +65,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: e2e-bridge-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   UNITY_IMAGE: unityci/editor:ubuntu-2021.3.45f2-linux-il2cpp-3@sha256:903ced48a1d4f415b597280b76c4f01f1bd38f66c654805fb3ffd16874d7d2ee
@@ -61,8 +81,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
           fetch-depth: 0
+      - name: Verify exact bridge package revision
+        env:
+          EXPECTED_SHA: ${{ inputs.ref || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Plan bounded bridge coverage
         id: pairs
         env:
@@ -151,8 +176,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Verify exact bridge package revision
+        env:
+          EXPECTED_SHA: ${{ inputs.ref || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
@@ -239,16 +270,21 @@ jobs:
         shell: bash
         env:
           UNITY_IMAGE: ${{ env.UNITY_IMAGE }}
+          REQUIRE_NATIVE: ${{ inputs.require_native }}
         run: |
           set -euxo pipefail
           # In --ci mode the harness drives the DockerLauncher: it runs the same
           # docker container (repo .unity-mcp status dir, docker liveness/teardown,
           # log redaction), waits on the status file, derives the instance, then
           # runs the smoke + EditMode + PlayMode legs over the bridge.
+          args=()
+          if [ "$REQUIRE_NATIVE" = true ]; then
+            args+=(--strict-playmode)
+          fi
           python3 tools/local_harness.py --ci \
             --legs smoke,editmode,playmode \
             --project-path "$UNITY_PROJECT_ROOT" \
-            --reports reports
+            --reports reports "${args[@]}"
 
       - name: Record bridge pair outcome
         if: always()
@@ -280,3 +316,23 @@ jobs:
             reports/bridge-pair.json
             reports/bridge-installation.json
           if-no-files-found: ignore
+
+  required:
+    name: Require actual bridge execution
+    needs: [license, pairs, e2e-bridge]
+    if: always() && inputs.require_native
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        shell: python
+        run: |
+          import json
+          import os
+
+          results = json.loads(os.environ['JOB_RESULTS'])
+          required = ('license', 'pairs', 'e2e-bridge')
+          if any(results.get(name, {}).get('result') != 'success' for name in required):
+              raise SystemExit('Required bridge evidence is missing, skipped or failed; release qualification failed.')

@@ -1,6 +1,11 @@
 name: Unlocked distribution canary
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
   pull_request:
     branches: [main, beta]
     paths: &source-inputs
@@ -8,6 +13,9 @@ on:
       - manifest.json
       - release-source-inputs.json
       - tools/check_server_archive.py
+      - tools/check_server_startup.py
+      - tools/check_source_pin_drift.py
+      - tools/check_release_evidence.py
       - tools/tests/test_distribution_canary.py
       - .github/workflows/distribution-canary.yml
   push:
@@ -31,15 +39,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pin-only PRs check one selected archive; scheduled/manual runs retain the full matrix.
-        include: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'push') && '[{"os":"ubuntu-26.04","python-version":"3.11"}]' || '[{"os":"ubuntu-26.04","python-version":"3.11"},{"os":"windows-latest","python-version":"3.11"},{"os":"macos-26-intel","python-version":"3.11"},{"os":"ubuntu-26.04","python-version":"3.14"},{"os":"ubuntu-26.04","python-version":"3.15"}]') }}
+        # Changed pins must exercise the same installed behavior as qualification.
+        include:
+          - {os: ubuntu-26.04, python-version: '3.11'}
+          - {os: windows-latest, python-version: '3.11'}
+          - {os: macos-26-intel, python-version: '3.11'}
+          - {os: ubuntu-26.04, python-version: '3.14'}
+          - {os: ubuntu-26.04, python-version: '3.15'}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
       - name: Select committed launcher source
         id: source
+        env:
+          EXPECTED_SHA: ${{ inputs.ref || github.sha }}
         shell: python
         run: |
           import json
@@ -53,6 +69,7 @@ jobs:
           from check_source_pin_drift import BASE, source_pin
 
           checked = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert checked == os.environ['EXPECTED_SHA'], 'Checkout must match the exact requested SHA'
           pin = source_pin(repo, checked)
           source = BASE + '/archive/' + pin + '.zip#subdirectory=Server'
           report = {'checked_commit': checked, 'server_commit': pin, 'server_source': source}

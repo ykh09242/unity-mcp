@@ -1,11 +1,12 @@
 # AssetGen actual domain reload CI
 
 `AssetGen actual domain reload` (`assetgen-reload-tests.yml`) is a separate,
-manual-only licensed workflow. Dispatch it on a reviewed repository ref and set
-`run_assetgen_reload` to `true`. The checkout must match the dispatch event's exact
-SHA. The repository variable `UNITY_RUN_LICENSED_TESTS` must be `true`, with the
-same Unity license credentials required by the ordinary licensed suite. An opted-in
-run fails when those prerequisites are absent. The default input is `false`.
+opted-in licensed workflow, also reused by `release-qualification.yml`. Dispatch it
+on a reviewed repository ref and set `run_assetgen_reload` to `true`. The checkout
+must match the dispatch event's exact SHA; a reusable caller must pass that same full
+SHA as `ref`. The repository variable `UNITY_RUN_LICENSED_TESTS` must be `true`, with
+the same Unity license credentials required by the ordinary licensed suite. An
+opted-in run fails when those prerequisites are absent. The default input is `false`.
 
 The job uses the validated `defaultVersion` from `tools/unity-versions.json`, its
 pinned test Editor image, and `unity_ci_packages.py`'s version-specific package

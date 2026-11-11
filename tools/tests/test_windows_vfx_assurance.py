@@ -123,10 +123,14 @@ def test_empty_or_wrong_windows_inventory_cannot_fall_back_to_portable_tests(rep
         vfx.windows_methods({"schemaVersion": 1, "suites": [suite]})
 
 
-def test_only_manual_beta_receiving_sha_can_enter_licensed_job():
+def test_only_manual_or_reusable_beta_receiving_sha_can_enter_licensed_job():
     config = workflow()
     trigger = config.get("on", config.get(True))
-    assert trigger == {"workflow_dispatch": {}}
+    assert set(trigger) == {"workflow_dispatch", "workflow_call"}
+    assert trigger["workflow_call"]["inputs"]["ref"]["default"] == ""
+    assert trigger["workflow_call"]["secrets"] == {
+        "WINDOWS_VFX_UNITY_" + key: {"required": True} for key in ("EMAIL", "PASSWORD", "SERIAL")
+    }
     jobs = config["jobs"]
     assert jobs["rejectUntrustedRef"]["if"] == "github.ref != 'refs/heads/beta'"
     licensed = jobs["windowsVfx"]
@@ -135,7 +139,10 @@ def test_only_manual_beta_receiving_sha_can_enter_licensed_job():
     assert licensed["runs-on"] == "windows-2022"
     steps = licensed["steps"]
     checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
-    assert checkout["with"] == {"ref": "${{ github.sha }}", "persist-credentials": False}
+    assert checkout["with"] == {
+        "ref": "${{ inputs.ref || github.sha }}",
+        "persist-credentials": False,
+    }
     secret_steps = [step for step in steps if "secrets." in str(step)]
     assert [step.get("id") for step in secret_steps] == ["activate"]
     assert secret_steps[0]["env"] == {
@@ -154,17 +161,18 @@ def test_only_manual_beta_receiving_sha_can_enter_licensed_job():
 
 
 @pytest.mark.parametrize(
-    "ref,event_sha,actual,success",
+    "ref,event_sha,expected_sha,actual,success",
     [
-        ("refs/heads/beta", "a" * 40, "a" * 40, True),
-        ("refs/heads/BETA", "a" * 40, "a" * 40, False),
-        ("refs/tags/beta", "a" * 40, "a" * 40, False),
-        ("refs/heads/beta", "a" * 40, "b" * 40, False),
-        ("refs/heads/beta", "main", "main", False),
+        ("refs/heads/beta", "a" * 40, "a" * 40, "a" * 40, True),
+        ("refs/heads/BETA", "a" * 40, "a" * 40, "a" * 40, False),
+        ("refs/tags/beta", "a" * 40, "a" * 40, "a" * 40, False),
+        ("refs/heads/beta", "a" * 40, "a" * 40, "b" * 40, False),
+        ("refs/heads/beta", "a" * 40, "b" * 40, "b" * 40, False),
+        ("refs/heads/beta", "main", "main", "main", False),
     ],
 )
 def test_checkout_guard_executes_against_exact_event_ref_and_commit(
-    tmp_path, ref, event_sha, actual, success
+    tmp_path, ref, event_sha, expected_sha, actual, success
 ):
     pwsh = shutil.which("pwsh")
     if not pwsh:
@@ -184,6 +192,7 @@ def test_checkout_guard_executes_against_exact_event_ref_and_commit(
             "TEST_HEAD": actual,
             "GITHUB_REF": ref,
             "GITHUB_SHA": event_sha,
+            "EXPECTED_SHA": expected_sha,
             "GITHUB_STEP_SUMMARY": str(summary),
         },
     )
