@@ -4743,6 +4743,14 @@ class PluginHub(WebSocketEndpoint):
         task: asyncio.Task | None = None
         future: ThreadFuture = ThreadFuture()
 
+        def close_unaccepted() -> None:
+            nonlocal coro
+            # A queued admission callback can outlive this caller. Some supported
+            # runtimes keep arguments alive even inside a closed coroutine.
+            unaccepted, coro = coro, None
+            if unaccepted is not None:
+                unaccepted.close()
+
         def settled(completed: asyncio.Task) -> None:
             # Task state is read only on its loop. Even an abandoned caller's
             # task exception must be retrieved when the loop eventually drains.
@@ -4772,7 +4780,7 @@ class PluginHub(WebSocketEndpoint):
                             "PluginHub synchronous wait deadline exceeded", started=False
                         )
                 except BaseException as error:
-                    coro.close()
+                    close_unaccepted()
                     future.set_exception(error)
                     return
                 # Transfer before invoking a potentially eager task factory.
@@ -4781,7 +4789,7 @@ class PluginHub(WebSocketEndpoint):
             try:
                 created = loop.create_task(coro)
             except BaseException as error:
-                coro.close()
+                close_unaccepted()
                 with ownership:
                     if not future.done():
                         future.set_exception(error)
@@ -4816,7 +4824,7 @@ class PluginHub(WebSocketEndpoint):
             if request is not None:
                 deadline = min(deadline, request.budget.expires_at)
         except BaseException:
-            coro.close()
+            close_unaccepted()
             raise
         with ownership:
             try:
@@ -4827,7 +4835,7 @@ class PluginHub(WebSocketEndpoint):
                 # Even a scheduler that queues before raising cannot admit the
                 # operation once it acquires this same ownership lock.
                 abandoned = True
-                coro.close()
+                close_unaccepted()
                 future.cancel()
                 raise
         try:
@@ -4852,7 +4860,7 @@ class PluginHub(WebSocketEndpoint):
                     return future.result()
                 abandoned = True
                 if not started:
-                    coro.close()
+                    close_unaccepted()
                 raise _SyncWaitInterrupted(detail, started=started)
         finally:
             cancel_task = None
@@ -4860,7 +4868,7 @@ class PluginHub(WebSocketEndpoint):
                 if not future.done():
                     abandoned = True
                     if not started:
-                        coro.close()
+                        close_unaccepted()
                     future.cancel()
                     cancel_task = task
             if cancel_task is not None:

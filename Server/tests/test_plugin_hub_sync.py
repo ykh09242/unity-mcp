@@ -410,6 +410,7 @@ def test_abandoned_submission_releases_coroutine_payload_without_loop_restart(mo
     payload = Payload()
     retained = weakref.ref(payload)
     coro = operation(payload)
+    retained_coroutine = weakref.ref(coro)
     del payload
 
     def run_loop():
@@ -433,11 +434,16 @@ def test_abandoned_submission_releases_coroutine_payload_without_loop_restart(mo
         with pytest.raises(RuntimeError, match="stopped"):
             PluginHub._run_coroutine_sync(coro)
         assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+        # A closed coroutine can retain its arguments on supported runtimes.
+        # Release caller ownership before checking the queued admission's owner.
+        coro = None
+        assert retained_coroutine() is None
         assert retained() is None
     finally:
         owner.join(watchdog_timeout())
         loop.close()  # No restart or cleanup turn is required for unaccepted work.
-        coro.close()
+        if coro is not None:
+            coro.close()
         assert not owner.is_alive()
 
 
