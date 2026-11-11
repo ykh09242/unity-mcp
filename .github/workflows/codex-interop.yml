@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   codex_interop:
-    name: Actual Codex 0.166.0 MCP client
+    name: Actual Codex 0.167.1 MCP client
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
@@ -53,9 +53,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/codex-interop-bin"
           curl --fail --silent --show-error --location --retry 3 \
-            https://github.com/openai/codex/releases/download/rust-v0.166.0/codex-x86_64-unknown-linux-musl.tar.gz \
+            https://github.com/openai/codex/releases/download/rust-v0.167.1/codex-x86_64-unknown-linux-musl.tar.gz \
             --output "$RUNNER_TEMP/codex-interop-bin/codex.tar.gz"
-          echo "a0bf572d2f93f056c6712a6da348e96078dc84f3885fd7be67807ef389cb3978  $RUNNER_TEMP/codex-interop-bin/codex.tar.gz" | sha256sum --check --strict
+          echo "64bcc99c32e434b4bcb0508a97df9b7aeecdb97e956d976fb13661096ec4e3e2  $RUNNER_TEMP/codex-interop-bin/codex.tar.gz" | sha256sum --check --strict
           tar -xzf "$RUNNER_TEMP/codex-interop-bin/codex.tar.gz" -C "$RUNNER_TEMP/codex-interop-bin"
           "$RUNNER_TEMP/codex-interop-bin/codex-x86_64-unknown-linux-musl" --version
       - name: Exercise actual Rust client against production CLI
@@ -71,7 +71,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: codex-interop-0.166.0-${{ github.sha }}
+          name: codex-interop-0.167.1-${{ github.sha }}
           path: .tmp/codex-interop/report.json
           include-hidden-files: true
           if-no-files-found: error

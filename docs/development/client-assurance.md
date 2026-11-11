@@ -97,7 +97,7 @@ require their own execution evidence; this suite does not claim those outcomes.
 
 ## Actual Codex client regression
 
-`tools/check_codex_interop.py` drives the installed **Codex CLI 0.166.0**
+`tools/check_codex_interop.py` drives the installed **Codex CLI 0.167.1**
 `app-server` through its experimental direct MCP RPCs. These are the actual Rust
 `codex-rmcp-client` transport and decoder, not the Python client configured with a
 Codex name. The fixture starts the production CLI, registry and all normal
@@ -112,7 +112,9 @@ Server/.venv/Scripts/python.exe tools/check_codex_interop.py `
 
 The machine-readable receipt records the exact binary version, legacy initialize
 exchange, actual per-request protocol, catalog count, deadline error and verified
-size cases. The Windows run on 2026-11-02 passed all four protocol/transport cases. The matrix uses both the legacy default and the installed experimental
+size cases. The Windows run on 2026-11-11 with Codex 0.167.1 passed all four
+protocol/transport cases. The earlier 2026-11-02 run is historical evidence for
+0.166.0. The matrix uses both the legacy default and the installed experimental
 `mcp_2026_07_28` feature over stdio and locally authenticated streamable HTTP.
 Modern stdio also sets the supported `CODEX_MCP_PROTOCOL_VERSION=2026-07-28`
 server opt-in. Every actual tool request must use the selected protocol:
@@ -153,12 +155,14 @@ rerunning all four protocol/transport cases and reviewing the observed protocol.
 contracts come from the installed experimental schema and the
 [official app-server documentation](https://learn.chatgpt.com/docs/app-server).
 The client implementation is documented by the
-[pinned Rust source](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/rmcp-client/src/rmcp_client.rs),
+[pinned Rust source](https://github.com/openai/codex/blob/rust-v0.167.1/codex-rs/codex-mcp/src/rmcp_client.rs),
 and the binary comes from the
-[official 0.166.0 release](https://github.com/openai/codex/releases/tag/rust-v0.166.0).
+[official 0.167.1 release](https://github.com/openai/codex/releases/tag/rust-v0.167.1).
 
-The pinned client's [protocol selection policy](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/rmcp-client/src/protocol_mode.rs)
-requires both the feature and server opt-in for modern stdio. `codex features
+The pinned client's [protocol selection policy](https://github.com/openai/codex/blob/rust-v0.167.1/codex-rs/rmcp-client/src/protocol_mode.rs)
+requires both the feature and server opt-in for the explicit modern stdio mode
+used here. Pool-driven local stdio discovery is a separate mode; this four-case
+regression does not prove multi-chat connection sharing. `codex features
 list`, run inside the isolated temporary home, independently exposes the feature
-as under development in 0.166.0. This opt-in coverage does not imply that modern
+as under development in 0.167.1. This opt-in coverage does not imply that modern
 MCP is enabled in a user's default Codex configuration.
