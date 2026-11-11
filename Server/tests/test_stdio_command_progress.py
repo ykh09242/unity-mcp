@@ -123,6 +123,13 @@ def wire_peer(respond=None, *, capabilities=_ABSENT, legacy=False, forged=False,
                     }
                     if capabilities is not _ABSENT:
                         reply["capabilities"] = capabilities
+                        if (
+                            isinstance(capabilities, list)
+                            and "native_arbitration_v1" in capabilities
+                        ):
+                            reply["arbitration_generation"] = observed.generation
+                        if isinstance(capabilities, list) and "command_resume_v1" in capabilities:
+                            reply["resume_generation"] = "e" * 32
                     if forged:
                         reply["proof"] = "0" * 64
                     _write(peer, json.dumps(reply, separators=(",", ":")).encode("ascii"))
@@ -714,3 +721,224 @@ async def test_closed_foreground_cannot_deliver_a_later_wire_update(environment)
                 if not ctx.command.done():
                     ctx.command.cancel()
                 await asyncio.gather(ctx.command, return_exceptions=True)
+
+
+async def _send_progress_command(asynchronous, command, params, sink):
+    options = {"instance_id": IDENTITY, "_progress": sink, "retry_on_reload": False}
+    if asynchronous:
+        return await uc.async_send_command_with_retry(command, params, **options)
+    return await asyncio.to_thread(uc.send_command_with_retry, command, params, **options)
+
+
+def _resume_result(command, state):
+    waiting = state in {"queued", "executing"}
+    return json.dumps(
+        {
+            "command_resume": {
+                "version": 1,
+                "invocation_id": command["resume"]["invocation_id"],
+                "editor_session_id": command["resume"]["editor_session_id"],
+                "state": state,
+            },
+            "payload": {
+                "native_arbitration": {
+                    **command["arbitration"],
+                    "disposition": "not_started" if waiting else "started",
+                    "retryable": waiting,
+                    **({"reason": "operation_busy"} if waiting else {}),
+                },
+                "payload": json.loads(RESULT),
+            },
+        }
+    ).encode()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [True, False], ids=["async", "sync"])
+@pytest.mark.parametrize("state", ["queued", "executing"])
+async def test_nonterminal_stdio_reply_preserves_logical_progress(environment, asynchronous, state):
+    # Given: one foreground sink spans two negotiated attempts of the same invocation.
+    ctx = RecordingContext()
+    callbacks = []
+
+    def respond(sock, prelude, peer, index):
+        command = json.loads(peer.business[-1])
+        if not index:
+            if state == "executing":
+                _write(sock, _control(prelude["id"]))
+                assert ctx.acknowledged.wait(watchdog_timeout())
+                ctx.acknowledged.clear()
+            _write(sock, _resume_result(command, state))
+            return
+        assert command["resume"] == {
+            **json.loads(peer.business[0])["resume"],
+            "action": "resume" if state == "queued" else "status",
+        }
+        if prelude is None:
+            _write(sock, _resume_result(command, "completed"))
+            return
+        assert prelude["id"] != peer.preludes[0]["id"]
+        # An old callback and an old frame cannot advance the newly bound source.
+        callbacks[0](
+            sink, peer.preludes[0]["id"], _control(peer.preludes[0]["id"], completed=2)[4:]
+        )
+        _write(sock, _control(peer.preludes[0]["id"], completed=2))
+        _write(sock, _control(prelude["id"], completed=1 if state == "queued" else 2))
+        assert ctx.acknowledged.wait(watchdog_timeout())
+        _write(sock, _resume_result(command, "completed"))
+
+    capabilities = [CAPABILITY, "native_arbitration_v1", "command_resume_v1"]
+    with wire_peer(respond, capabilities=capabilities, commands=2) as peer:
+        connection = await _prepared_connection(environment, peer)
+        callbacks.append(connection._offer_stdio_progress)
+        async with progress.foreground_progress(ctx):
+            sink = progress.claim_command_progress(total=2)
+            # When: queued/executing ownership is handed to a fresh wire attempt.
+            ctx.command = asyncio.create_task(
+                _send_progress_command(asynchronous, "batch_execute", PARAMS, sink)
+            )
+            result = await asyncio.wait_for(ctx.command, watchdog_timeout())
+            assert len(peer.preludes) == 2, "Nonterminal attempt closed the logical reporter"
+            assert not sink.offer(progress.CommandProgressUpdate(2, 2, "batch_items"))
+        # Then: notifications remain monotonic, and foreground completion prevents rebinding.
+        assert [call[0] for call in ctx.calls] == ([1] if state == "queued" else [1, 2])
+        assert result == json.loads(RESULT)["result"]
+        assert not sink.bind(progress.ProgressSource("stdio", "late", "s", "g", None, None, _true))
+        assert connection._progress_owner is None
+
+
+async def _true():
+    return True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [True, False], ids=["async", "sync"])
+async def test_native_subcommands_do_not_own_foreground_sink(environment, asynchronous):
+    # Given: one public invocation includes unsupported native work around a progress batch.
+    ctx = RecordingContext()
+
+    def respond(sock, prelude, _peer, index):
+        if index == 1:
+            if prelude is not None:
+                _write(sock, _control(prelude["id"]))
+                assert ctx.acknowledged.wait(watchdog_timeout())
+        else:
+            assert prelude is None
+        _write(sock, RESULT)
+
+    with wire_peer(respond, capabilities=[CAPABILITY], commands=3) as peer:
+        connection = await _prepared_connection(environment, peer)
+        async with progress.foreground_progress(ctx):
+            sink = progress.claim_command_progress(total=2)
+            # When: native helpers and a supported batch share that foreground capability.
+            for command, params in [
+                ("manage_scene", {"action": "get_hierarchy"}),
+                ("batch_execute", PARAMS),
+                ("manage_scene", {"action": "get_hierarchy"}),
+            ]:
+                ctx.command = asyncio.create_task(
+                    _send_progress_command(asynchronous, command, params, sink)
+                )
+                await asyncio.wait_for(ctx.command, watchdog_timeout())
+            source = progress.ProgressSource("stdio", "next", "s", "g", None, None, _true)
+            assert sink.bind(source), "A native terminal response closed its public owner"
+            sink.detach(source)
+        # Then: only the batch reports, and the public owner's completion closes its sink.
+        assert [call[0] for call in ctx.calls] == [1]
+        assert not sink.bind(source)
+        assert connection._progress_owner is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stdio_foreground_closes_sink_before_worker_finishes(environment):
+    # Given: the native wire stays pending after a delivered foreground notification.
+    ctx = RecordingContext()
+    release = threading.Event()
+    claimed = []
+
+    def respond(sock, prelude, _peer, _index):
+        _write(sock, _control(prelude["id"]))
+        assert release.wait(watchdog_timeout())
+        _write(sock, _control(prelude["id"], completed=2))
+        _write(sock, RESULT)
+
+    async def invocation():
+        async with progress.foreground_progress(ctx):
+            sink = progress.claim_command_progress(total=2)
+            claimed.append(sink)
+            return await _send_progress_command(True, "batch_execute", PARAMS, sink)
+
+    with wire_peer(respond, capabilities=[CAPABILITY]) as peer:
+        connection = await _prepared_connection(environment, peer)
+        ctx.command = asyncio.create_task(invocation())
+        try:
+            assert await asyncio.wait_for(ctx.received.get(), watchdog_timeout()) == 1
+            # When: the public owner is cancelled while the worker still owns the wire.
+            ctx.command.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await ctx.command
+            source = progress.ProgressSource("stdio", "late", "s", "g", None, None, _true)
+            assert not claimed[0].bind(source)
+            release.set()
+            async with asyncio.timeout(watchdog_timeout()):
+                while connection._async_admission(asyncio.get_running_loop()).in_use():
+                    await asyncio.sleep(0.001)
+            # Then: late wire progress is dropped and its worker releases the exact attempt.
+            assert [call[0] for call in ctx.calls] == [1]
+            assert len(peer.business) == 1
+            assert connection._progress_owner is None
+        finally:
+            release.set()
+            ctx.command.cancel()
+            await asyncio.gather(ctx.command, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["before_bind", "during_bind"])
+async def test_cancelled_attempt_cannot_publish_late_progress_source(
+    environment, monkeypatch, phase
+):
+    # Given: a worker can be cancelled before or during source binding.
+    ctx = RecordingContext()
+    cancelled, entered, release = threading.Event(), threading.Event(), threading.Event()
+    with wire_peer(capabilities=[CAPABILITY]) as peer:
+        connection = await _prepared_connection(environment, peer)
+        async with progress.foreground_progress(ctx):
+            sink = progress.claim_command_progress(total=2)
+            original_bind = sink.bind
+
+            def held_bind(source):
+                entered.set()
+                assert release.wait(watchdog_timeout())
+                return original_bind(source)
+
+            if phase == "during_bind":
+                monkeypatch.setattr(sink, "bind", held_bind)
+            else:
+                cancelled.set()
+            worker = asyncio.create_task(
+                asyncio.to_thread(
+                    connection._begin_stdio_progress, sink, "batch_execute", PARAMS, None, cancelled
+                )
+            )
+            try:
+                # When: cancellation revokes an attempt whose source is not published yet.
+                if phase == "during_bind":
+                    assert await asyncio.to_thread(entered.wait, watchdog_timeout())
+                    cancelled.set()
+                    connection._revoke_stdio_progress(cancelled)
+                    release.set()
+                assert await asyncio.wait_for(worker, watchdog_timeout()) is None
+                monkeypatch.setattr(sink, "bind", original_bind)
+                # Then: the cancelled source has no authority, while its foreground can continue.
+                source = progress.ProgressSource("stdio", "next", "s", "g", None, None, _true)
+                assert sink.bind(source)
+                connection._detach_stdio_progress()
+                assert sink.offer(
+                    progress.CommandProgressUpdate(1, 2, "batch_items"), source=source
+                )
+                sink.detach(source)
+            finally:
+                release.set()
+                await asyncio.gather(worker, return_exceptions=True)
+        assert peer.business == []

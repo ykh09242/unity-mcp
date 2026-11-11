@@ -13,6 +13,8 @@ import pytest
 
 from core.config import config
 from models.models import UnityInstanceInfo
+from services import command_progress as progress
+from tests.test_stdio_command_progress import RecordingContext, _control, _write
 from tests.timing import watchdog_timeout
 from transport.legacy import unity_connection as uc
 from transport.legacy.stdio_auth import authentication_proof
@@ -67,7 +69,13 @@ def result(command, state, value):
 
 @contextmanager
 def resume_peer(
-    mode="completed", reloads=1, *, origin=False, business_result=None, clock_sample=None
+    mode="completed",
+    reloads=1,
+    *,
+    origin=False,
+    business_result=None,
+    clock_sample=None,
+    progress_callback=None,
 ):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
@@ -108,6 +116,7 @@ def resume_peer(
                         "capabilities": [
                             "native_arbitration_v1",
                             "command_resume_v1",
+                            *(["command_progress_v1"] if progress_callback is not None else []),
                             *(["command_resume_origin_v1"] if origin else []),
                             *(["command_resume_clock_v1"] if clock_sample is not None else []),
                         ],
@@ -122,10 +131,15 @@ def resume_peer(
                 )
                 try:
                     command = read_frame(peer)
+                    prelude = None
+                    if command.get("type") == "command_progress_begin":
+                        prelude, command = command, read_frame(peer)
                 except EOFError:
                     assert mode == "cold" and attempt == 1
                     return
                 commands.append(command)
+                if progress_callback is not None:
+                    progress_callback(peer, command, attempt, prelude)
                 if mode in {"cancel", "cancel_after_completion"}:
                     control = command["resume"]["action"] == "cancel"
                     if control:
@@ -238,6 +252,130 @@ def configure(monkeypatch, port, reconnect_failures=0):
     monkeypatch.setattr(uc, "get_unity_connection", select)
     monkeypatch.setattr(uc, "read_status_file", lambda *_: None)
     return connection
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [True, False], ids=["async", "sync"])
+async def test_stdio_reload_keeps_progress_bound_to_original_foreground(monkeypatch, asynchronous):
+    # Given: an executing batch loses its authenticated wire after a visible settled item.
+    ctx = RecordingContext()
+    preludes = []
+
+    def observe(peer, command, attempt, prelude):
+        if prelude is None:
+            return
+        preludes.append(prelude)
+        if attempt:
+            assert command["resume"]["action"] == "resume"
+            assert preludes[0]["id"] != prelude["id"]
+            _write(peer, _control(preludes[0]["id"], completed=2))
+        _write(peer, _control(prelude["id"], completed=attempt + 1))
+        assert ctx.acknowledged.wait(watchdog_timeout())
+        ctx.acknowledged.clear()
+
+    with resume_peer(progress_callback=observe) as (port, commands, _, _):
+        connection = configure(monkeypatch, port)
+        monkeypatch.setattr(config, "command_total_timeout", 10.0)
+        params = {"commands": [{"tool": "manage_scene", "params": {"action": "save"}}] * 2}
+        try:
+            async with progress.foreground_progress(ctx):
+                sink = progress.claim_command_progress(total=2)
+                # When: the original sender reconnects and continues under the original identity.
+                function = (
+                    uc.async_send_command_with_retry if asynchronous else uc.send_command_with_retry
+                )
+                options = {"instance_id": connection.instance_id, "_progress": sink}
+                invocation = (
+                    function("batch_execute", params, **options)
+                    if asynchronous
+                    else asyncio.to_thread(function, "batch_execute", params, **options)
+                )
+                ctx.command = asyncio.create_task(invocation)
+                value = await asyncio.wait_for(ctx.command, watchdog_timeout())
+            # Then: both settled counts reach the same foreground, without mutation replay.
+            assert len(preludes) == 2, "Reload cleanup permanently closed the logical reporter"
+            assert [call[0] for call in ctx.calls] == [1, 2]
+            assert value["success"]
+            assert commands[1]["resume"] == {**commands[0]["resume"], "action": "resume"}
+            assert commands[1]["params"] == commands[0]["params"]
+            assert not sink.offer(progress.CommandProgressUpdate(2, 2, "batch_items"))
+        finally:
+            connection.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_native_cancel_wait_revokes_business_progress_before_control_reply(monkeypatch):
+    # Given: negotiated progress/resume uses distinct held business and cancellation sockets.
+    ctx = RecordingContext()
+    control_received, send_late = threading.Event(), threading.Event()
+    release_control, release_business = threading.Event(), threading.Event()
+    processed = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    claimed = []
+    monkeypatch.setattr(progress, "_SEND_INTERVAL", 0)
+
+    def observe(peer, command, _attempt, prelude):
+        if command["resume"]["action"] == "cancel":
+            assert prelude is None
+            control_received.set()
+            assert release_control.wait(watchdog_timeout())
+        else:
+            assert prelude is not None
+            _write(peer, _control(prelude["id"]))
+            assert ctx.acknowledged.wait(watchdog_timeout())
+            assert send_late.wait(watchdog_timeout())
+            _write(peer, _control(prelude["id"], completed=2))
+            assert release_business.wait(watchdog_timeout())
+
+    with resume_peer("cancel", progress_callback=observe) as (port, _, _, _):
+        connection = configure(monkeypatch, port)
+        original_offer = connection._offer_stdio_progress
+
+        def observed_offer(sink, command_id, raw):
+            original_offer(sink, command_id, raw)
+            if json.loads(raw)["completed"] == 2:
+                loop.call_soon_threadsafe(processed.set)
+
+        monkeypatch.setattr(connection, "_offer_stdio_progress", observed_offer)
+
+        async def invocation():
+            async with progress.foreground_progress(ctx):
+                sink = progress.claim_command_progress(total=2)
+                claimed.append(sink)
+                return await uc.async_send_command_with_retry(
+                    "batch_execute",
+                    {"commands": [{"tool": "manage_scene", "params": {"action": "save"}}] * 2},
+                    instance_id=connection.instance_id,
+                    _progress=sink,
+                )
+
+        ctx.command = asyncio.create_task(invocation())
+        try:
+            assert await asyncio.wait_for(ctx.received.get(), watchdog_timeout()) == 1
+            # When: cancellation delivery is pending and the original business wire reports again.
+            ctx.command.cancel()
+            assert await asyncio.to_thread(control_received.wait, watchdog_timeout())
+            assert not ctx.command.done()
+            assert connection._async_admission(loop).in_use()
+            send_late.set()
+            await asyncio.wait_for(processed.wait(), watchdog_timeout())
+            for _ in range(6):
+                await asyncio.sleep(0)
+            # Then: reporting authority is revoked before the control reply or foreground exit.
+            assert [call[0] for call in ctx.calls] == [1]
+            assert not ctx.command.done()
+            assert connection._async_admission(loop).in_use()
+        finally:
+            send_late.set()
+            release_business.set()
+            release_control.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(ctx.command, watchdog_timeout())
+            async with asyncio.timeout(watchdog_timeout()):
+                while connection._async_admission(loop).in_use():
+                    await asyncio.sleep(0.001)
+            connection.disconnect()
+        assert not claimed[0].offer(progress.CommandProgressUpdate(2, 2, "batch_items"))
 
 
 @pytest.mark.parametrize("skew_ms", [-60000, 60000])

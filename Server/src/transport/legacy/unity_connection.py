@@ -117,6 +117,14 @@ _connection_lock = threading.Lock()
 FRAMED_MAX = 128 * 1024 * 1024
 
 
+@dataclass(frozen=True, slots=True)
+class _StdioProgressAttempt:
+    active: threading.Event
+    sink: ProgressSink
+    source: ProgressSource
+    cancelled: threading.Event | None
+
+
 class _ConnectionSelection:
     """Carry one caller's budget and cancellation through its blocking selection."""
 
@@ -326,7 +334,7 @@ class UnityConnection:
         self._async_admissions = weakref.WeakKeyDictionary()
         self._needs_tool_resync = False  # Set True after reconnection
         self._authentication_failure: StdioAuthenticationError | None = None
-        self._progress_owner: tuple[threading.Event, ProgressSink] | None = None
+        self._progress_owner: _StdioProgressAttempt | None = None
         if self.allow_legacy_auth is None:
             self.allow_legacy_auth = os.environ.get("UNITY_MCP_STDIO_ALLOW_LEGACY") == "1"
 
@@ -353,13 +361,21 @@ class UnityConnection:
         except OSError as exc:
             logger.debug(f"Unable to set TCP_NODELAY: {exc}")
 
-    def _close_stdio_progress(self) -> None:
+    def _detach_stdio_progress(self) -> None:
+        """Release this wire attempt; the foreground invocation owns the sink."""
         owner, self._progress_owner = getattr(self, "_progress_owner", None), None
         if owner is not None:
-            active, sink = owner
-            active.clear()
+            owner.active.clear()
             with contextlib.suppress(Exception):
-                sink.close()
+                owner.sink.detach(owner.source)
+
+    def _revoke_stdio_progress(self, cancelled: threading.Event) -> None:
+        """Revoke only the cancelled attempt without taking its busy I/O lock."""
+        owner = getattr(self, "_progress_owner", None)
+        if owner is not None and owner.cancelled is cancelled:
+            owner.active.clear()
+            with contextlib.suppress(Exception):
+                owner.sink.detach(owner.source)
 
     def _begin_stdio_progress(
         self,
@@ -367,10 +383,11 @@ class UnityConnection:
         command_type: str,
         params: dict[str, Any],
         deadline: float | None,
+        cancelled: threading.Event | None = None,
     ) -> tuple[str, bytes] | None:
         """Bind one opaque foreground sink while this command owns the I/O lock."""
-        self._close_stdio_progress()
-        if sink is None:
+        self._detach_stdio_progress()
+        if sink is None or cancelled is not None and cancelled.is_set():
             return None
         session = self.authenticated_session
         commands = params.get("commands") if isinstance(params, dict) else None
@@ -384,37 +401,37 @@ class UnityConnection:
             or session.session_generation != self.session_generation
             or CAPABILITY not in session.capabilities
         ):
-            with contextlib.suppress(Exception):
-                sink.close()
             return None
         command_id = str(uuid4())
         active = threading.Event()
 
         async def still_owned() -> bool:
-            # The I/O owner clears this invocation-specific fence before response,
+            # The I/O owner clears this attempt-specific fence before response,
             # disconnect or reset. Never take its blocking lock on the SDK loop.
-            return active.is_set()
+            return active.is_set() and (cancelled is None or not cancelled.is_set())
 
+        source = ProgressSource(
+            transport="stdio",
+            command_id=command_id,
+            session_id=session.session_id,
+            generation=session.server_generation,
+            user_id=None,
+            expires_at=deadline,
+            guard=still_owned,
+        )
         try:
-            bound = sink.bind(
-                ProgressSource(
-                    transport="stdio",
-                    command_id=command_id,
-                    session_id=session.session_id,
-                    generation=session.server_generation,
-                    user_id=None,
-                    expires_at=deadline,
-                    guard=still_owned,
-                )
-            )
+            bound = sink.bind(source)
         except Exception:
             bound = False
         if not bound:
-            with contextlib.suppress(Exception):
-                sink.close()
             return None
         active.set()
-        self._progress_owner = active, sink
+        self._progress_owner = _StdioProgressAttempt(active, sink, source, cancelled)
+        if cancelled is not None and cancelled.is_set():
+            # Cancellation can win while bind runs on the worker, before its
+            # source is published. Do not resurrect reporting during cleanup.
+            self._revoke_stdio_progress(cancelled)
+            return None
         prelude = json.dumps(
             {"type": "command_progress_begin", "version": 1, "id": command_id},
             separators=(",", ":"),
@@ -437,7 +454,7 @@ class UnityConnection:
                 return True
             self.session_generation = None
             self.authenticated_session = None
-            self._close_stdio_progress()
+            self._detach_stdio_progress()
             self._authentication_failure = None
             try:
                 # Only an explicitly supplied address with no project selector is a raw dial.
@@ -578,13 +595,13 @@ class UnityConnection:
                 self.sock = None
                 self.session_generation = None
                 self.authenticated_session = None
-                self._close_stdio_progress()
+                self._detach_stdio_progress()
                 return False
 
     def disconnect(self):
         """Close the connection to the Unity Editor."""
         with self._io_lock:
-            self._close_stdio_progress()
+            self._detach_stdio_progress()
             self.authenticated_session = None
             self.session_generation = None
             if self.sock:
@@ -646,7 +663,7 @@ class UnityConnection:
                 self.sock = None
                 self.session_generation = None
                 self.authenticated_session = None
-                self._close_stdio_progress()
+                self._detach_stdio_progress()
             finally:
                 if self.sock is original_socket:
                     original_socket.settimeout(original_timeout)
@@ -685,8 +702,18 @@ class UnityConnection:
                     received += size
         return data
 
-    @staticmethod
-    def _offer_stdio_progress(sink: ProgressSink, command_id: str, raw: bytearray) -> None:
+    def _offer_stdio_progress(self, sink: ProgressSink, command_id: str, raw: bytearray) -> None:
+        owner = getattr(self, "_progress_owner", None)
+        if owner is None:
+            return
+        if (
+            not owner.active.is_set()
+            or owner.cancelled is not None
+            and owner.cancelled.is_set()
+            or owner.sink is not sink
+            or owner.source.command_id != command_id
+        ):
+            return
         try:
             message = json.loads(raw)
         except (ValueError, UnicodeError):
@@ -705,8 +732,9 @@ class UnityConnection:
         # The sink enforces the claimed total, monotonicity, foreground lifetime
         # and SDK-loop ownership. A notification failure never changes Unity work.
         with contextlib.suppress(Exception):
-            sink.offer_from_thread(
-                CommandProgressUpdate(message["completed"], message["total"], "batch_items")
+            sink.offer(
+                CommandProgressUpdate(message["completed"], message["total"], "batch_items"),
+                source=owner.source,
             )
 
     def receive_full_response(
@@ -1089,7 +1117,7 @@ class UnityConnection:
                             self.sock.settimeout(blender_timeout)
                         t_send_start = time.time()
                         association = self._begin_stdio_progress(
-                            _progress, command_type, params, deadline
+                            _progress, command_type, params, deadline, _cancelled
                         )
                         if association is not None:
                             _, prelude = association
@@ -1163,7 +1191,7 @@ class UnityConnection:
                         with contextlib.suppress(Exception):
                             logger.debug(f"recv {len(response_data)} bytes; mode={mode}")
                     finally:
-                        self._close_stdio_progress()
+                        self._detach_stdio_progress()
                         self.sock.settimeout(restore_timeout)
 
                     # Parse
@@ -2122,10 +2150,6 @@ def send_command_with_retry(
         if resume_owner.invocation is None:
             raise
         return _stdio_deadline_response(command_type, resume_owner.invocation)
-    finally:
-        if _progress is not None:
-            with contextlib.suppress(Exception):
-                _progress.close()
 
 
 def _stdio_deadline_response(command: str, resume: CommandResumeInvocation | None) -> MCPResponse:
@@ -3015,6 +3039,7 @@ async def _async_send_command_attempt(
                     result, conn = await asyncio.shield(completion)
         except asyncio.CancelledError:
             state.cancelled.set()
+            conn._revoke_stdio_progress(state.cancelled)
             state.abort_before_start()
             if _resume_owner is not None:
                 _resume_owner.cancel()
@@ -3045,10 +3070,6 @@ async def _async_send_command_attempt(
         if isinstance(e, TimeoutError) and _resume_owner is not None and _resume_owner.invocation:
             raise
         return MCPResponse(success=False, error=str(e))
-    finally:
-        if _progress is not None:
-            with contextlib.suppress(Exception):
-                _progress.close()
 
 
 async def _resync_tools_after_reconnect(instance_id: str | None) -> None:
