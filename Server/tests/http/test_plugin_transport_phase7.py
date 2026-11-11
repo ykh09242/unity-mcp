@@ -362,6 +362,9 @@ def test_invalid_gzip_stream_closes_only_owner_and_releases(client, kind):
             with pytest.raises(WebSocketDisconnect) as failure:
                 receive(client, wire)
             assert failure.value.code == 4400
+            # Complete the synthetic peer's close handshake before awaiting
+            # the pending command's disconnect cleanup.
+            wire.close()
             assert task.result(timeout=watchdog_timeout())["success"] is False
             assert_released()
             barrier(client, healthy, healthy_sid)

@@ -309,8 +309,12 @@ def test_malformed_active_large_transfer_closes_only_its_socket(client, kind):
             else:
                 for chunk in chunks:
                     wire.send_bytes(chunk)
-            with pytest.raises(WebSocketDisconnect):
+            with pytest.raises(WebSocketDisconnect) as failure:
                 wire.receive_json()
+            assert failure.value.code == 4400
+            # TestClient sends websocket.disconnect only when explicitly closed;
+            # acknowledge the server close before awaiting disconnect cleanup.
+            wire.close()
             assert task.result(timeout=watchdog_timeout())["success"] is False
             assert not unrelated.done()
             healthy.send_json(

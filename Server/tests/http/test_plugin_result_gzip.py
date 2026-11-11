@@ -116,7 +116,11 @@ def test_bad_compressed_payload_closes_offender_and_releases_peak_charge(client,
         wire.send_json(start)
         for chunk in chunks:
             wire.send_bytes(chunk)
-        with pytest.raises(WebSocketDisconnect):
+        with pytest.raises(WebSocketDisconnect) as failure:
             wire.receive_json()
+        assert failure.value.code == 4400
+        # Complete the synthetic peer's close handshake before awaiting
+        # the pending command's disconnect cleanup.
+        wire.close()
         assert task.result(timeout=watchdog_timeout())["success"] is False
     assert PluginHub._raw_results == {}
