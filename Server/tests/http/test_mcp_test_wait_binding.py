@@ -14,6 +14,7 @@ from fastmcp import Client, Context, FastMCP
 from fastmcp.server.middleware import Middleware
 
 from tests.test_http_command_outcome import command_hub  # pylint: disable=unused-import
+from tests.transport_socket import JsonSocket
 
 
 @asynccontextmanager
@@ -683,7 +684,7 @@ async def test_actual_factory_hosted_waits_capture_current_tenant_and_project_an
             await registry.register_tools_for_session(
                 sid, [ToolDefinitionModel(name="get_test_job")]
             )
-            socket = SimpleNamespace(
+            socket = JsonSocket(
                 state=SimpleNamespace(
                     plugin_registered=True,
                     plugin_session_id=sid,

@@ -101,6 +101,7 @@ def test_sdk_http_refresh_admission_reconnect_and_withdrawal(tmp_path, mode):
         from transport.models import RegisterToolsMessage, RegisterMessage, CommandResultMessage
         from transport.plugin_hub import PluginHub
         from transport.plugin_registry import PluginRegistry
+        from tests.transport_socket import bind_json_text
 
         async def main():
             config.transport_mode = "http"
@@ -121,6 +122,7 @@ def test_sdk_http_refresh_admission_reconnect_and_withdrawal(tmp_path, mode):
                         sent.append(payload)
                         await hub._handle_command_result(ws, CommandResultMessage(id=payload["id"], result={"success": True, "data": payload["params"]}))
                 ws.send_json = send
+                bind_json_text(ws)
                 return ws
             first = socket()
             await hub._handle_register(first, RegisterMessage(project_name="A", project_hash="a"))

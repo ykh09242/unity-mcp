@@ -13,6 +13,7 @@ import json
 import socket
 from contextlib import asynccontextmanager, contextmanager
 from types import SimpleNamespace
+from tests.transport_socket import JsonSocket, bind_json_text
 
 import httpx2
 import pytest
@@ -690,7 +691,7 @@ async def test_reload_detaches_scheduled_progress_before_old_guard_can_close_rep
     async with _resumable_batch_progress(command_hub, progress_api) as (ctx, _, call, sent):
         first = await asyncio.wait_for(sent.get(), watchdog_timeout())
         old = command_hub.websocket
-        replacement = SimpleNamespace(**vars(old))
+        replacement = JsonSocket(**vars(old))
         replacement.state = SimpleNamespace(**vars(old.state))
         replacement.state.plugin_session_id = "replacement"
         replacement.state.plugin_generation = "replacement-generation"
@@ -741,6 +742,7 @@ async def test_disconnected_socket_guard_ahead_of_cleanup_keeps_logical_progress
         {"type": "websocket", "state": vars(original_socket.state).copy()}, incoming.get, send
     )
     await old.accept()
+    bind_json_text(old)
     command_hub.websocket = old
     PluginHub._connections["session"] = old
     fixture = SimpleNamespace(hub=command_hub)
@@ -766,7 +768,7 @@ async def test_disconnected_socket_guard_ahead_of_cleanup_keeps_logical_progress
                 disconnect.cancel()
                 await asyncio.gather(disconnect, return_exceptions=True)
 
-        replacement = SimpleNamespace(**vars(original_socket))
+        replacement = JsonSocket(**vars(original_socket))
         replacement.state = SimpleNamespace(**old.scope["state"])
         replacement.state.plugin_session_id = "replacement"
         replacement.state.plugin_generation = "replacement-generation"

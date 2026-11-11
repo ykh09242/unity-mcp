@@ -4,6 +4,7 @@ from tests.timing import await_completion, await_signal, watchdog_timeout
 
 import asyncio
 from types import SimpleNamespace
+from tests.transport_socket import JsonSocket
 
 import pytest
 from fastmcp import Client, Context, FastMCP
@@ -582,7 +583,7 @@ async def test_sdk_stale_cleanup_survives_deadline_and_preserves_replacement(
             failed = await await_completion(task, "expired SDK request")
             assert budgets[0].scope.expired()
             assert failed.structured_content["data"]["reason"] == "command_deadline_exceeded"
-            replacement = SimpleNamespace(
+            replacement = JsonSocket(
                 state=SimpleNamespace(
                     plugin_registered=True,
                     plugin_session_id="replacement",

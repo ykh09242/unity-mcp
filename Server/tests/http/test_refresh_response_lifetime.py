@@ -3,6 +3,7 @@
 import asyncio
 import importlib
 from types import SimpleNamespace
+from tests.transport_socket import JsonSocket
 
 import pytest
 import pytest_asyncio
@@ -33,7 +34,7 @@ class SelectedContext:
 async def peer(monkeypatch):
     registry = PluginRegistry()
     await registry.register("refresh", "Refresh", "a" * 32, "test")
-    socket = SimpleNamespace(
+    socket = JsonSocket(
         state=SimpleNamespace(
             plugin_generation="generation",
             plugin_registered=True,

@@ -369,11 +369,11 @@ async def test_read_credentials_cannot_start_hidden_execution_or_asset_writes(
 async def test_final_serialized_policy_refusal_sends_neither_execute_nor_cancel(
     command_hub, monkeypatch, command, params, wire_params
 ):
-    hub = importlib.import_module("transport.plugin_hub")
     monkeypatch.setattr(config, "http_remote_hosted", True)
     await command_hub.registry.unregister("session")
     await command_hub.registry.register("session", "Fixture", "hash", "6000", user_id="alice")
-    original_dump = hub.ExecuteCommandMessage.model_dump
+    payload_module = importlib.import_module("transport.payload_processing")
+    original_dump = payload_module.ExecuteCommandMessage.model_dump
     serialized = []
 
     def changed_payload(message, *args, **kwargs):
@@ -382,7 +382,7 @@ async def test_final_serialized_policy_refusal_sends_neither_execute_nor_cancel(
         serialized.append(payload)
         return payload
 
-    monkeypatch.setattr(hub.ExecuteCommandMessage, "model_dump", changed_payload)
+    monkeypatch.setattr(payload_module.ExecuteCommandMessage, "model_dump", changed_payload)
     claims = {name: {"unity_mcp_permissions": ["read"]} for name in ("request", "plugin")}
     async with permission_service(monkeypatch, claims) as fixture:
         requester = (await fixture.service.validate("request")).lease
