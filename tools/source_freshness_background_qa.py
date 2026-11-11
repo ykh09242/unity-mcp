@@ -126,7 +126,7 @@ class DesktopProcess:
 
     def poll(self):
         if self.returncode is None:
-            code = ctypes.c_ulong()
+            code = ctypes.c_ulong(0)
             if not self.kernel.GetExitCodeProcess(self.handle, ctypes.byref(code)):
                 raise ctypes.WinError(ctypes.get_last_error())
             if code.value != 259:
@@ -169,7 +169,7 @@ class DesktopProcess:
         declined = False
 
         def attributes(window):
-            pid = w.DWORD()
+            pid = w.DWORD(0)
             self.user.GetWindowThreadProcessId(window, ctypes.byref(pid))
             title, kind = ctypes.create_unicode_buffer(512), ctypes.create_unicode_buffer(128)
             self.user.GetWindowTextW(window, title, 512)
@@ -179,7 +179,7 @@ class DesktopProcess:
         def child(window, _):
             nonlocal declined
             if attributes(window) == (self.pid, "&No", "Button"):
-                result = ctypes.c_size_t()
+                result = ctypes.c_size_t(0)
                 declined = bool(
                     self.user.SendMessageTimeoutW(
                         window, 0x00F5, 0, 0, 2, 500, ctypes.byref(result)
@@ -239,7 +239,7 @@ def foreground_pid() -> int:
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     user32.GetForegroundWindow.restype = ctypes.c_void_p
     user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
-    pid = ctypes.c_ulong()
+    pid = ctypes.c_ulong(0)
     user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(pid))
     return pid.value
 
