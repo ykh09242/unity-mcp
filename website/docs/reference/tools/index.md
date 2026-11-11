@@ -157,7 +157,7 @@ ScriptableObject management
 - **[`inspect_serialized_object`](./scripting_ext/inspect_serialized_object.md)** — Inspect one exact Component or ScriptableObject instance ID through SerializedObject.
 - **[`manage_scriptable_object`](./scripting_ext/manage_scriptable_object.md)** — Creates and modifies ScriptableObject assets using Unity SerializedObject property paths.
 
-## `testing` &nbsp; (10 tools)
+## `testing` &nbsp; (12 tools)
 Test runner, async test jobs & bounded Play Mode input simulation
 - **[`cancel_test_job`](./testing/cancel_test_job.md)** — Request cancellation of an owned native test job.
 - **[`export_test_job`](./testing/export_test_job.md)** — Export completed Unity test evidence as JSON or JUnit.
@@ -166,7 +166,9 @@ Test runner, async test jobs & bounded Play Mode input simulation
 - **[`manage_input`](./testing/manage_input.md)** — Simulate bounded input in Unity Play Mode. status reports capabilities and held controls. ui_click dispatches uGUI pointer events to a scene instance ID or exact root hierarchy path (independent of raw input backend; does not test raycas…
 - **[`manage_play_scenario`](./testing/manage_play_scenario.md)** — Save/get/list/delete scenarios and suites; reports history and run/status/cancel Unity-owned jobs.
 - **[`manage_scenario_recording`](./testing/manage_scenario_recording.md)** — Record observed uGUI Button pointer clicks and scene changes during unpaused Editor Play Mode.
+- **[`manage_script_quality`](./testing/manage_script_quality.md)** — Observe optional pinned Unity/C# diagnostics without writing source. capabilities reports explicit Editor setup/consent. analyze and capture_baseline require options.paths (1..256 Assets/Packages .cs files) XOR options.change_set_id; inc…
 - **[`manage_simulation_profiles`](./testing/manage_simulation_profiles.md)** — Capture named Time/Physics3D/Physics2D/Audio/Input configuration profiles, inspect per-domain applicability, diff/validate against current settings, explicitly apply, and conditionally restore confirmed changes. capabilities lists exact…
+- **[`manage_verification`](./testing/manage_verification.md)** — Run project verification with source-linked stage reports. profiles reads defaults and explicit project overrides without writing. set_profile requires profile_id, profile and expected_hash from profiles (missing for a new file). prepare…
 - **[`run_tests`](./testing/run_tests.md)** — Starts a Unity test run asynchronously and returns a job_id immediately.
 - **[`view_test_results`](./testing/view_test_results.md)** — Read one completed Unity test-result page (up to 100 failed/skipped details).
 

@@ -1391,7 +1391,7 @@ Fetch documentation for a Unity class or member. Examples: unity-mcp docs get Ph
 
 ## `unity-mcp doctor`
 
-Verify this diagnostic SDK connection; does not attest another desktop client's session.
+Verify this diagnostic SDK connection; does not attest another desktop client's session. Source recovery advice in data.source_recovery is observational; this command never restarts, focuses or repairs the Editor.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -3972,6 +3972,16 @@ Apply text edits to a script. Examples: unity-mcp script edit "Assets/Scripts/Pl
 | --expected-sha | text | optional | nargs=1 | — | — | SHA-256 observed in a previous JSON script read. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp script quality`
+
+Read source-bound diagnostics through the public MCP tool; never apply fixes.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| action | choice: capabilities, capture_baseline, analyze, status, cancel, impact | required | nargs=1 | — | — |  |
+| --options | text | optional | nargs=1 | "&#123;&#125;" | — | Action options as JSON, @file or - for stdin; explicit paths or change_set_id are required for analysis. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp script read`
 
 Read a C# script file. Examples: unity-mcp script read "Assets/Scripts/Player.cs" unity-mcp script read "Assets/Scripts/Player.cs" --start-line 10 --line-count 20
@@ -4368,6 +4378,16 @@ Edit one existing uGUI Image through a single native Undo transaction.
 | --- | --- | --- | --- | --- | --- | --- |
 | target | text | required | nargs=1 | — | — |  |
 | --properties | text | required | nargs=1 | — | — | Image JSON properties; sprite accepts null, asset path, or &#123;path,name&#125;. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification`
+
+Prepare source-linked checks and observe runs without automatically replaying work.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| action | choice: profiles, set_profile, prepare, run, status, cancel, report | required | nargs=1 | — | — |  |
+| --options | text | optional | nargs=1 | "&#123;&#125;" | — | Action options as JSON, @file or - for stdin. Run/status/report use the returned owned IDs. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp vfx`

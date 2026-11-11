@@ -408,6 +408,24 @@
       "requires_graphics": false,
       "disruptive": false,
       "platform_exclusions": {}
+    },
+    "script-quality-impact": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.TextEvidenceConfirmsFieldAndLocallyBoundPersistentCall",
+        "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.CrossFileOrMissingTargetsNeverConfirmAMethod",
+        "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.DuplicateFileIdsCannotBindPersistentTargets",
+        "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.BinaryMissingScriptAndAmbiguousYamlRetainCoverageGaps",
+        "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.ImpactReadPreservesSceneStageAssetAndMetadataAndRefusesSourceDrift"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
+    "source-freshness-reload": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.SourceFreshnessReloadTests.RealDomainReloadPreservesPendingIdentityWithoutInventingCompilation"
+      ],
+      "disruptive": true,
+      "platform_exclusions": {}
     }
   }
 }

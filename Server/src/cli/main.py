@@ -354,6 +354,7 @@ def register_commands():
         ("cli.commands.asset_gen", "asset_gen"),
         ("cli.commands.blender", "blender"),
         ("cli.commands.script", "script"),
+        ("cli.commands.verification", "verification"),
         ("cli.commands.code", "code"),
         ("cli.commands.editor", "editor"),
         ("cli.commands.play_scenario", "play_scenario"),

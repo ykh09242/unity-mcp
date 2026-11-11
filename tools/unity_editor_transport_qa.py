@@ -208,6 +208,7 @@ def _launch(args):
     env = os.environ.copy()
     env.pop("UNITY_MCP_ALLOW_BATCH", None)
     env["UNITY_MCP_OWNED_TRANSPORT_TESTS"] = "1"
+    env["UNITY_MCP_SOURCE_RELOAD_PROJECT"] = str(project)
     env["UNITY_MCP_STATUS_DIR"] = str(output / "stdio-status")
     if args.stdio_command_timeout_ms is not None:
         if args.stdio_command_timeout_ms <= 0:

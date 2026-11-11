@@ -30,6 +30,26 @@ def script():
     pass
 
 
+@script.command("quality")
+@click.argument(
+    "action",
+    type=click.Choice(
+        ["capabilities", "capture_baseline", "analyze", "status", "cancel", "impact"]
+    ),
+)
+@click.option(
+    "--options",
+    default="{}",
+    help="Action options as JSON, @file or - for stdin; explicit paths or change_set_id are required for analysis.",
+)
+@handle_unity_errors
+def quality(action: str, options: str):
+    """Read source-bound diagnostics through the public MCP tool; never apply fixes."""
+    from cli.utils.composed_tools import echo_composed_tool
+
+    echo_composed_tool("manage_script_quality", action, options)
+
+
 @script.command("create")
 @click.argument("name")
 @click.option("--path", "-p", default="Assets/Scripts", help="Directory to create the script in.")

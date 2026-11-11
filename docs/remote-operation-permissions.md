@@ -42,6 +42,15 @@ Adding a built-in operation requires reviewing its policy entry. This policy is
 operation admission, not a sandbox for arbitrary user scripts, Unity callbacks,
 Editor extensions or already-running native jobs.
 
+Changed-script capabilities/status/results/impact require `read`; analysis and
+baseline capture require `read` + `run` plus explicit native analysis-host consent.
+Verification profile writes require `read` + `edit`. Preparation with baseline
+capture requires `read` + `run`; execution checks the union of its actual profile
+stages before admission and again at every child dispatch. Refresh requires
+`edit` + `run`, and native tests require `test`. A status/report grant never supplies
+authority to refresh, test or cancel a child mutation. See
+[verification profiles](verification-profiles.md) for ownership and cancellation.
+
 | Grant | Examples |
 |---|---|
 | `read` | Asset information and labels, scene hierarchy, console reads, job observations, known resources and catalog subscriptions |

@@ -201,6 +201,10 @@ class DiagnosticClient:
     async def read_resource_mcp(self, uri, *, meta=None):
         return await self._client.read_resource(uri, meta=self._meta(meta), cache_mode="bypass")
 
+    async def call_tool_mcp(self, name, arguments, *, meta=None):
+        # A single low-level call: no input callback loops or automatic re-dispatch.
+        return await self._client.session.call_tool(name, arguments, meta=self._meta(meta))
+
     @staticmethod
     def _meta(value):
         from mcp_types import RequestParamsMeta

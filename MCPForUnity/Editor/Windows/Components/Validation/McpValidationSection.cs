@@ -2,6 +2,7 @@ using System;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.ScriptQuality;
+using MCPForUnity.Editor.Services.SourceFreshness;
 using MCPForUnity.Editor.Setup;
 using MCPForUnity.Editor.Tools;
 using UnityEditor;
@@ -109,7 +110,47 @@ namespace MCPForUnity.Editor.Windows.Components.Validation
                     text = "Disable analysis",
                 }
             );
-            Root.Add(new Button(() => analysisStatus.text = ScriptAnalysisHost.Capabilities().ToString()) { text = "Check analysis host status" });
+            Root.Add(
+                new Button(() =>
+                {
+                    var status = ScriptAnalysisHost.Capabilities();
+                    analysisStatus.text =
+                        $"Analysis host: {((bool?)status["available"] == true ? "available" : "setup or inspection required")}\n"
+                        + $"Session consent: {((bool?)status["consent"] == true ? "enabled" : "disabled")}\n"
+                        + $"Occupied analysis slots: {status["occupied"]}\nReason: {status["reason"] ?? "none"}";
+                })
+                {
+                    text = "Check analysis host status",
+                }
+            );
+            Root.Add(
+                new Button(async () =>
+                {
+                    try
+                    {
+                        using var cancellation = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
+                        var observation = await SourceFreshnessService.ObserveAsync(cancellation.Token);
+                        analysisStatus.text =
+                            $"Source freshness: {observation["status"]}\nReason: {observation["reason"]}\n"
+                            + "Observation only. Use a verification profile to request compilation when needed.";
+                    }
+                    catch (Exception error)
+                    {
+                        analysisStatus.text = "Source observation unavailable: " + error.GetType().Name;
+                    }
+                })
+                {
+                    text = "Check source freshness",
+                }
+            );
+            Root.Add(
+                new Label(
+                    "Use script-check, editmode-check or playmode-check through manage_verification or the CLI. Reports retain source identity, diagnostic coverage and native job status; no code is formatted or automatically fixed."
+                )
+                {
+                    style = { whiteSpace = WhiteSpace.Normal },
+                }
+            );
             analysisStatus.text =
                 "Optional changed-script diagnostics use a separate .NET process. Setup restores pinned dependencies; analysis never installs or changes project code.";
         }

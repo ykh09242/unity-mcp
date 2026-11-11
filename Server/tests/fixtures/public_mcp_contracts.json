@@ -5237,6 +5237,10 @@
               "compile_id": {
                 "type": "string"
               },
+              "observe_source": {
+                "default": false,
+                "type": "boolean"
+              },
               "unity_instance": {
                 "anyOf": [
                   {
@@ -5307,6 +5311,18 @@
                 "anyOf": [
                   {
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "source_freshness": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
                   },
                   {
                     "type": "null"
@@ -19070,6 +19086,61 @@
             "type": "object"
           }
         },
+        "manage_script_quality": {
+          "annotations": {
+            "destructiveHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "capabilities",
+                  "capture_baseline",
+                  "analyze",
+                  "status",
+                  "cancel",
+                  "impact"
+                ],
+                "type": "string"
+              },
+              "options": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "manage_scriptable_object": {
           "annotations": {
             "destructiveHint": true
@@ -21574,6 +21645,61 @@
             "type": "object"
           }
         },
+        "manage_verification": {
+          "annotations": {
+            "destructiveHint": false
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "profiles",
+                  "set_profile",
+                  "prepare",
+                  "run",
+                  "status",
+                  "cancel",
+                  "report"
+                ],
+                "type": "string"
+              },
+              "options": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "manage_vfx": {
           "annotations": {
             "destructiveHint": true
@@ -23022,6 +23148,10 @@
                 ],
                 "type": "string"
               },
+              "force_recompile": {
+                "default": false,
+                "type": "boolean"
+              },
               "mode": {
                 "default": "if_dirty",
                 "enum": [
@@ -23231,6 +23361,10 @@
                 ],
                 "type": "string"
               },
+              "require_source_freshness": {
+                "default": true,
+                "type": "boolean"
+              },
               "run_timeout_ms": {
                 "anyOf": [
                   {
@@ -23325,6 +23459,28 @@
                             "type": "string"
                           },
                           "mode": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "source_freshness_required": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "source_token": {
                             "anyOf": [
                               {
                                 "type": "string"
@@ -30824,6 +30980,10 @@
               "compile_id": {
                 "type": "string"
               },
+              "observe_source": {
+                "default": false,
+                "type": "boolean"
+              },
               "unity_instance": {
                 "anyOf": [
                   {
@@ -30894,6 +31054,18 @@
                 "anyOf": [
                   {
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "source_freshness": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
                   },
                   {
                     "type": "null"
@@ -44657,6 +44829,61 @@
             "type": "object"
           }
         },
+        "manage_script_quality": {
+          "annotations": {
+            "destructiveHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "capabilities",
+                  "capture_baseline",
+                  "analyze",
+                  "status",
+                  "cancel",
+                  "impact"
+                ],
+                "type": "string"
+              },
+              "options": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "manage_scriptable_object": {
           "annotations": {
             "destructiveHint": true
@@ -47161,6 +47388,61 @@
             "type": "object"
           }
         },
+        "manage_verification": {
+          "annotations": {
+            "destructiveHint": false
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "profiles",
+                  "set_profile",
+                  "prepare",
+                  "run",
+                  "status",
+                  "cancel",
+                  "report"
+                ],
+                "type": "string"
+              },
+              "options": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "manage_vfx": {
           "annotations": {
             "destructiveHint": true
@@ -48609,6 +48891,10 @@
                 ],
                 "type": "string"
               },
+              "force_recompile": {
+                "default": false,
+                "type": "boolean"
+              },
               "mode": {
                 "default": "if_dirty",
                 "enum": [
@@ -48818,6 +49104,10 @@
                 ],
                 "type": "string"
               },
+              "require_source_freshness": {
+                "default": true,
+                "type": "boolean"
+              },
               "run_timeout_ms": {
                 "anyOf": [
                   {
@@ -48912,6 +49202,28 @@
                             "type": "string"
                           },
                           "mode": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "source_freshness_required": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "source_token": {
                             "anyOf": [
                               {
                                 "type": "string"

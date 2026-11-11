@@ -21,6 +21,11 @@ The existing `outcome` and native `compile_job@1` contract remain compatible.
 Neither that history nor readiness proves that a specific source revision is
 loaded. A timed-out observation does not cancel compilation or replay refresh.
 
+The additive [source freshness](source-freshness.md) envelope binds sampled source,
+compilation and loaded assembly evidence. New native test starts require its source
+token at the final execution boundary. [Verification profiles](verification-profiles.md)
+also recheck that token after their stages; a passing test alone cannot conceal drift.
+
 ## Test and console observations
 
 New test runs wait for fresh readiness observations to remain stable for 750 ms,

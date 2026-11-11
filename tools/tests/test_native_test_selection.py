@@ -10,6 +10,23 @@ import pytest
 from tools import unity_editor_transport_qa as qa
 
 
+def test_source_quality_acceptance_groups_include_a_separate_actual_reload():
+    manifest_path = Path(__file__).resolve().parents[1] / "unity-native-groups.json"
+    groups = json.loads(manifest_path.read_text(encoding="utf-8"))["groups"]
+    assert {
+        "source-freshness",
+        "source-freshness-reload",
+        "script-quality",
+        "script-quality-impact",
+        "verification-profiles",
+    } <= groups.keys()
+    reload = groups["source-freshness-reload"]
+    assert reload["disruptive"] is True
+    assert reload["methods"] == [
+        "MCPForUnityTests.Editor.Services.SourceFreshnessReloadTests.RealDomainReloadPreservesPendingIdentityWithoutInventingCompilation"
+    ]
+
+
 def manifest(tmp_path):
     path = tmp_path / "groups.json"
     path.write_text(

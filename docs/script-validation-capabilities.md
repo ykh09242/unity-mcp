@@ -26,3 +26,10 @@ explicit compilation workflow when fresh native compiler results are required.
 
 Roslyn is optional. Its installed assemblies and `USE_ROSLYN` compile configuration
 must agree; this view does not install packages or change compiler defines.
+
+The same panel separately exposes explicit setup and session consent for
+[changed-script diagnostics](script-quality.md). That isolated host provides pinned
+Unity/CodeStyle analyzers and real compilation context without adding assemblies to
+the Editor's Roslyn set. [Verification profiles](verification-profiles.md) combine
+those diagnostics with [source freshness](source-freshness.md) and existing tests.
+No validation level or verification profile formats or automatically fixes code.
