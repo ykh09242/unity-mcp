@@ -153,6 +153,7 @@ async def send_with_unity_instance(
     user_id: str | None = None,
     _progress: ProgressSink | None = None,
     _response_adapter: Callable[[Any], Any] | None = None,
+    _preserve_local_response: bool = False,
     **kwargs,
 ) -> T:
     if _is_http_transport():
@@ -258,6 +259,9 @@ async def send_with_unity_instance(
         kwargs["_progress"] = _progress
     if unity_instance:
         kwargs.setdefault("instance_id", unity_instance)
-    result = _public_response_value(await send_fn(*args, **kwargs))
-    observe_native_result(result)
-    return result
+    result = await send_fn(*args, **kwargs)
+    public = _public_response_value(result)
+    observe_native_result(public)
+    # Internal mutation recovery needs the in-process preflight type as proof
+    # of zero dispatch. Public callers still receive the normalized dictionary.
+    return result if _preserve_local_response else public

@@ -64,6 +64,41 @@ async def test_public_wrapper_preserves_model_and_dictionary_responses(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+@pytest.mark.parametrize("preserve", [False, True])
+@pytest.mark.parametrize("typed", [False, True])
+async def test_private_preflight_preservation_never_reaches_native_dispatch(
+    monkeypatch, transport, preserve, typed
+):
+    monkeypatch.setattr(config, "transport_mode", transport)
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    response = MCPResponse(success=False, hint="retry", data={"reason": "reloading"})
+    raw = response if typed else response.model_dump()
+    send = AsyncMock(return_value=raw)
+    monkeypatch.setattr(unity_transport.PluginHub, "send_command_for_instance", send)
+    params = {"action": "create", "name": "Owned"}
+    result = await unity_transport.send_with_unity_instance(
+        send,
+        "P@id",
+        "manage_gameobject",
+        params,
+        retry_on_reload=False,
+        _preserve_local_response=preserve,
+    )
+    if transport == "stdio" and preserve:
+        assert result is raw
+    else:
+        assert result == response.model_dump()
+    expected_args = ("manage_gameobject", params)
+    expected_kwargs = {"retry_on_reload": False, "instance_id": "P@id"}
+    if transport == "http":
+        expected_args = ("P@id", *expected_args)
+        expected_kwargs = {"user_id": None, "retry_on_reload": False}
+    send.assert_awaited_once_with(*expected_args, **expected_kwargs)
+    assert params == {"action": "create", "name": "Owned"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("value", [None, False, 0, "unexpected", [1, 2]])
 async def test_stdio_boundary_does_not_coerce_arbitrary_values(monkeypatch, value):
     # Given: a legacy transport returns a non-response value.

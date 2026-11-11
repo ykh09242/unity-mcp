@@ -357,7 +357,10 @@ async def test_local_preflight_reload_retries_once_and_preserves_last_response(
     assert result is second
     assert send.await_count == 2
     assert ready.await_count == 2
-    assert all(call.kwargs == {"retry_on_reload": False} for call in send.await_args_list)
+    assert all(
+        call.kwargs == {"retry_on_reload": False, "_preserve_local_response": True}
+        for call in send.await_args_list
+    )
     verify.assert_not_awaited()
 
 
@@ -390,7 +393,7 @@ async def test_handler_reload_hint_waits_without_replaying_mutation(monkeypatch)
     # Handler data can require readiness recovery but cannot prove zero dispatch.
     assert result is response
     send.assert_awaited_once()
-    assert send.await_args.kwargs == {"retry_on_reload": False}
+    assert send.await_args.kwargs == {"retry_on_reload": False, "_preserve_local_response": True}
     ready.assert_awaited_once_with(ctx)
     verify.assert_not_awaited()
 

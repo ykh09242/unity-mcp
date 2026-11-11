@@ -246,6 +246,7 @@ async def _send_mutation(
         command,
         params,
         retry_on_reload=False,
+        _preserve_local_response=True,
     )
     if _is_preflight_reload(resp):
         ready, _ = await wait_for_editor_ready(ctx)
@@ -257,6 +258,7 @@ async def _send_mutation(
             command,
             params,
             retry_on_reload=False,
+            _preserve_local_response=True,
         )
     if (
         isinstance(resp, dict)
