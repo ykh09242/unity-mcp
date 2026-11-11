@@ -109,6 +109,14 @@ selected launcher archive, `--archive-source` checks its immutable commit URL an
 subdirectory against the installed origin. An unrelated installed archive cannot pass by
 echoing a requested candidate SHA.
 
+Archive hashes are optional in installer metadata. The selected remote archive is bound
+by its exact immutable URL and `Server` subdirectory; an unrecorded SHA256 is reported as
+`archive_sha256: null`. Malformed or conflicting provided digests still fail. Candidate
+installation supplies the independently computed ZIP SHA256 in its file-URL fragment,
+which uv verifies and retains even when `archive_info` is empty. The checker accepts only
+one supported `sha256` fragment, requires agreement with any recorded SHA256 metadata,
+and independently rehashes the local ZIP. Missing local content proof still fails.
+
 [`distribution-canary.yml`](../../.github/workflows/distribution-canary.yml) runs Python
 3.11 probes on Linux, Windows and Intel macOS, plus Linux Python 3.14 and 3.15 probes, each Monday
 at 04:23 UTC and supports manual dispatch. Each row selects the

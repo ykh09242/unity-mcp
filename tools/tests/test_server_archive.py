@@ -25,13 +25,14 @@ def archive_checker():
 
 
 @pytest.mark.parametrize("mismatch", ["pin", "url", "subdirectory", "editable", "vcs"])
-def test_selected_archive_requires_matching_installed_origin(mismatch):
+@pytest.mark.parametrize("archive_info", [{}, {"hashes": {}}, {"hashes": {"sha256": "b" * 64}}])
+def test_selected_archive_requires_matching_installed_origin(mismatch, archive_info):
     module = archive_checker()
     source = f"https://github.com/ykh09242/unity-mcp/archive/{'a' * 40}.zip#subdirectory=Server"
     direct = {
         "url": source.split("#")[0],
         "subdirectory": "Server",
-        "archive_info": {"hashes": {"sha256": "b" * 64}},
+        "archive_info": archive_info,
     }
     assert module.verify_archive_origin(direct, source, "a" * 40) == direct
     match mismatch:
@@ -49,17 +50,89 @@ def test_selected_archive_requires_matching_installed_origin(mismatch):
         module.verify_archive_origin(direct, source, "a" * 40)
 
 
-def test_local_unpublished_archive_is_bound_to_file_bytes(tmp_path):
+@pytest.mark.parametrize("proof", ["metadata", "installation-url-fragment"])
+def test_local_unpublished_archive_is_bound_to_file_bytes(tmp_path, proof):
     module = archive_checker()
     archive = tmp_path / "unpublished candidate.zip"
     archive.write_bytes(b"owned synthetic candidate ZIP bytes")
     import hashlib
 
     checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
-    direct = {"url": archive.as_uri(), "archive_info": {"hashes": {"sha256": checksum}}}
+    direct = (
+        {"url": archive.as_uri(), "archive_info": {"hashes": {"sha256": checksum}}}
+        if proof == "metadata"
+        else {"url": archive.as_uri() + "#sha256=" + checksum, "archive_info": {}}
+    )
     # A local file is sufficient; no remote existence lookup is needed for this commit label.
     assert module.verify_archive_origin(direct, archive, "a" * 40) == direct
     archive.write_bytes(b"different archive")
+    with pytest.raises(RuntimeError, match="provenance"):
+        module.verify_archive_origin(direct, archive, "a" * 40)
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        "",
+        "sha256=bad",
+        "sha256=" + "0" * 64,
+        "sha256=" + "c" * 64,
+        "sha512=" + "c" * 128,
+        "sha256={digest}&sha256={digest}",
+        "sha256={digest}&sha256=" + "c" * 64,
+        "sha256={digest}&subdirectory=Server",
+        "sha256={digest}&other=1",
+        "sha256={digest}&sha512=" + "c" * 128,
+    ],
+)
+def test_local_archive_requires_one_valid_matching_installation_digest(tmp_path, fragment):
+    import hashlib
+
+    module = archive_checker()
+    archive = tmp_path / "candidate.zip"
+    archive.write_bytes(b"owned candidate")
+    fragment = fragment.format(digest=hashlib.sha256(archive.read_bytes()).hexdigest())
+    direct = {"url": archive.as_uri() + ("#" + fragment if fragment else ""), "archive_info": {}}
+    with pytest.raises(RuntimeError, match="provenance"):
+        module.verify_archive_origin(direct, archive, "a" * 40)
+
+
+@pytest.mark.parametrize(
+    "archive_info",
+    [
+        None,
+        {"hashes": None},
+        {"hashes": []},
+        {"hashes": {"sha256": None}},
+        {"hashes": {"sha256": "bad"}},
+        {"hashes": {"sha256": "0" * 64}},
+        {"hash": None},
+        {"hash": "bad"},
+        {"hash": "sha256=bad"},
+        {"hashes": {"sha512": "bad"}},
+        {"hashes": {"unknown": "b" * 64}},
+        {"hash": "sha256=" + "b" * 64, "hashes": {"sha256": "c" * 64}},
+    ],
+)
+def test_optional_remote_digest_does_not_accept_malformed_provided_metadata(archive_info):
+    module = archive_checker()
+    source = f"https://github.com/ykh09242/unity-mcp/archive/{'a' * 40}.zip#subdirectory=Server"
+    direct = {"url": source.split("#")[0], "subdirectory": "Server", "archive_info": archive_info}
+    with pytest.raises(RuntimeError, match="provenance"):
+        module.verify_archive_origin(direct, source, "a" * 40)
+
+
+def test_local_fragment_and_metadata_digest_must_agree(tmp_path):
+    import hashlib
+
+    module = archive_checker()
+    archive = tmp_path / "candidate.zip"
+    archive.write_bytes(b"owned candidate")
+    checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+    direct = {
+        "url": archive.as_uri() + "#sha256=" + checksum,
+        "archive_info": {"hashes": {"sha256": "b" * 64}},
+    }
     with pytest.raises(RuntimeError, match="provenance"):
         module.verify_archive_origin(direct, archive, "a" * 40)
 
@@ -193,6 +266,9 @@ def test_archive_workflow_installs_the_checked_candidate_without_lock_or_source_
     assert "uv pip install" in install["run"]
     assert "ykh09242-unity-mcp-server @ " in install["run"]
     assert "uv sync" not in install["run"]
+    assert "Get-FileHash -LiteralPath $archive -Algorithm SHA256" in install["run"]
+    assert "'#sha256=' + $archiveDigest" in install["run"]
+    assert install["run"].index("Get-FileHash") < install["run"].index("uv pip install")
     behavior = next(
         step
         for step in steps

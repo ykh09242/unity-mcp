@@ -335,7 +335,8 @@ jobs:
           uv venv --no-config --python $env:ARCHIVE_PYTHON_VERSION $environment
           if ($LASTEXITCODE -ne 0) { throw 'Archive environment failed' }
           $python = if ($IsWindows) { Join-Path $environment 'Scripts/python.exe' } else { Join-Path $environment 'bin/python' }
-          $source = 'ykh09242-unity-mcp-server @ ' + ([System.Uri]::new($archive)).AbsoluteUri
+          $archiveDigest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $source = 'ykh09242-unity-mcp-server @ ' + ([System.Uri]::new($archive)).AbsoluteUri + '#sha256=' + $archiveDigest
           uv pip install --no-config --python $python $source
           if ($LASTEXITCODE -ne 0) { throw 'Unlocked candidate archive installation failed' }
           "ARCHIVE_PYTHON=$python" >> $env:GITHUB_ENV
