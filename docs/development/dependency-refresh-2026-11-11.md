@@ -313,3 +313,11 @@ model turns, no user credentials/configuration and no sidebar chat. Source links
 were checked at their exact 0.167.1 paths, including the relocated client module
 and the retained protocol-mode module. No native Unity or desktop UI adoption
 claim follows from this managed/client evidence.
+
+## Follow-up project improvements
+
+The [remediation report](project-review-remediation-2026-11-11.md) maps the 16
+subsequent improvements to their commits and focused evidence. The later
+[shared-connection matrix](shared-connections.md) adds actual multi-owner Codex
+assurance beyond the four single-chat cases above, with explicit authority and
+host limits.
