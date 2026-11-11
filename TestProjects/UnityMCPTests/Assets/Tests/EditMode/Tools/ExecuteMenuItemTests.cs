@@ -21,13 +21,18 @@ namespace MCPForUnityTests.Editor.Tools
     {
         private const string OwnedMenuPath = "Tools/MCPForUnityTests/Owned Menu 80f1a802b581420493c68b31d1b43d8c";
         private static bool _ownedMenuInvoked;
+        private static int _validationCalls;
         private const string DisabledMenuPath = "Tools/MCPForUnityTests/Disabled DEV11 9a438d";
 
         [MenuItem(DisabledMenuPath)]
         private static void InvokeDisabledMenu() => _ownedMenuInvoked = true;
 
         [MenuItem(DisabledMenuPath, true)]
-        private static bool ValidateDisabledMenu() => false;
+        private static bool ValidateDisabledMenu()
+        {
+            _validationCalls++;
+            return false;
+        }
 
         [MenuItem("CONTEXT/Transform/Owned DEV11 9a438d")]
         private static void InvokeContextMenu(MenuCommand command) => _ownedMenuInvoked = true;
@@ -41,7 +46,12 @@ namespace MCPForUnityTests.Editor.Tools
         public void SetUp()
         {
             _ownedMenuInvoked = false;
-            registryConsent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("execute_menu_item", "execute_menu_item_observed");
+            _validationCalls = 0;
+            registryConsent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState(
+                "execute_menu_item",
+                "execute_menu_item_observed",
+                "inspect_menu_item_declaration"
+            );
         }
 
         [TearDown]
@@ -87,6 +97,83 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue((bool)result["data"]["existence"]["value"]);
             Assert.IsNotEmpty((string)result["data"]["existence"]["source"]);
             Assert.IsFalse((bool)result["data"]["invocation"]["attempted"]);
+            Assert.AreEqual("not_evaluated", (string)result["data"]["availability"]["status"]);
+            Assert.AreEqual(JTokenType.Null, result["data"]["availability"]["enabled"].Type);
+        }
+
+        [TestCase("inspect")]
+        [TestCase("exists")]
+        public void DeclarationRead_DoesNotInvokeActualValidationOrAvailabilityBoundary(string action)
+        {
+            int availabilityCalls = 0;
+            Seam(
+                "_enabledOverride",
+                (Func<string, bool>)(
+                    _ =>
+                    {
+                        availabilityCalls++;
+                        return ValidateDisabledMenu();
+                    }
+                )
+            );
+            var result = ToJO(ExecuteMenuItem.HandleCommand(Request(action, DisabledMenuPath)));
+            Assert.IsTrue((bool)result["success"], result.ToString());
+            Assert.IsTrue((bool)result["data"]["existence"]["value"]);
+            Assert.AreEqual(0, _validationCalls, "Declaration inspection must not invoke the project's MenuItem validator.");
+            Assert.AreEqual(0, availabilityCalls, "No GetEnabled boundary is permitted, even when a validator reports disabled.");
+            Assert.IsFalse(_ownedMenuInvoked);
+
+            // Repeat through the real native registry with the actual GetEnabled API available.
+            Seam("_enabledOverride", null);
+            CommandRegistry.Initialize();
+            result = ToJO(CommandRegistry.GetHandler("inspect_menu_item_declaration")(Request(action, DisabledMenuPath)));
+            Assert.IsTrue((bool)result["success"], result.ToString());
+            Assert.AreEqual(0, _validationCalls);
+            Assert.IsFalse(_ownedMenuInvoked);
+        }
+
+        [Test]
+        public void DeclarationFallback_DoesNotEvaluateAvailabilityToProveExistence()
+        {
+            Seam("_existsOverride", (Func<string, bool?>)(_ => null));
+            Seam(
+                "_enabledOverride",
+                (Func<string, bool>)(
+                    _ =>
+                    {
+                        _validationCalls++;
+                        return true;
+                    }
+                )
+            );
+            var declared = ToJO(ExecuteMenuItem.HandleCommand(Request("inspect", DisabledMenuPath)));
+            Assert.IsTrue((bool)declared["data"]["existence"]["value"]);
+            Assert.AreEqual("managed_declaration", (string)declared["data"]["existence"]["source"]);
+            var missing = ToJO(ExecuteMenuItem.HandleCommand(Request("exists", "Fixture/Undeclared T8")));
+            Assert.AreEqual(JTokenType.Null, missing["data"]["existence"]["value"].Type);
+            Assert.AreEqual(0, _validationCalls);
+        }
+
+        [Test]
+        public void AvailabilityRoute_RequiresConsentAndRunsValidationBoundaryOnlyAfterGrant()
+        {
+            Seam("_existsOverride", (Func<string, bool?>)(_ => true));
+            Seam("_enabledOverride", (Func<string, bool>)(_ => ValidateDisabledMenu()));
+            CommandRegistry.Initialize();
+            var request = Request("execute", DisabledMenuPath);
+            Assert.Throws<InvalidOperationException>(() => CommandRegistry.InvokeCommandAsync("evaluate_menu_item", request));
+            Assert.AreEqual(0, _validationCalls);
+            Assert.IsFalse(_ownedMenuInvoked);
+
+            Assert.IsTrue(registryConsent.Service.Grant("evaluate_menu_item", ToolConsentScope.EditorSession).Succeeded);
+            var result = ToJO(CommandRegistry.InvokeCommandAsync("evaluate_menu_item", request).GetAwaiter().GetResult());
+            Assert.IsTrue((bool)result["success"], result.ToString());
+            Assert.AreEqual(1, _validationCalls);
+            Assert.AreEqual("evaluate_availability", (string)result["data"]["action"]);
+            Assert.AreEqual("disabled", (string)result["data"]["availability"]["status"]);
+            Assert.IsFalse((bool)result["data"]["invocation"]["attempted"]);
+            Assert.IsFalse(_ownedMenuInvoked);
+            Assert.AreEqual("execute", (string)request["action"], "The route must preserve caller input while forcing inspection intent.");
         }
 
         [Test]
@@ -120,7 +207,7 @@ namespace MCPForUnityTests.Editor.Tools
             var result = ToJO(ExecuteMenuItem.HandleCommand(Request("inspect", "Fixture/DEV11 missing 98cd20")));
             Assert.IsTrue((bool)result["success"]);
             Assert.AreEqual(JTokenType.Null, result["data"]["existence"]["value"].Type);
-            Assert.AreEqual("unknown", (string)result["data"]["availability"]["status"]);
+            Assert.AreEqual("not_evaluated", (string)result["data"]["availability"]["status"]);
             Assert.AreEqual(JTokenType.Null, result["data"]["availability"]["enabled"].Type);
         }
 
@@ -611,6 +698,8 @@ namespace MCPForUnityTests.Editor.Tools
         private static FieldInfo Seam(string name) => typeof(ExecuteMenuItem).GetField(name, BindingFlags.NonPublic | BindingFlags.Static);
 
         [TestCase("InspectMenuItem", "inspect_menu_item")]
+        [TestCase("InspectMenuItemDeclaration", "inspect_menu_item_declaration")]
+        [TestCase("EvaluateMenuItem", "evaluate_menu_item")]
         [TestCase("ExecuteMenuItemObserved", "execute_menu_item_observed")]
         public void AliasHasRealConservativeMetadataWithoutSecondPublicRegistration(string className, string command)
         {

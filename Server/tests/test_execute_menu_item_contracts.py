@@ -37,7 +37,7 @@ def test_registered_menu_contract_schema_forwarding_and_no_execute_replay():
             for mode in ('2026-07-28', 'legacy'):
                 async with Client(server, mode=mode) as client:
                     discovered = {tool.name: tool for tool in await client.list_tools()}
-                    assert 'inspect_menu_item' not in discovered and 'execute_menu_item_observed' not in discovered
+                    assert not {'inspect_menu_item', 'inspect_menu_item_declaration', 'evaluate_menu_item', 'execute_menu_item_observed'} & discovered.keys()
                     tool = discovered['execute_menu_item']
                     assert tool.annotations.destructiveHint is True
                     for field in ('action', 'wait_for', 'timeout_ms'):
@@ -48,6 +48,8 @@ def test_registered_menu_contract_schema_forwarding_and_no_execute_replay():
                          {'menuPath': 'Fixture/Owned', 'action': 'inspect'}, True),
                         ({'menu_path': 'Fixture/Owned', 'action': 'exists'},
                          {'menuPath': 'Fixture/Owned', 'action': 'exists'}, True),
+                        ({'menu_path': 'Fixture/Owned', 'action': 'evaluate_availability'},
+                         {'menuPath': 'Fixture/Owned', 'action': 'evaluate_availability'}, False),
                         ({'menu_path': 'Window/General/Console', 'wait_for': 'console_window_open', 'timeout_ms': 60000},
                          {'menuPath': 'Window/General/Console', 'wait_for': 'console_window_open', 'timeout_ms': 60000, 'timeout_seconds': 60}, False),
                     ]
@@ -56,7 +58,8 @@ def test_registered_menu_contract_schema_forwarding_and_no_execute_replay():
                         result = await client.call_tool('execute_menu_item', payload, raise_on_error=False)
                         assert len(sends) == before + 1
                         instance, command, params, options = sends[-1]
-                        expected_command = ('inspect_menu_item' if payload.get('action') in ('inspect', 'exists')
+                        expected_command = ('inspect_menu_item_declaration' if payload.get('action') in ('inspect', 'exists')
+                                            else 'evaluate_menu_item' if payload.get('action') == 'evaluate_availability'
                                             else 'execute_menu_item_observed' if payload.get('wait_for') == 'console_window_open'
                                             else 'execute_menu_item')
                         assert (instance, command, params) == ('DEV11@owned', expected_command, expected)
@@ -111,7 +114,8 @@ def test_old_native_dispatch_table_cannot_execute_new_semantics_or_receive_fallb
         def old_execute(params):
             executions.append(copy.deepcopy(params))
             return {'success': True, 'message': 'Attempted to execute menu item; check logs.'}
-        old_table = {'execute_menu_item': old_execute}
+        # Include the old callback-capable inspector: declaration reads must not use it.
+        old_table = {'execute_menu_item': old_execute, 'inspect_menu_item': old_execute}
         async def send(instance, command, params, **kwargs):
             sends.append((instance, command, copy.deepcopy(params), kwargs))
             if command not in old_table:
@@ -130,8 +134,9 @@ def test_old_native_dispatch_table_cannot_execute_new_semantics_or_receive_fallb
             for mode in ('2026-07-28', 'legacy'):
                 async with Client(server, mode=mode) as client:
                     for payload, command in (
-                        ({'menu_path': 'Fixture/Owned', 'action': 'inspect'}, 'inspect_menu_item'),
-                        ({'menu_path': 'Fixture/Owned', 'action': 'exists'}, 'inspect_menu_item'),
+                        ({'menu_path': 'Fixture/Owned', 'action': 'inspect'}, 'inspect_menu_item_declaration'),
+                        ({'menu_path': 'Fixture/Owned', 'action': 'exists'}, 'inspect_menu_item_declaration'),
+                        ({'menu_path': 'Fixture/Owned', 'action': 'evaluate_availability'}, 'evaluate_menu_item'),
                         ({'menu_path': 'Window/General/Console', 'wait_for': 'console_window_open'}, 'execute_menu_item_observed'),
                     ):
                         before = len(sends)
@@ -141,7 +146,7 @@ def test_old_native_dispatch_table_cannot_execute_new_semantics_or_receive_fallb
                         assert sends[-1][0:2] == ('OLD@owned', command)
                         assert result.structured_content['success'] is False
                         assert result.structured_content['data']['reason'] == 'unsupported_command'
-                        assert sends[-1][3]['retry_on_reload'] is (command == 'inspect_menu_item')
+                        assert sends[-1][3]['retry_on_reload'] is (command == 'inspect_menu_item_declaration')
             print('DEV11 old-native dispatch zero executions, six unsupported requests, no fallback')
         asyncio.run(main())
     """)

@@ -51,7 +51,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`debug_request_context`](./core/debug_request_context.md)** — Return the current FastMCP request context details (client_id, session_id, and meta dump).
 - **[`delete_script`](./core/delete_script.md)** — Delete a C# script by URI or Assets-relative path.
 - **[`execute_custom_tool`](./core/execute_custom_tool.md)** — Execute a project-scoped custom tool registered by Unity.
-- **[`execute_menu_item`](./core/execute_menu_item.md)** — Inspect menu existence/availability evidence or invoke a menu by exact path.
+- **[`execute_menu_item`](./core/execute_menu_item.md)** — Inspect menu declarations or invoke a menu by exact path. inspect/exists never evaluate validation callbacks.
 - **[`find_gameobjects`](./core/find_gameobjects.md)** — Search GameObjects by name, tag, layer, component, path or ID; returns IDs only. scene_scope=legacy (default) preserves method-dependent scene selection and numeric offsets. active uses SceneManager's reported active scene; all_loaded co…
 - **[`find_in_file`](./core/find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers and excerpts.
 - **[`gameobject_create`](./core/gameobject_create.md)** — Create a named GameObject with transform, components and optional prefab output. name must contain non-whitespace text. save_as_prefab=true requires a nonempty .prefab prefab_path or prefab_folder for the generated name.prefab destination.

@@ -14,10 +14,14 @@ from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
+ALL_ACTIONS = ["execute", "inspect", "exists", "evaluate_availability"]
+
 
 @mcp_for_unity_tool(
     description=(
-        "Inspect menu existence/availability evidence or invoke a menu by exact path. "
+        "Inspect menu declarations or invoke a menu by exact path. inspect/exists never evaluate "
+        "validation callbacks. Opt into evaluate_availability to call Menu.GetEnabled, which can "
+        "run project validation callbacks and requires read, edit and run grants plus Editor consent. "
         "Default execution reports invocation only; arbitrary completion and modal handling "
         "are not guaranteed. Only Window/General/Console supports console_window_open observation. "
         "CONTEXT execution is unsupported and File/Quit is blocked. Inspection and observation "
@@ -36,9 +40,9 @@ async def execute_menu_item(
     ]
     | None = None,
     action: Annotated[
-        Literal["execute", "inspect", "exists"] | None,
+        Literal["execute", "inspect", "exists", "evaluate_availability"] | None,
         Field(
-            description="Default execute; inspect (or exists alias) does not invoke the command."
+            description="Default execute; inspect/exists reads declarations only; evaluate_availability opts into validation callbacks."
         ),
     ] = None,
     wait_for: Annotated[
@@ -71,8 +75,13 @@ async def execute_menu_item(
                     invalid = "menu_path exceeds its bounds or contains NUL/newlines."
             except UnicodeEncodeError:
                 invalid = "menu_path must contain valid Unicode."
-    if action is not None and action not in ("execute", "inspect", "exists"):
-        invalid = "action must be execute, inspect or exists."
+    if action is not None and action not in (
+        "execute",
+        "inspect",
+        "exists",
+        "evaluate_availability",
+    ):
+        invalid = "action must be execute, inspect, exists or evaluate_availability."
     if wait_for is not None and wait_for not in ("none", "console_window_open"):
         invalid = "wait_for must be none or console_window_open."
     if wait_for == "console_window_open" and (
@@ -100,8 +109,10 @@ async def execute_menu_item(
         # still owns observation; neither transport may silently keep its old cap.
         params_dict["timeout_seconds"] = (timeout_ms if timeout_ms is not None else 300000) / 1000
     command = (
-        "inspect_menu_item"
+        "inspect_menu_item_declaration"
         if action in ("inspect", "exists")
+        else "evaluate_menu_item"
+        if action == "evaluate_availability"
         else "execute_menu_item_observed"
         if wait_for == "console_window_open"
         else "execute_menu_item"
@@ -111,6 +122,6 @@ async def execute_menu_item(
         unity_instance,
         command,
         params_dict,
-        retry_on_reload=command == "inspect_menu_item",
+        retry_on_reload=command == "inspect_menu_item_declaration",
     )
     return MCPResponse(**result) if isinstance(result, dict) else result

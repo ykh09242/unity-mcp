@@ -2835,7 +2835,8 @@
                     "enum": [
                       "execute",
                       "inspect",
-                      "exists"
+                      "exists",
+                      "evaluate_availability"
                     ],
                     "type": "string"
                   },
@@ -28421,7 +28422,8 @@
                     "enum": [
                       "execute",
                       "inspect",
-                      "exists"
+                      "exists",
+                      "evaluate_availability"
                     ],
                     "type": "string"
                   },

@@ -35,12 +35,22 @@ namespace MCPForUnity.Editor.Tools
 
         internal static object HandleInspection(JObject parameters)
         {
+            return HandleRead(parameters, false);
+        }
+
+        internal static object HandleAvailability(JObject parameters)
+        {
+            return HandleRead(parameters, true);
+        }
+
+        private static object HandleRead(JObject parameters, bool evaluateAvailability)
+        {
             var policyError = ParentPolicyError();
             if (policyError != null)
                 return policyError;
             var read = parameters == null ? new JObject() : (JObject)parameters.DeepClone();
             read["action"] = "inspect";
-            return Begin(read, CancellationToken.None);
+            return Begin(read, CancellationToken.None, evaluateAvailability);
         }
 
         internal static Task<object> HandleObserved(JObject parameters, CancellationToken cancellationToken)
@@ -96,16 +106,24 @@ namespace MCPForUnity.Editor.Tools
             return result is Task<object> pending ? pending : Task.FromResult(result);
         }
 
-        private static object Begin(JObject @params, CancellationToken cancellationToken)
+        private static object Begin(JObject @params, CancellationToken cancellationToken, bool evaluateAvailability = false)
         {
             if (!TryGetMenuPath(@params, out string menuPath, out ErrorResponse inputError))
                 return inputError;
             if (!TryOptions(@params, menuPath, out string action, out string condition, out int timeout, out inputError))
                 return inputError;
 
-            var data = Describe(menuPath, action, condition);
+            var data = Describe(menuPath, action, condition, action == "execute" || evaluateAvailability);
             if (action == "inspect")
-                return new SuccessResponse("Menu evidence inspected; no execution callback invoked.", data);
+            {
+                data["action"] = evaluateAvailability ? "evaluate_availability" : "inspect";
+                return new SuccessResponse(
+                    evaluateAvailability
+                        ? "Menu availability evaluated; validation callbacks may have run, but no execution callback was invoked."
+                        : "Menu declarations inspected; no validation or execution callbacks invoked.",
+                    data
+                );
+            }
             if ((bool)data["policy"]["blocked"])
                 return Refuse(data, "blocked", $"Execution of menu item '{menuPath}' is blocked for safety reasons.");
             if (!(bool)data["policy"]["context_supported"])
@@ -210,7 +228,7 @@ namespace MCPForUnity.Editor.Tools
             return true;
         }
 
-        private static JObject Describe(string path, string action, string condition)
+        private static JObject Describe(string path, string action, string condition, bool evaluateAvailability)
         {
             bool blocked = _menuPathBlacklist.Contains(path);
             bool context = path.StartsWith("CONTEXT/", StringComparison.OrdinalIgnoreCase);
@@ -262,7 +280,9 @@ namespace MCPForUnity.Editor.Tools
                         diagnostic = Bounded(e.GetBaseException().Message);
                     }
                 }
-                if (!context && exists != false)
+                // GetEnabled is callback-capable. Declaration reads must never use it,
+                // including as an existence fallback when the registry API is unavailable.
+                if (evaluateAvailability && !context && exists != false)
                 {
                     try
                     {
@@ -285,6 +305,8 @@ namespace MCPForUnity.Editor.Tools
                 }
                 else if (!context && exists == false)
                     availability = "not_found";
+                else if (!evaluateAvailability && !context)
+                    availability = "not_evaluated";
             }
             var selected = Selection.objects;
             var data = new JObject
@@ -472,6 +494,20 @@ namespace MCPForUnity.Editor.Tools
     public static class InspectMenuItem
     {
         public static object HandleCommand(JObject parameters) => ExecuteMenuItem.HandleInspection(parameters);
+    }
+
+    // New declaration-only wire identity fails closed on older Editors whose
+    // inspect_menu_item implementation also evaluated validation callbacks.
+    [McpForUnityTool("inspect_menu_item_declaration", AutoRegister = false, RequiresExplicitConsent = true, Group = "core")]
+    public static class InspectMenuItemDeclaration
+    {
+        public static object HandleCommand(JObject parameters) => ExecuteMenuItem.HandleInspection(parameters);
+    }
+
+    [McpForUnityTool("evaluate_menu_item", AutoRegister = false, RequiresExplicitConsent = true, Group = "core")]
+    public static class EvaluateMenuItem
+    {
+        public static object HandleCommand(JObject parameters) => ExecuteMenuItem.HandleAvailability(parameters);
     }
 
     [McpForUnityTool("execute_menu_item_observed", AutoRegister = false, RequiresExplicitConsent = true, Group = "core")]

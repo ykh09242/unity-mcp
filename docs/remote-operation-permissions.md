@@ -61,8 +61,37 @@ Public `manage_script` create/delete also require all three before their
 unconditional ready wait. Native script create/delete/edit/text/prepared-apply
 actions require `edit` and `run`; dedicated native reads/previews still require
 only `read`. Native menu execution always requires `run`, even if its
-arguments claim an inspection action; public menu inspection routes to the
-separate read-only native inspector. Live model catalog refresh/listing and
+arguments claim an inspection action. Public `execute_menu_item` actions
+`inspect` and `exists` now read declarations/existence only: they never call
+`Menu.GetEnabled` or invoke menu validation/execution callbacks. Their existing
+`read` grant remains sufficient. The result keeps `existence`, `availability`,
+`policy`, `invocation`, `completion` and `context`; unevaluated availability has
+`enabled: null`, `status: "not_evaluated"` and `source: "unavailable"` (known
+absence, blocked paths and unsupported context retain their explicit status).
+
+Clients that need enabled/disabled evidence must migrate to the explicit
+`action: "evaluate_availability"`. It calls `Menu.GetEnabled`, which can evaluate
+project validation callbacks with arbitrary effects, and therefore requires
+`read`, `edit` and `run` on both requester and selected plugin plus explicit
+Editor consent for `evaluate_menu_item`. It never invokes the menu execution
+callback, and it is not automatically replayed after a reload. Existing execution
+continues to require `run` and its existing Editor consent.
+
+The public declaration route uses the new `inspect_menu_item_declaration` native
+command. Older Editors refuse it; the server never falls back to the older
+`inspect_menu_item` command, whose previous implementation evaluated availability.
+Direct native calls and batch members using that legacy identity conservatively
+require `read`, `edit` and `run` on both authorities, even when their payload claims
+an inspection action. Existing Editor consent does not relax these grants. Use
+the new declaration identity (or public `inspect`/`exists`) for read-only access.
+Upgrade the Editor package to restore declaration inspection. On upgraded Editors
+the legacy native inspector is also declaration-only. As with the existing native
+menu aliases, explicit Editor consent is required for the new declaration command;
+consent recorded for the old command name does not grant the new identity.
+This distinction hardens
+operation admission; grants do not sandbox arbitrary callbacks or other Editor work.
+
+Live model catalog refresh/listing and
 Blender update checking require `run` because their native handlers start
 background refresh or subprocess work. Asset-generation status remains a read
 of the existing job record.

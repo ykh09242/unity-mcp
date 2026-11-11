@@ -57,6 +57,8 @@ _BACKEND_ONLY_TOOL_NAMES = frozenset(
     {
         "tail_console",
         "inspect_menu_item",
+        "inspect_menu_item_declaration",
+        "evaluate_menu_item",
         "execute_menu_item_observed",
         "manage_components_selected",
         "manage_object_handles_v1",

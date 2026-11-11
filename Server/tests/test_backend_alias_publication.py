@@ -33,7 +33,7 @@ source = pathlib.Path(sys.argv[1]).resolve()
 assert pathlib.Path(console.__file__).resolve() == source / "services/tools/read_console.py"
 assert pathlib.Path(custom.__file__).resolve() == source / "services/custom_tool_service.py"
 mode, hosted = sys.argv[2], sys.argv[3] == "true"
-aliases = {"tail_console", "inspect_menu_item", "execute_menu_item_observed", "manage_components_selected", "manage_object_handles_v1"}
+aliases = {"tail_console", "inspect_menu_item", "inspect_menu_item_declaration", "evaluate_menu_item", "execute_menu_item_observed", "manage_components_selected", "manage_object_handles_v1"}
 parents = {"read_console": console}
 for name in ("execute_menu_item", "manage_components"):
     parents[name] = importlib.import_module("services.tools." + name)
@@ -156,7 +156,7 @@ from core.config import config
 from models.models import ToolDefinitionModel
 import services.custom_tool_service as module
 assert pathlib.Path(module.__file__).resolve() == pathlib.Path(sys.argv[1]).resolve() / "services/custom_tool_service.py"
-reserved = frozenset({"tail_console", "inspect_menu_item", "execute_menu_item_observed", "manage_components_selected", "manage_object_handles_v1"})
+reserved = frozenset({"tail_console", "inspect_menu_item", "inspect_menu_item_declaration", "evaluate_menu_item", "execute_menu_item_observed", "manage_components_selected", "manage_object_handles_v1"})
 def definitions(): return [ToolDefinitionModel(name=name) for name in sorted(reserved | {"owned_public"})]
 async def scenario():
     config.http_remote_hosted = False
