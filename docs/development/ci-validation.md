@@ -117,6 +117,10 @@ which uv verifies and retains even when `archive_info` is empty. The checker acc
 one supported `sha256` fragment, requires agreement with any recorded SHA256 metadata,
 and independently rehashes the local ZIP. Missing local content proof still fails.
 
+Reference graph jobs allow 20 minutes on macOS to include cold cryptography source
+builds before test execution; Windows and Linux retain their 10-minute deadline.
+The test inventory, warning policy and dependency pins are unchanged.
+
 [`distribution-canary.yml`](../../.github/workflows/distribution-canary.yml) runs Python
 3.11 probes on Linux, Windows and Intel macOS, plus Linux Python 3.14 and 3.15 probes, each Monday
 at 04:23 UTC and supports manual dispatch. Each row selects the

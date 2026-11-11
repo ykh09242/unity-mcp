@@ -140,7 +140,8 @@ jobs:
     name: Reference graph (${{ matrix.os }}, Python ${{ matrix.python }})
     if: inputs.validation_profile != 'tools-only'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    # macOS may build cryptography from source before the graph tests can start.
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 20 || 10 }}
     strategy:
       fail-fast: false
       matrix:

@@ -331,6 +331,21 @@ def test_python_lint_is_a_blocking_step_with_locked_dependencies() -> None:
 
 
 @pytest.mark.parametrize(
+    "platform,budget", [("windows-latest", 10), ("ubuntu-26.04", 10), ("macos-26-intel", 20)]
+)
+def test_reference_graph_cold_build_budget_is_mac_only(platform, budget):
+    job = workflow("python-tests.yml")["jobs"]["reference_graph"]
+    assert platform in job["strategy"]["matrix"]["os"]
+    expression = re.fullmatch(
+        r"\$\{\{ startsWith\(matrix.os, '([^']+)'\) && ([0-9]+) \|\| ([0-9]+) }}",
+        str(job["timeout-minutes"]),
+    )
+    assert expression is not None, "Use the OS row's bounded cold-build deadline"
+    actual = int(expression[2] if platform.startswith(expression[1]) else expression[3])
+    assert actual == budget
+
+
+@pytest.mark.parametrize(
     "step_name",
     [
         "Run tests with coverage",
