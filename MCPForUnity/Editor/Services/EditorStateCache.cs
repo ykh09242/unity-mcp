@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Threading;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services.SourceFreshness;
 using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -114,6 +115,9 @@ namespace MCPForUnity.Editor.Services
 
             [JsonProperty("compilation")]
             public EditorStateCompilation Compilation { get; set; }
+
+            [JsonProperty("source_freshness")]
+            public JObject SourceFreshness { get; set; }
 
             [JsonProperty("assets")]
             public EditorStateAssets Assets { get; set; }
@@ -369,6 +373,7 @@ namespace MCPForUnity.Editor.Services
             CompilationJobTracker.ObserveNativeCompletion();
             CompilationJobTracker.Reservation.Started(context);
             CompilationJobTracker.Ledger.Started(context);
+            SourceFreshnessService.CompilationStarted();
             SetSessionUnixMs(CompileStartedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             SessionState.SetInt(CompileCountKey, SessionState.GetInt(CompileCountKey, 0) + 1);
             ForceUpdate("compilation_started", _pipelineCompilationRunning);
@@ -521,7 +526,7 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private static void ForceUpdate(string reason, bool? compilationState = null)
+        internal static void ForceUpdate(string reason, bool? compilationState = null)
         {
             lock (LockObj)
             {
@@ -733,6 +738,7 @@ namespace MCPForUnity.Editor.Services
                     LastDomainReloadBeforeUnixMs = _domainReloadBeforeUnixMs,
                     LastDomainReloadAfterUnixMs = _domainReloadAfterUnixMs,
                 },
+                SourceFreshness = SourceFreshnessService.Cached(),
                 Assets = new EditorStateAssets
                 {
                     IsUpdating = EditorApplication.isUpdating,

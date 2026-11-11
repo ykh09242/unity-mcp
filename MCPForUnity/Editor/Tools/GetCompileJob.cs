@@ -1,5 +1,8 @@
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.SourceFreshness;
 using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools
@@ -8,7 +11,9 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("get_compile_job", AutoRegister = false)]
     public static class GetCompileJob
     {
-        public static object HandleCommand(JObject parameters)
+        public static Task<object> HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+
+        public static async Task<object> HandleCommand(JObject parameters, CancellationToken cancellation)
         {
             var token = parameters?["compile_id"];
             if (token?.Type != JTokenType.String || !CompilationLedger.ValidId(token.Value<string>()))
@@ -19,6 +24,10 @@ namespace MCPForUnity.Editor.Tools
             // outside that ledger so a new native peer preserves their compiler result.
             response["native_coordination"] = JObject.FromObject(CompilationJobTracker.CoordinationStatus(token.Value<string>()));
             response["last_successful_compilation"] = CompilationJobTracker.Ledger.LastSuccessfulCompilation();
+            response["source_freshness"] =
+                parameters?["observe_source"]?.Type == JTokenType.Boolean && (bool)parameters["observe_source"]
+                    ? await SourceFreshnessService.ObserveAsync(cancellation)
+                    : SourceFreshnessService.Cached();
             return response;
         }
     }

@@ -1,8 +1,10 @@
 using System;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.SourceFreshness;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Compilation;
@@ -19,6 +21,7 @@ namespace MCPForUnity.Editor.Tools
         private const int DefaultWaitTimeoutSeconds = 300;
         internal static Action<ImportAssetOptions> RefreshAssets = AssetDatabase.Refresh;
         internal static Action RequestCompilation = CompilationPipeline.RequestScriptCompilation;
+        internal static Action RequestCleanCompilation = () => CompilationPipeline.RequestScriptCompilation(RequestScriptCompilationOptions.CleanBuildCache);
         internal static Func<bool> IsCompiling = EditorStateCache.GetActualIsCompiling;
         internal static CompilationLedger LedgerOverride;
         internal static OwnedCompilationReservation ReservationOverride;
@@ -46,6 +49,7 @@ namespace MCPForUnity.Editor.Tools
             string scope;
             string compile;
             bool waitForReady;
+            bool forceRecompile;
             double timeoutSeconds;
             try
             {
@@ -53,6 +57,17 @@ namespace MCPForUnity.Editor.Tools
                 mode = ReadOption(@params, "mode", "if_dirty", "if_dirty", "force");
                 scope = ReadOption(@params, "scope", "all", "assets", "scripts", "all");
                 compile = ReadOption(@params, "compile", "none", "none", "request");
+                forceRecompile = ParamCoercion.CoerceBool(@params?["force_recompile"], false);
+                if (
+                    forceRecompile
+                    && (
+                        !string.Equals(scope, "scripts", StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(compile, "request", StringComparison.OrdinalIgnoreCase)
+                    )
+                )
+                    throw new ArgumentException(
+                        "force_recompile requires scope=scripts and compile=request; import assets separately before requesting a clean compilation."
+                    );
                 var snakeCaseWait = @params?["wait_for_ready"];
                 var camelCaseWait = @params?["waitForReady"];
                 // Validate both supplied aliases, even when one is shadowed by precedence.
@@ -118,11 +133,21 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 if (compileId != null)
+                {
                     reservationGeneration = Reservation.Reserve(
                         compileId,
                         EditorApplication.timeSinceStartup + Remaining().TotalSeconds,
                         refreshing: !string.Equals(scope, "scripts", StringComparison.OrdinalIgnoreCase)
                     );
+                    // Reserve before yielding. The next compilation must be bound to this input observation.
+                    if (LedgerOverride == null)
+                    {
+                        using var captureDeadline = new CancellationTokenSource(Remaining());
+                        await SourceFreshnessService.PrepareAsync(compileId, captureDeadline.Token);
+                        if (IsCompiling() || TestRunStatus.IsRunning || EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode)
+                            throw new InvalidOperationException("Editor changed state during source observation.");
+                    }
+                }
                 // Best-effort semantics: if_dirty currently behaves like force unless future dirty signals are added.
                 bool shouldRefresh =
                     string.Equals(mode, "force", StringComparison.OrdinalIgnoreCase) || string.Equals(mode, "if_dirty", StringComparison.OrdinalIgnoreCase);
@@ -152,7 +177,10 @@ namespace MCPForUnity.Editor.Tools
                     else
                     {
                         Ledger.ExplicitRequest(compileId);
-                        RequestCompilation();
+                        if (forceRecompile)
+                            RequestCleanCompilation();
+                        else
+                            RequestCompilation();
                         compileRequested = true;
                         compilationTrigger = "request";
                         Ledger.Dispatched(compileId);
@@ -254,10 +282,12 @@ namespace MCPForUnity.Editor.Tools
                     refresh_triggered = refreshTriggered,
                     compile_requested = compileRequested,
                     compilation_trigger = compilationTrigger,
+                    force_recompile = forceRecompile,
                     compilation_goal_satisfied = refreshCycleObserved,
                     no_op = !refreshTriggered && !compileRequested && !refreshCycleObserved,
                     reason = !refreshTriggered && !compileRequested && !refreshCycleObserved ? "scripts_scope_without_compile_request" : null,
                     last_successful_compilation = Ledger.LastSuccessfulCompilation(),
+                    source_freshness = SourceFreshnessService.Cached(),
                     compile_started = compileStarted,
                     native_coordination = compileId == null ? null : CompilationJobTracker.CoordinationStatus(compileId),
                     resulting_state = resultingState,
