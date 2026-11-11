@@ -20,6 +20,8 @@ from typing import Final, Never, TypeAlias
 from urllib.parse import urlsplit
 import xml.etree.ElementTree as ET
 
+from release_association import ExecutionEvidence, LEGACY_LIMIT, verify_association
+
 
 Json: TypeAlias = str | int | float | bool | None | list["Json"] | dict[str, "Json"]
 JsonMap: TypeAlias = dict[str, Json]
@@ -632,7 +634,7 @@ def native_log(data: bytes, kind: Kind) -> int:
     )
     platform = "EditMode" if kind == Kind.EDIT else "PlayMode"
     require(
-        re.search(r"-testPlatform(?:\s+|=)" + platform + r"\b", log) is not None
+        re.search(r"-testPlatform(?:\s+|=)" + platform + r"\b", log, re.IGNORECASE) is not None
         and "-runTests" in log,
         "Native log lacks matching test invocation/platform",
     )
@@ -699,7 +701,8 @@ def check_execution(
 
 def validate_row(row: Row, entry: JsonMap, index_path: Path, selected: Components) -> None:
     require(
-        set(entry) <= {"origin", "kind", "public_url", "files", "reason"}
+        set(entry)
+        <= {"origin", "kind", "public_url", "files", "reason", "execution_id", "association_limit"}
         and {"origin", "kind", "public_url", "files"} <= set(entry),
         "Unsupported evidence entry fields",
     )
@@ -711,6 +714,10 @@ def validate_row(row: Row, entry: JsonMap, index_path: Path, selected: Component
     match origin:
         case Origin.POLICY:
             require(
+                "execution_id" not in entry and "association_limit" not in entry,
+                "Policy cannot carry execution association",
+            )
+            require(
                 row.result == Result.NOT_RUN and row.tested == "none",
                 "Policy is not-run only with no tested input",
             )
@@ -718,6 +725,10 @@ def validate_row(row: Row, entry: JsonMap, index_path: Path, selected: Component
             entry_files(index_path, entry, set())
             return
         case Origin.LOCAL:
+            require(
+                "execution_id" not in entry and "association_limit" not in entry,
+                "Local-native uses partial input history, not CI association",
+            )
             require(
                 row.kind in (Kind.EDIT, Kind.PLAY)
                 and row.result == Result.HISTORICAL
@@ -758,8 +769,25 @@ def validate_row(row: Row, entry: JsonMap, index_path: Path, selected: Component
         case Origin.CI:
             require(row.result != Result.NOT_RUN, "CI record cannot be relabelled not-run")
     roles = {"workflow", "job"}
+    associated = "execution_id" in entry
+    legacy = "association_limit" in entry
+    require(not associated or not legacy, "Associated evidence cannot declare a legacy limitation")
+    if legacy:
+        require(
+            row.result == Result.HISTORICAL
+            and entry["association_limit"] == LEGACY_LIMIT
+            and row.label.endswith(" (legacy unbound)"),
+            "Legacy association limitation must be explicit and historical-only",
+        )
+    else:
+        require(
+            associated or row.result == Result.SKIPPED,
+            "Executed CI evidence requires execution association",
+        )
     if row.result != Result.SKIPPED:
         roles.update(("checkout", "log"))
+        if associated:
+            roles.add("execution-log")
         match row.kind:
             case Kind.PYTHON | Kind.EDIT | Kind.PLAY:
                 roles.add("results")
@@ -789,6 +817,7 @@ def validate_row(row: Row, entry: JsonMap, index_path: Path, selected: Component
     )
     conclusion = job.get("conclusion")
     if row.result == Result.SKIPPED:
+        require(not associated and not legacy, "Skipped jobs cannot carry execution association")
         require(
             conclusion == "skipped" and row.tested == "none",
             "Skipped row requires an actually skipped job and no tested input",
@@ -809,16 +838,35 @@ def validate_row(row: Row, entry: JsonMap, index_path: Path, selected: Component
         row.result == Result.HISTORICAL or revision == selected.revision(row.component),
         "Actual checkout is a different component input; retain it as historical",
     )
-    complete, failed = check_execution(row.kind, files, row.python_counts)
+    succeeded = None
+    execution_files = files
+    if associated:
+        succeeded = verify_association(
+            ExecutionEvidence(
+                row.kind.value,
+                text(entry.get("execution_id"), "execution ID"),
+                workflow,
+                job,
+                files,
+                revision,
+            )
+        )
+        execution_files = {**files, "log": files["execution-log"]}
+    complete, failed = check_execution(row.kind, execution_files, row.python_counts)
+    require(
+        not failed or succeeded is not True, "Failed records contradict successful execution step"
+    )
     require(not failed or conclusion == "failure", "Actual failed cases contradict successful job")
     match row.result:
         case Result.PASSED:
             require(
-                conclusion == "success" and complete,
+                conclusion == "success" and complete and succeeded is True,
                 "Actual executed records do not establish a passed row",
             )
         case Result.FAILED:
-            require(conclusion == "failure", "Actual job did not fail")
+            require(
+                conclusion == "failure" and succeeded is False, "Actual execution step did not fail"
+            )
         case Result.HISTORICAL:
             pass
         case Result.NOT_RUN | Result.SKIPPED:

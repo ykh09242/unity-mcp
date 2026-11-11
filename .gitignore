@@ -60,6 +60,7 @@ TestProjects/UnityMCPTests/Assets/Temp/
 
 # CI test reports (generated during test runs)
 reports/
+.release-evidence/
 
 # Local testing harness
 scripts/local-test/

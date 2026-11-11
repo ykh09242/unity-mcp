@@ -442,33 +442,36 @@ jobs:
           cd Server
           uv run --python "${{ matrix.python-version }}" --locked --extra dev python ../tools/lint_python.py
 
-      - name: Run tests with coverage
+      - name: Run tests with coverage [test:${{ matrix.python-version }}:${{ matrix.suite }}]
         if: matrix.suite == 'server' && matrix.python-version == '3.14'
         env:
           UNITY_MCP_LOG_DIR: ${{ runner.temp }}/unity-mcp-test-logs
           PYTHONPATH: ${{ github.workspace }}/tools
+          EVIDENCE_STEP_NAME: Run tests with coverage [test:${{ matrix.python-version }}:${{ matrix.suite }}]
         run: |
           cd Server
           # Start the measured long HTTP child early; keep complete files on four workers.
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json --ci-progress-dir=test-worker-progress -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
+          uv run --python "${{ matrix.python-version }}" --locked --extra dev python ../tools/release_execution.py run --kind python --step-name "$EVIDENCE_STEP_NAME" --output results=test-results.xml -- uv run --python "${{ matrix.python-version }}" pytest tests/ -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json --ci-progress-dir=test-worker-progress -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
 
-      - name: Run server tests
+      - name: Run server tests [test:${{ matrix.python-version }}:${{ matrix.suite }}]
         if: matrix.suite == 'server' && matrix.python-version != '3.14'
         env:
           UNITY_MCP_LOG_DIR: ${{ runner.temp }}/unity-mcp-test-logs
           PYTHONPATH: ${{ github.workspace }}/tools
+          EVIDENCE_STEP_NAME: Run server tests [test:${{ matrix.python-version }}:${{ matrix.suite }}]
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json --ci-progress-dir=test-worker-progress -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" --locked --extra dev python ../tools/release_execution.py run --kind python --step-name "$EVIDENCE_STEP_NAME" --output results=test-results.xml -- uv run --python "${{ matrix.python-version }}" pytest tests/ -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json --ci-progress-dir=test-worker-progress -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
-      - name: Run local harness unit tests (hermetic, no Unity)
+      - name: Run local harness unit tests (hermetic, no Unity) [test:${{ matrix.python-version }}:${{ matrix.suite }}]
         if: matrix.suite == 'tools'
         env:
           PYTHONPATH: ${{ github.workspace }}/tools
+          EVIDENCE_STEP_NAME: Run local harness unit tests (hermetic, no Unity) [test:${{ matrix.python-version }}:${{ matrix.suite }}]
         run: |
           cd Server
           # This sibling suite cannot inherit Server/tests/pytest.ini.
-          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -o asyncio_default_fixture_loop_scope=function -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=tools/tests/test_bench_transport.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json --ci-progress-dir=test-worker-progress -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" --locked --extra dev python ../tools/release_execution.py run --kind python --step-name "$EVIDENCE_STEP_NAME" --output results=test-results.xml -- uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -o asyncio_default_fixture_loop_scope=function -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=tools/tests/test_bench_transport.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json --ci-progress-dir=test-worker-progress -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -515,11 +518,13 @@ jobs:
           name: pytest-results-${{ matrix.python-version }}-${{ matrix.suite }}
           path: |
             Server/test-results.xml
+            Server/.release-evidence/
             Server/test-results-http.xml
             Server/test-worker-timings.json
             Server/test-worker-progress/
             Server/coverage.xml
             Server/htmlcov/
+          include-hidden-files: true
           retention-days: ${{ job.status == 'success' && 7 || 30 }}
 
   performance_report:

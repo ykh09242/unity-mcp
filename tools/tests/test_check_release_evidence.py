@@ -18,6 +18,9 @@ BASE = "https://github.com/ykh09242/unity-mcp"
 
 
 def checker() -> ModuleType:
+    tools = str(ROOT / "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
     path = ROOT / "tools/check_release_evidence.py"
     assert path.is_file(), "The approved check_release_notes API is not implemented"
     spec = importlib.util.spec_from_file_location("release_checker_fixture", path)
@@ -68,6 +71,23 @@ class Bundle:
         return {"path": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
     def index(self, entry: dict) -> None:
+        files = entry["files"]
+        kind = entry["kind"]
+        ready = (
+            kind == "compile"
+            or kind == "package-preparation"
+            and "preparation" in files
+            or kind in {"python", "native-editmode", "native-playmode"}
+            and "results" in files
+        )
+        if (
+            entry["origin"] == "github-actions"
+            and "log" in files
+            and "execution-log" not in files
+            and "association_limit" not in entry
+            and ready
+        ):
+            self.associate(entry)
         self.evidence.write_text(
             json.dumps({"schema_version": 1, "evidence": {"proof": entry}}), encoding="utf-8"
         )
@@ -105,6 +125,8 @@ class Bundle:
                     "status": "completed",
                     "conclusion": "success",
                     "head_sha": self.package,
+                    "run_attempt": 2,
+                    "run_started_at": "2026-10-16T12:00:00Z",
                     "event": "push",
                     "html_url": BASE + "/actions/runs/123",
                     "repository": {"full_name": "ykh09242/unity-mcp"},
@@ -118,6 +140,8 @@ class Bundle:
                     "status": "completed",
                     "conclusion": conclusion,
                     "html_url": BASE + "/actions/runs/123/job/456",
+                    "started_at": "2026-10-16T12:00:00Z",
+                    "completed_at": "2026-10-16T12:00:05Z",
                 },
             ),
         }
@@ -156,6 +180,8 @@ class Bundle:
         return entry
 
     def execution(self, entry: dict, body: str) -> None:
+        entry.pop("execution_id", None)
+        entry["files"].pop("execution-log", None)
         source = self.evidence.parent / entry["files"]["checkout"]["path"]
         combined = (
             source.read_text(encoding="utf-8")
@@ -164,6 +190,113 @@ class Bundle:
         )
         entry["files"]["log"] = self.file("log", combined)
         entry["files"]["checkout"] = dict(entry["files"]["log"])
+
+    def associate(self, entry: dict) -> None:
+        files = entry["files"]
+        original = (self.evidence.parent / files["log"]["path"]).read_text(encoding="utf-8")
+        # Keep this fixture's original checkout section; append one execution with exact step metadata.
+        checkout = original.split("2026-10-16T12:00:00Z ##[group]Removing auth")[0]
+        checkout += "2026-10-16T12:00:00Z ##[group]Removing auth\n"
+        body_lines = [
+            line.split("Z ", 1)[1]
+            for line in original.splitlines()
+            if "12:00:01Z " in line and "UNITY_MCP_EXECUTION " not in line
+        ]
+        body = "\n".join(body_lines) + "\n"
+        files["execution-log"] = self.file("execution-log", body)
+        execution_id = "f" * 32
+        entry["execution_id"] = execution_id
+        kind = entry["kind"]
+        native = kind.startswith("native-")
+        name = "Execute fixture [fixture:default]"
+        root = ".release-evidence/" + execution_id
+        outputs = {
+            "execution-log": {
+                "path": root + "/execution.log",
+                "sha256": files["execution-log"]["sha256"],
+            }
+        }
+        role = "preparation" if kind == "package-preparation" else "results"
+        if role in files:
+            outputs[role] = {"path": role + ".xml", "sha256": files[role]["sha256"]}
+        if native:
+            mode = kind.removeprefix("native-")
+            outputs["results"]["path"] = root + "/" + mode + "-results.xml"
+            outputs["execution-log"]["path"] = root + "/" + mode + ".log"
+        try:
+            revision = checker().checkout_revision(checkout.encode())
+        except ValueError:
+            return
+        common = {
+            "schema_version": 1,
+            "repository": "ykh09242/unity-mcp",
+            "run_id": 123,
+            "run_attempt": 2,
+            "job_key": "fixture",
+            "checkout_sha": revision,
+            "execution_id": execution_id,
+            "kind": kind,
+            "step_name": name,
+            "output_root": root,
+            "record_type": "action-observation" if native else "subprocess-completion",
+        }
+        start = {
+            **common,
+            "event": "reserved" if native else "started",
+            "emitter_step_name": "Reserve fixture [fixture:default]" if native else name,
+            "expected_outputs": {key: pointer["path"] for key, pointer in outputs.items()},
+        }
+        end = {
+            **common,
+            "event": "observed" if native else "completed",
+            "emitter_step_name": "Observe fixture [fixture:default]" if native else name,
+            "outputs": outputs,
+        }
+        if native:
+            start["observer_step_name"] = end["emitter_step_name"]
+            end["runner_outcome"] = "success"
+        else:
+            end["exit_code"] = 0
+        steps = []
+        for number, step_name, begin, finish in (
+            (
+                (1, start["emitter_step_name"], "00", "01"),
+                (2, name, "01", "02"),
+                (3, end["emitter_step_name"], "03", "04"),
+            )
+            if native
+            else [(1, name, "01", "02")]
+        ):
+            steps.append(
+                {
+                    "number": number,
+                    "name": step_name,
+                    "status": "completed",
+                    "conclusion": "success",
+                    "started_at": f"2026-10-16T12:00:{begin}Z",
+                    "completed_at": f"2026-10-16T12:00:{finish}Z",
+                }
+            )
+        job = json.loads((self.evidence.parent / files["job"]["path"]).read_bytes())
+        job["steps"] = steps
+        files["job"] = self.file("job", job)
+        start_time = "00.5" if native else "01"
+        end_time = "03" if native else "01.5"
+        combined = (
+            checkout
+            + f"2026-10-16T12:00:{start_time}Z UNITY_MCP_EXECUTION "
+            + json.dumps(start)
+            + "\n"
+        )
+        if native:
+            combined += (
+                "2026-10-16T12:00:01Z ##[group]Run game-ci/unity-test-runner@" + "a" * 40 + "\n"
+            )
+            combined += "2026-10-16T12:00:01Z   artifactsPath: " + root + "\n"
+        combined += "\n".join("2026-10-16T12:00:01Z " + line for line in body.splitlines()) + "\n"
+        combined += f"2026-10-16T12:00:{end_time}Z UNITY_MCP_EXECUTION " + json.dumps(end) + "\n"
+        files["log"] = self.file("log", combined)
+        files["checkout"] = dict(files["log"])
 
     def check(self, notes: str | None = None) -> list[str]:
         return checker().check_release_notes(
@@ -574,6 +707,7 @@ def test_other_supported_actual_record_formats(bundle: Bundle, mode: str) -> Non
                 '<testsuites><testsuite tests="1" failures="0" errors="0" skipped="0"><testcase classname="tests.fixture" name="case" /></testsuite></testsuites>',
             )
         case "package-preparation":
+            bundle.execution(entry, "Prepared Unity package profile fixture for 6000.0.69f1\n")
             entry["files"]["preparation"] = bundle.file(
                 "preparation",
                 {
@@ -725,6 +859,182 @@ def test_actual_earlier_ci_execution_can_remain_historical(bundle: Bundle) -> No
     assert bundle.check(bundle.notes(result="historical", tested="commit:" + bundle.server)) == []
 
 
+def test_current_execution_requires_originating_association(bundle: Bundle) -> None:
+    # Prior-format compile output is real execution, but has no step/run-bound output record.
+    entry = json.loads(bundle.evidence.read_bytes())["evidence"]["proof"]
+    entry.pop("execution_id")
+    entry["files"].pop("execution-log")
+    bundle.evidence.write_text(json.dumps({"schema_version": 1, "evidence": {"proof": entry}}))
+    assert bundle.check(), "Markerless evidence must not establish a current execution"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("run_id", 999),
+        ("run_attempt", 1),
+        ("job_key", "another-job"),
+        ("step_name", "Other step [fixture:default]"),
+        ("checkout_sha", "b" * 40),
+        ("emitter_step_name", "Later finalizer [fixture:default]"),
+    ],
+)
+def test_execution_record_must_match_real_run_attempt_step_and_checkout(bundle, field, value):
+    entry = bundle.ci()
+    path = bundle.evidence.parent / entry["files"]["log"]["path"]
+    lines = path.read_text().splitlines()
+    for index, line in enumerate(lines):
+        if "UNITY_MCP_EXECUTION " in line:
+            prefix, raw = line.split("UNITY_MCP_EXECUTION ", 1)
+            record = json.loads(raw)
+            record[field] = value
+            lines[index] = prefix + "UNITY_MCP_EXECUTION " + json.dumps(record)
+    entry["files"]["log"] = bundle.file("log", "\n".join(lines))
+    entry["files"]["checkout"] = dict(entry["files"]["log"])
+    bundle.index(entry)
+    assert bundle.check()
+
+
+def test_markerless_legacy_is_explicit_historical_only(bundle):
+    entry = bundle.ci()
+    entry.pop("execution_id")
+    entry["files"].pop("execution-log")
+    entry["association_limit"] = "Execution-to-output association was not recorded."
+    bundle.index(entry)
+    notes = bundle.notes(result="historical").replace(
+        "Fixture capability", "Fixture capability (legacy unbound)"
+    )
+    assert bundle.check(notes) == []
+    assert bundle.check(bundle.notes())
+    assert bundle.check(bundle.notes(result="historical"))
+
+
+@pytest.mark.parametrize("kind", ["python", "package-preparation", "native-editmode"])
+def test_attached_outputs_copied_from_another_execution_are_rejected(bundle, kind):
+    entry = bundle.ci(kind)
+    if kind == "native-editmode":
+        add_native(bundle, entry)
+    elif kind == "python":
+        bundle.execution(entry, "Python 3.14 pytest\n")
+        entry["files"]["results"] = bundle.file(
+            "results",
+            '<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase name="one"/></testsuite>',
+        )
+        bundle.index(entry)
+    else:
+        entry["files"]["preparation"] = bundle.file(
+            "preparation",
+            {
+                "unityVersion": "6000.0.69f1",
+                "profile": "fixture",
+                "packages": [
+                    {
+                        "name": "com.fixture.test",
+                        "version": "1.0.0",
+                        "source": "registry",
+                        "integrity": {"packageMetadataSha256": "a" * 64},
+                    }
+                ],
+            },
+        )
+        bundle.index(entry)
+    role = "preparation" if kind == "package-preparation" else "results"
+    raw = (bundle.evidence.parent / entry["files"][role]["path"]).read_text()
+    entry["files"][role] = bundle.file(role, raw + "\n")
+    bundle.index(entry)
+    assert bundle.check(bundle.notes(kind))
+
+
+def test_native_observation_cannot_claim_originating_step_or_reused_output_root(bundle):
+    entry = bundle.ci()
+    add_native(bundle, entry)
+    path = bundle.evidence.parent / entry["files"]["log"]["path"]
+    original = path.read_text()
+    for old, new in [
+        ("Observe fixture [fixture:default]", "Execute fixture [fixture:default]"),
+        ("  artifactsPath: .release-evidence/", "  artifactsPath: artifacts/old/"),
+    ]:
+        raw = original.replace(old, new)
+        entry["files"]["log"] = bundle.file("log", raw)
+        entry["files"]["checkout"] = dict(entry["files"]["log"])
+        bundle.index(entry)
+        assert bundle.check(bundle.notes("native-editmode"))
+
+
+def test_compiler_only_execution_cannot_be_relabelled_preparation(bundle):
+    entry = bundle.ci("compile")
+    entry["kind"] = "package-preparation"
+    entry["files"]["preparation"] = bundle.file(
+        "preparation",
+        {
+            "unityVersion": "6000.0.69f1",
+            "profile": "fixture",
+            "packages": [
+                {
+                    "name": "com.fixture.test",
+                    "version": "1.0.0",
+                    "source": "registry",
+                    "integrity": {"packageMetadataSha256": "a" * 64},
+                }
+            ],
+        },
+    )
+    bundle.index(entry)
+    assert bundle.check(bundle.notes("package-preparation"))
+
+
+def test_failed_native_raw_outcome_is_not_promoted_by_continue_on_error(bundle):
+    entry = bundle.ci(conclusion="failure")
+    add_native(bundle, entry, result="Failed")
+    raw = (bundle.evidence.parent / entry["files"]["log"]["path"]).read_text()
+    raw = raw.replace('"runner_outcome": "success"', '"runner_outcome": "failure"')
+    entry["files"]["log"] = bundle.file("log", raw)
+    entry["files"]["checkout"] = dict(entry["files"]["log"])
+    bundle.index(entry)
+    # Policy can keep the runner step green; the raw outcome and actual NUnit/log still fail.
+    assert bundle.check(bundle.notes("native-editmode", result="failed")) == []
+    assert bundle.check(bundle.notes("native-editmode", result="passed"))
+
+
+@pytest.mark.parametrize(
+    "damage", ["missing-completion", "outside-step", "wrong-job-step", "old-attempt-job"]
+)
+def test_completion_requires_actual_step_and_attempt_boundaries(bundle, damage):
+    entry = bundle.ci()
+    if damage in {"missing-completion", "outside-step"}:
+        raw = (bundle.evidence.parent / entry["files"]["log"]["path"]).read_text()
+        if damage == "missing-completion":
+            raw = "\n".join(line for line in raw.splitlines() if '"event": "completed"' not in line)
+        else:
+            raw = raw.replace("12:00:01.5Z", "12:00:04Z")
+        entry["files"]["log"] = bundle.file("log", raw)
+        entry["files"]["checkout"] = dict(entry["files"]["log"])
+    else:
+        job = json.loads((bundle.evidence.parent / entry["files"]["job"]["path"]).read_bytes())
+        if damage == "wrong-job-step":
+            job["steps"][0]["name"] = "Execute another row [another:default]"
+        else:
+            workflow = json.loads(
+                (bundle.evidence.parent / entry["files"]["workflow"]["path"]).read_bytes()
+            )
+            workflow["run_started_at"] = "2026-10-16T12:01:00Z"
+            entry["files"]["workflow"] = bundle.file("workflow", workflow)
+        entry["files"]["job"] = bundle.file("job", job)
+    bundle.index(entry)
+    assert bundle.check()
+
+
+def test_association_parser_bounds_only_marker_payloads():
+    checker()
+    from release_association import records
+
+    unrelated = b"2026-10-16T12:00:02Z unrelated " + b"x" * (2 * 1024 * 1024)
+    assert records(unrelated) == []
+    oversized = b"2026-10-16T12:00:02Z UNITY_MCP_EXECUTION " + b"x" * 32769
+    with pytest.raises(ValueError, match="exceeds 32 KiB"):
+        records(oversized)
+
+
 def test_only_nonfetching_nonreplaced_explicit_git_object_reads_are_used(
     bundle: Bundle, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -783,7 +1093,7 @@ def test_real_gh_prefix_bom_form_is_supported(bundle: Bundle) -> None:
         encoding="utf-8"
     )
     combined = (
-        original
+        original.rstrip("\n")
         + "\n2026-10-16T12:00:01Z Compiler      : /fixture/csc.dll\n2026-10-16T12:00:01Z --- MCPForUnity.Editor [win] : 42 sources, 20 refs ---\n"
     )
     combined = "Compile fixture\tUNKNOWN STEP\t\ufeff" + combined

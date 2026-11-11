@@ -18,7 +18,13 @@ UPSTREAM_ONLY = "github.repository == 'CoplayDev/unity-mcp'"
 
 
 def workflow(name: str) -> dict:
-    return yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
+    config = yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
+    # Policy checks use base names; execution-association tests verify complete row identities.
+    for job in config["jobs"].values():
+        for step in job.get("steps", []):
+            if "name" in step:
+                step["name"] = step["name"].split(" [", 1)[0]
+    return config
 
 
 @pytest.mark.parametrize("job", ["update_unity_beta_version", "publish_pypi_prerelease"])

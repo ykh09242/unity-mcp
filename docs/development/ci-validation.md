@@ -686,6 +686,15 @@ The Unity package commit, its selected immutable server archive and its independ
 
 Keep compilation, package preparation and native execution distinct. A successful parent workflow or prepared dependency cache cannot turn skipped native jobs into passes. A native passed row requires actual coherent NUnit records, a matching Editor invocation/log and a successful applicable runner, including positive passing cases and no failed, skipped or inconclusive cases. A passing family inside a failed combined batch remains historical factual evidence with aggregate disclosure.
 
+Current CI release evidence also requires the execution association described in the
+[release guide](../../website/docs/contributing/releases.md#associate-execution-and-saved-outputs).
+Wrapped commands emit completion from their own step; native actions use distinct fresh
+reservation and later observation steps, retaining exact NUnit/Editor-log digests. The
+checker uses the actual REST job steps and run attempt without treating a workflow job key
+as a numeric job ID. Older unassociated evidence is explicitly historical and visibly
+limited, never silently credited as a current result. Offline export retains these same
+records and acceptance rules.
+
 The checker accepts only its documented GitHub Actions, pytest/JUnit, Unity/NUnit and historical local-native formats. Unsupported manual/live executions retain their original evidence in ordinary release prose outside the checked block; they must not be relabelled as not-run. Human review still owns whether the selected tests substantiate a capability and whether public evidence remains available. No release or tag is authorized by a successful notes check.
 
 ## Reference material

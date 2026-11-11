@@ -34,6 +34,41 @@ def test_every_runner_step_pins_the_action_commit_and_cli_release():
         assert re.search(r'^          githubToken: ""$', step, re.M), step
 
 
+def test_native_actions_have_fresh_distinct_reservation_and_observation_lineage():
+    config = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    for job_name in ("testAllModes", "optionalIntegrations"):
+        steps = config["jobs"][job_name]["steps"]
+        runners = [step for step in steps if "game-ci/unity-test-runner@" in step.get("uses", "")]
+        roots = set()
+        for runner in runners:
+            root = runner["with"]["artifactsPath"]
+            assert root not in roots
+            roots.add(root)
+            reserve_id = re.fullmatch(r"\$\{\{ steps\.([\w-]+)\.outputs.root }}", root)[1]
+            reserve = next(step for step in steps if step.get("id") == reserve_id)
+            observer = next(
+                step
+                for step in steps
+                if step.get("env", {}).get("RESERVATION")
+                == f"${{{{ steps.{reserve_id}.outputs.reservation }}}}"
+            )
+            assert steps.index(reserve) < steps.index(runner) < steps.index(observer)
+            assert reserve["env"]["RUNNER_STEP"] == runner["name"]
+            assert reserve["env"]["RESERVE_STEP"] == reserve["name"]
+            assert reserve["env"]["OBSERVE_STEP"] == observer["name"]
+            assert f"[{job_name}:" in runner["name"]
+            assert "release_execution.py reserve" in reserve["run"]
+            assert "release_execution.py observe" in observer["run"]
+            assert observer["if"].startswith("always()")
+            assert observer["env"]["RUNNER_OUTCOME"] == f"${{{{ steps.{runner['id']}.outcome }}}}"
+            assert "exit_code" not in observer["run"]
+        artifacts = next(
+            step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")
+        )
+        assert ".release-evidence/" in artifacts["with"]["path"]
+        assert artifacts["with"]["include-hidden-files"] is True
+
+
 @pytest.mark.parametrize("step_name", ["Check domain reload test results", "Check test results"])
 @pytest.mark.parametrize("missing_result", [None, "Skipped", "Failed", "Passed"])
 def test_critical_native_body_inventory_rejects_missing_or_unexecuted_bodies(

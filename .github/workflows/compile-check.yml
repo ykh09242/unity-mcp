@@ -196,21 +196,24 @@ jobs:
           path: ${{ steps.sdk_identity.outputs.cache_path }}
           key: ${{ steps.sdk_identity.outputs.cache_key }}
 
-      - name: Prepare version-specific test packages
+      - name: Prepare version-specific test packages [compile:${{ matrix.unity.version }}:packages]
         id: packages
         env:
           UNITY_VERSION: ${{ matrix.unity.version }}
           UNITY_DATA: ${{ steps.sdk.outputs.unity_data }}
+          EVIDENCE_STEP_NAME: Prepare version-specific test packages [compile:${{ matrix.unity.version }}:packages]
         run: |
           set -euo pipefail
           input_system=()
           # Reuse the compatible optional profile and its verified registry pin.
           if [[ "$UNITY_VERSION" == 6000.0.* ]]; then input_system+=(--include-input-system); fi
-          python3 tools/unity_ci_packages.py prepare \
+          python3 tools/release_execution.py run --kind package-preparation \
+            --step-name "$EVIDENCE_STEP_NAME" --output "preparation=.unity-ci/$UNITY_VERSION/resolved-packages.json" -- \
+            python3 tools/unity_ci_packages.py prepare \
             --unity-version "$UNITY_VERSION" --unity-data "$UNITY_DATA" \
             --output ".unity-ci/$UNITY_VERSION" "${input_system[@]}"
 
-      - name: Compile
+      - name: Compile [compile:${{ matrix.unity.version }}:main]
         env:
           UNITY_VERSION: ${{ matrix.unity.version }}
           UNITY_IMAGE: ${{ steps.sdk.outputs.runtime_image }}
@@ -221,9 +224,11 @@ jobs:
           TEST_PROJECT: ${{ steps.packages.outputs.project_path }}
           INPUT_SYSTEM_SOURCE: ${{ steps.packages.outputs.input_system_source }}
           COMPILE_INPUT_SYSTEM: ${{ startsWith(matrix.unity.version, '6000.0.') && '1' || '0' }}
+          EVIDENCE_STEP_NAME: Compile [compile:${{ matrix.unity.version }}:main]
         run: |
           set -euo pipefail
-          docker run --rm --entrypoint /bin/bash \
+          python3 tools/release_execution.py run --kind compile --step-name "$EVIDENCE_STEP_NAME" -- \
+            docker run --rm --entrypoint /bin/bash \
             -v "$PWD:/repo" -w /repo \
             -e UNITY_VERSION="$UNITY_VERSION" \
             -e UNITY_DATA="/repo/$UNITY_DATA" \
@@ -237,7 +242,7 @@ jobs:
             -e TEST_PROJECT="/repo/$TEST_PROJECT" \
             "$UNITY_IMAGE" /repo/tools/compile-check.sh
 
-      - name: Compile optional module boundaries
+      - name: Compile optional module boundaries [compile:${{ matrix.unity.version }}:optional]
         if: needs.matrix.outputs.optional_modules == 'true' && (startsWith(matrix.unity.version, '2021.3.') || startsWith(matrix.unity.version, '6000.6.'))
         env:
           UNITY_VERSION: ${{ matrix.unity.version }}
@@ -246,9 +251,11 @@ jobs:
           EXTRA_REFS: ${{ steps.packages.outputs.refs }}
           TEST_FRAMEWORK_SOURCE: ${{ steps.packages.outputs.test_framework_source }}
           EDITOR_COROUTINES_SOURCE: ${{ steps.packages.outputs.editor_coroutines_source }}
+          EVIDENCE_STEP_NAME: Compile optional module boundaries [compile:${{ matrix.unity.version }}:optional]
         run: |
           set -euo pipefail
-          docker run --rm --entrypoint /bin/bash \
+          python3 tools/release_execution.py run --kind compile --step-name "$EVIDENCE_STEP_NAME" -- \
+            docker run --rm --entrypoint /bin/bash \
             -v "$PWD:/repo" -w /repo \
             -e UNITY_VERSION="$UNITY_VERSION" \
             -e UNITY_DATA="/repo/$UNITY_DATA" \
@@ -263,7 +270,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Unity package profile ${{ matrix.unity.version }}
-          path: ${{ steps.packages.outputs.resolution_report }}
+          path: |
+            ${{ steps.packages.outputs.resolution_report }}
+            .release-evidence/
           if-no-files-found: error
           # Only the resolution JSON is selected, not the hidden package/cache tree.
           include-hidden-files: true

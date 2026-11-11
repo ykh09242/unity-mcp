@@ -23,7 +23,12 @@ OPTIONAL_SUITES = json.loads(
 
 
 def workflow(name):
-    return yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
+    config = yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
+    for job in config["jobs"].values():
+        for step in job.get("steps", []):
+            if "name" in step:
+                step["name"] = step["name"].split(" [", 1)[0]
+    return config
 
 
 @pytest.mark.parametrize("name", ["compile-check.yml", "unity-tests.yml"])
@@ -423,7 +428,10 @@ def test_compilation_and_editor_tests_share_isolated_package_preparation(name, j
         artifact = next(
             step for step in job["steps"] if step.get("name") == "Upload package resolution"
         )
-        assert artifact["with"]["path"] == "${{ steps.packages.outputs.resolution_report }}"
+        assert artifact["with"]["path"].splitlines() == [
+            "${{ steps.packages.outputs.resolution_report }}",
+            ".release-evidence/",
+        ]
         assert artifact["with"]["if-no-files-found"] == "error"
         assert artifact["with"]["include-hidden-files"] is True
 
@@ -502,7 +510,10 @@ def test_optional_preparation_retains_only_resolution_metadata_without_native_ex
     assert report["uses"].startswith("actions/upload-artifact@")
     assert report["if"] == "always() && steps.packages.outcome == 'success'"
     assert report["with"]["name"] == "optional-package-resolution-${{ matrix.unity.version }}"
-    assert report["with"]["path"] == "${{ steps.packages.outputs.resolution_report }}"
+    assert report["with"]["path"].splitlines() == [
+        "${{ steps.packages.outputs.resolution_report }}",
+        ".release-evidence/",
+    ]
     assert report["with"]["if-no-files-found"] == "error"
     assert report["with"]["include-hidden-files"] is True
     assert report["with"]["retention-days"] == 7
