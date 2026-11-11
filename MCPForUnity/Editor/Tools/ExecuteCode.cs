@@ -6,7 +6,9 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnity.Runtime.Serialization;
 using Microsoft.CSharp;
@@ -38,7 +40,6 @@ namespace MCPForUnity.Editor.Tools
         private static string[] _cachedCodeDomAssemblyPaths;
         private static int _assemblyGeneration;
         private static int _cachedAssemblyGeneration = -1;
-        private static readonly JsonSerializer _resultSerializer = CreateResultSerializer();
 
         static ExecuteCode()
         {
@@ -350,7 +351,16 @@ namespace MCPForUnity.Editor.Tools
                 );
 
             if (result != null)
-                return new SuccessResponse("Code executed successfully.", new { result = SerializeResult(result), compiler = compilerUsed });
+            {
+                try
+                {
+                    return new SuccessResponse("Code executed successfully.", new { result = SerializeResult(result), compiler = compilerUsed });
+                }
+                catch (Exception exception) when (exception is ResponseLimitException || exception is UnsupportedAwaitableResultException)
+                {
+                    return new ErrorResponse($"Result serialization failed: {exception.Message}", new { compiler = compilerUsed });
+                }
+            }
 
             return new SuccessResponse("Code executed successfully.", new { compiler = compilerUsed });
         }
@@ -678,11 +688,11 @@ namespace MCPForUnity.Editor.Tools
         {
             string preview;
             if (result is SuccessResponse sr)
-                preview = sr.Data?.ToString() ?? sr.Message;
+                preview = sr.Data == null ? sr.Message : CreateResultPreview(sr.Data);
             else if (result is ErrorResponse er)
                 preview = er.Error;
             else
-                preview = result?.ToString() ?? "null";
+                preview = result?.GetType().Name ?? "null";
 
             if (preview != null && preview.Length > 200)
                 preview = preview.Substring(0, 200) + "...";
@@ -713,31 +723,160 @@ namespace MCPForUnity.Editor.Tools
             if (result == null)
                 return null;
 
-            var type = result.GetType();
-            if (type.IsPrimitive || result is string || result is decimal)
-                return result;
-
+            var budget = new BoundedResponseJson.Budget();
+            var awaitables = new AwaitableResultConverter();
+            var serializer = CreateResultSerializer(awaitables);
             try
             {
-                return JToken.FromObject(result, _resultSerializer);
+                var frozen = BoundedResponseJson.Freeze(result, serializer, budget);
+                awaitables.Check();
+                return frozen;
             }
             catch
             {
-                return result.ToString();
+                // Neither a nested OnError callback nor the compatibility string fallback
+                // may turn a refusal into partial success or enumerate the result again.
+                budget.Check();
+                awaitables.Check();
+                return BoundedResponseJson.Freeze(result.ToString(), budget: budget);
             }
         }
 
-        private static JsonSerializer CreateResultSerializer()
+        private static JsonSerializer CreateResultSerializer(AwaitableResultConverter awaitables)
         {
             // Reuse the existing converters without modifying the shared serializer or
             // the project's JsonConvert.DefaultSettings. Computed Unity properties can
             // recurse, lose precision through ToString(), or invoke native Editor APIs.
             var serializer = JsonSerializer.Create();
+            serializer.Converters.Add(awaitables);
             foreach (var converter in UnityJsonSerializer.Instance.Converters)
                 serializer.Converters.Add(converter);
             serializer.Converters.Add(new Matrix4x4Converter());
             serializer.Converters.Add(new UnityMathematicsConverter());
             return serializer;
+        }
+
+        private sealed class UnsupportedAwaitableResultException : JsonSerializationException
+        {
+            internal UnsupportedAwaitableResultException()
+                : base("Task and ValueTask results, including nested values, are not supported. Return a synchronous value.") { }
+        }
+
+        private sealed class AwaitableResultConverter : JsonConverter
+        {
+            private bool rejected;
+
+            public override bool CanConvert(Type type) =>
+                typeof(Task).IsAssignableFrom(type)
+                || type.FullName == "System.Threading.Tasks.ValueTask"
+                || (type.IsGenericType && type.GetGenericTypeDefinition().FullName == "System.Threading.Tasks.ValueTask`1");
+
+            internal void Check()
+            {
+                if (rejected)
+                    throw new UnsupportedAwaitableResultException();
+            }
+
+            public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+            {
+                rejected = true;
+                Check();
+            }
+
+            public override bool CanRead => false;
+
+            public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer) =>
+                throw new NotSupportedException();
+        }
+
+        private static string CreateResultPreview(object data)
+        {
+            using var output = new ResultPreviewWriter();
+            using var writer = new ResultPreviewJsonWriter(output) { AutoCompleteOnClose = false };
+            try
+            {
+                JsonSerializer.Create().Serialize(writer, data);
+                writer.Flush();
+            }
+            catch (Exception) when (output.Truncated)
+            {
+                // A preview is deliberately incomplete JSON; stop at its own small bound.
+            }
+            return output.Finish();
+        }
+
+        private sealed class ResultPreviewJsonWriter : JsonTextWriter
+        {
+            internal ResultPreviewJsonWriter(TextWriter output)
+                : base(output) { }
+
+            // Json.NET can buffer a string up to its last escaped character before
+            // writing anything to the bounded sink. Clip first, including JToken writes.
+            // One extra character guarantees the sink still observes truncation.
+            private static string Prefix(string value) =>
+                value != null && value.Length > ResultPreviewWriter.Limit + 1 ? value.Substring(0, ResultPreviewWriter.Limit + 1) : value;
+
+            public override void WriteValue(string value) => base.WriteValue(Prefix(value));
+
+            public override void WriteValue(Uri value) => WriteValue(value?.OriginalString);
+
+            public override void WritePropertyName(string name) => base.WritePropertyName(Prefix(name));
+
+            public override void WritePropertyName(string name, bool escape) => base.WritePropertyName(Prefix(name), escape);
+
+            public override void WriteComment(string text) => base.WriteComment(Prefix(text));
+
+            public override void WriteRaw(string json) => base.WriteRaw(Prefix(json));
+
+            public override void WriteRawValue(string json) => base.WriteRawValue(Prefix(json));
+
+            public override void WriteStartConstructor(string name) => base.WriteStartConstructor(Prefix(name));
+        }
+
+        private sealed class ResultPreviewWriter : TextWriter
+        {
+            internal const int Limit = 200;
+            private readonly StringBuilder text = new StringBuilder(Limit);
+            internal bool Truncated { get; private set; }
+            public override Encoding Encoding => Encoding.UTF8;
+
+            public override void Write(char value)
+            {
+                if (text.Length == Limit)
+                    Stop();
+                text.Append(value);
+            }
+
+            public override void Write(string value)
+            {
+                if (value == null)
+                    return;
+                int count = Math.Min(value.Length, Limit - text.Length);
+                text.Append(value, 0, count);
+                if (count < value.Length)
+                    Stop();
+            }
+
+            public override void Write(char[] buffer, int index, int count)
+            {
+                int admitted = Math.Min(count, Limit - text.Length);
+                text.Append(buffer, index, admitted);
+                if (admitted < count)
+                    Stop();
+            }
+
+            private void Stop()
+            {
+                Truncated = true;
+                throw new IOException("Result preview complete.");
+            }
+
+            internal string Finish()
+            {
+                if (Truncated && text.Length > 0 && char.IsHighSurrogate(text[text.Length - 1]))
+                    text.Length--;
+                return text.ToString() + (Truncated ? "..." : "");
+            }
         }
 
         private class HistoryEntry

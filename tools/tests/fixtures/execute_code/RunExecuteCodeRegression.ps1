@@ -20,7 +20,7 @@ New-Item -ItemType Directory -Path $work | Out-Null
 $previousTemp = $env:TEMP
 $previousTmp = $env:TMP
 try {
-    $references = @('mscorlib.dll', 'System.dll', 'System.Core.dll', 'Microsoft.CSharp.dll') | ForEach-Object { Join-Path $framework $_ }
+    $references = @('mscorlib.dll', 'System.dll', 'System.Core.dll', 'System.Numerics.dll', 'Microsoft.CSharp.dll') | ForEach-Object { Join-Path $framework $_ }
     $references += Join-Path $framework 'Facades/netstandard.dll'
     $dependencies = @('Microsoft.CodeAnalysis.dll', 'Microsoft.CodeAnalysis.CSharp.dll', 'System.Collections.Immutable.dll',
         'System.Reflection.Metadata.dll', 'System.Memory.dll', 'System.Numerics.Vectors.dll', 'System.Runtime.CompilerServices.Unsafe.dll', 'System.Threading.Tasks.Extensions.dll')
@@ -46,6 +46,7 @@ try {
     }
     $configuration.Save((Join-Path $work 'ExecuteCodeRegression.exe.config'))
     foreach ($path in @((Join-Path $root '.compile-refs/Newtonsoft.Json.dll'),
+        (Join-Path $root '.compile-refs/nunit.framework.dll'),
         (Join-Path $UnityData 'Managed/UnityEngine/UnityEngine.CoreModule.dll'),
         (Join-Path $UnityData 'Managed/UnityEngine/UnityEngine.SharedInternalsModule.dll'))) {
         $references += $path
@@ -59,6 +60,10 @@ try {
     }
     $arguments += $references | ForEach-Object { '/reference:' + $_ }
     $arguments += @($source, (Join-Path $PSScriptRoot 'ExecuteCodeRegressionHarness.cs'),
+        (Join-Path $root 'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/ExecuteCodeResultSafetyTests.cs'),
+        (Join-Path $root 'MCPForUnity/Editor/Services/Transport/BoundedResponseJson.cs'),
+        (Join-Path $root 'MCPForUnity/Editor/Services/Transport/PlainObjectJsonWriter.cs'),
+        (Join-Path $root 'MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs'),
         (Join-Path $root 'MCPForUnity/Editor/Helpers/Response.cs'),
         (Join-Path $root 'MCPForUnity/Editor/Helpers/UnityJsonSerializer.cs'),
         (Join-Path $root 'MCPForUnity/Runtime/Helpers/UnityAssembliesCompat.cs'),

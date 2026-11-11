@@ -54,6 +54,19 @@ internal static class ExecuteCodeRegressionHarness
         Check("Unity7 simulated snippets reuse modules and compile distinct source", Unity7SnippetCache);
         Check("Unity7 simulated dynamic and pathless loads preserve caches", Unity7ExcludedLoads);
 #endif
+        foreach (var test in typeof(MCPForUnityTests.EditMode.Tools.ExecuteCodeResultSafetyTests).GetMethods())
+            if (test.GetCustomAttributes(typeof(NUnit.Framework.TestAttribute), false).Length != 0)
+                Check("result safety: " + test.Name, () =>
+                {
+                    try
+                    {
+                        test.Invoke(new MCPForUnityTests.EditMode.Tools.ExecuteCodeResultSafetyTests(), null);
+                    }
+                    catch (TargetInvocationException exception)
+                    {
+                        throw exception.InnerException ?? exception;
+                    }
+                });
         foreach (var backend in new[] { "codedom", "roslyn" })
         {
             Check(backend + ": basic return", () => Require(Result(Execute("return 42;", backend)).Value<int>() == 42, "Wrong result"));

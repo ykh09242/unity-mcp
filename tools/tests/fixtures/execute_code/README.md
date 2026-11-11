@@ -10,7 +10,11 @@ The runner compiles the selected **actual `ExecuteCode.cs`** together with the r
 
 Use `-SourcePath '<absolute path to baseline ExecuteCode.cs>'` to test an unchanged source snapshot with the same assertions. Optional `-CaseFilter 'performance'` selects case names by a case-insensitive substring; no matching cases returns exit code 2. A failing behavior returns exit code 1; setup/compilation failures throw. Output includes the selected source path/hash, runtime identity, every case and an aggregate result.
 
-Optional `-CompileEditModeTests` additionally compiles the repository's actual `ExecuteCodeTests.cs` against installed NUnit and the same actual production sources, using only a `TestUtilities.ToJObject` seam. It prints the test source hash and a distinct `COMPILE_ONLY` result. This does not execute NUnit or native-dependent Editor tests.
+The runner also executes the actual `ExecuteCodeResultSafetyTests` NUnit methods against the production result serializer and bounded response writer. Use `-CaseFilter 'result safety'` for these cases: unfinished root/nested Task and ValueTask rejection, completed awaitable rejection, early disposal at the node budget, scalar/depth limits (including handled errors), normal Unity values and string fallback, returned/history error status, and a streaming history preview. Unfinished-task probes have a bounded wait and complete their task in `finally`, so the baseline reports a failure without leaving a blocked worker. Native Editor signals are not used by these methods.
+
+The preview allocation regression uses 16 MiB strings and property names with a final escaped character, ensuring the small preview is bounded before Json.NET allocates an escaping buffer. Another case preserves exact small JSON, including escapes and nulls. Allocations are measured after warmup, with the original input retained unchanged.
+
+Optional `-CompileEditModeTests` additionally compiles the repository's actual `ExecuteCodeTests.cs` against installed NUnit and the same actual production sources, using only a `TestUtilities.ToJObject` seam. It prints the test source hash and a distinct `COMPILE_ONLY` result. This does not execute the native-dependent Editor tests.
 
 Use `-CaseFilter 'followed by codedom'` for the two isolated recovery cases: a fresh Roslyn compilation failure or success followed by a successful CodeDom return. Both use fresh managed AppDomains, unloaded in `finally`, to avoid changing unrelated cases.
 
