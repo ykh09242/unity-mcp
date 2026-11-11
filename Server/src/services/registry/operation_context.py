@@ -50,8 +50,9 @@ def capture_operation_worker(context: Context) -> _WorkerPin | None:
 
 def operation_task(coroutine: Coroutine[None, None, T]) -> asyncio.Task[T]:
     context = copy_context()
-    pin = capture_operation_worker(context)
+    pin = None
     try:
+        pin = capture_operation_worker(context)
         task = asyncio.create_task(coroutine, context=context)
     except BaseException:
         if pin is not None:

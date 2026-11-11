@@ -2,6 +2,7 @@
 
 import asyncio  # noqa: ANYIO_OK -- exercise production loop/executor ownership.
 from contextvars import ContextVar
+import inspect
 import threading
 
 import pytest
@@ -57,6 +58,39 @@ async def test_cancelled_executor_await_keeps_fence_until_actual_worker_returns(
     async with scheduler.session(request()):
         assert scheduler.snapshot()["active"] == 1
     assert scheduler.snapshot()["instances"] == 0
+
+
+@pytest.mark.asyncio
+async def test_closed_invocation_rejects_and_closes_unsubmitted_coroutine():
+    # Given an inherited invocation that has already released its admission.
+    scheduler = OperationScheduler()
+    started = False
+
+    async def child():
+        nonlocal started
+        started = True
+
+    async with scheduler.session(request()) as owner:
+        pass
+    token = current_operation.set(owner)
+    coroutine = child()
+    try:
+        # When submission is refused before a worker can claim ownership.
+        with pytest.raises(OperationScopeChanged):
+            operation_task(coroutine)
+
+        # Then the unsubmitted coroutine is closed and no work or lease remains.
+        assert inspect.getcoroutinestate(coroutine) == inspect.CORO_CLOSED
+        assert not started
+        assert scheduler.snapshot() == {
+            "instances": 0,
+            "active": 0,
+            "waiting": 0,
+            "retained_bytes": 0,
+        }
+    finally:
+        coroutine.close()
+        current_operation.reset(token)
 
 
 @pytest.mark.asyncio
