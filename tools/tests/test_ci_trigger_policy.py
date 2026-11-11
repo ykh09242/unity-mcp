@@ -175,3 +175,35 @@ def test_shared_report_fixture_retains_beta_python_contract_validation() -> None
     assert selected("fork-beta-tools.yml", "push", "beta", SHARED_REPORT_FIXTURE)
     jobs = workflow("fork-beta-tools.yml")["jobs"]
     assert jobs["python_tests"]["uses"] == "./.github/workflows/python-tests.yml"
+
+
+@pytest.mark.parametrize("target", ["main", "beta"])
+def test_reference_only_pr_executes_resource_uri_contract(target: str) -> None:
+    path = "website/docs/reference/tools/get_tests.md"
+    assert selected("docs-generate.yml", "pull_request", target, path, "synchronize")
+    steps = workflow("docs-generate.yml")["jobs"]["check"]["steps"]
+    contract = next(
+        step for step in steps if "test_resource_uri_references.py" in step.get("run", "")
+    )
+    assert "--extra dev" in contract["run"]
+    assert "-W error" in contract["run"]
+
+
+def test_authored_reference_resource_error_is_rejected(tmp_path, monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "uri_reference_contract", ROOT / "Server/tests/test_resource_uri_references.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    (tmp_path / "unity-mcp-skill").mkdir()
+    (tmp_path / "unity-mcp-skill/SKILL.md").write_text("# Fixture\n", encoding="utf-8")
+    directory = tmp_path / "website/docs/reference/tools"
+    directory.mkdir(parents=True)
+    (directory / "example.md").write_text("Read the get_tests resource.\n", encoding="utf-8")
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    with pytest.raises(AssertionError, match="get_tests"):
+        module.test_agent_facing_markdown_references_resources_by_uri(
+            {"get_tests": "mcpforunity://tests"}
+        )

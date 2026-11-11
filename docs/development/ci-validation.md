@@ -120,6 +120,11 @@ resolved distribution version, and successful probe reports for 30 days. Install
 probe failures fail the job; this read-only check publishes no package and does not run
 the complete test matrix. Its purpose is to detect dependency changes between source commits.
 
+Reference-only PRs already select the reference drift job. That job also executes
+`Server/tests/test_resource_uri_references.py`, including authored example blocks that the
+reference generator preserves. A resource name without its required URI cannot bypass the
+contract merely because generated catalog content remains fresh.
+
 To inspect local server test durations, run from `Server/`:
 
 ```sh

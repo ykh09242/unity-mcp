@@ -96,3 +96,9 @@ jobs:
       - name: Check native feature catalog
         working-directory: Server
         run: uv run --locked --python 3.14 python ../tools/generate_tool_capabilities.py --check
+
+      - name: Check authored resource URI references
+        run: >-
+          uv run --project Server --locked --extra dev --python 3.14 python -m pytest
+          Server/tests/test_resource_uri_references.py
+          -q -W error -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function
