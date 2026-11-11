@@ -69,7 +69,7 @@ baseline; missing comparison cannot pass. There are no executable paths, shell
 commands, tool names, downloads, formatter stages or arbitrary profile hooks.
 
 Stage deadlines in seconds (default / maximum): freshness 120/300, analysis
-120/300, impact 30/120, tests 300/900, console 30/60, final 30/120. The sum bounds the
+120/300, impact 30/120, tests 300/600, console 30/60, final 30/120. The sum bounds the
 whole run; nested checks do not reset that deadline. A timed-out observer records
 existing child ownership and does not issue another mutation.
 

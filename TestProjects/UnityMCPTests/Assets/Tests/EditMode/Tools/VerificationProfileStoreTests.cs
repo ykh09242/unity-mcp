@@ -52,6 +52,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("command", "\"cmd.exe\"")]
         [TestCase("test_mode", "\"Everything\"")]
         [TestCase("deadlines", "{\"tests\":0}")]
+        [TestCase("deadlines", "{\"tests\":601}")]
         public void NativeBoundaryRejectsUnknownStagesAndInvalidProfiles(string field, string value)
         {
             Assert.Throws<ArgumentException>(() => VerificationProfileStore.Write(root, "bad", new JObject { [field] = JToken.Parse(value) }, "missing"));

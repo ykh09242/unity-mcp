@@ -75,6 +75,9 @@ def test_stage_deadlines_and_test_selectors_are_bounded():
         VerificationProfile.model_validate({"deadlines": {"tests": 0}})
     with pytest.raises(ValidationError):
         VerificationProfile.model_validate({"test_names": ["A"], "test_mode": None})
+    assert VerificationProfile.model_validate({"deadlines": {"tests": 600}}).deadlines.tests == 600
+    with pytest.raises(ValidationError):
+        VerificationProfile.model_validate({"deadlines": {"tests": 601}})
 
 
 def test_verification_public_permissions_do_not_make_status_a_test_grant():

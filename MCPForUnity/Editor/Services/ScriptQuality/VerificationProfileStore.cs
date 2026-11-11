@@ -164,7 +164,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                     {
                         "freshness" or "analysis" => 300,
                         "impact" or "final" => 120,
-                        "tests" => 900,
+                        "tests" => 600,
                         "console" => 60,
                         _ => 0,
                     };

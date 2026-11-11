@@ -16,7 +16,7 @@ class StageDeadlines(QualityOptions):
     freshness: Annotated[int, Field(ge=1, le=300)] = 120
     analysis: Annotated[int, Field(ge=1, le=300)] = 120
     impact: Annotated[int, Field(ge=1, le=120)] = 30
-    tests: Annotated[int, Field(ge=1, le=900)] = 300
+    tests: Annotated[int, Field(ge=1, le=600)] = 300
     console: Annotated[int, Field(ge=1, le=60)] = 30
     final: Annotated[int, Field(ge=1, le=120)] = 30
 
