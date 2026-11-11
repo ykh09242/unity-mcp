@@ -71,11 +71,18 @@ namespace MCPForUnity.Editor.Tools.Terrain
                 attempted = true;
                 if (before.Kind == "trees")
                 {
-                    ownedAfter = before.Values.DeepClone();
+                    TreeInstance[] trees = before.Data.treeInstances;
                     for (int i = 0; i < before.Indices.Length; i++)
                     {
                         token.ThrowIfCancellationRequested();
-                        ApplyTree(before.Data, before.Indices[i], (JObject)intended[i]);
+                        trees[before.Indices[i]] = ApplyTree(trees[before.Indices[i]], (JObject)intended[i]);
+                    }
+                    token.ThrowIfCancellationRequested();
+                    // SetTreeInstance rejects position changes. Replace the array once, preserving unselected trees and authored height.
+                    before.Data.SetTreeInstances(trees, false);
+                    ownedAfter = before.Values.DeepClone();
+                    for (int i = 0; i < before.Indices.Length; i++)
+                    {
                         JToken rowAfter = TerrainState.Tree(before.Data.GetTreeInstance(before.Indices[i]));
                         if (!Equivalent(intended[i], rowAfter, 0.000001f))
                             throw new InvalidOperationException("Native tree readback did not match.");
@@ -261,16 +268,15 @@ namespace MCPForUnity.Editor.Tools.Terrain
                     TerrainState.Number(value, 0, 1, "normalized tree position");
         }
 
-        private static void ApplyTree(TerrainData data, int index, JObject row)
+        private static TreeInstance ApplyTree(TreeInstance value, JObject row)
         {
-            TreeInstance value = data.GetTreeInstance(index);
             value.position = new Vector3(row["position"][0].Value<float>(), row["position"][1].Value<float>(), row["position"][2].Value<float>());
             value.widthScale = row.Value<float>("width_scale");
             value.heightScale = row.Value<float>("height_scale");
             value.rotation = row.Value<float>("rotation");
             value.color = Color(row["color"]);
             value.lightmapColor = Color(row["lightmap_color"]);
-            data.SetTreeInstance(index, value);
+            return value;
         }
 
         private static Color32 Color(JToken token) =>
@@ -399,6 +405,8 @@ namespace MCPForUnity.Editor.Tools.Terrain
                 }
                 else if (before.Kind == "trees")
                 {
+                    TreeInstance[] trees = before.Data.treeInstances;
+                    var planned = new Dictionary<int, int>();
                     for (int i = 0; i < before.Indices.Length; i++)
                     {
                         if (!verifiedTrees.Contains(i))
@@ -421,10 +429,19 @@ namespace MCPForUnity.Editor.Tools.Terrain
                         }
                         if (changed)
                         {
-                            ApplyTree(before.Data, before.Indices[i], merged);
-                            if (!JToken.DeepEquals(TerrainState.Tree(before.Data.GetTreeInstance(before.Indices[i])), merged))
+                            trees[before.Indices[i]] = ApplyTree(trees[before.Indices[i]], merged);
+                            planned.Add(i, plannedFields);
+                        }
+                    }
+                    if (planned.Count > 0)
+                    {
+                        before.Data.SetTreeInstances(trees, false);
+                        foreach (var entry in planned)
+                        {
+                            int index = before.Indices[entry.Key];
+                            if (!JToken.DeepEquals(TerrainState.Tree(before.Data.GetTreeInstance(index)), TerrainState.Tree(trees[index])))
                                 throw new InvalidOperationException("Tree recovery readback did not match.");
-                            restored += plannedFields;
+                            restored += entry.Value;
                         }
                     }
                 }

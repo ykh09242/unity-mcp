@@ -532,6 +532,89 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void TreePositionEditPreservesUnselectedInstanceAndSupportsNativeUndo()
+        {
+            TreeInstance[] before = data.treeInstances;
+            var trees = Guard("get_trees", new JObject { ["indices"] = new JArray(1) });
+            trees["values"] = new JArray(new JObject { ["position"] = new JArray(.6f, .65f, .7f), ["width_scale"] = 2f });
+            JObject result = Call("set_trees", trees);
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(new Vector3(.6f, .65f, .7f), data.GetTreeInstance(1).position, "Authored height must not snap to the heightmap.");
+            Assert.AreEqual(2f, data.GetTreeInstance(1).widthScale);
+            Assert.AreEqual(before[1].prototypeIndex, data.GetTreeInstance(1).prototypeIndex);
+            Assert.AreEqual(before[0], data.GetTreeInstance(0), "Every field of an unselected tree must remain unchanged.");
+            Assert.AreEqual(dataGuid, AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(data)));
+            Assert.IsTrue(EditorUtility.IsDirty(data));
+            Assert.IsTrue(result["data"].Value<bool>("undo_registered"), result.ToString());
+            Undo.FlushUndoRecordObjects();
+            Undo.PerformUndo();
+            CollectionAssert.AreEqual(before, data.treeInstances, "Native Undo must restore tree positions and the rest of the array.");
+        }
+
+        [TestCase("cancelled")]
+        [TestCase("failed")]
+        [TestCase("external")]
+        public void TreePositionFailureRestoresOwnedFieldsAndPreservesExternalChanges(string outcome)
+        {
+            TreeInstance[] before = data.treeInstances;
+            var trees = Guard("get_trees", new JObject { ["indices"] = new JArray(1) });
+            trees["values"] = new JArray(new JObject { ["position"] = new JArray(.6f, .65f, .7f), ["width_scale"] = 2f });
+            using var cancelled = new CancellationTokenSource();
+            Stage(value =>
+            {
+                if (outcome == "cancelled")
+                {
+                    cancelled.Cancel();
+                    return;
+                }
+                if (outcome == "external")
+                {
+                    TreeInstance[] external = value.treeInstances;
+                    external[1].position = new Vector3(.3f, .4f, .5f);
+                    external[0].heightScale = 3f;
+                    value.SetTreeInstances(external, false);
+                }
+                throw new InvalidOperationException("Owned fixture fails after verified tree position authoring.");
+            });
+            JObject result = Call("set_trees", trees, cancelled.Token);
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(outcome == "cancelled" ? "terrain_cancelled" : "terrain_edit_failed", result.Value<string>("code"));
+            Assert.AreEqual(outcome == "external" ? 1 : 2, result["data"]["recovery"].Value<int>("restored_cells"), result.ToString());
+            Assert.AreEqual(outcome == "external" ? 1 : 0, result["data"]["recovery"].Value<int>("conflicted_cells"), result.ToString());
+            Assert.IsTrue(result["data"].Value<bool>("undo_registered"), result.ToString());
+            if (outcome == "external")
+            {
+                before[1].position = new Vector3(.3f, .4f, .5f);
+                before[0].heightScale = 3f;
+            }
+            CollectionAssert.AreEqual(before, data.treeInstances, "Recovery restores only verified owned fields and preserves unselected external edits.");
+        }
+
+        [Test]
+        public void TreePositionBatchUsesRequestedIndexOrderAndPreservesUnselectedInstance()
+        {
+            TreeInstance extra = data.GetTreeInstance(0);
+            extra.position = new Vector3(.9f, .2f, .3f);
+            data.SetTreeInstances(data.treeInstances.Concat(new[] { extra }).ToArray(), false);
+            TreeInstance[] before = data.treeInstances;
+            var trees = Guard("get_trees", new JObject { ["indices"] = new JArray(1, 0) });
+            trees["values"] = new JArray(
+                new JObject { ["position"] = new JArray(.6f, .65f, .7f), ["width_scale"] = 2f },
+                new JObject { ["position"] = new JArray(.1f, .3f, .4f), ["rotation"] = .5f }
+            );
+            JObject result = Call("set_trees", trees);
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(new Vector3(.6f, .65f, .7f), data.GetTreeInstance(1).position);
+            Assert.AreEqual(2f, data.GetTreeInstance(1).widthScale);
+            Assert.AreEqual(new Vector3(.1f, .3f, .4f), data.GetTreeInstance(0).position);
+            Assert.AreEqual(.5f, data.GetTreeInstance(0).rotation);
+            Assert.AreEqual(before[2], data.GetTreeInstance(2));
+            Undo.FlushUndoRecordObjects();
+            Undo.PerformUndo();
+            CollectionAssert.AreEqual(before, data.treeInstances);
+        }
+
+        [Test]
         public void BoundaryAcknowledgementNeverChangesAdjacentTerrain()
         {
             var args = Region("heights", 32, 2, 1, 1);
