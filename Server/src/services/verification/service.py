@@ -41,7 +41,7 @@ class VerificationIO:
         self.ctx, self.owner = ctx, target.scope.key
         self.resume = target.resume_generation
         self.generation = target.scope.generation
-        self.on_refresh = None
+        self.on_refresh = lambda _parameters: None
         self.impact_requested = False
 
     async def target(self, deadline=None):
@@ -112,8 +112,10 @@ class VerificationIO:
 
         async def before(name, params):
             await self.authorize(name, params, deadline)
-            if name == "refresh_unity" and callable(self.on_refresh):
-                children.append(self.on_refresh(params))
+            if name == "refresh_unity":
+                child = self.on_refresh(params)
+                if child is not None:
+                    children.append(child)
 
         evidence = await ensure_source_freshness(
             self.ctx,

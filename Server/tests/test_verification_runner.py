@@ -34,8 +34,17 @@ class IO:
         }
         self.tests = {
             "job_id": "t" * 32,
-            "status": "completed",
-            "native_cleanup_pending": False,
+            "status": "succeeded",
+            "completion_kind": "completed",
+            "native_control": {
+                "version": 1,
+                "job_id": "t" * 32,
+                "released": True,
+                "termination": "confirmed",
+                "final_witness": True,
+                "native_invoked": True,
+                "native_guid": "6e764d23-6f6c-470a-abe9-1d2db576e3a4",
+            },
             "result": {"summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0}},
         }
         self.deny = False

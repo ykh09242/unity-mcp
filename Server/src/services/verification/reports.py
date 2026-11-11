@@ -17,9 +17,32 @@ def final_verdict(stages):
 
 
 def test_settled(data):
+    control = data.get("native_control")
+    if (
+        data.get("status") not in {"succeeded", "failed", "cancelled"}
+        or not isinstance(control, dict)
+        or type(control.get("version")) is not int
+        or control["version"] != 1
+        or not data.get("job_id")
+        or control.get("job_id") != data["job_id"]
+        or control.get("released") is not True
+        or control.get("observation_lost") is True
+        or control.get("ambiguous") is True
+    ):
+        return False
+    if control.get("termination") == "not_started":
+        return (
+            data["status"] != "succeeded"
+            and control.get("native_invoked") is False
+            and control.get("final_witness") is False
+            and not control.get("native_guid")
+        )
     return (
-        data.get("status") in {"completed", "failed", "cancelled", "canceled"}
-        and data.get("native_cleanup_pending") is False
+        control.get("termination") == "confirmed"
+        and control.get("final_witness") is True
+        and control.get("native_invoked") is True
+        and isinstance(control.get("native_guid"), str)
+        and bool(control["native_guid"])
     )
 
 
@@ -27,7 +50,11 @@ def test_verdict(data):
     summary = (data.get("result") or {}).get("summary") or {}
     if data.get("status") == "failed" or summary.get("failed", 0) > 0:
         return "failed"
+    if data.get("status") == "cancelled":
+        return "canceled"
     if not test_settled(data) or type(summary.get("total")) is not int or summary["total"] < 1:
+        return "incomplete"
+    if data.get("status") != "succeeded" or data.get("completion_kind") != "completed":
         return "incomplete"
     if summary.get("passed") != summary["total"] or summary.get("skipped", 0) != 0:
         return "incomplete"

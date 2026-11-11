@@ -403,7 +403,10 @@ class VerificationRunner:
             {
                 "job_id": child["job_id"],
                 "summary": (data.get("result") or {}).get("summary"),
-                "native_cleanup_pending": data.get("native_cleanup_pending"),
+                "status": data.get("status"),
+                "completion_kind": data.get("completion_kind"),
+                "native_control": data.get("native_control"),
+                "native_cleanup_pending": not test_settled(data),
                 "mode": self.profile.test_mode,
                 "selectors": {
                     key: value
