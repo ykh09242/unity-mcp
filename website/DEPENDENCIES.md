@@ -22,9 +22,11 @@ Treat configured glob patterns and build plugins as trusted build inputs. The li
 
 ## November 2026 refresh
 
-On November 5, npm reported one low-severity advisory in `deepmerge` and counted four dependents in Docusaurus's SVG build chain. The installed version is 4.3.1. The advisory lists no patched release. Recheck the upstream package and SVGR resolution at the next refresh. [deepmerge advisory](https://github.com/advisories/GHSA-gcqx-w48m-w2h4)
+On November 11, npm 12.2.2 still reports one low-severity advisory in `deepmerge` and counts four dependents in Docusaurus's SVG build chain (five low entries total). The installed version is 4.3.1 and the advisory lists no patched release. `npm audit` exits 1 for these findings; it does not report a failed installation or an invalid dependency graph. Its force-fix suggestion downgrades `@docusaurus/preset-classic` to 3.6.3, so do not apply it. Recheck the upstream package and SVGR resolution at the next refresh. [deepmerge advisory](https://github.com/advisories/GHSA-gcqx-w48m-w2h4)
 
-The minimum `postcss-selector-parser` override is 7.1.7, which preserves trailing whitespace in lossless parsing. Local search and development hot reload were exercised with the refreshed webpack and Markdown packages. [Selector parser changelog](https://github.com/postcss/postcss-selector-parser/blob/v7.1.7/CHANGELOG.md)
+The minimum `postcss-selector-parser` override is 7.2.0. It retains the 7.1.7 trailing-whitespace correction and includes the subsequent CPU-resource and escaping fixes. Dependency contracts exercise escaped identifiers, functional pseudo-classes, attribute flags, lossless parsing and the optional `maxInputLength` limit. That limit is opt-in; this update does not add a site-wide selector cap. [Selector parser changelog](https://github.com/postcss/postcss-selector-parser/blob/7591d8d67f42fde79490d5e9c8fac0b8deb43fa2/CHANGELOG.md)
+
+The compatible transitive refresh keeps Docusaurus 3.10.2, React/DOM 19.3.1 and the existing override/lifecycle policies. It includes Undici 7.30.2 and updates Markdown, CSS, watcher and search tooling. Production navigation, local autocomplete/full search and development CSS hot reload were exercised on owned loopback servers. [Full refresh and verification notes](../docs/development/dependency-refresh-2026-11-11.md#website-dependency-graph)
 
 ## October 2026 refresh
 

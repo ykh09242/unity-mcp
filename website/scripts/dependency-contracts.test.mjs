@@ -64,7 +64,7 @@ for (const [name, buffer, expected] of encodingFixtures) {
   });
 }
 
-for (const [name, minimum] of [['tinypool', '2.1.2'], ['postcss-selector-parser', '7.1.6']]) {
+for (const [name, minimum] of [['tinypool', '2.1.2'], ['postcss-selector-parser', '7.2.0']]) {
   test(`every locked ${name} includes the published security fixes`, () => {
     const lock = JSON.parse(readFileSync(path.join(siteDir, 'package-lock.json'), 'utf8'));
     const entries = Object.entries(lock.packages)
@@ -75,6 +75,51 @@ for (const [name, minimum] of [['tinypool', '2.1.2'], ['postcss-selector-parser'
     }
   });
 }
+
+test('selector parsing preserves complex CSS, escaped identifiers and trailing whitespace', () => {
+  const parser = require('postcss-selector-parser');
+  const selector = String.raw`  .\31 0-col:is(.active, [data-kind="a,b" i]) > a:has(> svg):not([hidden])::before  `;
+  const classes = [];
+  const attributes = [];
+  const processor = parser((root) => {
+    root.walkClasses((node) => classes.push(node.value));
+    root.walkAttributes((node) => attributes.push([node.attribute, node.value, node.insensitive]));
+  });
+  assert.equal(processor.processSync(selector), selector);
+  assert.deepEqual(classes, ['10-col', 'active']);
+  assert.deepEqual(attributes, [['data-kind', 'a,b', true], ['hidden', undefined, undefined]]);
+  assert.equal(parser().processSync('  main   > .content  ', { lossless: false }), 'main>.content');
+});
+
+test('selector input cap is opt-in and rejects oversized input before parsing', () => {
+  const parser = require('postcss-selector-parser');
+  const selector = '.navigation';
+  assert.equal(parser().processSync(selector), selector);
+  assert.equal(parser().processSync(selector, { maxInputLength: selector.length }), selector);
+  assert.throws(() => parser().processSync(selector, { maxInputLength: selector.length - 1 }),
+    /length .* exceeds the maximum/);
+});
+
+test('Markdown raw HTML repairs table nesting and preserves entities and template content', async () => {
+  const { raw } = await import('hast-util-raw');
+  const result = raw({ type: 'root', children: [{
+    type: 'raw',
+    value: '<table><tr><td>Task2 &amp; &#x1F3AE;</td></tr></table><template><p>Template &amp; entity</p></template>',
+  }] });
+  const [table, template] = result.children;
+  assert.equal(table.tagName, 'table');
+  const tbody = table.children[0];
+  assert.equal(tbody.tagName, 'tbody');
+  const row = tbody.children[0];
+  assert.equal(row.tagName, 'tr');
+  const cell = row.children[0];
+  assert.equal(cell.tagName, 'td');
+  assert.deepEqual(cell.children, [{ type: 'text', value: 'Task2 & 🎮' }]);
+  assert.equal(template.tagName, 'template');
+  assert.deepEqual(template.children, []);
+  assert.equal(template.content.children[0].tagName, 'p');
+  assert.deepEqual(template.content.children[0].children, [{ type: 'text', value: 'Template & entity' }]);
+});
 
 test('Docusaurus worker pool preserves SSG data and ignores inherited task options', async () => {
   const { default: Tinypool } = await import(pathToFileURL(coreRequire.resolve('tinypool')).href);
