@@ -331,19 +331,22 @@ namespace MCPForUnity.Editor.Tools
             for (int i = plan.Files.Count - 1; i >= 0; i--)
             {
                 Entry entry = plan.Files[i];
-                if (entry.State == "prepared" || entry.State == "not_applied")
-                {
-                    entry.State = "not_applied";
-                    continue;
-                }
                 if (entry.State == "unchanged" || entry.State == "restored")
                     continue;
+                if (!entry.ReplaceAttempted)
+                {
+                    // Candidate equality cannot establish ownership of another writer's save.
+                    bool original = Matches(entry, entry.Original);
+                    entry.State = original ? "not_applied" : "uncertain";
+                    entry.Reason = original ? "replacement_not_attempted" : "source_changed_without_replacement";
+                    continue;
+                }
                 try
                 {
                     if (MetaDigest(entry.Path) != entry.Meta)
                         throw new Refusal("metadata_changed", "Metadata changed externally.");
-                    byte[] restore = ReadBounded(Blob(plan, i, false), MaxFileBytes);
-                    string restoreDigest = entry.Original;
+                    byte[] restore = null;
+                    string restoreDigest = null;
                     string backup = Staged(plan, i, "bak");
                     // On Unix a process can stop after atomic exchange but before the preimage
                     // is renamed to .bak. Reconcile that retained stage using the same digest guard.
@@ -375,6 +378,8 @@ namespace MCPForUnity.Editor.Tools
                     }
                     if (observed != entry.Candidate)
                         throw new Refusal("external_writer", "Current source differs from the prepared candidate; it was not overwritten.");
+                    if (restore == null)
+                        throw new Refusal("replacement_unproven", "The displaced replacement preimage is unavailable; current source was not overwritten.");
                     entry.State = "restoring";
                     Save(plan);
                     AtomicAssetFile.Replace(fullPath, restore, entry.Candidate, () =>

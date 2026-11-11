@@ -245,6 +245,68 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void ApplyAndRecoveryPreserveUnattemptedExternalCandidate()
+        {
+            string id = Prepare();
+            byte[] first = Bytes("First");
+            byte[] external = new UTF8Encoding(false).GetBytes(Candidate("Second"));
+            SetSeam(
+                "_stageForTests",
+                (Action<string, int>)(
+                    (stage, index) =>
+                    {
+                        if (stage == "before_replace" && index == 1)
+                            File.WriteAllBytes(Path.Combine(folder, "Second.cs"), external);
+                    }
+                )
+            );
+
+            JObject applied = Command("apply_change_set", id);
+            CollectionAssert.AreEqual(external, Bytes("Second"), "Candidate equality does not give this operation ownership of an external write.");
+            CollectionAssert.AreEqual(first, Bytes("First"));
+            Assert.AreEqual("change_set_conflict", (string)applied["code"]);
+            Assert.AreEqual("restored", (string)applied["data"]["files"][0]["state"]);
+            SetSeam("_stageForTests", null);
+            SetSeam("_domainForTests", (Func<string>)(() => "recovery-domain"));
+            JObject recovered = Command("recover_change_set", id);
+            Assert.AreEqual("change_set_conflict", (string)recovered["code"]);
+            CollectionAssert.AreEqual(external, Bytes("Second"));
+            CollectionAssert.AreEqual(first, Bytes("First"));
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void RecoveryRequiresDisplacedPreimageForReplacement(bool retainPreimage, bool replaceReturned)
+        {
+            byte[] original = Bytes("First");
+            string id = Prepare();
+            SetSeam("_continueForTests", (Func<int, bool>)(_ => false));
+            Command("apply_change_set", id);
+            byte[] candidate = Bytes("First");
+            string manifestPath = Path.Combine(storage, id, "manifest.json");
+            JObject manifest = JObject.Parse(File.ReadAllText(manifestPath));
+            manifest["Files"][0]["ReplaceReturned"] = replaceReturned;
+            manifest["Files"][0]["Backup"] = null;
+            manifest["Files"][0]["State"] = "writing";
+            File.WriteAllText(manifestPath, manifest.ToString(), new UTF8Encoding(false));
+            string backup = Directory.GetFiles(folder, "*.bak").Single();
+            if (retainPreimage)
+                File.Move(backup, Path.ChangeExtension(backup, ".tmp"));
+            else
+                File.Delete(backup);
+            SetSeam("_domainForTests", (Func<string>)(() => "recovery-domain"));
+
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                JObject recovered = Command("recover_change_set", id);
+                Assert.AreEqual(retainPreimage, recovered.Value<bool>("success"), recovered.ToString());
+                CollectionAssert.AreEqual(retainPreimage ? original : candidate, Bytes("First"));
+            }
+        }
+
+        [Test]
         public void Apply_CompensationPreservesInterferingExternalWriter()
         {
             // Given: an external edit to the first candidate before the second write fails.
