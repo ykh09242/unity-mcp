@@ -131,7 +131,7 @@ def status(job_id: Optional[str]):
     if job_id:
         params["job_id"] = job_id
     result = run_command("manage_packages", params, config)
-    click.echo(format_output(result, config.format))
+    click.echo(format_output(result, config.format, show_success_message=True))
 
 
 @packages.command("embed")

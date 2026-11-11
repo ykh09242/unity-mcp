@@ -45,6 +45,21 @@ def test_resolve_text_does_not_claim_completion():
     assert "resolution triggered" in result.output
 
 
+@pytest.mark.parametrize("format_type", ["text", "json"])
+def test_empty_package_status_shows_native_acknowledgement(format_type):
+    response = {"success": True, "message": "No package jobs found."}
+    with patch("cli.commands.packages.get_config", return_value=CLIConfig(format=format_type)):
+        with patch("cli.commands.packages.run_command", return_value=response):
+            result = CliRunner().invoke(packages, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    if format_type == "json":
+        assert json.loads(result.stdout) == response
+    else:
+        assert result.stdout.strip() == response["message"]
+
+
 def test_package_text_retains_job_polling_guidance():
     with patch("cli.commands.packages.get_config", return_value=CLIConfig(format="text")):
         with patch(
