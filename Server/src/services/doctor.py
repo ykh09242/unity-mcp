@@ -1,11 +1,13 @@
 """A sanitized doctor view over the existing generation-verified capability capture."""
 
 import re
+import time
 
 from fastmcp import Context
 from pydantic import ValidationError
 
 from core.server_build import RUNNING_SERVER
+from core.config import config
 from models.doctor import (
     DoctorCheck,
     DoctorLimits,
@@ -15,6 +17,7 @@ from models.doctor import (
     DoctorTarget,
 )
 from services.capabilities import _capture_project_capabilities
+from services.source_recovery_diagnostics import RecoveryObservations, classify_source_recovery
 
 _VERSION = re.compile(r"[0-9][0-9A-Za-z+_.-]{0,79}\Z")
 _COMMIT = re.compile(r"[0-9a-fA-F]{40}\Z")
@@ -185,6 +188,19 @@ async def query_doctor(ctx: Context) -> DoctorReceipt:
         else None,
         source_comparison=comparison,
         checks=checks,
+        source_recovery=classify_source_recovery(
+            RecoveryObservations(
+                observed_at_unix_ms=int(time.time() * 1000),
+                connection_status=connection.status,
+                instance_id=target.instance_id,
+                generation=target.generation,
+                native_bound=verified and state.evidence.status == "observed",
+                wrong_target=wrong_target,
+                admission_available=connection.admission_available,
+                remote_hosted=config.http_remote_hosted,
+                state=state.data,
+            )
+        ),
         limits=DoctorLimits(
             query_timeout_seconds=limits.query_timeout_seconds,
             query_cleanup_grace_seconds=limits.query_cleanup_grace_seconds,

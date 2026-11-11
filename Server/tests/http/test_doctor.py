@@ -366,3 +366,30 @@ async def test_malformed_installed_package_version_cannot_prove_source_match(
     assert data["connection_verified"] is True
     assert data["source_comparison"] == "unknown"
     assert data["package"]["effective_server_commit"] is None
+
+
+@pytest.mark.asyncio
+async def test_doctor_recovers_compile_failure_without_another_native_probe(command_hub):
+    import time
+
+    values = observations()
+    stamp = int(time.time() * 1000)
+    values["get_editor_state"]["observed_at_unix_ms"] = stamp
+    values["get_editor_state"].update(
+        source_observation_age_ms=0,
+        source_freshness={
+            "schema": "unity-mcp/source_freshness@1",
+            "status": "compile_failed",
+            "observed_at_unix_ms": stamp,
+            "source_token": "b" * 64,
+            "compile_id": "c" * 32,
+        },
+    )
+    await install_native_replies(command_hub, values)
+    async with Client(doctor_server(), mode="legacy") as client:
+        await client.call_tool("select_fixture")
+        data = await read_doctor(client)
+    assert data["connection_verified"] is True
+    assert data["source_recovery"]["reason"] == "compilation_failed"
+    assert data["source_recovery"]["compile_id"] == "c" * 32
+    assert len([item for item in command_hub.sent if item["type"] == "execute"]) == 5

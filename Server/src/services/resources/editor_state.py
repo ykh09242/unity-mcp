@@ -183,6 +183,7 @@ class EditorStateData(BaseModel):
     diagnostics: EditorStateDiagnostics | None = None
     source_freshness: dict | None = None
     source_observation_age_ms: int | None = None
+    source_recovery: dict | None = None
 
 
 def _now_unix_ms() -> int:
@@ -433,6 +434,17 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         else "retry_later",
     }
     state_v2["staleness"] = {"age_ms": age_ms, "is_stale": is_stale}
+    from services.source_recovery_diagnostics import RecoveryObservations, classify_source_recovery
+
+    state_v2["source_recovery"] = classify_source_recovery(
+        RecoveryObservations(
+            observed_at_unix_ms=now_ms,
+            connection_status="connected",
+            native_bound=True,
+            remote_hosted=config.http_remote_hosted,
+            state=state_v2,
+        )
+    ).model_dump(mode="json")
     return state_v2
 
 

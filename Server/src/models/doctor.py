@@ -4,6 +4,7 @@ from typing import Annotated, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from models.native_recovery import NativeCoordination, RecoveryAction
+from models.source_recovery import RecoveryDiagnostic
 
 EXACT_TARGET_PATTERN: Final = r"(?=\S)[^@/\\\x00-\x1f\x7f]{1,128}@[0-9a-fA-F]{8,64}\Z"
 
@@ -100,6 +101,9 @@ class DoctorReceipt(DoctorModel):
     checks: dict[Literal["target", "native_read", "source", "readiness"], DoctorCheck]
     limits: DoctorLimits
     residual_server_work: Literal["unknown"] = "unknown"
+    source_recovery: RecoveryDiagnostic | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class DoctorResourceResponse(DoctorModel):

@@ -71,6 +71,9 @@ async def test_sdk_diagnostic_proves_only_its_own_target(command_hub, monkeypatc
     assert receipt.connection_verified is True
     assert receipt.external_client_verified is False
     assert receipt.scope == "diagnostic_sdk"
+    assert receipt.data.source_recovery is not None
+    assert receipt.data.source_recovery.evidence[0].origin == "routing"
+    assert "editor_log_not_inspected" in receipt.data.source_recovery.limitations
     assert receipt.observed_protocol in ("2026-07-28", "2025-11-25")
     assert len([item for item in command_hub.sent if item["type"] == "execute"]) == 5
 

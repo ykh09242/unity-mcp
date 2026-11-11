@@ -22,7 +22,11 @@ from models.doctor import EXACT_TARGET_PATTERN, DoctorCLIReceipt
     help="Read local CLI effective configuration offline; does not observe a running server.",
 )
 def doctor(protocol: Literal["auto", "legacy"], show_config: bool = False):
-    """Verify this diagnostic SDK connection; does not attest another desktop client's session."""
+    """Verify this diagnostic SDK connection; does not attest another desktop client's session.
+
+    Source recovery advice in data.source_recovery is observational; this command
+    never restarts, focuses or repairs the Editor.
+    """
     config = get_config()
     if show_config:
         from cli.utils.config_diagnostics import local_configuration
