@@ -326,10 +326,17 @@ async def test_legacy_stdio_without_authenticated_generation_stays_unknown(monke
     async def state(_name):
         return "Fixture@hash"
 
-    async def no_generation(_instance):
-        return None
+    def no_generation(instance):
+        from models.capabilities import CapabilityConnection
 
-    monkeypatch.setattr(capabilities, "get_authenticated_stdio_generation", no_generation)
+        return CapabilityConnection(
+            transport="stdio",
+            status="unknown",
+            instance_id=instance,
+            next_action="establish_authenticated_unity_connection",
+        )
+
+    monkeypatch.setattr(capabilities, "get_stdio_capability_snapshot", no_generation)
 
     # When: discovery cannot bind observations to one connection generation.
     data = await capabilities.query_project_capabilities(SimpleNamespace(get_state=state))
@@ -782,8 +789,15 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
         SimpleNamespace(monotonic=transport_monotonic, time=time.time, sleep=time.sleep),
     )
 
-    async def generation(_instance):
-        return "stable-authenticated-generation"
+    def generation(instance):
+        from models.capabilities import CapabilityConnection
+
+        return CapabilityConnection(
+            transport="stdio",
+            status="connected",
+            instance_id=instance,
+            generation="stable-authenticated-generation",
+        )
 
     async def state(name):
         return "Fixture@hash" if name == "unity_instance" else None
@@ -799,7 +813,7 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
         finally:
             loop.call_soon_threadsafe(finished.set)
 
-    monkeypatch.setattr(capabilities, "get_authenticated_stdio_generation", generation)
+    monkeypatch.setattr(capabilities, "get_stdio_capability_snapshot", generation)
     monkeypatch.setattr(legacy, "get_unity_connection", lambda _instance: connection)
     # A separate command-policy ceiling must not mask a missing capability
     # deadline. This test observes the exact probe ceiling passed to the worker.

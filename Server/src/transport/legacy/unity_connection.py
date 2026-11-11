@@ -9,6 +9,7 @@ from core.server_build import RUNNING_SERVER
 import contextlib
 from contextvars import Context, ContextVar
 from dataclasses import dataclass, field, replace
+from hashlib import sha256
 import errno
 import json
 import logging
@@ -66,6 +67,7 @@ def run_with_connection_deadline(
 
 
 from models.models import MCPResponse, UnityInstanceInfo
+from models.capabilities import CapabilityConnection, WIRE_CAPABILITIES
 from services.operation_permissions import JsonValue
 from services.command_progress import (
     CAPABILITY,
@@ -107,6 +109,13 @@ from transport.command_resume import (
     resume_eligible,
 )
 
+STDIO_CAPABILITIES = (
+    CAPABILITY,
+    ARBITRATION_CAPABILITY,
+    RESUME_CAPABILITY,
+    CLOCK_CAPABILITY,
+    ORIGIN_CAPABILITY,
+)
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -532,13 +541,7 @@ class UnityConnection:
                                 handshake_deadline,
                                 expected,
                             ),
-                            capabilities=(
-                                CAPABILITY,
-                                ARBITRATION_CAPABILITY,
-                                RESUME_CAPABILITY,
-                                CLOCK_CAPABILITY,
-                                ORIGIN_CAPABILITY,
-                            ),
+                            capabilities=STDIO_CAPABILITIES,
                         )
                         self._check_deadline(handshake_deadline)
                         self.authenticated_session = session
@@ -1962,6 +1965,85 @@ def _commit_stdio_catalog(connection, generation, publish):
             ):
                 raise ValueError("Unity catalog generation changed before publication")
             return publish()
+        finally:
+            connection._io_lock.release()
+    finally:
+        pool._pool_lock.release()
+
+
+def get_stdio_capability_snapshot(instance_id: str | None) -> CapabilityConnection:
+    """Read one retained authenticated session without discovery, I/O or lock waiting.
+
+    This is negotiated metadata, not a socket-liveness probe. Busy, retired or
+    mismatched generations remain unknown; the ordinary command path owns recovery.
+    """
+    known = WIRE_CAPABILITIES.intersection(STDIO_CAPABILITIES)
+    base = {"transport": "stdio", "server_advertised": sorted(known)}
+    unknown = CapabilityConnection(
+        **base,
+        status="unknown",
+        instance_id=instance_id,
+        reason="authenticated_generation_unavailable",
+        next_action="establish_authenticated_unity_connection",
+    )
+    pool = _unity_connection_pool
+    if not instance_id or config.http_remote_hosted or pool is None:
+        return unknown
+    if not pool._pool_lock.acquire(blocking=False):
+        return unknown
+    try:
+        if pool is not _unity_connection_pool or pool._retired:
+            return unknown
+        connection = pool._connections.get(instance_id)
+        target = pool._known_instances.get(instance_id)
+        if connection is None or target is None or not connection._io_lock.acquire(blocking=False):
+            return unknown
+        try:
+            session = connection.authenticated_session
+            selected = connection.selected_target
+            if (
+                connection._retired
+                or connection._active_commands
+                or session is None
+                or connection.sock is None
+                or connection.sock.fileno() < 0
+                or selected is None
+                or selected.id != instance_id
+                or connection.instance_id != instance_id
+                or selected.port != target.port
+                or connection.port != target.port
+                or selected.path != target.path
+                or selected.hash != target.hash
+                or selected.listener_generation != target.listener_generation
+                or target.listener_generation != session.server_generation
+                or connection.session_generation != session.session_generation
+                or not valid_generation(session.server_generation)
+                or not valid_generation(session.session_id)
+            ):
+                return unknown
+            accepted = known.intersection(session.capabilities)
+            if (
+                ARBITRATION_CAPABILITY in accepted
+                and not valid_generation(session.arbitration_generation)
+                or RESUME_CAPABILITY in accepted
+                and (
+                    ARBITRATION_CAPABILITY not in accepted
+                    or not valid_generation(session.resume_generation)
+                )
+                or (ORIGIN_CAPABILITY in accepted or CLOCK_CAPABILITY in accepted)
+                and RESUME_CAPABILITY not in accepted
+                or CLOCK_CAPABILITY in accepted
+                and session.resume_clock is None
+            ):
+                return unknown
+            return CapabilityConnection(
+                **base,
+                status="connected",
+                instance_id=target.id,
+                project_hash=target.hash,
+                generation=sha256(session.session_generation.encode()).hexdigest(),
+                negotiated=sorted(accepted),
+            )
         finally:
             connection._io_lock.release()
     finally:

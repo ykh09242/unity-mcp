@@ -1,7 +1,6 @@
 """Compose existing capability sources under one generation and read deadline."""
 
 from dataclasses import dataclass
-from hashlib import sha256
 from contextlib import contextmanager
 from contextvars import ContextVar
 from collections.abc import Iterator
@@ -30,7 +29,7 @@ from services.resources.editor_state import get_editor_state_authoritative
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import (
     async_send_command_with_retry,
-    get_authenticated_stdio_generation,
+    get_stdio_capability_snapshot,
 )
 from transport.plugin_hub import PluginHub
 from transport.unity_transport import send_with_unity_instance
@@ -144,15 +143,7 @@ def _observation(response: MCPResponse | JsonValue) -> _Observation:
 async def _connection(instance: str | None, user_id: str | None) -> CapabilityConnection:
     if (config.transport_mode or "stdio").lower() == "http":
         return await PluginHub.get_capability_snapshot(instance, user_id=user_id)
-    generation = await get_authenticated_stdio_generation(instance) if instance else None
-    return CapabilityConnection(
-        transport="stdio",
-        status="connected" if generation else "unknown",
-        instance_id=instance,
-        generation=sha256(generation.encode()).hexdigest() if generation else None,
-        reason=None if generation else "authenticated_generation_unavailable",
-        next_action="none" if generation else "establish_authenticated_unity_connection",
-    )
+    return get_stdio_capability_snapshot(instance)
 
 
 async def get_connection_evidence(

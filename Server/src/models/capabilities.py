@@ -1,13 +1,22 @@
 """Bounded, evidence-based project capability discovery contract."""
 
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 from models.native_recovery import NativeCoordination
 
 WireCapability = Literal[
-    "editor_state_v1", "large_result_v1", "large_result_gzip_v1", "command_cancel_v1"
+    "editor_state_v1",
+    "large_result_v1",
+    "large_result_gzip_v1",
+    "command_cancel_v1",
+    "native_arbitration_v1",
+    "command_resume_v1",
+    "command_resume_clock_v1",
+    "command_resume_origin_v1",
+    "command_progress_v1",
 ]
+WIRE_CAPABILITIES = frozenset(get_args(WireCapability))
 
 
 class CapabilityModel(BaseModel):

@@ -38,7 +38,7 @@ from core import phase_diagnostics
 from core.config import config
 from core.constants import API_KEY_HEADER
 from models.models import MCPResponse
-from models.capabilities import CapabilityConnection
+from models.capabilities import CapabilityConnection, WIRE_CAPABILITIES
 from models.response_limits import (
     MAX_RESPONSE_BYTES,
     MAX_RESPONSE_DEPTH,
@@ -1529,9 +1529,7 @@ class PluginHub(WebSocketEndpoint):
         cls, unity_instance: str | None, user_id: str | None = None
     ) -> CapabilityConnection:
         """Observe one live tenant-owned generation without dispatching a command."""
-        known = cls.CAPABILITIES.intersection(
-            {"editor_state_v1", "large_result_v1", "large_result_gzip_v1", "command_cancel_v1"}
-        )
+        known = cls.CAPABILITIES.intersection(WIRE_CAPABILITIES)
         base = {"transport": "http", "server_advertised": sorted(known)}
         if config.http_remote_hosted and not user_id:
             return CapabilityConnection(**base, status="auth_required", next_action="authenticate")
