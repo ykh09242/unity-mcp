@@ -40,7 +40,58 @@ Replace the example ID with a discovered one. Global options go **before** subco
 | `--instance` | `UNITY_MCP_INSTANCE` | Target Editor ID. |
 | `--verbose` | - | Write command requests and raw responses to stderr; use only with data safe to log. |
 
-Explicit options override corresponding environment settings. The CLI connects directly to loopback addresses and bypasses environment proxies for commands, health checks and inventory. It loads the current local token for authenticated requests. Non-loopback connections need explicit credentials and trusted transport. See [authentication](./security.md#local-http-authentication).
+Explicit options override corresponding environment settings, then project-context values, then defaults. Health and inventory requests respect `--timeout`, capped at 5 and 10 seconds respectively. The CLI connects directly to loopback addresses and bypasses environment proxies for commands, health checks and inventory. It loads the current local token for authenticated requests. Non-loopback connections need explicit credentials and trusted transport. See [authentication](./security.md#local-http-authentication).
+
+## Project-local defaults and protection
+
+From a Unity project or its subdirectories, the CLI automatically discovers
+`.unity-mcp.json` beside `Assets` and `ProjectSettings`. Discovery stops at the
+nearest Unity project, even when that project has no context file; it does not
+search home or sibling directories. Create this secret-free file yourself:
+
+```json
+{
+  "schema_version": "unity-mcp/cli-context@1",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "instance": "0123456789abcdef",
+  "timeout": 30,
+  "format": "json"
+}
+```
+
+`schema_version` is required. The remaining fields are optional: `host` must be
+loopback, `port` is 1–65535, `timeout` is a positive integer in seconds, `format`
+is `text`, `json`, or `table`, and `instance` is a complete 16-character native
+hash or `Name@Hash`. Copy the full hash from `unity-mcp instance list`; the sample
+is a placeholder. Unknown or duplicate fields are rejected. Omitted fields keep
+the CLI defaults, including the 300-second command timeout. Never store tokens,
+credential paths, secrets, or executable settings here. The existing
+[CLI usage guide and context schema](https://github.com/ykh09242/unity-mcp/blob/beta/Server/src/cli/CLI_USAGE_GUIDE.md#project-local-cli-context)
+describe the full contract.
+
+Precedence is **explicit flag → environment variable → context file → default**,
+including explicit flags equal to a default. The containing Unity root becomes
+the expected project. Commands require a complete explicit instance hash and use
+the guarded local route, which checks the selected Editor's registered root and
+hash. A mismatch or an older server refuses the request; the CLI never falls back
+to an unguarded mutation. Changing `--instance` alone retains the expected root.
+This cooperative registered-path check does not authenticate project contents or
+prove that an earlier timed-out mutation was rolled back.
+
+```bash
+unity-mcp --project-context /projects/GameB/.unity-mcp.json scene active
+unity-mcp --instance fedcba9876543210 --expect-project /projects/GameB scene active
+unity-mcp --no-project-context --instance 0123456789abcdef scene active
+unity-mcp --format json doctor --config
+```
+
+`--project-context FILE` selects a file explicitly; `--no-project-context`
+disables automatic discovery. They cannot be combined. `--expect-project ROOT`
+sets an explicit expected root independently of file defaults. Use `doctor
+--config` to inspect the effective settings and where each value came from.
+It reports configuration without dispatching Editor work; discovery and readiness
+checks retain their own read-only scopes and do not attest a future mutation.
 
 ## Discover exact commands
 
