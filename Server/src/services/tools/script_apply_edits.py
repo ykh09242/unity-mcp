@@ -15,6 +15,7 @@ from core.config import config
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 from services.registry import mcp_for_unity_tool
+from services.reference_graph.mutation_tracking import tracked_mutation
 from services.script_edit_normalization import (
     _err,
     _normalize_edit_scalars,
@@ -1006,6 +1007,7 @@ async def _ordered_script_edits(ctx: Context, request: _OrderedScriptRequest) ->
     loop = asyncio.get_running_loop()
     instance = None
     dispatched = False
+    definitive_response: dict[str, Any] | None = None
     expected_sha = request.options.get("candidate_bytes_sha256")
     target = f"{request.path}/{request.name}.cs"
     cancelled = Event()
@@ -1019,6 +1021,7 @@ async def _ordered_script_edits(ctx: Context, request: _OrderedScriptRequest) ->
             message,
             extra={
                 "outcome": "unknown",
+                "reason": "outcome_unknown",
                 "confirmation": "pending_verification",
                 "expected_bytes_sha256": expected_sha,
                 "path": target,
@@ -1182,36 +1185,52 @@ async def _ordered_script_edits(ctx: Context, request: _OrderedScriptRequest) ->
                 )
                 prepared["message"] = "Ordered no-op; no file replacement or refresh was requested."
                 return _with_norm(prepared, request.edits, routing="mixed/request/noop")
-            response = await send(
-                {
-                    "action": "apply_prepared_script",
-                    "name": request.name,
-                    "path": request.path,
-                    "original_bytes_sha256": original["original_bytes_sha256"],
-                    "candidate_contents": current,
-                    "candidate_bytes_sha256": expected_sha,
-                    "bom": original["bom"],
-                    "options": request.options,
-                },
-                commit=True,
-            )
-            # Record known commits before another await, including a failed refresh.
-            result_data = response.get("data") if isinstance(response, dict) else None
-            if isinstance(result_data, dict) and result_data.get("applied") is True:
-                result_data.update(path=target, unity_instance=instance, ordering="request")
-                if (
-                    result_data.get("bytes_sha256") != expected_sha
-                    or result_data.get("sha256") != data["candidate_sha256"]
-                    or result_data.get("bom") is not original["bom"]
-                ):
-                    result_data.update(outcome="conflict", confirmation="committed_result_mismatch")
-                return response
-            if isinstance(result_data, dict) and result_data.get("applied") is False:
-                return response
-            return unknown(
-                "No definitive native commit result was received; do not replay this request"
+            commit_params = {
+                "action": "apply_prepared_script",
+                "name": request.name,
+                "path": request.path,
+                "original_bytes_sha256": original["original_bytes_sha256"],
+                "candidate_contents": current,
+                "candidate_bytes_sha256": expected_sha,
+                "bom": original["bom"],
+                "options": request.options,
+            }
+
+            async def commit() -> dict[str, Any]:
+                nonlocal definitive_response
+                try:
+                    response = await send(commit_params, commit=True)
+                except TimeoutError:
+                    raise
+                except (ConnectionError, OSError) as exc:
+                    return unknown(str(exc))
+                # Record known commits before another await, including a failed refresh.
+                result_data = response.get("data") if isinstance(response, dict) else None
+                if isinstance(result_data, dict) and result_data.get("applied") is True:
+                    result_data.update(path=target, unity_instance=instance, ordering="request")
+                    if (
+                        result_data.get("bytes_sha256") != expected_sha
+                        or result_data.get("sha256") != data["candidate_sha256"]
+                        or result_data.get("bom") is not original["bom"]
+                    ):
+                        result_data.update(
+                            outcome="conflict", confirmation="committed_result_mismatch"
+                        )
+                    definitive_response = response
+                    return response
+                if isinstance(result_data, dict) and result_data.get("applied") is False:
+                    definitive_response = response
+                    return response
+                return unknown(
+                    "No definitive native commit result was received; do not replay this request"
+                )
+
+            return await tracked_mutation(
+                ctx, instance, "manage_script", commit_params, commit, paths=[target]
             )
     except TimeoutError:
+        if definitive_response is not None:
+            return definitive_response
         if dispatched:
             return unknown("The ordered deadline expired after commit dispatch; do not replay")
         return _err(

@@ -36,7 +36,7 @@ def target_paths(command, params):
         "delete",
         "apply_text_edits",
         "apply_edits",
-        "apply_prepared_edit",
+        "apply_prepared_script",
     }:
         path, name = params.get("path"), params.get("name")
         if isinstance(path, str) and isinstance(name, str):

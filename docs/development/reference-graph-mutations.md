@@ -11,6 +11,10 @@ An already active graph tracks supported script mutations, asset mutations, and
 script change-set apply/recovery for its authenticated user and selected Editor.
 Inactive graphs perform no additional native or database calls. Preview/read
 operations do not create receipts. Existing developer installation is sufficient.
+Ordered mixed script edits track only the final `apply_prepared_script` commit,
+with the explicit script path. Their buffer preparation, previews and detected
+no-ops create no receipts. Graph preparation consumes the same fixed ordered
+request deadline; it cannot extend the opportunity to dispatch a native write.
 Structured script edits and folder creation use the same boundary. When an asset
 copy has no explicit destination, the native collector first chooses its unique
 path without writing. The receipt captures that destination before the copy is
