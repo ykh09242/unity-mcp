@@ -37,7 +37,17 @@ def boundary(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_script_impact_releases_outer_admission_before_checked_graph_children(boundary):
+@pytest.mark.parametrize(
+    "name,action",
+    [
+        ("manage_script_quality", "impact"),
+        ("manage_verification", "prepare"),
+        ("manage_verification", "run"),
+    ],
+)
+async def test_script_impact_releases_outer_admission_before_checked_graph_children(
+    boundary, name, action
+):
     async def impact(ctx, action):
         from services.registry.operation_context import active_operation
 
@@ -48,12 +58,7 @@ async def test_script_impact_releases_outer_admission_before_checked_graph_child
         ):
             return "checked"
 
-    assert (
-        await mod.wrap_tool(impact, "manage_script_quality", "manage_script_quality")(
-            Context(), "impact"
-        )
-        == "checked"
-    )
+    assert await mod.wrap_tool(impact, name, name)(Context(), action) == "checked"
 
 
 @pytest.mark.asyncio

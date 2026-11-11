@@ -452,7 +452,12 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
         # This reviewed composition owns admission for each native child. Holding
         # its read lease while checked graph collection needs an exclusive child
         # would either escalate the lease or deadlock that child's admission.
-        if trusted and name == "manage_script_quality" and params.get("action") == "impact":
+        if trusted and (
+            name == "manage_script_quality"
+            and params.get("action") == "impact"
+            or name == "manage_verification"
+            and params.get("action") in {"prepare", "run", "status", "cancel", "report"}
+        ):
             refusal = await validate_target()
             if refusal is not None:
                 return refusal_result(refusal)

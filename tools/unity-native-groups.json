@@ -1,6 +1,15 @@
 {
   "schema_version": 1,
   "groups": {
+    "verification-profiles": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.VerificationProfileStoreTests.ReadingAbsentProfilesNeverCreatesProjectSettings",
+        "MCPForUnityTests.Editor.Tools.VerificationProfileStoreTests.ExplicitProfileWritesRequireCurrentHashAndPreserveConflictingBytes",
+        "MCPForUnityTests.Editor.Tools.VerificationProfileStoreTests.NativeBoundaryRejectsUnknownStagesAndInvalidProfiles"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
     "script-impact": {
       "methods": [
         "MCPForUnityTests.Editor.Tools.SerializedScriptImpactTests.TextEvidenceConfirmsFieldAndLocallyBoundPersistentCall",

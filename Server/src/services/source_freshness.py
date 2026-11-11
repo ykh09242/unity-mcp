@@ -17,6 +17,7 @@ async def ensure_source_freshness(
     instance: str | None,
     deadline: float,
     refresh_policy: Literal["never", "if_needed"],
+    before_dispatch=None,
 ) -> SourceFreshness:
     if refresh_policy not in ("never", "if_needed"):
         raise ValueError("refresh_policy must be never or if_needed")
@@ -37,6 +38,8 @@ async def ensure_source_freshness(
             return None
 
     async def send(command, params):
+        if before_dispatch is not None:
+            await before_dispatch(command, params)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError()
