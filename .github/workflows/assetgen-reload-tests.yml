@@ -1,0 +1,177 @@
+name: AssetGen actual domain reload
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_assetgen_reload:
+        description: "Run licensed real reload probes in fresh disposable CI projects."
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  reload:
+    name: AssetGen ${{ matrix.probe.id }} real reload
+    if: inputs.run_assetgen_reload
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        probe:
+          - id: queued
+            owner: UNITY_MCP_ASSETGEN_QUEUE_RELOAD_PROJECT
+            method: MCPForUnityTests.Editor.AssetGen.AssetGenQueuedActualReloadTests.ActualDomainReload_QueuedIntentSubmitsOnceWithSameId
+          - id: recorded
+            owner: UNITY_MCP_GEN06_RELOAD_PROJECT
+            method: MCPForUnityTests.Editor.AssetGen.AssetGenActualReloadTests.ActualDomainReload_ResumesRecordedTaskWithoutResubmit
+    steps:
+      - name: Checkout exact dispatched commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          lfs: true
+          persist-credentials: false
+
+      - name: Record source and select pinned Editor
+        id: source
+        env:
+          PROBE_ID: ${{ matrix.probe.id }}
+          PROBE_METHOD: ${{ matrix.probe.method }}
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          sys.path.insert(0, str(Path.cwd() / 'tools'))
+          from unity_ci import load_manifest
+
+          checked = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert checked == os.environ['GITHUB_SHA'], 'Checkout must match the exact dispatched SHA'
+          manifest = load_manifest(Path('tools/unity-versions.json'))
+          output = Path('.tmp') / ('assetgen-reload-' + os.environ['PROBE_ID'])
+          output.mkdir(parents=True, exist_ok=True)
+          report = {'source_sha': checked, 'unity_version': manifest.default_version,
+                    'required_test': os.environ['PROBE_METHOD']}
+          (output / 'source.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
+              stream.write('version=' + manifest.default_version + '\n')
+
+      - name: Require licensed execution prerequisites
+        env:
+          LICENSED_POLICY: ${{ vars.UNITY_RUN_LICENSED_TESTS }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        run: |
+          set -euo pipefail
+          if [ "$LICENSED_POLICY" != true ] || [ -z "$UNITY_EMAIL" ] || [ -z "$UNITY_PASSWORD" ] || { [ -z "$UNITY_LICENSE" ] && [ -z "$UNITY_SERIAL" ]; }; then
+            echo "::error::Opted-in AssetGen reload requires enabled licensed-test policy and available license credentials."
+            exit 1
+          fi
+
+      - name: Prepare pinned test Editor image
+        id: editor
+        env:
+          UNITY_VERSION: ${{ steps.source.outputs.version }}
+        run: python3 tools/unity_ci.py prepare "$UNITY_VERSION" --purpose tests
+
+      # Never restore a Library or reuse a user project: each probe starts with empty SessionState.
+      - name: Prepare disposable pinned-package project
+        id: packages
+        env:
+          UNITY_VERSION: ${{ steps.source.outputs.version }}
+          UNITY_IMAGE: ${{ steps.editor.outputs.image }}
+          PROBE_ID: ${{ matrix.probe.id }}
+        run: >-
+          python3 tools/unity_ci_packages.py prepare --unity-version "$UNITY_VERSION"
+          --image "$UNITY_IMAGE" --output ".unity-ci/assetgen-reload/$PROBE_ID"
+
+      # The pinned action/CLI does not forward arbitrary step environment variables.
+      # Its Linux Docker workspace is /github/workspace. A local derived image adds only
+      # the probe's exact ownership variable, preserving the fixture's strict opt-in.
+      - name: Bind ownership to the disposable container project
+        id: owned-image
+        env:
+          UNITY_IMAGE: ${{ steps.editor.outputs.image }}
+          PROJECT_PATH: ${{ steps.packages.outputs.project_path }}
+          OWNER_VARIABLE: ${{ matrix.probe.owner }}
+          PROBE_ID: ${{ matrix.probe.id }}
+        run: |
+          set -euo pipefail
+          test "$PROJECT_PATH" = ".unity-ci/assetgen-reload/$PROBE_ID/project"
+          recipe=".unity-ci/assetgen-reload/$PROBE_ID/Dockerfile.reload"
+          printf 'FROM %s\nENV %s=/github/workspace/%s\n' "$UNITY_IMAGE" "$OWNER_VARIABLE" "$PROJECT_PATH" > "$recipe"
+          image="unity-mcp-assetgen-reload:$PROBE_ID-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker build --network=none --file "$recipe" --tag "$image" ".unity-ci/assetgen-reload/$PROBE_ID"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          mkdir -p "$HOME/.local/share/unity3d/Unity"
+
+      - name: Reserve AssetGen reload outputs
+        id: native-output
+        env:
+          PROBE_ID: ${{ matrix.probe.id }}
+        run: >-
+          python3 tools/release_execution.py reserve --kind native-editmode
+          --step-name "Run AssetGen $PROBE_ID reload probe [reload:$PROBE_ID]"
+          --emitter-step-name "Reserve AssetGen reload outputs"
+          --observer-step-name "Observe AssetGen reload outputs"
+
+      - name: Run AssetGen ${{ matrix.probe.id }} reload probe [reload:${{ matrix.probe.id }}]
+        id: tests
+        uses: game-ci/unity-test-runner@32e57712352b500e17974b245a6dce9e11a73213 # v4.4.0
+        continue-on-error: true
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: ${{ steps.packages.outputs.project_path }}
+          unityVersion: ${{ steps.source.outputs.version }}
+          customImage: ${{ steps.owned-image.outputs.image }}
+          testMode: editmode
+          customParameters: -testFilter ${{ matrix.probe.method }}
+          coverageEnabled: false
+          cliVersion: v0.1.69
+          githubToken: ""
+          artifactsPath: ${{ steps.native-output.outputs.root }}
+
+      - name: Observe AssetGen reload outputs
+        if: always() && steps.native-output.outcome == 'success' && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure')
+        env:
+          RESERVATION: ${{ steps.native-output.outputs.reservation }}
+          RUNNER_OUTCOME: ${{ steps.tests.outcome }}
+        run: python3 tools/release_execution.py observe --reservation "$RESERVATION" --outcome "$RUNNER_OUTCOME"
+
+      - name: Require the selected real reload case to pass
+        if: always() && steps.native-output.outcome == 'success'
+        env:
+          RESULTS_XML: ${{ steps.native-output.outputs.results }}
+          TEST_RUN_OUTCOME: ${{ steps.tests.outcome }}
+          REQUIRED_TEST: ${{ matrix.probe.method }}
+        run: >-
+          python3 tools/check_unity_test_results.py "$RESULTS_XML"
+          --runner-outcome "$TEST_RUN_OUTCOME" --require-test "$REQUIRED_TEST"
+
+      - name: Retain bounded AssetGen reload evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: assetgen-reload-${{ matrix.probe.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .tmp/assetgen-reload-${{ matrix.probe.id }}/source.json
+            .unity-ci/assetgen-reload/${{ matrix.probe.id }}/resolved-packages.json
+            .unity-ci/assetgen-reload/${{ matrix.probe.id }}/Dockerfile.reload
+            .release-evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
