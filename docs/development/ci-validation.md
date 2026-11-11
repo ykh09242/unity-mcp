@@ -131,6 +131,13 @@ resolved distribution version, and successful probe reports for 30 days. Install
 probe failures fail the job; this read-only check publishes no package and does not run
 the complete test matrix. Its purpose is to detect dependency changes between source commits.
 
+The candidate container job first runs `--help` with the image's unchanged entrypoint and
+environment under `--network none`, bounded to 60 seconds. Its subsequent registration
+probe explicitly selects the installed Python and controlled offline/no-sync environment.
+Both probes clean only their exact unique container names, including after a timeout.
+Command-contract tests verify the distinction without requiring a local Docker daemon;
+actual image startup is established only by an executed container job.
+
 Reference-only PRs already select the reference drift job. That job also executes
 `Server/tests/test_resource_uri_references.py`, including authored example blocks that the
 reference generator preserves. A resource name without its required URI cannot bypass the

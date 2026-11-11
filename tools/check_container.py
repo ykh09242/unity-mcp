@@ -66,17 +66,17 @@ def probe(root: Path, image: str, arguments: list[str], *, registration: bool = 
         name,
         "--network",
         "none",
-        "--env",
-        "UV_OFFLINE=true",
-        "--env",
-        "UV_NO_SYNC=true",
-        "--env",
-        "DISABLE_TELEMETRY=true",
-        "--env",
-        "UNITY_MCP_TELEMETRY_ENABLED=false",
     ]
     if registration:
         command += [
+            "--env",
+            "UV_OFFLINE=true",
+            "--env",
+            "UV_NO_SYNC=true",
+            "--env",
+            "DISABLE_TELEMETRY=true",
+            "--env",
+            "UNITY_MCP_TELEMETRY_ENABLED=false",
             "--mount",
             f"type=bind,source={root / 'tools/check_server_startup.py'},target=/tmp/check_server_startup.py,readonly",
             "--entrypoint",
@@ -141,6 +141,7 @@ def validate(root: Path = ROOT, *, controls: bool = False):
         check=True,
         timeout=600,
     )
+    # Exercise shipped startup unchanged, independently of controlled registration.
     cli = probe(root, image, ["--help"])
     if "Unity MCP (ykh09242)" not in cli.stdout:
         raise RuntimeError("Candidate entrypoint did not render installed CLI help")

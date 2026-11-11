@@ -104,6 +104,28 @@ def test_python_workflow_runs_candidate_with_no_credentials_or_publication():
     assert "login-action" not in text
 
 
+def test_default_help_preserves_image_environment_and_entrypoint(monkeypatch):
+    helper = load_helper()
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="Unity MCP (ykh09242)\n")
+
+    monkeypatch.setattr(helper.subprocess, "run", run)
+    helper.validate(ROOT)
+    probes = [(command, options) for command, options in calls if command[1] == "run"]
+    default, options = probes[0]
+    assert default[-1] == "--help"
+    assert "--env" not in default
+    assert "--entrypoint" not in default
+    assert default[default.index("--network") + 1] == "none"
+    assert options["timeout"] == 60
+    controlled, _ = probes[1]
+    assert "UV_OFFLINE=true" in controlled
+    assert "--entrypoint" in controlled
+
+
 @pytest.mark.parametrize(
     "path,expected",
     [
