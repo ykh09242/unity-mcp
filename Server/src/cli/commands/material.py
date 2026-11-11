@@ -11,10 +11,11 @@ from cli.utils.output import format_output, print_error, print_success
 from cli.utils.connection import run_command, handle_unity_errors
 from cli.utils.parsers import parse_value_safe, parse_json_dict_or_exit
 from cli.utils.constants import SEARCH_METHOD_CHOICE_RENDERER
-from services.tools.utils import normalize_color
 
 
 def _material_color(r, g, b, a, color_range):
+    from services.tools.utils import normalize_color
+
     components = [r, g, b] if a is None else [r, g, b, a]
     color, error = normalize_color(components, input_range=color_range)
     if error:
