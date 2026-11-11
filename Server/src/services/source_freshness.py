@@ -23,10 +23,6 @@ async def ensure_source_freshness(
         raise ValueError("refresh_policy must be never or if_needed")
     if not instance:
         return SourceFreshness(reason="exact_editor_required")
-    compile_id = uuid.uuid4().hex
-    identity = None
-    imported = False
-    compiled = False
 
     async def permitted(command, params):
         try:
@@ -55,6 +51,20 @@ async def ensure_source_freshness(
             remaining,
         )
         return response.model_dump() if hasattr(response, "model_dump") else response
+
+    return await observe_source_freshness(
+        send, permitted, deadline=deadline, refresh_policy=refresh_policy
+    )
+
+
+async def observe_source_freshness(send, permitted, *, deadline, refresh_policy):
+    """Shared bounded protocol; adapters retain target and per-dispatch authority."""
+    if refresh_policy not in ("never", "if_needed"):
+        raise ValueError("refresh_policy must be never or if_needed")
+    compile_id = uuid.uuid4().hex
+    identity = None
+    imported = False
+    compiled = False
 
     while time.monotonic() < deadline:
         permission = await permitted("get_compile_job", {})

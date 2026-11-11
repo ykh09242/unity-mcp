@@ -583,6 +583,10 @@ def run_tests(
         params["includeFailedTests"] = True
 
     result = _run_test_job_command("run_tests", params, config)
+    if isinstance(result.get("unity_instance"), str):
+        from dataclasses import replace
+
+        config = replace(config, unity_instance=result["unity_instance"])
 
     # For async mode, just show job ID
     if async_mode and result.get("success"):

@@ -26,7 +26,13 @@ def wire(monkeypatch, tmp_path):
     real_client = httpx.AsyncClient
 
     def respond(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"instances": [{"project": "Owned", "hash": "a" * 16}]})
         requests.append((str(request.url), json.loads(request.content)))
+        if requests[-1][1]["type"] == "get_compile_job":
+            from tests.test_source_freshness_contracts import current
+
+            return httpx.Response(200, json={"success": True, "source_freshness": current()})
         return httpx.Response(
             200,
             json={
@@ -94,12 +100,24 @@ def test_printed_followup_keeps_endpoint_target_guard_and_timeout(wire, tmp_path
     )
     polled = CliRunner().invoke(cli, shlex.split(hint)[1:])
     assert polled.exit_code == 0, (polled.output, polled.exception)
-    assert len(wire) == 2
-    assert wire[1][0] == wire[0][0] == "http://127.0.0.1:18080/api/context-command"
+    assert len(wire) == (3 if command == ["editor", "tests", "--async"] else 2)
+    assert all(row[0] == "http://127.0.0.1:18080/api/context-command" for row in wire)
     for key in ("unity_instance", "expected_project"):
-        assert wire[1][1][key] == wire[0][1][key]
-    assert wire[1][1]["params"].get("job_id", wire[1][1]["params"].get("jobId")) == "owned-job"
+        assert all(row[1][key] == wire[0][1][key] for row in wire)
+    assert wire[-1][1]["params"].get("job_id", wire[-1][1]["params"].get("jobId")) == "owned-job"
     assert get_config().timeout == 41
+
+
+def test_test_start_followup_retains_automatically_resolved_exact_target(wire):
+    start = CliRunner().invoke(cli, ["--no-project-context", "editor", "tests", "--async"])
+    assert start.exit_code == 0, (start.output, start.exception)
+    hint = next(
+        line.split("with: ", 1)[1] for line in start.output.splitlines() if "with: " in line
+    )
+    args = shlex.split(hint)[1:]
+    assert args[args.index("--instance") + 1] == "Owned@" + "a" * 16
+    assert CliRunner().invoke(cli, args).exit_code == 0
+    assert all(row[1]["unity_instance"] == "Owned@" + "a" * 16 for row in wire)
 
 
 def test_context_defaults_are_frozen_before_context_file_changes(wire, tmp_path):

@@ -36,6 +36,11 @@ incomplete evidence. No focus change or perpetual background watcher is required
 New public native `run_tests` starts require `source_token`. The existing public
 MCP test tool obtains it through its preflight; the native runner checks it again
 immediately before execution, including queued admission and reload recovery.
+The existing `editor tests` CLI and native CLI test starts acquire that token
+through the same bounded freshness protocol. They freeze an exact Editor before
+observing source and retain any configured HTTP project-root guard for every
+step. Multiple matching Editors require explicit selection. An uncertain refresh
+is never replayed, and `--clear-stuck` remains independent of source admission.
 Older peers cannot satisfy a freshness-required request. A source change during
 verification marks the report stale even if the tests passed.
 

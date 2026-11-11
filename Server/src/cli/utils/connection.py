@@ -227,6 +227,29 @@ async def send_command(
             )
         payload["expected_project"] = {"root": cfg.expected_project_root}
 
+    source_admitted = False
+    if (
+        native_command == "run_tests"
+        and not params.get("clear_stuck")
+        and "source_token" not in params
+    ):
+        from time import monotonic
+        from cli.utils.source_freshness import prepare_test_start
+
+        params, cfg, remaining = await prepare_test_start(
+            params,
+            cfg,
+            deadline=monotonic() + min(timeout or cfg.timeout, 300),
+            send=send_command,
+            inventory=list_unity_instances,
+        )
+        if remaining <= 0:
+            raise UnityConnectionError("Source admission deadline expired; no tests were started.")
+        timeout = remaining
+        payload["params"] = params
+        payload["unity_instance"] = cfg.unity_instance
+        source_admitted = True
+
     if cfg.verbose:
         visible = {**payload, "expected_project": "<redacted>"} if guarded else payload
         click.echo(f"> POST {url} {json.dumps(visible)}", err=True)
@@ -247,7 +270,10 @@ async def send_command(
                     err=True,
                 )
             response.raise_for_status()
-            return normalize_unity_response(response.json())
+            result = normalize_unity_response(response.json())
+            if source_admitted and isinstance(result, dict):
+                result["unity_instance"] = cfg.unity_instance
+            return result
     except httpx.ConnectError as e:
         raise UnityConnectionError(
             f"Cannot connect to Unity MCP server at {cfg.host}:{cfg.port}. "
