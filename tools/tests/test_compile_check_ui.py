@@ -222,10 +222,18 @@ def test_optional_ugui_uses_runtime_bcl_and_respects_editor_profile(
 
 def test_license_free_ci_enables_separate_ugui_compile_passes() -> None:
     # Given the CI step that invokes the license-free compiler in Docker.
-    workflow = (ROOT / ".github/workflows/compile-check.yml").read_text(encoding="utf-8")
-    step = workflow.split("      - name: Compile\n", 1)[1].split("\n      - name:", 1)[0]
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/compile-check.yml").read_text(encoding="utf-8")
+    )
+    step = next(
+        item
+        for item in workflow["jobs"]["compile"]["steps"]
+        if item.get("name", "").startswith("Compile [")
+    )
     # When its real shell argument list is parsed without executing the container.
-    arguments = shlex.split(step.split("        run: |\n", 1)[1])
+    arguments = shlex.split(step["run"])
+    assert step["env"]["EVIDENCE_STEP_NAME"] == step["name"]
+    assert arguments[arguments.index("--step-name") + 1] == "$EVIDENCE_STEP_NAME"
     # Then the optional compile flag belongs to Docker's environment for this script.
     selected = arguments.index("COMPILE_INPUT_UGUI=1")
     assert arguments[selected - 1] == "-e"
@@ -243,17 +251,34 @@ def test_workflow_prepares_profile_sources_and_passes_them_to_the_compiler(
     steps = workflow["jobs"]["compile"]["steps"]
     preparation = next(step for step in steps if step.get("id") == "packages")
     capture = harness.repo / "arguments.txt"
+    wrapper_capture = harness.repo / "wrapper-arguments.txt"
+    # Run the actual workflow shell and forward the wrapper's command verbatim.
+    # release_execution's subprocess receipts are tested by test_release_execution.
+    forward = """python3() {
+      if [[ "$1" == tools/release_execution.py ]]; then
+        printf '%s\\n' "$@" > "$WRAPPER_CAPTURE"
+        while [[ "$1" != -- ]]; do shift; done
+        shift
+        "$@"
+      else
+        printf '%s\\n' "$@" > "$CAPTURE"
+      fi
+    };\n"""
     environment = {
         **os.environ,
         "UNITY_VERSION": version,
         "UNITY_DATA": "verified/editor",
         "CAPTURE": capture.as_posix(),
+        "WRAPPER_CAPTURE": wrapper_capture.as_posix(),
+        "EVIDENCE_STEP_NAME": preparation["env"]["EVIDENCE_STEP_NAME"].replace(
+            "${{ matrix.unity.version }}", version
+        ),
     }
     result = subprocess.run(
         [
             harness.bash,
             "-c",
-            'python3() { printf \'%s\\n\' "$@" > "$CAPTURE"; };\n' + preparation["run"],
+            forward + preparation["run"],
         ],
         env=environment,
         capture_output=True,
@@ -261,10 +286,23 @@ def test_workflow_prepares_profile_sources_and_passes_them_to_the_compiler(
         check=False,
     )
     assert result.returncode == 0, result.stderr
+    wrapper = wrapper_capture.read_text(encoding="utf-8").splitlines()
+    assert wrapper[:5] == [
+        "tools/release_execution.py",
+        "run",
+        "--kind",
+        "package-preparation",
+        "--step-name",
+    ]
+    assert wrapper[5] == environment["EVIDENCE_STEP_NAME"]
+    assert wrapper[wrapper.index("--") + 1 :] == [
+        "python3",
+        *capture.read_text(encoding="utf-8").splitlines(),
+    ]
     assert (
         "--include-input-system" in capture.read_text(encoding="utf-8").splitlines()
     ) == selected
-    compiler = next(step for step in steps if step.get("name") == "Compile")
+    compiler = next(step for step in steps if step.get("name", "").startswith("Compile ["))
     assert (
         compiler["env"]["INPUT_SYSTEM_SOURCE"]
         == "${{ steps.packages.outputs.input_system_source }}"
@@ -282,13 +320,18 @@ def test_workflow_prepares_profile_sources_and_passes_them_to_the_compiler(
             "TEST_FRAMEWORK_SOURCE": "verified/test-framework",
             "EDITOR_COROUTINES_SOURCE": "verified/coroutines",
             "TEST_PROJECT": "isolated/project",
+            "EVIDENCE_STEP_NAME": compiler["env"]["EVIDENCE_STEP_NAME"].replace(
+                "${{ matrix.unity.version }}", version
+            ),
         }
     )
     result = subprocess.run(
         [
             harness.bash,
             "-c",
-            'docker() { printf \'%s\\n\' "$@" > "$CAPTURE"; return 7; };\n' + compiler["run"],
+            forward
+            + 'docker() { printf \'%s\\n\' "$@" > "$CAPTURE"; return 7; };\n'
+            + compiler["run"],
         ],
         env=environment,
         capture_output=True,
@@ -297,6 +340,16 @@ def test_workflow_prepares_profile_sources_and_passes_them_to_the_compiler(
     )
     assert result.returncode == 7
     arguments = capture.read_text(encoding="utf-8").splitlines()
+    wrapper = wrapper_capture.read_text(encoding="utf-8").splitlines()
+    assert wrapper[:6] == [
+        "tools/release_execution.py",
+        "run",
+        "--kind",
+        "compile",
+        "--step-name",
+        environment["EVIDENCE_STEP_NAME"],
+    ]
+    assert wrapper[wrapper.index("--") + 1 :] == ["docker", *arguments]
     assert f"COMPILE_INPUT_SYSTEM={1 if selected else 0}" in arguments
     assert "INPUT_SYSTEM_SOURCE=/repo/verified/input-package" in arguments
     assert arguments[-1] == "/repo/tools/compile-check.sh"
