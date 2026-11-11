@@ -50,6 +50,15 @@ refresh or tests to replace an uncertain response.
 
 ## Recovery observations
 
+A compiler failure belongs to its captured source snapshot. If external edits
+change that snapshot, observation reports changed inputs so an authorized request
+can import and compile the corrected source. Incomplete coverage cannot inherit
+the earlier failure as a verdict on the new source.
+
+Excluded inputs are rejected before filesystem inspection, including explicit
+compiler inputs and aliased roots. Encountering an excluded subtree or environment
+file leaves coverage incomplete; skipping it never certifies all inputs current.
+
 Doctor receipts and Editor state expose `source_recovery` with reason, certainty,
 evidence origin/time/age, source/compile identity where available, limitations and
 the next inspection action. `compilation_failed`, `reload_in_progress`, and

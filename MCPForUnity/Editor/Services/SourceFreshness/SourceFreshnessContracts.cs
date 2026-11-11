@@ -38,6 +38,7 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
                 ["source_token"] = Snapshot?.Token,
                 ["source_digest"] = Snapshot?.SourceDigest,
                 ["context_digest"] = Snapshot?.ContextDigest,
+                ["unity_version"] = Snapshot?.UnityVersion,
                 ["observed_at_unix_ms"] = Snapshot?.ObservedAtUnixMs,
                 ["compile_id"] = Compilation?.CompileId,
                 ["compile_generation"] = Compilation?.Generation,

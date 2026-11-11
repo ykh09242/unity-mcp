@@ -1,10 +1,20 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
 namespace MCPForUnity.Editor.Services.SourceFreshness
 {
+    internal sealed class SourceFileSystem
+    {
+        internal Func<string, bool> DirectoryExists = Directory.Exists;
+        internal Func<string, bool> FileExists = File.Exists;
+        internal Func<string, IEnumerable<string>> Entries = Directory.EnumerateFileSystemEntries;
+        internal Func<string, FileAttributes> Attributes = File.GetAttributes;
+        internal Func<string, Stream> Open = path => new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+    }
+
     // Captured on the Editor thread. The collector only consumes this detached data.
     internal sealed class SourceScope
     {
@@ -17,6 +27,8 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
         internal readonly List<string> Reasons = new();
         internal long MaxBytes = 256L * 1024 * 1024;
         internal int MaxFiles = 100000;
+        internal SourceFileSystem FileSystem = new();
+        internal string UnityVersion;
 
         internal SourceScope(string root, string sessionId, string context)
         {
@@ -39,6 +51,7 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
         public int FileCount { get; }
         public long InputBytes { get; }
         public long ObservedAtUnixMs { get; }
+        public string UnityVersion { get; }
         public string Token => Hash(ProjectId + "\n" + SessionId + "\n" + SourceDigest + "\n" + ContextDigest);
 
         [Newtonsoft.Json.JsonConstructor]
@@ -51,7 +64,8 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
             string[] reasons,
             int fileCount,
             long inputBytes,
-            long observedAtUnixMs = 0
+            long observedAtUnixMs = 0,
+            string unityVersion = null
         )
         {
             ProjectId = projectId;
@@ -63,6 +77,7 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
             FileCount = fileCount;
             InputBytes = inputBytes;
             ObservedAtUnixMs = observedAtUnixMs == 0 ? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() : observedAtUnixMs;
+            UnityVersion = unityVersion;
         }
 
         internal static string Hash(string value)

@@ -11,6 +11,91 @@ namespace MCPForUnityTests.Editor.Services
 {
     public class SourceFreshnessTests
     {
+        [TestCase("discovery")]
+        [TestCase("root")]
+        [TestCase("input")]
+        [TestCase("environment")]
+        public void ExcludedInputsAreRejectedBeforeAnyFileSystemAccess(string route)
+        {
+            // A purely synthetic filesystem: never create or inspect excluded paths on disk.
+            string root = Path.GetFullPath("synthetic-source-root");
+            string resources = Path.Combine(root, "Assets", "Resources");
+            string excluded = Path.Combine(resources, "GameData");
+            string allowed = Path.Combine(resources, "Allowed.cs");
+            void Access(string path)
+            {
+                if (
+                    path.StartsWith(excluded, StringComparison.OrdinalIgnoreCase)
+                    || Path.GetFileName(path).StartsWith(".env", StringComparison.OrdinalIgnoreCase)
+                )
+                    Assert.Fail("Excluded input received a filesystem operation.");
+            }
+            var scope = new SourceScope(root, "session", "context");
+            scope.Roots.Clear();
+            scope.FileSystem = new SourceFileSystem
+            {
+                DirectoryExists = path =>
+                {
+                    Access(path);
+                    return path == resources;
+                },
+                FileExists = path =>
+                {
+                    Access(path);
+                    return false;
+                },
+                Attributes = path =>
+                {
+                    Access(path);
+                    return FileAttributes.Normal;
+                },
+                Entries = path =>
+                {
+                    Access(path);
+                    return new[] { excluded, allowed };
+                },
+                Open = path =>
+                {
+                    Access(path);
+                    return new MemoryStream(new byte[] { 1 });
+                },
+            };
+            if (route == "discovery")
+                scope.Roots["Assets/Resources"] = resources;
+            else if (route == "root")
+                scope.Roots["alias"] = excluded;
+            else
+                scope.Inputs["alias"] = route == "input" ? Path.Combine(excluded, "Input.cs") : Path.Combine(root, ".env.local");
+            var snapshot = SourceSnapshotCollector.CaptureAsync(scope, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.IsFalse(snapshot.Complete);
+            CollectionAssert.Contains(snapshot.Reasons, "excluded_compilation_input");
+            Assert.AreEqual(route == "discovery" ? 1 : 0, snapshot.FileCount);
+        }
+
+        [Test]
+        public void ChangedOrIncompleteSourceCannotInheritAnEarlierCompilationFailure()
+        {
+            var ledger = new SourceFreshnessLedger("project", "session");
+            ledger.BeginCompilation(Compilation().CompileId, Snapshot(), "domain");
+            Assert.AreEqual("compile_failed", ledger.ObserveCompilation(Snapshot(), Compilation("failed")).Status);
+            Assert.AreEqual("changed", ledger.ObserveCompilation(Snapshot("fixed"), Compilation("failed")).Status);
+            Assert.AreEqual("incomplete", ledger.ObserveCompilation(Snapshot(complete: false), Compilation("failed")).Status);
+            ledger.BeginCompilation(Compilation().CompileId, Snapshot("fixed"), "domain");
+            Assert.AreEqual("observed_current", ledger.ObserveCompilation(Snapshot("fixed"), Compilation()).Status);
+        }
+
+        [Test]
+        public void SourceObservationExposesTheCapturedUnityVersion()
+        {
+            var scope = SourceFreshnessService.CaptureScope();
+            scope.Roots.Clear();
+            scope.Inputs.Clear();
+            scope.FileSystem = new SourceFileSystem { FileExists = _ => false };
+            var snapshot = SourceSnapshotCollector.CaptureAsync(scope, CancellationToken.None).GetAwaiter().GetResult();
+            var observation = new FreshnessObservation { Snapshot = snapshot };
+            Assert.AreEqual(UnityEngine.Application.unityVersion, (string)observation.ToJson("p", "s")["unity_version"]);
+        }
+
         [TestCase("all", "request")]
         [TestCase("scripts", "none")]
         public void CleanCompilationRefusesAnAmbiguousImportOrNonCompilationRequest(string scope, string compile)

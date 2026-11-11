@@ -113,12 +113,12 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
         {
             if (!Owns(snapshot) || _before == null || compilation.CompileId != CompileId)
                 return Set("incomplete", "request_snapshot_unavailable", snapshot);
-            if (compilation.Outcome == "failed")
-                return Set("compile_failed", "compiler_errors", snapshot, compilation);
             if (!_before.Complete || !snapshot.Complete)
                 return Set("incomplete", "input_coverage_incomplete", snapshot, compilation);
             if (_before.Token != snapshot.Token)
                 return Set("changed", "inputs_changed_since_request", snapshot, compilation);
+            if (compilation.Outcome == "failed")
+                return Set("compile_failed", "compiler_errors", snapshot, compilation);
             if (!compilation.Finished)
                 return Set("pending", "compilation_pending", snapshot, compilation);
             if (!compilation.Complete || !compilation.Attributed || compilation.Generation < 1)

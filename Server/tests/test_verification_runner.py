@@ -119,6 +119,25 @@ async def test_script_profile_keeps_source_provenance_without_formatting_or_test
 
 
 @pytest.mark.asyncio
+async def test_report_retains_editor_version_and_load_identity_separately_from_roslyn():
+    from models.source_freshness import SourceFreshness
+
+    io = IO()
+    identities = [{"name": "Assembly-CSharp", "output_mvid": "a" * 32, "loaded_mvid": "a" * 32}]
+    value = SourceFreshness(unity_version="6000.0.69f1", loaded_assemblies=identities)
+    assert value.model_dump().get("unity_version") == "6000.0.69f1"
+    for observation in io.observations:
+        observation.update(unity_version="6000.0.69f1", loaded_assemblies=identities)
+    report = await run(io)
+    sources = [
+        stage["evidence"] for stage in report["stages"] if stage["name"].startswith("freshness")
+    ]
+    assert sources
+    assert all(source["unity_version"] == "6000.0.69f1" for source in sources)
+    assert all(source["loaded_assemblies"] == identities for source in sources)
+
+
+@pytest.mark.asyncio
 async def test_compile_failure_still_analyzes_but_never_dispatches_tests():
     io = IO()
     io.observations = [freshness("compile_failed"), freshness("compile_failed")]

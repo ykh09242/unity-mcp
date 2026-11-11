@@ -38,6 +38,7 @@ class SourceFreshness(BaseModel):
     source_token: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     source_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     context_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    unity_version: str | None = Field(default=None, max_length=64)
     observed_at_unix_ms: int | None = Field(default=None, ge=0)
     compile_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     compile_generation: int | None = Field(default=None, ge=0)

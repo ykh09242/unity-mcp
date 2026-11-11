@@ -31,7 +31,8 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
                 reasons.Count == 0,
                 reasons.OrderBy(r => r).ToArray(),
                 first.Count,
-                size
+                size,
+                unityVersion: scope.UnityVersion
             );
         }
 
@@ -42,10 +43,23 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
             long total = 0;
             int entries = 0;
             bool limit = false;
+            bool Excluded(string name, string path)
+            {
+                bool Blocked(string value)
+                {
+                    string normalized = "/" + value.Replace('\\', '/').Trim('/') + "/";
+                    return normalized.IndexOf("/Assets/Resources/GameData/", StringComparison.OrdinalIgnoreCase) >= 0
+                        || normalized.Split('/').Any(part => part.StartsWith(".env", StringComparison.OrdinalIgnoreCase));
+                }
+                if (!Blocked(name) && !Blocked(Path.GetFullPath(path)))
+                    return false;
+                reasons.Add("excluded_compilation_input");
+                return true;
+            }
             void Add(string name, string path)
             {
                 cancellation.ThrowIfCancellationRequested();
-                if (limit || files.ContainsKey(name))
+                if (limit || Excluded(name, path) || files.ContainsKey(name))
                     return;
                 if (files.Count >= scope.MaxFiles)
                 {
@@ -62,14 +76,10 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
                         return;
                     }
                     // Refuse links, including linked ancestors of explicitly supplied references.
-                    for (
-                        var item = new FileInfo(Path.GetFullPath(path)) as FileSystemInfo;
-                        item != null;
-                        item = item is FileInfo file ? file.Directory : ((DirectoryInfo)item).Parent
-                    )
-                        if ((item.Attributes & FileAttributes.ReparsePoint) != 0)
+                    for (string item = absolute; item != null; item = Path.GetDirectoryName(item))
+                        if ((scope.FileSystem.Attributes(item) & FileAttributes.ReparsePoint) != 0)
                             throw new IOException("Linked compiler input");
-                    using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    using var input = scope.FileSystem.Open(path);
                     using var hash = SHA256.Create();
                     var buffer = new byte[65536];
                     int read;
@@ -97,16 +107,16 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
             void Walk(string name, string path)
             {
                 cancellation.ThrowIfCancellationRequested();
-                if (limit || !Directory.Exists(path))
+                if (limit || Excluded(name, path) || !scope.FileSystem.DirectoryExists(path))
                     return;
                 try
                 {
-                    if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                    if ((scope.FileSystem.Attributes(path) & FileAttributes.ReparsePoint) != 0)
                     {
                         reasons.Add("linked_input_root");
                         return;
                     }
-                    foreach (string child in Directory.EnumerateFileSystemEntries(path))
+                    foreach (string child in scope.FileSystem.Entries(path))
                     {
                         cancellation.ThrowIfCancellationRequested();
                         if (++entries > scope.MaxFiles * 4L || limit)
@@ -117,7 +127,9 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
                         }
                         string leaf = Path.GetFileName(child);
                         string relative = name + "/" + leaf;
-                        if (Directory.Exists(child))
+                        if (Excluded(relative, child))
+                            continue;
+                        if (scope.FileSystem.DirectoryExists(child))
                         {
                             if (
                                 !leaf.StartsWith(".", StringComparison.Ordinal)
@@ -142,7 +154,7 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
             foreach (var root in scope.Roots.OrderBy(p => p.Key, StringComparer.Ordinal))
                 Walk(root.Key, root.Value);
             foreach (string name in new[] { ".editorconfig", ".globalconfig", "csc.rsp" })
-                if (File.Exists(Path.Combine(scope.ProjectRoot, name)))
+                if (scope.FileSystem.FileExists(Path.Combine(scope.ProjectRoot, name)))
                     Add(name, Path.Combine(scope.ProjectRoot, name));
             foreach (var input in scope.Inputs.OrderBy(p => p.Key, StringComparer.Ordinal))
                 Add(input.Key, input.Value);

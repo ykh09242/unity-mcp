@@ -18,6 +18,8 @@ def source_summary(value):
         "source_token",
         "source_digest",
         "context_digest",
+        "unity_version",
+        "loaded_assemblies",
         "project_id",
         "session_id",
         "compile_id",

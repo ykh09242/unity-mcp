@@ -81,6 +81,11 @@ because time elapsed. A server restart or expired handle never reruns work.
 
 ## CLI
 
+Each source observation in a report retains the captured `unity_version` and
+bounded loaded/output assembly identities. Missing version evidence is unknown.
+The diagnostic provider's Roslyn version describes the isolated analysis host;
+it does not identify Unity's native C# compiler version.
+
 ```sh
 unity-mcp --no-project-context --instance 'Game@0123456789abcdef' --format json verification profiles
 unity-mcp --no-project-context --instance 'Game@0123456789abcdef' --format json verification prepare --options '{"paths":["Assets/Scripts/Player.cs"],"profile_id":"script-check"}'

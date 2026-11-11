@@ -84,7 +84,8 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
                         false,
                         snapshot.Reasons.Concat(new[] { "context_changed_during_scan" }).ToArray(),
                         snapshot.FileCount,
-                        snapshot.InputBytes
+                        snapshot.InputBytes,
+                        unityVersion: snapshot.UnityVersion
                     );
                 return snapshot;
             }
@@ -232,7 +233,10 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
                     })
                 ),
             };
-            var scope = new SourceScope(ProjectRoot, Ledger.SessionId, context.ToString(Formatting.None));
+            var scope = new SourceScope(ProjectRoot, Ledger.SessionId, context.ToString(Formatting.None))
+            {
+                UnityVersion = UnityEngine.Application.unityVersion,
+            };
             scope.Reasons.AddRange(reasons.Distinct());
             foreach (var package in packages)
                 if (package.source != PackageSource.BuiltIn && !string.IsNullOrEmpty(package.resolvedPath))
