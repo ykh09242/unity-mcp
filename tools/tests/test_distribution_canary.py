@@ -2,11 +2,13 @@
 
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
 
 import yaml
+import pytest
 
 from tests.test_check_source_pin_drift import commit, history, set_pin
 from tests.test_update_source_pins import put
@@ -68,7 +70,8 @@ def test_canary_schedules_supported_platform_floor_and_separate_evidence():
     job = config["jobs"]["canary"]
 
     # When GitHub expands the matrix, every supported platform must check Python 3.11.
-    rows = job["strategy"]["matrix"]["include"]
+    expansion = job["strategy"]["matrix"]["include"]
+    rows = json.loads(re.search(r"\|\| '([^']+)'", expansion)[1])
     observed = {(row["os"], row["python-version"]) for row in rows}
     assert {
         ("ubuntu-26.04", "3.11"),
@@ -90,3 +93,19 @@ def test_canary_schedules_supported_platform_floor_and_separate_evidence():
         for os_name, version in observed
     }
     assert len(names) == len(observed)
+
+
+@pytest.mark.parametrize(
+    "path", ["MCPForUnity/package.json", "manifest.json", "release-source-inputs.json"]
+)
+def test_pin_only_pr_selects_one_selected_distribution_canary(path):
+    from tests.test_ci_trigger_policy import selected
+
+    assert selected("distribution-canary.yml", "pull_request", "beta", path, "synchronize")
+    assert selected("distribution-canary.yml", "push", "beta", path)
+    assert not selected("distribution-canary.yml", "push", "main", path)
+    config = yaml.safe_load((ROOT / ".github/workflows/distribution-canary.yml").read_text())
+    matrix = config["jobs"]["canary"]["strategy"]["matrix"]
+    assert "github.event_name == 'pull_request'" in matrix["include"]
+    rows = json.loads(re.search(r"&& '([^']+)'", matrix["include"])[1])
+    assert rows == [{"os": "ubuntu-26.04", "python-version": "3.11"}]

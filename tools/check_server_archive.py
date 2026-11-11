@@ -1,7 +1,7 @@
 """Exercise an archive-installed server's public MCP/HTTP/CLI contracts without Unity.
 
 Run with the archive environment's Python, isolated mode and an empty working directory:
-    python -I /path/to/check_server_archive.py --forbid-source CHECKOUT --candidate-sha FULL_SHA
+    python -I /path/to/check_server_archive.py --forbid-source CHECKOUT --candidate-sha FULL_SHA --archive-file ZIP
 Only the supervised MCP worker may launch and contact its own loopback listener.
 Editor discovery, user configuration and external connections are prohibited.
 """
@@ -15,9 +15,11 @@ import hashlib
 import logging
 import os
 from pathlib import Path
+import re
 import sys
 from tempfile import TemporaryDirectory
 from typing import Final
+from urllib.parse import urlsplit
 
 
 PACKAGES: Final = (
@@ -32,6 +34,70 @@ PACKAGES: Final = (
     "httpx2",
     "click",
 )
+Json = str | int | float | bool | None | list["Json"] | dict[str, "Json"]
+JsonMap = dict[str, Json]
+
+
+def verify_archive_origin(direct: JsonMap, source: str | Path, candidate: str) -> JsonMap:
+    """Bind installed origin to the selected immutable URL or independently hashed local ZIP."""
+    if re.fullmatch(r"[0-9a-f]{40}", candidate) is None or candidate == "0" * 40:
+        raise RuntimeError("Archive provenance requires a full nonzero candidate SHA")
+    match source:
+        case Path():
+            if not source.is_file() or source.is_symlink():
+                raise RuntimeError("Archive provenance requires an ordinary local ZIP")
+            expected_url = source.resolve().as_uri()
+            with source.open("rb") as stream:
+                expected_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+            subdirectory = None
+        case str():
+            expected = (
+                f"https://github.com/ykh09242/unity-mcp/archive/{candidate}.zip#subdirectory=Server"
+            )
+            if source != expected:
+                raise RuntimeError("Archive provenance source differs from selected immutable SHA")
+            expected_url = urlsplit(source)._replace(fragment="").geturl()
+            expected_hash = None
+            subdirectory = "Server"
+        case _:
+            raise RuntimeError("Unsupported archive provenance input")
+    archive = direct.get("archive_info")
+    if (
+        not isinstance(archive, dict)
+        or "dir_info" in direct
+        or "vcs_info" in direct
+        or direct.get("url") != expected_url
+        or direct.get("subdirectory") != subdirectory
+    ):
+        raise RuntimeError("Installed archive required: provenance differs from selected source")
+    hashes = archive.get("hashes", {})
+    if not isinstance(hashes, dict):
+        raise RuntimeError("Installed archive required: provenance hashes must be an object")
+    checksum = hashes.get("sha256")
+    legacy = archive.get("hash")
+    if legacy is not None:
+        if not isinstance(legacy, str) or "=" not in legacy:
+            raise RuntimeError("Installed archive required: provenance legacy hash is malformed")
+        algorithm, legacy_digest = legacy.split("=", 1)
+        if (
+            not algorithm
+            or not legacy_digest
+            or ("hashes" in archive and hashes.get(algorithm) != legacy_digest)
+        ):
+            raise RuntimeError("Installed archive required: provenance legacy hash is inconsistent")
+        if "hashes" not in archive and algorithm == "sha256":
+            checksum = legacy_digest
+    if (
+        not isinstance(checksum, str)
+        or re.fullmatch(r"[0-9a-f]{64}", checksum) is None
+        or checksum == "0" * 64
+        or expected_hash is not None
+        and checksum != expected_hash
+    ):
+        raise RuntimeError(
+            "Installed archive required: provenance SHA256 mismatch or missing digest"
+        )
+    return direct
 
 
 def installed_origins(forbidden: Path) -> dict[str, str]:
@@ -210,8 +276,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--forbid-source", type=Path, required=True)
     parser.add_argument("--candidate-sha", required=True)
+    origin = parser.add_mutually_exclusive_group(required=True)
+    origin.add_argument("--archive-source", help="Selected immutable launcher source URL")
+    origin.add_argument("--archive-file", type=Path, help="Actual local candidate ZIP installed")
     args = parser.parse_args()
     forbidden = args.forbid_source.resolve()
+    source = args.archive_file.resolve() if args.archive_file else args.archive_source
+    installed = distribution("ykh09242-unity-mcp-server")
+    direct = json.loads(installed.read_text("direct_url.json") or "{}")
+    verified_origin = verify_archive_origin(direct, source, args.candidate_sha)
     with TemporaryDirectory(prefix="unity-mcp-archive-") as temporary:
         root = Path(temporary).resolve(strict=True)
         for name in (
@@ -240,6 +313,7 @@ def main() -> None:
                 json.dumps(
                     {
                         "candidate_sha": args.candidate_sha,
+                        "archive_origin": verified_origin,
                         "archive_hashes": json.loads(installed.read_text("direct_url.json"))[
                             "archive_info"
                         ].get("hashes", {}),

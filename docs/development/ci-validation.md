@@ -101,6 +101,14 @@ application modules; both probes explicitly use `-W error`, since isolated mode 
 archive job uses the same optional beartype setting as the locked suites. These small probes
 complement the complete locked test suites without repeating them.
 
+The archive checker compares installed `direct_url.json` with the actual selected input.
+For a candidate ZIP, `--archive-file` verifies its file URI and independently computed
+SHA256 against installed archive metadata; the candidate SHA remains a separate source
+label. This path works for an unpublished local commit without remote access. For the
+selected launcher archive, `--archive-source` checks its immutable commit URL and `Server`
+subdirectory against the installed origin. An unrelated installed archive cannot pass by
+echoing a requested candidate SHA.
+
 [`distribution-canary.yml`](../../.github/workflows/distribution-canary.yml) runs Python
 3.11 probes on Linux, Windows and Intel macOS, plus Linux Python 3.14 and 3.15 probes, each Monday
 at 04:23 UTC and supports manual dispatch. Each row selects the
@@ -108,6 +116,9 @@ immutable `mcpServerSource` from the checked commit's `MCPForUnity/package.json`
 shared source-pin validator to require consistent launcher metadata. Scheduled runs use
 the default branch; manual runs use the selected workflow branch. The selected launcher
 commit and server archive commit appear separately in the run summary and retained report.
+Source-pin changes in PRs to main/beta and pushes to beta select one Linux/Python 3.11
+canary row. Scheduled and manual runs retain the complete matrix above. Candidate archive
+coverage remains independent and continues to exercise the checked source commit.
 
 The canary creates an empty environment and installs that archive with fresh, unlocked
 dependency resolution and no shared uv cache. It reuses the installed-archive HTTP/CLI,

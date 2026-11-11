@@ -16,6 +16,71 @@ ROOT = Path(__file__).resolve().parents[2]
 PROBE = ROOT / "tools/check_server_archive.py"
 
 
+def archive_checker():
+    spec = spec_from_file_location("archive_checker", PROBE)
+    module = module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("mismatch", ["pin", "url", "subdirectory", "editable", "vcs"])
+def test_selected_archive_requires_matching_installed_origin(mismatch):
+    module = archive_checker()
+    source = f"https://github.com/ykh09242/unity-mcp/archive/{'a' * 40}.zip#subdirectory=Server"
+    direct = {
+        "url": source.split("#")[0],
+        "subdirectory": "Server",
+        "archive_info": {"hashes": {"sha256": "b" * 64}},
+    }
+    assert module.verify_archive_origin(direct, source, "a" * 40) == direct
+    match mismatch:
+        case "pin":
+            direct["url"] = direct["url"].replace("a" * 40, "c" * 40)
+        case "url":
+            direct["url"] = direct["url"].replace("github.com", "example.invalid")
+        case "subdirectory":
+            direct["subdirectory"] = "Other"
+        case "editable":
+            direct["dir_info"] = {"editable": True}
+        case "vcs":
+            direct["vcs_info"] = {"commit_id": "a" * 40}
+    with pytest.raises(RuntimeError, match="provenance"):
+        module.verify_archive_origin(direct, source, "a" * 40)
+
+
+def test_local_unpublished_archive_is_bound_to_file_bytes(tmp_path):
+    module = archive_checker()
+    archive = tmp_path / "unpublished candidate.zip"
+    archive.write_bytes(b"owned synthetic candidate ZIP bytes")
+    import hashlib
+
+    checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+    direct = {"url": archive.as_uri(), "archive_info": {"hashes": {"sha256": checksum}}}
+    # A local file is sufficient; no remote existence lookup is needed for this commit label.
+    assert module.verify_archive_origin(direct, archive, "a" * 40) == direct
+    archive.write_bytes(b"different archive")
+    with pytest.raises(RuntimeError, match="provenance"):
+        module.verify_archive_origin(direct, archive, "a" * 40)
+
+
+def test_archive_origin_accepts_consistent_deprecated_hash_alongside_sha256():
+    module = archive_checker()
+    source = f"https://github.com/ykh09242/unity-mcp/archive/{'a' * 40}.zip#subdirectory=Server"
+    direct = {
+        "url": source.split("#")[0],
+        "subdirectory": "Server",
+        "archive_info": {
+            "hash": "sha512=" + "c" * 128,
+            "hashes": {"sha256": "b" * 64, "sha512": "c" * 128},
+        },
+    }
+    assert module.verify_archive_origin(direct, source, "a" * 40) == direct
+    direct["archive_info"]["hash"] = "sha512=" + "d" * 128
+    with pytest.raises(RuntimeError, match="provenance"):
+        module.verify_archive_origin(direct, source, "a" * 40)
+
+
 def load_mcp_probe():
     spec = spec_from_file_location("installed_mcp_probe", ROOT / "tools/installed_mcp_probe.py")
     module = module_from_spec(spec)
@@ -96,6 +161,8 @@ def test_archive_probe_refuses_editable_worktree_imports(tmp_path):
             str(ROOT),
             "--candidate-sha",
             "a" * 40,
+            "--archive-source",
+            f"https://github.com/ykh09242/unity-mcp/archive/{'a' * 40}.zip#subdirectory=Server",
         ],
         cwd=tmp_path,
         env={**os.environ, "TEMP": str(tmp_path), "TMP": str(tmp_path)},

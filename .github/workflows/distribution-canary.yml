@@ -1,6 +1,18 @@
 name: Unlocked distribution canary
 
 on:
+  pull_request:
+    branches: [main, beta]
+    paths: &source-inputs
+      - MCPForUnity/package.json
+      - manifest.json
+      - release-source-inputs.json
+      - tools/check_server_archive.py
+      - tools/tests/test_distribution_canary.py
+      - .github/workflows/distribution-canary.yml
+  push:
+    branches: [beta]
+    paths: *source-inputs
   schedule:
     - cron: '23 4 * * 1'
   workflow_dispatch: {}
@@ -19,17 +31,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-26.04
-            python-version: '3.11'
-          - os: windows-latest
-            python-version: '3.11'
-          - os: macos-26-intel
-            python-version: '3.11'
-          - os: ubuntu-26.04
-            python-version: '3.14'
-          - os: ubuntu-26.04
-            python-version: '3.15'
+        # Pin-only PRs check one selected archive; scheduled/manual runs retain the full matrix.
+        include: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'push') && '[{"os":"ubuntu-26.04","python-version":"3.11"}]' || '[{"os":"ubuntu-26.04","python-version":"3.11"},{"os":"windows-latest","python-version":"3.11"},{"os":"macos-26-intel","python-version":"3.11"},{"os":"ubuntu-26.04","python-version":"3.14"},{"os":"ubuntu-26.04","python-version":"3.15"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,10 +94,11 @@ jobs:
       - name: Exercise installed registration, MCP, HTTP and CLI behavior
         env:
           SERVER_COMMIT: ${{ steps.source.outputs.server_commit }}
+          SERVER_SOURCE: ${{ steps.source.outputs.server_source }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & $env:CANARY_PYTHON -I -W error tools/check_server_archive.py --forbid-source $env:GITHUB_WORKSPACE --candidate-sha $env:SERVER_COMMIT > .tmp/distribution-canary/behavior.json
+          & $env:CANARY_PYTHON -I -W error tools/check_server_archive.py --forbid-source $env:GITHUB_WORKSPACE --candidate-sha $env:SERVER_COMMIT --archive-source $env:SERVER_SOURCE > .tmp/distribution-canary/behavior.json
           if ($LASTEXITCODE -ne 0) { throw 'Installed canary behavior failed' }
           & $env:CANARY_PYTHON -I -W error tools/check_server_startup.py > .tmp/distribution-canary/registration.jsonl
           if ($LASTEXITCODE -ne 0) { throw 'Installed canary registration failed' }
