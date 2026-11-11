@@ -99,7 +99,7 @@ ALL_ACTIONS = (
 )
 async def manage_camera(
     ctx: Context,
-    action: Annotated[str, "The camera action to perform."],
+    action: Annotated[str, Literal[*ALL_ACTIONS], "The camera action to perform."],
     target: Annotated[str | None, "Target camera (name, path, or instance ID)."] = None,
     search_method: Annotated[
         Literal["by_id", "by_name", "by_path"] | None,

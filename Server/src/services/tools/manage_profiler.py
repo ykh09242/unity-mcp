@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Optional, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -91,7 +91,7 @@ ALL_ACTIONS = (
 )
 async def manage_profiler(
     ctx: Context,
-    action: Annotated[str, "The profiler action to perform."],
+    action: Annotated[str, Literal[*ALL_ACTIONS], "The profiler action to perform."],
     category: Annotated[
         Optional[str],
         "Profiler category name for get_counters (e.g. Render, Scripts, Memory, Physics).",

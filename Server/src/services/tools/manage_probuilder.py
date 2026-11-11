@@ -212,7 +212,7 @@ def _topology_admission(action: str, properties: Any) -> str | None:
 )
 async def manage_probuilder(
     ctx: Context,
-    action: Annotated[str, "Action to perform."],
+    action: Annotated[str, Literal[*ALL_ACTIONS], "Action to perform."],
     target: Annotated[str | None, "Target GameObject (name/path/id)."] = None,
     search_method: Annotated[
         Literal["by_id", "by_name", "by_path", "by_tag", "by_layer"] | None,

@@ -107,7 +107,9 @@ ALL_ACTIONS = ["ping"] + PARTICLE_ACTIONS + VFX_ACTIONS + LINE_ACTIONS + TRAIL_A
 )
 async def manage_vfx(
     ctx: Context,
-    action: Annotated[str, "Action to perform (prefix: particle_, vfx_, line_, trail_)."],
+    action: Annotated[
+        str, Literal[*ALL_ACTIONS], "Action to perform (prefix: particle_, vfx_, line_, trail_)."
+    ],
     target: Annotated[str | None, "Target GameObject (name/path/id)."] = None,
     search_method: Annotated[
         Literal["by_id", "by_name", "by_path", "by_tag", "by_layer"] | None,

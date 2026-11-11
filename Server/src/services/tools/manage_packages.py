@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Optional, Literal
 from urllib.parse import unquote, urlsplit
 import re
 
@@ -105,7 +105,7 @@ async def _send_packages_command(
 )
 async def manage_packages(
     ctx: Context,
-    action: Annotated[str, "The package action to perform."],
+    action: Annotated[str, Literal[*ALL_ACTIONS], "The package action to perform."],
     package: Annotated[
         Optional[str], "Package identifier (name, name@version, git URL, or file: path)."
     ] = None,

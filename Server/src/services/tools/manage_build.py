@@ -1,7 +1,7 @@
 """Build management — player builds, platform switching, settings, batch automation."""
 
 import re
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Optional, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -101,6 +101,7 @@ async def manage_build(
     ctx: Context,
     action: Annotated[
         str,
+        Literal[*ALL_ACTIONS],
         "Action: plan, build_from_plan, build, status, platform, settings, scenes, profiles, batch, cancel, clean_output, report_history, report, compare_reports",
     ],
     target: Annotated[

@@ -8,7 +8,7 @@ import re
 import threading
 import time
 from html.parser import HTMLParser
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Optional, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
@@ -1045,7 +1045,7 @@ async def _lookup(
 @_bounded_request
 async def unity_docs(
     ctx: Context,
-    action: Annotated[str, "The documentation action to perform."],
+    action: Annotated[str, Literal[*ALL_ACTIONS], "The documentation action to perform."],
     class_name: Annotated[Optional[str], "Unity class name (e.g. 'Physics', 'Transform')."] = None,
     member_name: Annotated[Optional[str], "Method or property name to look up."] = None,
     version: Annotated[

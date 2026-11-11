@@ -20,7 +20,7 @@ Inspect existing optional Addressables settings (groups, explicit entries and ra
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `str` | yes |  |
+| `action` | `str` | yes | Addressables action. |
 | `settings_path` | `str \| None` | — |  |
 | `section` | `str \| None` | — |  |
 | `page_number` | `int` | — |  |

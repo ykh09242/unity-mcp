@@ -165,7 +165,9 @@ def _round_trip_error(action: str, properties: dict[str, JsonValue] | None) -> s
 )
 async def manage_animation(
     ctx: Context,
-    action: Annotated[str, "Action to perform (prefix: animator_, controller_, clip_)."],
+    action: Annotated[
+        str, Literal[*ALL_ACTIONS], "Action to perform (prefix: animator_, controller_, clip_)."
+    ],
     target: Annotated[str | None, "Target GameObject (name/path/id)."] = None,
     search_method: Annotated[
         Literal["by_id", "by_name", "by_path", "by_tag", "by_layer"] | None,

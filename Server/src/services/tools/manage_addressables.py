@@ -1,7 +1,7 @@
 """Bounded Addressables settings inspection, guarded edits and existing build-layout analysis."""
 
 import re
-from typing import Any
+from typing import Any, Annotated, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -131,7 +131,7 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
 )
 async def manage_addressables(
     ctx: Context,
-    action: str,
+    action: Annotated[str, Literal[*ALL_ACTIONS], "Addressables action."],
     settings_path: str | None = None,
     section: str | None = None,
     page_number: StrictInt = 1,

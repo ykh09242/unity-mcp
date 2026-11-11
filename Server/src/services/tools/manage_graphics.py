@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Optional, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -114,7 +114,7 @@ ALL_ACTIONS = (
 )
 async def manage_graphics(
     ctx: Context,
-    action: Annotated[str, "The graphics action to perform."],
+    action: Annotated[str, Literal[*ALL_ACTIONS], "The graphics action to perform."],
     target: Annotated[Optional[str], "Target object name or instance ID."] = None,
     effect: Annotated[Optional[str], "Effect type name (e.g., 'Bloom', 'Vignette')."] = None,
     parameters: Annotated[Optional[dict[str, Any]], "Dict of parameter values."] = None,

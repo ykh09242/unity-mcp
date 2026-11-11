@@ -6,7 +6,23 @@ from click.testing import CliRunner
 import pytest
 
 
-@pytest.mark.parametrize("name", ["unity_reflect", "manage_terrain"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "unity_reflect",
+        "manage_terrain",
+        "manage_addressables",
+        "manage_animation",
+        "manage_build",
+        "manage_camera",
+        "manage_graphics",
+        "manage_packages",
+        "manage_probuilder",
+        "manage_profiler",
+        "manage_vfx",
+        "unity_docs",
+    ],
+)
 def test_search_uses_real_action_declarations(name):
     from importlib import import_module
 
@@ -20,6 +36,23 @@ def test_search_uses_real_action_declarations(name):
     assert result["actions"] == list(module.ALL_ACTIONS)
     assert result["actions"]
     assert result["readiness"] == "unobserved"
+
+
+def test_real_imported_catalog_keeps_matching_action_beyond_description_clip():
+    from pathlib import Path
+
+    import services.tools as tools_package
+    from services.registry import get_registered_tools
+    from services.registry.task_search import SearchRequest, search_catalog
+    from utils.module_discovery import discover_modules
+
+    list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
+    result = search_catalog(SearchRequest(query="memory_analyze_snapshots"), get_registered_tools())
+    profiler = next(item for item in result["results"] if item["name"] == "manage_profiler")
+
+    assert "memory_analyze_snapshots" not in profiler["description"]
+    assert "memory_analyze_snapshots" in profiler["actions"]
+    assert len(profiler["description"]) <= 1200
 
 
 @pytest.mark.parametrize(
@@ -95,6 +128,8 @@ def test_navigation_discovery_preserves_status_listing_without_job_id():
             "get_type",
         ),
         ("manage_terrain", {"action": "GET_INFO", "target": "123"}, "get_info"),
+        ("manage_profiler", {"action": "PING"}, "ping"),
+        ("manage_packages", {"action": "STATUS"}, "status"),
     ],
 )
 async def test_declared_action_metadata_preserves_legacy_wire_arguments(
