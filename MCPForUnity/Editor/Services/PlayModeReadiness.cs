@@ -222,7 +222,7 @@ namespace MCPForUnity.Editor.Services
         {
             if (_readinessOverride != null)
                 return _readinessOverride();
-            if (!_job.entered || !EditorApplication.isPlaying || EditorApplication.isCompiling || EditorApplication.isUpdating)
+            if (!_job.entered || !EditorApplication.isPlaying || EditorStateCache.GetActualIsCompiling() || EditorApplication.isUpdating)
                 return false;
             Scene active = SceneManager.GetActiveScene();
             return active.IsValid() && active.isLoaded && (_job.wait_until != "first_frame" || Time.frameCount > _job.entry_frame);
