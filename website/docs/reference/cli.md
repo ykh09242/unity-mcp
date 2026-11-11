@@ -15,9 +15,9 @@ This page is authored, not the generated MCP tool schema. Follow [CLI setup](../
 | Executable | Purpose |
 |---|---|
 | `mcp-for-unity` | Run the Python MCP server; accepts server transport/bind/auth flags. |
-| `unity-mcp` | Send Editor-control commands to an already-running local HTTP server. |
+| `unity-mcp` | Send Editor commands and source-quality workflows to an already-running server. |
 
-They are **not aliases for one another**. Both are installed from the matching immutable `mcpServerSource`; neither should implicitly install an upstream PyPI distribution. Stdio and hosted HTTP do not provide the local REST interface used by `unity-mcp`.
+They are **not aliases for one another**. Both are installed from the matching immutable `mcpServerSource`; neither should implicitly install an upstream PyPI distribution. Most `unity-mcp` commands use the local REST interface, which stdio and hosted HTTP do not provide. The source-quality commands described below use public MCP composition.
 
 ## Global CLI options
 
@@ -36,7 +36,7 @@ Place global options before subcommands. HTTP tokens are discovered automaticall
 
 ## Command groups
 
-Registered groups include `instance`, `scene`, `scene_edit`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `play_scenario`, `scenario_recording`, `prefab`, `material`, `lighting`, `animation`, `sprite`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `doctor`, `physics`, `profiler`, `project_auditor`, `tool`, and `custom_tool`. Optional module-load failures can change available groups; installed help is authoritative.
+Registered groups include `instance`, `scene`, `scene_edit`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `play_scenario`, `scenario_recording`, `prefab`, `material`, `lighting`, `animation`, `sprite`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `doctor`, `physics`, `profiler`, `project_auditor`, `verification`, `tool`, and `custom_tool`. Optional module-load failures can change available groups; installed help is authoritative.
 
 CLI verbs/flags are not automatically generated from MCP tool parameters. Use exact help:
 
@@ -57,6 +57,14 @@ The `scenario_recording` and `scene_edit` registrations are exposed as `scenario
 The `project_auditor` registration is exposed as `project-auditor`. Its experimental [Project Auditor tool](./tools/profiling/manage_project_auditor.md) requires the optional installed Project Auditor 1.0.1 package and compatible rules. `availability` checks those prerequisites without starting analysis. `start` explicitly begins analysis of the current build target and may compile Player code; retain its audit identity and use `status` after an uncertain response. `issues` reads bounded completed-result pages with `--page-size` from 1 to 100 (default 50) and the returned `--cursor`. Inspect `unity-mcp project-auditor --help` for the exact command syntax.
 
 ## Output and failures
+
+`script quality` and `verification` use the public MCP server to retain analysis,
+baseline and report identities. Select an exact `--instance` and explicitly use
+`--no-project-context`: the HTTP project-root guard is unavailable on this surface
+and a configured guard is refused. Inspect `unity-mcp script quality --help` and
+`unity-mcp verification --help` for actions and bounded JSON options. See the
+[script diagnostics](./tools/testing/manage_script_quality.md) and
+[verification](./tools/testing/manage_verification.md) tool references.
 
 JSON mode emits a machine-readable stdout document; diagnostics belong on stderr. Explicit Unity failures return nonzero status and preserve native diagnostic payloads. Check child results/jobs as well as the outer response. A timeout after dispatch does not prove cancellation: inspect state before retrying writes.
 
