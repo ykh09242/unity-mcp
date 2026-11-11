@@ -345,15 +345,11 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             var host = new Host();
             int captures = 0;
             PlayScenarioStep capturedStep = null;
-            var engine = new PlayScenarioEngine(
-                PlayScenarioEngine.Create(Definition(), new string('d', 32), 1, 1, 1000),
-                host,
-                (_, step, __) =>
-                {
-                    captures++;
-                    capturedStep = step;
-                }
-            );
+            var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(Definition(), new string('d', 32), 1, 1, 1000), host, (_, step, __) =>
+            {
+                captures++;
+                capturedStep = step;
+            });
             engine.State.PlayRequested = playRequested;
             engine.Tick(2000, false);
             Assert.That(engine.State.Status, Is.EqualTo("timed_out"));
@@ -492,14 +488,11 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 },
             };
             int captures = 0;
-            var engine = LifecycleEngine(
-                host,
-                onFailure: (_, step, __) =>
-                {
-                    captures++;
-                    events.Add("Snapshot " + step.Name);
-                }
-            );
+            var engine = LifecycleEngine(host, onFailure: (_, step, __) =>
+            {
+                captures++;
+                events.Add("Snapshot " + step.Name);
+            });
             for (long now = 1000; engine.Running && now < 10000; now += 250)
                 engine.Tick(now, true);
             CollectionAssert.AreEqual(new[] { "Reset", "Main", "Snapshot Main", "Cleanup one", "Cleanup two" }, events);
@@ -708,18 +701,13 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             };
             PlayScenarioEngine engine = null;
             long clock = 1000;
-            engine = LifecycleEngine(
-                host,
-                definition,
-                repeat: repeats,
-                onEvaluationCompleted: () =>
-                {
-                    if (!pendingError)
-                        return;
-                    pendingError = false;
-                    engine.ObserveUnexpectedError("final cleanup emitted Error", clock);
-                }
-            );
+            engine = LifecycleEngine(host, definition, repeat: repeats, onEvaluationCompleted: () =>
+            {
+                if (!pendingError)
+                    return;
+                pendingError = false;
+                engine.ObserveUnexpectedError("final cleanup emitted Error", clock);
+            });
             for (; engine.Running && clock < 10000; clock += 250)
                 engine.Tick(clock, true);
 
@@ -1046,18 +1034,14 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                     pendingError = true;
                 return new PlayScenarioObservation(true, "ready");
             };
-            engine = LifecycleEngine(
-                host,
-                repeat: 3,
-                onEvaluationCompleted: () =>
+            engine = LifecycleEngine(host, repeat: 3, onEvaluationCompleted: () =>
+            {
+                if (pendingError)
                 {
-                    if (pendingError)
-                    {
-                        pendingError = false;
-                        engine.ObserveUnexpectedError("second final cleanup log", now);
-                    }
+                    pendingError = false;
+                    engine.ObserveUnexpectedError("second final cleanup log", now);
                 }
-            );
+            });
             for (; engine.Running && now < 20000; now += 250)
                 engine.Tick(now, true);
             AssertLedger(engine.State, "passed", "failed", "skipped");

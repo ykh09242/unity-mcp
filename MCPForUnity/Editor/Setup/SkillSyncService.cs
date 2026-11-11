@@ -96,35 +96,24 @@ namespace MCPForUnity.Editor.Setup
 
         public static void SyncAsync(string repoUrl, string installDir, string branch, Action<string> log, Action<SyncResult> onComplete)
         {
-            PreviewAsync(
-                repoUrl,
-                installDir,
-                branch,
-                log,
-                preview =>
-                {
-                    if (!preview.Success)
-                        onComplete?.Invoke(new SyncResult { Error = preview.Error });
-                    else
-                        ApplyAsync(preview, log, onComplete);
-                }
-            );
+            PreviewAsync(repoUrl, installDir, branch, log, preview =>
+            {
+                if (!preview.Success)
+                    onComplete?.Invoke(new SyncResult { Error = preview.Error });
+                else
+                    ApplyAsync(preview, log, onComplete);
+            });
         }
 
         public static void SyncSourceAsync(SkillSyncSource source, string installDir, Action<string> log, Action<SyncResult> onComplete)
         {
-            PreviewSourceAsync(
-                source,
-                installDir,
-                log,
-                preview =>
-                {
-                    if (!preview.Success)
-                        onComplete?.Invoke(new SyncResult { Error = preview.Error });
-                    else
-                        ApplyAsync(preview, log, onComplete);
-                }
-            );
+            PreviewSourceAsync(source, installDir, log, preview =>
+            {
+                if (!preview.Success)
+                    onComplete?.Invoke(new SyncResult { Error = preview.Error });
+                else
+                    ApplyAsync(preview, log, onComplete);
+            });
         }
 
         public static void PreviewAsync(string repoUrl, string installDir, string branch, Action<string> log, Action<SyncPreview> onComplete)
@@ -256,8 +245,7 @@ namespace MCPForUnity.Editor.Setup
                 throw new InvalidOperationException("The skill ownership marker is invalid.");
             if (baseline == null && !markerExists && local.Count > 0 && !local.Keys.Contains("SKILL.md", StringComparer.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Install Dir is not an empty or existing skill folder.");
-            var previous =
-                baseline?.files.ToDictionary(file => file.path, file => file.hash, StringComparer.OrdinalIgnoreCase)
+            var previous = baseline?.files.ToDictionary(file => file.path, file => file.hash, StringComparer.OrdinalIgnoreCase)
                 ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var plan = BuildPlanWithBaseline(remote.Files, local, previous, StringComparer.OrdinalIgnoreCase);
             plan.ExpectedDirectories = DirectorySnapshot(root);
@@ -298,33 +286,26 @@ namespace MCPForUnity.Editor.Setup
             Func<string, long, byte[]> download,
             Action<string> log,
             SkillSyncWaitBudget budget
-        ) =>
-            ApplyPreview(
-                preview,
-                fetchSnapshot,
-                download,
-                log,
-                () =>
+        ) => ApplyPreview(preview, fetchSnapshot, download, log, () =>
+            {
+                budget?.ThrowIfCancellationRequested();
+                if (preview?.Source?.IsPackagePinned == true)
                 {
-                    budget?.ThrowIfCancellationRequested();
-                    if (preview?.Source?.IsPackagePinned == true)
+                    SkillSyncSource current;
+                    try
                     {
-                        SkillSyncSource current;
-                        try
-                        {
-                            current = readInstalled();
-                        }
-                        catch (Exception error)
-                        {
-                            throw new InvalidOperationException(
-                                "The installed package selection could not be re-read. Preview again before applying. " + error.Message,
-                                error
-                            );
-                        }
-                        preview.Source.RequireCurrentSelection(current);
+                        current = readInstalled();
                     }
+                    catch (Exception error)
+                    {
+                        throw new InvalidOperationException(
+                            "The installed package selection could not be re-read. Preview again before applying. " + error.Message,
+                            error
+                        );
+                    }
+                    preview.Source.RequireCurrentSelection(current);
                 }
-            );
+            });
 
         private static SkillSyncSource ReadInstalledWithBudget(SkillSyncWaitBudget budget) =>
             budget.Read(() =>

@@ -27,23 +27,20 @@ internal static class CancellationSocketHarness
         int starts = 0,
             settles = 0,
             mutations = 0;
-        handlers[name] = HandlerInfo.Cooperative(
-            name,
-            async (_, token) =>
+        handlers[name] = HandlerInfo.Cooperative(name, async (_, token) =>
+        {
+            Interlocked.Increment(ref starts);
+            try
             {
-                Interlocked.Increment(ref starts);
-                try
-                {
-                    await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
-                    return null;
-                }
-                finally
-                {
-                    await cleanup.Task.ConfigureAwait(true);
-                    Interlocked.Increment(ref settles);
-                }
+                await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
+                return null;
             }
-        );
+            finally
+            {
+                await cleanup.Task.ConfigureAwait(true);
+                Interlocked.Increment(ref settles);
+            }
+        });
         handlers[mutation] = new HandlerInfo(
             mutation,
             _ =>

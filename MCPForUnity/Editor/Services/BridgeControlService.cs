@@ -34,8 +34,7 @@ namespace MCPForUnity.Editor.Services
             bool handshakeValid = handshakeOverride ?? (mode == TransportMode.Stdio ? state.IsConnected : true);
             string transportLabel = string.IsNullOrWhiteSpace(state.TransportName) ? mode.ToString().ToLowerInvariant() : state.TransportName;
             string detailSuffix = string.IsNullOrWhiteSpace(state.Details) ? string.Empty : $" [{state.Details}]";
-            string message =
-                messageOverride
+            string message = messageOverride
                 ?? state.Error
                 ?? (state.IsConnected ? $"Transport '{transportLabel}' connected{detailSuffix}" : $"Transport '{transportLabel}' disconnected{detailSuffix}");
 

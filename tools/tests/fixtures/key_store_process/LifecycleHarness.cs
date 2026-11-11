@@ -25,108 +25,87 @@ internal static class LifecycleHarness
         };
         foreach (var action in actions)
         {
-            Check(
-                action.Name + " reaps timed-out children",
-                () =>
-                {
-                    FakeProcess.Completes = false;
-                    for (int i = 0; i < 100; i++)
-                    {
-                        bool refused = false;
-                        try
-                        {
-                            action.Action();
-                        }
-                        catch (InvalidOperationException error)
-                            when (action.Name.EndsWith(" delete") && error.Message.StartsWith("Credential removal could not be confirmed."))
-                        {
-                            refused = true;
-                        }
-                        Require(refused == action.Name.EndsWith(" delete"), "Delete timeout did not report unconfirmed removal");
-                    }
-                    int alive = FakeProcess.All.FindAll(p => p.Running).Count;
-                    Console.WriteLine("TIMEOUT " + action.Name + ": alive=" + alive);
-                    Require(FakeProcess.All.Count == 100, "Not all timeout attempts executed");
-                    Require(alive == 0, "Timed-out child processes survived disposal");
-                    Require(FakeProcess.All.TrueForAll(p => p.Disposed), "Process handle was not disposed");
-                    Require(FakeProcess.All.TrueForAll(p => p.StreamsDisposed), "Exposed streams were not disposed");
-                }
-            );
-        }
-        Check(
-            "linux success preserves value, exit checks and stdin",
-            () =>
-            {
-                FakeProcess.Completes = true;
-                FakeProcess.Output = " fixture-value \r\n";
-                var store = new LinuxSecretToolKeyStore();
-                Require(store.TryGet("fixture", out string value) && value == " fixture-value ", "Value changed");
-                store.Set("fixture", "fixture-input");
-                Require(FakeProcess.All[^1].InputValue == "fixture-input", "stdin changed");
-                Require(FakeProcess.All.TrueForAll(p => p.Kills == 0 && p.Disposed), "Successful child was killed or not disposed");
-                FakeProcess.ExitStatus = 9;
-                Require(!store.TryGet("fixture", out _), "Nonzero exit was accepted");
-            }
-        );
-        Check(
-            "mac success preserves value and structured arguments",
-            () =>
-            {
-                FakeProcess.Completes = true;
-                FakeProcess.Output = " fixture-value \n";
-                var store = new MacKeychainKeyStore();
-                Require(store.TryGet("fixture", out string value) && value == " fixture-value ", "Value changed");
-                store.Set("fixture", "fixture-input");
-                Require(FakeProcess.All[^1].StartInfo.ArgumentList.Contains("fixture-input"), "Argument value changed");
-                Require(FakeProcess.All.TrueForAll(p => p.Kills == 0 && p.Disposed), "Successful child was killed or not disposed");
-                FakeProcess.ExitStatus = 9;
-                Require(!store.TryGet("fixture", out _), "Nonzero exit was accepted");
-            }
-        );
-        Check(
-            "read paths drain stdout and stderr asynchronously",
-            () =>
-            {
-                FakeProcess.Completes = true;
-                FakeProcess.ForbidSynchronousRead = true;
-                Require(new LinuxSecretToolKeyStore().TryGet("fixture", out _), "Linux used blocking pipe read");
-                Require(new MacKeychainKeyStore().TryGet("fixture", out _), "macOS used blocking pipe read");
-                Require(FakeProcess.All.TrueForAll(p => p.AsyncReads == 2), "Both pipes were not drained");
-            }
-        );
-        Check(
-            "completed commands release every exposed stream",
-            () =>
-            {
-                foreach (var action in actions)
-                    action.Action();
-                Require(FakeProcess.All.TrueForAll(p => p.StreamsDisposed), "Completed command retained an exposed stream");
-            }
-        );
-        Check(
-            "pending output and input tasks finish when timeout closes pipes",
-            () =>
+            Check(action.Name + " reaps timed-out children", () =>
             {
                 FakeProcess.Completes = false;
-                FakeProcess.PendingReads = true;
-                FakeProcess.PendingWrite = true;
+                for (int i = 0; i < 100; i++)
+                {
+                    bool refused = false;
+                    try
+                    {
+                        action.Action();
+                    }
+                    catch (InvalidOperationException error)
+                        when (action.Name.EndsWith(" delete") && error.Message.StartsWith("Credential removal could not be confirmed."))
+                    {
+                        refused = true;
+                    }
+                    Require(refused == action.Name.EndsWith(" delete"), "Delete timeout did not report unconfirmed removal");
+                }
+                int alive = FakeProcess.All.FindAll(p => p.Running).Count;
+                Console.WriteLine("TIMEOUT " + action.Name + ": alive=" + alive);
+                Require(FakeProcess.All.Count == 100, "Not all timeout attempts executed");
+                Require(alive == 0, "Timed-out child processes survived disposal");
+                Require(FakeProcess.All.TrueForAll(p => p.Disposed), "Process handle was not disposed");
+                Require(FakeProcess.All.TrueForAll(p => p.StreamsDisposed), "Exposed streams were not disposed");
+            });
+        }
+        Check("linux success preserves value, exit checks and stdin", () =>
+        {
+            FakeProcess.Completes = true;
+            FakeProcess.Output = " fixture-value \r\n";
+            var store = new LinuxSecretToolKeyStore();
+            Require(store.TryGet("fixture", out string value) && value == " fixture-value ", "Value changed");
+            store.Set("fixture", "fixture-input");
+            Require(FakeProcess.All[^1].InputValue == "fixture-input", "stdin changed");
+            Require(FakeProcess.All.TrueForAll(p => p.Kills == 0 && p.Disposed), "Successful child was killed or not disposed");
+            FakeProcess.ExitStatus = 9;
+            Require(!store.TryGet("fixture", out _), "Nonzero exit was accepted");
+        });
+        Check("mac success preserves value and structured arguments", () =>
+        {
+            FakeProcess.Completes = true;
+            FakeProcess.Output = " fixture-value \n";
+            var store = new MacKeychainKeyStore();
+            Require(store.TryGet("fixture", out string value) && value == " fixture-value ", "Value changed");
+            store.Set("fixture", "fixture-input");
+            Require(FakeProcess.All[^1].StartInfo.ArgumentList.Contains("fixture-input"), "Argument value changed");
+            Require(FakeProcess.All.TrueForAll(p => p.Kills == 0 && p.Disposed), "Successful child was killed or not disposed");
+            FakeProcess.ExitStatus = 9;
+            Require(!store.TryGet("fixture", out _), "Nonzero exit was accepted");
+        });
+        Check("read paths drain stdout and stderr asynchronously", () =>
+        {
+            FakeProcess.Completes = true;
+            FakeProcess.ForbidSynchronousRead = true;
+            Require(new LinuxSecretToolKeyStore().TryGet("fixture", out _), "Linux used blocking pipe read");
+            Require(new MacKeychainKeyStore().TryGet("fixture", out _), "macOS used blocking pipe read");
+            Require(FakeProcess.All.TrueForAll(p => p.AsyncReads == 2), "Both pipes were not drained");
+        });
+        Check("completed commands release every exposed stream", () =>
+        {
+            foreach (var action in actions)
+                action.Action();
+            Require(FakeProcess.All.TrueForAll(p => p.StreamsDisposed), "Completed command retained an exposed stream");
+        });
+        Check("pending output and input tasks finish when timeout closes pipes", () =>
+        {
+            FakeProcess.Completes = false;
+            FakeProcess.PendingReads = true;
+            FakeProcess.PendingWrite = true;
+            new LinuxSecretToolKeyStore().Set("fixture", "fixture-input");
+            var process = FakeProcess.All[^1];
+            Require(!process.Running && process.Disposed && process.StreamsDisposed, "Timed-out IO retained owned resources");
+            Require(process.IO.TrueForAll(task => task.IsCompleted), "Pipe tasks remained pending after disposal");
+        });
+        foreach (string stage in new[] { "start", "getter", "read", "write", "dispose" })
+            Check(stage + " exception releases all acquired resources", () =>
+            {
+                FakeProcess.FailureStage = stage;
                 new LinuxSecretToolKeyStore().Set("fixture", "fixture-input");
                 var process = FakeProcess.All[^1];
-                Require(!process.Running && process.Disposed && process.StreamsDisposed, "Timed-out IO retained owned resources");
-                Require(process.IO.TrueForAll(task => task.IsCompleted), "Pipe tasks remained pending after disposal");
-            }
-        );
-        foreach (string stage in new[] { "start", "getter", "read", "write", "dispose" })
-            Check(
-                stage + " exception releases all acquired resources",
-                () =>
-                {
-                    FakeProcess.FailureStage = stage;
-                    new LinuxSecretToolKeyStore().Set("fixture", "fixture-input");
-                    var process = FakeProcess.All[^1];
-                    Require(!process.Running && process.Disposed && process.StreamsDisposed, "Exception bypassed owned resource cleanup");
-                }
-            );
+                Require(!process.Running && process.Disposed && process.StreamsDisposed, "Exception bypassed owned resource cleanup");
+            });
         Console.WriteLine("RESULT: " + (checks - failures) + "/" + checks + " passed");
         return failures == 0 ? 0 : 1;
     }

@@ -248,18 +248,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 }
 
                 saveAttempted = true;
-                if (
-                    !CreatePrefabAsset(
-                        sourceObject,
-                        finalPath,
-                        replaceExisting,
-                        () =>
-                        {
-                            materials.Commit();
-                            folders.Complete();
-                        }
-                    )
-                )
+                if (!CreatePrefabAsset(sourceObject, finalPath, replaceExisting, () =>
+                    {
+                        materials.Commit();
+                        folders.Complete();
+                    }))
                 {
                     return new ErrorResponse(
                         $"Failed to create prefab asset at '{finalPath}'."
@@ -813,17 +806,14 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             string revision = GetHierarchyRevision(sanitizedPath);
             var state = HierarchyPaging.Resume(options, "prefab:" + sanitizedPath, revision);
             cancellationToken.ThrowIfCancellationRequested();
-            return ReadLoadedPrefab(
-                sanitizedPath,
-                prefabContents =>
-                {
-                    var data = BuildHierarchyPage(prefabContents.transform, sanitizedPath, options, state, cancellationToken);
-                    if (revision != GetHierarchyRevision(sanitizedPath))
-                        return new ErrorResponse("stale_cursor: prefab source changed during the read; restart.");
-                    cancellationToken.ThrowIfCancellationRequested();
-                    return new SuccessResponse("Successfully retrieved a bounded prefab hierarchy page.", data);
-                }
-            );
+            return ReadLoadedPrefab(sanitizedPath, prefabContents =>
+            {
+                var data = BuildHierarchyPage(prefabContents.transform, sanitizedPath, options, state, cancellationToken);
+                if (revision != GetHierarchyRevision(sanitizedPath))
+                    return new ErrorResponse("stale_cursor: prefab source changed during the read; restart.");
+                cancellationToken.ThrowIfCancellationRequested();
+                return new SuccessResponse("Successfully retrieved a bounded prefab hierarchy page.", data);
+            });
         }
 
         private static object ReadLoadedPrefab(string sanitizedPath, Func<GameObject, object> read)

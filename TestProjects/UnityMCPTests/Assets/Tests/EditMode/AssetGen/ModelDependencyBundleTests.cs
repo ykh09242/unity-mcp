@@ -608,18 +608,11 @@ namespace MCPForUnityTests.Editor.AssetGen
             string source = PlannerBundle();
             BundlePlan plan = ModelDependencyBundle.Plan(source);
             byte[][] original = plan.Entries.Select(e => File.ReadAllBytes(e.AbsolutePath)).ToArray();
-            BundleImportException error = Assert.Throws<BundleImportException>(() =>
-                ModelDependencyBundle.Stage(
-                    plan,
-                    outputRoot,
-                    "copy",
-                    (ordinal, path) =>
-                    {
-                        if (ordinal == 1)
-                            throw new IOException("owned injected copy failure");
-                    }
-                )
-            );
+            BundleImportException error = Assert.Throws<BundleImportException>(() => ModelDependencyBundle.Stage(plan, outputRoot, "copy", (ordinal, path) =>
+                {
+                    if (ordinal == 1)
+                        throw new IOException("owned injected copy failure");
+                }));
             Assert.AreEqual("dependency_stage_failed", (string)error.Evidence["error_code"]);
             Assert.AreEqual("rolled_back", (string)error.Evidence["stage"]);
             Assert.AreEqual(0, (int)error.Evidence["staged_file_count"]);
@@ -652,21 +645,14 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             BundlePlan plan = ModelDependencyBundle.Plan(PlannerBundle());
             string collision = null;
-            BundleImportException error = Assert.Throws<BundleImportException>(() =>
-                ModelDependencyBundle.Stage(
-                    plan,
-                    outputRoot,
-                    "copy",
-                    (ordinal, path) =>
+            BundleImportException error = Assert.Throws<BundleImportException>(() => ModelDependencyBundle.Stage(plan, outputRoot, "copy", (ordinal, path) =>
+                {
+                    if (ordinal == 0)
                     {
-                        if (ordinal == 0)
-                        {
-                            collision = path;
-                            File.WriteAllText(path, "intervening owned file");
-                        }
+                        collision = path;
+                        File.WriteAllText(path, "intervening owned file");
                     }
-                )
-            );
+                }));
             Assert.AreEqual("dependency_stage_failed", (string)error.Evidence["error_code"]);
             Assert.AreEqual(0, (int)error.Evidence["staged_file_count"]);
             Assert.AreEqual(0, (long)error.Evidence["staged_bytes"]);
@@ -735,21 +721,14 @@ namespace MCPForUnityTests.Editor.AssetGen
             BundlePlan plan = ModelDependencyBundle.Plan(PlannerBundle());
             string metadata = null;
             string existing = "fileFormatVersion: 2\nguid: " + Guid.NewGuid().ToString("N") + "\n";
-            BundleImportException error = Assert.Throws<BundleImportException>(() =>
-                ModelDependencyBundle.Stage(
-                    plan,
-                    outputRoot,
-                    "copy",
-                    (ordinal, path) =>
+            BundleImportException error = Assert.Throws<BundleImportException>(() => ModelDependencyBundle.Stage(plan, outputRoot, "copy", (ordinal, path) =>
+                {
+                    if (ordinal == 0)
                     {
-                        if (ordinal == 0)
-                        {
-                            metadata = path + ".meta";
-                            File.WriteAllText(metadata, existing);
-                        }
+                        metadata = path + ".meta";
+                        File.WriteAllText(metadata, existing);
                     }
-                )
-            );
+                }));
             Assert.AreEqual("dependency_stage_failed", (string)error.Evidence["error_code"]);
             Assert.AreEqual(0, (int)error.Evidence["staged_file_count"]);
             Assert.AreEqual(0, (long)error.Evidence["staged_bytes"]);

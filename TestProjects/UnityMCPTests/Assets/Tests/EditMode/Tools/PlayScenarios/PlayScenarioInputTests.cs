@@ -344,10 +344,8 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 );
             var host = new Host();
             int captures = 0;
-            var engine = new PlayScenarioEngine(
-                PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000),
-                host,
-                onFailure: (run, step, now) => captures++
+            var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000), host, onFailure: (run, step, now) =>
+                captures++
             );
             engine.EnteredPlayMode();
             engine.Tick(1000, true);
@@ -467,10 +465,8 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             definition.CleanupSteps.Add(cleanup);
             var host = new Host();
             int captures = 0;
-            var engine = new PlayScenarioEngine(
-                PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000),
-                host,
-                onFailure: (run, step, now) => captures++
+            var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000), host, onFailure: (run, step, now) =>
+                captures++
             );
             engine.EnteredPlayMode();
             engine.Tick(1000, true);

@@ -91,14 +91,11 @@ namespace MCPForUnityTests.EditMode.Windows
                 root.AddToClassList("mcp-editor");
                 AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(BasePath + "MCPForUnityEditorWindow.uxml").CloneTree(root);
                 string selected = "clients";
-                navigation = new McpWindowNavigation(
-                    root,
-                    id =>
-                    {
-                        selected = id;
-                        navigation.Select(id);
-                    }
-                );
+                navigation = new McpWindowNavigation(root, id =>
+                {
+                    selected = id;
+                    navigation.Select(id);
+                });
                 for (int i = 0; i < 12; i++)
                 {
                     window.Repaint();

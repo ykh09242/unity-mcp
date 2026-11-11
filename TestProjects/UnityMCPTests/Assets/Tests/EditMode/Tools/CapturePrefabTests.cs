@@ -78,21 +78,14 @@ namespace MCPForUnityTests.Editor.Tools
             Canvas.ForceUpdateCanvases();
             string before = EditorJsonUtility.ToJson(scaler);
             _sceneFixture.ClearDirtiness();
-            var captured = CapturePixels(
-                path,
-                "ui_canvas",
-                width,
-                height,
-                parent.GetInstanceIDCompat(),
-                data =>
-                {
-                    Assert.AreEqual("scene_parent", (string)data["ui_context"]["source"]);
-                    Assert.AreEqual(parent.GetInstanceIDCompat(), (int)data["ui_context"]["parent_instance_id"]);
-                    Assert.AreEqual(scale, (float)data["ui_context"]["scale_factor"]);
-                    Assert.AreEqual(128f, (float)data["ui_context"]["reference_resolution"]["x"]);
-                    Assert.AreEqual("full_viewport", (string)data["ui_context"]["framing"]);
-                }
-            );
+            var captured = CapturePixels(path, "ui_canvas", width, height, parent.GetInstanceIDCompat(), data =>
+            {
+                Assert.AreEqual("scene_parent", (string)data["ui_context"]["source"]);
+                Assert.AreEqual(parent.GetInstanceIDCompat(), (int)data["ui_context"]["parent_instance_id"]);
+                Assert.AreEqual(scale, (float)data["ui_context"]["scale_factor"]);
+                Assert.AreEqual(128f, (float)data["ui_context"]["reference_resolution"]["x"]);
+                Assert.AreEqual("full_viewport", (string)data["ui_context"]["framing"]);
+            });
             try
             {
                 RectInt bounds = PixelBounds(captured, IsRed);
@@ -125,19 +118,12 @@ namespace MCPForUnityTests.Editor.Tools
             Canvas.ForceUpdateCanvases();
             string before = EditorJsonUtility.ToJson(rect);
             _sceneFixture.ClearDirtiness();
-            var captured = CapturePixels(
-                path,
-                "ui_canvas",
-                256,
-                256,
-                parent.GetInstanceIDCompat(),
-                data =>
-                {
-                    Assert.AreEqual("rect_transform_snapshot", (string)data["ui_context"]["parent_layout"]);
-                    StringAssert.Contains("VerticalLayoutGroup", data["limitations"].ToString());
-                    StringAssert.Contains("Safe Area", data["limitations"].ToString());
-                }
-            );
+            var captured = CapturePixels(path, "ui_canvas", 256, 256, parent.GetInstanceIDCompat(), data =>
+            {
+                Assert.AreEqual("rect_transform_snapshot", (string)data["ui_context"]["parent_layout"]);
+                StringAssert.Contains("VerticalLayoutGroup", data["limitations"].ToString());
+                StringAssert.Contains("Safe Area", data["limitations"].ToString());
+            });
             try
             {
                 RectInt bounds = PixelBounds(captured, IsRed);
@@ -189,13 +175,8 @@ namespace MCPForUnityTests.Editor.Tools
             var image = parent.AddComponent(Type.GetType("UnityEngine.UI.Image, UnityEngine.UI"));
             SetUiProperty(image, "color", Color.green);
             _sceneFixture.ClearDirtiness();
-            var captured = CapturePixels(
-                path,
-                "ui_canvas",
-                256,
-                256,
-                parent.GetInstanceIDCompat(),
-                data => StringAssert.Contains("UnityEngine.UI.Image", data["limitations"].ToString())
+            var captured = CapturePixels(path, "ui_canvas", 256, 256, parent.GetInstanceIDCompat(), data =>
+                StringAssert.Contains("UnityEngine.UI.Image", data["limitations"].ToString())
             );
             try
             {
@@ -261,18 +242,12 @@ namespace MCPForUnityTests.Editor.Tools
                 PrefabUtility.UnloadPrefabContents(asset);
             }
             _sceneFixture.ClearDirtiness();
-            var captured = CapturePixels(
-                path,
-                "ui_canvas",
-                128,
-                128,
-                inspect: data =>
-                {
-                    Assert.AreEqual("WorldSpace", (string)data["ui_context"]["scale_mode"]);
-                    Assert.AreEqual(2f, (float)data["ui_context"]["scale_factor"]);
-                    StringAssert.Contains("World Space", data["limitations"].ToString());
-                }
-            );
+            var captured = CapturePixels(path, "ui_canvas", 128, 128, inspect: data =>
+            {
+                Assert.AreEqual("WorldSpace", (string)data["ui_context"]["scale_mode"]);
+                Assert.AreEqual(2f, (float)data["ui_context"]["scale_factor"]);
+                StringAssert.Contains("World Space", data["limitations"].ToString());
+            });
             Object.DestroyImmediate(captured);
         }
 
@@ -281,18 +256,12 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string path = CreatePanelPrefab();
             _sceneFixture.ClearDirtiness();
-            var captured = CapturePixels(
-                path,
-                "ui_canvas",
-                128,
-                128,
-                inspect: data =>
-                {
-                    Assert.AreEqual("default_canvas", (string)data["ui_context"]["source"]);
-                    Assert.AreEqual(1f, (float)data["ui_context"]["scale_factor"]);
-                    StringAssert.Contains("1x", data["limitations"].ToString());
-                }
-            );
+            var captured = CapturePixels(path, "ui_canvas", 128, 128, inspect: data =>
+            {
+                Assert.AreEqual("default_canvas", (string)data["ui_context"]["source"]);
+                Assert.AreEqual(1f, (float)data["ui_context"]["scale_factor"]);
+                StringAssert.Contains("1x", data["limitations"].ToString());
+            });
             Object.DestroyImmediate(captured);
         }
 

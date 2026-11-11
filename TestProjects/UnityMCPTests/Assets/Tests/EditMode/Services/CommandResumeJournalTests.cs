@@ -369,15 +369,11 @@ namespace MCPForUnityTests.Editor.Services
         public void ConcurrentDuplicateDeliveryGrantsOnlyOneRuntimeClaim()
         {
             int claims = 0;
-            Parallel.For(
-                0,
-                16,
-                _ =>
-                {
-                    if (journal.Admit(Request(), "test", new JObject()).Ticket != null)
-                        System.Threading.Interlocked.Increment(ref claims);
-                }
-            );
+            Parallel.For(0, 16, _ =>
+            {
+                if (journal.Admit(Request(), "test", new JObject()).Ticket != null)
+                    System.Threading.Interlocked.Increment(ref claims);
+            });
             Assert.AreEqual(1, claims);
         }
 

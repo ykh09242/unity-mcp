@@ -44,17 +44,13 @@ namespace MCPForUnityTests.Editor.Helpers
             using var entered = new ManualResetEventSlim();
             using var release = new ManualResetEventSlim();
             var rows = new List<string>();
-            Create(
-                2,
-                256,
-                (line, error) =>
-                {
-                    entered.Set();
-                    release.Wait(TimeSpan.FromSeconds(5));
-                    lock (rows)
-                        rows.Add(line);
-                }
-            );
+            Create(2, 256, (line, error) =>
+            {
+                entered.Set();
+                release.Wait(TimeSpan.FromSeconds(5));
+                lock (rows)
+                    rows.Add(line);
+            });
             try
             {
                 Assert.IsTrue(Call<bool>("Enqueue", "first", false));

@@ -561,31 +561,16 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
         {
             var persistence = new PlayScenarioPlayerPersistence();
             var original = new IOException(new string('x', prefix) + "\U0001F680tail");
-            Assert.That(
-                Assert.Throws<IOException>(() =>
-                    persistence.Execute(
-                        "journal_append",
-                        2,
-                        () =>
-                        {
-                            throw original;
-                        }
-                    )
-                ),
-                Is.SameAs(original)
-            );
+            Assert.That(Assert.Throws<IOException>(() => persistence.Execute("journal_append", 2, () =>
+                    {
+                        throw original;
+                    })), Is.SameAs(original));
             JObject first = persistence.Diagnostic;
             foreach (string stage in new[] { "iteration_report", "report_retention", "checkpoint_replace", "journal_verify", "final_report" })
-                Assert.Throws<IOException>(() =>
-                    persistence.Execute(
-                        stage,
-                        3,
-                        () =>
-                        {
-                            throw new IOException("secondary failure");
-                        }
-                    )
-                );
+                Assert.Throws<IOException>(() => persistence.Execute(stage, 3, () =>
+                    {
+                        throw new IOException("secondary failure");
+                    }));
             Assert.That(JToken.DeepEquals(first, persistence.Diagnostic), Is.True);
             first["stage"] = "caller mutation";
             Assert.That((string)persistence.Diagnostic["stage"], Is.EqualTo("journal_append"));

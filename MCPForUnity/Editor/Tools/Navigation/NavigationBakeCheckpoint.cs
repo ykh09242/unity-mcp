@@ -42,8 +42,7 @@ namespace MCPForUnity.Editor.Tools.Navigation
                     else
                     {
                         job["state"] = "interrupted";
-                        job["detail"] =
-                            job["resume_refusal"]?.ToString()
+                        job["detail"] = job["resume_refusal"]?.ToString()
                             ?? "Native completion or safe unstarted target identity is unconfirmed; no bake resumed. Inspect surface data before another bake.";
                     }
                 }

@@ -50,16 +50,11 @@ namespace MCPForUnityTests.Editor.Services
             bool secondStarted = false;
             Assert.IsNull(owner.TryStart("first", _ => active.Task));
             Assert.AreEqual("Duplicate command id", owner.TryStart("first", _ => Task.CompletedTask));
-            Assert.IsNull(
-                owner.TryStart(
-                    "second",
-                    async previous =>
-                    {
-                        await previous.ConfigureAwait(false);
-                        secondStarted = true;
-                    }
-                )
-            );
+            Assert.IsNull(owner.TryStart("second", async previous =>
+                {
+                    await previous.ConfigureAwait(false);
+                    secondStarted = true;
+                }));
             Assert.AreEqual("Command queue is full", owner.TryStart("third", _ => Task.CompletedTask));
             Assert.IsFalse(secondStarted);
             active.SetResult(true);
@@ -390,15 +385,11 @@ namespace MCPForUnityTests.Editor.Services
             var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
             var previous = handlers[name];
             var observed = new System.Collections.Generic.List<JToken>();
-            handlers[name] = new HandlerInfo(
-                name,
-                null,
-                parameters =>
-                {
-                    observed.Add(parameters["text"].DeepClone());
-                    return Task.FromResult<object>(new { text = (string)parameters["text"] });
-                }
-            );
+            handlers[name] = new HandlerInfo(name, null, parameters =>
+            {
+                observed.Add(parameters["text"].DeepClone());
+                return Task.FromResult<object>(new { text = (string)parameters["text"] });
+            });
             try
             {
                 var typed = TransportCommandDispatcher.ExecuteCommandAsync(

@@ -324,14 +324,11 @@ namespace MCPForUnity.Editor.Tools
             if (!background)
                 return new Observation { State = Describe(command) };
             var paths = new List<string>(2);
-            JObject before = Describe(
-                command,
-                path =>
-                {
-                    paths.Add(path);
-                    return string.Empty;
-                }
-            );
+            JObject before = Describe(command, path =>
+            {
+                paths.Add(path);
+                return string.Empty;
+            });
             if (paths.Count == 0)
                 return new Observation { State = before };
             string assetsRoot = Application.dataPath;

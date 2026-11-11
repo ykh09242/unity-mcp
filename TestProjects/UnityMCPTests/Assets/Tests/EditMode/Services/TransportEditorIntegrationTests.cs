@@ -162,25 +162,19 @@ namespace MCPForUnityTests.Editor.Services
             const string name = "__editor_qa_cancel";
             var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            Register(
-                name,
-                HandlerInfo.Cooperative(
-                    name,
-                    async (_, cancellationToken) =>
+            Register(name, HandlerInfo.Cooperative(name, async (_, cancellationToken) =>
+                {
+                    started.TrySetResult(true);
+                    try
                     {
-                        started.TrySetResult(true);
-                        try
-                        {
-                            await Task.Delay(System.Threading.Timeout.Infinite, cancellationToken);
-                            return new { unexpected = true };
-                        }
-                        finally
-                        {
-                            settled.TrySetResult(cancellationToken.IsCancellationRequested);
-                        }
+                        await Task.Delay(System.Threading.Timeout.Infinite, cancellationToken);
+                        return new { unexpected = true };
                     }
-                )
-            );
+                    finally
+                    {
+                        settled.TrySetResult(cancellationToken.IsCancellationRequested);
+                    }
+                }));
             int port = StartOwned();
             var peer = await StdioPeer.Connect(port, Token);
             var command = peer.Command(name, new JObject());
@@ -224,26 +218,19 @@ namespace MCPForUnityTests.Editor.Services
             var nextStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             bool legacySettled = false;
-            Register(
-                legacyName,
-                new HandlerInfo(
-                    legacyName,
-                    null,
-                    async _ =>
+            Register(legacyName, new HandlerInfo(legacyName, null, async _ =>
+                {
+                    started.TrySetResult(true);
+                    try
                     {
-                        started.TrySetResult(true);
-                        try
-                        {
-                            return await release.Task;
-                        }
-                        finally
-                        {
-                            legacySettled = true;
-                            settled.TrySetResult(true);
-                        }
+                        return await release.Task;
                     }
-                )
-            );
+                    finally
+                    {
+                        legacySettled = true;
+                        settled.TrySetResult(true);
+                    }
+                }));
             Register(
                 nextName,
                 new HandlerInfo(
@@ -327,25 +314,18 @@ namespace MCPForUnityTests.Editor.Services
             var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             int queuedInvocations = 0;
             var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            Register(
-                activeName,
-                new HandlerInfo(
-                    activeName,
-                    null,
-                    async _ =>
+            Register(activeName, new HandlerInfo(activeName, null, async _ =>
+                {
+                    started.TrySetResult(true);
+                    try
                     {
-                        started.TrySetResult(true);
-                        try
-                        {
-                            return await release.Task;
-                        }
-                        finally
-                        {
-                            settled.TrySetResult(true);
-                        }
+                        return await release.Task;
                     }
-                )
-            );
+                    finally
+                    {
+                        settled.TrySetResult(true);
+                    }
+                }));
             Register(
                 queuedName,
                 new HandlerInfo(
@@ -526,25 +506,19 @@ namespace MCPForUnityTests.Editor.Services
             const string name = "__editor_qa_ws_cancel";
             var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            Register(
-                name,
-                HandlerInfo.Cooperative(
-                    name,
-                    async (_, cancellationToken) =>
+            Register(name, HandlerInfo.Cooperative(name, async (_, cancellationToken) =>
+                {
+                    started.TrySetResult(true);
+                    try
                     {
-                        started.TrySetResult(true);
-                        try
-                        {
-                            await Task.Delay(Timeout.Infinite, cancellationToken);
-                            return new { unexpected = true };
-                        }
-                        finally
-                        {
-                            settled.TrySetResult(cancellationToken.IsCancellationRequested);
-                        }
+                        await Task.Delay(Timeout.Infinite, cancellationToken);
+                        return new { unexpected = true };
                     }
-                )
-            );
+                    finally
+                    {
+                        settled.TrySetResult(cancellationToken.IsCancellationRequested);
+                    }
+                }));
             using var peer = new OwnedWebSocketPeer(Token);
             using var client = OwnedWebSocket(peer);
             try
@@ -657,21 +631,14 @@ namespace MCPForUnityTests.Editor.Services
             var observed = new LiteralObservation();
             // This fixed compact JSON is the closed response oracle, independent of incoming token instances.
             var echo = ParseLiteralObject(LiteralPayloadJson);
-            Register(
-                LiteralCommand,
-                new HandlerInfo(
-                    LiteralCommand,
-                    null,
-                    parameters =>
-                    {
-                        observed.Invocations++;
-                        observed.Thread = Thread.CurrentThread.ManagedThreadId;
-                        Assert.AreEqual(mainThread, observed.Thread, "The authenticated wire request must reach the Editor dispatcher.");
-                        AssertLiteralPayload(parameters);
-                        return Task.FromResult<object>(echo.DeepClone());
-                    }
-                )
-            );
+            Register(LiteralCommand, new HandlerInfo(LiteralCommand, null, parameters =>
+                {
+                    observed.Invocations++;
+                    observed.Thread = Thread.CurrentThread.ManagedThreadId;
+                    Assert.AreEqual(mainThread, observed.Thread, "The authenticated wire request must reach the Editor dispatcher.");
+                    AssertLiteralPayload(parameters);
+                    return Task.FromResult<object>(echo.DeepClone());
+                }));
             return observed;
         }
 

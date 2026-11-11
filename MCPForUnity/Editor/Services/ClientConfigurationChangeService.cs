@@ -424,17 +424,11 @@ namespace MCPForUnity.Editor.Services
             GeneratedClientConfigOwnership.RestoreReceipt(format, target.Path, ownership);
             try
             {
-                Commit(
-                    target.Path,
-                    text,
-                    bom,
-                    expected,
-                    () =>
-                    {
-                        if (GeneratedClientConfigOwnership.Receipt(format, target.Path) != ownership)
-                            throw new McpConfigurationHelper.ConfigurationConflictException();
-                    }
-                );
+                Commit(target.Path, text, bom, expected, () =>
+                {
+                    if (GeneratedClientConfigOwnership.Receipt(format, target.Path) != ownership)
+                        throw new McpConfigurationHelper.ConfigurationConflictException();
+                });
             }
             catch
             {
@@ -450,19 +444,14 @@ namespace MCPForUnity.Editor.Services
                 throw new ConfigurationLimitException();
             ValidatePath(path);
             Directory.CreateDirectory(Path.GetDirectoryName(path));
-            McpConfigurationHelper.WriteGuardedConfiguration(
-                path,
-                (bom ? "\uFEFF" : "") + text,
-                expected,
-                () =>
-                {
-                    beforeCommitComparison?.Invoke();
-                    validateOwnership?.Invoke();
-                    if (readLock())
-                        throw new ConfigurationLockedException();
-                    ValidatePath(path);
-                }
-            );
+            McpConfigurationHelper.WriteGuardedConfiguration(path, (bom ? "\uFEFF" : "") + text, expected, () =>
+            {
+                beforeCommitComparison?.Invoke();
+                validateOwnership?.Invoke();
+                if (readLock())
+                    throw new ConfigurationLockedException();
+                ValidatePath(path);
+            });
         }
 
         private static ClientConfigurationPreview Refused(string code) =>

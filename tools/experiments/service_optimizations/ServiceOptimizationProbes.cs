@@ -27,8 +27,8 @@ namespace MCPForUnityTests.Editor.Performance
     // Optional isolated-project probe; never add this fixture to ordinary native CI selection.
     public class ServiceOptimizationProbes
     {
-        private static readonly string Output =
-            Environment.GetEnvironmentVariable("UNITY_MCP_OPTIMIZATION_OUTPUT") ?? Path.Combine(Application.temporaryCachePath, "McpServiceOptimizationProbes");
+        private static readonly string Output = Environment.GetEnvironmentVariable("UNITY_MCP_OPTIMIZATION_OUTPUT")
+            ?? Path.Combine(Application.temporaryCachePath, "McpServiceOptimizationProbes");
         private static readonly BindingFlags Instance = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
 
         private static void Save(string name, object value)
@@ -522,17 +522,11 @@ namespace MCPForUnityTests.Editor.Performance
                                         int ownedSlot = slot;
                                         ready[slot] = false;
                                         errors[slot] = false;
-                                        AsyncGPUReadback.RequestIntoNativeArray(
-                                            ref buffers[slot],
-                                            targets[slot],
-                                            0,
-                                            TextureFormat.RGBA32,
-                                            request =>
-                                            {
-                                                errors[ownedSlot] = request.hasError;
-                                                ready[ownedSlot] = true;
-                                            }
-                                        );
+                                        AsyncGPUReadback.RequestIntoNativeArray(ref buffers[slot], targets[slot], 0, TextureFormat.RGBA32, request =>
+                                        {
+                                            errors[ownedSlot] = request.hasError;
+                                            ready[ownedSlot] = true;
+                                        });
                                         pending[slot] = true;
                                         launched++;
                                     }

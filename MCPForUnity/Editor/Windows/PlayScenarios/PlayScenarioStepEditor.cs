@@ -206,19 +206,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 if (step.Performance == null)
                     return;
                 PlayScenarioPerformanceOptions options = step.Performance;
-                OptionalInteger(
-                    performanceFields,
-                    "Maximum duration (ms)",
-                    "stepMaxDuration" + index,
-                    options.MaxDurationMs,
-                    value => edit(() => options.MaxDurationMs = value)
+                OptionalInteger(performanceFields, "Maximum duration (ms)", "stepMaxDuration" + index, options.MaxDurationMs, value =>
+                    edit(() => options.MaxDurationMs = value)
                 );
-                OptionalInteger(
-                    performanceFields,
-                    "Maximum GC allocation per frame (bytes)",
-                    "stepMaxGc" + index,
-                    options.MaxGcAllocatedBytesPerFrame,
-                    value => edit(() => options.MaxGcAllocatedBytesPerFrame = value)
+                OptionalInteger(performanceFields, "Maximum GC allocation per frame (bytes)", "stepMaxGc" + index, options.MaxGcAllocatedBytesPerFrame, value =>
+                    edit(() => options.MaxGcAllocatedBytesPerFrame = value)
                 );
                 var frameEnabled = new Toggle("Maximum frame time p95 (ms)")
                 {
@@ -301,22 +293,19 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             var id = new TextField("State ID") { name = "stepStateId" + index, value = step.StateId ?? "" };
             id.RegisterValueChangedCallback(evt => edit(() => step.StateId = evt.newValue));
             card.Add(id);
-            var raw = StateValueDrafts.GetValue(
-                step,
-                value =>
+            var raw = StateValueDrafts.GetValue(step, value =>
+            {
+                JToken expected = value.StateEquals;
+                return new StateValueDraft
                 {
-                    JToken expected = value.StateEquals;
-                    return new StateValueDraft
-                    {
-                        Type =
-                            expected?.Type == JTokenType.Boolean ? "Boolean"
-                            : expected?.Type == JTokenType.Integer ? "Integer"
-                            : expected?.Type == JTokenType.Float ? "Number"
-                            : "String",
-                        Text = expected?.Type == JTokenType.String ? (string)expected : expected?.ToString(Formatting.None) ?? "",
-                    };
-                }
-            );
+                    Type =
+                        expected?.Type == JTokenType.Boolean ? "Boolean"
+                        : expected?.Type == JTokenType.Integer ? "Integer"
+                        : expected?.Type == JTokenType.Float ? "Number"
+                        : "String",
+                    Text = expected?.Type == JTokenType.String ? (string)expected : expected?.ToString(Formatting.None) ?? "",
+                };
+            });
             var types = new List<string> { "String", "Boolean", "Integer", "Number" };
             var type = new PopupField<string>("Value type", types, types.IndexOf(raw.Type)) { name = "stepStateType" + index };
             var valueField = new TextField("Expected value") { name = "stepStateValue" + index, value = raw.Text };
@@ -476,51 +465,45 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     })
                 );
                 fields.Add(target);
-                fields.Add(
-                    ActionButton(
-                        "Use Current Selection",
-                        "useSelection" + index,
-                        () =>
+                fields.Add(ActionButton("Use Current Selection", "useSelection" + index, () =>
+                    {
+                        var selected = Selection.activeGameObject;
+                        if (selected == null || !selected.scene.IsValid())
                         {
-                            var selected = Selection.activeGameObject;
-                            if (selected == null || !selected.scene.IsValid())
+                            setMessage("Select a scene GameObject first.", true);
+                            return;
+                        }
+                        string value;
+                        if (useId)
+                        {
+                            var marker = selected.GetComponent<MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget>();
+                            if (marker == null || string.IsNullOrEmpty(marker.TargetId))
                             {
-                                setMessage("Select a scene GameObject first.", true);
+                                setMessage(
+                                    "Selection needs a PlayScenarioTarget marker with a nonempty ID. Author the marker explicitly in the Inspector.",
+                                    true
+                                );
                                 return;
                             }
-                            string value;
-                            if (useId)
-                            {
-                                var marker = selected.GetComponent<MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget>();
-                                if (marker == null || string.IsNullOrEmpty(marker.TargetId))
-                                {
-                                    setMessage(
-                                        "Selection needs a PlayScenarioTarget marker with a nonempty ID. Author the marker explicitly in the Inspector.",
-                                        true
-                                    );
-                                    return;
-                                }
-                                value = marker.TargetId;
-                            }
-                            else
-                            {
-                                var names = new List<string>();
-                                for (Transform current = selected.transform; current != null; current = current.parent)
-                                    names.Add(current.name);
-                                names.Reverse();
-                                value = string.Join("/", names);
-                            }
-                            edit(() =>
-                            {
-                                if (useId)
-                                    step.TargetId = value;
-                                else
-                                    step.Target = value;
-                            });
-                            target.SetValueWithoutNotify(value);
+                            value = marker.TargetId;
                         }
-                    )
-                );
+                        else
+                        {
+                            var names = new List<string>();
+                            for (Transform current = selected.transform; current != null; current = current.parent)
+                                names.Add(current.name);
+                            names.Reverse();
+                            value = string.Join("/", names);
+                        }
+                        edit(() =>
+                        {
+                            if (useId)
+                                step.TargetId = value;
+                            else
+                                step.Target = value;
+                        });
+                        target.SetValueWithoutNotify(value);
+                    }));
             };
             selector.RegisterValueChangedCallback(evt =>
             {

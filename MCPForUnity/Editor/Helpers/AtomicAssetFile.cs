@@ -66,14 +66,11 @@ namespace MCPForUnity.Editor.Helpers
                 if (expectedDigest != null && observed != expectedDigest)
                     throw new IOException("Source changed since preparation; no bytes were replaced.");
                 string metadata = Metadata(path);
-                AtomicFilePublication.StageNew(
-                    Checked(stage),
-                    output =>
-                    {
-                        staged = true;
-                        output.Write(contents, 0, contents.Length);
-                    }
-                );
+                AtomicFilePublication.StageNew(Checked(stage), output =>
+                {
+                    staged = true;
+                    output.Write(contents, 0, contents.Length);
+                });
                 beforeCommit?.Invoke();
                 Checked(path);
                 if (Metadata(path) != metadata || (original != null ? DigestFile(path) != observed : File.Exists(path)))

@@ -201,15 +201,11 @@ namespace MCPForUnityTests.Editor.Services.Characterization
             {
                 EditorPrefs.SetString(EditorPrefKeys.HttpBaseUrl, "http://127.0.0.1:59982");
                 EditorConfigurationCache.Instance.Refresh();
-                var service = new ServerManagementService(
-                    null,
-                    pids,
-                    shutdownRequester: (_endpoint, _token) =>
-                    {
-                        requests++;
-                        return (true, null);
-                    }
-                );
+                var service = new ServerManagementService(null, pids, shutdownRequester: (_endpoint, _token) =>
+                {
+                    requests++;
+                    return (true, null);
+                });
                 Assert.IsFalse(service.StopLocalHttpServer());
                 Assert.AreEqual(0, requests);
                 StringAssert.Contains("no managed launch identity", service.LastStopFailure);

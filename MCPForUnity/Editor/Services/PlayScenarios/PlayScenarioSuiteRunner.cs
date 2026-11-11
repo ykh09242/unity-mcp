@@ -145,8 +145,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return;
             State.RequestedStatus = State.FirstFailureStatus != null && State.Report.Suite.FailurePolicy == "continue" ? "failed" : outcome;
             State.Report.Error = State.Report.Error ?? Bounded(error);
-            State.FinalizationDeadlineUnixMs =
-                State.FinalizationDeadlineUnixMs
+            State.FinalizationDeadlineUnixMs = State.FinalizationDeadlineUnixMs
                 ?? checked(now + (State.Cursor < State.Definitions.Count ? State.Definitions[State.Cursor].CleanupTimeoutSeconds : 0) * 1000L + 60000);
             checkpoint();
         }

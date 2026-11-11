@@ -905,28 +905,23 @@ namespace MCPForUnity.Editor.Windows
                     )
                 )
                     return;
-                RunDependencyAction(
-                    installAllButton,
-                    "Installing...",
-                    "Install All",
-                    async done =>
+                RunDependencyAction(installAllButton, "Installing...", "Install All", async done =>
+                {
+                    try
                     {
-                        try
-                        {
-                            if (
-                                !RoslynInstaller.IsInstalled()
-                                && Type.GetType("Microsoft.CodeAnalysis.CSharp.CSharpCompilation, Microsoft.CodeAnalysis.CSharp") == null
-                            )
-                                await RoslynInstaller.InstallAsync(interactive: false);
-                            BatchUpmAdd(SelectMissingPackages(selectedPackages, GetInstalledUpmVersions()), done);
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogError($"[MCP] Install failed: {ex.Message}");
-                            done();
-                        }
+                        if (
+                            !RoslynInstaller.IsInstalled()
+                            && Type.GetType("Microsoft.CodeAnalysis.CSharp.CSharpCompilation, Microsoft.CodeAnalysis.CSharp") == null
+                        )
+                            await RoslynInstaller.InstallAsync(interactive: false);
+                        BatchUpmAdd(SelectMissingPackages(selectedPackages, GetInstalledUpmVersions()), done);
                     }
-                );
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"[MCP] Install failed: {ex.Message}");
+                        done();
+                    }
+                });
             });
             installAllButton.text = "Install All";
             installAllButton.AddToClassList("action-button");
@@ -944,16 +939,11 @@ namespace MCPForUnity.Editor.Windows
                     )
                 )
                     return;
-                RunDependencyAction(
-                    uninstallAllButton,
-                    "Removing...",
-                    "Uninstall All",
-                    done =>
-                    {
-                        UninstallRoslyn();
-                        BatchUpmRemove(upmPackages, done);
-                    }
-                );
+                RunDependencyAction(uninstallAllButton, "Removing...", "Uninstall All", done =>
+                {
+                    UninstallRoslyn();
+                    BatchUpmRemove(upmPackages, done);
+                });
             });
             uninstallAllButton.text = "Uninstall All";
             uninstallAllButton.AddToClassList("action-button");
@@ -1125,15 +1115,8 @@ namespace MCPForUnity.Editor.Windows
             };
             var message = new Label { name = packageId + "-message", enableRichText = false };
             message.AddToClassList("help-text");
-            var row = AddDependencyRow(
-                parent,
-                name,
-                description,
-                present,
-                string.Empty,
-                "Not installed — choose a compatible or exact version",
-                null,
-                done => RemoveUpmPackage(packageId, done)
+            var row = AddDependencyRow(parent, name, description, present, string.Empty, "Not installed — choose a compatible or exact version", null, done =>
+                RemoveUpmPackage(packageId, done)
             );
             row.name = "dependency-" + packageId;
             var status = row.Q<Label>("dependency-status");
@@ -1168,56 +1151,41 @@ namespace MCPForUnity.Editor.Windows
             var lookupStatus = new Label("Find versions when needed; choosing one does not install it.") { name = packageId + "-lookup-status" };
             lookupStatus.AddToClassList("help-text");
             Button find = null;
-            find = new Button(() =>
-                RunDependencyAction(
-                    find,
-                    "Finding versions...",
-                    "Find compatible versions",
-                    done =>
+            find = new Button(() => RunDependencyAction(find, "Finding versions...", "Find compatible versions", done =>
+                {
+                    lookupStatus.text = "Looking up registry versions compatible with this Unity Editor...";
+                    try
                     {
-                        lookupStatus.text = "Looking up registry versions compatible with this Unity Editor...";
-                        try
+                        searchDependencyVersions(packageId, (versions, error) =>
                         {
-                            searchDependencyVersions(
-                                packageId,
-                                (versions, error) =>
-                                {
-                                    try
-                                    {
-                                        var valid = (versions ?? Array.Empty<string>())
-                                            .Where(version => TryGetExactPackageSelection(packageId, packageId + "@" + version, out _))
-                                            .Distinct()
-                                            .ToList();
-                                        choices.choices = new List<string> { "Choose a version" };
-                                        if (error == null)
-                                            choices.choices.AddRange(valid);
-                                        choices.SetValueWithoutNotify("Choose a version");
-                                        choices.SetEnabled(error == null && valid.Count > 0);
-                                        lookupStatus.text =
-                                            error != null ? "Version lookup failed. Check registry access and retry, or enter an exact version manually."
-                                            : valid.Count == 0
-                                                ? "No compatible versions were reported. Check Package Manager or enter an exact version manually."
-                                            : valid.Count + " compatible versions found. Select one, then explicitly apply it.";
-                                    }
-                                    finally
-                                    {
-                                        done();
-                                    }
-                                }
-                            );
-                        }
-                        catch (Exception)
-                        {
-                            lookupStatus.text = "Version lookup failed. Check registry access and retry, or enter an exact version manually.";
-                            done();
-                        }
+                            try
+                            {
+                                var valid = (versions ?? Array.Empty<string>())
+                                    .Where(version => TryGetExactPackageSelection(packageId, packageId + "@" + version, out _))
+                                    .Distinct()
+                                    .ToList();
+                                choices.choices = new List<string> { "Choose a version" };
+                                if (error == null)
+                                    choices.choices.AddRange(valid);
+                                choices.SetValueWithoutNotify("Choose a version");
+                                choices.SetEnabled(error == null && valid.Count > 0);
+                                lookupStatus.text =
+                                    error != null ? "Version lookup failed. Check registry access and retry, or enter an exact version manually."
+                                    : valid.Count == 0 ? "No compatible versions were reported. Check Package Manager or enter an exact version manually."
+                                    : valid.Count + " compatible versions found. Select one, then explicitly apply it.";
+                            }
+                            finally
+                            {
+                                done();
+                            }
+                        });
                     }
-                )
-            )
-            {
-                text = "Find compatible versions",
-                name = packageId + "-find-versions",
-            };
+                    catch (Exception)
+                    {
+                        lookupStatus.text = "Version lookup failed. Check registry access and retry, or enter an exact version manually.";
+                        done();
+                    }
+                })) { text = "Find compatible versions", name = packageId + "-find-versions" };
             find.AddToClassList("tool-action-button");
             choices.RegisterValueChangedCallback(evt =>
             {

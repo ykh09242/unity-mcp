@@ -45,8 +45,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 )
                     return new ErrorResponse("'look_at_target' must be a position [x,y,z] or a GameObject name/path/ID.");
                 // Preserve an explicit selector match, then resolve an independent GO reference.
-                GameObject lookAtGo =
-                    ManageGameObjectCommon.FindObjectInternal(lookAtToken, searchMethod)
+                GameObject lookAtGo = ManageGameObjectCommon.FindObjectInternal(lookAtToken, searchMethod)
                     ?? ManageGameObjectCommon.FindObjectInternal(lookAtToken, "by_id_or_name_or_path");
                 if (lookAtGo == null)
                 {

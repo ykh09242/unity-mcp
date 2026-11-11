@@ -78,8 +78,7 @@ namespace MCPForUnityTests.EditMode.Tools
 
         private static Type EventDataType()
         {
-            var type =
-                Type.GetType("UnityEditorInternal.FrameDebuggerInternal.FrameDebuggerEventData, UnityEditor")
+            var type = Type.GetType("UnityEditorInternal.FrameDebuggerInternal.FrameDebuggerEventData, UnityEditor")
                 ?? Type.GetType("UnityEditorInternal.FrameDebuggerEventData, UnityEditor");
             if (type == null)
                 Assert.Ignore("This Editor does not expose the supported FrameDebuggerEventData layout.");
@@ -106,8 +105,8 @@ namespace MCPForUnityTests.EditMode.Tools
         public void RealManagedEventDataUsesStableOutputKey(string legacy, string modern, object expected)
         {
             var type = EventDataType();
-            var field =
-                type.GetField(legacy, BindingFlags.Public | BindingFlags.Instance) ?? type.GetField(modern, BindingFlags.Public | BindingFlags.Instance);
+            var field = type.GetField(legacy, BindingFlags.Public | BindingFlags.Instance)
+                ?? type.GetField(modern, BindingFlags.Public | BindingFlags.Instance);
             if (field == null)
                 Assert.Ignore("The installed Editor uses a different detail member layout.");
             var data = Activator.CreateInstance(type);
@@ -122,13 +121,12 @@ namespace MCPForUnityTests.EditMode.Tools
         [Test]
         public void RealManagedDescriptorEnumUsesEventTypeKey()
         {
-            var type =
-                Type.GetType("UnityEditorInternal.FrameDebuggerInternal.FrameDebuggerEvent, UnityEditor")
+            var type = Type.GetType("UnityEditorInternal.FrameDebuggerInternal.FrameDebuggerEvent, UnityEditor")
                 ?? Type.GetType("UnityEditorInternal.FrameDebuggerEvent, UnityEditor");
             if (type == null)
                 Assert.Ignore("This Editor does not expose the supported descriptor layout.");
-            var field =
-                type.GetField("type", BindingFlags.Public | BindingFlags.Instance) ?? type.GetField("m_Type", BindingFlags.Public | BindingFlags.Instance);
+            var field = type.GetField("type", BindingFlags.Public | BindingFlags.Instance)
+                ?? type.GetField("m_Type", BindingFlags.Public | BindingFlags.Instance);
             Assert.IsNotNull(field);
             Assert.IsTrue(field.FieldType.IsEnum);
             var expected = Enum.GetValues(field.FieldType).GetValue(0);

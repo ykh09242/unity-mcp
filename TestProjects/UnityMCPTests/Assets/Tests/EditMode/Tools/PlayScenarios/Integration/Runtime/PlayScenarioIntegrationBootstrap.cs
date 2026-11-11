@@ -38,29 +38,21 @@ namespace MCPForUnityTests.PlayScenarios.Integration.Runtime
             var canvas = new GameObject("Canvas", typeof(Canvas), typeof(GraphicRaycaster));
             canvas.transform.SetParent(transform, false);
             canvas.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
-            CreateHardeningButton(
-                canvas.transform,
-                "StartButton",
-                () =>
-                {
-                    StartClickCount++;
-                    Debug.Log("PLAY_SCENARIO_QA_HARDENING_START");
-                    if (DelayedError)
-                        StartCoroutine(EmitDelayedError());
-                }
-            );
-            CreateHardeningButton(
-                canvas.transform,
-                "CleanupButton",
-                () =>
-                {
-                    CleanupClickCount++;
-                    Initialized = false;
-                    Debug.Log("PLAY_SCENARIO_QA_HARDENING_CLEANUP");
-                    if (CleanupError)
-                        Debug.LogError("PLAY_SCENARIO_QA_CLEANUP_ERROR");
-                }
-            );
+            CreateHardeningButton(canvas.transform, "StartButton", () =>
+            {
+                StartClickCount++;
+                Debug.Log("PLAY_SCENARIO_QA_HARDENING_START");
+                if (DelayedError)
+                    StartCoroutine(EmitDelayedError());
+            });
+            CreateHardeningButton(canvas.transform, "CleanupButton", () =>
+            {
+                CleanupClickCount++;
+                Initialized = false;
+                Debug.Log("PLAY_SCENARIO_QA_HARDENING_CLEANUP");
+                if (CleanupError)
+                    Debug.LogError("PLAY_SCENARIO_QA_CLEANUP_ERROR");
+            });
             for (int i = 0; i < 2; i++)
             {
                 var duplicate = new GameObject("InactiveDuplicate");

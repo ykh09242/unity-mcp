@@ -688,12 +688,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     }
                     try
                     {
-                        copying.Copy(
-                            source,
-                            absolute,
-                            entry.Length,
-                            entry.MetadataHash,
-                            count => result.Evidence["staged_bytes"] = (long)result.Evidence["staged_bytes"] + count
+                        copying.Copy(source, absolute, entry.Length, entry.MetadataHash, count =>
+                            result.Evidence["staged_bytes"] = (long)result.Evidence["staged_bytes"] + count
                         );
                     }
                     catch (IOException e)

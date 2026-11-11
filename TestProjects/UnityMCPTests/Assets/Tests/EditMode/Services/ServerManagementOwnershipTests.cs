@@ -48,22 +48,17 @@ namespace MCPForUnityTests.Editor.Services
             _exitsAfterRequest = false;
             _requests = 0;
             _loseAcknowledgement = false;
-            _service = new ServerManagementService(
-                _detector,
-                _pids,
-                _terminator,
-                shutdownRequester: (endpoint, token) =>
-                {
-                    Assert.AreEqual("127.0.0.1", endpoint.Host);
-                    Assert.AreEqual(InstanceToken, token);
-                    _requests++;
-                    if (_loseAcknowledgement)
-                        throw new TimeoutException("simulated lost response");
-                    if (_exitsAfterRequest)
-                        _detector.Listening = false;
-                    return ServerManagementService.ParseShutdownResponse(_shutdownStatus, _shutdownBody);
-                }
-            );
+            _service = new ServerManagementService(_detector, _pids, _terminator, shutdownRequester: (endpoint, token) =>
+            {
+                Assert.AreEqual("127.0.0.1", endpoint.Host);
+                Assert.AreEqual(InstanceToken, token);
+                _requests++;
+                if (_loseAcknowledgement)
+                    throw new TimeoutException("simulated lost response");
+                if (_exitsAfterRequest)
+                    _detector.Listening = false;
+                return ServerManagementService.ParseShutdownResponse(_shutdownStatus, _shutdownBody);
+            });
         }
 
         [TearDown]
@@ -149,11 +144,8 @@ namespace MCPForUnityTests.Editor.Services
                 peerPids.StoreHandshake(peerPath, "other-project-launch");
                 peerPids.StoreOwnedLaunchProcess(LauncherPid, Port, "other-project-launch");
                 _detector.ExistsByPid[LauncherPid] = false;
-                var peerService = new ServerManagementService(
-                    _detector,
-                    peerPids,
-                    _terminator,
-                    shutdownRequester: (_, _) => throw new AssertionException("The peer must never request the winning server's shutdown.")
+                var peerService = new ServerManagementService(_detector, peerPids, _terminator, shutdownRequester: (_, _) =>
+                    throw new AssertionException("The peer must never request the winning server's shutdown.")
                 );
                 Assert.IsFalse(peerService.StopLocalHttpServer());
                 Assert.IsFalse(peerPids.TryGetHandshake(out _, out _));
@@ -161,18 +153,13 @@ namespace MCPForUnityTests.Editor.Services
                 // Reopening the owning project constructs fresh services; no new launch
                 // or in-memory reference is needed to recover its persisted handshake.
                 _pids = new PidFileManager(_root);
-                _service = new ServerManagementService(
-                    _detector,
-                    _pids,
-                    _terminator,
-                    shutdownRequester: (_, token) =>
-                    {
-                        Assert.AreEqual(InstanceToken, token);
-                        _requests++;
-                        _detector.Listening = false;
-                        return (true, null);
-                    }
-                );
+                _service = new ServerManagementService(_detector, _pids, _terminator, shutdownRequester: (_, token) =>
+                {
+                    Assert.AreEqual(InstanceToken, token);
+                    _requests++;
+                    _detector.Listening = false;
+                    return (true, null);
+                });
                 AssertOriginalOwnership();
                 Assert.IsTrue(_service.StopLocalHttpServer());
                 Assert.AreEqual(2, _requests);
@@ -576,14 +563,10 @@ namespace MCPForUnityTests.Editor.Services
         public void Start_PersistedCreationIdentityOnlyRetiresProvenReusedProcess(bool launcherRecord, string identity)
         {
             DateTime original = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
-            _pids = new PidFileManager(
-                _root,
-                _ =>
-                    identity == "inaccessible" ? throw new UnauthorizedAccessException()
-                    : identity == "unknown" ? null
-                    : identity == "reused" ? original.AddMinutes(1)
-                    : original
-            );
+            _pids = new PidFileManager(_root, _ => identity == "inaccessible" ? throw new UnauthorizedAccessException()
+                : identity == "unknown" ? null
+                : identity == "reused" ? original.AddMinutes(1)
+                : original);
             _detector.Listening = false;
             _detector.ExistsOverride = true;
             if (launcherRecord)
@@ -612,16 +595,11 @@ namespace MCPForUnityTests.Editor.Services
             _pids.RememberOwnedServerCreation(ServerPid, Port, InstanceToken, original);
             _detector.Listening = false;
             _detector.ExistsOverride = true;
-            _service = new ServerManagementService(
-                _detector,
-                _pids,
-                _terminator,
-                shutdownRequester: (_, _) =>
-                {
-                    _requests++;
-                    return (true, null);
-                }
-            );
+            _service = new ServerManagementService(_detector, _pids, _terminator, shutdownRequester: (_, _) =>
+            {
+                _requests++;
+                return (true, null);
+            });
 
             Assert.IsTrue(_service.StopLocalHttpServer());
 
@@ -640,16 +618,11 @@ namespace MCPForUnityTests.Editor.Services
             _pids = new PidFileManager(_root, _ => creationRace && ++reads == 1 ? original : original.AddMinutes(1));
             if (!creationRace)
                 _pids.RememberOwnedServerCreation(ServerPid, Port, InstanceToken, original);
-            _service = new ServerManagementService(
-                _detector,
-                _pids,
-                _terminator,
-                shutdownRequester: (_, _) =>
-                {
-                    _requests++;
-                    return (true, null);
-                }
-            );
+            _service = new ServerManagementService(_detector, _pids, _terminator, shutdownRequester: (_, _) =>
+            {
+                _requests++;
+                return (true, null);
+            });
 
             Assert.IsFalse(_service.StopLocalHttpServer());
 
@@ -667,13 +640,9 @@ namespace MCPForUnityTests.Editor.Services
             DateTime original = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
             DateTime current = original;
             int reads = 0;
-            _pids = new PidFileManager(
-                _root,
-                _ =>
-                    observation == "inaccessible" ? null
-                    : observation == "creation_race" && ++reads > 1 ? original.AddMinutes(1)
-                    : current
-            );
+            _pids = new PidFileManager(_root, _ => observation == "inaccessible" ? null
+                : observation == "creation_race" && ++reads > 1 ? original.AddMinutes(1)
+                : current);
             if (observation == "other_token")
                 _detector.CommandLine = "python --unity-instance-token another-token";
             _service = new ServerManagementService(_detector, _pids, _terminator);

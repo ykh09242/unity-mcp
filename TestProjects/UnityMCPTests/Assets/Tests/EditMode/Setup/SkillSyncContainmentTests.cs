@@ -98,17 +98,11 @@ namespace MCPForUnityTests.Editor.Setup
             File.Delete(path);
             Link(path, Path.Combine(_outside, "sentinel.md"), false);
             int downloads = 0;
-            Assert.Throws<InvalidOperationException>(() =>
-                Apply(
-                    plan,
-                    remote,
-                    _ =>
-                    {
-                        downloads++;
-                        return Encoding.UTF8.GetBytes("new");
-                    }
-                )
-            );
+            Assert.Throws<InvalidOperationException>(() => Apply(plan, remote, _ =>
+                {
+                    downloads++;
+                    return Encoding.UTF8.GetBytes("new");
+                }));
             Assert.AreEqual(0, downloads);
             Assert.AreEqual("outside sentinel", File.ReadAllText(Path.Combine(_outside, "sentinel.md")));
         }
@@ -122,20 +116,14 @@ namespace MCPForUnityTests.Editor.Setup
             File.WriteAllText(old, "obsolete");
             object plan = Plan(remote);
             int downloads = 0;
-            Assert.Throws<InvalidOperationException>(() =>
-                Apply(
-                    plan,
-                    remote,
-                    _ =>
-                    {
-                        downloads++;
-                        string path = deletion ? old : Path.Combine(_install, "SKILL.md");
-                        File.Delete(path);
-                        Link(path, Path.Combine(_outside, "sentinel.md"), false);
-                        return Encoding.UTF8.GetBytes("new");
-                    }
-                )
-            );
+            Assert.Throws<InvalidOperationException>(() => Apply(plan, remote, _ =>
+                {
+                    downloads++;
+                    string path = deletion ? old : Path.Combine(_install, "SKILL.md");
+                    File.Delete(path);
+                    Link(path, Path.Combine(_outside, "sentinel.md"), false);
+                    return Encoding.UTF8.GetBytes("new");
+                }));
             Assert.AreEqual(1, downloads);
             Assert.AreEqual("outside sentinel", File.ReadAllText(Path.Combine(_outside, "sentinel.md")));
             if (deletion)
@@ -157,19 +145,13 @@ namespace MCPForUnityTests.Editor.Setup
             };
             object plan = Plan(remote);
             string moved = Path.Combine(_root, "saved");
-            Assert.Throws<InvalidOperationException>(() =>
-                Apply(
-                    plan,
-                    remote,
-                    _ =>
-                    {
-                        string swapped = root ? _install : Path.Combine(_install, "references");
-                        Directory.Move(swapped, moved);
-                        Link(swapped, _outside, true);
-                        return Encoding.UTF8.GetBytes("new");
-                    }
-                )
-            );
+            Assert.Throws<InvalidOperationException>(() => Apply(plan, remote, _ =>
+                {
+                    string swapped = root ? _install : Path.Combine(_install, "references");
+                    Directory.Move(swapped, moved);
+                    Link(swapped, _outside, true);
+                    return Encoding.UTF8.GetBytes("new");
+                }));
             Assert.AreEqual("outside sentinel", File.ReadAllText(Path.Combine(_outside, "sentinel.md")));
             Assert.AreEqual("old guide", File.ReadAllText(Path.Combine(moved, root ? "references/guide.md" : "guide.md")));
             Assert.IsFalse(File.Exists(Path.Combine(_outside, "guide.md")));

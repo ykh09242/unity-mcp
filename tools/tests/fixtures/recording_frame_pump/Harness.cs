@@ -76,67 +76,55 @@ internal static class Harness
         Run("component creation exception", () => SetupFailure("component-throw"));
         Run("component creation null", () => SetupFailure("component-null"));
         Run("exception after component attachment", () => SetupFailure("component-attached-throw"));
-        Run(
-            "edit-mode preflight does not allocate",
-            () =>
+        Run("edit-mode preflight does not allocate", () =>
+        {
+            Application.isPlaying = false;
+            for (int i = 0; i < 100; i++)
             {
-                Application.isPlaying = false;
-                for (int i = 0; i < 100; i++)
+                try
                 {
-                    try
-                    {
-                        RecordingFramePump.Begin(null, null);
-                        throw new Exception("missing preflight error");
-                    }
-                    catch (InvalidOperationException) { }
+                    RecordingFramePump.Begin(null, null);
+                    throw new Exception("missing preflight error");
                 }
-                Check(Native.Created == 0 && Native.Live.Count == 0, "preflight allocation");
+                catch (InvalidOperationException) { }
             }
-        );
-        Run(
-            "successful factory transfers ownership and cancel is idempotent",
-            () =>
+            Check(Native.Created == 0 && Native.Live.Count == 0, "preflight allocation");
+        });
+        Run("successful factory transfers ownership and cancel is idempotent", () =>
+        {
+            int callbacks = 0;
+            for (int i = 0; i < 100; i++)
             {
-                int callbacks = 0;
-                for (int i = 0; i < 100; i++)
-                {
-                    var pump = RecordingFramePump.Begin(() => callbacks++, () => callbacks++);
-                    Check(Native.Live.Count == 1 && !pump.Destroyed, "successful transfer");
-                    pump.Cancel();
-                    pump.Cancel();
-                    Check(Native.Live.Count == 0, "cancel releases host");
-                }
-                Check(Native.DestroyCalls == 100 && callbacks == 0, "cancel destruction and callback contract");
-            }
-        );
-        Run(
-            "external destruction notifies once and clears callback owners",
-            () =>
-            {
-                int calls = 0;
-                var pump = RecordingFramePump.Begin(() => calls += 100, () => calls++);
-                UnityEngine.Object.DestroyImmediate(pump.gameObject);
-                UnityEngine.Object.DestroyImmediate(pump.gameObject);
-                Check(calls == 1 && Native.Live.Count == 0, "external destruction callback once");
-                foreach (var name in new[] { "_onFrame", "_onDestroyed" })
-                    Check(
-                        typeof(RecordingFramePump).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(pump) == null,
-                        "callback capture cleared"
-                    );
-            }
-        );
-        Run(
-            "cancellation after end-of-frame yield does not invoke stale callbacks",
-            () =>
-            {
-                int calls = 0;
-                var pump = RecordingFramePump.Begin(() => calls++, () => calls++);
-                var frames = Start(pump);
-                Check(frames.MoveNext() && frames.Current is WaitForEndOfFrame, "initial frame yield");
+                var pump = RecordingFramePump.Begin(() => callbacks++, () => callbacks++);
+                Check(Native.Live.Count == 1 && !pump.Destroyed, "successful transfer");
                 pump.Cancel();
-                Check(!frames.MoveNext() && calls == 0, "cancelled coroutine cannot invoke old callback");
+                pump.Cancel();
+                Check(Native.Live.Count == 0, "cancel releases host");
             }
-        );
+            Check(Native.DestroyCalls == 100 && callbacks == 0, "cancel destruction and callback contract");
+        });
+        Run("external destruction notifies once and clears callback owners", () =>
+        {
+            int calls = 0;
+            var pump = RecordingFramePump.Begin(() => calls += 100, () => calls++);
+            UnityEngine.Object.DestroyImmediate(pump.gameObject);
+            UnityEngine.Object.DestroyImmediate(pump.gameObject);
+            Check(calls == 1 && Native.Live.Count == 0, "external destruction callback once");
+            foreach (var name in new[] { "_onFrame", "_onDestroyed" })
+                Check(
+                    typeof(RecordingFramePump).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(pump) == null,
+                    "callback capture cleared"
+                );
+        });
+        Run("cancellation after end-of-frame yield does not invoke stale callbacks", () =>
+        {
+            int calls = 0;
+            var pump = RecordingFramePump.Begin(() => calls++, () => calls++);
+            var frames = Start(pump);
+            Check(frames.MoveNext() && frames.Current is WaitForEndOfFrame, "initial frame yield");
+            pump.Cancel();
+            Check(!frames.MoveNext() && calls == 0, "cancelled coroutine cannot invoke old callback");
+        });
         Console.WriteLine("RESULT passed=" + passed + " failed=" + failed + " assertions=" + assertions);
         if (Array.IndexOf(arguments, "--baseline") >= 0)
         {

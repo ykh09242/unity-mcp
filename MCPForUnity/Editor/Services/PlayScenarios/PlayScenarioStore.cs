@@ -137,8 +137,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             lock (gate)
             {
                 JObject value = Read(Checked(Reports + "/" + jobId + ".json"), ReportLimit);
-                var legacyResourceChecks =
-                    (value["resource_checks"] as JArray)?.OfType<JObject>().Where(check => check.Property("retained_resources") == null).ToArray()
+                var legacyResourceChecks = (value["resource_checks"] as JArray)
+                    ?.OfType<JObject>()
+                    .Where(check => check.Property("retained_resources") == null)
+                    .ToArray()
                     ?? Array.Empty<JObject>();
                 ValidateShape(value, typeof(PlayScenarioRun));
                 foreach (JObject check in legacyResourceChecks)
@@ -324,8 +326,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         internal static void ValidateReport(JObject value)
         {
-            var legacyResourceChecks =
-                (value["resource_checks"] as JArray)?.OfType<JObject>().Where(check => check.Property("retained_resources") == null).ToArray()
+            var legacyResourceChecks = (value["resource_checks"] as JArray)
+                ?.OfType<JObject>()
+                .Where(check => check.Property("retained_resources") == null)
+                .ToArray()
                 ?? Array.Empty<JObject>();
             ValidateShape(value, typeof(PlayScenarioRun));
             foreach (JObject check in legacyResourceChecks)

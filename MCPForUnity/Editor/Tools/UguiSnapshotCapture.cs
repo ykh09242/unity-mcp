@@ -213,10 +213,8 @@ namespace MCPForUnity.Editor.Tools
                             );
                         throw new ArgumentException("Snapshot overflow: hierarchy exceeds the identity depth or sibling bound.");
                     }
-                    parent.Children ??= new CaptureUISnapshot.SiblingIdentities(
-                        parentTransform.childCount,
-                        parent.Path,
-                        (index, currentPath) => EffectiveSegment(parentTransform.GetChild(index), currentPath, identities)
+                    parent.Children ??= new CaptureUISnapshot.SiblingIdentities(parentTransform.childCount, parent.Path, (index, currentPath) =>
+                        EffectiveSegment(parentTransform.GetChild(index), currentPath, identities)
                     );
                     int sibling = go.transform.GetSiblingIndex();
                     path = parent.Children.Paths?[sibling];

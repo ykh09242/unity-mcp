@@ -46,12 +46,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         }
 
         public Task<ProviderPollResult> PollAsync(string providerJobId, string apiKey, IHttpTransport http, CancellationToken ct) =>
-            FalAdapter.PollQueueAsync(
-                providerJobId,
-                apiKey,
-                http,
-                ct,
-                json => new ProviderPollResult { DownloadUrl = (string)json.SelectToken(profile.ModelOutputField + ".url"), ResultExt = "glb" }
-            );
+            FalAdapter.PollQueueAsync(providerJobId, apiKey, http, ct, json => new ProviderPollResult
+            {
+                DownloadUrl = (string)json.SelectToken(profile.ModelOutputField + ".url"),
+                ResultExt = "glb",
+            });
     }
 }

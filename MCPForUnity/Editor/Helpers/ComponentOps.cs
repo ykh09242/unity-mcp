@@ -252,8 +252,7 @@ namespace MCPForUnity.Editor.Helpers
                 apply = component => property.SetValue(component, converted);
                 return true;
             }
-            FieldInfo field =
-                componentType.GetField(propertyName, flags)
+            FieldInfo field = componentType.GetField(propertyName, flags)
                 ?? componentType.GetField(normalized, flags)
                 ?? FindSerializedFieldInHierarchy(componentType, propertyName)
                 ?? FindSerializedFieldInHierarchy(componentType, normalized);

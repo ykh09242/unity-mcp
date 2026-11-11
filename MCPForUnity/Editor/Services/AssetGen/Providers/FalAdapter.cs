@@ -110,21 +110,15 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         }
 
         public Task<ProviderPollResult> PollAsync(string providerJobId, string apiKey, IHttpTransport http, CancellationToken ct) =>
-            PollQueueAsync(
-                providerJobId,
-                apiKey,
-                http,
-                ct,
-                json =>
+            PollQueueAsync(providerJobId, apiKey, http, ct, json =>
+            {
+                var file = json["images"]?[0] ?? json["image"];
+                return new ProviderPollResult
                 {
-                    var file = json["images"]?[0] ?? json["image"];
-                    return new ProviderPollResult
-                    {
-                        DownloadUrl = ExtractImageUrl(json),
-                        ResultExt = ImageResultFormat.FromMetadata((string)file?["content_type"], (string)file?["url"]),
-                    };
-                }
-            );
+                    DownloadUrl = ExtractImageUrl(json),
+                    ResultExt = ImageResultFormat.FromMetadata((string)file?["content_type"], (string)file?["url"]),
+                };
+            });
 
         internal static async Task<ProviderPollResult> PollQueueAsync(
             string providerJobId,

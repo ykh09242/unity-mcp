@@ -19,30 +19,7 @@ internal static class LifecycleRegressionHarness
         Application.temporaryCachePath = args[0];
         Application.dataPath = args[0];
         foreach (var method in new[] { "OnEnable", "OnGUI" })
-            Check(
-                method + " adopts exact ordered inactive helper among multiple objects",
-                () =>
-                {
-                    var later = UserHelper();
-                    later.LookupOrder = 30;
-                    var inactive = UserHelper(false);
-                    inactive.LookupOrder = 10;
-                    var active = UserHelper();
-                    active.LookupOrder = 20;
-                    var window = new RoslynRuntimeCompilerWindow();
-                    Call(window, method);
-                    Require(Helper(window) == inactive, "Window did not preserve ordered inactive selection");
-                    Require(
-                        Object.LastFindType == typeof(RoslynRuntimeCompiler) && Object.LastFindInactive,
-                        "Window lookup did not forward exact Type and Include flag"
-                    );
-                    Call(window, "OnDestroy");
-                    Require(Object.DestroyedObjects.Count == 0, "Adopted helper was treated as owned");
-                }
-            );
-        Check(
-            "static helper preserves ordered active-only compiler selection",
-            () =>
+            Check(method + " adopts exact ordered inactive helper among multiple objects", () =>
             {
                 var later = UserHelper();
                 later.LookupOrder = 30;
@@ -50,597 +27,510 @@ internal static class LifecycleRegressionHarness
                 inactive.LookupOrder = 10;
                 var active = UserHelper();
                 active.LookupOrder = 20;
-                typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
-                var selected = typeof(RoslynMCPHelper).GetMethod("GetOrCreateCompiler", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
-                Require(ReferenceEquals(selected, active), "Static helper changed active-only ordered selection");
+                var window = new RoslynRuntimeCompilerWindow();
+                Call(window, method);
+                Require(Helper(window) == inactive, "Window did not preserve ordered inactive selection");
                 Require(
-                    Object.LastFindType == typeof(RoslynRuntimeCompiler) && !Object.LastFindInactive,
-                    "Static helper did not forward exact Type and Exclude flag"
+                    Object.LastFindType == typeof(RoslynRuntimeCompiler) && Object.LastFindInactive,
+                    "Window lookup did not forward exact Type and Include flag"
                 );
-            }
-        );
-        Check(
-            "runtime tool reuses one hidden compiler across history reads",
-            () =>
-            {
-                for (int i = 0; i < 20; i++)
-                    Require(ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "get_history" }) is SuccessResponse, "History failed");
-                int live = GameObject.All.Count(go => !go.Destroyed && go.name == "MCPRoslynCompiler");
-                Console.WriteLine("OBSERVED_HISTORY: hosts=" + live + " lookups=" + Object.FindCalls);
-                Require(live == 1, "History reads retained " + live + " hidden compilers");
-                Require(Object.FindCalls == 1, "History reads repeated scene lookup " + Object.FindCalls + " times");
-            }
-        );
-        Check(
-            "runtime tool shares cached compiler with static MCP helper",
-            () =>
-            {
-                var shared = typeof(RoslynMCPHelper).GetMethod("GetOrCreateCompiler", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+                Call(window, "OnDestroy");
+                Require(Object.DestroyedObjects.Count == 0, "Adopted helper was treated as owned");
+            });
+        Check("static helper preserves ordered active-only compiler selection", () =>
+        {
+            var later = UserHelper();
+            later.LookupOrder = 30;
+            var inactive = UserHelper(false);
+            inactive.LookupOrder = 10;
+            var active = UserHelper();
+            active.LookupOrder = 20;
+            typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
+            var selected = typeof(RoslynMCPHelper).GetMethod("GetOrCreateCompiler", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+            Require(ReferenceEquals(selected, active), "Static helper changed active-only ordered selection");
+            Require(
+                Object.LastFindType == typeof(RoslynRuntimeCompiler) && !Object.LastFindInactive,
+                "Static helper did not forward exact Type and Exclude flag"
+            );
+        });
+        Check("runtime tool reuses one hidden compiler across history reads", () =>
+        {
+            for (int i = 0; i < 20; i++)
                 Require(ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "get_history" }) is SuccessResponse, "History failed");
-                Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Tool created a second hidden compiler");
-                Require(Object.FindCalls == 1, "Tool repeated a lookup despite existing helper");
-                Require(ReferenceEquals(shared, GameObject.All.Single().Components.Single()), "Tool replaced shared helper");
-            }
-        );
-        Check(
-            "runtime tool reacquires after cached compiler is destroyed",
-            () =>
-            {
-                ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "get_history" });
-                var oldHost = GameObject.All.Single();
-                Object.DestroyImmediate(oldHost);
-                for (int i = 0; i < 3; i++)
-                    Require(ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "clear_history" }) is SuccessResponse, "Clear failed");
-                Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Destroyed cache did not recover to one live helper");
-                Require(Object.FindCalls == 2, "Replacement repeated scene lookup");
-            }
-        );
-        Check(
-            "runtime tool keeps adopted compiler settings and ordered active selection",
-            () =>
-            {
-                var inactive = UserHelper(false);
-                inactive.LookupOrder = 5;
-                var chosen = UserHelper();
-                chosen.LookupOrder = 10;
-                chosen.enableHistory = false;
-                var later = UserHelper();
-                later.LookupOrder = 20;
-                for (int i = 0; i < 3; i++)
-                    Require(ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "get_history" }) is SuccessResponse, "History failed");
-                var cached = typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
-                Require(ReferenceEquals(cached, chosen) && !chosen.enableHistory, "Adoption changed helper identity or history preference");
-                Require(Object.FindCalls == 1 && Object.DestroyedObjects.Count == 0, "Adoption repeated lookup or destroyed user objects");
-            }
-        );
+            int live = GameObject.All.Count(go => !go.Destroyed && go.name == "MCPRoslynCompiler");
+            Console.WriteLine("OBSERVED_HISTORY: hosts=" + live + " lookups=" + Object.FindCalls);
+            Require(live == 1, "History reads retained " + live + " hidden compilers");
+            Require(Object.FindCalls == 1, "History reads repeated scene lookup " + Object.FindCalls + " times");
+        });
+        Check("runtime tool shares cached compiler with static MCP helper", () =>
+        {
+            var shared = typeof(RoslynMCPHelper).GetMethod("GetOrCreateCompiler", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+            Require(ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "get_history" }) is SuccessResponse, "History failed");
+            Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Tool created a second hidden compiler");
+            Require(Object.FindCalls == 1, "Tool repeated a lookup despite existing helper");
+            Require(ReferenceEquals(shared, GameObject.All.Single().Components.Single()), "Tool replaced shared helper");
+        });
+        Check("runtime tool reacquires after cached compiler is destroyed", () =>
+        {
+            ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "get_history" });
+            var oldHost = GameObject.All.Single();
+            Object.DestroyImmediate(oldHost);
+            for (int i = 0; i < 3; i++)
+                Require(ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "clear_history" }) is SuccessResponse, "Clear failed");
+            Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Destroyed cache did not recover to one live helper");
+            Require(Object.FindCalls == 2, "Replacement repeated scene lookup");
+        });
+        Check("runtime tool keeps adopted compiler settings and ordered active selection", () =>
+        {
+            var inactive = UserHelper(false);
+            inactive.LookupOrder = 5;
+            var chosen = UserHelper();
+            chosen.LookupOrder = 10;
+            chosen.enableHistory = false;
+            var later = UserHelper();
+            later.LookupOrder = 20;
+            for (int i = 0; i < 3; i++)
+                Require(ManageRuntimeCompilation.HandleCommand(new JObject { ["action"] = "get_history" }) is SuccessResponse, "History failed");
+            var cached = typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            Require(ReferenceEquals(cached, chosen) && !chosen.enableHistory, "Adoption changed helper identity or history preference");
+            Require(Object.FindCalls == 1 && Object.DestroyedObjects.Count == 0, "Adoption repeated lookup or destroyed user objects");
+        });
         foreach (bool success in new[] { false, true })
-            Check(
-                "runtime tool repeated " + (success ? "successful" : "failed") + " execution reuses helper",
-                () =>
+            Check("runtime tool repeated " + (success ? "successful" : "failed") + " execution reuses helper", () =>
+            {
+                for (int i = 0; i < 3; i++)
                 {
-                    for (int i = 0; i < 3; i++)
-                    {
-                        var result = ManageRuntimeCompilation.HandleCommand(
-                            new JObject
-                            {
-                                ["action"] = "execute_with_roslyn",
-                                ["code"] = success ? StaticSource : "public class Broken {",
-                                ["class_name"] = "StaticProgram",
-                            }
-                        );
-                        Require(success ? result is SuccessResponse : result is ErrorResponse, "Unexpected execution result");
-                    }
-                    Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Repeated execution leaked compiler hosts");
-                    Require(Object.FindCalls == 1, "Repeated execution searched scene again");
-                    Require(RuntimeProbe.Calls == (success ? 3 : 0), "Execution contract changed");
-                }
-            );
-        foreach (bool active in new[] { true, false })
-            Check(
-                "adopted " + (active ? "active" : "inactive") + " helper preserves user object and children",
-                () =>
-                {
-                    var helper = UserHelper(active);
-                    var child = new GameObject("UserChild", helper.gameObject);
-                    var other = helper.gameObject.AddComponent<UserComponent>();
-                    var window = new RoslynRuntimeCompilerWindow();
-                    Call(window, "OnEnable");
-                    Require(Helper(window) == helper, "Existing helper was not adopted");
-                    Call(window, "OnDisable");
-                    Call(window, "OnDestroy");
-                    Require(
-                        !helper.gameObject.Destroyed && !child.Destroyed && !other.Destroyed,
-                        "Closing window destroyed adopted user GameObject, child or other component"
+                    var result = ManageRuntimeCompilation.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "execute_with_roslyn",
+                            ["code"] = success ? StaticSource : "public class Broken {",
+                            ["class_name"] = "StaticProgram",
+                        }
                     );
-                    Require(Object.DestroyedObjects.Count == 0, "Unexpected destruction call");
+                    Require(success ? result is SuccessResponse : result is ErrorResponse, "Unexpected execution result");
                 }
-            );
-        Check(
-            "owned hidden helper is cleaned on close",
-            () =>
+                Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Repeated execution leaked compiler hosts");
+                Require(Object.FindCalls == 1, "Repeated execution searched scene again");
+                Require(RuntimeProbe.Calls == (success ? 3 : 0), "Execution contract changed");
+            });
+        foreach (bool active in new[] { true, false })
+            Check("adopted " + (active ? "active" : "inactive") + " helper preserves user object and children", () =>
             {
+                var helper = UserHelper(active);
+                var child = new GameObject("UserChild", helper.gameObject);
+                var other = helper.gameObject.AddComponent<UserComponent>();
                 var window = new RoslynRuntimeCompilerWindow();
                 Call(window, "OnEnable");
-                var helper = Helper(window);
-                Require(helper.gameObject.hideFlags == HideFlags.HideAndDontSave, "Temporary helper is not hidden");
-                Call(window, "OnDestroy");
-                Require(helper.gameObject.Destroyed, "Owned helper leaked");
-                Require(Object.DestroyedObjects.Count == 1, "Owned helper cleanup did not occur exactly once");
-                Call(window, "OnDestroy");
-                Require(Object.DestroyedObjects.Count == 1, "Second destroy repeated cleanup");
-            }
-        );
-        Check(
-            "repeated enable retains exact owned helper identity",
-            () =>
-            {
-                var window = new RoslynRuntimeCompilerWindow();
-                Call(window, "OnEnable");
-                var helper = Helper(window);
-                var user = UserHelper();
-                GameObject.All.Remove(user.gameObject);
-                GameObject.All.Insert(0, user.gameObject);
-                Call(window, "OnEnable");
-                Require(Helper(window) == helper, "Repeated enable switched away from owned helper");
-                Call(window, "OnDestroy");
-                Require(helper.gameObject.Destroyed && !user.gameObject.Destroyed, "Cleanup lost ownership identity");
-            }
-        );
-        Check(
-            "fallback adoption after owned helper destruction preserves replacement",
-            () =>
-            {
-                var window = new RoslynRuntimeCompilerWindow();
-                Call(window, "OnEnable");
-                Object.DestroyImmediate(Helper(window).gameObject);
-                var replacement = UserHelper(false);
-                replacement.code = "replacement-code";
-                Call(window, "OnGUI");
-                Require(Helper(window) == replacement, "Fallback did not adopt replacement");
-                Require((string)Get(window, "codeText") == "replacement-code", "Fallback did not load replacement state");
-                Object.DestroyedObjects.Clear();
-                Call(window, "OnDestroy");
-                Require(!replacement.gameObject.Destroyed && Object.DestroyedObjects.Count == 0, "Ownership transferred to adopted replacement");
-            }
-        );
-        Check(
-            "fallback creation is owned and receives window state",
-            () =>
-            {
-                var window = new RoslynRuntimeCompilerWindow();
-                Call(window, "OnEnable");
-                Object.DestroyImmediate(Helper(window).gameObject);
-                Set(window, "codeText", "new-window-code");
-                Call(window, "OnGUI");
-                var replacement = Helper(window);
-                Require(replacement.code == "new-window-code", "Fallback helper lost window state");
-                Require(replacement.gameObject.hideFlags == HideFlags.HideAndDontSave, "Fallback helper is not hidden");
-                Object.DestroyedObjects.Clear();
-                Call(window, "OnDestroy");
-                Require(replacement.gameObject.Destroyed && Object.DestroyedObjects.Count == 1, "Owned fallback helper leaked");
-            }
-        );
-        Check(
-            "adopted helper keeps existing state synchronization",
-            () =>
-            {
-                var helper = UserHelper();
-                helper.code = "user-code";
-                helper.entryTypeName = "UserType";
-                helper.entryMethodName = "UserMethod";
-                helper.attachAsComponent = true;
-                helper.targetGameObject = new GameObject("UserTarget");
-                var window = new RoslynRuntimeCompilerWindow();
-                Call(window, "OnEnable");
-                Require(
-                    (string)Get(window, "codeText") == "user-code" && (string)Get(window, "typeName") == "UserType",
-                    "OnEnable changed helper state loading"
-                );
-                Set(window, "codeText", "edited-code");
+                Require(Helper(window) == helper, "Existing helper was not adopted");
                 Call(window, "OnDisable");
-                Require(
-                    helper.code == "edited-code" && helper.entryMethodName == "UserMethod" && helper.attachAsComponent,
-                    "OnDisable changed helper state saving"
-                );
-                Call(window, "ApplyToHelper");
-                Require(helper.targetGameObject.name == "UserTarget", "ApplyToHelper changed target routing");
-            }
-        );
-        Check(
-            "destroyed adopted helper is replaced by owned temporary helper",
-            () =>
-            {
-                var helper = UserHelper();
-                var window = new RoslynRuntimeCompilerWindow();
-                Call(window, "OnEnable");
-                Object.DestroyImmediate(helper.gameObject);
-                Call(window, "OnGUI");
-                var replacement = Helper(window);
-                Object.DestroyedObjects.Clear();
                 Call(window, "OnDestroy");
-                Require(replacement.gameObject.Destroyed && Object.DestroyedObjects.Count == 1, "Owned replacement leaked");
-            }
-        );
+                Require(
+                    !helper.gameObject.Destroyed && !child.Destroyed && !other.Destroyed,
+                    "Closing window destroyed adopted user GameObject, child or other component"
+                );
+                Require(Object.DestroyedObjects.Count == 0, "Unexpected destruction call");
+            });
+        Check("owned hidden helper is cleaned on close", () =>
+        {
+            var window = new RoslynRuntimeCompilerWindow();
+            Call(window, "OnEnable");
+            var helper = Helper(window);
+            Require(helper.gameObject.hideFlags == HideFlags.HideAndDontSave, "Temporary helper is not hidden");
+            Call(window, "OnDestroy");
+            Require(helper.gameObject.Destroyed, "Owned helper leaked");
+            Require(Object.DestroyedObjects.Count == 1, "Owned helper cleanup did not occur exactly once");
+            Call(window, "OnDestroy");
+            Require(Object.DestroyedObjects.Count == 1, "Second destroy repeated cleanup");
+        });
+        Check("repeated enable retains exact owned helper identity", () =>
+        {
+            var window = new RoslynRuntimeCompilerWindow();
+            Call(window, "OnEnable");
+            var helper = Helper(window);
+            var user = UserHelper();
+            GameObject.All.Remove(user.gameObject);
+            GameObject.All.Insert(0, user.gameObject);
+            Call(window, "OnEnable");
+            Require(Helper(window) == helper, "Repeated enable switched away from owned helper");
+            Call(window, "OnDestroy");
+            Require(helper.gameObject.Destroyed && !user.gameObject.Destroyed, "Cleanup lost ownership identity");
+        });
+        Check("fallback adoption after owned helper destruction preserves replacement", () =>
+        {
+            var window = new RoslynRuntimeCompilerWindow();
+            Call(window, "OnEnable");
+            Object.DestroyImmediate(Helper(window).gameObject);
+            var replacement = UserHelper(false);
+            replacement.code = "replacement-code";
+            Call(window, "OnGUI");
+            Require(Helper(window) == replacement, "Fallback did not adopt replacement");
+            Require((string)Get(window, "codeText") == "replacement-code", "Fallback did not load replacement state");
+            Object.DestroyedObjects.Clear();
+            Call(window, "OnDestroy");
+            Require(!replacement.gameObject.Destroyed && Object.DestroyedObjects.Count == 0, "Ownership transferred to adopted replacement");
+        });
+        Check("fallback creation is owned and receives window state", () =>
+        {
+            var window = new RoslynRuntimeCompilerWindow();
+            Call(window, "OnEnable");
+            Object.DestroyImmediate(Helper(window).gameObject);
+            Set(window, "codeText", "new-window-code");
+            Call(window, "OnGUI");
+            var replacement = Helper(window);
+            Require(replacement.code == "new-window-code", "Fallback helper lost window state");
+            Require(replacement.gameObject.hideFlags == HideFlags.HideAndDontSave, "Fallback helper is not hidden");
+            Object.DestroyedObjects.Clear();
+            Call(window, "OnDestroy");
+            Require(replacement.gameObject.Destroyed && Object.DestroyedObjects.Count == 1, "Owned fallback helper leaked");
+        });
+        Check("adopted helper keeps existing state synchronization", () =>
+        {
+            var helper = UserHelper();
+            helper.code = "user-code";
+            helper.entryTypeName = "UserType";
+            helper.entryMethodName = "UserMethod";
+            helper.attachAsComponent = true;
+            helper.targetGameObject = new GameObject("UserTarget");
+            var window = new RoslynRuntimeCompilerWindow();
+            Call(window, "OnEnable");
+            Require((string)Get(window, "codeText") == "user-code" && (string)Get(window, "typeName") == "UserType", "OnEnable changed helper state loading");
+            Set(window, "codeText", "edited-code");
+            Call(window, "OnDisable");
+            Require(
+                helper.code == "edited-code" && helper.entryMethodName == "UserMethod" && helper.attachAsComponent,
+                "OnDisable changed helper state saving"
+            );
+            Call(window, "ApplyToHelper");
+            Require(helper.targetGameObject.name == "UserTarget", "ApplyToHelper changed target routing");
+        });
+        Check("destroyed adopted helper is replaced by owned temporary helper", () =>
+        {
+            var helper = UserHelper();
+            var window = new RoslynRuntimeCompilerWindow();
+            Call(window, "OnEnable");
+            Object.DestroyImmediate(helper.gameObject);
+            Call(window, "OnGUI");
+            var replacement = Helper(window);
+            Object.DestroyedObjects.Clear();
+            Call(window, "OnDestroy");
+            Require(replacement.gameObject.Destroyed && Object.DestroyedObjects.Count == 1, "Owned replacement leaked");
+        });
         Check("missing helper on close is harmless", () => Call(new RoslynRuntimeCompilerWindow(), "OnDestroy"));
-        Check(
-            "serialized ownership restoration model keeps exact owned helper",
-            () =>
-            {
-                var original = new RoslynRuntimeCompilerWindow();
-                Call(original, "OnEnable");
-                var owned = Helper(original);
-                var restored = new RoslynRuntimeCompilerWindow();
-                foreach (
-                    var field in typeof(RoslynRuntimeCompilerWindow)
-                        .GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
-                        .Where(f => f.IsDefined(typeof(SerializeField), false))
-                )
-                    field.SetValue(restored, field.GetValue(original));
-                var user = UserHelper();
-                GameObject.All.Remove(user.gameObject);
-                GameObject.All.Insert(0, user.gameObject);
-                Call(restored, "OnEnable");
-                Require(Helper(restored) == owned, "Restored references lost owned identity");
-                Call(restored, "OnDestroy");
-                Require(owned.gameObject.Destroyed && !user.gameObject.Destroyed, "Restored ownership cleanup targeted wrong object");
-            }
-        );
-        Check(
-            "coroutine to MonoBehaviour recompile never invokes prior program",
-            () =>
+        Check("serialized ownership restoration model keeps exact owned helper", () =>
+        {
+            var original = new RoslynRuntimeCompilerWindow();
+            Call(original, "OnEnable");
+            var owned = Helper(original);
+            var restored = new RoslynRuntimeCompilerWindow();
+            foreach (
+                var field in typeof(RoslynRuntimeCompilerWindow)
+                    .GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+                    .Where(f => f.IsDefined(typeof(SerializeField), false))
+            )
+                field.SetValue(restored, field.GetValue(original));
+            var user = UserHelper();
+            GameObject.All.Remove(user.gameObject);
+            GameObject.All.Insert(0, user.gameObject);
+            Call(restored, "OnEnable");
+            Require(Helper(restored) == owned, "Restored references lost owned identity");
+            Call(restored, "OnDestroy");
+            Require(owned.gameObject.Destroyed && !user.gameObject.Destroyed, "Restored ownership cleanup targeted wrong object");
+        });
+        Check("coroutine to MonoBehaviour recompile never invokes prior program", () =>
+        {
+            var compiler = UserHelper();
+            Require(Execute(compiler, CoroutineSource, "CoroutineProgram", compiler.gameObject, false), "Initial coroutine compile failed");
+            RuntimeProbe.Calls = 0;
+            compiler.StartedCoroutines.Clear();
+            Require(Execute(compiler, ComponentSource, "GeneratedComponent", compiler.gameObject, false), "Component recompile failed");
+            Require(RuntimeProbe.Calls == 0 && compiler.StartedCoroutines.Count == 0, "Prior coroutine executed after component recompile");
+            Require(!compiler.HasEntryMethod && compiler.EntryType.Name == "GeneratedComponent", "Method cache belongs to previous program");
+            Require(
+                compiler.gameObject.Components.Count(c => !c.Destroyed && c.GetType().Name == "GeneratedComponent") == 1,
+                "Current MonoBehaviour was not attached"
+            );
+        });
+        foreach (var invalid in new[] { "syntax", "missing-type", "missing-method", "ambiguous-method" })
+            Check("failed " + invalid + " recompile clears runnable caches", () =>
             {
                 var compiler = UserHelper();
-                Require(Execute(compiler, CoroutineSource, "CoroutineProgram", compiler.gameObject, false), "Initial coroutine compile failed");
+                Require(Execute(compiler, StaticSource, "StaticProgram", compiler.gameObject, false), "Seed compilation failed");
                 RuntimeProbe.Calls = 0;
-                compiler.StartedCoroutines.Clear();
-                Require(Execute(compiler, ComponentSource, "GeneratedComponent", compiler.gameObject, false), "Component recompile failed");
-                Require(RuntimeProbe.Calls == 0 && compiler.StartedCoroutines.Count == 0, "Prior coroutine executed after component recompile");
-                Require(!compiler.HasEntryMethod && compiler.EntryType.Name == "GeneratedComponent", "Method cache belongs to previous program");
+                compiler.code =
+                    invalid == "syntax" ? "public class Broken {"
+                    : invalid == "missing-type" ? "public class Other {}"
+                    : invalid == "missing-method" ? "public class Broken {}"
+                    : "public class Broken { public static void Run() {} public static void Run(int x) {} }";
+                compiler.entryTypeName = "Broken";
+                compiler.entryMethodName = "Run";
+                Require(!compiler.CompileInMemory(out string diagnostics) && !string.IsNullOrEmpty(diagnostics), "Expected failed compile or entry resolution");
                 Require(
-                    compiler.gameObject.Components.Count(c => !c.Destroyed && c.GetType().Name == "GeneratedComponent") == 1,
-                    "Current MonoBehaviour was not attached"
+                    !compiler.InvokeEntry(compiler.gameObject, out string error) && RuntimeProbe.Calls == 0,
+                    "Failed recompile left previous code callable; calls=" + RuntimeProbe.Calls
                 );
-            }
-        );
-        foreach (var invalid in new[] { "syntax", "missing-type", "missing-method", "ambiguous-method" })
-            Check(
-                "failed " + invalid + " recompile clears runnable caches",
-                () =>
-                {
-                    var compiler = UserHelper();
-                    Require(Execute(compiler, StaticSource, "StaticProgram", compiler.gameObject, false), "Seed compilation failed");
-                    RuntimeProbe.Calls = 0;
-                    compiler.code =
-                        invalid == "syntax" ? "public class Broken {"
-                        : invalid == "missing-type" ? "public class Other {}"
-                        : invalid == "missing-method" ? "public class Broken {}"
-                        : "public class Broken { public static void Run() {} public static void Run(int x) {} }";
-                    compiler.entryTypeName = "Broken";
-                    compiler.entryMethodName = "Run";
-                    Require(
-                        !compiler.CompileInMemory(out string diagnostics) && !string.IsNullOrEmpty(diagnostics),
-                        "Expected failed compile or entry resolution"
-                    );
-                    Require(
-                        !compiler.InvokeEntry(compiler.gameObject, out string error) && RuntimeProbe.Calls == 0,
-                        "Failed recompile left previous code callable; calls=" + RuntimeProbe.Calls
-                    );
-                    Require(!compiler.HasCompiledAssembly && !compiler.HasEntryType && !compiler.HasEntryMethod, "Failed recompile left published caches");
-                }
+                Require(!compiler.HasCompiledAssembly && !compiler.HasEntryType && !compiler.HasEntryMethod, "Failed recompile left published caches");
+            });
+        Check("same class recompile replaces prior tracked component", () =>
+        {
+            var compiler = UserHelper();
+            var target = new GameObject("AttachmentTarget");
+            Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "First attachment failed");
+            var first = target.Components.Single();
+            Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Second attachment failed");
+            Require(
+                first.Destroyed && target.Components.Count(c => !c.Destroyed) == 1,
+                "Fresh assembly Type retained old component; live count=" + target.Components.Count(c => !c.Destroyed)
             );
-        Check(
-            "same class recompile replaces prior tracked component",
-            () =>
+        });
+        Check("same Type attachment preserves remove before add ordering", () =>
+        {
+            var compiler = UserHelper();
+            var target = new GameObject("SameTypeTarget");
+            compiler.code = ComponentSource;
+            compiler.entryTypeName = "GeneratedComponent";
+            Require(compiler.CompileInMemory(out string diagnostics) && compiler.AttachMonoBehaviour(target, out string error), "Seed attachment failed");
+            var first = target.Components.Single();
+            target.FailAdd = "same-type-present";
+            Require(
+                compiler.AttachMonoBehaviour(target, out error) && first.Destroyed && target.Components.Count(c => !c.Destroyed) == 1,
+                "Same Type attempted adding while previous instance was still present"
+            );
+        });
+        Check("replacement preserves untracked older Type with same full name", () =>
+        {
+            var compiler = UserHelper();
+            var target = new GameObject("ExternalAttachmentTarget");
+            compiler.code = ComponentSource;
+            compiler.entryTypeName = "GeneratedComponent";
+            Require(compiler.CompileInMemory(out string diagnostics), "External Type compilation failed");
+            var external = target.AddComponent(compiler.EntryType);
+            Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Tracked attachment failed");
+            Require(!external.Destroyed && target.Components.Count(c => !c.Destroyed) == 2, "Replacement removed an untracked same-name component");
+        });
+        Check("component replacement preserves other targets and classes", () =>
+        {
+            var compiler = UserHelper();
+            var firstTarget = new GameObject("FirstTarget");
+            var secondTarget = new GameObject("SecondTarget");
+            Require(Execute(compiler, ComponentSource, "GeneratedComponent", firstTarget, true), "First target attachment failed");
+            var first = firstTarget.Components.Single();
+            Require(Execute(compiler, ComponentSource, "GeneratedComponent", secondTarget, true), "Second target attachment failed");
+            var second = secondTarget.Components.Single();
+            Require(
+                Execute(compiler, "public class OtherComponent : UnityEngine.MonoBehaviour {}", "OtherComponent", secondTarget, true),
+                "Other class attachment failed"
+            );
+            Require(
+                !first.Destroyed && !second.Destroyed && secondTarget.Components.Count(c => !c.Destroyed) == 2,
+                "Replacement removed a different target or class"
+            );
+        });
+        foreach (bool switchTarget in new[] { true, false })
+            Check("A B A component recompiles replace A across " + (switchTarget ? "targets" : "classes"), () =>
+            {
+                var compiler = UserHelper();
+                var targetA = new GameObject("TargetA");
+                var targetB = switchTarget ? new GameObject("TargetB") : targetA;
+                Require(Execute(compiler, ComponentSource, "GeneratedComponent", targetA, true), "Initial A attachment failed");
+                var firstA = targetA.Components.Single();
+                string sourceB = switchTarget ? ComponentSource : "public class OtherComponent : UnityEngine.MonoBehaviour {}";
+                string typeB = switchTarget ? "GeneratedComponent" : "OtherComponent";
+                Require(Execute(compiler, sourceB, typeB, targetB, true), "B attachment failed");
+                var componentB = targetB.Components.Last();
+                Require(Execute(compiler, ComponentSource, "GeneratedComponent", targetA, true), "Final A attachment failed");
+                Require(
+                    firstA.Destroyed && !componentB.Destroyed && targetA.Components.Count(c => !c.Destroyed && c.GetType().Name == "GeneratedComponent") == 1,
+                    "Returning to A leaked its prior component or destroyed B"
+                );
+            });
+        foreach (bool throwOnAdd in new[] { false, true })
+            Check("failed replacement add " + (throwOnAdd ? "exception" : "null") + " preserves valid old component", () =>
             {
                 var compiler = UserHelper();
                 var target = new GameObject("AttachmentTarget");
-                Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "First attachment failed");
-                var first = target.Components.Single();
-                Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Second attachment failed");
+                Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Seed attachment failed");
+                var previous = target.Components.Single();
+                target.FailAdd = throwOnAdd ? "throw" : "null";
+                Require(!Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Failed AddComponent reported success");
+                Require(!previous.Destroyed, "Failed addition removed prior valid component");
+                target.FailAdd = null;
                 Require(
-                    first.Destroyed && target.Components.Count(c => !c.Destroyed) == 1,
-                    "Fresh assembly Type retained old component; live count=" + target.Components.Count(c => !c.Destroyed)
+                    Execute(compiler, ComponentSource, "GeneratedComponent", target, true)
+                        && previous.Destroyed
+                        && target.Components.Count(c => !c.Destroyed) == 1,
+                    "Failed addition forgot prior valid component ownership"
                 );
-            }
-        );
-        Check(
-            "same Type attachment preserves remove before add ordering",
-            () =>
-            {
-                var compiler = UserHelper();
-                var target = new GameObject("SameTypeTarget");
-                compiler.code = ComponentSource;
-                compiler.entryTypeName = "GeneratedComponent";
-                Require(compiler.CompileInMemory(out string diagnostics) && compiler.AttachMonoBehaviour(target, out string error), "Seed attachment failed");
-                var first = target.Components.Single();
-                target.FailAdd = "same-type-present";
-                Require(
-                    compiler.AttachMonoBehaviour(target, out error) && first.Destroyed && target.Components.Count(c => !c.Destroyed) == 1,
-                    "Same Type attempted adding while previous instance was still present"
-                );
-            }
-        );
-        Check(
-            "replacement preserves untracked older Type with same full name",
-            () =>
-            {
-                var compiler = UserHelper();
-                var target = new GameObject("ExternalAttachmentTarget");
-                compiler.code = ComponentSource;
-                compiler.entryTypeName = "GeneratedComponent";
-                Require(compiler.CompileInMemory(out string diagnostics), "External Type compilation failed");
-                var external = target.AddComponent(compiler.EntryType);
-                Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Tracked attachment failed");
-                Require(!external.Destroyed && target.Components.Count(c => !c.Destroyed) == 2, "Replacement removed an untracked same-name component");
-            }
-        );
-        Check(
-            "component replacement preserves other targets and classes",
-            () =>
-            {
-                var compiler = UserHelper();
-                var firstTarget = new GameObject("FirstTarget");
-                var secondTarget = new GameObject("SecondTarget");
-                Require(Execute(compiler, ComponentSource, "GeneratedComponent", firstTarget, true), "First target attachment failed");
-                var first = firstTarget.Components.Single();
-                Require(Execute(compiler, ComponentSource, "GeneratedComponent", secondTarget, true), "Second target attachment failed");
-                var second = secondTarget.Components.Single();
-                Require(
-                    Execute(compiler, "public class OtherComponent : UnityEngine.MonoBehaviour {}", "OtherComponent", secondTarget, true),
-                    "Other class attachment failed"
-                );
-                Require(
-                    !first.Destroyed && !second.Destroyed && secondTarget.Components.Count(c => !c.Destroyed) == 2,
-                    "Replacement removed a different target or class"
-                );
-            }
-        );
-        foreach (bool switchTarget in new[] { true, false })
-            Check(
-                "A B A component recompiles replace A across " + (switchTarget ? "targets" : "classes"),
-                () =>
-                {
-                    var compiler = UserHelper();
-                    var targetA = new GameObject("TargetA");
-                    var targetB = switchTarget ? new GameObject("TargetB") : targetA;
-                    Require(Execute(compiler, ComponentSource, "GeneratedComponent", targetA, true), "Initial A attachment failed");
-                    var firstA = targetA.Components.Single();
-                    string sourceB = switchTarget ? ComponentSource : "public class OtherComponent : UnityEngine.MonoBehaviour {}";
-                    string typeB = switchTarget ? "GeneratedComponent" : "OtherComponent";
-                    Require(Execute(compiler, sourceB, typeB, targetB, true), "B attachment failed");
-                    var componentB = targetB.Components.Last();
-                    Require(Execute(compiler, ComponentSource, "GeneratedComponent", targetA, true), "Final A attachment failed");
-                    Require(
-                        firstA.Destroyed
-                            && !componentB.Destroyed
-                            && targetA.Components.Count(c => !c.Destroyed && c.GetType().Name == "GeneratedComponent") == 1,
-                        "Returning to A leaked its prior component or destroyed B"
-                    );
-                }
-            );
-        foreach (bool throwOnAdd in new[] { false, true })
-            Check(
-                "failed replacement add " + (throwOnAdd ? "exception" : "null") + " preserves valid old component",
-                () =>
-                {
-                    var compiler = UserHelper();
-                    var target = new GameObject("AttachmentTarget");
-                    Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Seed attachment failed");
-                    var previous = target.Components.Single();
-                    target.FailAdd = throwOnAdd ? "throw" : "null";
-                    Require(!Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Failed AddComponent reported success");
-                    Require(!previous.Destroyed, "Failed addition removed prior valid component");
-                    target.FailAdd = null;
-                    Require(
-                        Execute(compiler, ComponentSource, "GeneratedComponent", target, true)
-                            && previous.Destroyed
-                            && target.Components.Count(c => !c.Destroyed) == 1,
-                        "Failed addition forgot prior valid component ownership"
-                    );
-                }
-            );
+            });
         foreach (bool withHost in new[] { false, true })
-            Check(
-                "GameObject coroutine keeps explicit target with " + (withHost ? "target host" : "compiler host fallback"),
-                () =>
-                {
-                    var compiler = UserHelper();
-                    var target = new GameObject("CoroutineTarget");
-                    var targetHost = withHost ? target.AddComponent<LifecycleRegressionHarness.UserComponent>() : null;
-                    Require(Execute(compiler, CoroutineSource, "CoroutineProgram", target, false), "Coroutine compilation failed");
-                    Require(RuntimeProbe.Target == target, "Coroutine received " + RuntimeProbe.Target?.name + " instead of explicit target");
-                    Require((withHost ? targetHost.StartedCoroutines.Count : compiler.StartedCoroutines.Count) == 1, "Coroutine started on wrong host");
-                }
-            );
+            Check("GameObject coroutine keeps explicit target with " + (withHost ? "target host" : "compiler host fallback"), () =>
+            {
+                var compiler = UserHelper();
+                var target = new GameObject("CoroutineTarget");
+                var targetHost = withHost ? target.AddComponent<LifecycleRegressionHarness.UserComponent>() : null;
+                Require(Execute(compiler, CoroutineSource, "CoroutineProgram", target, false), "Coroutine compilation failed");
+                Require(RuntimeProbe.Target == target, "Coroutine received " + RuntimeProbe.Target?.name + " instead of explicit target");
+                Require((withHost ? targetHost.StartedCoroutines.Count : compiler.StartedCoroutines.Count) == 1, "Coroutine started on wrong host");
+            });
         foreach (bool success in new[] { true, false })
-            Check(
-                "window Compile and Run records " + (success ? "success" : "failure") + " history",
-                () =>
-                {
-                    var window = new RoslynRuntimeCompilerWindow();
-                    Call(window, "OnEnable");
-                    var compiler = Helper(window);
-                    compiler.enableHistory = true;
-                    Set(window, "codeText", success ? StaticSource : "public class Broken {");
-                    Set(window, "typeName", "StaticProgram");
-                    GUI.NextButton = "Compile & Run on helper";
-                    Call(window, "OnGUI");
-                    Require(compiler.CompilationHistory.Count == 1, "GUI compile/run wrote no history");
-                    var entry = compiler.CompilationHistory.Single();
-                    Require(
-                        entry.success == success && entry.executionTarget == compiler.gameObject.name && entry.typeName == "StaticProgram",
-                        "History reported wrong result/target"
-                    );
-                    Call(window, "OnDestroy");
-                }
-            );
-        foreach (bool parameterless in new[] { true, false })
-            Check(
-                (parameterless ? "parameterless" : "MonoBehaviour") + " coroutine signature preserves host",
-                () =>
-                {
-                    var compiler = UserHelper();
-                    var target = new GameObject("CoroutineTarget");
-                    var host = target.AddComponent<UserComponent>();
-                    string source =
-                        "public class SignatureProgram { public static System.Collections.IEnumerator Run("
-                        + (parameterless ? "" : "UnityEngine.MonoBehaviour host")
-                        + ") { RuntimeProbe.Calls++; "
-                        + (parameterless ? "" : "RuntimeProbe.Target = host.gameObject; ")
-                        + "return new object[0].GetEnumerator(); } }";
-                    Require(Execute(compiler, source, "SignatureProgram", target, false), "Coroutine signature failed");
-                    Require(RuntimeProbe.Calls == 1 && host.StartedCoroutines.Count == 1, "Coroutine signature used wrong execution host");
-                    if (!parameterless)
-                        Require(RuntimeProbe.Target == target, "MonoBehaviour argument used wrong host");
-                }
-            );
-        Check(
-            "public coroutine overload preserves host GameObject",
-            () =>
+            Check("window Compile and Run records " + (success ? "success" : "failure") + " history", () =>
             {
-                var compiler = UserHelper();
-                compiler.code = CoroutineSource;
-                compiler.entryTypeName = "CoroutineProgram";
-                Require(compiler.CompileInMemory(out string diagnostics), "Coroutine compilation failed");
+                var window = new RoslynRuntimeCompilerWindow();
+                Call(window, "OnEnable");
+                var compiler = Helper(window);
+                compiler.enableHistory = true;
+                Set(window, "codeText", success ? StaticSource : "public class Broken {");
+                Set(window, "typeName", "StaticProgram");
+                GUI.NextButton = "Compile & Run on helper";
+                Call(window, "OnGUI");
+                Require(compiler.CompilationHistory.Count == 1, "GUI compile/run wrote no history");
+                var entry = compiler.CompilationHistory.Single();
                 Require(
-                    compiler.InvokeCoroutine(compiler, out string error) && RuntimeProbe.Target == compiler.gameObject,
-                    "Public overload changed host argument"
+                    entry.success == success && entry.executionTarget == compiler.gameObject.name && entry.typeName == "StaticProgram",
+                    "History reported wrong result/target"
                 );
-            }
-        );
-        Check(
-            "Compile and Run still respects disabled history",
-            () =>
+                Call(window, "OnDestroy");
+            });
+        foreach (bool parameterless in new[] { true, false })
+            Check((parameterless ? "parameterless" : "MonoBehaviour") + " coroutine signature preserves host", () =>
             {
                 var compiler = UserHelper();
-                compiler.enableHistory = false;
+                var target = new GameObject("CoroutineTarget");
+                var host = target.AddComponent<UserComponent>();
+                string source =
+                    "public class SignatureProgram { public static System.Collections.IEnumerator Run("
+                    + (parameterless ? "" : "UnityEngine.MonoBehaviour host")
+                    + ") { RuntimeProbe.Calls++; "
+                    + (parameterless ? "" : "RuntimeProbe.Target = host.gameObject; ")
+                    + "return new object[0].GetEnumerator(); } }";
+                Require(Execute(compiler, source, "SignatureProgram", target, false), "Coroutine signature failed");
+                Require(RuntimeProbe.Calls == 1 && host.StartedCoroutines.Count == 1, "Coroutine signature used wrong execution host");
+                if (!parameterless)
+                    Require(RuntimeProbe.Target == target, "MonoBehaviour argument used wrong host");
+            });
+        Check("public coroutine overload preserves host GameObject", () =>
+        {
+            var compiler = UserHelper();
+            compiler.code = CoroutineSource;
+            compiler.entryTypeName = "CoroutineProgram";
+            Require(compiler.CompileInMemory(out string diagnostics), "Coroutine compilation failed");
+            Require(
+                compiler.InvokeCoroutine(compiler, out string error) && RuntimeProbe.Target == compiler.gameObject,
+                "Public overload changed host argument"
+            );
+        });
+        Check("Compile and Run still respects disabled history", () =>
+        {
+            var compiler = UserHelper();
+            compiler.enableHistory = false;
+            compiler.code = StaticSource;
+            compiler.entryTypeName = "StaticProgram";
+            compiler.CompileAndRunOnSelf();
+            Require(compiler.CompilationHistory.Count == 0 && RuntimeProbe.Calls == 1, "Disabled history or execution changed");
+        });
+        foreach (var invalid in new[] { "empty-code", "whitespace-code", "empty-type", "whitespace-type" })
+            Check("invalid GUI " + invalid + " compile disables prior Run", () =>
+            {
+                var window = new RoslynRuntimeCompilerWindow();
+                Call(window, "OnEnable");
+                var compiler = Helper(window);
                 compiler.code = StaticSource;
                 compiler.entryTypeName = "StaticProgram";
-                compiler.CompileAndRunOnSelf();
-                Require(compiler.CompilationHistory.Count == 0 && RuntimeProbe.Calls == 1, "Disabled history or execution changed");
-            }
-        );
-        foreach (var invalid in new[] { "empty-code", "whitespace-code", "empty-type", "whitespace-type" })
-            Check(
-                "invalid GUI " + invalid + " compile disables prior Run",
-                () =>
-                {
-                    var window = new RoslynRuntimeCompilerWindow();
-                    Call(window, "OnEnable");
-                    var compiler = Helper(window);
-                    compiler.code = StaticSource;
-                    compiler.entryTypeName = "StaticProgram";
-                    Require(compiler.CompileInMemory(out string diagnostics), "Seed compilation failed");
-                    Set(
-                        window,
-                        "codeText",
-                        invalid == "empty-code" ? ""
-                            : invalid == "whitespace-code" ? " \t\r\n"
-                            : StaticSource
-                    );
-                    Set(
-                        window,
-                        "typeName",
-                        invalid == "empty-type" ? ""
-                            : invalid == "whitespace-type" ? " \t"
-                            : "StaticProgram"
-                    );
-                    GUI.NextButton = "Compile & Run on helper";
-                    Call(window, "OnGUI");
-                    GUI.NextButton = "Run (invoke on selected)";
-                    Call(window, "OnGUI");
-                    Require(
-                        RuntimeProbe.Calls == 0 && !compiler.HasCompiledAssembly && !compiler.HasEntryType && !compiler.HasEntryMethod,
-                        "Invalid GUI attempt retained prior runnable code; calls=" + RuntimeProbe.Calls
-                    );
-                    Require(compiler.CompilationHistory.Count == 0, "Input validation changed existing history semantics");
-                    Call(window, "OnDestroy");
-                }
-            );
-        Check(
-            "simplified null source returns existing validation error",
-            () =>
-            {
-                var compiler = UserHelper();
-                Require(
-                    !compiler.CompileAndExecute(null, "StaticProgram", compiler.gameObject, out string error) && error == "Source code cannot be empty.",
-                    "Null source did not return the existing validation error"
+                Require(compiler.CompileInMemory(out string diagnostics), "Seed compilation failed");
+                Set(
+                    window,
+                    "codeText",
+                    invalid == "empty-code" ? ""
+                        : invalid == "whitespace-code" ? " \t\r\n"
+                        : StaticSource
                 );
-            }
-        );
+                Set(
+                    window,
+                    "typeName",
+                    invalid == "empty-type" ? ""
+                        : invalid == "whitespace-type" ? " \t"
+                        : "StaticProgram"
+                );
+                GUI.NextButton = "Compile & Run on helper";
+                Call(window, "OnGUI");
+                GUI.NextButton = "Run (invoke on selected)";
+                Call(window, "OnGUI");
+                Require(
+                    RuntimeProbe.Calls == 0 && !compiler.HasCompiledAssembly && !compiler.HasEntryType && !compiler.HasEntryMethod,
+                    "Invalid GUI attempt retained prior runnable code; calls=" + RuntimeProbe.Calls
+                );
+                Require(compiler.CompilationHistory.Count == 0, "Input validation changed existing history semantics");
+                Call(window, "OnDestroy");
+            });
+        Check("simplified null source returns existing validation error", () =>
+        {
+            var compiler = UserHelper();
+            Require(
+                !compiler.CompileAndExecute(null, "StaticProgram", compiler.gameObject, out string error) && error == "Source code cannot be empty.",
+                "Null source did not return the existing validation error"
+            );
+        });
         foreach (bool playing in new[] { false, true })
         {
             foreach (var failure in new[] { "invalid-input", "syntax", "entry", "execution" })
-                Check(
-                    "failed generated attachment releases owned target: " + failure + ", playing=" + playing,
-                    () =>
-                    {
-                        bool previousPlaying = Application.isPlaying;
-                        Application.isPlaying = playing;
-                        try
-                        {
-                            var compiler = UserHelper();
-                            typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
-                            string source =
-                                failure == "invalid-input" ? null
-                                : failure == "syntax" ? "public class Broken {"
-                                : failure == "entry" ? "public class Other {}"
-                                : "public class Broken { public static void Run() { throw new System.InvalidOperationException(); } }";
-                            for (int attempt = 0; attempt < 3; attempt++)
-                                Require(!RoslynMCPHelper.CompileAndAttach(source, "Broken", null, out _), "Failure reported success");
-                            Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Failed attempts accumulated generated GameObjects");
-                            Require(!compiler.gameObject.Destroyed, "Failure destroyed the existing compiler helper");
-                            Require(compiler.targetGameObject == null, "Compiler retains failed generated target");
-                        }
-                        finally
-                        {
-                            Application.isPlaying = previousPlaying;
-                        }
-                    }
-                );
-            Check(
-                "failed attachment preserves user target, playing=" + playing,
-                () =>
+                Check("failed generated attachment releases owned target: " + failure + ", playing=" + playing, () =>
                 {
                     bool previousPlaying = Application.isPlaying;
                     Application.isPlaying = playing;
                     try
                     {
-                        UserHelper();
+                        var compiler = UserHelper();
                         typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
-                        var target = new GameObject("UserAttachmentTarget");
-                        Require(!RoslynMCPHelper.CompileAndAttach("public class Broken {", "Broken", target.name, out _), "Failure reported success");
-                        Require(!target.Destroyed && Object.DestroyedObjects.Count == 0, "Failure destroyed a caller-owned target");
+                        string source =
+                            failure == "invalid-input" ? null
+                            : failure == "syntax" ? "public class Broken {"
+                            : failure == "entry" ? "public class Other {}"
+                            : "public class Broken { public static void Run() { throw new System.InvalidOperationException(); } }";
+                        for (int attempt = 0; attempt < 3; attempt++)
+                            Require(!RoslynMCPHelper.CompileAndAttach(source, "Broken", null, out _), "Failure reported success");
+                        Require(GameObject.All.Count(go => !go.Destroyed) == 1, "Failed attempts accumulated generated GameObjects");
+                        Require(!compiler.gameObject.Destroyed, "Failure destroyed the existing compiler helper");
+                        Require(compiler.targetGameObject == null, "Compiler retains failed generated target");
                     }
                     finally
                     {
                         Application.isPlaying = previousPlaying;
                     }
-                }
-            );
-            Check(
-                "successful generated attachment retains result, playing=" + playing,
-                () =>
+                });
+            Check("failed attachment preserves user target, playing=" + playing, () =>
+            {
+                bool previousPlaying = Application.isPlaying;
+                Application.isPlaying = playing;
+                try
                 {
-                    bool previousPlaying = Application.isPlaying;
-                    Application.isPlaying = playing;
-                    try
-                    {
-                        UserHelper();
-                        typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
-                        Require(RoslynMCPHelper.CompileAndAttach(ComponentSource, "GeneratedComponent", null, out string result), result);
-                        var target = GameObject.Find("Generated_GeneratedComponent");
-                        Require(
-                            target != null && target.Components.Count == 1 && Object.DestroyedObjects.Count == 0,
-                            "Successful generated target was released"
-                        );
-                    }
-                    finally
-                    {
-                        Application.isPlaying = previousPlaying;
-                    }
+                    UserHelper();
+                    typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
+                    var target = new GameObject("UserAttachmentTarget");
+                    Require(!RoslynMCPHelper.CompileAndAttach("public class Broken {", "Broken", target.name, out _), "Failure reported success");
+                    Require(!target.Destroyed && Object.DestroyedObjects.Count == 0, "Failure destroyed a caller-owned target");
                 }
-            );
+                finally
+                {
+                    Application.isPlaying = previousPlaying;
+                }
+            });
+            Check("successful generated attachment retains result, playing=" + playing, () =>
+            {
+                bool previousPlaying = Application.isPlaying;
+                Application.isPlaying = playing;
+                try
+                {
+                    UserHelper();
+                    typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
+                    Require(RoslynMCPHelper.CompileAndAttach(ComponentSource, "GeneratedComponent", null, out string result), result);
+                    var target = GameObject.Find("Generated_GeneratedComponent");
+                    Require(target != null && target.Components.Count == 1 && Object.DestroyedObjects.Count == 0, "Successful generated target was released");
+                }
+                finally
+                {
+                    Application.isPlaying = previousPlaying;
+                }
+            });
         }
         Console.WriteLine("RESULT: " + (checks - failures) + "/" + checks + " passed; failures=" + failures);
         return failures == 0 ? 0 : 1;

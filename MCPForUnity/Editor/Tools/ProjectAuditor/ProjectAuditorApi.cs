@@ -132,37 +132,33 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
             var parameterType = auditorType.Assembly.GetType(Namespace + "AnalysisParams");
             // The official default constructor registers thresholds and saves Auditor settings. Only explicit start reaches here.
             object parameters = Activator.CreateInstance(parameterType, new object[] { true });
-            Bind(
-                parameters,
-                "OnIncomingIssues",
-                value =>
+            Bind(parameters, "OnIncomingIssues", value =>
+            {
+                foreach (object item in (IEnumerable)value)
                 {
-                    foreach (object item in (IEnumerable)value)
+                    if (Interlocked.Increment(ref inspected) > MaximumInspected)
                     {
-                        if (Interlocked.Increment(ref inspected) > MaximumInspected)
-                        {
-                            observationTruncated = true;
-                            break;
-                        }
-                        try
-                        {
-                            if ((bool)item.GetType().GetMethod("IsIssue").Invoke(item, null))
-                                issue(Diagnostic(item));
-                        }
-                        catch (Exception error)
-                            when (error is TargetInvocationException
-                                || error is InvalidCastException
-                                || error is InvalidOperationException
-                                || error is ArgumentException
-                            )
-                        {
-                            observationError = "diagnostic_conversion_failed";
-                            observationTruncated = true;
-                            break;
-                        }
+                        observationTruncated = true;
+                        break;
+                    }
+                    try
+                    {
+                        if ((bool)item.GetType().GetMethod("IsIssue").Invoke(item, null))
+                            issue(Diagnostic(item));
+                    }
+                    catch (Exception error)
+                        when (error is TargetInvocationException
+                            || error is InvalidCastException
+                            || error is InvalidOperationException
+                            || error is ArgumentException
+                        )
+                    {
+                        observationError = "diagnostic_conversion_failed";
+                        observationTruncated = true;
+                        break;
                     }
                 }
-            );
+            });
             Bind(parameters, "OnModuleCompleted", value => moduleCompleted(value.ToString()));
             Bind(parameters, "OnCompleted", _ => completed());
             var method = auditorType

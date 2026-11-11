@@ -325,15 +325,11 @@ namespace MCPForUnityTests.Editor.Services
         public IEnumerator ResponseCancellationKeepsActualLeaseUntilMainThreadCompletionCheckpoint()
         {
             var held = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
-            handlers[Name] = new HandlerInfo(
-                Name,
-                null,
-                _ =>
-                {
-                    calls++;
-                    return held.Task;
-                }
-            );
+            handlers[Name] = new HandlerInfo(Name, null, _ =>
+            {
+                calls++;
+                return held.Task;
+            });
             var admission = journal.Admit(Request(), Name, new JObject());
             using var cancellation = new CancellationTokenSource();
             var operation = TransportCommandDispatcher.ExecuteCommandAsync(
@@ -373,14 +369,11 @@ namespace MCPForUnityTests.Editor.Services
         {
             // Given an executing writer whose actual work has not yet settled.
             var held = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
-            handlers[Name] = HandlerInfo.Cooperative(
-                Name,
-                (_, token) =>
-                {
-                    calls++;
-                    return held.Task;
-                }
-            );
+            handlers[Name] = HandlerInfo.Cooperative(Name, (_, token) =>
+            {
+                calls++;
+                return held.Task;
+            });
             var admission = journal.Admit(Request(), Name, new JObject());
             using var cancellation = new CancellationTokenSource();
             journal.BindCancellation(admission.Ticket, cancellation.Cancel);

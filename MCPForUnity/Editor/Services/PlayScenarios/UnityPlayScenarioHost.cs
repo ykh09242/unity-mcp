@@ -61,9 +61,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             : this(
                 logPolicy,
                 sceneSemantics,
-                new PlayScenarioSceneOperation(
-                    sceneSemantics,
-                    (path, mode) => EditorSceneManager.LoadSceneAsyncInPlayMode(RequireSceneAsset(path), new LoadSceneParameters(mode))
+                new PlayScenarioSceneOperation(sceneSemantics, (path, mode) =>
+                    EditorSceneManager.LoadSceneAsyncInPlayMode(RequireSceneAsset(path), new LoadSceneParameters(mode))
                 )
             ) { }
 

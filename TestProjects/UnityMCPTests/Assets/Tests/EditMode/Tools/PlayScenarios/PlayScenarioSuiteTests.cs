@@ -456,17 +456,13 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 (string)request["source_revision"],
                 (string)request["suite_id"]
             );
-            WithCurrentSuite(
-                harness.Runner,
-                false,
-                () =>
-                {
-                    var response = ManagePlayScenario.HandleCommand(request) as SuccessResponse;
-                    Assert.That(response, Is.Not.Null);
-                    Assert.That((string)((JObject)response.Data)["suite_id"], Is.EqualTo((string)request["suite_id"]));
-                    Assert.That(harness.Starts, Is.Zero);
-                }
-            );
+            WithCurrentSuite(harness.Runner, false, () =>
+            {
+                var response = ManagePlayScenario.HandleCommand(request) as SuccessResponse;
+                Assert.That(response, Is.Not.Null);
+                Assert.That((string)((JObject)response.Data)["suite_id"], Is.EqualTo((string)request["suite_id"]));
+                Assert.That(harness.Starts, Is.Zero);
+            });
         }
 
         [Test]
@@ -519,24 +515,17 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 () => { },
                 () => false
             );
-            WithCurrentSuite(
-                runner,
-                completed,
-                () =>
-                {
-                    JObject request = PythonRunWire(restored.Report);
-                    var response = ManagePlayScenario.HandleCommand(request) as SuccessResponse;
-                    Assert.That(response, Is.Not.Null);
-                    JObject report = (JObject)response.Data;
-                    Assert.That((string)report["suite_id"], Is.EqualTo(restored.Report.SuiteId));
-                    Assert.That((string)report["status"], Is.EqualTo(completed ? "succeeded" : "running"));
-                    Assert.That(
-                        report["scenarios"].Select(child => (string)child["job_id"]),
-                        Is.EqualTo(restored.Report.Scenarios.Select(child => child.JobId))
-                    );
-                    Assert.That(harness.Starts, Is.EqualTo(completed ? 2 : 0));
-                }
-            );
+            WithCurrentSuite(runner, completed, () =>
+            {
+                JObject request = PythonRunWire(restored.Report);
+                var response = ManagePlayScenario.HandleCommand(request) as SuccessResponse;
+                Assert.That(response, Is.Not.Null);
+                JObject report = (JObject)response.Data;
+                Assert.That((string)report["suite_id"], Is.EqualTo(restored.Report.SuiteId));
+                Assert.That((string)report["status"], Is.EqualTo(completed ? "succeeded" : "running"));
+                Assert.That(report["scenarios"].Select(child => (string)child["job_id"]), Is.EqualTo(restored.Report.Scenarios.Select(child => child.JobId)));
+                Assert.That(harness.Starts, Is.EqualTo(completed ? 2 : 0));
+            });
         }
 
         [TestCase("release\\candidate")]
@@ -548,17 +537,13 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 label = new string('x', 128);
             PlayScenarioService.ValidateSourceRevision(label);
             var harness = new Harness(Suite("continue"), revision: label);
-            WithCurrentSuite(
-                harness.Runner,
-                false,
-                () =>
-                {
-                    var response = ManagePlayScenario.HandleCommand(PythonRunWire(harness.Runner.State.Report)) as SuccessResponse;
-                    Assert.That(response, Is.Not.Null);
-                    Assert.That((string)((JObject)response.Data)["source_revision"], Is.EqualTo(label));
-                    Assert.That(harness.Starts, Is.Zero);
-                }
-            );
+            WithCurrentSuite(harness.Runner, false, () =>
+            {
+                var response = ManagePlayScenario.HandleCommand(PythonRunWire(harness.Runner.State.Report)) as SuccessResponse;
+                Assert.That(response, Is.Not.Null);
+                Assert.That((string)((JObject)response.Data)["source_revision"], Is.EqualTo(label));
+                Assert.That(harness.Starts, Is.Zero);
+            });
         }
 
         [TestCase("wrong_type")]
@@ -569,36 +554,32 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         public void SuiteRevisionRejectsInvalidLabelTypesAndValues(string kind)
         {
             var harness = new Harness(Suite("continue"));
-            WithCurrentSuite(
-                harness.Runner,
-                false,
-                () =>
+            WithCurrentSuite(harness.Runner, false, () =>
+            {
+                JObject request = PythonRunWire(harness.Runner.State.Report);
+                switch (kind)
                 {
-                    JObject request = PythonRunWire(harness.Runner.State.Report);
-                    switch (kind)
-                    {
-                        case "wrong_type":
-                            request["source_revision"] = 42;
-                            break;
-                        case "null":
-                            request["source_revision"] = JValue.CreateNull();
-                            break;
-                        case "control":
-                            request["source_revision"] = "release\u0001candidate";
-                            break;
-                        case "blank":
-                            request["source_revision"] = "   ";
-                            break;
-                        case "overbound":
-                            request["source_revision"] = new string('x', 129);
-                            break;
-                    }
-                    var response = ManagePlayScenario.HandleCommand(request) as ErrorResponse;
-                    Assert.That(response, Is.Not.Null);
-                    Assert.That(response.Error, Does.Contain("source_revision"));
-                    Assert.That(harness.Starts, Is.Zero);
+                    case "wrong_type":
+                        request["source_revision"] = 42;
+                        break;
+                    case "null":
+                        request["source_revision"] = JValue.CreateNull();
+                        break;
+                    case "control":
+                        request["source_revision"] = "release\u0001candidate";
+                        break;
+                    case "blank":
+                        request["source_revision"] = "   ";
+                        break;
+                    case "overbound":
+                        request["source_revision"] = new string('x', 129);
+                        break;
                 }
-            );
+                var response = ManagePlayScenario.HandleCommand(request) as ErrorResponse;
+                Assert.That(response, Is.Not.Null);
+                Assert.That(response.Error, Does.Contain("source_revision"));
+                Assert.That(harness.Starts, Is.Zero);
+            });
         }
 
         [TestCase("name", "other-suite")]
@@ -608,19 +589,15 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         public void ReusingSuiteIdWithADifferentOriginalRequestIsRejected(string field, string replacement)
         {
             var harness = new Harness(Suite("continue"));
-            WithCurrentSuite(
-                harness.Runner,
-                false,
-                () =>
-                {
-                    JObject request = PythonRunWire(harness.Runner.State.Report);
-                    request[field] = field == "repeat_count" || field == "timeout_seconds" ? new JValue(int.Parse(replacement)) : new JValue(replacement);
-                    var response = ManagePlayScenario.HandleCommand(request) as ErrorResponse;
-                    Assert.That(response, Is.Not.Null);
-                    Assert.That(response.Error, Does.Contain("different run request"));
-                    Assert.That(harness.Starts, Is.Zero);
-                }
-            );
+            WithCurrentSuite(harness.Runner, false, () =>
+            {
+                JObject request = PythonRunWire(harness.Runner.State.Report);
+                request[field] = field == "repeat_count" || field == "timeout_seconds" ? new JValue(int.Parse(replacement)) : new JValue(replacement);
+                var response = ManagePlayScenario.HandleCommand(request) as ErrorResponse;
+                Assert.That(response, Is.Not.Null);
+                Assert.That(response.Error, Does.Contain("different run request"));
+                Assert.That(harness.Starts, Is.Zero);
+            });
         }
 
         private static JObject PythonRunWire(PlayScenarioSuiteReport report)

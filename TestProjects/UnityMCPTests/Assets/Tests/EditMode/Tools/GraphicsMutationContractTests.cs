@@ -291,11 +291,9 @@ namespace MCPForUnityTests.Editor.Tools
         public void QualityLevelAcceptsConfiguredStringName(bool differentCase)
         {
             string[] names = QualitySettings.names;
-            int target = System.Array.FindIndex(
-                names,
-                name =>
-                    !string.IsNullOrEmpty(name)
-                    && !int.TryParse(name, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out _)
+            int target = System.Array.FindIndex(names, name =>
+                !string.IsNullOrEmpty(name)
+                && !int.TryParse(name, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out _)
             );
             if (target < 0)
                 Assert.Ignore("Configured quality levels have no nonnumeric string name.");

@@ -322,26 +322,19 @@ namespace MCPForUnityTests.Editor.Services
                     null
                 )
             );
-            handlers.Set(
-                secondName,
-                new HandlerInfo(
-                    secondName,
-                    null,
-                    async _ =>
+            handlers.Set(secondName, new HandlerInfo(secondName, null, async _ =>
+                {
+                    secondCalls++;
+                    entered.TrySetResult(true);
+                    try
                     {
-                        secondCalls++;
-                        entered.TrySetResult(true);
-                        try
-                        {
-                            return await release.Task.ConfigureAwait(true);
-                        }
-                        finally
-                        {
-                            settled.TrySetResult(true);
-                        }
+                        return await release.Task.ConfigureAwait(true);
                     }
-                )
-            );
+                    finally
+                    {
+                        settled.TrySetResult(true);
+                    }
+                }));
             using var host = new StdioBridgeReconnectTests.TimingHostScope(_ => Task.FromResult<object>(new { unused = true }));
             var batch = new JObject
             {

@@ -990,26 +990,22 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     try
                     {
                         session = await launch
-                            .AuthenticateSessionAsync(
-                                stream,
-                                token,
-                                _ =>
+                            .AuthenticateSessionAsync(stream, token, _ =>
+                            {
+                                lock (clientsLock)
                                 {
-                                    lock (clientsLock)
-                                    {
-                                        if (
-                                            token.IsCancellationRequested
-                                            || !isRunning
-                                            || !ReferenceEquals(launch, authentication)
-                                            || activeClients.Count >= MaxAuthenticatedClients
-                                        )
-                                            return false;
-                                        authenticatingClients.Remove(client);
-                                        activeClients.Add(client);
-                                        return true;
-                                    }
+                                    if (
+                                        token.IsCancellationRequested
+                                        || !isRunning
+                                        || !ReferenceEquals(launch, authentication)
+                                        || activeClients.Count >= MaxAuthenticatedClients
+                                    )
+                                        return false;
+                                    authenticatingClients.Remove(client);
+                                    activeClients.Add(client);
+                                    return true;
                                 }
-                            )
+                            })
                             .ConfigureAwait(false);
                         if (session == null)
                             return;

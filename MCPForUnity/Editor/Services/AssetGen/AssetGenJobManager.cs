@@ -109,8 +109,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 if (_journal != null)
                     return _journal;
                 string project = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-                string owner =
-                    _journalOwnerForTests
+                string owner = _journalOwnerForTests
                     ?? AtomicAssetFile.Digest(
                         Encoding.UTF8.GetBytes(project + "\n" + Environment.MachineName + "\n" + Environment.UserDomainName + "\n" + Environment.UserName)
                     );
@@ -121,8 +120,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     instance = Guid.NewGuid().ToString("N");
                     SessionState.SetString(instanceKey, instance);
                 }
-                string directory =
-                    _journalRootForTests
+                string directory = _journalRootForTests
                     ?? SafePathUtility.ResolveWithinRoot(project, Path.Combine("Library", "MCPForUnity", "AssetGen", owner.Substring(0, 32)));
                 return _journal = new AssetGenJobJournal(directory, owner, instance, _journalUtcForTests ?? (() => DateTimeOffset.UtcNow));
             }

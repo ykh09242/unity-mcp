@@ -986,38 +986,33 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             installSkillsButton.SetEnabled(false);
             installSkillsButton.text = "Syncing...";
 
-            SkillSyncService.SyncSourceAsync(
-                source,
-                installPath,
-                null,
-                result =>
-                {
-                    isSkillSyncInProgress = false;
-                    installSkillsButton.SetEnabled(true);
-                    installSkillsButton.text = "Install Skills";
+            SkillSyncService.SyncSourceAsync(source, installPath, null, result =>
+            {
+                isSkillSyncInProgress = false;
+                installSkillsButton.SetEnabled(true);
+                installSkillsButton.text = "Install Skills";
 
-                    string summary = SkillSyncService.DescribeResult(result);
-                    string diagnostics = SkillSyncService.DescribeResult(result, includeSourceDetails: true);
-                    if (result.Success)
-                    {
-                        bool needsAttention = result.Conflicts.Length > 0 || !string.IsNullOrEmpty(result.RecoveryPath);
-                        if (needsAttention)
-                            McpLog.Warn($"SkillSync: {diagnostics} ({installPath})");
-                        else
-                            McpLog.Info($"SkillSync: {diagnostics} ({installPath})");
-                        EditorUtility.DisplayDialog(
-                            needsAttention ? "Skills synced with retained changes" : "Install Skills",
-                            $"{summary}\n\nInstalled at: {installPath}",
-                            "OK"
-                        );
-                    }
+                string summary = SkillSyncService.DescribeResult(result);
+                string diagnostics = SkillSyncService.DescribeResult(result, includeSourceDetails: true);
+                if (result.Success)
+                {
+                    bool needsAttention = result.Conflicts.Length > 0 || !string.IsNullOrEmpty(result.RecoveryPath);
+                    if (needsAttention)
+                        McpLog.Warn($"SkillSync: {diagnostics} ({installPath})");
                     else
-                    {
-                        McpLog.Error($"SkillSync failed: {diagnostics}");
-                        EditorUtility.DisplayDialog(result.PartialApplication ? "Skill sync requires recovery" : "Install Skills Failed", summary, "OK");
-                    }
+                        McpLog.Info($"SkillSync: {diagnostics} ({installPath})");
+                    EditorUtility.DisplayDialog(
+                        needsAttention ? "Skills synced with retained changes" : "Install Skills",
+                        $"{summary}\n\nInstalled at: {installPath}",
+                        "OK"
+                    );
                 }
-            );
+                else
+                {
+                    McpLog.Error($"SkillSync failed: {diagnostics}");
+                    EditorUtility.DisplayDialog(result.PartialApplication ? "Skill sync requires recovery" : "Install Skills Failed", summary, "OK");
+                }
+            });
         }
 
         private void OnBrowseClaudeClicked()

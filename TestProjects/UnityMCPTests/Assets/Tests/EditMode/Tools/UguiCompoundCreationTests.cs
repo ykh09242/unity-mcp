@@ -2358,18 +2358,15 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             if (string.IsNullOrEmpty(CleanupErrorsJson))
                 CleanupErrorsJson = "[]";
-            Capture(
-                "runtime_roots",
-                () =>
-                {
-                    if (!Application.isPlaying)
-                        return;
-                    var scene = FindOwnedScene(State());
-                    AssertOnlyOwnedRoots(scene, State());
-                    foreach (var root in scene.GetRootGameObjects())
-                        UnityEngine.Object.Destroy(root);
-                }
-            );
+            Capture("runtime_roots", () =>
+            {
+                if (!Application.isPlaying)
+                    return;
+                var scene = FindOwnedScene(State());
+                AssertOnlyOwnedRoots(scene, State());
+                foreach (var root in scene.GetRootGameObjects())
+                    UnityEngine.Object.Destroy(root);
+            });
             if (Application.isPlaying)
             {
                 yield return null;
@@ -2378,19 +2375,15 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             Phase = "cleaning";
             CleanupEditor(null);
-            Capture(
-                "cleanup_evidence",
-                () =>
-                    WriteEvidence(
-                        "cleanup",
-                        new JObject
-                        {
-                            ["primaryOutcome"] = TestContext.CurrentContext.Result.Outcome.Status.ToString(),
-                            ["errors"] = JArray.Parse(CleanupErrorsJson),
-                            ["phase"] = Phase,
-                        }
-                    )
-            );
+            Capture("cleanup_evidence", () => WriteEvidence(
+                    "cleanup",
+                    new JObject
+                    {
+                        ["primaryOutcome"] = TestContext.CurrentContext.Result.Outcome.Status.ToString(),
+                        ["errors"] = JArray.Parse(CleanupErrorsJson),
+                        ["phase"] = Phase,
+                    }
+                ));
             string errors = CleanupErrorsJson;
             OwnedStateJson = ManifestPath = ManifestSha256 = Phase = CleanupErrorsJson = null;
             if (JArray.Parse(errors).Count != 0)
@@ -2949,21 +2942,18 @@ namespace MCPForUnityTests.EditMode.Tools
             CheckState(state);
             if (((JArray)state["folders"]).Count == 0)
                 return; // Admission failed before any owned allocation.
-            Capture(
-                "close_owned_scene",
-                () =>
+            Capture("close_owned_scene", () =>
+            {
+                string path = state.Value<string>("scene");
+                if (string.IsNullOrEmpty(path))
+                    return;
+                var scene = SceneManager.GetSceneByPath(path);
+                if (scene.IsValid() && scene.isLoaded)
                 {
-                    string path = state.Value<string>("scene");
-                    if (string.IsNullOrEmpty(path))
-                        return;
-                    var scene = SceneManager.GetSceneByPath(path);
-                    if (scene.IsValid() && scene.isLoaded)
-                    {
-                        AssertOnlyOwnedRoots(scene, state);
-                        Need(EditorSceneManager.CloseScene(scene, true), "owned_scene_close_failed");
-                    }
+                    AssertOnlyOwnedRoots(scene, state);
+                    Need(EditorSceneManager.CloseScene(scene, true), "owned_scene_close_failed");
                 }
-            );
+            });
             bool closed = string.IsNullOrEmpty(state.Value<string>("scene")) || !SceneManager.GetSceneByPath(state.Value<string>("scene")).isLoaded;
             if (!closed)
             {
@@ -2971,83 +2961,80 @@ namespace MCPForUnityTests.EditMode.Tools
                 return;
             }
             bool cacheSafe = false;
-            Capture(
-                "owned_cache_cleanup",
-                () =>
+            Capture("owned_cache_cleanup", () =>
+            {
+                string fontPath = state.Value<string>("font") ?? state.Value<string>("folder") + "/Font.asset";
+                var fontRow = ((JArray)state["files"]).SingleOrDefault(row => row.Value<string>("path") == fontPath);
+                string fontGuid = AssetDatabase.AssetPathToGUID(fontPath);
+                Need(string.IsNullOrEmpty(fontGuid) || fontRow != null && fontRow.Value<string>("guid") == fontGuid, "foreign_font_GUID_preserved");
+                Type type = RequiredType("TMPro.TMP_FontAsset");
+                // Before persistence, use only the exact object returned to this fixture in this domain.
+                // Never recover an object by a recyclable ID or a global resource scan.
+                var font = string.IsNullOrEmpty(fontGuid)
+                    ? transient
+                        .Where(value => value != null && type.IsInstanceOfType(value) && !EditorUtility.IsPersistent(value))
+                        .Cast<ScriptableObject>()
+                        .SingleOrDefault()
+                    : AssetDatabase.LoadAssetAtPath<ScriptableObject>(fontPath);
+                if (font != null)
                 {
-                    string fontPath = state.Value<string>("font") ?? state.Value<string>("folder") + "/Font.asset";
-                    var fontRow = ((JArray)state["files"]).SingleOrDefault(row => row.Value<string>("path") == fontPath);
-                    string fontGuid = AssetDatabase.AssetPathToGUID(fontPath);
-                    Need(string.IsNullOrEmpty(fontGuid) || fontRow != null && fontRow.Value<string>("guid") == fontGuid, "foreign_font_GUID_preserved");
-                    Type type = RequiredType("TMPro.TMP_FontAsset");
-                    // Before persistence, use only the exact object returned to this fixture in this domain.
-                    // Never recover an object by a recyclable ID or a global resource scan.
-                    var font = string.IsNullOrEmpty(fontGuid)
-                        ? transient
-                            .Where(value => value != null && type.IsInstanceOfType(value) && !EditorUtility.IsPersistent(value))
-                            .Cast<ScriptableObject>()
-                            .SingleOrDefault()
-                        : AssetDatabase.LoadAssetAtPath<ScriptableObject>(fontPath);
-                    if (font != null)
+                    foreach (var registry in FontRegistries())
                     {
-                        foreach (var registry in FontRegistries())
+                        Need(registry.Count <= 4096, "font_registry_bound");
+                        foreach (object item in registry.Values)
                         {
-                            Need(registry.Count <= 4096, "font_registry_bound");
-                            foreach (object item in registry.Values)
-                            {
-                                object value =
-                                    item is UnityEngine.Object
-                                        ? item
-                                        : item.GetType().GetField("fontAsset", BindingFlags.Public | BindingFlags.Instance).GetValue(item);
-                                Need(ReferenceEquals(value, font), "foreign_font_cache_preserved");
-                            }
+                            object value =
+                                item is UnityEngine.Object
+                                    ? item
+                                    : item.GetType().GetField("fontAsset", BindingFlags.Public | BindingFlags.Instance).GetValue(item);
+                            Need(ReferenceEquals(value, font), "foreign_font_cache_preserved");
                         }
-                        var callbacks = FontCallbacks();
-                        Need(callbacks.Count <= 4096, "callback_bound");
-                        foreach (object weak in callbacks)
-                        {
-                            object[] target = { null };
-                            Need(
-                                (bool)weak.GetType().GetMethod("TryGetTarget").Invoke(weak, target) && ReferenceEquals(target[0], font),
-                                "foreign_or_dead_font_callback_preserved"
-                            );
-                        }
-                        var resource = type.Assembly.GetType("TMPro.TMP_ResourceManager", true);
-                        resource.GetMethod("RemoveFontAsset", new[] { type }).Invoke(null, new object[] { font });
-                        for (int i = callbacks.Count - 1; i >= 0; i--)
-                        {
-                            object[] target = { null };
-                            if ((bool)callbacks[i].GetType().GetMethod("TryGetTarget").Invoke(callbacks[i], target) && ReferenceEquals(target[0], font))
-                                callbacks.RemoveAt(i);
-                        }
-                        foreach (var registry in FontRegistries())
-                            Need(registry.Count == 0, "owned_font_cache_remains");
-                        Need(callbacks.Count == 0, "owned_font_callback_remains");
                     }
-                    else
+                    var callbacks = FontCallbacks();
+                    Need(callbacks.Count <= 4096, "callback_bound");
+                    foreach (object weak in callbacks)
                     {
-                        foreach (var registry in FontRegistries())
-                            Need(registry.Count == 0, "untracked_font_registry_preserved");
-                        Need(FontCallbacks().Count == 0, "untracked_font_callbacks_preserved");
-                    }
-                    object current = SettingsSlot().GetValue(null);
-                    if (current != null)
-                    {
-                        string settingsPath = state.Value<string>("settings") ?? state.Value<string>("folder") + "/Resources/TMP Settings.asset";
-                        var settingsRow = ((JArray)state["files"]).SingleOrDefault(row => row.Value<string>("path") == settingsPath);
+                        object[] target = { null };
                         Need(
-                            settingsRow != null
-                                && AssetDatabase.GetAssetPath(current as UnityEngine.Object) == settingsPath
-                                && AssetDatabase.AssetPathToGUID(settingsPath) == settingsRow.Value<string>("guid"),
-                            "foreign_TMP_settings_preserved"
+                            (bool)weak.GetType().GetMethod("TryGetTarget").Invoke(weak, target) && ReferenceEquals(target[0], font),
+                            "foreign_or_dead_font_callback_preserved"
                         );
-                        var settings = AssetDatabase.LoadAssetAtPath<ScriptableObject>(settingsPath);
-                        Need(ReferenceEquals(current, settings), "foreign_TMP_settings_preserved");
-                        SettingsSlot().SetValue(null, null);
                     }
-                    cacheSafe = true;
+                    var resource = type.Assembly.GetType("TMPro.TMP_ResourceManager", true);
+                    resource.GetMethod("RemoveFontAsset", new[] { type }).Invoke(null, new object[] { font });
+                    for (int i = callbacks.Count - 1; i >= 0; i--)
+                    {
+                        object[] target = { null };
+                        if ((bool)callbacks[i].GetType().GetMethod("TryGetTarget").Invoke(callbacks[i], target) && ReferenceEquals(target[0], font))
+                            callbacks.RemoveAt(i);
+                    }
+                    foreach (var registry in FontRegistries())
+                        Need(registry.Count == 0, "owned_font_cache_remains");
+                    Need(callbacks.Count == 0, "owned_font_callback_remains");
                 }
-            );
+                else
+                {
+                    foreach (var registry in FontRegistries())
+                        Need(registry.Count == 0, "untracked_font_registry_preserved");
+                    Need(FontCallbacks().Count == 0, "untracked_font_callbacks_preserved");
+                }
+                object current = SettingsSlot().GetValue(null);
+                if (current != null)
+                {
+                    string settingsPath = state.Value<string>("settings") ?? state.Value<string>("folder") + "/Resources/TMP Settings.asset";
+                    var settingsRow = ((JArray)state["files"]).SingleOrDefault(row => row.Value<string>("path") == settingsPath);
+                    Need(
+                        settingsRow != null
+                            && AssetDatabase.GetAssetPath(current as UnityEngine.Object) == settingsPath
+                            && AssetDatabase.AssetPathToGUID(settingsPath) == settingsRow.Value<string>("guid"),
+                        "foreign_TMP_settings_preserved"
+                    );
+                    var settings = AssetDatabase.LoadAssetAtPath<ScriptableObject>(settingsPath);
+                    Need(ReferenceEquals(current, settings), "foreign_TMP_settings_preserved");
+                    SettingsSlot().SetValue(null, null);
+                }
+                cacheSafe = true;
+            });
             if (!cacheSafe)
             {
                 AddError("assets_retained_for_cache_uncertainty", new InvalidOperationException());
@@ -3056,87 +3043,75 @@ namespace MCPForUnityTests.EditMode.Tools
             if (fault == "after_cache_cleanup")
                 Capture("injected_cleanup", () => throw new InvalidOperationException("owned_cleanup_fault"));
             foreach (var row in ((JArray)state["files"]).Reverse().ToArray())
-                Capture(
-                    "delete_owned_asset",
-                    () =>
-                    {
-                        string path = row.Value<string>("path");
-                        string guid = AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets);
-                        if (string.IsNullOrEmpty(guid))
-                            return;
-                        Need(guid == row.Value<string>("guid"), "foreign_asset_GUID_preserved");
-                        Need(AssetDatabase.DeleteAsset(path), "owned_asset_delete_failed");
-                    }
-                );
+                Capture("delete_owned_asset", () =>
+                {
+                    string path = row.Value<string>("path");
+                    string guid = AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets);
+                    if (string.IsNullOrEmpty(guid))
+                        return;
+                    Need(guid == row.Value<string>("guid"), "foreign_asset_GUID_preserved");
+                    Need(AssetDatabase.DeleteAsset(path), "owned_asset_delete_failed");
+                });
             foreach (var value in transient.AsEnumerable().Reverse())
-                Capture(
-                    "transient_cleanup",
-                    () =>
-                    {
-                        if (value != null && !EditorUtility.IsPersistent(value))
-                            UnityEngine.Object.DestroyImmediate(value);
-                    }
-                );
+                Capture("transient_cleanup", () =>
+                {
+                    if (value != null && !EditorUtility.IsPersistent(value))
+                        UnityEngine.Object.DestroyImmediate(value);
+                });
             transient.Clear();
             foreach (var row in ((JArray)state["folders"]).Reverse().ToArray())
-                Capture(
-                    "delete_owned_empty_folder",
-                    () =>
-                    {
-                        string path = row.Value<string>("path");
-                        if (!AssetDatabase.IsValidFolder(path))
-                            return;
-                        Need(
-                            AssetDatabase.AssetPathToGUID(path) == row.Value<string>("guid") && Directory.GetFileSystemEntries(DiskPath(path)).Length == 0,
-                            "foreign_folder_content_preserved"
-                        );
-                        Need(AssetDatabase.DeleteAsset(path), "owned_folder_delete_failed");
-                    }
-                );
-            Capture(
-                "previous_scene_restore",
-                () =>
+                Capture("delete_owned_empty_folder", () =>
                 {
-                    var previous = Enumerable
+                    string path = row.Value<string>("path");
+                    if (!AssetDatabase.IsValidFolder(path))
+                        return;
+                    Need(
+                        AssetDatabase.AssetPathToGUID(path) == row.Value<string>("guid") && Directory.GetFileSystemEntries(DiskPath(path)).Length == 0,
+                        "foreign_folder_content_preserved"
+                    );
+                    Need(AssetDatabase.DeleteAsset(path), "owned_folder_delete_failed");
+                });
+            Capture("previous_scene_restore", () =>
+            {
+                var previous = Enumerable
+                    .Range(0, SceneManager.sceneCount)
+                    .Select(SceneManager.GetSceneAt)
+                    .Single(scene => scene.path == state.Value<string>("previousActivePath") && scene.name == state.Value<string>("previousActiveName"));
+                bool previousActiveRestored = SelectActiveScene(previous);
+                string reason = "previous_active_scene_restore_failed";
+                if (!previousActiveRestored)
+                    try
+                    {
+                        reason += ":valid=" + previous.IsValid();
+                        reason += ";loaded=" + previous.isLoaded;
+                        reason += ";preview=" + EditorSceneManager.IsPreviewScene(previous);
+                        reason += ";active=" + SceneManager.GetActiveScene().Equals(previous);
+                    }
+                    catch (Exception error)
+                    {
+                        reason += ";flags_unavailable=" + error.GetType().Name;
+                    }
+                Need(previousActiveRestored, reason);
+                var current = new JArray(
+                    Enumerable
                         .Range(0, SceneManager.sceneCount)
                         .Select(SceneManager.GetSceneAt)
-                        .Single(scene => scene.path == state.Value<string>("previousActivePath") && scene.name == state.Value<string>("previousActiveName"));
-                    bool previousActiveRestored = SelectActiveScene(previous);
-                    string reason = "previous_active_scene_restore_failed";
-                    if (!previousActiveRestored)
-                        try
+                        .Select(scene => new JObject
                         {
-                            reason += ":valid=" + previous.IsValid();
-                            reason += ";loaded=" + previous.isLoaded;
-                            reason += ";preview=" + EditorSceneManager.IsPreviewScene(previous);
-                            reason += ";active=" + SceneManager.GetActiveScene().Equals(previous);
-                        }
-                        catch (Exception error)
-                        {
-                            reason += ";flags_unavailable=" + error.GetType().Name;
-                        }
-                    Need(previousActiveRestored, reason);
-                    var current = new JArray(
-                        Enumerable
-                            .Range(0, SceneManager.sceneCount)
-                            .Select(SceneManager.GetSceneAt)
-                            .Select(scene => new JObject
-                            {
-                                ["path"] = scene.path,
-                                ["name"] = scene.name,
-                                ["dirty"] = scene.isDirty,
-                                ["roots"] = new JArray(scene.GetRootGameObjects().Select(go => go.name).OrderBy(name => name)),
-                            })
-                    );
-                    Need(JToken.DeepEquals(current, state["previousScenes"]), "previous_scenes_changed");
-                    Need(Selection.activeObject == null, "selection_changed");
-                    Need(
-                        state.Value<bool>("reloadEnabled") == EditorSettings.enterPlayModeOptionsEnabled
-                            && state.Value<int>("reloadOptions") == (int)EditorSettings.enterPlayModeOptions,
-                        "user_reload_settings_changed"
-                    );
-                }
-            );
+                            ["path"] = scene.path,
+                            ["name"] = scene.name,
+                            ["dirty"] = scene.isDirty,
+                            ["roots"] = new JArray(scene.GetRootGameObjects().Select(go => go.name).OrderBy(name => name)),
+                        })
+                );
+                Need(JToken.DeepEquals(current, state["previousScenes"]), "previous_scenes_changed");
+                Need(Selection.activeObject == null, "selection_changed");
+                Need(
+                    state.Value<bool>("reloadEnabled") == EditorSettings.enterPlayModeOptionsEnabled
+                        && state.Value<int>("reloadOptions") == (int)EditorSettings.enterPlayModeOptions,
+                    "user_reload_settings_changed"
+                );
+            });
         }
 
         private void TrackAsset(string path)

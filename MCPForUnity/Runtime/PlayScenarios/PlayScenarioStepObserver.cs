@@ -112,9 +112,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             captureDeadline = now + 2000;
             try
             {
-                pump = RecordingFramePump.Begin(
-                    CaptureFrame,
-                    () => StopCapture("unavailable", "The screenshot frame source was destroyed before capture completed.")
+                pump = RecordingFramePump.Begin(CaptureFrame, () =>
+                    StopCapture("unavailable", "The screenshot frame source was destroyed before capture completed.")
                 );
             }
             catch (Exception error)

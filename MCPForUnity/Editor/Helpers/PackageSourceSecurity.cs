@@ -48,34 +48,28 @@ namespace MCPForUnity.Editor.Helpers
             {
                 // Delimiters are necessary for either pattern; ordinary diagnostics need no regex scan.
                 if (value.IndexOf("://", StringComparison.Ordinal) >= 0)
-                    redacted = Url.Replace(
-                        value,
-                        match =>
-                        {
-                            string url = match.Value;
-                            int authority = url.IndexOf("://", StringComparison.Ordinal) + 3;
-                            int end = url.IndexOfAny(new[] { '/', '?', '#' }, authority);
-                            if (end < 0)
-                                end = url.Length;
-                            int at = end > authority ? url.LastIndexOf('@', end - 1, end - authority) : -1;
-                            if (at >= authority)
-                                url = url.Substring(0, authority) + "[redacted]@" + url.Substring(at + 1);
-                            int suffix = url.IndexOfAny(new[] { '?', '#' });
-                            return suffix < 0 ? url : url.Substring(0, suffix) + "[redacted]";
-                        }
-                    );
+                    redacted = Url.Replace(value, match =>
+                    {
+                        string url = match.Value;
+                        int authority = url.IndexOf("://", StringComparison.Ordinal) + 3;
+                        int end = url.IndexOfAny(new[] { '/', '?', '#' }, authority);
+                        if (end < 0)
+                            end = url.Length;
+                        int at = end > authority ? url.LastIndexOf('@', end - 1, end - authority) : -1;
+                        if (at >= authority)
+                            url = url.Substring(0, authority) + "[redacted]@" + url.Substring(at + 1);
+                        int suffix = url.IndexOfAny(new[] { '?', '#' });
+                        return suffix < 0 ? url : url.Substring(0, suffix) + "[redacted]";
+                    });
                 if (redacted.IndexOf('@') < 0 || redacted.IndexOf(':') < 0)
                     return redacted;
-                return ScpSource.Replace(
-                    redacted,
-                    match =>
-                    {
-                        string source = match.Value;
-                        source = "[redacted]@" + source.Substring(source.IndexOf('@') + 1);
-                        int suffix = source.IndexOfAny(new[] { '?', '#' });
-                        return suffix < 0 ? source : source.Substring(0, suffix) + "[redacted]";
-                    }
-                );
+                return ScpSource.Replace(redacted, match =>
+                {
+                    string source = match.Value;
+                    source = "[redacted]@" + source.Substring(source.IndexOf('@') + 1);
+                    int suffix = source.IndexOfAny(new[] { '?', '#' });
+                    return suffix < 0 ? source : source.Substring(0, suffix) + "[redacted]";
+                });
             }
             catch (RegexMatchTimeoutException)
             {

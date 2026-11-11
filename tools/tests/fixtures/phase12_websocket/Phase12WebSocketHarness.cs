@@ -86,33 +86,24 @@ internal static class Phase12WebSocketHarness
             events.Add("A settled");
             return new { done = true };
         };
-        handlers["phase12_A"] = cooperative
-            ? HandlerInfo.Cooperative(
-                "phase12_A",
-                async (_, token) =>
+        handlers["phase12_A"] = cooperative ? HandlerInfo.Cooperative("phase12_A", async (_, token) =>
+            {
+                starts++;
+                try
                 {
-                    starts++;
-                    try
-                    {
-                        await Task.Delay(Timeout.Infinite, token);
-                        return null;
-                    }
-                    finally
-                    {
-                        cleanup++;
-                        await finish();
-                    }
+                    await Task.Delay(Timeout.Infinite, token);
+                    return null;
                 }
-            )
-            : new HandlerInfo(
-                "phase12_A",
-                null,
-                _ =>
+                finally
                 {
-                    starts++;
-                    return finish();
+                    cleanup++;
+                    await finish();
                 }
-            );
+            }) : new HandlerInfo("phase12_A", null, _ =>
+            {
+                starts++;
+                return finish();
+            });
         handlers["phase12_B"] = new HandlerInfo(
             "phase12_B",
             _ =>

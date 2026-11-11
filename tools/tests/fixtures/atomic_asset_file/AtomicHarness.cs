@@ -208,74 +208,65 @@ internal static class AtomicHarness
             return Child(args);
         string root = Path.GetFullPath(args[0]);
         Directory.CreateDirectory(root);
-        Check(
-            "no-replace preserves a concurrent creator and stage",
-            () =>
-            {
-                string path = Fresh(root, "create_새😀"),
-                    stage = Path.Combine(path, ".stage"),
-                    target = Path.Combine(path, "source.txt");
-                Stage(stage, Bytes("candidate"));
-                File.WriteAllText(target, "external");
-                Refused(() => Invoke("AtomicFilePublication", "Create", stage, target));
-                Require(File.ReadAllText(target) == "external" && File.ReadAllText(stage) == "candidate", "Creator clobbered");
-                File.Delete(target);
-                Invoke("AtomicFilePublication", "Create", stage, target);
-                Require(File.ReadAllText(target) == "candidate" && !File.Exists(stage), "Creation incomplete");
-            }
-        );
-        Check(
-            "post-guard conflict keeps the actual displaced bytes",
-            () =>
-            {
-                string path = Fresh(root, "conflict"),
-                    stage = Path.Combine(path, ".stage"),
-                    target = Path.Combine(path, "source.txt"),
-                    backup = Path.Combine(path, ".backup");
-                // A writer replaces the source after caller admission, immediately before the commit boundary.
-                Stage(stage, Bytes("candidate"));
-                File.WriteAllText(target, "external");
-                File.WriteAllText(target + ".meta", "metadata");
-                Refused(() =>
-                    Invoke(
-                        "AtomicAssetFile",
-                        "CommitPrepared",
-                        stage,
-                        target,
-                        backup,
-                        AtomicAssetFile.Digest(Bytes("original")),
-                        AtomicAssetFile.Digest(Bytes("metadata")),
-                        AtomicAssetFile.Digest(Bytes("candidate"))
+        Check("no-replace preserves a concurrent creator and stage", () =>
+        {
+            string path = Fresh(root, "create_새😀"),
+                stage = Path.Combine(path, ".stage"),
+                target = Path.Combine(path, "source.txt");
+            Stage(stage, Bytes("candidate"));
+            File.WriteAllText(target, "external");
+            Refused(() => Invoke("AtomicFilePublication", "Create", stage, target));
+            Require(File.ReadAllText(target) == "external" && File.ReadAllText(stage) == "candidate", "Creator clobbered");
+            File.Delete(target);
+            Invoke("AtomicFilePublication", "Create", stage, target);
+            Require(File.ReadAllText(target) == "candidate" && !File.Exists(stage), "Creation incomplete");
+        });
+        Check("post-guard conflict keeps the actual displaced bytes", () =>
+        {
+            string path = Fresh(root, "conflict"),
+                stage = Path.Combine(path, ".stage"),
+                target = Path.Combine(path, "source.txt"),
+                backup = Path.Combine(path, ".backup");
+            // A writer replaces the source after caller admission, immediately before the commit boundary.
+            Stage(stage, Bytes("candidate"));
+            File.WriteAllText(target, "external");
+            File.WriteAllText(target + ".meta", "metadata");
+            Refused(() =>
+                Invoke(
+                    "AtomicAssetFile",
+                    "CommitPrepared",
+                    stage,
+                    target,
+                    backup,
+                    AtomicAssetFile.Digest(Bytes("original")),
+                    AtomicAssetFile.Digest(Bytes("metadata")),
+                    AtomicAssetFile.Digest(Bytes("candidate"))
+                )
+            );
+            Require(File.ReadAllText(target) == "candidate" && File.ReadAllText(backup) == "external", "Conflict preimage was discarded");
+        });
+        Check("partial stage disk-full exception leaves source intact", () =>
+        {
+            string path = Fresh(root, "disk_full"),
+                target = Path.Combine(path, "source.txt"),
+                stage = Path.Combine(path, ".stage");
+            File.WriteAllText(target, "original");
+            Refused(() =>
+                Invoke(
+                    "AtomicFilePublication",
+                    "StageNew",
+                    stage,
+                    (Action<Stream>)(
+                        stream =>
+                        {
+                            stream.Write(Bytes("partial"), 0, 7);
+                            throw new IOException("Injected disk-full write failure");
+                        }
                     )
-                );
-                Require(File.ReadAllText(target) == "candidate" && File.ReadAllText(backup) == "external", "Conflict preimage was discarded");
-            }
-        );
-        Check(
-            "partial stage disk-full exception leaves source intact",
-            () =>
-            {
-                string path = Fresh(root, "disk_full"),
-                    target = Path.Combine(path, "source.txt"),
-                    stage = Path.Combine(path, ".stage");
-                File.WriteAllText(target, "original");
-                Refused(() =>
-                    Invoke(
-                        "AtomicFilePublication",
-                        "StageNew",
-                        stage,
-                        (Action<Stream>)(
-                            stream =>
-                            {
-                                stream.Write(Bytes("partial"), 0, 7);
-                                throw new IOException("Injected disk-full write failure");
-                            }
-                        )
-                    )
-                );
-                Require(File.ReadAllText(target) == "original" && File.ReadAllText(stage) == "partial", "Failed stage changed source");
-            }
-        );
+                )
+            );
+            Require(File.ReadAllText(target) == "original" && File.ReadAllText(stage) == "partial", "Failed stage changed source");
+        });
         foreach (string mode in new[] { "partial", "prepared", "exchange", "published" })
             Check("owned process termination at " + mode, () => Crash(root, mode));
         Console.WriteLine("Atomic publication: " + (checks - failures) + "/" + checks + " passed on " + RuntimeInformation.OSDescription);

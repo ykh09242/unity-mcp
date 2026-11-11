@@ -263,8 +263,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         private void RecordProgressError(Exception error)
         {
-            progressError =
-                progressError ?? PlayScenarioEngine.Bounded("Player progress publication failed: " + error.GetType().Name + ": " + error.Message, 2048);
+            progressError = progressError
+                ?? PlayScenarioEngine.Bounded("Player progress publication failed: " + error.GetType().Name + ": " + error.Message, 2048);
             if (run == null)
                 return;
             run.ReportError = run.ReportError ?? progressError;
@@ -308,8 +308,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 run.Error = run.Error ?? message;
                 run.FinishedUnixMs = Now;
                 run.RunnerResourcesReleased = true;
-                run.Failure =
-                    run.Failure
+                run.Failure = run.Failure
                     ?? (
                         error is PlayScenarioException scenario
                             ? scenario.Failure
@@ -469,15 +468,12 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     report["exit_code"] = exitCode;
                 }
                 persistence.Attach(report);
-                persistence.Execute(
-                    "final_report",
-                    null,
-                    () =>
-                        PlayScenarioPlayerFiles.WriteNew(
-                            Path.Combine(directory, "run.json"),
-                            report.ToString(Formatting.None),
-                            PlayScenarioDefinition.MaximumReportBytes
-                        )
+                persistence.Execute("final_report", null, () =>
+                    PlayScenarioPlayerFiles.WriteNew(
+                        Path.Combine(directory, "run.json"),
+                        report.ToString(Formatting.None),
+                        PlayScenarioDefinition.MaximumReportBytes
+                    )
                 );
             }
             catch (Exception error)

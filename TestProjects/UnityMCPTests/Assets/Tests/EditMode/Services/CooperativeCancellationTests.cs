@@ -98,16 +98,11 @@ namespace MCPForUnityTests.Editor.Services
             object request = NewWebSocketRequest(owner, "held", source);
             int mutations = 0;
             Assert.IsNull(owner.TryStartWithAsyncCancellation("held", _ => handler.Task, RequestCancel(request), settled: ((IDisposable)request).Dispose));
-            Assert.IsNull(
-                owner.TryStart(
-                    "next",
-                    async predecessor =>
-                    {
-                        await predecessor.ConfigureAwait(false);
-                        Interlocked.Increment(ref mutations);
-                    }
-                )
-            );
+            Assert.IsNull(owner.TryStart("next", async predecessor =>
+                {
+                    await predecessor.ConfigureAwait(false);
+                    Interlocked.Increment(ref mutations);
+                }));
             try
             {
                 if (explicitCancel)
@@ -332,16 +327,11 @@ namespace MCPForUnityTests.Editor.Services
                     }
                 )
             );
-            Assert.IsNull(
-                owner.TryStart(
-                    "next",
-                    async predecessor =>
-                    {
-                        await predecessor.ConfigureAwait(false);
-                        Interlocked.Increment(ref mutations);
-                    }
-                )
-            );
+            Assert.IsNull(owner.TryStart("next", async predecessor =>
+                {
+                    await predecessor.ConfigureAwait(false);
+                    Interlocked.Increment(ref mutations);
+                }));
             Task<bool> cancel = Task.Run(() => owner.TryCancel("held"));
             try
             {
@@ -444,17 +434,11 @@ namespace MCPForUnityTests.Editor.Services
             var owner = new ConnectionCommandWork(lifetime.Token);
             lifetime.Cancel();
             bool executed = false;
-            Assert.AreEqual(
-                "Connection closed",
-                owner.TryStart(
-                    "queued",
-                    _ =>
-                    {
-                        executed = true;
-                        return Task.CompletedTask;
-                    }
-                )
-            );
+            Assert.AreEqual("Connection closed", owner.TryStart("queued", _ =>
+                {
+                    executed = true;
+                    return Task.CompletedTask;
+                }));
             Assert.IsFalse(executed);
         }
     }

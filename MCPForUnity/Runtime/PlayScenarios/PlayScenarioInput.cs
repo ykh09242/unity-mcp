@@ -129,8 +129,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         {
             if (backend != null && backend.Available)
                 return;
-            string reason =
-                backend?.UnavailableReason
+            string reason = backend?.UnavailableReason
                 ?? "Scenario raw replay requires an enabled com.unity.inputsystem 1.7+ backend, Input System Package/Both handling and an Input System consumer. Legacy raw replay into UnityEngine.Input is unavailable; changing handling alone does not redirect those reads. Review recorded-legacy-input drafts and use target-based click_ui for uGUI. A project-defined input adapter requires explicit project-code integration.";
             Release();
             throw new PlayScenarioException(new PlayScenarioFailure { Code = "capability_unavailable", Message = reason });

@@ -43,15 +43,11 @@ namespace MCPForUnityTests.Editor.Setup
             var log = Create();
             Call(log, "Append", new string('x', 1000000));
             Assert.Less(Snapshot(log).Length, 4200);
-            Parallel.For(
-                0,
-                4,
-                producer =>
-                {
-                    for (int i = 0; i < 500; i++)
-                        Call(log, "Append", "producer-" + producer + "-line-" + i);
-                }
-            );
+            Parallel.For(0, 4, producer =>
+            {
+                for (int i = 0; i < 500; i++)
+                    Call(log, "Append", "producer-" + producer + "-line-" + i);
+            });
             string text = Snapshot(log);
             Assert.LessOrEqual(text.Length, 262300);
             Assert.LessOrEqual(text.Split('\n').Length, 1027);

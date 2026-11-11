@@ -741,10 +741,8 @@ namespace MCPForUnityTests.Editor.Clients
             string receipt = GeneratedClientConfigOwnership.Receipt("Claude", identity);
             int calls = cli.Calls;
             cli.Source = NextSource;
-            DuringLog(
-                afterDispatch ? "Successfully registered" : "Re-registering...",
-                SelectLocalHttp,
-                () => cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, NextSource, true)
+            DuringLog(afterDispatch ? "Successfully registered" : "Re-registering...", SelectLocalHttp, () =>
+                cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, NextSource, true)
             );
             if (afterDispatch)
             {

@@ -84,9 +84,8 @@ internal static class PropertyScalarHarness
                 Check(type.Name + " scalar rejects " + input, () => Reject(() => Convert(input, type)));
                 Check(type.Name + " array rejects " + input, () => Reject(() => Convert("[" + input + "]", type.MakeArrayType())));
                 Check(type.Name + " list rejects " + input, () => Reject(() => Convert("[" + input + "]", typeof(List<>).MakeGenericType(type))));
-                Check(
-                    type.Name + " dictionary rejects " + input,
-                    () => Reject(() => Convert("{\"bad\":" + input + "}", typeof(Dictionary<,>).MakeGenericType(typeof(string), type)))
+                Check(type.Name + " dictionary rejects " + input, () =>
+                    Reject(() => Convert("{\"bad\":" + input + "}", typeof(Dictionary<,>).MakeGenericType(typeof(string), type)))
                 );
                 foreach (string member in new[] { "Scalar", "Values", "Map" })
                 {
@@ -94,9 +93,8 @@ internal static class PropertyScalarHarness
                         member == "Values" ? "[" + input + "]"
                         : member == "Map" ? "{\"bad\":" + input + "}"
                         : input;
-                    Check(
-                        type.Name + " DTO " + member + " rejects " + input,
-                        () => Reject(() => Convert("{\"" + member + "\":" + nested + "}", typeof(ScalarDto<>).MakeGenericType(type)))
+                    Check(type.Name + " DTO " + member + " rejects " + input, () =>
+                        Reject(() => Convert("{\"" + member + "\":" + nested + "}", typeof(ScalarDto<>).MakeGenericType(type)))
                     );
                 }
             }
@@ -123,34 +121,28 @@ internal static class PropertyScalarHarness
             Check("enum array rejects " + json, () => Reject(() => Convert("[" + json + "]", typeof(DayOfWeek[]))));
             Check("enum nested DTO rejects " + json, () => Reject(() => Convert("{\"Values\":[" + json + "]}", typeof(ScalarDto<DayOfWeek>))));
         }
-        Check(
-            "enum names and integer controls",
-            () =>
-                Require(
-                    (DayOfWeek)Convert("\"Monday\"", typeof(DayOfWeek)) == DayOfWeek.Monday
-                        && (DayOfWeek)Convert("1", typeof(DayOfWeek)) == DayOfWeek.Monday
-                        && (DayOfWeek)Convert("\"1\"", typeof(DayOfWeek)) == DayOfWeek.Monday,
-                    "Enum changed"
-                )
+        Check("enum names and integer controls", () =>
+            Require(
+                (DayOfWeek)Convert("\"Monday\"", typeof(DayOfWeek)) == DayOfWeek.Monday
+                    && (DayOfWeek)Convert("1", typeof(DayOfWeek)) == DayOfWeek.Monday
+                    && (DayOfWeek)Convert("\"1\"", typeof(DayOfWeek)) == DayOfWeek.Monday,
+                "Enum changed"
+            )
         );
         Check("nullable enum null control", () => Require(Convert("null", typeof(DayOfWeek?)) == null, "Nullable enum changed"));
         foreach (Type type in new[] { typeof(bool), typeof(int), typeof(float), typeof(DayOfWeek), typeof(byte) })
         {
             Check(type.Name + " DTO required null rejected", () => Reject(() => Convert("{\"Scalar\":null}", typeof(ScalarDto<>).MakeGenericType(type))));
             Check(type.Name + " array required null rejected", () => Reject(() => Convert("[null]", type.MakeArrayType())));
-            Check(
-                type.Name + " optional top-level null preserved",
-                () => Require(Convert("null", type).Equals(Activator.CreateInstance(type)), "Top-level default changed")
+            Check(type.Name + " optional top-level null preserved", () =>
+                Require(Convert("null", type).Equals(Activator.CreateInstance(type)), "Top-level default changed")
             );
         }
-        Check(
-            "valid nested DTO",
-            () =>
-            {
-                var value = (ScalarDto<int>)Convert("{\"Scalar\":3,\"Values\":[4,\"5\"],\"Map\":{\"x\":6}}", typeof(ScalarDto<int>));
-                Require(value.Scalar == 3 && value.Values[1] == 5 && value.Map["x"] == 6, "DTO changed");
-            }
-        );
+        Check("valid nested DTO", () =>
+        {
+            var value = (ScalarDto<int>)Convert("{\"Scalar\":3,\"Values\":[4,\"5\"],\"Map\":{\"x\":6}}", typeof(ScalarDto<int>));
+            Require(value.Scalar == 3 && value.Values[1] == 5 && value.Map["x"] == 6, "DTO changed");
+        });
         foreach (Type type in new[] { typeof(float), typeof(double), typeof(decimal) })
         foreach (string json in new[] { "\"NaN\"", "\"Infinity\"", "\"-Infinity\"", "\"1e999\"" })
             Check(type.Name + " finite " + json, () => Reject(() => Convert(json, type)));
@@ -179,78 +171,60 @@ internal static class PropertyScalarHarness
                 : "1,2,3,4";
             Type nullable = typeof(Nullable<>).MakeGenericType(type);
             Check(type.Name + " nullable array normalization", () => Require(Convert("[" + components + "]", nullable) != null, "Nullable shorthand rejected"));
-            Check(
-                type.Name + " nullable collection normalization",
-                () =>
-                {
-                    var values = (Array)Convert("[[" + components + "],null]", nullable.MakeArrayType());
-                    Require(values.GetValue(0) != null && values.GetValue(1) == null, "Nullable collection changed");
-                }
-            );
+            Check(type.Name + " nullable collection normalization", () =>
+            {
+                var values = (Array)Convert("[[" + components + "],null]", nullable.MakeArrayType());
+                Require(values.GetValue(0) != null && values.GetValue(1) == null, "Nullable collection changed");
+            });
             Check(type.Name + " nullable collection rejects Boolean", () => Reject(() => Convert("[[true," + components + "]]", nullable.MakeArrayType())));
         }
         Check("VectorParsing rejects Boolean", () => Reject(() => VectorParsing.ParseVector3(JArray.Parse("[true,2,3]"))));
         Check("VectorParsing default rejects explicit invalid", () => Reject(() => VectorParsing.ParseVector3OrDefault(JArray.Parse("[true,2,3]"))));
-        Check(
-            "VectorParsing default accepts absent",
-            () => Require(VectorParsing.ParseVector3OrDefault(null, new Vector3(4, 5, 6)).x == 4f, "Missing default changed")
+        Check("VectorParsing default accepts absent", () =>
+            Require(VectorParsing.ParseVector3OrDefault(null, new Vector3(4, 5, 6)).x == 4f, "Missing default changed")
         );
         Check("Bounds parser rejects invalid center", () => Reject(() => VectorParsing.ParseBounds(JToken.Parse("{\"center\":[true,0,0],\"size\":[1,1,1]}"))));
         Check("TextureOps rejects Boolean", () => Reject(() => TextureOps.ParseColor32(JArray.Parse("[true,2,3]"))));
         Check("TextureOps rejects fractional component", () => Reject(() => TextureOps.ParseColor32(JArray.Parse("[1.5,2,3]"))));
-        Check(
-            "TextureOps integer clamp control",
-            () =>
-            {
-                var color = TextureOps.ParseColor32(JArray.Parse("[999,-2,3]"));
-                Require(color.r == 255 && color.g == 0 && color.b == 3 && color.a == 255, "Clamping changed");
-            }
+        Check("TextureOps integer clamp control", () =>
+        {
+            var color = TextureOps.ParseColor32(JArray.Parse("[999,-2,3]"));
+            Require(color.r == 255 && color.g == 0 && color.b == 3 && color.a == 255, "Clamping changed");
+        });
+        Check("read-only scalar converter preserves output", () => Require(
+                JToken
+                    .FromObject(
+                        new
+                        {
+                            Flag = true,
+                            Count = 3,
+                            Value = 1.5f,
+                        },
+                        UnityJsonSerializer.Instance
+                    )
+                    .ToString(Formatting.None) == "{\"Flag\":true,\"Count\":3,\"Value\":1.5}",
+                "Scalar output changed"
+            ));
+        Check("byte array base64 control", () =>
+            Require(
+                PropertyConversion.ConvertTo<byte[]>(new JValue("AQID"))[2] == 3
+                    && JToken.FromObject(new byte[] { 1, 2, 3 }, UnityJsonSerializer.Instance).ToString(Formatting.None) == "\"AQID\"",
+                "Byte array encoding changed"
+            )
         );
-        Check(
-            "read-only scalar converter preserves output",
-            () =>
-                Require(
-                    JToken
-                        .FromObject(
-                            new
-                            {
-                                Flag = true,
-                                Count = 3,
-                                Value = 1.5f,
-                            },
-                            UnityJsonSerializer.Instance
-                        )
-                        .ToString(Formatting.None) == "{\"Flag\":true,\"Count\":3,\"Value\":1.5}",
-                    "Scalar output changed"
-                )
-        );
-        Check(
-            "byte array base64 control",
-            () =>
-                Require(
-                    PropertyConversion.ConvertTo<byte[]>(new JValue("AQID"))[2] == 3
-                        && JToken.FromObject(new byte[] { 1, 2, 3 }, UnityJsonSerializer.Instance).ToString(Formatting.None) == "\"AQID\"",
-                    "Byte array encoding changed"
-                )
-        );
-        Check(
-            "input tokens unchanged",
-            () =>
-            {
-                JArray input = JArray.Parse("[[1,2,3],null]");
-                string before = input.ToString();
-                PropertyConversion.ConvertTo<Vector3?[]>(input);
-                Require(before == input.ToString(), "Caller tokens mutated");
-            }
-        );
-        Check(
-            "curve explicit stepped tangent control",
-            () =>
-                Require(
-                    float.IsPositiveInfinity(VectorParsing.ReadCurveTangent(new JValue(float.PositiveInfinity)))
-                        && float.IsNegativeInfinity(VectorParsing.ReadCurveTangent(new JValue("-Infinity"))),
-                    "Stepped tangent changed"
-                )
+        Check("input tokens unchanged", () =>
+        {
+            JArray input = JArray.Parse("[[1,2,3],null]");
+            string before = input.ToString();
+            PropertyConversion.ConvertTo<Vector3?[]>(input);
+            Require(before == input.ToString(), "Caller tokens mutated");
+        });
+        Check("curve explicit stepped tangent control", () =>
+            Require(
+                float.IsPositiveInfinity(VectorParsing.ReadCurveTangent(new JValue(float.PositiveInfinity)))
+                    && float.IsNegativeInfinity(VectorParsing.ReadCurveTangent(new JValue("-Infinity"))),
+                "Stepped tangent changed"
+            )
         );
         foreach (JToken tangent in new JToken[] { new JValue(true), new JValue(float.NaN), new JValue("NaN"), new JValue("1e999") })
             Check("curve tangent rejects " + tangent, () => Reject(() => VectorParsing.ReadCurveTangent(tangent)));
@@ -267,77 +241,65 @@ internal static class PropertyScalarHarness
                 "motionVectorGenerationMode",
             }
         )
-            Check(
-                "renderer prepared property rejects " + key,
-                () =>
-                {
-                    var parameters = new JObject { [key] = key == "receiveShadows" ? new JValue(1) : new JValue(true) };
-                    Reject(() => RendererHelpers.PrepareCommonRendererProperties(null, parameters, new List<string>()));
-                }
-            );
-        foreach (string key in new[] { "width", "startWidth", "endWidth", "widthMultiplier" })
-            Check(
-                "renderer widths reject Boolean " + key,
-                () =>
-                {
-                    int writes = 0;
-                    var changes = new List<string>();
-                    Reject(() =>
-                        RendererHelpers.ApplyWidthProperties(
-                            new JObject { [key] = true },
-                            changes,
-                            value => writes++,
-                            value => writes++,
-                            value => writes++,
-                            value => writes++,
-                            (value, fallback) => null
-                        )
-                    );
-                    Require(writes == 0 && changes.Count == 0, "Invalid scalar triggered a setter");
-                }
-            );
-        foreach (string key in new[] { "loop", "useWorldSpace", "numCornerVertices", "numCapVertices", "alignment", "textureMode", "generateLightingData" })
-            Check(
-                "renderer line properties reject " + key,
-                () =>
-                {
-                    int writes = 0;
-                    var changes = new List<string>();
-                    JToken invalid = key == "loop" || key == "useWorldSpace" || key == "generateLightingData" ? new JValue(1) : new JValue(true);
-                    Reject(() =>
-                        RendererHelpers.ApplyLineTrailProperties(
-                            new JObject { [key] = invalid },
-                            changes,
-                            value => writes++,
-                            value => writes++,
-                            value => writes++,
-                            value => writes++,
-                            value => writes++,
-                            value => writes++,
-                            value => writes++
-                        )
-                    );
-                    Require(writes == 0 && changes.Count == 0, "Invalid scalar triggered a setter");
-                }
-            );
-        Check(
-            "renderer valid width callbacks",
-            () =>
+            Check("renderer prepared property rejects " + key, () =>
             {
-                float start = 0f,
-                    end = 0f;
-                RendererHelpers.ApplyWidthProperties(
-                    new JObject { ["width"] = 2.5f },
-                    new List<string>(),
-                    value => start = value,
-                    value => end = value,
-                    value => { },
-                    value => { },
-                    (value, fallback) => null
+                var parameters = new JObject { [key] = key == "receiveShadows" ? new JValue(1) : new JValue(true) };
+                Reject(() => RendererHelpers.PrepareCommonRendererProperties(null, parameters, new List<string>()));
+            });
+        foreach (string key in new[] { "width", "startWidth", "endWidth", "widthMultiplier" })
+            Check("renderer widths reject Boolean " + key, () =>
+            {
+                int writes = 0;
+                var changes = new List<string>();
+                Reject(() =>
+                    RendererHelpers.ApplyWidthProperties(
+                        new JObject { [key] = true },
+                        changes,
+                        value => writes++,
+                        value => writes++,
+                        value => writes++,
+                        value => writes++,
+                        (value, fallback) => null
+                    )
                 );
-                Require(start == 2.5f && end == 2.5f, "Width control changed");
-            }
-        );
+                Require(writes == 0 && changes.Count == 0, "Invalid scalar triggered a setter");
+            });
+        foreach (string key in new[] { "loop", "useWorldSpace", "numCornerVertices", "numCapVertices", "alignment", "textureMode", "generateLightingData" })
+            Check("renderer line properties reject " + key, () =>
+            {
+                int writes = 0;
+                var changes = new List<string>();
+                JToken invalid = key == "loop" || key == "useWorldSpace" || key == "generateLightingData" ? new JValue(1) : new JValue(true);
+                Reject(() =>
+                    RendererHelpers.ApplyLineTrailProperties(
+                        new JObject { [key] = invalid },
+                        changes,
+                        value => writes++,
+                        value => writes++,
+                        value => writes++,
+                        value => writes++,
+                        value => writes++,
+                        value => writes++,
+                        value => writes++
+                    )
+                );
+                Require(writes == 0 && changes.Count == 0, "Invalid scalar triggered a setter");
+            });
+        Check("renderer valid width callbacks", () =>
+        {
+            float start = 0f,
+                end = 0f;
+            RendererHelpers.ApplyWidthProperties(
+                new JObject { ["width"] = 2.5f },
+                new List<string>(),
+                value => start = value,
+                value => end = value,
+                value => { },
+                value => { },
+                (value, fallback) => null
+            );
+            Require(start == 2.5f && end == 2.5f, "Width control changed");
+        });
         Console.WriteLine("RESULT: " + (cases - failures) + "/" + cases + " passed; failures=" + failures);
         return failures == 0 ? 0 : 1;
     }

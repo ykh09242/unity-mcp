@@ -94,14 +94,11 @@ namespace MCPForUnityTests.EditMode.Windows
                 AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(path + "Components/Connection/McpConnectionSection.uxml").CloneTree(root.Q("clients-container"));
                 root.Q<EnumField>("validation-level").Init(SyntheticValidation.Basic);
                 string selected = null;
-                using var navigation = new McpWindowNavigation(
-                    root,
-                    page =>
-                    {
-                        selected = page;
-                        root.Query<ScrollView>(className: "panel-scroll").ForEach(panel => panel.EnableInClassList("hidden", panel.name != page + "-panel"));
-                    }
-                );
+                using var navigation = new McpWindowNavigation(root, page =>
+                {
+                    selected = page;
+                    root.Query<ScrollView>(className: "panel-scroll").ForEach(panel => panel.EnableInClassList("hidden", panel.name != page + "-panel"));
+                });
                 var open = typeof(McpWindowNavigation).GetMethod("OpenSetting", BindingFlags.Instance | BindingFlags.NonPublic);
                 foreach (string target in new[] { "validation-level", "keep-local-server-alive" })
                 {
@@ -194,14 +191,11 @@ namespace MCPForUnityTests.EditMode.Windows
                 group.Add(target);
                 root.Q("assetgen-container").Add(group);
                 string selected = null;
-                using var navigation = new McpWindowNavigation(
-                    root,
-                    id =>
-                    {
-                        selected = id;
-                        root.Query<ScrollView>(className: "panel-scroll").ForEach(panel => panel.EnableInClassList("hidden", panel.name != id + "-panel"));
-                    }
-                );
+                using var navigation = new McpWindowNavigation(root, id =>
+                {
+                    selected = id;
+                    root.Query<ScrollView>(className: "panel-scroll").ForEach(panel => panel.EnableInClassList("hidden", panel.name != id + "-panel"));
+                });
                 var open = typeof(McpWindowNavigation).GetMethod("OpenSetting", BindingFlags.Instance | BindingFlags.NonPublic);
                 Assert.IsNotNull(open);
                 Assert.IsTrue((bool)open.Invoke(navigation, new object[] { "provider-key-fal" }));
@@ -262,14 +256,11 @@ namespace MCPForUnityTests.EditMode.Windows
                     group.Add(field);
                     root.Q("assetgen-container").Add(group);
                     McpWindowNavigation navigation = null;
-                    using var navigationLifetime = navigation = new McpWindowNavigation(
-                        root,
-                        id =>
-                        {
-                            navigation?.Select(id);
-                            root.Query<ScrollView>(className: "panel-scroll").ForEach(panel => panel.EnableInClassList("hidden", panel.name != id + "-panel"));
-                        }
-                    );
+                    using var navigationLifetime = navigation = new McpWindowNavigation(root, id =>
+                    {
+                        navigation?.Select(id);
+                        root.Query<ScrollView>(className: "panel-scroll").ForEach(panel => panel.EnableInClassList("hidden", panel.name != id + "-panel"));
+                    });
                     foreach (var size in new[] { new Vector2(500, 340), new Vector2(500, 600), new Vector2(1100, 700) })
                     {
                         host.position = new Rect(30, 30, size.x, size.y);

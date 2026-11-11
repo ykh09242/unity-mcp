@@ -348,93 +348,90 @@ namespace MCPForUnity.Editor.Tools
                 : new List<Assignment>();
             if (text != null)
                 ValidateTextRange(null, props);
-            return Mutate(
-                "Create uGUI " + kind,
-                () =>
+            return Mutate("Create uGUI " + kind, () =>
+            {
+                var go = new GameObject(name, typeof(RectTransform));
+                Undo.RegisterCreatedObjectUndo(go, "Create uGUI " + kind);
+                if (parent != null)
+                    Undo.SetTransformParent(go.transform, parent.transform, "Parent uGUI element");
+                else
                 {
-                    var go = new GameObject(name, typeof(RectTransform));
-                    Undo.RegisterCreatedObjectUndo(go, "Create uGUI " + kind);
-                    if (parent != null)
-                        Undo.SetTransformParent(go.transform, parent.transform, "Parent uGUI element");
-                    else
-                    {
-                        var stage = PrefabStageUtility.GetCurrentPrefabStage();
-                        if (stage != null)
-                            Undo.SetTransformParent(go.transform, stage.prefabContentsRoot.transform, "Parent uGUI canvas");
-                    }
-
-                    var rt = (RectTransform)go.transform;
-                    rt.localScale = Vector3.one;
-                    rt.localRotation = Quaternion.identity;
-                    rt.localPosition = Vector3.zero;
-                    rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(.5f, .5f);
-                    rt.sizeDelta = new Vector2(kind == "text" ? 300 : 160, kind == "text" ? 60 : 80);
-                    if (kind == "panel")
-                    {
-                        rt.anchorMin = Vector2.zero;
-                        rt.anchorMax = Vector2.one;
-                        rt.offsetMin = rt.offsetMax = Vector2.zero;
-                    }
-
-                    if (kind == "canvas")
-                    {
-                        var canvas = Undo.AddComponent<Canvas>(go);
-                        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-                        var cs = Undo.AddComponent(go, scaler);
-                        cs.GetType()
-                            .GetProperty("uiScaleMode")
-                            .SetValue(cs, Enum.Parse(cs.GetType().GetProperty("uiScaleMode").PropertyType, "ScaleWithScreenSize"));
-                        cs.GetType().GetProperty("referenceResolution").SetValue(cs, new Vector2(1920, 1080));
-                        cs.GetType().GetProperty("matchWidthOrHeight").SetValue(cs, .5f);
-                        Undo.AddComponent(go, raycaster);
-                    }
-
-                    Component visual = null;
-                    if (image != null)
-                    {
-                        visual = Undo.AddComponent(go, image);
-                        image.GetProperty("color").SetValue(visual, kind == "panel" ? new Color(.12f, .12f, .12f, 1) : Color.white);
-                        image.GetProperty("raycastTarget").SetValue(visual, button != null);
-                    }
-
-                    if (button != null)
-                    {
-                        var b = Undo.AddComponent(go, button);
-                        button.GetProperty("targetGraphic").SetValue(b, visual);
-                    }
-
-                    if (text != null)
-                    {
-                        visual = Undo.AddComponent(go, text);
-                        text.GetProperty("font").SetValue(visual, font);
-                        text.GetProperty("text").SetValue(visual, name);
-                        text.GetProperty("fontSize").SetValue(visual, 24f);
-                        text.GetProperty("fontSizeMin").SetValue(visual, 8f);
-                        text.GetProperty("fontSizeMax").SetValue(visual, 72f);
-                        text.GetProperty("color").SetValue(visual, Color.white);
-                        text.GetProperty("raycastTarget").SetValue(visual, false);
-                    }
-
-                    Apply(rt, rectValues);
-                    if (visual != null)
-                        Apply(visual, componentValues);
-                    Dirty(rt);
-                    if (visual != null)
-                        Dirty(visual);
-                    return new SuccessResponse(
-                        "Created uGUI element.",
-                        new
-                        {
-                            instance_id = go.GetInstanceIDCompat(),
-                            path = PathOf(go),
-                            element_type = kind,
-                            warnings = kind == "button"
-                                ? new[] { "Button requires an EventSystem and input module in the scene to receive input." }
-                                : Array.Empty<string>(),
-                        }
-                    );
+                    var stage = PrefabStageUtility.GetCurrentPrefabStage();
+                    if (stage != null)
+                        Undo.SetTransformParent(go.transform, stage.prefabContentsRoot.transform, "Parent uGUI canvas");
                 }
-            );
+
+                var rt = (RectTransform)go.transform;
+                rt.localScale = Vector3.one;
+                rt.localRotation = Quaternion.identity;
+                rt.localPosition = Vector3.zero;
+                rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(.5f, .5f);
+                rt.sizeDelta = new Vector2(kind == "text" ? 300 : 160, kind == "text" ? 60 : 80);
+                if (kind == "panel")
+                {
+                    rt.anchorMin = Vector2.zero;
+                    rt.anchorMax = Vector2.one;
+                    rt.offsetMin = rt.offsetMax = Vector2.zero;
+                }
+
+                if (kind == "canvas")
+                {
+                    var canvas = Undo.AddComponent<Canvas>(go);
+                    canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                    var cs = Undo.AddComponent(go, scaler);
+                    cs.GetType()
+                        .GetProperty("uiScaleMode")
+                        .SetValue(cs, Enum.Parse(cs.GetType().GetProperty("uiScaleMode").PropertyType, "ScaleWithScreenSize"));
+                    cs.GetType().GetProperty("referenceResolution").SetValue(cs, new Vector2(1920, 1080));
+                    cs.GetType().GetProperty("matchWidthOrHeight").SetValue(cs, .5f);
+                    Undo.AddComponent(go, raycaster);
+                }
+
+                Component visual = null;
+                if (image != null)
+                {
+                    visual = Undo.AddComponent(go, image);
+                    image.GetProperty("color").SetValue(visual, kind == "panel" ? new Color(.12f, .12f, .12f, 1) : Color.white);
+                    image.GetProperty("raycastTarget").SetValue(visual, button != null);
+                }
+
+                if (button != null)
+                {
+                    var b = Undo.AddComponent(go, button);
+                    button.GetProperty("targetGraphic").SetValue(b, visual);
+                }
+
+                if (text != null)
+                {
+                    visual = Undo.AddComponent(go, text);
+                    text.GetProperty("font").SetValue(visual, font);
+                    text.GetProperty("text").SetValue(visual, name);
+                    text.GetProperty("fontSize").SetValue(visual, 24f);
+                    text.GetProperty("fontSizeMin").SetValue(visual, 8f);
+                    text.GetProperty("fontSizeMax").SetValue(visual, 72f);
+                    text.GetProperty("color").SetValue(visual, Color.white);
+                    text.GetProperty("raycastTarget").SetValue(visual, false);
+                }
+
+                Apply(rt, rectValues);
+                if (visual != null)
+                    Apply(visual, componentValues);
+                Dirty(rt);
+                if (visual != null)
+                    Dirty(visual);
+                return new SuccessResponse(
+                    "Created uGUI element.",
+                    new
+                    {
+                        instance_id = go.GetInstanceIDCompat(),
+                        path = PathOf(go),
+                        element_type = kind,
+                        warnings = kind == "button"
+                            ? new[] { "Button requires an EventSystem and input module in the scene to receive input." }
+                            : Array.Empty<string>(),
+                    }
+                );
+            });
         }
 
         private static object SetRect(GameObject go, JObject props)
@@ -531,23 +528,20 @@ namespace MCPForUnity.Editor.Tools
             }
             ImageState(image, type); // Verify readback API/metadata availability before mutation.
             values = values.OrderBy(value => ImageOrder(value.Property.Name)).ToList();
-            return Mutate(
-                "Set uGUI Image",
-                () =>
-                {
-                    Apply(image, values);
-                    return new SuccessResponse(
-                        "Updated uGUI Image.",
-                        new
-                        {
-                            instance_id = go.GetInstanceIDCompat(),
-                            path = PathOf(go),
-                            applied = new JArray(props.Properties().Select(p => p.Name)),
-                            image = ImageState(image, type),
-                        }
-                    );
-                }
-            );
+            return Mutate("Set uGUI Image", () =>
+            {
+                Apply(image, values);
+                return new SuccessResponse(
+                    "Updated uGUI Image.",
+                    new
+                    {
+                        instance_id = go.GetInstanceIDCompat(),
+                        path = PathOf(go),
+                        applied = new JArray(props.Properties().Select(p => p.Name)),
+                        image = ImageState(image, type),
+                    }
+                );
+            });
         }
 
         private static int ImageOrder(string key)
@@ -685,19 +679,16 @@ namespace MCPForUnity.Editor.Tools
                 throw new ArgumentException("Target has no CanvasScaler.");
             var cv = Prepare(typeof(Canvas), Select(props, canvasKeys), canvasKeys);
             var sv = scalerProps.Count == 0 ? new List<Assignment>() : Prepare(scaler.GetType(), scalerProps, scalerKeys);
-            return Mutate(
-                "Set uGUI canvas",
-                () =>
-                {
-                    // Native mode changes can resize and reposition the Canvas rectangle.
-                    if (cv.Any(value => value.Property.Name == "renderMode" && (RenderMode)value.Value != canvas.renderMode))
-                        Undo.RegisterCompleteObjectUndo(canvas.transform, "Set uGUI canvas");
-                    Apply(canvas, cv);
-                    if (scaler != null && sv.Count > 0)
-                        Apply(scaler, sv);
-                    return Changed(go);
-                }
-            );
+            return Mutate("Set uGUI canvas", () =>
+            {
+                // Native mode changes can resize and reposition the Canvas rectangle.
+                if (cv.Any(value => value.Property.Name == "renderMode" && (RenderMode)value.Value != canvas.renderMode))
+                    Undo.RegisterCompleteObjectUndo(canvas.transform, "Set uGUI canvas");
+                Apply(canvas, cv);
+                if (scaler != null && sv.Count > 0)
+                    Apply(scaler, sv);
+                return Changed(go);
+            });
         }
 
         private static object SetLayout(GameObject go, JObject props)
@@ -750,27 +741,21 @@ namespace MCPForUnity.Editor.Tools
             var values = new JObject(props);
             values.Remove("type");
             var assignments = Prepare(type, values, allowed);
-            return Mutate(
-                "Set uGUI layout",
-                () =>
-                {
-                    var component = c != null ? c : Undo.AddComponent(go, type);
-                    Apply(component, assignments);
-                    return Changed(go);
-                }
-            );
+            return Mutate("Set uGUI layout", () =>
+            {
+                var component = c != null ? c : Undo.AddComponent(go, type);
+                Apply(component, assignments);
+                return Changed(go);
+            });
         }
 
         private static object Edit(Component component, List<Assignment> values, GameObject go, string label)
         {
-            return Mutate(
-                label,
-                () =>
-                {
-                    Apply(component, values);
-                    return Changed(go);
-                }
-            );
+            return Mutate(label, () =>
+            {
+                Apply(component, values);
+                return Changed(go);
+            });
         }
 
         private static object Changed(GameObject go) =>
@@ -862,8 +847,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     // TMP skips its authored base update when the requested size equals the computed size.
                     using var serialized = new SerializedObject(component);
-                    using var authoredSize =
-                        serialized.FindProperty("m_fontSizeBase")
+                    using var authoredSize = serialized.FindProperty("m_fontSizeBase")
                         ?? throw new ArgumentException("TMP authored font size is unavailable in this Unity version.");
                     if (authoredSize.floatValue != (float)value.Value)
                     {

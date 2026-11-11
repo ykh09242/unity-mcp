@@ -13,8 +13,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
 {
     internal static class MemorySnapshotOps
     {
-        private static readonly Type MemoryProfilerType =
-            Type.GetType("Unity.Profiling.Memory.MemoryProfiler, UnityEngine.CoreModule")
+        private static readonly Type MemoryProfilerType = Type.GetType("Unity.Profiling.Memory.MemoryProfiler, UnityEngine.CoreModule")
             ?? Type.GetType("UnityEngine.Profiling.Memory.Experimental.MemoryProfiler, UnityEngine.CoreModule")
             ?? Type.GetType("Unity.MemoryProfiler.MemoryProfiler, Unity.MemoryProfiler.Editor");
 
@@ -59,12 +58,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
             try
             {
-                var debugScreenCaptureType =
-                    Type.GetType("Unity.Profiling.DebugScreenCapture, UnityEngine.CoreModule")
+                var debugScreenCaptureType = Type.GetType("Unity.Profiling.DebugScreenCapture, UnityEngine.CoreModule")
                     ?? Type.GetType("UnityEngine.Profiling.Experimental.DebugScreenCapture, UnityEngine.CoreModule")
                     ?? Type.GetType("Unity.Profiling.Memory.Experimental.DebugScreenCapture, Unity.MemoryProfiler.Editor");
-                var captureFlagsType =
-                    Type.GetType("Unity.Profiling.Memory.CaptureFlags, UnityEngine.CoreModule")
+                var captureFlagsType = Type.GetType("Unity.Profiling.Memory.CaptureFlags, UnityEngine.CoreModule")
                     ?? Type.GetType("UnityEngine.Profiling.Memory.Experimental.CaptureFlags, UnityEngine.CoreModule");
 
                 System.Reflection.MethodInfo takeMethod = null;

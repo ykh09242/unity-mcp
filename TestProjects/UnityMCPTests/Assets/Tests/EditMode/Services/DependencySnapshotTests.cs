@@ -70,37 +70,29 @@ namespace MCPForUnityTests.Editor.Services
             using var started = new ManualResetEventSlim();
             int active = 0;
             int overlaps = 0;
-            var old = Request(
-                cache,
-                "old",
-                token =>
+            var old = Request(cache, "old", token =>
+            {
+                Interlocked.Increment(ref active);
+                started.Set();
+                try
                 {
-                    Interlocked.Increment(ref active);
-                    started.Set();
-                    try
-                    {
-                        Assert.IsTrue(token.WaitHandle.WaitOne(5000));
-                        token.ThrowIfCancellationRequested();
-                        return new DependencyCheckResult();
-                    }
-                    finally
-                    {
-                        Interlocked.Decrement(ref active);
-                    }
+                    Assert.IsTrue(token.WaitHandle.WaitOne(5000));
+                    token.ThrowIfCancellationRequested();
+                    return new DependencyCheckResult();
                 }
-            );
-            Assert.IsTrue(started.Wait(2000));
-            var current = Request(
-                cache,
-                "changed",
-                token =>
+                finally
                 {
-                    if (Interlocked.Increment(ref active) != 1)
-                        Interlocked.Increment(ref overlaps);
                     Interlocked.Decrement(ref active);
-                    return new DependencyCheckResult { Summary = "current" };
                 }
-            );
+            });
+            Assert.IsTrue(started.Wait(2000));
+            var current = Request(cache, "changed", token =>
+            {
+                if (Interlocked.Increment(ref active) != 1)
+                    Interlocked.Increment(ref overlaps);
+                Interlocked.Decrement(ref active);
+                return new DependencyCheckResult { Summary = "current" };
+            });
             Assert.IsTrue(current.Wait(5000));
             Assert.AreEqual("current", current.Result.Summary);
             Assert.IsTrue(old.IsCanceled);

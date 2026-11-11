@@ -81,8 +81,10 @@ namespace MCPForUnity.Editor.Helpers
                     if (File.Exists(c))
                         return c;
                 }
-                string fromWhere =
-                    FindInPathWindows("claude.exe") ?? FindInPathWindows("claude.cmd") ?? FindInPathWindows("claude.ps1") ?? FindInPathWindows("claude");
+                string fromWhere = FindInPathWindows("claude.exe")
+                    ?? FindInPathWindows("claude.cmd")
+                    ?? FindInPathWindows("claude.ps1")
+                    ?? FindInPathWindows("claude");
                 if (!string.IsNullOrEmpty(fromWhere))
                     return fromWhere;
 #endif

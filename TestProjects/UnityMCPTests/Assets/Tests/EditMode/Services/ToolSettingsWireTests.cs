@@ -167,15 +167,12 @@ namespace MCPForUnityTests.Editor.Services
                 else
                     Register("owned-predecessor", HoldSend);
                 yield return WaitForTask(firstSend.Task);
-                Register(
-                    "owned-replacement",
-                    (frame, _) =>
-                    {
-                        Task parsed = Acknowledge(frame, "owned-replacement");
-                        replacementSent.TrySetResult(true);
-                        return parsed;
-                    }
-                );
+                Register("owned-replacement", (frame, _) =>
+                {
+                    Task parsed = Acknowledge(frame, "owned-replacement");
+                    replacementSent.TrySetResult(true);
+                    return parsed;
+                });
                 yield return WaitForTask(replacementSent.Task);
                 Assert.AreEqual("applied", client.Status.Stage);
                 Assert.AreEqual("owned-replacement", client.Status.SessionId);

@@ -16,8 +16,7 @@ Console.Error.WriteLine($"owned_process_pid={Environment.ProcessId}");
 
 var fixtures = args[1];
 var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-var tools =
-    JsonSerializer.Deserialize<Tool[]>(File.ReadAllText(Path.Combine(fixtures, "tools.json")), options)
+var tools = JsonSerializer.Deserialize<Tool[]>(File.ReadAllText(Path.Combine(fixtures, "tools.json")), options)
     ?? throw new InvalidDataException("Missing tool descriptors");
 var outputs = new[] { "small", "state", "large", "job" }.ToDictionary(
     name => name,

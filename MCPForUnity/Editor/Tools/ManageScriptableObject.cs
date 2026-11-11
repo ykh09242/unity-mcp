@@ -1592,31 +1592,27 @@ namespace MCPForUnity.Editor.Tools
 
             // Replace fieldName[index] with fieldName.Array.data[index]
             // But only if it's not already in Array.data format
-            return Regex.Replace(
-                path,
-                @"(\w+)\[(\d+)\]",
-                m =>
+            return Regex.Replace(path, @"(\w+)\[(\d+)\]", m =>
+            {
+                string fieldName = m.Groups[1].Value;
+                string index = m.Groups[2].Value;
+
+                // Check if this match is already part of .Array.data[index] pattern
+                // by checking if the text immediately before the field name is ".Array."
+                // and the field name is "data"
+                int matchStart = m.Index;
+                if (fieldName == "data" && matchStart >= 7) // Length of ".Array."
                 {
-                    string fieldName = m.Groups[1].Value;
-                    string index = m.Groups[2].Value;
-
-                    // Check if this match is already part of .Array.data[index] pattern
-                    // by checking if the text immediately before the field name is ".Array."
-                    // and the field name is "data"
-                    int matchStart = m.Index;
-                    if (fieldName == "data" && matchStart >= 7) // Length of ".Array."
+                    string preceding = path.Substring(matchStart - 7, 7);
+                    if (preceding == ".Array.")
                     {
-                        string preceding = path.Substring(matchStart - 7, 7);
-                        if (preceding == ".Array.")
-                        {
-                            // Already in Unity format (e.g., myList.Array.data[0]), return as-is
-                            return m.Value;
-                        }
+                        // Already in Unity format (e.g., myList.Array.data[0]), return as-is
+                        return m.Value;
                     }
-
-                    return $"{fieldName}.Array.data[{index}]";
                 }
-            );
+
+                return $"{fieldName}.Array.data[{index}]";
+            });
         }
 
         /// <summary>

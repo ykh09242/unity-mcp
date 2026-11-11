@@ -228,22 +228,16 @@ public static class PrefabTargetRegression
         Check("unique name", () => Equal(cube, Resolve("McpProbeCube")));
         Check("full hierarchy path", () => Equal(cube, Resolve("Parent/McpProbeCube")));
         Check("absolute hierarchy path", () => Equal(cube, Resolve("/Parent/McpProbeCube")));
-        Check(
-            "missing ID does not select numeric name",
-            () =>
-            {
-                var numeric = new GameObject("-123", 2, root);
-                Equal(null, Resolve("-123"));
-            }
-        );
-        Check(
-            "overflow ID does not select numeric name",
-            () =>
-            {
-                var numeric = new GameObject("2147483648", 6, root);
-                Equal(null, Resolve("2147483648"));
-            }
-        );
+        Check("missing ID does not select numeric name", () =>
+        {
+            var numeric = new GameObject("-123", 2, root);
+            Equal(null, Resolve("-123"));
+        });
+        Check("overflow ID does not select numeric name", () =>
+        {
+            var numeric = new GameObject("2147483648", 6, root);
+            Equal(null, Resolve("2147483648"));
+        });
         var elsewhere = new GameObject("OtherScene", -42);
         Check("ID outside active scene/stage", () => Equal(null, Resolve("-42")));
         cube.activeSelf = false;
@@ -264,33 +258,30 @@ public static class PrefabTargetRegression
         Check("prefab stage ID", () => Equal(stageChild, Resolve("5")));
         Check("prefab stage path", () => Equal(stageChild, Resolve("StageRoot/McpProbeCube")));
         var metadataSource = new GameObject("MetadataSource", -9000, root);
-        Check(
-            "create reports actual saved root identity without renaming source",
-            () =>
-            {
-                var create = typeof(ProductionResolver).GetMethod("CreatePrefabFromGameObject", BindingFlags.NonPublic | BindingFlags.Static);
-                var result = JObject.FromObject(
-                    create.Invoke(
-                        null,
-                        new object[]
-                        {
-                            new JObject { ["target"] = "MetadataSource", ["prefabPath"] = "Assets/ProbeCube.prefab" },
-                        }
-                    )
-                );
-                if (!result.Value<bool>("success"))
-                    throw new Exception(result.ToString());
-                var data = result["data"];
-                if (data.Value<string>("rootObjectName") != "ActualSavedRoot" || data.Value<string>("rootObjectPath") != "ActualSavedRoot")
-                    throw new Exception("Saved root identity was omitted or guessed from source/file name");
-                if (
-                    data.Value<string>("instanceName") != "MetadataSource"
-                    || metadataSource.name != "MetadataSource"
-                    || metadataSource.transform.parent != root.transform
+        Check("create reports actual saved root identity without renaming source", () =>
+        {
+            var create = typeof(ProductionResolver).GetMethod("CreatePrefabFromGameObject", BindingFlags.NonPublic | BindingFlags.Static);
+            var result = JObject.FromObject(
+                create.Invoke(
+                    null,
+                    new object[]
+                    {
+                        new JObject { ["target"] = "MetadataSource", ["prefabPath"] = "Assets/ProbeCube.prefab" },
+                    }
                 )
-                    throw new Exception("Source instance name or hierarchy changed");
-            }
-        );
+            );
+            if (!result.Value<bool>("success"))
+                throw new Exception(result.ToString());
+            var data = result["data"];
+            if (data.Value<string>("rootObjectName") != "ActualSavedRoot" || data.Value<string>("rootObjectPath") != "ActualSavedRoot")
+                throw new Exception("Saved root identity was omitted or guessed from source/file name");
+            if (
+                data.Value<string>("instanceName") != "MetadataSource"
+                || metadataSource.name != "MetadataSource"
+                || metadataSource.transform.parent != root.transform
+            )
+                throw new Exception("Source instance name or hierarchy changed");
+        });
         Console.WriteLine("RESULT: " + (17 - failures) + "/17 passed");
         return failures == 0 ? 0 : 1;
     }

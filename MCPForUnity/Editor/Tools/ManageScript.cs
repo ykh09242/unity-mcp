@@ -3002,8 +3002,7 @@ namespace MCPForUnity.Editor.Tools
             var protectedBytes = ProtectedLiteralBytes(old);
             string indent = FormattingBaseIndent(old, protectedBytes);
             string context = contextStart >= 0 ? source.Substring(contextStart, contextLength) : old;
-            string unit =
-                FormattingIndentUnit(context, ProtectedLiteralBytes(context), includeZero: false)
+            string unit = FormattingIndentUnit(context, ProtectedLiteralBytes(context), includeZero: false)
                 ?? FormattingIndentUnit(source, ProtectedLiteralBytes(source))
                 ?? "    ";
             int first = 0;
@@ -3079,8 +3078,9 @@ namespace MCPForUnity.Editor.Tools
             string classText = source.Substring(classStart, classLength);
             var protectedBytes = ProtectedLiteralBytes(classText);
             string classIndent = FormattingBaseIndent(classText, protectedBytes);
-            string unit =
-                FormattingIndentUnit(classText, protectedBytes, includeZero: false) ?? FormattingIndentUnit(source, ProtectedLiteralBytes(source)) ?? "    ";
+            string unit = FormattingIndentUnit(classText, protectedBytes, includeZero: false)
+                ?? FormattingIndentUnit(source, ProtectedLiteralBytes(source))
+                ?? "    ";
             int lineStart = insertAt;
             while (lineStart > 0 && source[lineStart - 1] != '\r' && source[lineStart - 1] != '\n')
                 lineStart--;

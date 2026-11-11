@@ -1057,8 +1057,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 // Keep the test assembly independent of optional URP assemblies and the
                 // defaultRenderPipeline API rename in newer Editors.
-                _graphicsPipelineProperty =
-                    typeof(GraphicsSettings).GetProperty("defaultRenderPipeline", BindingFlags.Public | BindingFlags.Static)
+                _graphicsPipelineProperty = typeof(GraphicsSettings).GetProperty("defaultRenderPipeline", BindingFlags.Public | BindingFlags.Static)
                     ?? typeof(GraphicsSettings).GetProperty("renderPipelineAsset", BindingFlags.Public | BindingFlags.Static);
                 Assert.IsNotNull(_graphicsPipelineProperty, "The Editor must expose its default render pipeline asset.");
                 _originalGraphicsPipeline = (RenderPipelineAsset)_graphicsPipelineProperty.GetValue(null);

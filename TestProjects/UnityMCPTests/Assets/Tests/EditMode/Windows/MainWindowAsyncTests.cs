@@ -26,13 +26,9 @@ namespace MCPForUnityTests.Editor.Windows
         {
             var button = new Button { text = "Install" };
             IEnumerator routine = null;
-            RunAction(
-                button,
-                "Installing...",
-                "Install",
-                done =>
-                    routine = (IEnumerator)
-                        typeof(MCPForUnityEditorWindow).GetMethod("PollUpmRequest", StaticFlags).Invoke(null, new object[] { null, "install", done })
+            RunAction(button, "Installing...", "Install", done =>
+                routine = (IEnumerator)
+                    typeof(MCPForUnityEditorWindow).GetMethod("PollUpmRequest", StaticFlags).Invoke(null, new object[] { null, "install", done })
             );
             try
             {
@@ -41,16 +37,11 @@ namespace MCPForUnityTests.Editor.Windows
                 Assert.IsTrue(button.enabledSelf);
                 Assert.AreEqual("Install", button.text);
                 bool retry = false;
-                RunAction(
-                    new Button(),
-                    "Installing...",
-                    "Install",
-                    done =>
-                    {
-                        retry = true;
-                        done();
-                    }
-                );
+                RunAction(new Button(), "Installing...", "Install", done =>
+                {
+                    retry = true;
+                    done();
+                });
                 Assert.IsTrue(retry);
             }
             finally
@@ -111,16 +102,11 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.IsTrue(button.enabledSelf);
             Assert.AreEqual("Uninstall All", button.text);
             bool retried = false;
-            RunAction(
-                button,
-                "Removing...",
-                "Uninstall All",
-                done =>
-                {
-                    retried = true;
-                    done();
-                }
-            );
+            RunAction(button, "Removing...", "Uninstall All", done =>
+            {
+                retried = true;
+                done();
+            });
             Assert.IsTrue(retried);
         }
 
@@ -147,16 +133,11 @@ namespace MCPForUnityTests.Editor.Windows
                 Assert.IsFalse(reopenedSection.enabledSelf);
 
                 bool overlapping = false;
-                RunAction(
-                    new Button(),
-                    "Removing...",
-                    "Uninstall",
-                    done =>
-                    {
-                        overlapping = true;
-                        done();
-                    }
-                );
+                RunAction(new Button(), "Removing...", "Uninstall", done =>
+                {
+                    overlapping = true;
+                    done();
+                });
                 Assert.IsFalse(overlapping);
                 finish();
                 Assert.IsTrue(reopenedSection.enabledSelf);
@@ -185,16 +166,11 @@ namespace MCPForUnityTests.Editor.Windows
                 RunAction(new Button(), "Installing...", "Install", done => secondDone = done);
                 firstDone();
                 bool overlapped = false;
-                RunAction(
-                    new Button(),
-                    "Removing...",
-                    "Uninstall",
-                    done =>
-                    {
-                        overlapped = true;
-                        done();
-                    }
-                );
+                RunAction(new Button(), "Removing...", "Uninstall", done =>
+                {
+                    overlapped = true;
+                    done();
+                });
                 Assert.IsFalse(overlapped);
             }
             finally

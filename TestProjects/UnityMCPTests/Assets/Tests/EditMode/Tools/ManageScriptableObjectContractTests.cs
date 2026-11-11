@@ -624,9 +624,8 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 if (phase != "create")
                     return;
-                string staging = Array.Find(
-                    Directory.GetDirectories(Application.dataPath, "__mcp_so_replacement_*"),
-                    path => Array.IndexOf(_replacementEntries, path) < 0
+                string staging = Array.Find(Directory.GetDirectories(Application.dataPath, "__mcp_so_replacement_*"), path =>
+                    Array.IndexOf(_replacementEntries, path) < 0
                 );
                 string partial = Path.Combine(staging, "new", "Existing.asset");
                 File.WriteAllText(partial, "partial native asset output");

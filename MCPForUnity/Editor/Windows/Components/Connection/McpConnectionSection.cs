@@ -768,8 +768,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     }
                     else
                     {
-                        string reason =
-                            (MCPServiceLocator.Server as ServerManagementService)?.LastStopFailure ?? "Check the Unity Console for the stop failure reason.";
+                        string reason = (MCPServiceLocator.Server as ServerManagementService)?.LastStopFailure
+                            ?? "Check the Unity Console for the stop failure reason.";
                         EditorUtility.DisplayDialog("HTTP Server Shutdown Not Confirmed", reason, "OK");
                     }
                 }

@@ -160,15 +160,12 @@ namespace MCPForUnityTests.Editor.Services
         [TestCase("InteractionMode")]
         public void TerminationAtApplyBoundary_RestoresOnlyDurablyOwnedValues(string boundary)
         {
-            var a = Lease(
-                101,
-                (key, value) =>
-                {
-                    preferences[key] = value;
-                    if (key == boundary)
-                        throw new IOException("simulated termination");
-                }
-            );
+            var a = Lease(101, (key, value) =>
+            {
+                preferences[key] = value;
+                if (key == boundary)
+                    throw new IOException("simulated termination");
+            });
             Assert.Throws<IOException>(() => a.Acquire());
             live.Remove(101);
             Lease(202).Recover();
@@ -181,15 +178,12 @@ namespace MCPForUnityTests.Editor.Services
         public void TerminationAtRestoreBoundary_RestartCompletesRecovery(string boundary)
         {
             Lease(101).Acquire();
-            var a = Lease(
-                101,
-                (key, value) =>
-                {
-                    preferences[key] = value;
-                    if (key == boundary)
-                        throw new IOException("simulated termination");
-                }
-            );
+            var a = Lease(101, (key, value) =>
+            {
+                preferences[key] = value;
+                if (key == boundary)
+                    throw new IOException("simulated termination");
+            });
             Assert.Throws<IOException>(() => a.Release());
             live.Remove(101);
             Lease(202).Recover();

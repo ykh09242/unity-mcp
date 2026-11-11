@@ -20,58 +20,45 @@ internal static class PathRegressionHarness
         foreach (var path in new[] { "MissingRoot/ExistingChild", "/MissingRoot/ExistingChild", "MissingRoot/Root/InactiveChild" })
         {
             Check("helper rejects missing first segment: " + path, () => Require(Find(path) == null, "Resolved an unrelated suffix object"));
-            Check(
-                "execute rejects missing first segment: " + path,
-                () =>
-                {
-                    var response = Execute(path);
-                    Require(response is ErrorResponse, "Expected not-found error, got " + response.GetType().Name);
-                    Require(((ErrorResponse)response).Message == "Target GameObject '" + path + "' not found", "Wrong not-found error");
-                    Require(RoslynRuntimeCompiler.Executions == 0, "Compiler executed against unrelated object");
-                }
-            );
-            Check(
-                "attachment rejects missing first segment: " + path,
-                () =>
-                {
-                    var response = Compile(path);
-                    Require(response is SuccessResponse, Describe(response));
-                    var data = JObject.FromObject(((SuccessResponse)response).Data);
-                    Require(data["attached_to"].Type == JTokenType.Null, "Attached to unrelated suffix object");
-                    Require(data["attached_type"].Type == JTokenType.Null, "Reported an unrelated attached type");
-                    Require(GameObject.All.Sum(go => go.AttachmentCount) == 0, "AddComponent was called on a scene object");
-                    Require(Debug.Warnings.Contains("[MCP] GameObject '" + path + "' not found"), "Missing attachment warning");
-                }
-            );
+            Check("execute rejects missing first segment: " + path, () =>
+            {
+                var response = Execute(path);
+                Require(response is ErrorResponse, "Expected not-found error, got " + response.GetType().Name);
+                Require(((ErrorResponse)response).Message == "Target GameObject '" + path + "' not found", "Wrong not-found error");
+                Require(RoslynRuntimeCompiler.Executions == 0, "Compiler executed against unrelated object");
+            });
+            Check("attachment rejects missing first segment: " + path, () =>
+            {
+                var response = Compile(path);
+                Require(response is SuccessResponse, Describe(response));
+                var data = JObject.FromObject(((SuccessResponse)response).Data);
+                Require(data["attached_to"].Type == JTokenType.Null, "Attached to unrelated suffix object");
+                Require(data["attached_type"].Type == JTokenType.Null, "Reported an unrelated attached type");
+                Require(GameObject.All.Sum(go => go.AttachmentCount) == 0, "AddComponent was called on a scene object");
+                Require(Debug.Warnings.Contains("[MCP] GameObject '" + path + "' not found"), "Missing attachment warning");
+            });
         }
 
         foreach (var path in new[] { "ExistingChild", "Root/Panel/ActiveChild", "Root/InactiveChild", "/Root/InactiveChild" })
         {
             Check("helper preserves valid target: " + path, () => Require(Find(path) == Expected(path), "Wrong helper target"));
-            Check(
-                "execute preserves valid target: " + path,
-                () =>
-                {
-                    var response = Execute(path);
-                    Require(response is SuccessResponse, Describe(response));
-                    Require(RoslynRuntimeCompiler.Executions == 1, "Compiler not called exactly once");
-                    Require(RoslynRuntimeCompiler.LastTarget == Expected(path), "Compiler received wrong target");
-                }
-            );
-            Check(
-                "attachment preserves valid target: " + path,
-                () =>
-                {
-                    var response = Compile(path);
-                    Require(response is SuccessResponse, Describe(response));
-                    Require(Expected(path).AttachmentCount == 1, "Expected target was not attached exactly once");
-                    Require(GameObject.All.Sum(go => go.AttachmentCount) == 1, "Attached to an extra object");
-                }
-            );
+            Check("execute preserves valid target: " + path, () =>
+            {
+                var response = Execute(path);
+                Require(response is SuccessResponse, Describe(response));
+                Require(RoslynRuntimeCompiler.Executions == 1, "Compiler not called exactly once");
+                Require(RoslynRuntimeCompiler.LastTarget == Expected(path), "Compiler received wrong target");
+            });
+            Check("attachment preserves valid target: " + path, () =>
+            {
+                var response = Compile(path);
+                Require(response is SuccessResponse, Describe(response));
+                Require(Expected(path).AttachmentCount == 1, "Expected target was not attached exactly once");
+                Require(GameObject.All.Sum(go => go.AttachmentCount) == 1, "Attached to an extra object");
+            });
         }
-        Check(
-            "missing child never switches to global suffix",
-            () => Require(Find("Root/MissingChild/ExistingChild") == null, "Resolved global suffix after missing child")
+        Check("missing child never switches to global suffix", () =>
+            Require(Find("Root/MissingChild/ExistingChild") == null, "Resolved global suffix after missing child")
         );
         Check("interior empty segment is not skipped", () => Require(Find("Root//InactiveChild") == null, "Interior empty path segment was normalized"));
         Console.WriteLine("RESULT: " + (23 - failures) + "/23 passed; failures=" + failures);
@@ -146,49 +133,40 @@ internal static class CompanionRegressionHarness
     {
         foreach (var target in new[] { "Missing", "MissingRoot/ExistingChild" })
         {
-            Check(
-                "static helper rejects explicit missing target: " + target,
-                () =>
-                {
-                    var success = RoslynMCPHelper.CompileAndExecuteStatic("public class Example {}", "Example", "Run", target, out string result);
-                    Require(
-                        !success && result == "GameObject '" + target + "' not found.",
-                        "Expected not-found; selected target="
-                            + (Compiler.targetGameObject == null ? "<null>" : Compiler.targetGameObject.name)
-                            + "; history target="
-                            + (Compiler.CompilationHistory.Count == 0 ? "<none>" : Compiler.CompilationHistory.Last().executionTarget)
-                            + "; observed "
-                            + result
-                    );
-                    Require(Compiler.targetGameObject == null && Compiler.CompilationHistory.Count == 0, "CompileAndExecute received compiler host");
-                }
-            );
+            Check("static helper rejects explicit missing target: " + target, () =>
+            {
+                var success = RoslynMCPHelper.CompileAndExecuteStatic("public class Example {}", "Example", "Run", target, out string result);
+                Require(
+                    !success && result == "GameObject '" + target + "' not found.",
+                    "Expected not-found; selected target="
+                        + (Compiler.targetGameObject == null ? "<null>" : Compiler.targetGameObject.name)
+                        + "; history target="
+                        + (Compiler.CompilationHistory.Count == 0 ? "<none>" : Compiler.CompilationHistory.Last().executionTarget)
+                        + "; observed "
+                        + result
+                );
+                Require(Compiler.targetGameObject == null && Compiler.CompilationHistory.Count == 0, "CompileAndExecute received compiler host");
+            });
         }
         foreach (var target in new string[] { null, "", "ExistingChild" })
         {
-            Check(
-                "static helper preserves target routing: " + (target ?? "<null>"),
-                () =>
-                {
-                    RoslynMCPHelper.CompileAndExecuteStatic("public class Example {}", "Example", "Run", target, out string result);
-                    var expected = string.IsNullOrEmpty(target) ? Compiler.gameObject : GameObject.Find(target);
-                    Require(Compiler.targetGameObject == expected, "Wrong target at real compiler boundary");
-                    Require(Compiler.CompilationHistory.Single().executionTarget == expected.name, "Wrong history target");
-                    Require(result.StartsWith("Failed: Compilation failed:", StringComparison.Ordinal), "Expected non-Editor compilation boundary");
-                }
-            );
-        }
-        Check(
-            "attach helper rejects missing target",
-            () =>
+            Check("static helper preserves target routing: " + (target ?? "<null>"), () =>
             {
-                Require(
-                    !RoslynMCPHelper.CompileAndAttach("public class Example {}", "Example", "Missing", out string result)
-                        && result == "GameObject 'Missing' not found.",
-                    "Sibling not-found contract changed"
-                );
-            }
-        );
+                RoslynMCPHelper.CompileAndExecuteStatic("public class Example {}", "Example", "Run", target, out string result);
+                var expected = string.IsNullOrEmpty(target) ? Compiler.gameObject : GameObject.Find(target);
+                Require(Compiler.targetGameObject == expected, "Wrong target at real compiler boundary");
+                Require(Compiler.CompilationHistory.Single().executionTarget == expected.name, "Wrong history target");
+                Require(result.StartsWith("Failed: Compilation failed:", StringComparison.Ordinal), "Expected non-Editor compilation boundary");
+            });
+        }
+        Check("attach helper rejects missing target", () =>
+        {
+            Require(
+                !RoslynMCPHelper.CompileAndAttach("public class Example {}", "Example", "Missing", out string result)
+                    && result == "GameObject 'Missing' not found.",
+                "Sibling not-found contract changed"
+            );
+        });
         Console.WriteLine("RESULT: " + (6 - failures) + "/6 passed; failures=" + failures);
         return failures == 0 ? 0 : 1;
     }

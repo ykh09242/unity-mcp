@@ -430,10 +430,8 @@ namespace MCPForUnity.Editor.Helpers
                     while (nextIndex < arraySize.Value && records.Count < options.PageSize)
                     {
                         int index = nextIndex;
-                        using var element = budget.Read(
-                            "index",
-                            options.Path + ".Array.data[" + index.ToString(CultureInfo.InvariantCulture) + "]",
-                            () => parent.GetArrayElementAtIndex(index)
+                        using var element = budget.Read("index", options.Path + ".Array.data[" + index.ToString(CultureInfo.InvariantCulture) + "]", () =>
+                            parent.GetArrayElementAtIndex(index)
                         );
                         if (!Append(element))
                             break;

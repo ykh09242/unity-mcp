@@ -31,12 +31,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 if (UtilType == null)
                     return;
 
-                EventCountProp =
-                    UtilType.GetProperty("count", BindingFlags.Public | BindingFlags.Static)
+                EventCountProp = UtilType.GetProperty("count", BindingFlags.Public | BindingFlags.Static)
                     ?? UtilType.GetProperty("eventsCount", BindingFlags.Public | BindingFlags.Static);
 
-                EnableMethod =
-                    UtilType.GetMethod("SetEnabled", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(bool), typeof(int) }, null)
+                EnableMethod = UtilType.GetMethod("SetEnabled", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(bool), typeof(int) }, null)
                     ?? UtilType.GetMethod("SetEnabled", BindingFlags.Public | BindingFlags.Static);
 
                 GetFrameEventsMethod = UtilType.GetMethod("GetFrameEvents", BindingFlags.Public | BindingFlags.Static);
@@ -44,8 +42,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
                 // Unity 6: GetFrameEventData(int, FrameDebuggerEventData) — 2 params, returns bool
                 // Older: GetFrameEventData(int) — 1 param, returns event data object
-                EventDataType =
-                    Type.GetType("UnityEditorInternal.FrameDebuggerInternal.FrameDebuggerEventData, UnityEditor")
+                EventDataType = Type.GetType("UnityEditorInternal.FrameDebuggerInternal.FrameDebuggerEventData, UnityEditor")
                     ?? Type.GetType("UnityEditorInternal.FrameDebuggerEventData, UnityEditor");
 
                 if (EventDataType != null)
@@ -322,8 +319,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 try
                 {
                     string name = i == 0 ? fieldName : alias;
-                    var field =
-                        type.GetField(name, BindingFlags.Public | BindingFlags.Instance) ?? type.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
+                    var field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance)
+                        ?? type.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
                     object val;
                     if (field != null)
                     {
@@ -331,8 +328,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     }
                     else
                     {
-                        var prop =
-                            type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)
+                        var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)
                             ?? type.GetProperty(name, BindingFlags.NonPublic | BindingFlags.Instance);
                         val = prop?.GetValue(obj);
                     }

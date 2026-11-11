@@ -440,15 +440,12 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse("No empty User Layer slots available (8-31 are full).");
                 }
 
-                MutateTagManager(
-                    tagManager.targetObject,
-                    () =>
-                    {
-                        using var targetLayerSP = layersProp.GetArrayElementAtIndex(firstEmptyUserLayer);
-                        targetLayerSP.stringValue = layerName;
-                        tagManager.ApplyModifiedProperties();
-                    }
-                );
+                MutateTagManager(tagManager.targetObject, () =>
+                {
+                    using var targetLayerSP = layersProp.GetArrayElementAtIndex(firstEmptyUserLayer);
+                    targetLayerSP.stringValue = layerName;
+                    tagManager.ApplyModifiedProperties();
+                });
                 return new SuccessResponse($"Layer '{layerName}' added successfully to slot {firstEmptyUserLayer}.");
             }
             catch (Exception e)
@@ -491,15 +488,12 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"User layer '{layerName}' not found.");
                 }
 
-                MutateTagManager(
-                    tagManager.targetObject,
-                    () =>
-                    {
-                        using var targetLayerSP = layersProp.GetArrayElementAtIndex(layerIndexToRemove);
-                        targetLayerSP.stringValue = string.Empty;
-                        tagManager.ApplyModifiedProperties();
-                    }
-                );
+                MutateTagManager(tagManager.targetObject, () =>
+                {
+                    using var targetLayerSP = layersProp.GetArrayElementAtIndex(layerIndexToRemove);
+                    targetLayerSP.stringValue = string.Empty;
+                    tagManager.ApplyModifiedProperties();
+                });
                 return new SuccessResponse($"Layer '{layerName}' (slot {layerIndexToRemove}) removed successfully.");
             }
             catch (Exception e)

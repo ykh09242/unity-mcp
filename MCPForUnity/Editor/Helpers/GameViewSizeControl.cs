@@ -125,8 +125,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 // Validate untrusted input before reflection touches a window or preset.
                 Selection requested = action == "set_game_view_size" ? Parse(parameters) : null;
-                var restores =
-                    JsonConvert.DeserializeObject<Dictionary<string, Selection>>(SessionState.GetString(RestoreKey, "{}"))
+                var restores = JsonConvert.DeserializeObject<Dictionary<string, Selection>>(SessionState.GetString(RestoreKey, "{}"))
                     ?? new Dictionary<string, Selection>();
                 string token = parameters["restore_token"]?.ToString();
                 if (action == "restore_game_view_size" && (string.IsNullOrEmpty(token) || !restores.TryGetValue(token, out requested)))

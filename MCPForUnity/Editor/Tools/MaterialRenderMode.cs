@@ -86,8 +86,7 @@ namespace MCPForUnity.Editor.Tools
                 ["render_type"] = material.GetTag("RenderType", false, ""),
                 ["alpha_keywords"] = alpha,
                 ["queue_behavior"] = "Explicit presets reset to shader default (-1) for opaque, 2450 for cutout, or 3000 for fade/transparent.",
-                ["reason"] =
-                    unsupported
+                ["reason"] = unsupported
                     ?? "Explicit preset support only. Raw edits do not automatically reconcile rendering mode; no ShaderGUI or global keyword mutation is performed.",
                 ["support_matrix"] = new JObject
                 {

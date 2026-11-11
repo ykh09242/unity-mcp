@@ -155,17 +155,12 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             var exportActions = Box(transfer, "graph-actions");
             AddButton(exportActions, "Load settings", "graph-export", () => Export(false));
             AddButton(exportActions, "Next page", "graph-next", () => Export(true));
-            AddButton(
-                exportActions,
-                "Copy page",
-                "graph-copy",
-                () =>
-                {
-                    if (exportPage != null)
-                        EditorGUIUtility.systemCopyBuffer = exportPage;
-                    return Task.CompletedTask;
-                }
-            );
+            AddButton(exportActions, "Copy page", "graph-copy", () =>
+            {
+                if (exportPage != null)
+                    EditorGUIUtility.systemCopyBuffer = exportPage;
+                return Task.CompletedTask;
+            });
             configurationRows = Box(transfer, "graph-config-list");
             var editor = new Foldout
             {
@@ -244,11 +239,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                     "Clear completed query scratch older than one day and abandoned staging in small batches. Active work, saved evidence and authored settings are preserved."
                 )
                 .AddToClassList("graph-muted");
-            AddButton(
-                maintenance,
-                "Clear eligible scratch",
-                "graph-cleanup",
-                () => Run("cleanup", new JObject { ["before"] = DateTimeOffset.UtcNow.AddDays(-1).ToUnixTimeSeconds(), ["limit"] = 100 })
+            AddButton(maintenance, "Clear eligible scratch", "graph-cleanup", () =>
+                Run("cleanup", new JObject { ["before"] = DateTimeOffset.UtcNow.AddDays(-1).ToUnixTimeSeconds(), ["limit"] = 100 })
             );
             SourceFields();
             UpdateControls();
@@ -807,8 +799,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 : "Collecting references";
             summary.EnableInClassList("graph-attention", failed);
             summary.EnableInClassList("graph-current", !failed && current);
-            summaryDetail.text =
-                graph.Value<string>("hint")
+            summaryDetail.text = graph.Value<string>("hint")
                 ?? (
                     failed ? "Some evidence is incomplete. Review the source status below, fix access or compilation, then retry."
                     : current ? "Native collection is current. External sources keep their own verification time."

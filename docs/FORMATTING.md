@@ -10,7 +10,7 @@ working-tree changes. Formatting does not replace correctness lint, tests or com
 | Language | Formatter / settings | Convention |
 | --- | --- | --- |
 | Python | Ruff **0.17.4**, root `ruff.toml` | Python 3.11 syntax, 100 columns, 4 spaces, double quotes, LF |
-| C# | Local CSharpier **1.3.0**, `.config/dotnet-tools.json`, root `.editorconfig` | 160 columns, 4 spaces, Allman braces, LF; preserve compact comment-only catches |
+| C# | Local CSharpier **1.4.0**, `.config/dotnet-tools.json`, root `.editorconfig` | 160 columns, 4 spaces, Allman braces, LF; preserve compact comment-only catches |
 | JS / TS / JSX / TSX / CSS / HTML / JSON / YAML | Root `.editorconfig`, existing file conventions | 2 spaces, LF; JS uses single quotes and semicolons; JSON uses double quotes |
 | Shell / PowerShell | Root `.editorconfig`, existing file conventions | Shell 2 spaces; PowerShell 4 spaces; LF |
 | Windows batch / command scripts | Root `.editorconfig` | 2 spaces, CRLF |

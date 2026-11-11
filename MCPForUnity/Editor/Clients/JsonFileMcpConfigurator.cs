@@ -396,27 +396,24 @@ namespace MCPForUnity.Editor.Clients
             string path = GetConfigPath();
             try
             {
-                ClientConfigurationChangeService.Shared.MutateFile(
-                    path,
-                    document =>
+                ClientConfigurationChangeService.Shared.MutateFile(path, document =>
+                {
+                    var root = JObject.Parse(document, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
+                    bool removed = false;
+                    if (client.IsVsCodeLayout)
                     {
-                        var root = JObject.Parse(document, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
-                        bool removed = false;
-                        if (client.IsVsCodeLayout)
-                        {
-                            removed = RemoveEntry(root["servers"]);
-                            if (root["mcp"] != null && root["mcp"] is not JObject)
-                                throw new FormatException("Invalid MCP configuration container.");
-                            removed |= RemoveEntry(root["mcp"]?["servers"]);
-                        }
-                        else
-                        {
-                            string key = string.IsNullOrEmpty(client.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
-                            removed = RemoveEntry(root[key]);
-                        }
-                        return removed ? root.ToString(Formatting.Indented) : document;
+                        removed = RemoveEntry(root["servers"]);
+                        if (root["mcp"] != null && root["mcp"] is not JObject)
+                            throw new FormatException("Invalid MCP configuration container.");
+                        removed |= RemoveEntry(root["mcp"]?["servers"]);
                     }
-                );
+                    else
+                    {
+                        string key = string.IsNullOrEmpty(client.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
+                        removed = RemoveEntry(root[key]);
+                    }
+                    return removed ? root.ToString(Formatting.Indented) : document;
+                });
 
                 client.SetStatus(McpStatus.NotConfigured);
                 client.configuredTransport = Models.ConfiguredTransport.Unknown;

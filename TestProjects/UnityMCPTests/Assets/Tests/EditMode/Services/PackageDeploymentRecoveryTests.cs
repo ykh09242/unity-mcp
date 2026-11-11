@@ -177,17 +177,12 @@ namespace MCPForUnityTests.Editor.Services
         {
             string target = MakePackage("Target", "old");
             var original = Directory.GetFiles(target, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes);
-            Assert.Throws<IOException>(() =>
-                GuardedFileSystem.ReplaceDirectory(
-                    target,
-                    stage =>
-                    {
-                        Directory.CreateDirectory(Path.Combine(stage, "Editor"));
-                        File.WriteAllText(Path.Combine(stage, "Editor/marker.txt"), "new");
-                        throw new IOException("Runtime copy failed after Editor was staged");
-                    }
-                )
-            );
+            Assert.Throws<IOException>(() => GuardedFileSystem.ReplaceDirectory(target, stage =>
+                {
+                    Directory.CreateDirectory(Path.Combine(stage, "Editor"));
+                    File.WriteAllText(Path.Combine(stage, "Editor/marker.txt"), "new");
+                    throw new IOException("Runtime copy failed after Editor was staged");
+                }));
             foreach (var pair in original)
                 CollectionAssert.AreEqual(pair.Value, File.ReadAllBytes(pair.Key));
             Assert.IsEmpty(Directory.GetDirectories(_root, ".mcp-stage-*"));
@@ -207,18 +202,13 @@ namespace MCPForUnityTests.Editor.Services
             SafeFileHandle held = null;
             try
             {
-                Assert.Throws<IOException>(() =>
-                    GuardedFileSystem.ReplaceDirectory(
-                        target,
-                        stage =>
-                        {
-                            GuardedFileSystem.CopyDirectory(source, stage);
-                            // Keep the fully staged directory readable, but deny its final rename.
-                            held = CreateFileW(stage, 0x80000000, 3, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
-                            Assert.IsFalse(held.IsInvalid);
-                        }
-                    )
-                );
+                Assert.Throws<IOException>(() => GuardedFileSystem.ReplaceDirectory(target, stage =>
+                    {
+                        GuardedFileSystem.CopyDirectory(source, stage);
+                        // Keep the fully staged directory readable, but deny its final rename.
+                        held = CreateFileW(stage, 0x80000000, 3, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+                        Assert.IsFalse(held.IsInvalid);
+                    }));
                 foreach (var pair in original)
                     CollectionAssert.AreEqual(pair.Value, File.ReadAllBytes(pair.Key));
                 Assert.IsEmpty(Directory.GetDirectories(_root, ".mcp-previous-*"), "The previous target must have been restored.");

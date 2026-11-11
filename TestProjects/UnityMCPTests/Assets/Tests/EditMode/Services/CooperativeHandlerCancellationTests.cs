@@ -45,17 +45,11 @@ namespace MCPForUnityTests.Editor.Services
         {
             const string name = "phase7_prestart_cancel";
             bool invoked = false;
-            using var registration = new HandlerRegistration(
-                name,
-                HandlerInfo.Cooperative(
-                    name,
-                    (_, token) =>
-                    {
-                        invoked = true;
-                        return Task.FromResult<object>(token);
-                    }
-                )
-            );
+            using var registration = new HandlerRegistration(name, HandlerInfo.Cooperative(name, (_, token) =>
+                {
+                    invoked = true;
+                    return Task.FromResult<object>(token);
+                }));
             using var lifetime = new CancellationTokenSource();
             lifetime.Cancel();
             Assert.Throws<OperationCanceledException>(() => CommandRegistry.InvokeCommandAsync(name, new JObject(), lifetime.Token));
@@ -72,25 +66,19 @@ namespace MCPForUnityTests.Editor.Services
             const string name = "phase7_cooperative_wait";
             bool started = false;
             bool settled = false;
-            using var registration = new HandlerRegistration(
-                name,
-                HandlerInfo.Cooperative(
-                    name,
-                    async (_, token) =>
+            using var registration = new HandlerRegistration(name, HandlerInfo.Cooperative(name, async (_, token) =>
+                {
+                    started = true;
+                    try
                     {
-                        started = true;
-                        try
-                        {
-                            await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
-                            return null;
-                        }
-                        finally
-                        {
-                            settled = true;
-                        }
+                        await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
+                        return null;
                     }
-                )
-            );
+                    finally
+                    {
+                        settled = true;
+                    }
+                }));
             using var connection = new CancellationTokenSource();
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(connection.Token);
             var operation = TransportCommandDispatcher.ExecuteCommandAsync(new Command { type = name }, deadline.Token);
@@ -126,17 +114,11 @@ namespace MCPForUnityTests.Editor.Services
             const string name = "phase7_queued_cancel";
             bool invoked = false;
             bool nextInvoked = false;
-            using var registration = new HandlerRegistration(
-                name,
-                HandlerInfo.Cooperative(
-                    name,
-                    (_, token) =>
-                    {
-                        invoked = true;
-                        return Task.FromResult<object>(null);
-                    }
-                )
-            );
+            using var registration = new HandlerRegistration(name, HandlerInfo.Cooperative(name, (_, token) =>
+                {
+                    invoked = true;
+                    return Task.FromResult<object>(null);
+                }));
             using var lifetime = new CancellationTokenSource();
             using var request = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             var predecessor = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -161,16 +143,11 @@ namespace MCPForUnityTests.Editor.Services
                     request.Cancel
                 )
             );
-            Assert.IsNull(
-                owner.TryStart(
-                    "next",
-                    async previous =>
-                    {
-                        await previous;
-                        nextInvoked = true;
-                    }
-                )
-            );
+            Assert.IsNull(owner.TryStart("next", async previous =>
+                {
+                    await previous;
+                    nextInvoked = true;
+                }));
             Assert.IsTrue(owner.TryCancel("queued"));
             Assert.IsTrue(SpinWait.SpinUntil(() => request.IsCancellationRequested, TimeSpan.FromSeconds(5)));
             Assert.IsFalse(invoked);
@@ -192,25 +169,19 @@ namespace MCPForUnityTests.Editor.Services
             var cleanup = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             bool cleaned = false;
             bool nextInvoked = false;
-            using var firstRegistration = new HandlerRegistration(
-                first,
-                HandlerInfo.Cooperative(
-                    first,
-                    async (_, token) =>
+            using var firstRegistration = new HandlerRegistration(first, HandlerInfo.Cooperative(first, async (_, token) =>
+                {
+                    try
                     {
-                        try
-                        {
-                            await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
-                            return null;
-                        }
-                        finally
-                        {
-                            await cleanup.Task.ConfigureAwait(true);
-                            cleaned = true;
-                        }
+                        await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
+                        return null;
                     }
-                )
-            );
+                    finally
+                    {
+                        await cleanup.Task.ConfigureAwait(true);
+                        cleaned = true;
+                    }
+                }));
             using var nextRegistration = new HandlerRegistration(
                 next,
                 new HandlerInfo(
@@ -245,17 +216,12 @@ namespace MCPForUnityTests.Editor.Services
                     deadline.Cancel
                 )
             );
-            Assert.IsNull(
-                owner.TryStart(
-                    "next",
-                    async previous =>
-                    {
-                        await previous.ConfigureAwait(true);
-                        var operation = TransportCommandDispatcher.ExecuteCommandAsync(new Command { type = next }, lifetime.Token);
-                        await operation.Completion.ConfigureAwait(true);
-                    }
-                )
-            );
+            Assert.IsNull(owner.TryStart("next", async previous =>
+                {
+                    await previous.ConfigureAwait(true);
+                    var operation = TransportCommandDispatcher.ExecuteCommandAsync(new Command { type = next }, lifetime.Token);
+                    await operation.Completion.ConfigureAwait(true);
+                }));
             Assert.IsTrue(owner.TryCancel("first"));
             Assert.AreSame(active.Response, await Task.WhenAny(active.Response, Task.Delay(5000)));
             Assert.IsTrue(active.Response.IsCanceled);

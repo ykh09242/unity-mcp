@@ -203,35 +203,32 @@ namespace MCPForUnityTests.Editor.Helpers
             var configPath = Path.Combine(_tempRoot, "claude-desktop.json");
             WriteInitialConfig(configPath, isVSCode: false, command: "uvx", directory: "/old/path");
 
-            WithTransportPreference(
-                false,
-                () =>
+            WithTransportPreference(false, () =>
+            {
+                MCPServiceLocator.Paths.SetUvxPathOverride(_fakeUvPath);
+                try
                 {
-                    MCPServiceLocator.Paths.SetUvxPathOverride(_fakeUvPath);
-                    try
+                    var client = new McpClient
                     {
-                        var client = new McpClient
-                        {
-                            name = "Claude Desktop",
-                            SupportsHttpTransport = false,
-                            StripEnvWhenNotRequired = true,
-                        };
+                        name = "Claude Desktop",
+                        SupportsHttpTransport = false,
+                        StripEnvWhenNotRequired = true,
+                    };
 
-                        InvokeWriteToConfig(configPath, client);
+                    InvokeWriteToConfig(configPath, client);
 
-                        var root = JObject.Parse(File.ReadAllText(configPath));
-                        var unity = (JObject)root.SelectToken("mcpServers.unityMCP");
-                        Assert.NotNull(unity, "Expected mcpServers.unityMCP node");
-                        Assert.AreEqual(_fakeUvPath, (string)unity["command"], "Claude Desktop should use absolute uvx path");
-                        Assert.IsNull(unity["env"], "Claude Desktop config should not include env block when not required");
-                        AssertTransportConfiguration(unity, client);
-                    }
-                    finally
-                    {
-                        MCPServiceLocator.Paths.ClearUvxPathOverride();
-                    }
+                    var root = JObject.Parse(File.ReadAllText(configPath));
+                    var unity = (JObject)root.SelectToken("mcpServers.unityMCP");
+                    Assert.NotNull(unity, "Expected mcpServers.unityMCP node");
+                    Assert.AreEqual(_fakeUvPath, (string)unity["command"], "Claude Desktop should use absolute uvx path");
+                    Assert.IsNull(unity["env"], "Claude Desktop config should not include env block when not required");
+                    AssertTransportConfiguration(unity, client);
                 }
-            );
+                finally
+                {
+                    MCPServiceLocator.Paths.ClearUvxPathOverride();
+                }
+            });
         }
 
         [Test]
@@ -314,25 +311,22 @@ namespace MCPForUnityTests.Editor.Helpers
             var configPath = Path.Combine(_tempRoot, "stdio-non-vscode.json");
             WriteInitialConfig(configPath, isVSCode: false, command: _fakeUvPath, directory: "/old/path");
 
-            WithTransportPreference(
-                false,
-                () =>
+            WithTransportPreference(false, () =>
+            {
+                var client = new McpClient
                 {
-                    var client = new McpClient
-                    {
-                        name = "Windsurf",
-                        HttpUrlProperty = "serverUrl",
-                        DefaultUnityFields = { { "disabled", false } },
-                        StripEnvWhenNotRequired = true,
-                    };
-                    InvokeWriteToConfig(configPath, client);
+                    name = "Windsurf",
+                    HttpUrlProperty = "serverUrl",
+                    DefaultUnityFields = { { "disabled", false } },
+                    StripEnvWhenNotRequired = true,
+                };
+                InvokeWriteToConfig(configPath, client);
 
-                    var root = JObject.Parse(File.ReadAllText(configPath));
-                    var unity = (JObject)root.SelectToken("mcpServers.unityMCP");
-                    Assert.NotNull(unity, "Expected mcpServers.unityMCP node");
-                    AssertTransportConfiguration(unity, client);
-                }
-            );
+                var root = JObject.Parse(File.ReadAllText(configPath));
+                var unity = (JObject)root.SelectToken("mcpServers.unityMCP");
+                Assert.NotNull(unity, "Expected mcpServers.unityMCP node");
+                AssertTransportConfiguration(unity, client);
+            });
         }
 
         [Test]
@@ -341,19 +335,16 @@ namespace MCPForUnityTests.Editor.Helpers
             var configPath = Path.Combine(_tempRoot, "stdio-vscode.json");
             WriteInitialConfig(configPath, isVSCode: true, command: _fakeUvPath, directory: "/old/path");
 
-            WithTransportPreference(
-                false,
-                () =>
-                {
-                    var client = new McpClient { name = "VSCode", IsVsCodeLayout = true };
-                    InvokeWriteToConfig(configPath, client);
+            WithTransportPreference(false, () =>
+            {
+                var client = new McpClient { name = "VSCode", IsVsCodeLayout = true };
+                InvokeWriteToConfig(configPath, client);
 
-                    var root = JObject.Parse(File.ReadAllText(configPath));
-                    var unity = (JObject)root.SelectToken("servers.unityMCP");
-                    Assert.NotNull(unity, "Expected servers.unityMCP node");
-                    AssertTransportConfiguration(unity, client);
-                }
-            );
+                var root = JObject.Parse(File.ReadAllText(configPath));
+                var unity = (JObject)root.SelectToken("servers.unityMCP");
+                Assert.NotNull(unity, "Expected servers.unityMCP node");
+                AssertTransportConfiguration(unity, client);
+            });
         }
 
         // --- Helpers ---

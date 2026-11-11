@@ -14,7 +14,7 @@ from typing import Final
 
 ROOT: Final = Path(__file__).resolve().parents[1]
 RUFF_VERSION: Final = "0.17.4"
-CSHARPIER_VERSION: Final = "1.3.0"
+CSHARPIER_VERSION: Final = "1.4.0"
 PYTHON_SUFFIXES: Final = frozenset({".py", ".pyi"})
 CSHARP_SUFFIXES: Final = frozenset({".cs", ".csx"})
 EDITOR_SUFFIXES: Final = frozenset(
@@ -237,7 +237,7 @@ def csharpier_command(root: Path) -> tuple[str, ...]:
     if command and (verified := verified_command(root, command, CSHARPIER_VERSION)):
         return verified
     raise RuntimeError(
-        "Local CSharpier 1.3.0 is unavailable. Install the compatible .NET SDK, then run dotnet tool restore from the repository root."
+        "Local CSharpier 1.4.0 is unavailable. Install the compatible .NET SDK, then run dotnet tool restore from the repository root."
     )
 
 

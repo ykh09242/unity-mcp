@@ -564,19 +564,12 @@ namespace MCPForUnityTests.Editor.Services
                     null
                 )
             );
-            handlers.Set(
-                second,
-                new HandlerInfo(
-                    second,
-                    null,
-                    async _ =>
-                    {
-                        secondCalls++;
-                        entered.TrySetResult(true);
-                        return await gate.Task.ConfigureAwait(true);
-                    }
-                )
-            );
+            handlers.Set(second, new HandlerInfo(second, null, async _ =>
+                {
+                    secondCalls++;
+                    entered.TrySetResult(true);
+                    return await gate.Task.ConfigureAwait(true);
+                }));
             TransportCommandOperation operation = null;
             try
             {

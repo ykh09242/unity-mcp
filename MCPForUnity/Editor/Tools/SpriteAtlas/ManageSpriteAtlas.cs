@@ -67,14 +67,11 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
                     if (!sameMaster)
                     {
                         mutationStarted = true;
-                        EditAsset(
-                            path,
-                            value =>
-                            {
-                                value.SetIsVariant(true);
-                                value.SetMasterAtlas(master);
-                            }
-                        );
+                        EditAsset(path, value =>
+                        {
+                            value.SetIsVariant(true);
+                            value.SetMasterAtlas(master);
+                        });
                         importer = (SpriteAtlasImporter)AssetImporter.GetAtPath(path);
                     }
                     mutationStarted = true;
@@ -108,16 +105,13 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
                 string[] expectedIds = expected.Select(AtlasAccess.Key).OrderBy(x => x, StringComparer.Ordinal).ToArray();
                 AtlasAccess.Guard(request, path);
                 mutationStarted = true;
-                EditAsset(
-                    path,
-                    value =>
-                    {
-                        if (action == "add_packables")
-                            value.Add(delta);
-                        else
-                            value.Remove(delta);
-                    }
-                );
+                EditAsset(path, value =>
+                {
+                    if (action == "add_packables")
+                        value.Add(delta);
+                    else
+                        value.Remove(delta);
+                });
                 string[] actual = AtlasAccess.Packables(AtlasAccess.Load(path)).Select(AtlasAccess.Key).OrderBy(x => x, StringComparer.Ordinal).ToArray();
                 if (!expectedIds.SequenceEqual(actual))
                     throw new InvalidOperationException("Native import did not retain the exact requested packable membership.");

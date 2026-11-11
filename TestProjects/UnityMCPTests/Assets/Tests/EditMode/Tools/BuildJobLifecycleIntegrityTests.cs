@@ -316,15 +316,12 @@ namespace MCPForUnityTests.EditMode.Tools
             var batch = new BatchJob("local-completed-child-reload-gap") { State = BuildJobState.Building };
             batch.Children.Add(Child());
             batch.Children.Add(Child());
-            BuildRunner.ScheduleNextBatchBuild(
-                batch,
-                index =>
-                {
-                    BuildJob child = batch.Children[index];
-                    ScheduleManagedBuild(child, () => throw new InvalidOperationException("controlled build failure"));
-                    return child;
-                }
-            );
+            BuildRunner.ScheduleNextBatchBuild(batch, index =>
+            {
+                BuildJob child = batch.Children[index];
+                ScheduleManagedBuild(child, () => throw new InvalidOperationException("controlled build failure"));
+                return child;
+            });
             ExpectManagedBuildFailure();
             AdvanceOwnedCallbacks();
             Assert.AreEqual(1, batch.CurrentIndex);
@@ -338,21 +335,18 @@ namespace MCPForUnityTests.EditMode.Tools
         public void QueuedSiblingCleanupCannotClearAnExecutingInvocation()
         {
             bool retainedDuringSiblingCleanup = false;
-            ScheduleManagedBuild(
-                Child(),
-                () =>
-                {
-                    var precedingCallbacks = new HashSet<EditorApplication.CallbackFunction>(CurrentCallbacks());
-                    BuildJob sibling = Child();
-                    BuildRunner.ScheduleBuild(sibling, new BuildPlayerOptions());
-                    sibling.State = BuildJobState.Cancelled;
-                    CaptureCallbacks();
-                    foreach (var callback in CurrentCallbacks().Where(callback => !precedingCallbacks.Contains(callback)).ToArray())
-                        callback();
-                    retainedDuringSiblingCleanup = SessionState.GetBool("MCPForUnity.Build.NativeOwnerV1", false);
-                    throw new InvalidOperationException("controlled build failure");
-                }
-            );
+            ScheduleManagedBuild(Child(), () =>
+            {
+                var precedingCallbacks = new HashSet<EditorApplication.CallbackFunction>(CurrentCallbacks());
+                BuildJob sibling = Child();
+                BuildRunner.ScheduleBuild(sibling, new BuildPlayerOptions());
+                sibling.State = BuildJobState.Cancelled;
+                CaptureCallbacks();
+                foreach (var callback in CurrentCallbacks().Where(callback => !precedingCallbacks.Contains(callback)).ToArray())
+                    callback();
+                retainedDuringSiblingCleanup = SessionState.GetBool("MCPForUnity.Build.NativeOwnerV1", false);
+                throw new InvalidOperationException("controlled build failure");
+            });
             ExpectManagedBuildFailure();
             AdvanceOwnedCallbacks();
             Assert.IsTrue(retainedDuringSiblingCleanup);
@@ -402,17 +396,14 @@ namespace MCPForUnityTests.EditMode.Tools
             int prepared = 0;
             try
             {
-                BuildRunner.ScheduleNextBatchBuild(
-                    batch,
-                    index =>
-                    {
-                        prepared++;
-                        BuildJob child = batch.Children[index];
-                        BuildRunner.ScheduleBuild(child, new BuildPlayerOptions());
-                        child.State = BuildJobState.Cancelled;
-                        return child;
-                    }
-                );
+                BuildRunner.ScheduleNextBatchBuild(batch, index =>
+                {
+                    prepared++;
+                    BuildJob child = batch.Children[index];
+                    BuildRunner.ScheduleBuild(child, new BuildPlayerOptions());
+                    child.State = BuildJobState.Cancelled;
+                    return child;
+                });
                 CaptureCallbacks();
                 // Invoke only the watcher first, deliberately withholding the native
                 // callback. A cancelled public status must not schedule child two.

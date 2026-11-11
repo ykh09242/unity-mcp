@@ -425,17 +425,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             runButton.AddToClassList("scenario-primary-button");
             runButton.tooltip = "Saves this scenario and starts Play Mode. The run continues if this window closes.";
             toolbar.Add(runButton);
-            toolbar.Add(
-                ActionButton(
-                    "Review steps",
-                    "reviewScenarioSteps",
-                    () =>
-                    {
-                        SelectScenarioPane("edit");
-                        rootVisualElement.Q<ScrollView>("scenarioEditorScroll")?.ScrollTo(validation);
-                    }
-                )
-            );
+            toolbar.Add(ActionButton("Review steps", "reviewScenarioSteps", () =>
+                {
+                    SelectScenarioPane("edit");
+                    rootVisualElement.Q<ScrollView>("scenarioEditorScroll")?.ScrollTo(validation);
+                }));
             panel.Add(toolbar);
             var repeats = new IntegerField("Repeats") { name = "repeatCount", value = repeatCount };
             repeats.tooltip = "Run the flow 1–100 times, including its configured setup and cleanup steps.";
@@ -576,32 +570,26 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 value = false,
             };
             var list = new VisualElement();
-            section.Add(
-                ActionButton(
-                    "Add " + title + " Step",
-                    "add" + title + "Step",
-                    () =>
+            section.Add(ActionButton("Add " + title + " Step", "add" + title + "Step", () =>
+                {
+                    var steps = stage == "setup" ? draft.SetupSteps : draft.CleanupSteps;
+                    if (steps.Count >= 16)
                     {
-                        var steps = stage == "setup" ? draft.SetupSteps : draft.CleanupSteps;
-                        if (steps.Count >= 16)
-                        {
-                            SetMessage("Each setup/cleanup stage supports at most 16 steps.", true);
-                            return;
-                        }
-                        Edit(() =>
-                            steps.Add(
-                                new PlayScenarioStep
-                                {
-                                    Name = title + " step",
-                                    Action = "wait_object",
-                                    Target = "",
-                                }
-                            )
-                        );
-                        RenderSteps();
+                        SetMessage("Each setup/cleanup stage supports at most 16 steps.", true);
+                        return;
                     }
-                )
-            );
+                    Edit(() =>
+                        steps.Add(
+                            new PlayScenarioStep
+                            {
+                                Name = title + " step",
+                                Action = "wait_object",
+                                Target = "",
+                            }
+                        )
+                    );
+                    RenderSteps();
+                }));
             section.Add(list);
             parent.Add(section);
             return list;

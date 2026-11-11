@@ -75,8 +75,8 @@ namespace MCPForUnityTests.PlayScenarios.Player
                         ["name"] = "native-three-frozen",
                         ["children"] = children,
                         ["unity_version"] = Application.unityVersion,
-                        ["package_version"] =
-                            UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(PlayScenarioPlayerBuild).Assembly)?.version ?? "unknown",
+                        ["package_version"] = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(PlayScenarioPlayerBuild).Assembly)?.version
+                            ?? "unknown",
                         ["build_source_revision"] = revision,
                         ["failure_policy"] = "continue",
                         ["isolation"] = "fresh-process",

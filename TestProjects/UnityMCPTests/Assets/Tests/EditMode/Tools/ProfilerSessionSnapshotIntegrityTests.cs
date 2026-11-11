@@ -408,8 +408,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void InstalledSnapshotOverloadsRetainTheirDeclaredDefaultsWithoutInvocation()
         {
-            Type memoryType =
-                Type.GetType("Unity.Profiling.Memory.MemoryProfiler, UnityEngine.CoreModule")
+            Type memoryType = Type.GetType("Unity.Profiling.Memory.MemoryProfiler, UnityEngine.CoreModule")
                 ?? Type.GetType("UnityEngine.Profiling.Memory.Experimental.MemoryProfiler, UnityEngine.CoreModule");
             if (memoryType == null)
                 Assert.Ignore("No supported built-in snapshot API is available.");

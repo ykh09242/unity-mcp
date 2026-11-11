@@ -644,72 +644,63 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase(true)]
         public void UnregisterHonorsLockBeforeAnyFileMutation(bool toml)
         {
-            WithOwnedConfiguration(
-                toml,
-                (configurator, path) =>
-                {
-                    EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, true);
-                    var before = File.ReadAllBytes(path);
-                    Assert.Throws<InvalidOperationException>(configurator.Unregister);
-                    CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
-                }
-            );
+            WithOwnedConfiguration(toml, (configurator, path) =>
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, true);
+                var before = File.ReadAllBytes(path);
+                Assert.Throws<InvalidOperationException>(configurator.Unregister);
+                CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+            });
         }
 
         [TestCase(false)]
         [TestCase(true)]
         public void UnregisterPreservesBomAndUnrelatedSettings(bool toml)
         {
-            WithOwnedConfiguration(
-                toml,
-                (configurator, path) =>
-                {
-                    configurator.Unregister();
-                    var bytes = File.ReadAllBytes(path);
-                    CollectionAssert.AreEqual(new byte[] { 239, 187, 191 }, new[] { bytes[0], bytes[1], bytes[2] });
-                    StringAssert.Contains("other-owned-value", File.ReadAllText(path));
-                    StringAssert.DoesNotContain("unityMCP", File.ReadAllText(path));
-                    Assert.AreEqual(McpStatus.NotConfigured, configurator.Status);
-                }
-            );
+            WithOwnedConfiguration(toml, (configurator, path) =>
+            {
+                configurator.Unregister();
+                var bytes = File.ReadAllBytes(path);
+                CollectionAssert.AreEqual(new byte[] { 239, 187, 191 }, new[] { bytes[0], bytes[1], bytes[2] });
+                StringAssert.Contains("other-owned-value", File.ReadAllText(path));
+                StringAssert.DoesNotContain("unityMCP", File.ReadAllText(path));
+                Assert.AreEqual(McpStatus.NotConfigured, configurator.Status);
+            });
         }
 
         [TestCase(false)]
         [TestCase(true)]
         public void UnregisterFinalComparisonPreservesConcurrentChanges(bool failWrite)
         {
-            WithOwnedConfiguration(
-                false,
-                (configurator, path) =>
+            WithOwnedConfiguration(false, (configurator, path) =>
+            {
+                var service = MCPForUnity.Editor.Services.ClientConfigurationChangeService.Shared;
+                var field = service
+                    .GetType()
+                    .GetField("beforeCommitComparison", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                var original = field.GetValue(service);
+                var expected = File.ReadAllBytes(path);
+                try
                 {
-                    var service = MCPForUnity.Editor.Services.ClientConfigurationChangeService.Shared;
-                    var field = service
-                        .GetType()
-                        .GetField("beforeCommitComparison", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-                    var original = field.GetValue(service);
-                    var expected = File.ReadAllBytes(path);
-                    try
-                    {
-                        field.SetValue(
-                            service,
-                            new Action(() =>
-                            {
-                                if (failWrite)
-                                    throw new IOException("synthetic write failure");
-                                File.AppendAllText(path, " ");
-                                expected = File.ReadAllBytes(path);
-                            })
-                        );
-                        Assert.Throws<InvalidOperationException>(configurator.Unregister);
-                        CollectionAssert.AreEqual(expected, File.ReadAllBytes(path));
-                        CollectionAssert.AreEquivalent(new[] { path }, Directory.GetFiles(Path.GetDirectoryName(path), Path.GetFileName(path) + "*"));
-                    }
-                    finally
-                    {
-                        field.SetValue(service, original);
-                    }
+                    field.SetValue(
+                        service,
+                        new Action(() =>
+                        {
+                            if (failWrite)
+                                throw new IOException("synthetic write failure");
+                            File.AppendAllText(path, " ");
+                            expected = File.ReadAllBytes(path);
+                        })
+                    );
+                    Assert.Throws<InvalidOperationException>(configurator.Unregister);
+                    CollectionAssert.AreEqual(expected, File.ReadAllBytes(path));
+                    CollectionAssert.AreEquivalent(new[] { path }, Directory.GetFiles(Path.GetDirectoryName(path), Path.GetFileName(path) + "*"));
                 }
-            );
+                finally
+                {
+                    field.SetValue(service, original);
+                }
+            });
         }
 
         [TestCase("duplicate")]
@@ -717,21 +708,18 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("large")]
         public void JsonUnregisterRefusesAmbiguousOrUnboundedInput(string kind)
         {
-            WithOwnedConfiguration(
-                false,
-                (configurator, path) =>
-                {
-                    if (kind == "duplicate")
-                        File.WriteAllText(path, "{\"mcpServers\":{\"unityMCP\":{},\"unityMCP\":{}}}");
-                    if (kind == "encoding")
-                        File.WriteAllBytes(path, new byte[] { 0xff, 0xfe, 0x00 });
-                    if (kind == "large")
-                        File.WriteAllText(path, new string(' ', 1024 * 1024 + 1));
-                    var bytes = File.ReadAllBytes(path);
-                    Assert.Throws<InvalidOperationException>(configurator.Unregister);
-                    CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
-                }
-            );
+            WithOwnedConfiguration(false, (configurator, path) =>
+            {
+                if (kind == "duplicate")
+                    File.WriteAllText(path, "{\"mcpServers\":{\"unityMCP\":{},\"unityMCP\":{}}}");
+                if (kind == "encoding")
+                    File.WriteAllBytes(path, new byte[] { 0xff, 0xfe, 0x00 });
+                if (kind == "large")
+                    File.WriteAllText(path, new string(' ', 1024 * 1024 + 1));
+                var bytes = File.ReadAllBytes(path);
+                Assert.Throws<InvalidOperationException>(configurator.Unregister);
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+            });
         }
 
         [TestCase(false)]

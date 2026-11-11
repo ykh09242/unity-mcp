@@ -276,8 +276,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Structural(string mode, string replacement = null)
         {
-            replacement =
-                replacement
+            replacement = replacement
                 ?? (
                     mode == "replace_class"
                         ? "public class PreviewProbe\n{\n    public void Changed() { }\n}"

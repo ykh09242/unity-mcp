@@ -312,26 +312,19 @@ namespace MCPForUnityTests.Editor.Services
                     null
                 )
             );
-            handlers.Set(
-                second,
-                new HandlerInfo(
-                    second,
-                    null,
-                    async _ =>
+            handlers.Set(second, new HandlerInfo(second, null, async _ =>
+                {
+                    secondCalls++;
+                    entered.TrySetResult(true);
+                    try
                     {
-                        secondCalls++;
-                        entered.TrySetResult(true);
-                        try
-                        {
-                            return await release.Task.ConfigureAwait(true);
-                        }
-                        finally
-                        {
-                            settled.TrySetResult(true);
-                        }
+                        return await release.Task.ConfigureAwait(true);
                     }
-                )
-            );
+                    finally
+                    {
+                        settled.TrySetResult(true);
+                    }
+                }));
             using var host = new TimingHostScope(_ =>
             {
                 nextCalls++;
@@ -585,26 +578,19 @@ namespace MCPForUnityTests.Editor.Services
                     null
                 )
             );
-            handlers.Set(
-                second,
-                new HandlerInfo(
-                    second,
-                    null,
-                    async _ =>
+            handlers.Set(second, new HandlerInfo(second, null, async _ =>
+                {
+                    secondCalls++;
+                    entered.TrySetResult(true);
+                    try
                     {
-                        secondCalls++;
-                        entered.TrySetResult(true);
-                        try
-                        {
-                            return await release.Task.ConfigureAwait(true);
-                        }
-                        finally
-                        {
-                            settled.TrySetResult(true);
-                        }
+                        return await release.Task.ConfigureAwait(true);
                     }
-                )
-            );
+                    finally
+                    {
+                        settled.TrySetResult(true);
+                    }
+                }));
             using var host = new TimingHostScope(_ => Task.FromResult<object>(new { unused = true }));
             var batch = new JObject
             {
@@ -739,26 +725,19 @@ namespace MCPForUnityTests.Editor.Services
                     null
                 )
             );
-            handlers.Set(
-                second,
-                new HandlerInfo(
-                    second,
-                    null,
-                    async _ =>
+            handlers.Set(second, new HandlerInfo(second, null, async _ =>
+                {
+                    secondCalls++;
+                    entered.TrySetResult(true);
+                    try
                     {
-                        secondCalls++;
-                        entered.TrySetResult(true);
-                        try
-                        {
-                            return await release.Task.ConfigureAwait(true);
-                        }
-                        finally
-                        {
-                            settled.TrySetResult(true);
-                        }
+                        return await release.Task.ConfigureAwait(true);
                     }
-                )
-            );
+                    finally
+                    {
+                        settled.TrySetResult(true);
+                    }
+                }));
             using var host = new TimingHostScope(_ => Task.FromResult<object>(new { unused = true }));
             NativeProgressProbe.RequireBatchCapacity(new JObject { ["commands"] = new JArray(new JObject(), new JObject()) });
             try
@@ -852,44 +831,30 @@ namespace MCPForUnityTests.Editor.Services
             var settledSecond = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             using var handlers = new ProgressHandlerScope();
             using var enabled = NativeProgressProbe.EnableTools("batch_execute");
-            handlers.Set(
-                first,
-                new HandlerInfo(
-                    first,
-                    null,
-                    async _ =>
+            handlers.Set(first, new HandlerInfo(first, null, async _ =>
+                {
+                    enteredFirst.TrySetResult(true);
+                    try
                     {
-                        enteredFirst.TrySetResult(true);
-                        try
-                        {
-                            return await releaseFirst.Task.ConfigureAwait(true);
-                        }
-                        finally
-                        {
-                            settledFirst.TrySetResult(true);
-                        }
+                        return await releaseFirst.Task.ConfigureAwait(true);
                     }
-                )
-            );
-            handlers.Set(
-                second,
-                new HandlerInfo(
-                    second,
-                    null,
-                    async _ =>
+                    finally
                     {
-                        enteredSecond.TrySetResult(true);
-                        try
-                        {
-                            return await releaseSecond.Task.ConfigureAwait(true);
-                        }
-                        finally
-                        {
-                            settledSecond.TrySetResult(true);
-                        }
+                        settledFirst.TrySetResult(true);
                     }
-                )
-            );
+                }));
+            handlers.Set(second, new HandlerInfo(second, null, async _ =>
+                {
+                    enteredSecond.TrySetResult(true);
+                    try
+                    {
+                        return await releaseSecond.Task.ConfigureAwait(true);
+                    }
+                    finally
+                    {
+                        settledSecond.TrySetResult(true);
+                    }
+                }));
             using var host = new TimingHostScope(_ => Task.FromResult<object>(new { unused = true }));
             string business = new JObject
             {
@@ -961,25 +926,18 @@ namespace MCPForUnityTests.Editor.Services
             using var handlers = new ProgressHandlerScope();
             using var enabled = NativeProgressProbe.EnableTools("batch_execute");
             handlers.Set(first, new HandlerInfo(first, _ => new { done = true }, null));
-            handlers.Set(
-                second,
-                new HandlerInfo(
-                    second,
-                    null,
-                    async _ =>
+            handlers.Set(second, new HandlerInfo(second, null, async _ =>
+                {
+                    entered.TrySetResult(true);
+                    try
                     {
-                        entered.TrySetResult(true);
-                        try
-                        {
-                            return await release.Task.ConfigureAwait(true);
-                        }
-                        finally
-                        {
-                            settled.TrySetResult(true);
-                        }
+                        return await release.Task.ConfigureAwait(true);
                     }
-                )
-            );
+                    finally
+                    {
+                        settled.TrySetResult(true);
+                    }
+                }));
             using var host = new TimingHostScope(_ =>
             {
                 nextCalls++;

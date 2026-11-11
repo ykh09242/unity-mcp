@@ -80,32 +80,23 @@ namespace MCPForUnityTests.Editor.Tools
             var legacy = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             bool settled = false;
             int nextCalls = 0;
-            handlers[first] = cooperative
-                ? HandlerInfo.Cooperative(
-                    first,
-                    async (_, token) =>
+            handlers[first] = cooperative ? HandlerInfo.Cooperative(first, async (_, token) =>
+                {
+                    try
                     {
-                        try
-                        {
-                            await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
-                            return null;
-                        }
-                        finally
-                        {
-                            settled = true;
-                        }
+                        await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
+                        return null;
                     }
-                )
-                : new HandlerInfo(
-                    first,
-                    null,
-                    async _ =>
+                    finally
                     {
-                        var value = await legacy.Task.ConfigureAwait(true);
                         settled = true;
-                        return value;
                     }
-                );
+                }) : new HandlerInfo(first, null, async _ =>
+                {
+                    var value = await legacy.Task.ConfigureAwait(true);
+                    settled = true;
+                    return value;
+                });
             handlers[next] = new HandlerInfo(
                 next,
                 _ =>
@@ -168,19 +159,12 @@ namespace MCPForUnityTests.Editor.Tools
                     null
                 )
             );
-            handlers.Set(
-                second,
-                new HandlerInfo(
-                    second,
-                    null,
-                    async _ =>
-                    {
-                        secondCalls++;
-                        entered.TrySetResult(true);
-                        return await gate.Task.ConfigureAwait(true);
-                    }
-                )
-            );
+            handlers.Set(second, new HandlerInfo(second, null, async _ =>
+                {
+                    secondCalls++;
+                    entered.TrySetResult(true);
+                    return await gate.Task.ConfigureAwait(true);
+                }));
             Task<object> batch = null;
             try
             {
@@ -229,37 +213,25 @@ namespace MCPForUnityTests.Editor.Tools
             bool settled = false;
             int remainingCalls = 0;
             handlers.Set(first, new HandlerInfo(first, _ => new { done = true }, null));
-            handlers.Set(
-                active,
-                cooperative
-                    ? HandlerInfo.Cooperative(
-                        active,
-                        async (_, token) =>
+            handlers.Set(active, cooperative ? HandlerInfo.Cooperative(active, async (_, token) =>
+                    {
+                        entered.TrySetResult(true);
+                        try
                         {
-                            entered.TrySetResult(true);
-                            try
-                            {
-                                await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
-                                return null;
-                            }
-                            finally
-                            {
-                                settled = true;
-                            }
+                            await Task.Delay(Timeout.Infinite, token).ConfigureAwait(true);
+                            return null;
                         }
-                    )
-                    : new HandlerInfo(
-                        active,
-                        null,
-                        async _ =>
+                        finally
                         {
-                            entered.TrySetResult(true);
-                            var result = await gate.Task.ConfigureAwait(true);
                             settled = true;
-                            return result;
                         }
-                    )
-            );
+                    }) : new HandlerInfo(active, null, async _ =>
+                    {
+                        entered.TrySetResult(true);
+                        var result = await gate.Task.ConfigureAwait(true);
+                        settled = true;
+                        return result;
+                    }));
             handlers.Set(
                 remaining,
                 new HandlerInfo(
@@ -340,21 +312,14 @@ namespace MCPForUnityTests.Editor.Tools
                 secondCalls = 0,
                 lastCalls = 0;
             bool firstSettled = false;
-            handlers.Set(
-                first,
-                new HandlerInfo(
-                    first,
-                    null,
-                    async _ =>
-                    {
-                        firstCalls++;
-                        entered.TrySetResult(true);
-                        var result = await gate.Task.ConfigureAwait(true);
-                        firstSettled = true;
-                        return result;
-                    }
-                )
-            );
+            handlers.Set(first, new HandlerInfo(first, null, async _ =>
+                {
+                    firstCalls++;
+                    entered.TrySetResult(true);
+                    var result = await gate.Task.ConfigureAwait(true);
+                    firstSettled = true;
+                    return result;
+                }));
             handlers.Set(
                 second,
                 new HandlerInfo(

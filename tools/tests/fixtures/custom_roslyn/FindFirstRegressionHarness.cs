@@ -15,108 +15,84 @@ internal static class FindFirstRegressionHarness
     {
         Check("unrelated lookups work before ordered lookup", CheckUnordered);
 #if MISSING_ORDERED_API
-        Check(
-            "missing exact ordered overload fails loudly on each call",
-            () =>
+        Check("missing exact ordered overload fails loudly on each call", () =>
+        {
+            for (int i = 0; i < 2; i++)
             {
-                for (int i = 0; i < 2; i++)
-                {
-                    try
-                    {
-                        UnityFindObjectsCompat.FindFirst<Sample>(true);
-                        throw new Exception("Missing API returned normally");
-                    }
-                    catch (MissingMethodException) { }
-                }
-            }
-        );
-#else
-        Check("no match retains null", () => Require(UnityFindObjectsCompat.FindFirst<Other>() == null, "No-match lookup changed"));
-        Check(
-            "multiple active objects retain Unity's exact ordered identity",
-            () =>
-            {
-                Require(UnityFindObjectsCompat.FindFirst<Sample>() == Object.Scene[2], "Used enumeration or any-object order");
-                Require(Object.LastType == typeof(Sample) && !Object.LastInactive, "Wrong Type or default inactive flag");
-            }
-        );
-        Check(
-            "including inactive retains ordered inactive identity",
-            () =>
-            {
-                Require(UnityFindObjectsCompat.FindFirst<Sample>(true) == Object.Scene[1], "Inactive first object was excluded");
-                Require(Object.LastType == typeof(Sample) && Object.LastInactive, "Inactive flag was not forwarded");
-            }
-        );
-        Check(
-            "inactive flag roundtrip does not stick in cached lookup",
-            () =>
-            {
-                UnityFindObjectsCompat.FindFirst<Sample>(true);
-                Require(UnityFindObjectsCompat.FindFirst<Sample>(false) == Object.Scene[2] && !Object.LastInactive, "Cached flag leaked");
-            }
-        );
-        Check(
-            "requested runtime Type changes across cached calls",
-            () =>
-            {
-                Require(UnityFindObjectsCompat.FindFirst<Derived>() == Object.Scene[0] && Object.LastType == typeof(Derived), "Cached Type leaked");
-                Require(UnityFindObjectsCompat.FindFirst<Other>() == null && Object.LastType == typeof(Other), "No-match Type changed");
-            }
-        );
-        Check(
-            "ordered invocation failure is observable",
-            () =>
-            {
-                Object.ThrowOnOrderedLookup = true;
                 try
                 {
-                    UnityFindObjectsCompat.FindFirst<Sample>();
-                    throw new Exception("Underlying failure returned normally");
+                    UnityFindObjectsCompat.FindFirst<Sample>(true);
+                    throw new Exception("Missing API returned normally");
                 }
-                catch (InvalidOperationException ex)
-                {
-                    Require(ex.Message == "ordered-probe", "Wrong direct failure");
-                }
-                catch (TargetInvocationException ex)
-                {
-                    Require(ex.InnerException is InvalidOperationException && ex.InnerException.Message == "ordered-probe", "Underlying failure lost");
-                }
-                finally
-                {
-                    Object.ThrowOnOrderedLookup = false;
-                }
+                catch (MissingMethodException) { }
             }
-        );
+        });
+#else
+        Check("no match retains null", () => Require(UnityFindObjectsCompat.FindFirst<Other>() == null, "No-match lookup changed"));
+        Check("multiple active objects retain Unity's exact ordered identity", () =>
+        {
+            Require(UnityFindObjectsCompat.FindFirst<Sample>() == Object.Scene[2], "Used enumeration or any-object order");
+            Require(Object.LastType == typeof(Sample) && !Object.LastInactive, "Wrong Type or default inactive flag");
+        });
+        Check("including inactive retains ordered inactive identity", () =>
+        {
+            Require(UnityFindObjectsCompat.FindFirst<Sample>(true) == Object.Scene[1], "Inactive first object was excluded");
+            Require(Object.LastType == typeof(Sample) && Object.LastInactive, "Inactive flag was not forwarded");
+        });
+        Check("inactive flag roundtrip does not stick in cached lookup", () =>
+        {
+            UnityFindObjectsCompat.FindFirst<Sample>(true);
+            Require(UnityFindObjectsCompat.FindFirst<Sample>(false) == Object.Scene[2] && !Object.LastInactive, "Cached flag leaked");
+        });
+        Check("requested runtime Type changes across cached calls", () =>
+        {
+            Require(UnityFindObjectsCompat.FindFirst<Derived>() == Object.Scene[0] && Object.LastType == typeof(Derived), "Cached Type leaked");
+            Require(UnityFindObjectsCompat.FindFirst<Other>() == null && Object.LastType == typeof(Other), "No-match Type changed");
+        });
+        Check("ordered invocation failure is observable", () =>
+        {
+            Object.ThrowOnOrderedLookup = true;
+            try
+            {
+                UnityFindObjectsCompat.FindFirst<Sample>();
+                throw new Exception("Underlying failure returned normally");
+            }
+            catch (InvalidOperationException ex)
+            {
+                Require(ex.Message == "ordered-probe", "Wrong direct failure");
+            }
+            catch (TargetInvocationException ex)
+            {
+                Require(ex.InnerException is InvalidOperationException && ex.InnerException.Message == "ordered-probe", "Underlying failure lost");
+            }
+            finally
+            {
+                Object.ThrowOnOrderedLookup = false;
+            }
+        });
 #endif
 #if UNITY_6000_5_OR_NEWER || !UNITY_2022_3_OR_NEWER
-        Check(
-            "reflection resolves exact non-generic signature once",
-            () =>
-            {
-                var field = typeof(UnityFindObjectsCompat).GetField("_findFirst", BindingFlags.NonPublic | BindingFlags.Static);
-                var method = (MethodInfo)field.GetValue(null);
+        Check("reflection resolves exact non-generic signature once", () =>
+        {
+            var field = typeof(UnityFindObjectsCompat).GetField("_findFirst", BindingFlags.NonPublic | BindingFlags.Static);
+            var method = (MethodInfo)field.GetValue(null);
 #if MISSING_ORDERED_API
-                Require(method == null, "Accepted distractor overload");
+            Require(method == null, "Accepted distractor overload");
 #else
-                Require(method != null && !method.IsGenericMethod && method.GetParameters()[0].ParameterType == typeof(Type), "Wrong ordered overload");
+            Require(method != null && !method.IsGenericMethod && method.GetParameters()[0].ParameterType == typeof(Type), "Wrong ordered overload");
 #if UNITY_6000_5_OR_NEWER
-                Require(
-                    method.Name == "FindFirstObjectByType" && method.GetParameters()[1].ParameterType == typeof(FindObjectsInactive),
-                    "Wrong modern signature"
-                );
+            Require(method.Name == "FindFirstObjectByType" && method.GetParameters()[1].ParameterType == typeof(FindObjectsInactive), "Wrong modern signature");
 #else
-                Require(method.Name == "FindObjectOfType" && method.GetParameters()[1].ParameterType == typeof(bool), "Wrong legacy signature");
+            Require(method.Name == "FindObjectOfType" && method.GetParameters()[1].ParameterType == typeof(bool), "Wrong legacy signature");
 #endif
-                UnityFindObjectsCompat.FindFirst<Sample>();
-                Require(ReferenceEquals(method, field.GetValue(null)), "Reflection result was not cached");
+            UnityFindObjectsCompat.FindFirst<Sample>();
+            Require(ReferenceEquals(method, field.GetValue(null)), "Reflection result was not cached");
 #endif
-                Require(
-                    (bool)typeof(UnityFindObjectsCompat).GetField("_findFirstProbed", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null),
-                    "Probe was not cached"
-                );
-            }
-        );
+            Require(
+                (bool)typeof(UnityFindObjectsCompat).GetField("_findFirstProbed", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null),
+                "Probe was not cached"
+            );
+        });
 #endif
         Check("unrelated lookups work after ordered lookup or failure", CheckUnordered);
         Console.WriteLine("RESULT: " + (checks - failures) + "/" + checks + " passed; failures=" + failures);

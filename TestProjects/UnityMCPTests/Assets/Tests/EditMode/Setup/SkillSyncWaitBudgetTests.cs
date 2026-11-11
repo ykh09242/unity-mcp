@@ -103,25 +103,19 @@ namespace MCPForUnityTests.Editor.Setup
         {
             var budget = Budget(60);
             int calls = 0;
-            var first = Queue(
-                budget,
-                () =>
-                {
-                    calls++;
-                    return _source;
-                }
-            );
+            var first = Queue(budget, () =>
+            {
+                calls++;
+                return _source;
+            });
             _now += 59;
             _context.Drain();
             Assert.AreSame(_source, first.GetAwaiter().GetResult());
-            var second = Queue(
-                budget,
-                () =>
-                {
-                    calls++;
-                    return _source;
-                }
-            );
+            var second = Queue(budget, () =>
+            {
+                calls++;
+                return _source;
+            });
             _now += 2;
             _context.Drain();
             Assert.Throws<TimeoutException>(() => second.GetAwaiter().GetResult());
@@ -134,14 +128,11 @@ namespace MCPForUnityTests.Editor.Setup
             using var cancellation = new CancellationTokenSource();
             var budget = Budget(86400, cancellation.Token);
             int calls = 0;
-            var read = Queue(
-                budget,
-                () =>
-                {
-                    calls++;
-                    return _source;
-                }
-            );
+            var read = Queue(budget, () =>
+            {
+                calls++;
+                return _source;
+            });
             cancellation.Cancel();
             Assert.Catch<OperationCanceledException>(() => read.GetAwaiter().GetResult());
             _context.Drain();
@@ -153,14 +144,11 @@ namespace MCPForUnityTests.Editor.Setup
         {
             var budget = Budget(0.1);
             int calls = 0;
-            var read = Queue(
-                budget,
-                () =>
-                {
-                    calls++;
-                    return _source;
-                }
-            );
+            var read = Queue(budget, () =>
+            {
+                calls++;
+                return _source;
+            });
             Assert.Throws<TimeoutException>(() => read.GetAwaiter().GetResult());
             _context.Drain();
             Assert.AreEqual(0, calls);

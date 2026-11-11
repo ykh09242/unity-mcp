@@ -377,17 +377,12 @@ namespace MCPForUnity.Editor.Tools
                         throw new Refusal("external_writer", "Current source differs from the prepared candidate; it was not overwritten.");
                     entry.State = "restoring";
                     Save(plan);
-                    AtomicAssetFile.Replace(
-                        fullPath,
-                        restore,
-                        entry.Candidate,
-                        () =>
-                        {
-                            _stageForTests?.Invoke("before_restore", i);
-                            if (MetaDigest(entry.Path) != entry.Meta)
-                                throw new Refusal("metadata_changed", "Metadata changed externally.");
-                        }
-                    );
+                    AtomicAssetFile.Replace(fullPath, restore, entry.Candidate, () =>
+                    {
+                        _stageForTests?.Invoke("before_restore", i);
+                        if (MetaDigest(entry.Path) != entry.Meta)
+                            throw new Refusal("metadata_changed", "Metadata changed externally.");
+                    });
                     if (!Matches(entry, restoreDigest))
                         throw new IOException("Restored bytes could not be confirmed.");
                     entry.State = restoreDigest == entry.Original ? "restored" : "restored_external_preimage";

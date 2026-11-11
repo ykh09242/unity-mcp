@@ -41,9 +41,8 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.Ignore("An existing HTTP recovery is pending; do not replace its services.");
             editorReadyCallback = (EditorApplication.CallbackFunction)
                 Delegate.CreateDelegate(typeof(EditorApplication.CallbackFunction), typeof(HttpAutoStartHandler).GetMethod("WaitForEditorReady", StaticFlags));
-            hadEditorReadyCallback = Array.Exists(
-                EditorApplication.update?.GetInvocationList() ?? Array.Empty<Delegate>(),
-                entry => entry.Equals(editorReadyCallback)
+            hadEditorReadyCallback = Array.Exists(EditorApplication.update?.GetInvocationList() ?? Array.Empty<Delegate>(), entry =>
+                entry.Equals(editorReadyCallback)
             );
 
             foreach (string name in new[] { "_bridgeService", "_serverManagementService", "_transportManager" })

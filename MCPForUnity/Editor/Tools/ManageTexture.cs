@@ -453,16 +453,11 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
                 JObject importReport = null;
-                var publicationError = PublishImageAndContinue(
-                    fullPath,
-                    imageData,
-                    expectedDigest,
-                    () =>
-                    {
-                        AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
-                        importReport = ApplyPreparedImportSettings(fullPath, applySettings);
-                    }
-                );
+                var publicationError = PublishImageAndContinue(fullPath, imageData, expectedDigest, () =>
+                {
+                    AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
+                    importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                });
                 if (publicationError != null)
                     return publicationError;
                 sourceSaved = true;
@@ -742,16 +737,11 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
                 JObject importReport = null;
-                var publicationError = PublishImageAndContinue(
-                    fullPath,
-                    imageData,
-                    expectedDigest,
-                    () =>
-                    {
-                        AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
-                        importReport = ApplyPreparedImportSettings(fullPath, applySettings);
-                    }
-                );
+                var publicationError = PublishImageAndContinue(fullPath, imageData, expectedDigest, () =>
+                {
+                    AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
+                    importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                });
                 if (publicationError != null)
                     return publicationError;
                 sourceSaved = true;
@@ -854,16 +844,11 @@ namespace MCPForUnity.Editor.Tools
                 folders.EnsureParentDirectory(fullPath);
                 cancellationToken.ThrowIfCancellationRequested();
                 JObject importReport = null;
-                var publicationError = PublishImageAndContinue(
-                    fullPath,
-                    imageData,
-                    expectedDigest,
-                    () =>
-                    {
-                        AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
-                        importReport = ApplyPreparedImportSettings(fullPath, applySettings);
-                    }
-                );
+                var publicationError = PublishImageAndContinue(fullPath, imageData, expectedDigest, () =>
+                {
+                    AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
+                    importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                });
                 if (publicationError != null)
                     return publicationError;
                 sourceSaved = true;

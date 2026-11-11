@@ -157,16 +157,12 @@ namespace MCPForUnityTests.Editor.Services
             var first = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             var calls = new List<string>();
             var peers = new List<TcpClient>();
-            handlers[name] = new HandlerInfo(
-                name,
-                null,
-                parameters =>
-                {
-                    string label = parameters.Value<string>("label");
-                    calls.Add(label);
-                    return label == "A" ? first.Task : Task.FromResult<object>(new { label });
-                }
-            );
+            handlers[name] = new HandlerInfo(name, null, parameters =>
+            {
+                string label = parameters.Value<string>("label");
+                calls.Add(label);
+                return label == "A" ? first.Task : Task.FromResult<object>(new { label });
+            });
             void Enqueue(string label, int count)
             {
                 var peer = Connect(StdioBridgeHost.GetCurrentPort(), token);
@@ -363,23 +359,20 @@ namespace MCPForUnityTests.Editor.Services
             Task stopping = null;
             TcpClient peer = null;
             int callbacks = 0;
-            handlers[name] = HandlerInfo.Cooperative(
-                name,
-                (_, cancellation) =>
+            handlers[name] = HandlerInfo.Cooperative(name, (_, cancellation) =>
+            {
+                registration = cancellation.Register(() =>
                 {
-                    registration = cancellation.Register(() =>
-                    {
-                        Interlocked.Increment(ref callbacks);
-                        callbackEntered.Set();
-                        if (!releaseCallback.Wait(TimeSpan.FromSeconds(15)))
-                            throw new TimeoutException("Owned callback was not released.");
-                        if (throws)
-                            throw new InvalidOperationException("Owned callback failure.");
-                    });
-                    entered.Set();
-                    return handler.Task;
-                }
-            );
+                    Interlocked.Increment(ref callbacks);
+                    callbackEntered.Set();
+                    if (!releaseCallback.Wait(TimeSpan.FromSeconds(15)))
+                        throw new TimeoutException("Owned callback was not released.");
+                    if (throws)
+                        throw new InvalidOperationException("Owned callback failure.");
+                });
+                entered.Set();
+                return handler.Task;
+            });
             try
             {
                 StdioBridgeHost.StartOwned(0, token);

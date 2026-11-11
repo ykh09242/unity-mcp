@@ -75,18 +75,12 @@ namespace MCPForUnityTests.Editor.Helpers
         public void InterruptedPreparedWriteLeavesCompleteOriginalAndMetadata()
         {
             bool prepared = false;
-            Assert.Throws<IOException>(() =>
-                Replace(
-                    new byte[1024 * 1024],
-                    null,
-                    () =>
-                    {
-                        prepared = true;
-                        Assert.AreEqual("original", File.ReadAllText(target));
-                        throw new IOException("owned staging interruption");
-                    }
-                )
-            );
+            Assert.Throws<IOException>(() => Replace(new byte[1024 * 1024], null, () =>
+                {
+                    prepared = true;
+                    Assert.AreEqual("original", File.ReadAllText(target));
+                    throw new IOException("owned staging interruption");
+                }));
             Assert.IsTrue(prepared);
             Assert.AreEqual("original", File.ReadAllText(target));
             Assert.AreEqual("original metadata", File.ReadAllText(target + ".meta"));
@@ -106,17 +100,11 @@ namespace MCPForUnityTests.Editor.Helpers
         [Test]
         public void RenamedExternalReplacementBeforeCommitIsPreserved()
         {
-            Assert.Throws<IOException>(() =>
-                Replace(
-                    Encoding.UTF8.GetBytes("candidate"),
-                    null,
-                    () =>
-                    {
-                        File.Move(target, target + ".external-original");
-                        File.WriteAllText(target, "external replacement");
-                    }
-                )
-            );
+            Assert.Throws<IOException>(() => Replace(Encoding.UTF8.GetBytes("candidate"), null, () =>
+                {
+                    File.Move(target, target + ".external-original");
+                    File.WriteAllText(target, "external replacement");
+                }));
             Assert.AreEqual("external replacement", File.ReadAllText(target));
             Assert.AreEqual("original", File.ReadAllText(target + ".external-original"));
         }

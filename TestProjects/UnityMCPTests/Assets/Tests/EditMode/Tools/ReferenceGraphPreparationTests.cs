@@ -41,15 +41,12 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             int converted = 0;
             using var cancellation = new CancellationTokenSource();
-            var preparation = new ReferenceGraphSnapshotPreparation(
-                new[] { "c", "b", "a" },
-                value =>
-                {
-                    if (++converted == 1)
-                        cancellation.Cancel();
-                    return value;
-                }
-            );
+            var preparation = new ReferenceGraphSnapshotPreparation(new[] { "c", "b", "a" }, value =>
+            {
+                if (++converted == 1)
+                    cancellation.Cancel();
+                return value;
+            });
             Assert.Throws<OperationCanceledException>(() => preparation.Step(100, double.PositiveInfinity, cancellation.Token));
             Assert.AreEqual(1, converted);
             Assert.IsFalse(preparation.Complete);

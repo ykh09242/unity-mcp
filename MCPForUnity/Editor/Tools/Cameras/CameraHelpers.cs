@@ -252,8 +252,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             var type = cmCamera.GetType();
 
             // CinemachineCamera.GetCinemachineComponent(CinemachineCore.Stage stage)
-            var stageEnumType =
-                type.Assembly.GetType("Unity.Cinemachine.CinemachineCore+Stage")
+            var stageEnumType = type.Assembly.GetType("Unity.Cinemachine.CinemachineCore+Stage")
                 ?? type.Assembly.GetType("Unity.Cinemachine.CinemachineCore")?.GetNestedType("Stage");
 
             if (stageEnumType == null)

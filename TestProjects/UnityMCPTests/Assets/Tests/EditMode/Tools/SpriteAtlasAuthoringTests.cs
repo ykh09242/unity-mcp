@@ -127,8 +127,7 @@ namespace MCPForUnityTests.Editor.Tools
                     path ?? atlasPath,
                     new JObject
                     {
-                        ["properties"] =
-                            properties
+                        ["properties"] = properties
                             ?? new JObject { ["include_in_build"] = false, ["packables"] = new JArray(Reference(sprites[0]), Reference(sprites[1])) },
                     }
                 )

@@ -75,15 +75,11 @@ namespace MCPForUnityTests.Editor.Services
             handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
             previous = handlers[Name];
             held = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
-            handlers[Name] = new HandlerInfo(
-                Name,
-                null,
-                _ =>
-                {
-                    calls++;
-                    return held.Task;
-                }
-            );
+            handlers[Name] = new HandlerInfo(Name, null, _ =>
+            {
+                calls++;
+                return held.Task;
+            });
         }
 
         [TearDown]

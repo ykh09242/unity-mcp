@@ -507,11 +507,9 @@ namespace MCPForUnityTests.Editor.Tools
 
         private IEnumerator Capture(string path)
         {
-            Type profilerType =
-                Type.GetType("Unity.Profiling.Memory.MemoryProfiler, UnityEngine.CoreModule")
+            Type profilerType = Type.GetType("Unity.Profiling.Memory.MemoryProfiler, UnityEngine.CoreModule")
                 ?? Type.GetType("UnityEngine.Profiling.Memory.Experimental.MemoryProfiler, UnityEngine.CoreModule");
-            Type flagsType =
-                Type.GetType("Unity.Profiling.Memory.CaptureFlags, UnityEngine.CoreModule")
+            Type flagsType = Type.GetType("Unity.Profiling.Memory.CaptureFlags, UnityEngine.CoreModule")
                 ?? Type.GetType("UnityEngine.Profiling.Memory.Experimental.CaptureFlags, UnityEngine.CoreModule");
             Assert.IsNotNull(profilerType, "The installed Editor must expose its real native memory capture API.");
             Assert.IsNotNull(flagsType);

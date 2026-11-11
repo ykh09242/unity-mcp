@@ -256,16 +256,11 @@ namespace MCPForUnityTests.Editor.Services
             {
                 Environment.SetEnvironmentVariable(budgetKey, "0.05");
                 int mutations = 0;
-                Assert.IsNull(
-                    work.TryStart(
-                        "owned-held-command",
-                        async _ =>
-                        {
-                            Interlocked.Increment(ref mutations);
-                            await release.Task;
-                        }
-                    )
-                );
+                Assert.IsNull(work.TryStart("owned-held-command", async _ =>
+                    {
+                        Interlocked.Increment(ref mutations);
+                        await release.Task;
+                    }));
                 Assert.IsTrue(await _manager.StartAsync(TransportMode.Http));
                 Set(client, "_lifecycleCts", lifecycle);
                 Set(client, "_connectionCts", connection);
@@ -286,16 +281,11 @@ namespace MCPForUnityTests.Editor.Services
 
                 Assert.IsFalse(await _manager.StartAsync(TransportMode.Http), "Unfinished command ownership must still refuse a replacement connection.");
                 Assert.IsFalse(_manager.HasConnectionIntent(TransportMode.Http));
-                Assert.IsNotNull(
-                    work.TryStart(
-                        "owned-late-command",
-                        _ =>
-                        {
-                            Interlocked.Increment(ref mutations);
-                            return Task.CompletedTask;
-                        }
-                    )
-                );
+                Assert.IsNotNull(work.TryStart("owned-late-command", _ =>
+                    {
+                        Interlocked.Increment(ref mutations);
+                        return Task.CompletedTask;
+                    }));
                 Assert.AreEqual(1, mutations);
                 StringAssert.Contains("execution_unsettled", (await bridge.VerifyAsync()).Message);
 

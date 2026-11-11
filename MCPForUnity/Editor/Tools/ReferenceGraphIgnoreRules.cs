@@ -479,14 +479,12 @@ namespace MCPForUnity.Editor.Tools
                     // Mono selects its backend in the constructor. Inspect before
                     // enabling: DefaultWatcher otherwise scans the tree every 750ms.
                     if (
-                        !CanObserveWithoutPolling(
-                            Type.GetType("Mono.Runtime") != null,
-                            () =>
-                                typeof(FileSystemWatcher)
-                                    .GetField("watcher", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
-                                    ?.GetValue(watcher)
-                                    ?.GetType()
-                                    .FullName
+                        !CanObserveWithoutPolling(Type.GetType("Mono.Runtime") != null, () =>
+                            typeof(FileSystemWatcher)
+                                .GetField("watcher", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                                ?.GetValue(watcher)
+                                ?.GetType()
+                                .FullName
                         )
                     )
                         throw new NotSupportedException("The watcher backend cannot provide event-only invalidation.");

@@ -129,16 +129,12 @@ internal static class TransportArchitectureHarness
         var slow = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
         var invoked = new List<string>();
         int mainThread = Thread.CurrentThread.ManagedThreadId;
-        handlers["fixture_slow"] = new HandlerInfo(
-            "fixture_slow",
-            null,
-            _ =>
-            {
-                Assert.AreEqual(mainThread, Thread.CurrentThread.ManagedThreadId);
-                invoked.Add("slow");
-                return slow.Task;
-            }
-        );
+        handlers["fixture_slow"] = new HandlerInfo("fixture_slow", null, _ =>
+        {
+            Assert.AreEqual(mainThread, Thread.CurrentThread.ManagedThreadId);
+            invoked.Add("slow");
+            return slow.Task;
+        });
         handlers["fixture_next"] = new HandlerInfo(
             "fixture_next",
             _ =>
@@ -278,15 +274,11 @@ internal static class TransportArchitectureHarness
         Pass("Production frame sender reassembles negotiated result and interleaves pong between <=64KiB messages");
         var disconnectActive = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
         bool disconnectStarted = false;
-        handlers["fixture_disconnect"] = new HandlerInfo(
-            "fixture_disconnect",
-            null,
-            _ =>
-            {
-                disconnectStarted = true;
-                return disconnectActive.Task;
-            }
-        );
+        handlers["fixture_disconnect"] = new HandlerInfo("fixture_disconnect", null, _ =>
+        {
+            disconnectStarted = true;
+            return disconnectActive.Task;
+        });
         peer.Send(Execute("disconnect-active", "fixture_disconnect"));
         PumpUntil(() => disconnectStarted, "active operation before disconnect");
         var shutdown = Invoke(

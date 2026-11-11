@@ -251,20 +251,11 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             var options = new RecordingOptions("scene_view", 32, 32, 10, 2);
             string output = RecordingOptions.ResolveOutputPath(_root, null, "fixture.mp4", "fixture");
-            Assert.Throws<IOException>(() =>
-                new RecordingJob(
-                    "fixture",
-                    options,
-                    _root,
-                    output,
-                    100,
-                    (path, config) =>
-                    {
-                        File.WriteAllText(path, "partial");
-                        throw new IOException("Fixture unavailable codec");
-                    }
-                )
-            );
+            Assert.Throws<IOException>(() => new RecordingJob("fixture", options, _root, output, 100, (path, config) =>
+                {
+                    File.WriteAllText(path, "partial");
+                    throw new IOException("Fixture unavailable codec");
+                }));
             Assert.That(Directory.Exists(Path.Combine(_root, "Captures")), Is.False);
         }
 

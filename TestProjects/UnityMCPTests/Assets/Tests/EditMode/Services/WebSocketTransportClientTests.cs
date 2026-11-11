@@ -358,26 +358,19 @@ namespace MCPForUnityTests.Editor.Services
                     null
                 )
             );
-            handlers.Set(
-                second,
-                new MCPForUnity.Editor.Tools.HandlerInfo(
-                    second,
-                    null,
-                    async _ =>
+            handlers.Set(second, new MCPForUnity.Editor.Tools.HandlerInfo(second, null, async _ =>
+                {
+                    secondCalls++;
+                    entered.TrySetResult(true);
+                    try
                     {
-                        secondCalls++;
-                        entered.TrySetResult(true);
-                        try
-                        {
-                            return await release.Task.ConfigureAwait(true);
-                        }
-                        finally
-                        {
-                            settled.TrySetResult(true);
-                        }
+                        return await release.Task.ConfigureAwait(true);
                     }
-                )
-            );
+                    finally
+                    {
+                        settled.TrySetResult(true);
+                    }
+                }));
             NativeProgressProbe.RequireBatchCapacity(new JObject { ["commands"] = new JArray(new JObject(), new JObject()) });
             using var client = new WebSocketTransportClient(
                 MCPServiceLocator.ToolDiscovery,
@@ -696,8 +689,7 @@ namespace MCPForUnityTests.Editor.Services
                 closureTask = Task.Run(async () => await (Task)closure.Invoke(client, new object[] { "overlap-old", oldToken }));
                 Assert.IsTrue(reachedLog.Wait(TimeSpan.FromSeconds(5)), "Pause the actual background callback after its ownership validation.");
                 client.ForceStop();
-                var restartLock =
-                    typeof(WebSocketTransportClient).GetField("_ownershipLock", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(client)
+                var restartLock = typeof(WebSocketTransportClient).GetField("_ownershipLock", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(client)
                     ?? new object();
                 lock (restartLock)
                 {
@@ -861,19 +853,12 @@ namespace MCPForUnityTests.Editor.Services
             var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             const string child = "__tcr12_owned_mutation";
             int calls = 0;
-            handlers.Set(
-                child,
-                new MCPForUnity.Editor.Tools.HandlerInfo(
-                    child,
-                    null,
-                    async _ =>
-                    {
-                        Interlocked.Increment(ref calls);
-                        entered.TrySetResult(true);
-                        return await release.Task;
-                    }
-                )
-            );
+            handlers.Set(child, new MCPForUnity.Editor.Tools.HandlerInfo(child, null, async _ =>
+                {
+                    Interlocked.Increment(ref calls);
+                    entered.TrySetResult(true);
+                    return await release.Task;
+                }));
             using var peer = new ProgressWirePeer();
             using var client = peer.CreateClient();
             Task<bool> restart = null;
@@ -952,18 +937,11 @@ namespace MCPForUnityTests.Editor.Services
             var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var releaseHandler = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             const string child = "__owned_deadline_settlement";
-            handlers.Set(
-                child,
-                new MCPForUnity.Editor.Tools.HandlerInfo(
-                    child,
-                    null,
-                    _ =>
-                    {
-                        entered.TrySetResult(true);
-                        return releaseHandler.Task;
-                    }
-                )
-            );
+            handlers.Set(child, new MCPForUnity.Editor.Tools.HandlerInfo(child, null, _ =>
+                {
+                    entered.TrySetResult(true);
+                    return releaseHandler.Task;
+                }));
             using var peer = new ProgressWirePeer();
             using var client = peer.CreateClient();
             using var contenderPeer = new ProgressWirePeer();
@@ -1079,25 +1057,19 @@ namespace MCPForUnityTests.Editor.Services
             var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             const string child = "__tcr12_held_cancel_callback";
             int calls = 0;
-            handlers.Set(
-                child,
-                MCPForUnity.Editor.Tools.HandlerInfo.Cooperative(
-                    child,
-                    async (_, token) =>
+            handlers.Set(child, MCPForUnity.Editor.Tools.HandlerInfo.Cooperative(child, async (_, token) =>
+                {
+                    Interlocked.Increment(ref calls);
+                    using var registration = token.Register(() =>
                     {
-                        Interlocked.Increment(ref calls);
-                        using var registration = token.Register(() =>
-                        {
-                            callbackEntered.TrySetResult(true);
-                            releaseCallback.Wait();
-                            if (transition == "wire_throw")
-                                throw new InvalidOperationException("test cancellation callback failure");
-                        });
-                        entered.TrySetResult(true);
-                        return await release.Task;
-                    }
-                )
-            );
+                        callbackEntered.TrySetResult(true);
+                        releaseCallback.Wait();
+                        if (transition == "wire_throw")
+                            throw new InvalidOperationException("test cancellation callback failure");
+                    });
+                    entered.TrySetResult(true);
+                    return await release.Task;
+                }));
             using var peer = new ProgressWirePeer();
             using var client = peer.CreateClient();
             Task force = Task.CompletedTask;
@@ -1834,19 +1806,12 @@ namespace MCPForUnityTests.Editor.Services
                     null
                 )
             );
-            handlers.Set(
-                second,
-                new MCPForUnity.Editor.Tools.HandlerInfo(
-                    second,
-                    null,
-                    async _ =>
-                    {
-                        secondCalls++;
-                        entered.TrySetResult(true);
-                        return await gate.Task.ConfigureAwait(true);
-                    }
-                )
-            );
+            handlers.Set(second, new MCPForUnity.Editor.Tools.HandlerInfo(second, null, async _ =>
+                {
+                    secondCalls++;
+                    entered.TrySetResult(true);
+                    return await gate.Task.ConfigureAwait(true);
+                }));
             handlers.Set(
                 queued,
                 new MCPForUnity.Editor.Tools.HandlerInfo(
@@ -1985,19 +1950,12 @@ namespace MCPForUnityTests.Editor.Services
             int activeCalls = 0,
                 nextCalls = 0;
             handlers.Set(first, new MCPForUnity.Editor.Tools.HandlerInfo(first, _ => new { done = true }, null));
-            handlers.Set(
-                held,
-                new MCPForUnity.Editor.Tools.HandlerInfo(
-                    held,
-                    null,
-                    async _ =>
-                    {
-                        activeCalls++;
-                        entered.TrySetResult(true);
-                        return await gate.Task.ConfigureAwait(true);
-                    }
-                )
-            );
+            handlers.Set(held, new MCPForUnity.Editor.Tools.HandlerInfo(held, null, async _ =>
+                {
+                    activeCalls++;
+                    entered.TrySetResult(true);
+                    return await gate.Task.ConfigureAwait(true);
+                }));
             handlers.Set(
                 next,
                 new MCPForUnity.Editor.Tools.HandlerInfo(
@@ -2064,22 +2022,15 @@ namespace MCPForUnityTests.Editor.Services
             var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             int calls = 0;
-            handlers.Set(
-                child,
-                new MCPForUnity.Editor.Tools.HandlerInfo(
-                    child,
-                    null,
-                    async _ =>
-                    {
-                        if (++calls < 20)
-                            return new { done = true };
-                        entered.TrySetResult(true);
-                        var result = await gate.Task.ConfigureAwait(true);
-                        settled.TrySetResult(true);
-                        return result;
-                    }
-                )
-            );
+            handlers.Set(child, new MCPForUnity.Editor.Tools.HandlerInfo(child, null, async _ =>
+                {
+                    if (++calls < 20)
+                        return new { done = true };
+                    entered.TrySetResult(true);
+                    var result = await gate.Task.ConfigureAwait(true);
+                    settled.TrySetResult(true);
+                    return result;
+                }));
             using var peer = new ProgressWirePeer();
             using var client = peer.CreateClient();
             SemaphoreSlim writer = null;

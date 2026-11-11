@@ -272,16 +272,14 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
         {
             // ToMesh and Refresh have optional parameters (MeshTopology, RefreshMask) —
             // Type.EmptyTypes won't find them. Use name-only lookup with default args.
-            var toMeshMethod =
-                _proBuilderMeshType.GetMethod("ToMesh", Type.EmptyTypes)
+            var toMeshMethod = _proBuilderMeshType.GetMethod("ToMesh", Type.EmptyTypes)
                 ?? _proBuilderMeshType.GetMethod("ToMesh", BindingFlags.Instance | BindingFlags.Public);
             toMeshMethod?.Invoke(
                 pbMesh,
                 toMeshMethod.GetParameters().Length > 0 ? toMeshMethod.GetParameters().Select(parameter => parameter.DefaultValue).ToArray() : null
             );
 
-            var refreshMethod =
-                _proBuilderMeshType.GetMethod("Refresh", Type.EmptyTypes)
+            var refreshMethod = _proBuilderMeshType.GetMethod("Refresh", Type.EmptyTypes)
                 ?? _proBuilderMeshType.GetMethod("Refresh", BindingFlags.Instance | BindingFlags.Public);
             refreshMethod?.Invoke(
                 pbMesh,
@@ -695,8 +693,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 {
                     float r = radius > 0 ? radius : (size > 0 ? size / 2f : 0.5f);
                     float h = height > 0 ? height : (size > 0 ? size : 2f);
-                    int axisDivisions =
-                        props["axisDivisions"]?.ReadScalar<int?>()
+                    int axisDivisions = props["axisDivisions"]?.ReadScalar<int?>()
                         ?? props["axis_divisions"]?.ReadScalar<int?>()
                         ?? props["segments"]?.ReadScalar<int?>()
                         ?? 24;
@@ -713,8 +710,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 {
                     float r = radius > 0 ? radius : (size > 0 ? size / 2f : 0.5f);
                     float h = height > 0 ? height : (size > 0 ? size : 1f);
-                    int subdivAxis =
-                        props["subdivAxis"]?.ReadScalar<int?>() ?? props["subdiv_axis"]?.ReadScalar<int?>() ?? props["segments"]?.ReadScalar<int?>() ?? 6;
+                    int subdivAxis = props["subdivAxis"]?.ReadScalar<int?>()
+                        ?? props["subdiv_axis"]?.ReadScalar<int?>()
+                        ?? props["segments"]?.ReadScalar<int?>()
+                        ?? 6;
                     return InvokeGenerator(
                         "GenerateCone",
                         new[] { _pivotLocationType, typeof(float), typeof(float), typeof(int) },
@@ -740,14 +739,12 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     // ProBuilder convention: innerRadius = ring radius (major), outerRadius = tube radius (minor).
                     // Our API uses the intuitive naming: outerRadius = ring, innerRadius = tube.
                     // So we swap when passing to ProBuilder's GenerateTorus.
-                    float tubeRadius =
-                        props["innerRadius"]?.ReadScalar<float?>()
+                    float tubeRadius = props["innerRadius"]?.ReadScalar<float?>()
                         ?? props["inner_radius"]?.ReadScalar<float?>()
                         ?? props["tubeRadius"]?.ReadScalar<float?>()
                         ?? props["tube_radius"]?.ReadScalar<float?>()
                         ?? (radius > 0 ? radius * 0.1f : 0.1f);
-                    float ringRadius =
-                        props["outerRadius"]?.ReadScalar<float?>()
+                    float ringRadius = props["outerRadius"]?.ReadScalar<float?>()
                         ?? props["outer_radius"]?.ReadScalar<float?>()
                         ?? props["ringRadius"]?.ReadScalar<float?>()
                         ?? props["ring_radius"]?.ReadScalar<float?>()
@@ -778,8 +775,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     float r = radius > 0 ? radius : (size > 0 ? size / 2f : 1f);
                     float h = height > 0 ? height : (size > 0 ? size : 2f);
                     float thickness = props["thickness"]?.ReadScalar<float?>() ?? 0.2f;
-                    int subdivAxis =
-                        props["subdivAxis"]?.ReadScalar<int?>() ?? props["subdiv_axis"]?.ReadScalar<int?>() ?? props["segments"]?.ReadScalar<int?>() ?? 6;
+                    int subdivAxis = props["subdivAxis"]?.ReadScalar<int?>()
+                        ?? props["subdiv_axis"]?.ReadScalar<int?>()
+                        ?? props["segments"]?.ReadScalar<int?>()
+                        ?? 6;
                     int subdivHeight = props["subdivHeight"]?.ReadScalar<int?>() ?? props["subdiv_height"]?.ReadScalar<int?>() ?? 1;
                     return InvokeGenerator(
                         "GeneratePipe",
@@ -1282,8 +1281,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             var edgeA = ParseBoundedEdge(pbMesh, edgeAToken);
             var edgeB = ParseBoundedEdge(pbMesh, edgeBToken);
 
-            bool allowNonManifold =
-                props["allowNonManifold"]?.ReadScalar<bool?>()
+            bool allowNonManifold = props["allowNonManifold"]?.ReadScalar<bool?>()
                 ?? props["allow_non_manifold"]?.ReadScalar<bool?>()
                 ?? props["allowNonManifoldGeometry"]?.ReadScalar<bool?>()
                 ?? props["allow_non_manifold_geometry"]?.ReadScalar<bool?>()
@@ -1404,8 +1402,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (_extrudeElementsType == null)
                 return new ErrorResponse("ExtrudeElements type not found.");
 
-            bool deleteSource =
-                props["deleteSourceFaces"]?.ReadScalar<bool?>()
+            bool deleteSource = props["deleteSourceFaces"]?.ReadScalar<bool?>()
                 ?? props["delete_source_faces"]?.ReadScalar<bool?>()
                 ?? props["deleteSource"]?.ReadScalar<bool?>()
                 ?? props["delete_source"]?.ReadScalar<bool?>()
@@ -1578,8 +1575,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
         {
             if (_meshImporterType == null)
                 throw new InvalidOperationException("MeshImporter type not found.");
-            importerCtor =
-                _meshImporterType.GetConstructor(new[] { typeof(Mesh), typeof(Material[]), _proBuilderMeshType })
+            importerCtor = _meshImporterType.GetConstructor(new[] { typeof(Mesh), typeof(Material[]), _proBuilderMeshType })
                 ?? _meshImporterType.GetConstructor(new[] { _proBuilderMeshType });
             if (importerCtor == null)
                 throw new InvalidOperationException("MeshImporter constructor not found.");
@@ -1891,8 +1887,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             string indicesError = ValidateVertexIndices(pbMesh, vertexIndices);
             if (indicesError != null)
                 return new ErrorResponse(indicesError);
-            float neighborRadius =
-                props["radius"]?.ReadScalar<float?>()
+            float neighborRadius = props["radius"]?.ReadScalar<float?>()
                 ?? props["neighborRadius"]?.ReadScalar<float?>()
                 ?? props["neighbor_radius"]?.ReadScalar<float?>()
                 ?? 0.01f;
@@ -2500,8 +2495,9 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     && renderer.sharedMaterial.shader.name.Contains("Standard")
                 )
                 {
-                    var vcShader =
-                        Shader.Find("ProBuilder/Standard Vertex Color") ?? Shader.Find("ProBuilder/Diffuse Vertex Color") ?? Shader.Find("Sprites/Default");
+                    var vcShader = Shader.Find("ProBuilder/Standard Vertex Color")
+                        ?? Shader.Find("ProBuilder/Diffuse Vertex Color")
+                        ?? Shader.Find("Sprites/Default");
                     // Standard Vertex Color also matches "Standard"; reuse it on later color edits.
                     if (vcShader != null && renderer.sharedMaterial.shader != vcShader)
                     {

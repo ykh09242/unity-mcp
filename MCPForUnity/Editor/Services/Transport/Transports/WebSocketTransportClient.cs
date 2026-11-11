@@ -2111,8 +2111,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             // Legacy integrations can use opaque IDs; they retain text responses.
             if (!Guid.TryParseExact(id, "D", out var parsedId) || parsedId.ToString("D") != id)
                 negotiated = false;
-            bool allowCompression =
-                _ownedConnection?.AllowCompression
+            bool allowCompression = _ownedConnection?.AllowCompression
                 ?? string.Equals(Environment.GetEnvironmentVariable("UNITY_MCP_RESULT_COMPRESSION"), "gzip", StringComparison.OrdinalIgnoreCase);
             timing?.Stop(CommandPhaseTiming.Phase.Serialization);
             timing?.Start(CommandPhaseTiming.Phase.Send);

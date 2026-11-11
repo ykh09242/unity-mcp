@@ -79,38 +79,34 @@ namespace MCPForUnityTests.EditMode.Tools
                     int pages = 0;
                     double worstPage = 0;
                     string digest = null;
-                    JObject measured = Measure(
-                        format,
-                        round,
-                        () =>
+                    JObject measured = Measure(format, round, () =>
+                    {
+                        using var sha = SHA256.Create();
+                        var request = new JObject { ["action"] = "source", ["guid"] = guid };
+                        long total = 0;
+                        while (true)
                         {
-                            using var sha = SHA256.Create();
-                            var request = new JObject { ["action"] = "source", ["guid"] = guid };
-                            long total = 0;
-                            while (true)
-                            {
-                                var watch = Stopwatch.StartNew();
-                                JObject page = ReferenceGraphCollectorTests.Call(
-                                    "source",
-                                    request.Properties().Where(p => p.Name != "action").SelectMany(p => new object[] { p.Name, p.Value }).ToArray()
-                                );
-                                watch.Stop();
-                                worstPage = Math.Max(worstPage, watch.Elapsed.TotalMilliseconds);
-                                byte[] bytes = Convert.FromBase64String(page.Value<string>("bytes_base64"));
-                                sha.TransformBlock(bytes, 0, bytes.Length, null, 0);
-                                total += bytes.Length;
-                                pages++;
-                                Assert.AreEqual(format, page.Value<string>("source_format"));
-                                if (page["next_offset"].Type == JTokenType.Null)
-                                    break;
-                                request["offset"] = page["next_offset"];
-                                request["fingerprint"] = page["fingerprint"];
-                            }
-                            sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-                            digest = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
-                            Assert.AreEqual(expected.Length, total);
+                            var watch = Stopwatch.StartNew();
+                            JObject page = ReferenceGraphCollectorTests.Call(
+                                "source",
+                                request.Properties().Where(p => p.Name != "action").SelectMany(p => new object[] { p.Name, p.Value }).ToArray()
+                            );
+                            watch.Stop();
+                            worstPage = Math.Max(worstPage, watch.Elapsed.TotalMilliseconds);
+                            byte[] bytes = Convert.FromBase64String(page.Value<string>("bytes_base64"));
+                            sha.TransformBlock(bytes, 0, bytes.Length, null, 0);
+                            total += bytes.Length;
+                            pages++;
+                            Assert.AreEqual(format, page.Value<string>("source_format"));
+                            if (page["next_offset"].Type == JTokenType.Null)
+                                break;
+                            request["offset"] = page["next_offset"];
+                            request["fingerprint"] = page["fingerprint"];
                         }
-                    );
+                        sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                        digest = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+                        Assert.AreEqual(expected.Length, total);
+                    });
                     Assert.AreEqual(expectedHash, digest);
                     measured["bytes"] = expected.Length;
                     measured["pages"] = pages;
@@ -186,42 +182,34 @@ namespace MCPForUnityTests.EditMode.Tools
                 {
                     int replayed = 0,
                         pages = 0;
-                    JObject result = Measure(
-                        "cached_census_plus_50000_history",
-                        round,
-                        () =>
+                    JObject result = Measure("cached_census_plus_50000_history", round, () =>
+                    {
+                        // Resume consumer A's immutable inventory. A new tokenless
+                        // census after imports intentionally refreshes and expires A.
+                        JObject start = ReferenceGraphCollectorTests.Call("inventory", "snapshot", token, "offset", 0, "page_size", 1);
+                        Assert.AreEqual(token, start.Value<string>("snapshot"));
+                        long after = start.Value<long>("revision");
+                        while (true)
                         {
-                            // Resume consumer A's immutable inventory. A new tokenless
-                            // census after imports intentionally refreshes and expires A.
-                            JObject start = ReferenceGraphCollectorTests.Call("inventory", "snapshot", token, "offset", 0, "page_size", 1);
-                            Assert.AreEqual(token, start.Value<string>("snapshot"));
-                            long after = start.Value<long>("revision");
-                            while (true)
-                            {
-                                JObject page = ReferenceGraphCollectorTests.Call("changes", "epoch", epoch, "after", after, "page_size", 1000);
-                                replayed += page["changes"].Count();
-                                pages++;
-                                if (!page.Value<bool>("has_more"))
-                                    break;
-                                after = page.Value<long>("next_after");
-                            }
+                            JObject page = ReferenceGraphCollectorTests.Call("changes", "epoch", epoch, "after", after, "page_size", 1000);
+                            replayed += page["changes"].Count();
+                            pages++;
+                            if (!page.Value<bool>("has_more"))
+                                break;
+                            after = page.Value<long>("next_after");
                         }
-                    );
+                    });
                     result["replayed_rows"] = replayed;
                     result["history_pages"] = pages;
                     result["native_inventory_size"] = ((string[])Collector.GetField("inventory", Hidden).GetValue(null)).Length;
                     Assert.AreEqual(50000, replayed);
                     Report(result);
                     string[] candidate = null;
-                    JObject fresh = Measure(
-                        "candidate_fresh_find_sort",
-                        round,
-                        () =>
-                        {
-                            candidate = AssetDatabase.FindAssets("");
-                            Array.Sort(candidate, StringComparer.Ordinal);
-                        }
-                    );
+                    JObject fresh = Measure("candidate_fresh_find_sort", round, () =>
+                    {
+                        candidate = AssetDatabase.FindAssets("");
+                        Array.Sort(candidate, StringComparer.Ordinal);
+                    });
                     CollectionAssert.AreEqual((string[])Collector.GetField("inventory", Hidden).GetValue(null), candidate);
                     fresh["native_inventory_size"] = candidate.Length;
                     // Publishing a fresh token into the single-snapshot cache is

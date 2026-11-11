@@ -333,14 +333,11 @@ namespace MCPForUnityTests.Editor.Blender
         public IEnumerator Batch_CancelDelayedExport_DoesNotStartFollowingCommand()
         {
             int following = 0;
-            ReplaceHandler(
-                "gen08_following",
-                _ =>
-                {
-                    following++;
-                    return new { success = true };
-                }
-            );
+            ReplaceHandler("gen08_following", _ =>
+            {
+                following++;
+                return new { success = true };
+            });
             var peer = NewPeer();
             var cancellation = NewCancellation();
             using var observed = new MutationObserver(unique);
@@ -391,14 +388,11 @@ namespace MCPForUnityTests.Editor.Blender
         public IEnumerator CancelDelayedComparison_DoesNotInvokeUnityScreenshot()
         {
             int screenshots = 0;
-            ReplaceHandler(
-                "manage_scene",
-                _ =>
-                {
-                    screenshots++;
-                    return new { success = false };
-                }
-            );
+            ReplaceHandler("manage_scene", _ =>
+            {
+                screenshots++;
+                return new { success = false };
+            });
             var target = new GameObject(unique);
             SceneManager.MoveGameObjectToScene(target, scene);
             var peer = NewPeer(screenshot: true);
@@ -481,16 +475,13 @@ namespace MCPForUnityTests.Editor.Blender
             CancellationToken received = default;
             int calls = 0;
             replacedHandlers["manage_scene"] = handlers["manage_scene"];
-            handlers["manage_scene"] = HandlerInfo.Cooperative(
-                "manage_scene",
-                (_, token) =>
-                {
-                    received = token;
-                    calls++;
-                    cancellation.Cancel();
-                    return Task.FromResult<object>(new { success = true, data = new { fullPath = "not-read-after-cancellation" } });
-                }
-            );
+            handlers["manage_scene"] = HandlerInfo.Cooperative("manage_scene", (_, token) =>
+            {
+                received = token;
+                calls++;
+                cancellation.Cancel();
+                return Task.FromResult<object>(new { success = true, data = new { fullPath = "not-read-after-cancellation" } });
+            });
             var target = new GameObject(unique);
             SceneManager.MoveGameObjectToScene(target, scene);
             var peer = NewPeer(screenshot: true);
@@ -524,29 +515,26 @@ namespace MCPForUnityTests.Editor.Blender
             {
                 string unityPath = null;
                 var cancellation = NewCancellation();
-                handlers["manage_scene"] = HandlerInfo.Cooperative(
-                    "manage_scene",
-                    (parameters, token) =>
+                handlers["manage_scene"] = HandlerInfo.Cooperative("manage_scene", (parameters, token) =>
+                {
+                    string directory = (string)parameters["output_folder"];
+                    Assert.IsNotEmpty(directory);
+                    StringAssert.Contains("Library/BlenderBridge/", directory.Replace('\\', '/'));
+                    Assert.AreEqual("unity.png", (string)parameters["fileName"]);
+                    unityPath = Path.Combine(directory, "unity.png");
+                    using (var output = new FileStream(unityPath, FileMode.CreateNew))
                     {
-                        string directory = (string)parameters["output_folder"];
-                        Assert.IsNotEmpty(directory);
-                        StringAssert.Contains("Library/BlenderBridge/", directory.Replace('\\', '/'));
-                        Assert.AreEqual("unity.png", (string)parameters["fileName"]);
-                        unityPath = Path.Combine(directory, "unity.png");
-                        using (var output = new FileStream(unityPath, FileMode.CreateNew))
-                        {
-                            byte[] bytes = Convert.FromBase64String(
-                                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
-                            );
-                            output.Write(bytes, 0, bytes.Length);
-                        }
-                        if (outcome == "cancel")
-                            cancellation.Cancel();
-                        if (outcome == "exception")
-                            throw new IOException("Owned nested capture failure");
-                        return Task.FromResult<object>(new { success = outcome != "failure", data = new { fullPath = unityPath } });
+                        byte[] bytes = Convert.FromBase64String(
+                            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+                        );
+                        output.Write(bytes, 0, bytes.Length);
                     }
-                );
+                    if (outcome == "cancel")
+                        cancellation.Cancel();
+                    if (outcome == "exception")
+                        throw new IOException("Owned nested capture failure");
+                    return Task.FromResult<object>(new { success = outcome != "failure", data = new { fullPath = unityPath } });
+                });
                 var peer = NewPeer(screenshot: true);
                 Task<object> command = Invoke(new JObject { ["action"] = "compare_screenshot", ["game_object"] = unique }, cancellation.Token);
                 yield return Until(() => peer.Request.Task.IsCompleted);
@@ -583,36 +571,30 @@ namespace MCPForUnityTests.Editor.Blender
             var target = new GameObject(unique);
             SceneManager.MoveGameObjectToScene(target, scene);
             int unrelatedWrites = 0;
-            ReplaceHandler(
-                "gen08_following",
-                _ =>
-                {
-                    unrelatedWrites++;
-                    return new { success = true };
-                }
-            );
+            ReplaceHandler("gen08_following", _ =>
+            {
+                unrelatedWrites++;
+                return new { success = true };
+            });
             replacedHandlers["manage_scene"] = handlers["manage_scene"];
             foreach (bool batch in new[] { false, true })
             {
                 string unityPath = null;
-                handlers["manage_scene"] = HandlerInfo.Cooperative(
-                    "manage_scene",
-                    (parameters, token) =>
-                    {
-                        Assert.IsNull(NativeCommandArbitrator.TakeCompositionLease(), "Custom child callbacks cannot inherit admission authority.");
-                        var blocked = Assert.Throws<NativeCommandBlockedException>(() =>
-                            CommandRegistry.InvokeCommandAsync("gen08_following", new JObject(), token)
-                        );
-                        Assert.AreEqual("operation_busy", blocked.Reason);
-                        unityPath = Path.Combine((string)parameters["output_folder"], "unity.png");
-                        StringAssert.Contains("Library/BlenderBridge/", unityPath.Replace('\\', '/'));
-                        File.WriteAllBytes(
-                            unityPath,
-                            Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==")
-                        );
-                        return Task.FromResult<object>(new { success = true, data = new { fullPath = unityPath } });
-                    }
-                );
+                handlers["manage_scene"] = HandlerInfo.Cooperative("manage_scene", (parameters, token) =>
+                {
+                    Assert.IsNull(NativeCommandArbitrator.TakeCompositionLease(), "Custom child callbacks cannot inherit admission authority.");
+                    var blocked = Assert.Throws<NativeCommandBlockedException>(() =>
+                        CommandRegistry.InvokeCommandAsync("gen08_following", new JObject(), token)
+                    );
+                    Assert.AreEqual("operation_busy", blocked.Reason);
+                    unityPath = Path.Combine((string)parameters["output_folder"], "unity.png");
+                    StringAssert.Contains("Library/BlenderBridge/", unityPath.Replace('\\', '/'));
+                    File.WriteAllBytes(
+                        unityPath,
+                        Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==")
+                    );
+                    return Task.FromResult<object>(new { success = true, data = new { fullPath = unityPath } });
+                });
                 var peer = NewPeer(screenshot: true);
                 var parameters = new JObject { ["action"] = "compare_screenshot", ["game_object"] = unique };
                 var operation = Dispatch(
@@ -666,17 +648,14 @@ namespace MCPForUnityTests.Editor.Blender
             int calls = 0;
             CancellationToken received = default;
             replacedHandlers["manage_graphics"] = handlers["manage_graphics"];
-            handlers["manage_graphics"] = HandlerInfo.Cooperative(
-                "manage_graphics",
-                (parameters, token) =>
-                {
-                    calls++;
-                    received = token;
-                    Assert.AreEqual("volume_add_effect", (string)parameters["action"]);
-                    cancellation.Cancel();
-                    return Task.FromResult<object>(new { success = true });
-                }
-            );
+            handlers["manage_graphics"] = HandlerInfo.Cooperative("manage_graphics", (parameters, token) =>
+            {
+                calls++;
+                received = token;
+                Assert.AreEqual("volume_add_effect", (string)parameters["action"]);
+                cancellation.Cancel();
+                return Task.FromResult<object>(new { success = true });
+            });
             Task<object> command = Invoke(new JObject { ["action"] = "setup_bloom" }, cancellation.Token);
             yield return Until(() => command.IsCompleted);
             AssertCanceled(command, cancellation.Token);

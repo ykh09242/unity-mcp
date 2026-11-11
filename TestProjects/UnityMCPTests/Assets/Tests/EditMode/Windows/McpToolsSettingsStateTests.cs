@@ -261,16 +261,11 @@ namespace MCPForUnityTests.Editor.Windows
                 var status = new ConsentNotifications();
                 var root = ConsentRoot();
                 int prompts = 0;
-                var section = ConsentSection(
-                    root,
-                    consent,
-                    status,
-                    _ =>
-                    {
-                        prompts++;
-                        return null;
-                    }
-                );
+                var section = ConsentSection(root, consent, status, _ =>
+                {
+                    prompts++;
+                    return null;
+                });
                 using var panel = new OwnedConsentPanel(root);
                 section.Refresh();
                 Assert.AreEqual(0, consent.StorageWrites);
@@ -426,17 +421,12 @@ namespace MCPForUnityTests.Editor.Windows
             {
                 panel = createPanel.Invoke(null, new object[] { owner }) as IPanel;
                 Assert.IsNotNull(panel);
-                var section = new McpToolsSection(
-                    root,
-                    new ConsentNotifications(),
-                    false,
-                    tool =>
-                    {
-                        Assert.AreEqual("execute_code", tool.Name);
-                        prompts++;
-                        return choice;
-                    }
-                );
+                var section = new McpToolsSection(root, new ConsentNotifications(), false, tool =>
+                {
+                    Assert.AreEqual("execute_code", tool.Name);
+                    prompts++;
+                    return choice;
+                });
                 panel.visualTree.Add(root);
                 Assert.AreSame(panel, root.panel);
                 section.Refresh();

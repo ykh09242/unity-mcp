@@ -349,8 +349,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                         FalModelCatalog.RefreshAsync("model", true),
                         OpenRouterModelCatalog.RefreshAsync(true)
                     );
-                    error =
-                        FalModelCatalog.LastError("image")
+                    error = FalModelCatalog.LastError("image")
                         ?? FalModelCatalog.LastError("audio")
                         ?? FalModelCatalog.LastError("model")
                         ?? OpenRouterModelCatalog.LastError;

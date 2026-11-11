@@ -227,16 +227,11 @@ namespace MCPForUnityTests.Editor.Setup
             var before = Snapshot();
             var remote = Remote(("../escape.md", "must not escape"));
             int downloads = 0;
-            Assert.Throws<InvalidOperationException>(() =>
-                Apply(
-                    remote,
-                    path =>
-                    {
-                        downloads++;
-                        return remote[path];
-                    }
-                )
-            );
+            Assert.Throws<InvalidOperationException>(() => Apply(remote, path =>
+                {
+                    downloads++;
+                    return remote[path];
+                }));
             Assert.AreEqual(0, downloads);
             AssertSnapshot(before);
             Assert.IsFalse(File.Exists(Path.Combine(_root, "escape.md")));
@@ -399,18 +394,13 @@ namespace MCPForUnityTests.Editor.Setup
                 File.AppendAllText(Path.Combine(_install, BaselineName), " ");
             var before = Snapshot();
             int downloads = 0;
-            var result = ApplyPreview(
-                preview,
-                remote,
-                drift == "remote" ? CommitA : CommitB,
-                path =>
-                {
-                    downloads++;
-                    if (drift == "download")
-                        Write("SKILL.md", "edit while downloading");
-                    return remote[path];
-                }
-            );
+            var result = ApplyPreview(preview, remote, drift == "remote" ? CommitA : CommitB, path =>
+            {
+                downloads++;
+                if (drift == "download")
+                    Write("SKILL.md", "edit while downloading");
+                return remote[path];
+            });
             Assert.IsFalse(result.Success);
             Assert.That(result.Error, Does.Contain("changed"));
             Assert.AreEqual(drift == "download" ? 1 : 0, downloads);

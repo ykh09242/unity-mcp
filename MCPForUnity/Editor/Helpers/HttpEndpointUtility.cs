@@ -186,20 +186,17 @@ namespace MCPForUnity.Editor.Helpers
                 return message;
             try
             {
-                return DiagnosticUrl.Replace(
-                    message,
-                    match =>
-                    {
-                        if (
-                            Uri.TryCreate(match.Value, UriKind.Absolute, out var uri)
-                            && string.IsNullOrEmpty(uri.UserInfo)
-                            && string.IsNullOrEmpty(uri.Query)
-                            && string.IsNullOrEmpty(uri.Fragment)
-                        )
-                            return match.Value;
-                        return GetDisplayUrl(match.Value);
-                    }
-                );
+                return DiagnosticUrl.Replace(message, match =>
+                {
+                    if (
+                        Uri.TryCreate(match.Value, UriKind.Absolute, out var uri)
+                        && string.IsNullOrEmpty(uri.UserInfo)
+                        && string.IsNullOrEmpty(uri.Query)
+                        && string.IsNullOrEmpty(uri.Fragment)
+                    )
+                        return match.Value;
+                    return GetDisplayUrl(match.Value);
+                });
             }
             catch (RegexMatchTimeoutException)
             {

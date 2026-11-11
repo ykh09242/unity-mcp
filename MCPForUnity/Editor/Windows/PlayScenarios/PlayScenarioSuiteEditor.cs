@@ -314,15 +314,12 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 JObject data = Call(new JObject { ["action"] = "suite_reports", ["name"] = name.value });
                 history.Clear();
                 foreach (JObject report in ((JArray)data["reports"] ?? new JArray()).OfType<JObject>())
-                    AppendReport(
-                        report,
-                        text =>
-                        {
-                            var label = new Label(text);
-                            label.AddToClassList("scenario-note");
-                            history.Add(label);
-                        }
-                    );
+                    AppendReport(report, text =>
+                    {
+                        var label = new Label(text);
+                        label.AddToClassList("scenario-note");
+                        history.Add(label);
+                    });
                 if (history.childCount == 0)
                     history.Add(new Label("No saved suite reports."));
             }

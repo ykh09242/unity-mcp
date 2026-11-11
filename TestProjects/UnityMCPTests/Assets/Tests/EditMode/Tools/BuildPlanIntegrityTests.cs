@@ -125,9 +125,9 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsNotNull(field, "Editor update callback inventory is unavailable; do not claim invariance.");
             var callback = field.GetValue(null) as Delegate;
             return callback
-                    ?.GetInvocationList()
-                    .Select(d => d.Method.DeclaringType?.FullName + "." + d.Method.Name + ":" + (d.Target == null ? 0 : RuntimeHelpers.GetHashCode(d.Target)))
-                    .ToArray()
+                ?.GetInvocationList()
+                .Select(d => d.Method.DeclaringType?.FullName + "." + d.Method.Name + ":" + (d.Target == null ? 0 : RuntimeHelpers.GetHashCode(d.Target)))
+                .ToArray()
                 ?? Array.Empty<string>();
         }
 

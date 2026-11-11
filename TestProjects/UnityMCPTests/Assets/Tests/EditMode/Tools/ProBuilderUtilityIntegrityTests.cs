@@ -383,8 +383,9 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(true)]
         public void SetFaceColor_ReusesCompatibleMaterialAcrossRepeatedRequests(bool alreadyCompatible)
         {
-            var vertexShader =
-                Shader.Find("ProBuilder/Standard Vertex Color") ?? Shader.Find("ProBuilder/Diffuse Vertex Color") ?? Shader.Find("Sprites/Default");
+            var vertexShader = Shader.Find("ProBuilder/Standard Vertex Color")
+                ?? Shader.Find("ProBuilder/Diffuse Vertex Color")
+                ?? Shader.Find("Sprites/Default");
             var standardShader = Shader.Find("Standard");
             Assert.IsNotNull(vertexShader, "A supported vertex-color shader fallback must be available.");
             Assert.IsNotNull(standardShader, "The Standard conversion-source shader must be available.");
