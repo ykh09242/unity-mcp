@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse
 from core.config import config
 from core.server_build import RUNNING_SERVER
 from models.response_limits import bound_response
+from models.connection_diagnosis import no_unity_instances_response
 from core.server_runtime import ServerRuntime
 from services.execution_receipt_context import owned_to_thread
 from services.execution_receipt_identity import ReceiptConflict, ReceiptInvalid
@@ -320,10 +321,7 @@ def install_http_routes(
                 sessions = await PluginHub.get_sessions()
                 if not sessions.sessions:
                     return JSONResponse(
-                        {
-                            "success": False,
-                            "error": "No Unity instances connected. Make sure Unity is running with MCP plugin.",
-                        },
+                        no_unity_instances_response(),
                         status_code=503,
                     )
 
@@ -462,10 +460,7 @@ def install_http_routes(
                 sessions = await PluginHub.get_sessions()
                 if not sessions.sessions:
                     return JSONResponse(
-                        {
-                            "success": False,
-                            "error": "No Unity instances connected. Make sure Unity is running with MCP plugin.",
-                        },
+                        no_unity_instances_response(),
                         status_code=503,
                     )
 

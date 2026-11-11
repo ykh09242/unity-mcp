@@ -11,7 +11,20 @@ from cli.utils import connection
 
 
 @pytest.mark.parametrize(
-    "failure", ["refused", "timeout", "missing_token", "http_error", "redirect", "informational"]
+    "failure",
+    [
+        "refused",
+        "timeout",
+        "missing_token",
+        "http_error",
+        "proxy_503",
+        "unvalidated_503",
+        "invalid_success_503",
+        "oversized_503",
+        "unauthorized",
+        "redirect",
+        "informational",
+    ],
 )
 @pytest.mark.parametrize("verbose", [False, True])
 @pytest.mark.parametrize(
@@ -42,6 +55,37 @@ def test_connection_failure_returns_one_sanitized_json_document(
                 raise httpx.ReadTimeout(f"deadline X-API-Key: {credential}")
             case "http_error":
                 return httpx.Response(500, text=f"sensitive response: {credential}")
+            case "proxy_503":
+                return httpx.Response(503, json={"success": False, "error": credential})
+            case "unauthorized":
+                return httpx.Response(
+                    401,
+                    json={
+                        "success": False,
+                        "code": "no_unity_instances",
+                        "dispatch": "not_dispatched",
+                        "error": credential,
+                    },
+                )
+            case "unvalidated_503":
+                return httpx.Response(
+                    503,
+                    json={
+                        "success": False,
+                        "code": "no_unity_instances",
+                        "dispatch": "not_dispatched",
+                        "error": credential,
+                    },
+                )
+            case "invalid_success_503" | "oversized_503":
+                from models.connection_diagnosis import no_unity_instances_response
+
+                payload = dict(no_unity_instances_response())
+                if failure == "invalid_success_503":
+                    payload["success"] = 0
+                else:
+                    payload["unexpected"] = credential * 200
+                return httpx.Response(503, json=payload)
             case "redirect":
                 return httpx.Response(
                     302,
@@ -95,6 +139,34 @@ def test_connection_failure_keeps_human_text_on_stderr(monkeypatch):
     assert result.exit_code == 1
     assert result.stdout == ""
     assert "Synthetic server is unavailable" in result.stderr
+
+
+@pytest.mark.parametrize("command", [["scene", "active"], ["raw", "fixture"], ["tool", "list"]])
+def test_known_no_editor_json_drops_untrusted_extra_fields(monkeypatch, command):
+    from models.connection_diagnosis import no_unity_instances_response
+
+    # Given: the known no-session contract plus an untrusted transport annotation.
+    credential = "synthetic-no-editor-credential"
+    client_type = httpx.AsyncClient
+    expected = no_unity_instances_response()
+    monkeypatch.setattr(connection, "read_local_auth_token", lambda *_: credential)
+    monkeypatch.setattr(
+        connection.httpx,
+        "AsyncClient",
+        lambda **_: client_type(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(503, json={**expected, "unexpected": credential})
+            )
+        ),
+    )
+
+    # When: the CLI receives that known refusal.
+    result = CliRunner().invoke(cli, ["--no-project-context", "--format", "json", *command])
+
+    # Then: only the fixed bounded diagnostic reaches stdout.
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout) == expected
+    assert credential not in result.output
 
 
 @pytest.mark.parametrize("verbose", [False, True])

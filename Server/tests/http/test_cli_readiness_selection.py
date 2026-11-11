@@ -28,6 +28,52 @@ def selection_client(monkeypatch, prepared_tool_factory):
     return TestClient(server.http_app(), headers={"X-Unity-MCP-Token": "inert-selection-token"})
 
 
+@pytest.mark.parametrize("command", [["scene", "active"], ["raw", "fixture"], ["tool", "list"]])
+def test_authenticated_healthy_server_without_editor_retains_bounded_cli_diagnosis(
+    selection_client, monkeypatch, command
+):
+    # Given: an authenticated healthy server with no Editor and a real CLI/HTTP boundary.
+    monkeypatch.setattr(PluginHub, "get_sessions", AsyncMock(return_value=SessionList(sessions={})))
+    dispatch = AsyncMock()
+    monkeypatch.setattr(PluginHub, "send_command", dispatch)
+    requests = []
+    token = "inert-selection-token"
+    client_type = httpx.AsyncClient
+
+    def respond(request):
+        requests.append(request)
+        response = selection_client.request(
+            request.method,
+            request.url.path,
+            content=request.content,
+            headers=dict(request.headers),
+        )
+        return httpx.Response(response.status_code, json=response.json())
+
+    monkeypatch.setattr(connection, "read_local_auth_token", lambda *_: token)
+    monkeypatch.setattr(
+        connection.httpx,
+        "AsyncClient",
+        lambda **_: client_type(transport=httpx.MockTransport(respond)),
+    )
+    assert selection_client.get("/health").json()["status"] == "healthy"
+
+    # When: a real authenticated command cannot select any Editor.
+    result = CliRunner().invoke(cli, ["--no-project-context", "--format", "json", *command])
+
+    # Then: a stable diagnosis survives, with no command dispatch or credential echo.
+    assert result.exit_code == 1, result.output
+    document = json.loads(result.stdout)
+    assert document["success"] is False
+    assert document["code"] == "no_unity_instances"
+    assert document["dispatch"] == "not_dispatched"
+    assert len(result.stdout) < 1000
+    assert token not in result.output
+    assert len(requests) == 1
+    assert requests[0].headers["X-Unity-MCP-Token"] == token
+    dispatch.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "catalog,selector,expected",
     [

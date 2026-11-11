@@ -13,6 +13,7 @@ from cli.utils.config import get_config, CLIConfig
 from cli.utils.project_context import exact_hash, is_loopback
 from core.local_auth import LOCAL_AUTH_HEADER, read_local_auth_token
 from models.unity_response import normalize_unity_response
+from models.connection_diagnosis import no_unity_instances_response
 from services.animator_actions import guarded_animator_batch_member, guarded_animator_parameters
 
 
@@ -150,6 +151,23 @@ def _raise_structured_target_refusal(response: httpx.Response) -> None:
         raise UnityCommandError(failure)
 
 
+def _raise_known_no_editor(response: httpx.Response) -> None:
+    """Admit only the bounded, fixed no-session 503 contract; never echo HTTP diagnostics."""
+    if response.status_code != 503 or len(response.content) > 4096:
+        return
+    try:
+        failure = response.json()
+    except ValueError:
+        return
+    expected = no_unity_instances_response()
+    if (
+        isinstance(failure, dict)
+        and failure.get("success") is False
+        and all(failure.get(key) == value for key, value in expected.items())
+    ):
+        raise UnityCommandError(expected)
+
+
 async def send_command(
     command_type: str,
     params: Dict[str, Any],
@@ -242,6 +260,7 @@ async def send_command(
             f"Unity may be busy or unresponsive."
         )
     except httpx.HTTPStatusError as e:
+        _raise_known_no_editor(e.response)
         if guarded:
             raise UnityConnectionError(
                 "Project context request refused; verify the selected local server supports guarded commands."
@@ -384,6 +403,7 @@ async def list_custom_tools(config: Optional[CLIConfig] = None) -> Dict[str, Any
         )
     except httpx.HTTPStatusError as e:
         _raise_structured_target_refusal(e.response)
+        _raise_known_no_editor(e.response)
         raise UnityConnectionError(
             f"HTTP error from server: {e.response.status_code} - {e.response.text}"
         )
