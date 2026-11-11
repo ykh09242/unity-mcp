@@ -150,6 +150,11 @@ be verified or the PR has no unique merge base. Base-only edits do not expand PR
 Deleted files are omitted; added and renamed destinations use the same authored scope
 and generated/vendor/link exclusions as the local runner. Checks never write sources.
 
+For manual recovery, select the intended ref and provide the required `base_sha`
+input as a full, nonzero 40-character commit SHA. The workflow checks that exact
+base against the dispatched head with the same read-only verifier. It does not
+guess a previous commit or apply the PR merge-base adjustment to manual runs.
+
 Changes to `ruff.toml` check all eligible Python files. Changes to `.editorconfig` or
 `.config/dotnet-tools.json` check all eligible C# files. Changes to the formatting runner
 or CI selection helper check both supported languages. These broader checks expose

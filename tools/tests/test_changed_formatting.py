@@ -266,6 +266,9 @@ def test_workflow_selects_configs_and_passes_explicit_pr_or_beta_range():
         (ROOT / ".github/workflows/changed-formatting.yml").read_text(encoding="utf-8")
     )
     triggers = workflow.get("on", workflow.get(True))
+    manual_base = triggers["workflow_dispatch"]["inputs"]["base_sha"]
+    assert manual_base["required"] is True and manual_base["type"] == "string"
+    assert "default" not in manual_base
     for event in ("pull_request", "push"):
         patterns = triggers[event]["paths"]
         for path in [
@@ -284,7 +287,7 @@ def test_workflow_selects_configs_and_passes_explicit_pr_or_beta_range():
     assert checkout["with"]["ref"] == "${{ github.event.pull_request.head.sha || github.sha }}"
     step = next(step for step in job["steps"] if "--base" in step.get("run", ""))
     assert step["env"] == {
-        "BASE_SHA": "${{ github.event.pull_request.base.sha || github.event.before }}",
+        "BASE_SHA": "${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before }}",
         "HEAD_SHA": "${{ github.event.pull_request.head.sha || github.sha }}",
         "USE_MERGE_BASE": "${{ github.event_name == 'pull_request' }}",
     }

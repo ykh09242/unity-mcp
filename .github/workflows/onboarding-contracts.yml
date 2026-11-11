@@ -1,6 +1,7 @@
 name: Onboarding Documentation Contracts
 
 on:
+  workflow_dispatch: {}
   pull_request:
     branches: [main, beta]
     paths: &inputs

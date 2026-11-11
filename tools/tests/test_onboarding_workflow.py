@@ -43,6 +43,7 @@ def test_all_authored_contract_inputs_select_the_focused_gate(workflow, event):
 
 
 def test_focused_gate_executes_existing_contracts_without_site_or_unity_setup(workflow):
+    assert workflow.get("on", workflow.get(True))["workflow_dispatch"] == {}
     job = workflow["jobs"]["contracts"]
     assert "needs" not in job and "if" not in job and not job.get("continue-on-error")
     commands = [shlex.split(step["run"]) for step in job["steps"] if "run" in step]

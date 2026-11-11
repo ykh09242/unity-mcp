@@ -1,6 +1,12 @@
 name: Changed Authored Formatting
 
 on:
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: "Exact comparison base commit SHA (40 hexadecimal characters)."
+        type: string
+        required: true
   pull_request:
     branches: [main, beta]
     paths: &inputs
@@ -57,7 +63,7 @@ jobs:
           -q -W error -p no:cacheprovider
       - name: Check explicit event range without modifying sources
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           USE_MERGE_BASE: ${{ github.event_name == 'pull_request' }}
         run: |
