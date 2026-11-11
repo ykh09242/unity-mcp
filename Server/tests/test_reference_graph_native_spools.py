@@ -442,6 +442,138 @@ def test_reclaim_hashing_does_not_hold_the_global_producer_fence(tmp_path, monke
     )
 
 
+def test_reclaim_prunes_empty_owners_before_reduced_inventory_limit_is_exhausted(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "spools"
+    monkeypatch.setattr(spools, "MAX_FILES", 8)
+    for index in range(12):
+        editor = f"{index:032x}"
+        seed(root, editor)
+        assert len(spools.inventory(root)["captures"]) == 1
+        preview = spools.reclaim_capture(root, editor, CAPTURE)
+        spools.reclaim_capture(
+            root,
+            editor,
+            CAPTURE,
+            fingerprint=preview["fingerprint"],
+            inspected_at=preview["inspected_at"],
+            apply=True,
+        )
+        assert not (root / editor).exists()
+    assert spools.inventory(root)["captures"] == []
+
+
+@pytest.mark.parametrize("kind", ["file", "directory", "capture"])
+def test_reclaim_preserves_other_same_owner_contents(tmp_path, kind):
+    root = tmp_path / "spools"
+    seed(root)
+    retained = root / EDITOR_A / ("unknown" if kind != "capture" else "e" * 64 + ".events")
+    if kind == "directory":
+        retained.mkdir()
+    else:
+        retained.write_bytes(b"retained")
+    preview = spools.reclaim_capture(root, EDITOR_A, CAPTURE)
+    spools.reclaim_capture(
+        root,
+        EDITOR_A,
+        CAPTURE,
+        fingerprint=preview["fingerprint"],
+        inspected_at=preview["inspected_at"],
+        apply=True,
+    )
+    assert retained.exists()
+    if kind != "directory":
+        assert retained.read_bytes() == b"retained"
+
+
+def test_empty_owner_pruning_keeps_root_fence_until_removal(tmp_path, monkeypatch):
+    root = tmp_path / "spools"
+    seed(root)
+    directory = root / EDITOR_A
+    preview = spools.reclaim_capture(root, EDITOR_A, CAPTURE)
+    rmdir, observed = Path.rmdir, []
+    probe = """
+import sys
+from pathlib import Path
+from services.reference_graph.native_spool_paths import lease
+root = Path(sys.argv[1])
+try:
+    with lease(root / '.spool.lock'):
+        owner = root / sys.argv[2]
+        owner.mkdir(exist_ok=True)
+        (owner / 'new-capture').write_bytes(b'new')
+except ValueError as error:
+    if 'active or maintenance' not in str(error):
+        raise
+    print('busy')
+else:
+    print('created')
+"""
+
+    def competing_producer():
+        result = subprocess.run(
+            [sys.executable, "-B", "-c", probe, str(root), EDITOR_A],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def remove(path):
+        if path == directory:
+            observed.append(competing_producer())
+        return rmdir(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "rmdir", remove)
+        spools.reclaim_capture(
+            root,
+            EDITOR_A,
+            CAPTURE,
+            fingerprint=preview["fingerprint"],
+            inspected_at=preview["inspected_at"],
+            apply=True,
+        )
+    assert observed == ["busy"]
+    assert competing_producer() == "created"
+    assert (directory / "new-capture").read_bytes() == b"new"
+
+
+def test_owner_replacement_is_rejected_before_empty_directory_probe(tmp_path, monkeypatch):
+    root = tmp_path / "spools"
+    seed(root)
+    directory = root / EDITOR_A
+    preview = spools.reclaim_capture(root, EDITOR_A, CAPTURE)
+    prune, scandir, probed = spools._prune_empty_owner, spools.os.scandir, []
+
+    def inspect(path):
+        if Path(path) == directory:
+            probed.append(path)
+        return scandir(path)
+
+    def replaced(selection, report):
+        directory.rename(root / "retained-original")
+        directory.mkdir()
+        probed.clear()
+        return prune(selection, report)
+
+    monkeypatch.setattr(spools, "_prune_empty_owner", replaced)
+    monkeypatch.setattr(spools.os, "scandir", inspect)
+    with pytest.raises(ValueError, match="directory changed"):
+        spools.reclaim_capture(
+            root,
+            EDITOR_A,
+            CAPTURE,
+            fingerprint=preview["fingerprint"],
+            inspected_at=preview["inspected_at"],
+            apply=True,
+        )
+    assert not probed
+    assert directory.exists() and (root / "retained-original").exists()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Actual Windows token and file ownership")
 def test_fixture_owner_is_user_and_nested_scope_restores_existing_token(tmp_path):
     security, kernel = windows_token_api()

@@ -96,6 +96,15 @@ after commit can leave retirement complete, so retry release to confirm it.
 Owner exclusions remain until their observation is reclaimed, and shared owner
 metadata needed by other enabled evidence is preserved.
 
+Native release and explicit offline reclaim remove an owner directory only after
+its last capture file and lease are gone, while still holding the common spool
+lock. Nonempty directories and unknown contents are preserved. Native start also
+scans at most 4096 root entries to prune pre-existing empty, correctly named owner
+directories under that lock. Larger old inventories may require another start
+attempt before the bounded census can admit a capture. This sweep does not delete
+retained capture evidence. Offline inventory remains read-only and retains its scan
+limit; native start provides recovery from an old accumulation of empty owners.
+
 Runtime schema version 3 adds provider indexes to existing evidence tables for
 bounded reclamation. This one-time index build can scale with existing history;
 it does not rewrite event payloads. The bounded release guarantee applies after

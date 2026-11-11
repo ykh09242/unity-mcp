@@ -3,6 +3,7 @@
 from contextlib import ExitStack
 import argparse
 from dataclasses import asdict, dataclass
+import errno
 import hashlib
 from itertools import islice
 import json
@@ -268,6 +269,31 @@ def _verify_record(path: Path, record: dict) -> None:
         raise ValueError("Native spool path changed before reclamation; preserve it")
 
 
+def _prune_empty_owner(selection: Selection, report: dict) -> None:
+    """Caller retains the common producer lease through this nonrecursive removal."""
+    directory = selection.root / selection.editor
+
+    def check_owner():
+        if (
+            identity(selection.root, directory=True) != report["root_identity"]
+            or identity(directory, directory=True) != report["editor_identity"]
+        ):
+            raise ValueError("Native spool directory changed; preserve it")
+
+    check_owner()
+    with os.scandir(directory) as entries:
+        if next(entries, None) is not None:
+            return
+    check_owner()
+    try:
+        directory.rmdir()
+    except OSError as error:
+        # An uncooperative writer can add unknown contents despite our lease.
+        # Never recurse or remove those contents to complete owner housekeeping.
+        if error.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+            raise
+
+
 def inspect_capture(
     root: Path, editor: str, capture: str, *, all_editors_stopped: bool = False
 ) -> dict:
@@ -391,6 +417,7 @@ def reclaim_capture(
             if asdict(_digest(selection.path(".lease"))) != lease_record:
                 raise ValueError("Native spool lease path changed; preserve it")
             selection.path(".lease").unlink()
+            _prune_empty_owner(selection, report)
             return {
                 "outcome": "reclaimed",
                 "editor": editor,

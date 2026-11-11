@@ -57,6 +57,7 @@ namespace MCPForUnity.Editor.Tools
                 lock (ReferenceGraphRuntimeSpool.Gate)
                     using (ReferenceGraphRuntimeSpool.Lock(Path.Combine(spoolRoot, ".spool.lock")))
                     {
+                        ReferenceGraphRuntimeSpool.PruneEmptyOwners(spoolRoot);
                         string pressure = ReferenceGraphRuntimeSpool.Pressure(location, 0, true);
                         if (pressure != null)
                             return new JObject
@@ -114,7 +115,10 @@ namespace MCPForUnity.Editor.Tools
                                     || File.Exists(SafeFile(location, ".json.pending"))
                                     || File.Exists(SafeFile(location, ".lease"));
                                 if (!present)
+                                {
+                                    ReferenceGraphRuntimeSpool.PruneEmptyOwner(root, Path.GetDirectoryName(location));
                                     return new JObject { ["released"] = true };
+                                }
                                 using (ReferenceGraphRuntimeSpool.Lock(SafeFile(location, ".lease")))
                                 {
                                     File.Delete(SafeFile(location, ".events"));
@@ -122,6 +126,7 @@ namespace MCPForUnity.Editor.Tools
                                     File.Delete(SafeFile(location, ".json.pending"));
                                 }
                                 File.Delete(SafeFile(location, ".lease"));
+                                ReferenceGraphRuntimeSpool.PruneEmptyOwner(root, Path.GetDirectoryName(location));
                             }
                     }
                     return new JObject { ["released"] = true };

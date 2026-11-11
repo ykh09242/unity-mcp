@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using MCPForUnity.Editor.Tools;
@@ -76,6 +77,139 @@ namespace MCPForUnityTests.EditMode.Tools
                     );
 
         private void UpdateCaptures() => captureType.DeclaringType.GetMethod("DrainCaptures", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+
+        private JObject HandleAt(string action, string path) =>
+            (JObject)
+                captureType
+                    .DeclaringType.GetMethod("HandleAt", BindingFlags.Static | BindingFlags.NonPublic)
+                    .Invoke(
+                        null,
+                        new object[]
+                        {
+                            new JObject { ["action"] = action, ["token"] = Path.GetFileName(path) },
+                            path,
+                        }
+                    );
+
+        [Test]
+        public void ReleasePrunesEmptyOwnerDirectory()
+        {
+            Assert.IsTrue(HandleAt("runtime_release", location).Value<bool>("released"));
+            Assert.IsFalse(Directory.Exists(Path.GetDirectoryName(location)), "The last released capture must not retain an empty owner.");
+            Assert.IsTrue(HandleAt("runtime_release", location).Value<bool>("released"));
+            Assert.IsFalse(Directory.Exists(Path.GetDirectoryName(location)));
+        }
+
+        [Test]
+        public void StartPrunesPreexistingEmptyOwners()
+        {
+            string[] empty = Enumerable.Range(0, 3).Select(_ => Path.Combine(root, Guid.NewGuid().ToString("N"))).ToArray();
+            foreach (string directory in empty)
+                Directory.CreateDirectory(directory);
+            string next = Path.Combine(root, Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Assert.AreEqual("active", HandleAt("runtime_start", next).Value<string>("state"));
+                foreach (string directory in empty)
+                    Assert.IsFalse(Directory.Exists(directory), "Start must reclaim bounded old empty owners.");
+                Assert.IsTrue(File.Exists(location + ".events"));
+            }
+            finally
+            {
+                HandleAt("runtime_release", next);
+            }
+        }
+
+        [Test]
+        public void RepeatedOwnerReleaseFitsReducedInventoryLimit()
+        {
+            for (int i = 0; i < 12; i++)
+            {
+                string next = Path.Combine(root, Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    Assert.AreEqual("active", HandleAt("runtime_start", next).Value<string>("state"));
+                }
+                finally
+                {
+                    HandleAt("runtime_release", next);
+                }
+                Assert.IsFalse(Directory.Exists(Path.GetDirectoryName(next)));
+                lock (ReferenceGraphRuntimeSpool.Gate)
+                    using (ReferenceGraphRuntimeSpool.Lock(Path.Combine(root, ".spool.lock")))
+                        Assert.IsNull(ReferenceGraphRuntimeSpool.Pressure(location, 0, true, 8));
+            }
+        }
+
+        [Test]
+        public void OldEmptySweepIsBoundedAndPreservesUnknownContents()
+        {
+            string unknown = Path.Combine(root, "unknown-owner");
+            Directory.CreateDirectory(unknown);
+            string nonempty = Path.Combine(root, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(nonempty);
+            File.WriteAllText(Path.Combine(nonempty, "unknown-content"), "retained");
+            string[] empty = Enumerable.Range(0, 19).Select(_ => Path.Combine(root, Guid.NewGuid().ToString("N"))).ToArray();
+            foreach (string directory in empty)
+                Directory.CreateDirectory(directory);
+            lock (ReferenceGraphRuntimeSpool.Gate)
+                using (ReferenceGraphRuntimeSpool.Lock(Path.Combine(root, ".spool.lock")))
+                {
+                    ReferenceGraphRuntimeSpool.PruneEmptyOwners(root, 8);
+                    Assert.GreaterOrEqual(empty.Count(Directory.Exists), 11, "A sweep must inspect at most its entry budget.");
+                    for (int pass = 0; pass < 8 && empty.Any(Directory.Exists); pass++)
+                        ReferenceGraphRuntimeSpool.PruneEmptyOwners(root, 8);
+                }
+            Assert.IsFalse(empty.Any(Directory.Exists));
+            Assert.IsTrue(Directory.Exists(unknown));
+            Assert.AreEqual("retained", File.ReadAllText(Path.Combine(nonempty, "unknown-content")));
+            Assert.IsTrue(File.Exists(location + ".events"));
+        }
+
+        [Test]
+        public void ReleasingOneCapturePreservesConcurrentSameOwnerCapture()
+        {
+            string next = Path.Combine(Path.GetDirectoryName(location), Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Assert.AreEqual("active", HandleAt("runtime_start", next).Value<string>("state"));
+                HandleAt("runtime_release", location);
+                Assert.IsTrue(Directory.Exists(Path.GetDirectoryName(next)));
+                Assert.IsTrue(File.Exists(next + ".lease"));
+                Assert.IsTrue(File.Exists(next + ".events"));
+                Assert.AreEqual("active", HandleAt("runtime_start", next).Value<string>("state"));
+            }
+            finally
+            {
+                HandleAt("runtime_release", next);
+            }
+            Assert.IsFalse(Directory.Exists(Path.GetDirectoryName(next)));
+        }
+
+        [Test, Platform(Include = "Win")]
+        public void ContendedRootPreventsReleaseAndOldEmptySweep()
+        {
+            string empty = Path.Combine(root, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(empty);
+            string next = Path.Combine(empty, Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"));
+            using (HoldRoot())
+            {
+                Assert.Throws<TargetInvocationException>(() => HandleAt("runtime_release", location));
+                Assert.Throws<TargetInvocationException>(() => HandleAt("runtime_start", next));
+                Assert.IsTrue(File.Exists(location + ".events"));
+                Assert.IsTrue(Directory.Exists(empty));
+            }
+            Assert.IsTrue(HandleAt("runtime_release", location).Value<bool>("released"));
+            try
+            {
+                Assert.AreEqual("active", HandleAt("runtime_start", next).Value<string>("state"));
+                Assert.IsTrue(File.Exists(next + ".events"));
+            }
+            finally
+            {
+                HandleAt("runtime_release", next);
+            }
+        }
 
         [Test, Platform(Include = "Win")]
         public void RecoveredContentionStopFinishesMoreThanOneBatchAcrossUpdates()
@@ -497,7 +631,7 @@ namespace MCPForUnityTests.EditMode.Tools
                     }
                 );
             Assert.IsTrue(emptyRelease.Value<bool>("released"));
-            Assert.IsEmpty(Directory.GetFileSystemEntries(freshEditor));
+            Assert.IsFalse(Directory.Exists(freshEditor));
             Assert.AreEqual(total, new FileInfo(retained).Length);
             CollectionAssert.AreEqual(retainedMetadata, File.ReadAllBytes(location + ".json"));
         }
