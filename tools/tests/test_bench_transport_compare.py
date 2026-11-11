@@ -786,6 +786,52 @@ def test_resource_parity_preserves_diagnostic_semantics(change) -> None:
     assert fingerprint(normalize_resource(first)) != fingerprint(normalize_resource(second))
 
 
+@pytest.mark.parametrize(
+    "change,equal", [({}, True), ({"fact": "stale_snapshot"}, False), ({"age_ms": None}, False)]
+)
+def test_recovery_evidence_clock_changes_preserve_facts_and_unknown_age(change, equal):
+    first = {
+        "success": True,
+        "data": {
+            "observed_at_unix_ms": 100,
+            "staleness": {"age_ms": 0},
+            "source_recovery": {
+                "reason": "unknown",
+                "certainty": "unknown",
+                "evidence": [
+                    {
+                        "origin": "editor_state",
+                        "observed_at_unix_ms": 100,
+                        "age_ms": 0,
+                        "fact": "native_observed",
+                    }
+                ],
+            },
+        },
+    }
+    second = json.loads(json.dumps(first))
+    second["data"]["source_recovery"]["evidence"][0].update(observed_at_unix_ms=200, age_ms=5)
+    second["data"]["source_recovery"]["evidence"][0].update(change)
+    assert (
+        fingerprint(normalize_resource(first)) == fingerprint(normalize_resource(second))
+    ) is equal
+    assert first["data"]["source_recovery"]["evidence"][0]["observed_at_unix_ms"] == 100
+
+
+@pytest.mark.parametrize("stamp,age", [(True, 0), (-1, 0), (100, -1), (100, True)])
+def test_recovery_parity_rejects_malformed_clock_evidence(stamp, age):
+    value = {
+        "success": True,
+        "data": {
+            "observed_at_unix_ms": 100,
+            "staleness": {"age_ms": 0},
+            "source_recovery": {"evidence": [{"observed_at_unix_ms": stamp, "age_ms": age}]},
+        },
+    }
+    with pytest.raises(ValueError, match="recovery"):
+        normalize_resource(value)
+
+
 def test_paged_cleanup_requires_each_serial_cohort_even_when_rpc_counters_agree(report):
     raw = report.model_dump(mode="json")
     row = raw["results"][0]

@@ -18,7 +18,34 @@ NORMALIZATION_PATHS: Final = (
     "data.observed_at_unix_ms",
     "data.staleness.age_ms",
     "data.diagnostics.heartbeat_age_ms",
+    "data.source_recovery.evidence[*].observed_at_unix_ms",
+    "data.source_recovery.evidence[*].age_ms",
 )
+
+
+def _normalize_recovery_clock(value: JsonValue) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict) or not isinstance(value.get("evidence"), list):
+        raise ValueError("Resource recovery evidence is invalid")
+    evidence = value["evidence"]
+    if len(evidence) > 8:
+        raise ValueError("Resource recovery evidence exceeds its bound")
+    for row in evidence:
+        if not isinstance(row, dict):
+            raise ValueError("Resource recovery evidence is invalid")
+        stamp, age = row.get("observed_at_unix_ms"), row.get("age_ms")
+        if (
+            type(stamp) is not int
+            or stamp < 0
+            or (age is not None and (type(age) is not int or age < 0))
+        ):
+            raise ValueError("Resource recovery timestamp fields are invalid")
+        del row["observed_at_unix_ms"]
+        # Unknown age remains semantic evidence. Omit only validated elapsed
+        # integers; retain reason, certainty, identities, origin and facts.
+        if age is not None:
+            del row["age_ms"]
 
 
 def normalize_resource(raw: JsonValue) -> JsonValue:
@@ -54,6 +81,7 @@ def normalize_resource(raw: JsonValue) -> JsonValue:
         del diagnostics["heartbeat_age_ms"]
     del data["observed_at_unix_ms"]
     del staleness["age_ms"]
+    _normalize_recovery_clock(data.get("source_recovery"))
     return value
 
 
