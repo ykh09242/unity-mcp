@@ -202,6 +202,52 @@ namespace MCPForUnityTests.Editor.Helpers
         }
 
         [Test]
+        public void FailedOutputScopePreservesMovedAndRecreatedDirectory()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "McpCaptureIdentity-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            string owned = Path.Combine(root, "Output");
+            string moved = Path.Combine(root, "Moved");
+            try
+            {
+                using (var folders = new OutputFolderScope(root))
+                {
+                    folders.EnsureParentDirectory(Path.Combine(owned, "capture.png"));
+                    Directory.Move(owned, moved);
+                    Directory.CreateDirectory(owned);
+                }
+                Assert.IsTrue(Directory.Exists(owned), "An empty replacement directory belongs to the external writer.");
+                Assert.IsTrue(Directory.Exists(moved), "Cleanup must not search for and remove a moved directory.");
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        [Test]
+        public void CompletedOutputScopeKeepsEmptyDirectoriesWithoutOwnershipArtifacts()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "McpCaptureComplete-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            string owned = Path.Combine(root, "Output");
+            try
+            {
+                using (var folders = new OutputFolderScope(root))
+                {
+                    folders.EnsureParentDirectory(Path.Combine(owned, "capture.png"));
+                    folders.Complete();
+                }
+                Assert.IsTrue(Directory.Exists(owned));
+                Assert.IsEmpty(Directory.GetFileSystemEntries(owned));
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        [Test]
         public void OutputScopeUnwindsEarlierFoldersAfterLaterParentFailure()
         {
             string root = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Temp", "McpCaptureFailure-" + Guid.NewGuid().ToString("N"));

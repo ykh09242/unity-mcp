@@ -8,7 +8,7 @@ namespace MCPForUnity.Runtime.Helpers
     public sealed class OutputFolderScope : IDisposable
     {
         private readonly string root;
-        private readonly List<string> createdFolders = new();
+        private readonly List<(string Path, string Marker)> createdFolders = new();
         private bool completed;
         private bool disposed;
 
@@ -43,8 +43,15 @@ namespace MCPForUnity.Runtime.Helpers
             path = SafePathUtility.ResolveWithinRoot(root, path);
             if (Directory.Exists(path))
                 return;
-            Directory.CreateDirectory(path);
-            createdFolders.Add(path);
+            // Publish the directory with its private marker already inside it. A later
+            // directory at the same path does not inherit this cleanup authority.
+            string marker = ".mcp-output-" + Guid.NewGuid().ToString("N");
+            string staging = SafePathUtility.ResolveWithinRoot(root, Path.Combine(parent, marker));
+            Directory.CreateDirectory(staging);
+            using (File.Open(Path.Combine(staging, marker), FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+            createdFolders.Add((staging, marker));
+            Directory.Move(staging, path);
+            createdFolders[createdFolders.Count - 1] = (path, marker);
             SafePathUtility.ResolveWithinRoot(root, path);
         }
 
@@ -55,21 +62,32 @@ namespace MCPForUnity.Runtime.Helpers
             if (disposed)
                 return;
             disposed = true;
-            if (completed)
-                return;
-
             for (int i = createdFolders.Count - 1; i >= 0; i--)
             {
                 var folder = createdFolders[i];
                 try
                 {
-                    string path = SafePathUtility.ResolveWithinRoot(root, folder);
+                    string path = SafePathUtility.ResolveWithinRoot(root, folder.Path);
                     if (!Directory.Exists(path))
                         continue;
-                    using (var entries = Directory.EnumerateFileSystemEntries(path).GetEnumerator())
-                        if (entries.MoveNext())
+                    string marker = SafePathUtility.ResolveWithinRoot(root, Path.Combine(path, folder.Marker));
+                    if (!File.Exists(marker))
+                        continue;
+                    using (var proof = File.Open(marker, FileMode.Open, FileAccess.Read, FileShare.Read))
+                        if (proof.Length != 0)
                             continue;
-                    Directory.Delete(path, false);
+                    bool empty = true;
+                    foreach (string entry in Directory.EnumerateFileSystemEntries(path))
+                        if (Path.GetFileName(entry) != folder.Marker)
+                        {
+                            empty = false;
+                            break;
+                        }
+                    File.Delete(SafePathUtility.ResolveWithinRoot(root, marker));
+                    // Nonrecursive deletion preserves new contents. Portable path APIs do
+                    // not make the ownership observation and deletion atomic against writers.
+                    if (!completed && empty)
+                        Directory.Delete(SafePathUtility.ResolveWithinRoot(root, path), false);
                 }
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
