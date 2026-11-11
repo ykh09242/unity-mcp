@@ -4,15 +4,17 @@ The Docker image and MCPB generator retain these reviewed top-level inputs:
 
 | Input | Pin | Evidence |
 | --- | --- | --- |
-| Python base image | `python:3.14-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966` | Official Docker Hub tag metadata matched the byte-hashed OCI index on 2026-11-04. |
+| Python base image | `python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f` | Official Docker Hub tag metadata matched the byte-hashed OCI index on 2026-11-11. |
 | Docker uv installer | `uv==0.13.7` | PyPI listed ten available Linux wheels on 2026-11-05. CI selects the same version. |
 | MCPB executable | `@anthropic-ai/mcpb@2.1.2` | Exact npm release metadata and the upstream CLI supported `pack [directory] [output]` on 2026-11-04. |
 
 The Python digest selects a multiarchitecture OCI index, preserving platform
 selection. Its Linux amd64 child digest is
-`sha256:ec6a14df5b63e3fbb3498e3240f7f640c230f9dca67683d23265db3866697f2d`;
+`sha256:ac25e5afbfdb4a94ff99cc24b0345719210133144481480bcba6085efa36a341`;
 its Linux arm64/v8 child is
-`sha256:29434a59c93070e470f84663e4289026e04644ea44b5220ef7e07d653318ca1f`.
+`sha256:973d41424c3fd81029ac9230bcdec2580fb67b49af9004279001c301182ae868`.
+Both child manifests and configuration digests were byte-hashed and declare Python
+3.14.10. This verifies registry metadata; Docker execution was not performed.
 The server's Python dependencies are declared separately in `Server/pyproject.toml`.
 
 Sources: [official Python tag metadata](https://hub.docker.com/v2/repositories/library/python/tags/3.14-slim),

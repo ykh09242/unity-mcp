@@ -12,7 +12,7 @@ def test_container_keeps_verified_python_index_digest_and_exact_uv_release():
     lines = (ROOT / "Server/Dockerfile").read_text().splitlines()
     assert (
         lines[0]
-        == "FROM python:3.14-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966"
+        == "FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f"
     )
     assert "RUN pip install uv==0.13.7" in lines
 
