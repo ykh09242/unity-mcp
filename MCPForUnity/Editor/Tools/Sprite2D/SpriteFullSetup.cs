@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
@@ -71,14 +73,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             )
                 return diagnostics.Fail("BAD_PARAM", pathError);
 
-            // ── Step 1: Slice ──────────────────────────────────────────────────
-
-            SpriteImportSetup.SliceSheet(@params, diagnostics);
-            if (diagnostics.HasErrors)
-                return Stop("slice_sheet", diagnostics);
-
-            // ── Step 2: Clips ──────────────────────────────────────────────────
-
             if (clipsToken == null || clipsToken.Count == 0)
             {
                 clipsToken = new JArray(
@@ -90,6 +84,28 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     }
                 );
             }
+
+            string sceneTarget = null;
+            if (addToScene)
+            {
+                if (!SpriteParams.TryReadString(@params, "scene_target", null, out sceneTarget, out pathError))
+                    return diagnostics.Fail("BAD_PARAM", pathError);
+                ResolveSceneTarget(sceneTarget, diagnostics);
+                if (diagnostics.HasErrors)
+                    return Stop("add_to_scene", diagnostics);
+            }
+
+            string refusedStep = PreflightDestinations(clipsToken, outputDir, controllerPath, overwrite, PredictSpriteCount(@params), diagnostics);
+            if (refusedStep != null)
+                return Stop(refusedStep, diagnostics);
+
+            // ── Step 1: Slice ──────────────────────────────────────────────────
+
+            SpriteImportSetup.SliceSheet(@params, diagnostics);
+            if (diagnostics.HasErrors)
+                return Stop("slice_sheet", diagnostics);
+
+            // ── Step 2: Clips ──────────────────────────────────────────────────
 
             var clips = SpriteClipBuilder.CreateClips(path, clipsToken, outputDir, overwrite, diagnostics);
             // A repeated run skips every clip, and the controller step then failed with "No valid
@@ -117,33 +133,12 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             // ── Step 4: Add to scene ───────────────────────────────────────────
 
-            string sceneTarget = @params["scene_target"]?.ToString();
-
-            // An attachment asked for but not made is not a success, so both misses are errors.
-            if (addToScene && string.IsNullOrEmpty(sceneTarget))
+            if (addToScene)
             {
-                diagnostics.AddError(
-                    "SCENE_TARGET_MISSING",
-                    "'add_to_scene' is true but 'scene_target' is empty.",
-                    "Pass 'scene_target' with the GameObject name.",
-                    "Set add_to_scene=false."
-                );
-            }
-            else if (addToScene)
-            {
-                // The shared lookup, not GameObject.Find: Find skips inactive objects and
-                // picks one of several with the same name without saying so.
-                var matches = GameObjectLookup.SearchGameObjects("by_name", sceneTarget, includeInactive: true);
-                var go = matches.Count == 1 ? GameObjectLookup.FindById(matches[0]) : null;
-                if (matches.Count > 1)
-                {
-                    diagnostics.AddError(
-                        "SCENE_TARGET_AMBIGUOUS",
-                        $"{matches.Count} GameObjects are named '{sceneTarget}'; nothing was attached.",
-                        "Rename the target or pick a unique name."
-                    );
-                }
-                else if (go != null)
+                // Imports can invoke project callbacks; re-resolve at the actual attachment
+                // boundary rather than trusting a target observed before the asset writes.
+                var go = ResolveSceneTarget(sceneTarget, diagnostics);
+                if (go != null)
                 {
                     var asset = AssetDatabase.LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(controller.path);
                     if (asset != null)
@@ -186,14 +181,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                         );
                     }
                 }
-                else
-                {
-                    diagnostics.AddError(
-                        "SCENE_TARGET_NOT_FOUND",
-                        $"GameObject '{sceneTarget}' not found in scene.",
-                        "Check GameObject name or open the correct scene first."
-                    );
-                }
             }
 
             // Shaped like the other three steps' refusals rather than like a success with the
@@ -224,6 +211,186 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 diagnostics = diagnostics.Build(),
             };
         }
+
+        private static UnityEngine.GameObject ResolveSceneTarget(string sceneTarget, SpriteDiagnosticBuilder diagnostics)
+        {
+            if (string.IsNullOrWhiteSpace(sceneTarget))
+            {
+                diagnostics.AddError(
+                    "SCENE_TARGET_MISSING",
+                    "'add_to_scene' is true but 'scene_target' is empty.",
+                    "Pass 'scene_target' with the GameObject name.",
+                    "Set add_to_scene=false."
+                );
+                return null;
+            }
+
+            // Shared lookup includes inactive objects and refuses duplicate names.
+            var matches = GameObjectLookup.SearchGameObjects("by_name", sceneTarget, includeInactive: true);
+            if (matches.Count > 1)
+            {
+                diagnostics.AddError(
+                    "SCENE_TARGET_AMBIGUOUS",
+                    $"{matches.Count} GameObjects are named '{sceneTarget}'; nothing was attached.",
+                    "Rename the target or pick a unique name."
+                );
+                return null;
+            }
+            var go = matches.Count == 1 ? GameObjectLookup.FindById(matches[0]) : null;
+            if (go == null)
+                diagnostics.AddError(
+                    "SCENE_TARGET_NOT_FOUND",
+                    $"GameObject '{sceneTarget}' not found in scene.",
+                    "Check GameObject name or open the correct scene first."
+                );
+            return go;
+        }
+
+        // Inspect predictable output refusals before the first importer or asset mutation.
+        // The builders keep their checks too: project import callbacks can change the paths.
+        private static int? PredictSpriteCount(JObject parameters)
+        {
+            // Explicit columns/rows fix the successful slice count without importing. If a
+            // dimension is derived from source pixels, leave the count unknown here.
+            if (
+                !SpriteParams.TryReadWholeNumber(parameters, "cols", 0, out int cols, out _)
+                || !SpriteParams.TryReadWholeNumber(parameters, "rows", 0, out int rows, out _)
+                || !SpriteParams.TryReadWholeNumber(parameters, "frame_height", 0, out int frameHeight, out _)
+            )
+                return null;
+            if ((parameters["rows"] == null || parameters["rows"].Type == JTokenType.Null) && frameHeight <= 0)
+                rows = 1;
+            long count = (long)cols * rows;
+            return cols > 0 && rows > 0 && count <= int.MaxValue ? (int?)count : null;
+        }
+
+        private static string PreflightDestinations(
+            JArray clips,
+            string outputDir,
+            string controllerPath,
+            bool overwrite,
+            int? spriteCount,
+            SpriteDiagnosticBuilder diagnostics
+        )
+        {
+            if (!AssetGenPaths.TryGetAssetsFolder(outputDir, out _))
+            {
+                diagnostics.AddError("BAD_PARAM", "'output_dir' must name a folder under Assets without an existing file at the destination or an ancestor.");
+                return "setup_clips";
+            }
+            string controllerDir = Path.GetDirectoryName(controllerPath)?.Replace('\\', '/') ?? "Assets";
+            if (!AssetGenPaths.TryGetAssetsFolder(controllerDir, out _))
+            {
+                diagnostics.AddError("BAD_PARAM", "'controller_path' must have a folder parent without an existing file at any ancestor.");
+                return "setup_controller";
+            }
+
+            var plannedPaths = new List<string>();
+            var skippedClips = new SpriteDiagnosticBuilder();
+            int existingClips = 0;
+            int folderClips = 0;
+            bool uncertainClips = false;
+            foreach (var clip in clips)
+            {
+                (string name, string path, int startFrame, int frameCount, float fps, bool loop, float duration) definition;
+                if (spriteCount.HasValue)
+                {
+                    if (!SpriteClipDefinition.TryRead(clip, spriteCount.Value, outputDir, skippedClips, out definition))
+                        continue;
+                }
+                else
+                {
+                    // With an unknown slice count, reject a path conflict only for a clip
+                    // eligible at every possible positive count. Range/default-end and duration
+                    // validity are monotonic between these endpoints; uncertain clips stay with
+                    // the builders' execution checks rather than blocking a valid skipped clip.
+                    var predictionDiagnostics = new SpriteDiagnosticBuilder();
+                    if (
+                        !SpriteClipDefinition.TryRead(clip, 1, outputDir, predictionDiagnostics, out definition)
+                        || !SpriteClipDefinition.TryRead(clip, int.MaxValue, outputDir, predictionDiagnostics, out _)
+                    )
+                    {
+                        uncertainClips = true;
+                        continue;
+                    }
+                }
+                string name = definition.name;
+                string clipPath = definition.path;
+                if (Directory.Exists(AssetPathUtility.GetFullAssetPath(clipPath)))
+                {
+                    folderClips++;
+                    skippedClips.AddWarning(
+                        "CLIP_BAD_PATH",
+                        $"Clip '{name}': '{clipPath}' is a folder - skipped.",
+                        "Choose a different clip name or output_dir."
+                    );
+                    continue;
+                }
+                if (!overwrite && AssetExists(clipPath))
+                {
+                    existingClips++;
+                    skippedClips.AddWarning(
+                        "CLIP_EXISTS",
+                        $"Clip '{name}': an asset already exists at '{clipPath}' - skipped.",
+                        "Set overwrite=true to replace it."
+                    );
+                    continue;
+                }
+                plannedPaths.Add(clipPath);
+            }
+            // A skipped destination can coexist with valid new clips. Preserve that successful
+            // partial setup and let the builder emit its warnings exactly once at execution.
+            if (!uncertainClips && plannedPaths.Count == 0 && existingClips + folderClips > 0)
+            {
+                foreach (var skipped in skippedClips.Build())
+                    diagnostics.AddWarning(skipped.code, skipped.message, skipped.fix_options);
+                if (existingClips == clips.Count)
+                    diagnostics.AddError(
+                        "ALL_CLIPS_EXIST",
+                        "Every requested clip already exists, so full_setup stopped before changing the importer or assets.",
+                        "Set overwrite=true to replace the clips and the controller.",
+                        "Call setup_controller with the existing .anim paths, which the CLIP_EXISTS warnings name, and overwrite=true if the controller already exists."
+                    );
+                else
+                    diagnostics.AddError(
+                        "NO_CLIPS",
+                        "No requested clip has a writable destination; full_setup stopped before changing the importer or assets.",
+                        "Choose a different clip name or output_dir, or set overwrite=true for existing files."
+                    );
+                return "setup_clips";
+            }
+
+            plannedPaths.Add(controllerPath);
+            var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            for (int i = 0; i < plannedPaths.Count; i++)
+            {
+                for (int j = i + 1; j < plannedPaths.Count; j++)
+                {
+                    string left = plannedPaths[i];
+                    string right = plannedPaths[j];
+                    if (left.StartsWith(right + "/", comparison) || right.StartsWith(left + "/", comparison))
+                    {
+                        diagnostics.AddError(
+                            "OUTPUT_PATH_CONFLICT",
+                            $"Requested outputs '{left}' and '{right}' cannot both be files.",
+                            "Choose distinct output paths without a file ancestor."
+                        );
+                        return "setup_controller";
+                    }
+                }
+            }
+            if (!overwrite && AssetExists(controllerPath))
+            {
+                diagnostics.AddError("CONTROLLER_EXISTS", $"An asset already exists at '{controllerPath}'.", "Set overwrite=true to replace it.");
+                return "setup_controller";
+            }
+            return null;
+        }
+
+        private static bool AssetExists(string path) =>
+            File.Exists(AssetPathUtility.GetFullAssetPath(path))
+            || AssetDatabase.LoadMainAssetAtPath(path) != null
+            || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets));
 
         private static object Stop(string step, SpriteDiagnosticBuilder diagnostics) =>
             new

@@ -2195,9 +2195,8 @@ namespace MCPForUnityTests.Editor.Tools
         // full_setup
         // =====================================================================
 
-        // A second run without overwrite. Given the same clip, every clip exists: it used to reach
-        // the controller step and fail there with "No valid clips loaded.". Given a new clip, the
-        // clip is written and the existing controller refuses. `fixes`: what the refusal must offer.
+        // A second run without overwrite refuses the predictable collision before slicing or
+        // writing a new clip. `fixes`: what the refusal must offer.
         [TestCase(null, "setup_clips", "ALL_CLIPS_EXIST", "overwrite=true", "setup_controller")]
         [TestCase("s5_new", "setup_controller", "CONTROLLER_EXISTS", "overwrite=true")]
         public void FullSetup_RerunWithoutOverwrite_StopsAtTheRefusingStepBeforeTouchingTheScene(
@@ -2276,6 +2275,71 @@ namespace MCPForUnityTests.Editor.Tools
             // the array was what let this refusal keep a shape no other refusal in the tool has.
             Assert.AreEqual("add_to_scene", result.Value<string>("step"));
             Assert.That(ErrorText(result), Does.Contain("NoSuchObject"));
+        }
+
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(2)]
+        public void FullSetup_InvalidSceneTarget_PreservesImporterAssetsAndDirtyState(int targetCase)
+        {
+            string path = CreateSheet("targetpreflight", 4, 1);
+            string clipPath = $"{TempRoot}/walk.anim";
+            string controllerPath = $"{TempRoot}/Target.controller";
+            AssetDatabase.CreateAsset(new AnimationClip { frameRate = 37 }, clipPath);
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+            AssetDatabase.SaveAssets();
+            var first = targetCase == 2 ? new GameObject("SpritePreflightDuplicate") : null;
+            var second = targetCase == 2 ? new GameObject("SpritePreflightDuplicate") : null;
+            var importer = AssetImporter.GetAtPath(path);
+            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
+            string importerBefore = EditorJsonUtility.ToJson(importer);
+            string clipBefore = EditorJsonUtility.ToJson(clip);
+            byte[] controllerBefore = File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(controllerPath));
+            bool importerDirty = EditorUtility.IsDirty(importer);
+            bool clipDirty = EditorUtility.IsDirty(clip);
+            bool controllerDirty = EditorUtility.IsDirty(controller);
+            bool sceneDirty = EditorSceneManager.GetActiveScene().isDirty;
+            try
+            {
+                var parameters = new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["animation_name"] = "walk",
+                    ["output_dir"] = TempRoot,
+                    ["controller_path"] = controllerPath,
+                    ["overwrite"] = true,
+                    ["add_to_scene"] = true,
+                };
+                if (targetCase != 0)
+                    parameters["scene_target"] = targetCase == 2 ? "SpritePreflightDuplicate" : "SpritePreflightMissing";
+                var result = Run(parameters);
+
+                Assert.IsFalse(result.Value<bool>("success"));
+                Assert.AreEqual("add_to_scene", result.Value<string>("step"));
+                string code =
+                    targetCase == 0 ? "SCENE_TARGET_MISSING"
+                    : targetCase == 2 ? "SCENE_TARGET_AMBIGUOUS"
+                    : "SCENE_TARGET_NOT_FOUND";
+                Assert.That(result["diagnostics"].ToString(), Does.Contain(code));
+                Assert.AreEqual(importerBefore, EditorJsonUtility.ToJson(importer));
+                Assert.AreEqual(clipBefore, EditorJsonUtility.ToJson(AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath)));
+                CollectionAssert.AreEqual(controllerBefore, File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(controllerPath)));
+                Assert.AreEqual(importerDirty, EditorUtility.IsDirty(importer));
+                Assert.AreEqual(clipDirty, EditorUtility.IsDirty(clip));
+                Assert.AreEqual(controllerDirty, EditorUtility.IsDirty(controller));
+                Assert.AreEqual(sceneDirty, EditorSceneManager.GetActiveScene().isDirty);
+                Assert.IsNull(result["controller_path"], "preflight did not write a controller");
+                UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                if (first != null)
+                    Object.DestroyImmediate(first);
+                if (second != null)
+                    Object.DestroyImmediate(second);
+            }
         }
 
         [Test]
@@ -2615,7 +2679,7 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void FullSetup_ControllerRefusal_PreservesClipsWrittenToNewFolder()
+        public void FullSetup_ControllerRefusal_PreservesImporterAndDoesNotWriteClips()
         {
             string path = CreateSheet("controllerrefusal", 4, 1);
             string controllerPath = $"{TempRoot}/Existing.controller";
@@ -2623,6 +2687,11 @@ namespace MCPForUnityTests.Editor.Tools
             AssetDatabase.SaveAssets();
             string controllerGuid = AssetDatabase.AssetPathToGUID(controllerPath);
             string outputDir = $"{TempRoot}/CompletedClips/Nested";
+            var importer = AssetImporter.GetAtPath(path);
+            string importerBefore = EditorJsonUtility.ToJson(importer);
+            bool importerDirty = EditorUtility.IsDirty(importer);
+            byte[] controllerBefore = File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(controllerPath));
+            bool controllerDirty = EditorUtility.IsDirty(existing);
 
             var result = Run(
                 new JObject
@@ -2639,10 +2708,171 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.AreEqual("setup_controller", result.Value<string>("step"));
             Assert.That(result["diagnostics"].ToString(), Does.Contain("CONTROLLER_EXISTS"));
-            Assert.IsTrue(AssetDatabase.IsValidFolder(outputDir));
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{outputDir}/walk.anim"));
+            Assert.IsFalse(AssetDatabase.IsValidFolder(outputDir));
+            Assert.IsNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{outputDir}/walk.anim"));
+            Assert.AreEqual(importerBefore, EditorJsonUtility.ToJson(importer));
+            Assert.AreEqual(importerDirty, EditorUtility.IsDirty(importer));
+            CollectionAssert.AreEqual(controllerBefore, File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(controllerPath)));
+            Assert.AreEqual(controllerDirty, EditorUtility.IsDirty(existing));
             Assert.AreEqual(controllerGuid, AssetDatabase.AssetPathToGUID(controllerPath));
             Assert.AreEqual(existing, AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void FullSetup_MixedSkippedAndNewClips_StillBuildsFreshController(bool folderCollision)
+        {
+            string path = CreateSheet("mixedcollision", 4, 1);
+            string skippedPath = $"{TempRoot}/walk.anim";
+            if (folderCollision)
+                EnsureFolder(skippedPath);
+            else
+                AssetDatabase.CreateAsset(new AnimationClip { frameRate = 37 }, skippedPath);
+            AssetDatabase.SaveAssets();
+            string skippedGuid = AssetDatabase.AssetPathToGUID(skippedPath);
+            byte[] skippedBytes = folderCollision ? null : File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(skippedPath));
+            var skippedClip = AssetDatabase.LoadAssetAtPath<AnimationClip>(skippedPath);
+            bool skippedDirty = skippedClip != null && EditorUtility.IsDirty(skippedClip);
+            string controllerPath = $"{TempRoot}/Mixed.controller";
+
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["output_dir"] = TempRoot,
+                    ["controller_path"] = controllerPath,
+                    ["clips"] = new JArray
+                    {
+                        new JObject { ["name"] = "walk" },
+                        new JObject { ["name"] = "idle" },
+                    },
+                }
+            );
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(1, result.Value<int>("clip_count"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain(folderCollision ? "CLIP_BAD_PATH" : "CLIP_EXISTS"));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{TempRoot}/idle.anim"));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath));
+            Assert.AreEqual(skippedGuid, AssetDatabase.AssetPathToGUID(skippedPath));
+            if (folderCollision)
+                Assert.IsTrue(AssetDatabase.IsValidFolder(skippedPath));
+            else
+            {
+                CollectionAssert.AreEqual(skippedBytes, File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(skippedPath)));
+                Assert.AreEqual(skippedClip, AssetDatabase.LoadAssetAtPath<AnimationClip>(skippedPath));
+                Assert.AreEqual(skippedDirty, EditorUtility.IsDirty(skippedClip));
+            }
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("fps", 0, "CLIP_BAD_FPS")]
+        [TestCase("fps", -1, "CLIP_BAD_FPS")]
+        [TestCase("fps", "bad", "CLIP_BAD_FPS")]
+        [TestCase("fps", double.NaN, "CLIP_BAD_FPS")]
+        [TestCase("fps", 1e-40, "CLIP_BAD_FPS")]
+        [TestCase("start_frame", -1, "CLIP_BAD_RANGE")]
+        [TestCase("start_frame", 4, "CLIP_BAD_RANGE")]
+        [TestCase("start_frame", 0.5, "CLIP_BAD_RANGE")]
+        [TestCase("end_frame", 4, "CLIP_BAD_RANGE")]
+        [TestCase("end_frame", -1, "CLIP_BAD_RANGE")]
+        [TestCase("loop", "bad", "CLIP_BAD_LOOP")]
+        [TestCase("loop", 1, "CLIP_BAD_LOOP")]
+        public void FullSetup_SkippedInvalidClip_DoesNotConflictWithControllerFolder(string key, object invalidValue, string code) =>
+            AssertSkippedClipAllowsControllerFolder(key, invalidValue, code, derivedGrid: false);
+
+        [TestCase("fps", 0, "CLIP_BAD_FPS")]
+        [TestCase("fps", 1e-40, "CLIP_BAD_FPS")]
+        [TestCase("end_frame", 4, "CLIP_BAD_RANGE")]
+        [TestCase("loop", "bad", "CLIP_BAD_LOOP")]
+        public void FullSetup_DerivedGridSkippedClip_DoesNotConflictWithControllerFolder(string key, object invalidValue, string code) =>
+            AssertSkippedClipAllowsControllerFolder(key, invalidValue, code, derivedGrid: true);
+
+        private static void AssertSkippedClipAllowsControllerFolder(string key, object invalidValue, string code, bool derivedGrid)
+        {
+            string path = CreateSheet("invalidclipancestor", 4, 1);
+            string outputDir = $"{TempRoot}/Clips";
+            string controllerPath = $"{outputDir}/walk.anim/Hero.controller";
+            var parameters = new JObject
+            {
+                ["action"] = "full_setup",
+                ["path"] = path,
+                ["cols"] = 4,
+                ["output_dir"] = outputDir,
+                ["controller_path"] = controllerPath,
+                ["clips"] = new JArray
+                {
+                    new JObject { ["name"] = "walk", [key] = JToken.FromObject(invalidValue) },
+                    new JObject { ["name"] = "idle" },
+                },
+            };
+            if (derivedGrid)
+            {
+                parameters.Remove("cols");
+                parameters["frame_width"] = Cell;
+                parameters["frame_height"] = Cell;
+            }
+            var result = Run(parameters);
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(1, result.Value<int>("clip_count"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain(code));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{outputDir}/idle.anim"));
+            Assert.IsTrue(AssetDatabase.IsValidFolder($"{outputDir}/walk.anim"));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("output_dir")]
+        [TestCase("controller_path")]
+        [TestCase("clip_path")]
+        [TestCase("planned_ancestor")]
+        public void FullSetup_DestinationConflict_PreservesImporterAndExistingAssets(string conflict)
+        {
+            string path = CreateSheet("destinationpreflight", 4, 1);
+            var importer = AssetImporter.GetAtPath(path);
+            string before = EditorJsonUtility.ToJson(importer);
+            bool dirty = EditorUtility.IsDirty(importer);
+            string blocker = $"{TempRoot}/Blocker.txt";
+            File.WriteAllText(AssetPathUtility.GetFullAssetPath(blocker), "preserve");
+            AssetDatabase.ImportAsset(blocker, ImportAssetOptions.ForceSynchronousImport);
+            string output = $"{TempRoot}/NewClips";
+            string controller = $"{TempRoot}/NewController.controller";
+            if (conflict == "output_dir")
+                output = blocker + "/Nested";
+            else if (conflict == "controller_path")
+                controller = blocker + "/Nested.controller";
+            else if (conflict == "clip_path")
+            {
+                output = TempRoot;
+                EnsureFolder($"{TempRoot}/walk.anim");
+            }
+            else
+                controller = output + "/walk.anim/Nested.controller";
+
+            var result = Run(
+                new JObject
+                {
+                    ["action"] = "full_setup",
+                    ["path"] = path,
+                    ["cols"] = 4,
+                    ["animation_name"] = "walk",
+                    ["output_dir"] = output,
+                    ["controller_path"] = controller,
+                    ["overwrite"] = true,
+                }
+            );
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(importer));
+            Assert.AreEqual(dirty, EditorUtility.IsDirty(importer));
+            Assert.AreEqual("preserve", File.ReadAllText(AssetPathUtility.GetFullAssetPath(blocker)));
+            Assert.IsEmpty(AssetDatabase.FindAssets("t:AnimationClip", new[] { TempRoot }));
+            Assert.IsEmpty(AssetDatabase.FindAssets("t:AnimatorController", new[] { TempRoot }));
+            Assert.IsFalse(AssetDatabase.IsValidFolder($"{TempRoot}/NewClips"));
             UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
         }
 
