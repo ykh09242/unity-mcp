@@ -359,6 +359,9 @@ async def refresh_unity(
     mode: Annotated[Literal["if_dirty", "force"], "Refresh mode"] = "if_dirty",
     scope: Annotated[Literal["assets", "scripts", "all"], "Refresh scope"] = "all",
     compile: Annotated[Literal["none", "request"], "Whether to request compilation"] = "none",
+    force_recompile: Annotated[
+        bool, "Request a clean compilation; requires scope=scripts and compile=request"
+    ] = False,
     wait_for_ready: Annotated[
         bool,
         "If true, wait until mcpforunity://editor/state reports data.advice.ready_for_tools true",
@@ -369,6 +372,12 @@ async def refresh_unity(
         "Total refresh/readiness observation budget in seconds; expiry does not undo native work",
     ] = REFRESH_READY_TIMEOUT_SECONDS,
 ) -> MCPResponse | dict[str, Any]:
+    if type(force_recompile) is not bool or (
+        force_recompile and (scope != "scripts" or compile != "request")
+    ):
+        return MCPResponse(
+            success=False, error="force_recompile requires scope=scripts and compile=request"
+        )
     if (
         isinstance(timeout_seconds, bool)
         or not isinstance(timeout_seconds, (int, float))
@@ -414,6 +423,8 @@ async def refresh_unity(
     }
 
     compile_id = uuid.uuid4().hex if compile == "request" else None
+    if force_recompile:
+        params["force_recompile"] = True
     if compile_id is not None:
         params["compile_id"] = compile_id
     compilation = unknown_compile_job(compile_id, "tracking_unsupported") if compile_id else None

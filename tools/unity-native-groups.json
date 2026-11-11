@@ -1,6 +1,20 @@
 {
   "schema_version": 1,
   "groups": {
+    "source-freshness-admission": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.TestRunnerServiceLifecycleTests.SourceFreshnessAdmissionChecksTheTokenImmediatelyBeforeNativeExecution",
+        "MCPForUnityTests.Editor.Services.TestRunnerServiceLifecycleTests.SourceFreshnessAdmissionCannotExecuteAfterDisposalDuringObservation",
+        "MCPForUnityTests.Editor.Tools.RunTestsTests.SourceEvidenceMissingRefusesBeforeReservingAJob",
+        "MCPForUnityTests.Editor.Tools.RunTestsTests.ValidSelector_PreservesSupportedEncodingsAndAliases",
+        "MCPForUnityTests.Editor.Tools.RunTestsTests.OptionalSelectorDefaults_RemainUnfiltered",
+        "MCPForUnityTests.Editor.Tools.RunTestsTests.MalformedSelector_RejectsBeforeJobReservationOrServiceCall",
+        "MCPForUnityTests.Editor.Tools.RunTestsTests.HandleCommand_WhenTestsAlreadyRunning_ReturnsBusyError",
+        "MCPForUnityTests.Editor.Tools.RunTestsTests.HandleCommand_WithInvalidMode_ReturnsError"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
     "authoring-prefab-persistence": {
       "methods": [
         "MCPForUnityTests.Editor.Tools.NativeAuthoringPersistenceTests.InheritedComponent_RecordsOverrideAndSurvivesUndoRedoAndReopen"

@@ -134,6 +134,10 @@ async def _scenario(case):
             )
             if command == "get_project_info":
                 return {"success": False, "error": "fixture no project path"}
+            if command == "get_compile_job":
+                from tests.test_source_freshness_contracts import current
+
+                return {"success": True, "source_freshness": current()}
             if command == "get_editor_state":
                 if case == "unknown_state":
                     return {

@@ -388,6 +388,54 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsFalse(TestRunStatus.IsRunning);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SourceFreshnessAdmissionChecksTheTokenImmediatelyBeforeNativeExecution(bool current)
+        {
+            int invoked = 0;
+            string checkedToken = null;
+            _service.SourceAdmissionForTests = (token, cancellation) =>
+            {
+                checkedToken = token;
+                return Task.FromResult(current);
+            };
+            SetSchedule(_ =>
+            {
+                invoked++;
+                throw new InvalidOperationException("native-execution-witness");
+            });
+            var run = _service.RunTestsAsync(TestMode.EditMode, new TestFilterOptions { RequireSourceFreshness = true, SourceToken = new string('a', 64) });
+            string message = ObserveFailure(run).Message;
+            Assert.AreEqual(new string('a', 64), checkedToken);
+            Assert.AreEqual(current ? 1 : 0, invoked);
+            StringAssert.Contains(current ? "native-execution-witness" : "source_freshness_changed", message);
+            Assert.IsFalse(TestRunStatus.IsRunning);
+        }
+
+        [Test]
+        public async Task SourceFreshnessAdmissionCannotExecuteAfterDisposalDuringObservation()
+        {
+            int invoked = 0;
+            var observation = new TaskCompletionSource<bool>();
+            _service.SourceAdmissionForTests = (_, cancellation) => observation.Task;
+            SetSchedule(_ =>
+            {
+                invoked++;
+                return "must-not-execute";
+            });
+            var run = _service.RunTestsAsync(TestMode.EditMode, new TestFilterOptions { RequireSourceFreshness = true, SourceToken = new string('b', 64) });
+            _service.Dispose();
+            observation.SetResult(true);
+            try
+            {
+                await run;
+                Assert.Fail("A disposed observer admitted a native run.");
+            }
+            catch (ObjectDisposedException) { }
+            Assert.AreEqual(0, invoked);
+            Assert.IsFalse(TestRunStatus.IsRunning);
+        }
+
         private void SetSchedule(Func<ExecutionSettings, string> schedule)
         {
             var field = typeof(TestRunnerApi).GetField("ScheduleJob", BindingFlags.NonPublic | BindingFlags.Instance);

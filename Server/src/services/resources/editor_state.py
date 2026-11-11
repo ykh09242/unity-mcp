@@ -181,6 +181,8 @@ class EditorStateData(BaseModel):
     advice: EditorStateAdvice | None = None
     staleness: EditorStateStaleness | None = None
     diagnostics: EditorStateDiagnostics | None = None
+    source_freshness: dict | None = None
+    source_observation_age_ms: int | None = None
 
 
 def _now_unix_ms() -> int:
@@ -257,6 +259,15 @@ async def _local_project_root(instance_id: str) -> str | None:
 
 def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
     now_ms = _now_unix_ms()
+    from models.source_freshness import parse_freshness
+
+    source = parse_freshness(state_v2.get("source_freshness"))
+    state_v2["source_freshness"] = source.model_dump(by_alias=True)
+    state_v2["source_observation_age_ms"] = (
+        max(0, now_ms - source.observed_at_unix_ms)
+        if source.observed_at_unix_ms is not None
+        else None
+    )
     observed = state_v2.get("observed_at_unix_ms")
     try:
         observed_ms = int(observed)

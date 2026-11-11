@@ -118,7 +118,10 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCaseSource(nameof(ValidSelectors))]
         public void ValidSelector_PreservesSupportedEncodingsAndAliases(string key, string json)
         {
-            var response = MCPForUnity.Editor.Tools.RunTests.HandleCommand(new JObject { [key] = JToken.Parse(json) }).GetAwaiter().GetResult();
+            var response = MCPForUnity
+                .Editor.Tools.RunTests.HandleCommand(new JObject { [key] = JToken.Parse(json), ["source_token"] = new string('a', 64) })
+                .GetAwaiter()
+                .GetResult();
             Assert.IsInstanceOf<SuccessResponse>(response);
             Assert.AreEqual(1, service.Calls);
             string[] selected =
@@ -136,14 +139,19 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("\" \"")]
         public void OptionalSelectorDefaults_RemainUnfiltered(string json)
         {
-            var request = new JObject();
+            var request = new JObject { ["source_token"] = new string('a', 64) };
             if (json != null)
                 foreach (string key in new[] { "testNames", "groupNames", "categoryNames", "assemblyNames" })
                     request[key] = JToken.Parse(json);
             var response = MCPForUnity.Editor.Tools.RunTests.HandleCommand(request).GetAwaiter().GetResult();
             Assert.IsInstanceOf<SuccessResponse>(response);
             Assert.AreEqual(1, service.Calls);
-            Assert.IsNull(service.Options);
+            Assert.IsNull(service.Options.TestNames);
+            Assert.IsNull(service.Options.GroupNames);
+            Assert.IsNull(service.Options.CategoryNames);
+            Assert.IsNull(service.Options.AssemblyNames);
+            Assert.IsTrue(service.Options.RequireSourceFreshness);
+            Assert.AreEqual(new string('a', 64), service.Options.SourceToken);
         }
 
         private sealed class CapturingTestService : ITestRunnerService
@@ -179,7 +187,10 @@ namespace MCPForUnityTests.Editor.Tools
 
             try
             {
-                var resultObj = MCPForUnity.Editor.Tools.RunTests.HandleCommand(new JObject()).GetAwaiter().GetResult();
+                var resultObj = MCPForUnity
+                    .Editor.Tools.RunTests.HandleCommand(new JObject { ["source_token"] = new string('a', 64) })
+                    .GetAwaiter()
+                    .GetResult();
 
                 Assert.IsInstanceOf<ErrorResponse>(resultObj);
                 var err = (ErrorResponse)resultObj;
@@ -206,6 +217,18 @@ namespace MCPForUnityTests.Editor.Tools
             var err = (ErrorResponse)resultObj;
             Assert.AreEqual(false, err.Success);
             Assert.IsTrue(err.Error.Contains("Unknown test mode", StringComparison.OrdinalIgnoreCase));
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("old-source")]
+        public void SourceEvidenceMissingRefusesBeforeReservingAJob(string token)
+        {
+            var response = MCPForUnity.Editor.Tools.RunTests.HandleCommand(new JObject { ["source_token"] = token }).GetAwaiter().GetResult();
+            Assert.IsInstanceOf<ErrorResponse>(response);
+            Assert.AreEqual("source_freshness_required", ((ErrorResponse)response).Code);
+            Assert.AreEqual(0, service.Calls);
+            Assert.AreEqual(0, Jobs.Count);
         }
     }
 }

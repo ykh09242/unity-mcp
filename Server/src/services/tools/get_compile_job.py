@@ -201,11 +201,20 @@ def parse_compile_job(value, compile_id: str, *, last_successful_compilation=Non
         return unknown_compile_job(compile_id, "tracking_unsupported")
 
 
-async def read_compile_job(instance: str | None, compile_id: str) -> dict:
+async def read_compile_job(
+    instance: str | None,
+    compile_id: str,
+    *,
+    observe_source: bool = False,
+    evidence: dict | None = None,
+) -> dict:
     # This command is safe even on old peers: NEVER fall back to refresh_unity.
     try:
+        params = {"compile_id": compile_id}
+        if observe_source:
+            params["observe_source"] = True
         response = await unity_transport.send_job_observation(
-            async_send_command_with_retry, instance, "get_compile_job", {"compile_id": compile_id}
+            async_send_command_with_retry, instance, "get_compile_job", params
         )
     except Exception:
         return unknown_compile_job(compile_id, "observation_unavailable")
@@ -223,6 +232,10 @@ async def read_compile_job(instance: str | None, compile_id: str) -> dict:
         compile_id,
         last_successful_compilation=value.get("last_successful_compilation"),
     )
+    if evidence is not None and value.get("source_freshness") is not None:
+        from models.source_freshness import parse_freshness
+
+        evidence["source_freshness"] = parse_freshness(value["source_freshness"])
     # New peers keep diagnostics outside the strict ledger contract so older
     # servers can still read compiler outcomes. Invalid optional diagnostics do
     # not invalidate otherwise complete evidence or establish native completion.
@@ -258,6 +271,10 @@ async def read_compile_job(instance: str | None, compile_id: str) -> dict:
     return result
 
 
+class CompileJobResponse(MCPResponse):
+    source_freshness: dict | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
 @mcp_for_unity_tool(
     description="Read compilation status, bounded diagnostics and the last successful compile by compile_id. Unknown means incomplete evidence; readiness and source-revision proof are separate.",
     annotations=ToolAnnotations(
@@ -267,10 +284,22 @@ async def read_compile_job(instance: str | None, compile_id: str) -> dict:
 async def get_compile_job(
     ctx: Context,
     compile_id: Annotated[str, "Opaque compile_id returned by refresh_unity with compile=request"],
-) -> MCPResponse:
+    observe_source: Annotated[
+        bool, "Capture current source inputs without importing or compiling"
+    ] = False,
+) -> CompileJobResponse:
     if not isinstance(compile_id, str) or re.fullmatch(r"[a-f0-9]{32}", compile_id) is None:
-        return MCPResponse(
+        return CompileJobResponse(
             success=False, error="compile_id must contain 32 lowercase hexadecimal characters"
         )
     instance = await get_unity_instance_from_context(ctx)
-    return MCPResponse(success=True, data=await read_compile_job(instance, compile_id))
+    evidence = {}
+    job = await read_compile_job(
+        instance, compile_id, observe_source=observe_source, evidence=evidence
+    )
+    source = evidence.get("source_freshness")
+    return CompileJobResponse(
+        success=True,
+        data=job,
+        source_freshness=source.model_dump(by_alias=True) if source else None,
+    )

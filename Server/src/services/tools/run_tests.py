@@ -334,6 +334,10 @@ class RunTestsStartData(BaseModel):
     mode: str | None = None
     include_details: bool | None = None
     include_failed_tests: bool | None = None
+    source_token: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    source_freshness_required: bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class RunTestsStartResponse(MCPResponse):
@@ -503,7 +507,12 @@ async def run_tests(
         "Clear an orphaned running job instead of starting a run. Use when a job "
         "was lost to a domain reload and is blocking every subsequent run.",
     ] = False,
+    require_source_freshness: Annotated[
+        bool,
+        "Require source, compilation and loaded assembly evidence; upgraded native peers always recheck admission",
+    ] = True,
 ) -> RunTestsStartResponse | MCPResponse:
+    admission_deadline = time.monotonic() + 300.0
     unity_instance = await get_unity_instance_from_context(ctx)
 
     # Runs before both the init_timeout check and preflight on purpose: neither is relevant to
@@ -533,11 +542,27 @@ async def run_tests(
     ):
         return MCPResponse(success=False, error="run_timeout_ms must be 1..86400000 milliseconds")
 
+    if type(require_source_freshness) is not bool:
+        return MCPResponse(success=False, error="require_source_freshness must be a boolean")
+
     gate = await preflight(
         ctx, requires_no_tests=True, wait_for_no_compile=True, refresh_if_dirty=True
     )
     if isinstance(gate, MCPResponse):
         return gate
+
+    from services.source_freshness import ensure_source_freshness
+
+    freshness = await ensure_source_freshness(
+        ctx, instance=unity_instance, deadline=admission_deadline, refresh_policy="if_needed"
+    )
+    legacy_optional = not require_source_freshness and freshness.reason == "unsupported"
+    if freshness.status != "observed_current" and not legacy_optional:
+        return MCPResponse(
+            success=False,
+            error="source_freshness_required",
+            data={"source_freshness": freshness.model_dump(by_alias=True)},
+        )
 
     def _coerce_string_list(value) -> list[str] | None:
         if value is None:
@@ -550,6 +575,9 @@ async def run_tests(
         return None
 
     params: dict[str, Any] = {"mode": mode}
+    if freshness.status == "observed_current":
+        params["source_token"] = freshness.source_token
+        params["require_source_freshness"] = True
     if t := _coerce_string_list(test_names):
         params["testNames"] = t
     if g := _coerce_string_list(group_names):

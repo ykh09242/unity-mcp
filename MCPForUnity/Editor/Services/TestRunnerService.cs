@@ -38,6 +38,7 @@ namespace MCPForUnity.Editor.Services
         private TaskCompletionSource<TestRunResult> _runCompletionSource;
         private string _trackedJobId;
         private bool _disposed;
+        internal Func<string, CancellationToken, Task<bool>> SourceAdmissionForTests;
         private bool _apiReleased;
         private static TestRunnerService _activeRunOwner;
         private static readonly HashSet<PendingRunAdmission> PendingRunAdmissions = new();
@@ -342,6 +343,21 @@ namespace MCPForUnity.Editor.Services
                     throw new InvalidOperationException(
                         "Editor became busy before test execution; wait for compilation, import and reload to settle before retrying."
                     );
+                if (filterOptions?.RequireSourceFreshness == true)
+                {
+                    using var freshnessDeadline = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
+                    freshnessDeadline.CancelAfter(TimeSpan.FromSeconds(30));
+                    var sourceCheck = SourceAdmissionForTests ?? SourceFreshness.SourceFreshnessService.CheckAdmissionAsync;
+                    if (!await sourceCheck(filterOptions.SourceToken, freshnessDeadline.Token))
+                        throw new InvalidOperationException("source_freshness_changed: obtain current source evidence before starting another test run.");
+                    nativeControl?.CheckAdmission();
+                    ThrowIfDisposed();
+                    ThrowIfRetiredRunPending();
+                    if (retirementError != null || (jobId != null && TestJobManager.CurrentJobId != jobId))
+                        throw new InvalidOperationException("Test job was retired during source observation.");
+                    if (EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode)
+                        throw new InvalidOperationException("Play Mode started during source observation.");
+                }
                 TestJobManager.MarkRunExecuting(jobId);
                 nativeControl?.MarkExecuting();
                 nativeInvoked = true;

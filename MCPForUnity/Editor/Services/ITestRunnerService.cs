@@ -10,6 +10,12 @@ namespace MCPForUnity.Editor.Services
     /// </summary>
     public class TestFilterOptions
     {
+        [Newtonsoft.Json.JsonProperty]
+        internal string SourceToken { get; set; }
+
+        [Newtonsoft.Json.JsonProperty]
+        internal bool RequireSourceFreshness { get; set; }
+
         /// <summary>
         /// Full names of specific tests to run (e.g., "MyNamespace.MyTests.TestMethod").
         /// </summary>

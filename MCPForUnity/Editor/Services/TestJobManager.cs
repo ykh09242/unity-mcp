@@ -929,8 +929,17 @@ namespace MCPForUnity.Editor.Services
             var filters = admission["filters"];
             if (filters?.Type == JTokenType.Null)
                 return true;
-            if (filters is not JObject options || options.Count != 4)
+            if (filters is not JObject options || (options.Count != 4 && options.Count != 6))
                 return false;
+            if (options.Count == 6)
+            {
+                if (options["RequireSourceFreshness"]?.Type != JTokenType.Boolean)
+                    return false;
+                var source = options["SourceToken"];
+                bool validSource = source?.Type == JTokenType.String && System.Text.RegularExpressions.Regex.IsMatch((string)source, "\\A[a-f0-9]{64}\\z");
+                if ((bool)options["RequireSourceFreshness"] ? !validSource : source?.Type != JTokenType.Null && !validSource)
+                    return false;
+            }
             foreach (string key in new[] { "TestNames", "GroupNames", "CategoryNames", "AssemblyNames" })
             {
                 var value = options[key];

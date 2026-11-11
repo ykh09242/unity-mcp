@@ -7,6 +7,21 @@ from models.models import MCPResponse
 from .test_helpers import DummyContext
 
 
+@pytest.fixture(autouse=True)
+def current_source_admission(monkeypatch):
+    # These cases isolate test-job forwarding; source admission has separate
+    # transport and refusal tests in test_source_freshness_preflight.
+    from models.source_freshness import parse_freshness
+    from services import source_freshness
+    from tests.test_source_freshness_contracts import current
+
+    monkeypatch.setattr(
+        source_freshness,
+        "ensure_source_freshness",
+        AsyncMock(return_value=parse_freshness(current())),
+    )
+
+
 @pytest.mark.asyncio
 async def test_run_tests_async_forwards_params(monkeypatch):
     from services.tools.run_tests import run_tests

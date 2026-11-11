@@ -18,6 +18,8 @@ namespace MCPForUnity.Editor.Tools
             var token = parameters?["compile_id"];
             if (token?.Type != JTokenType.String || !CompilationLedger.ValidId(token.Value<string>()))
                 return new ErrorResponse("compile_id must contain 32 lowercase hexadecimal characters.");
+            if (parameters?["observe_source"] != null && parameters["observe_source"].Type != JTokenType.Boolean)
+                return new ErrorResponse("observe_source must be a boolean.");
             var evidence = CompilationJobTracker.Ledger.Query(token.Value<string>());
             var response = JObject.FromObject(new SuccessResponse("Compilation request evidence.", evidence));
             // Older servers strictly validate data as compile_job@1. Keep diagnostics

@@ -12,6 +12,15 @@ from services.tools import preflight, refresh_unity, run_tests
 
 @pytest.fixture
 def editor_boundary(monkeypatch):
+    from models.source_freshness import parse_freshness
+    from services import source_freshness
+    from tests.test_source_freshness_contracts import current
+
+    monkeypatch.setattr(
+        source_freshness,
+        "ensure_source_freshness",
+        AsyncMock(return_value=parse_freshness(current())),
+    )
     state = AsyncMock(
         return_value={
             "success": True,
@@ -56,6 +65,8 @@ async def test_valid_initialization_timeout_still_checks_readiness(editor_bounda
     assert state.await_count >= 4
     assert all(call.args == (ctx,) for call in state.await_args_list)
     params = send.await_args.args[3]
+    assert params.pop("source_token") == "c" * 64
+    assert params.pop("require_source_freshness") is True
     assert params == (
         {"mode": "EditMode"}
         if timeout is None
