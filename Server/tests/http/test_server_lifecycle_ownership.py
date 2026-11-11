@@ -5,6 +5,7 @@ from tests.timing import await_signal, watchdog_timeout
 import asyncio  # noqa: ANYIO_OK -- inspect hub-owned task lifetimes.
 import threading
 from types import SimpleNamespace
+from tests.transport_socket import JsonSocket
 from unittest.mock import AsyncMock, Mock
 
 import anyio
@@ -48,7 +49,7 @@ async def lifecycle_state(monkeypatch: pytest.MonkeyPatch):
 
 
 def socket_stub():
-    return SimpleNamespace(
+    return JsonSocket(
         state=SimpleNamespace(),
         client_state=WebSocketState.CONNECTED,
         application_state=WebSocketState.CONNECTED,

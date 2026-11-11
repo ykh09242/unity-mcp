@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 from types import SimpleNamespace
+from tests.transport_socket import JsonSocket
 from unittest.mock import AsyncMock
 import weakref
 
@@ -53,7 +54,7 @@ def polling(monkeypatch):
         _large_results = None
 
     endpoint = OwnedHub.__new__(OwnedHub)
-    websocket = SimpleNamespace(
+    websocket = JsonSocket(
         state=SimpleNamespace(plugin_generation="owned", user_id="alice"),
         client_state=WebSocketState.CONNECTED,
         application_state=WebSocketState.CONNECTED,

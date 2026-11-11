@@ -78,6 +78,7 @@ from transport.command_timeout import (
     MAX_COMMAND_TIMEOUT,
 )
 from transport.command_payload import CommandPreparationBusy, prepare_command
+from transport.payload_processing import command_envelope, encode_command, decode_large_result
 from transport.command_dispatch import (
     CommandDispatch,
     CommandNotDispatchedError as CommandNotDispatchedError,
@@ -152,7 +153,6 @@ if TYPE_CHECKING:
 from transport.models import (
     WelcomeMessage,
     RegisteredMessage,
-    ExecuteCommandMessage,
     CancelCommandMessage,
     PingMessage,
     RegisterMessage,
@@ -466,6 +466,8 @@ class PluginHub(WebSocketEndpoint):
     )
     _large_results: ClassVar[LargeResultAssembler | None] = None
     _raw_results: ClassVar[ChargeLedger] = ChargeLedger()
+    # Detached generations still retain graphs until their CPU workers settle.
+    _outbound_payloads: ClassVar[dict[str, dict[str, Any]]] = {}
 
     @classmethod
     def _supports(cls, websocket: WebSocket, capability: str) -> bool:
@@ -932,7 +934,11 @@ class PluginHub(WebSocketEndpoint):
     @classmethod
     def _pending_usage(cls, session_id, user_id, *, reserve=None):
         count = user_count = session_count = total_bytes = user_bytes = session_bytes = 0
-        records = cls._control_reservations.values() if reserve is True else cls._pending.values()
+        records = (
+            cls._control_reservations.values()
+            if reserve is True
+            else (cls._outbound_payloads | cls._pending).values()
+        )
         for entry in records:
             if reserve is not None and (entry.get("control_reserve") is True) != reserve:
                 continue
@@ -995,6 +1001,8 @@ class PluginHub(WebSocketEndpoint):
             raise RuntimeError("PluginHub server resources are still shutting down")
         cls._fence_plugin_owners()
         cls._catalog_notifications.reset()
+        if cls._large_results is not None:
+            cls._large_results.discard_all()
         # A closing generation can still be draining this notifier. New deliveries
         # need a distinct owner so its eventual close cannot cancel them.
         cls._catalog_notifications = ToolListNotifier()
@@ -2409,7 +2417,7 @@ class PluginHub(WebSocketEndpoint):
                 if reserve
                 else None
             )
-            cls._pending[command_id] = {
+            entry = cls._pending[command_id] = {
                 "future": future,
                 "result_socket": websocket,
                 "result_generation": getattr(websocket.state, "plugin_generation", None),
@@ -2433,18 +2441,17 @@ class PluginHub(WebSocketEndpoint):
         bound: ProgressSource | None = None
         canceled = False
         try:
-            msg = ExecuteCommandMessage(
-                id=command_id,
-                name=command_type,
-                params=params,
-                timeout=unity_timeout_s,
+            cls._outbound_payloads[command_id] = entry
+            # The bounded structural probe skips integer conversion costs. The
+            # admitted measurement also catches large numeric wire payloads.
+            large_payload = _payload_bytes >= 64 * 1024
+            payload = await response_work(
+                lambda: command_envelope(command_id, command_type, params, unity_timeout_s),
+                large=large_payload or needs_response_worker(params),
             )
-            # Admission, serialization and all earlier phases spend this same budget.
-            # Omit only the optional envelope field; preserve nested null values.
-            payload = msg.model_dump(exclude={"progress"})
             if arbitration is not None:
                 payload["arbitration"] = arbitration.to_wire()
-                cls._pending[command_id]["arbitration_params"] = payload["params"]
+                entry["arbitration_params"] = payload["params"]
             if _resume is not None:
                 payload["resume"] = _resume.to_wire()
             diagnostic = phase_diagnostics.request(
@@ -2461,7 +2468,6 @@ class PluginHub(WebSocketEndpoint):
                 else None
             )
             if progress is not None:
-                entry = cls._pending[command_id]
                 floor = (
                     required_permissions(command_type, payload["params"], native=True)
                     if any(
@@ -2537,6 +2543,11 @@ class PluginHub(WebSocketEndpoint):
                     payload["progress"] = CommandProgressRequest().model_dump()
                 else:
                     progress.close()
+            encoded = await response_work(
+                lambda: encode_command(payload),
+                large=large_payload or needs_response_worker(payload),
+            )
+            cls._outbound_payloads.pop(command_id, None)
             if budget.remaining() <= 0:
                 raise TimeoutError
             deadline = budget.expires_at
@@ -2553,6 +2564,7 @@ class PluginHub(WebSocketEndpoint):
                     user_id=user_id,
                     command_id=command_id,
                     payload=payload,
+                    encoded=encoded,
                     future=future,
                     budget=budget,
                     response_deadline=deadline,
@@ -2566,6 +2578,7 @@ class PluginHub(WebSocketEndpoint):
                         cls._lock is lock
                         and cls._registry is registry
                         and cls._connections.get(session_id) is websocket
+                        and cls._pending.get(command_id) is entry
                     ),
                     read_is_current=(
                         (lambda: cls._matches_read_identity(websocket, user_id, admitted_read))
@@ -2681,13 +2694,15 @@ class PluginHub(WebSocketEndpoint):
             canceled = budget.dispatched
             raise
         finally:
+            cls._outbound_payloads.pop(command_id, None)
             # Each wire attempt releases its binding. Only the enclosing logical
             # command closes the sink, including terminal/error/cancel paths.
             if _progress is not None and bound is not None:
                 _progress.detach(bound)
             # Release synchronously on the owner loop before cancellation-sensitive
             # I/O cleanup. AnyIO level cancellation can interrupt every await here.
-            cls._pending.pop(command_id, None)
+            if cls._pending.get(command_id) is entry:
+                cls._pending.pop(command_id)
             if cls._large_results is not None:
                 if isinstance(generation, str):
                     cls._large_results.discard(generation, command_id)
@@ -3564,6 +3579,10 @@ class PluginHub(WebSocketEndpoint):
             and work.pending.matches(cls._pending.get(command_id))
             and work.entry.get("result_work") is work
             and not work.entry["future"].done()
+            and (
+                work.entry.get("result_deadline") is None
+                or asyncio.get_running_loop().time() < work.entry["result_deadline"]
+            )
             and cls._connections.get(work.entry["session_id"]) is websocket
             and getattr(websocket.state, "plugin_generation", None) == work.generation
             and cls._socket_lease(websocket) is work.credential
@@ -3573,31 +3592,14 @@ class PluginHub(WebSocketEndpoint):
     def _decode_large_result(
         cls, completed: CompletedLargeResult, max_retained_bytes: int
     ) -> CommandResultMessage:
-        # Decode directly from bytearray: avoid a second full bytes copy. This
-        # whole scan/decoder boundary runs in the bounded response worker.
-        text = bounded_json_text(
-            completed.payload,
+        return decode_large_result(
+            completed,
+            max_retained_bytes,
             max_bytes=cls.MAX_RAW_MESSAGE_BYTES,
             max_depth=cls.MAX_RESULT_DEPTH,
-            # The raw reservation already covers source bytes and Unicode text.
-            # Bound decoded object/container overhead before graph allocation.
-            max_nodes=min(cls.MAX_RESULT_NODES, max_retained_bytes // 512),
+            max_nodes=cls.MAX_RESULT_NODES,
+            max_retained=cls.MAX_RESULT_RETAINED_BYTES,
         )
-        if text is None:
-            reason = (
-                "result_capacity"
-                if max_retained_bytes < cls.MAX_RESULT_RETAINED_BYTES
-                else "result_payload_limit"
-            )
-            raise LargeResultProtocolError(reason, completed.command_id)
-        message = decode_json(completed.payload, fallback_text=text)
-        if (
-            not isinstance(message, dict)
-            or message.get("type") != "command_result"
-            or message.get("id") != completed.command_id
-        ):
-            raise LargeResultProtocolError("invalid_result_envelope", completed.command_id)
-        return CommandResultMessage(**message)
 
     @classmethod
     def _decode_large_result_outcome(
@@ -3630,6 +3632,9 @@ class PluginHub(WebSocketEndpoint):
         completed = None
         command_id = None
         work = None
+        chunk = None
+        inflation_owner = ResponseOwner()
+        inflation_charge = None
         close_invalid = False
         try:
             async with cls._authorized_socket_lock(websocket, lock):
@@ -3661,7 +3666,32 @@ class PluginHub(WebSocketEndpoint):
                     if admitted:
                         entry["transfer_pending"] = _PendingResult.capture(entry)
                     return
-                completed = assembler.feed(generation, data)
+                chunk = assembler.prepare_chunk(generation, data)
+                if chunk is None:
+                    return
+                pending = _PendingResult.capture(cls._pending[chunk.command_id])
+                if chunk.compressed:
+                    # A physical inflater survives socket retirement. Transfer its
+                    # charge to the persistent ledger before leaving the Hub lock.
+                    inflation_charge = cls._raw_results.pop((generation, chunk.command_id))
+                    ledger, key = cls._retained_results, "inflate:" + str(uuid.uuid4())
+                    ledger[key] = inflation_charge
+                    inflation_owner.entries.append((ledger, key))
+            valid = await response_work(chunk.process, large=chunk.compressed)
+            async with cls._authorized_socket_lock(websocket, lock):
+                if (
+                    cls._lock is not lock
+                    or not pending.matches(cls._pending.get(chunk.command_id))
+                    or not cls._transfer_pending(generation, chunk.command_id)
+                ):
+                    assembler.discard(generation, chunk.command_id)
+                    return
+                if inflation_charge is not None:
+                    cls._raw_results[generation, chunk.command_id] = inflation_charge
+                    inflation_owner.release()
+                completed = assembler.complete_chunk(chunk, valid)
+                assembler.release_chunk(chunk)
+                chunk = None
                 if completed is None:
                     return
                 command_id = completed.command_id
@@ -3716,6 +3746,11 @@ class PluginHub(WebSocketEndpoint):
         except (ValueError, RecursionError):
             close_invalid = work is None or cls._result_work_current(websocket, command_id, work)
         finally:
+            if chunk is not None:
+                assembler.discard(generation, chunk.command_id)
+                assembler.release_chunk(chunk)
+                chunk = None
+            inflation_owner.release()
             if command_id is not None:
                 assembler.discard(generation, command_id)
             if work is not None:

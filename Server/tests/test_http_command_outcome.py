@@ -13,6 +13,7 @@ from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
 from transport.unity_transport import send_with_unity_instance
+from tests.transport_socket import JsonSocket
 
 
 @pytest_asyncio.fixture
@@ -37,7 +38,7 @@ async def command_hub(monkeypatch):
     async def close(**_kwargs):
         return None
 
-    websocket = SimpleNamespace(
+    websocket = JsonSocket(
         state=SimpleNamespace(
             plugin_registered=True,
             plugin_session_id="session",

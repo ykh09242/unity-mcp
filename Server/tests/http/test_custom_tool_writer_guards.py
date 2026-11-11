@@ -355,9 +355,11 @@ async def test_actual_asgi_writer_guards_after_low_level_credential_renewal(
 
                 monkeypatch.setattr(fixture.service, "_validate_external", renew)
                 send_json = websocket.send_json
+                send_text = websocket.send_text
                 endpoint_send = endpoints[0].send
 
-                async def expire_at_wire(message):
+                async def expire_at_wire(text):
+                    message = json.loads(text)
                     # Expire only after the command writer calls the real
                     # Starlette socket; its guarded ASGI send must renew now.
                     if message["type"] == "execute":
@@ -366,7 +368,7 @@ async def test_actual_asgi_writer_guards_after_low_level_credential_renewal(
                             if receipt is not None:
                                 assert receipt.dispatches == []
                         fixture.now[0] = 10
-                    await send_json(message)
+                    await send_text(text)
 
                 async def expire_at_auth(message):
                     if (
@@ -377,7 +379,7 @@ async def test_actual_asgi_writer_guards_after_low_level_credential_renewal(
                     await endpoint_send(message)
 
                 if renew_at in {"hub", "inherited_ping"}:
-                    monkeypatch.setattr(websocket, "send_json", expire_at_wire)
+                    monkeypatch.setattr(websocket, "send_text", expire_at_wire)
                 else:
                     monkeypatch.setattr(endpoints[0], "send", expire_at_auth)
                 sent = []

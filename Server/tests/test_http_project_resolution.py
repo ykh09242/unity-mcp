@@ -179,6 +179,10 @@ def test_sdk_resource_and_execution_follow_http_reconnect_catalog(tmp_path, mode
                         CommandResultMessage(id=message["id"], result={"success":True,
                             "data":{"generation":generation[0]}}))
                 websocket.send_json = send_json
+                async def send_text(text):
+                    import json
+                    await send_json(json.loads(text))
+                websocket.send_text = send_text
                 if HOSTED:
                     await auth.attach_socket(websocket, "plugin:owned")
                 await registry.register(session_id, "Remote", "aabbccdd", "6000", user_id=user)

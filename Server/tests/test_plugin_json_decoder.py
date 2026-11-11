@@ -13,6 +13,7 @@ import pytest
 import pytest_asyncio
 
 from transport import plugin_hub as hub_module
+from transport import payload_processing
 from transport.large_result_assembler import (
     CAPABILITY,
     COMPRESSION_CAPABILITY,
@@ -227,7 +228,7 @@ async def test_late_final_frame_does_not_decode_or_retain(owned_hub, monkeypatch
             state=SimpleNamespace(plugin_generation="replacement")
         )
     parser = Mock(side_effect=AssertionError("late result must not allocate a graph"))
-    monkeypatch.setattr(hub_module, "decode_json", parser)
+    monkeypatch.setattr(payload_processing, "decode_json", parser)
     await hub._handle_large_result(websocket, frames[-1])
     parser.assert_not_called()
     assert type(hub)._raw_results == {} and type(hub)._large_results.retained_bytes == 0

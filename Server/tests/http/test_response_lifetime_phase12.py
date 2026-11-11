@@ -9,6 +9,7 @@ import time
 import weakref
 from unittest.mock import AsyncMock
 from types import SimpleNamespace
+from tests.transport_socket import bind_json_text
 
 import pytest
 from starlette.websockets import WebSocketState
@@ -66,6 +67,7 @@ async def test_standalone_get_disconnect_preserves_blocked_post_charge(
         await hub._handle_command_result(ws, CommandResultMessage(id=payload["id"], result=result))
 
     ws.send_json.side_effect = answer
+    bind_json_text(ws)
     server = UnityMCP("inert-independent-http-streams")
     server.add_middleware(ResponseLimitMiddleware())
 

@@ -409,7 +409,10 @@ class TestBlenderTimeouts:
                 other, CommandResultMessage(id=message["id"], result={"success": True})
             )
 
+        from tests.transport_socket import bind_json_text
+
         other.send_json.side_effect = reply
+        bind_json_text(other)
         assert (await PluginHub.send_command("session", COMMAND, {"timeoutSeconds": 900}))[
             "success"
         ]

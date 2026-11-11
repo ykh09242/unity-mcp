@@ -21,9 +21,10 @@ from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
 from transport.charge_ledger import ChargeLedger
 from transport.plugin_registry import PluginRegistry
+from tests.transport_socket import JsonSocket
 
 
-class Peer:
+class Peer(JsonSocket):
     """Owned in-memory registered peer; commands use production Hub accounting."""
 
     def __init__(

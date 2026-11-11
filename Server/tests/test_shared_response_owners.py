@@ -5,6 +5,7 @@ import importlib
 from copy import deepcopy
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from tests.transport_socket import JsonSocket
 
 import pytest
 from starlette.websockets import WebSocketState
@@ -43,7 +44,7 @@ def peer(monkeypatch):
         assert session_id == selected.session_id
         return selected
 
-    websocket = SimpleNamespace(
+    websocket = JsonSocket(
         state=SimpleNamespace(plugin_generation="owned-generation", user_id="owned-user"),
         client_state=WebSocketState.CONNECTED,
         application_state=WebSocketState.CONNECTED,

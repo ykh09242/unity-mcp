@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 from types import SimpleNamespace
+from tests.transport_socket import bind_json_text
 from urllib.parse import urlsplit
 from unittest.mock import AsyncMock
 
@@ -244,6 +245,7 @@ async def test_real_sdk_retains_results_until_http_or_sse_delivery(
         await hub._handle_command_result(ws, CommandResultMessage(id=payload["id"], result=result))
 
     ws.send_json.side_effect = answer
+    bind_json_text(ws)
     server = UnityMCP("inert-delivery")
     server.add_middleware(ResponseLimitMiddleware())
 

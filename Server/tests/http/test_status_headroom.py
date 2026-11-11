@@ -6,6 +6,7 @@ import asyncio  # noqa: ANYIO_OK -- controlled Hub command ownership and cancell
 from contextlib import asynccontextmanager
 import json
 from types import SimpleNamespace
+from tests.transport_socket import JsonSocket
 
 import anyio
 from fastmcp import Client, FastMCP
@@ -555,7 +556,7 @@ def tenant_server(monkeypatch, user_id, auth):
 
 async def tenant_socket(hub, session, user, auth, project_hash="hash"):
     await hub.registry.register(session, "Fixture", project_hash, "6000", user_id=user)
-    socket = SimpleNamespace(
+    socket = JsonSocket(
         state=SimpleNamespace(
             plugin_registered=True,
             plugin_session_id=session,

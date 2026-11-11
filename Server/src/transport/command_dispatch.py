@@ -45,6 +45,7 @@ class CommandDispatch:
     user_id: str | None
     command_id: str
     payload: dict[str, Any]
+    encoded: str
     future: asyncio.Future
     budget: _CommandBudget
     response_deadline: float
@@ -96,10 +97,10 @@ class CommandDispatch:
             if getattr(self.websocket.state, "plugin_guarded_send", False):
                 # Carry final admission through both Hub and optional
                 # remote-auth send wrappers, immediately before I/O.
-                await self.websocket.send_json(self.payload)
+                await self.websocket.send_text(self.encoded)
             elif await writer.authorize():
                 writer.dispatch()
-                await self.websocket.send_json(self.payload)
+                await self.websocket.send_text(self.encoded)
         finally:
             socket_write_guard.reset(writer_token)
         for lease in (self.requester, self.plugin):

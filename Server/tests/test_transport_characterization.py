@@ -12,6 +12,7 @@ They validate:
 The tests serve as regression detectors for any future changes to the transport layer.
 """
 
+import json
 import asyncio
 import pytest
 import pytest_asyncio
@@ -86,6 +87,11 @@ def mock_websocket():
     """Create a mock WebSocket."""
     ws = AsyncMock()
     ws.send_json = AsyncMock()
+
+    async def send_text(text):
+        await ws.send_json(json.loads(text))
+
+    ws.send_text = send_text
     ws.receive_json = AsyncMock()
     ws.accept = AsyncMock()
     ws.close = AsyncMock()

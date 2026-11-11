@@ -9,6 +9,7 @@ from tests.test_http_command_outcome import command_hub  # pylint: disable=unuse
 from tests.timing import await_signal, watchdog_timeout
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
+from tests.transport_socket import JsonSocket
 
 
 @pytest.mark.asyncio
@@ -21,7 +22,7 @@ async def test_cancelled_dispatch_cannot_release_or_relabel_another_writer(
     messages = {name: [] for name in entered}
     await command_hub.registry.register("second", "Other", "other-hash", "6000.3")
     sockets = {"session": command_hub.websocket}
-    sockets["second"] = SimpleNamespace(
+    sockets["second"] = JsonSocket(
         **{
             **vars(command_hub.websocket),
             "state": SimpleNamespace(

@@ -4,6 +4,7 @@ from tests.timing import await_signal, watchdog_timeout
 
 import asyncio
 from types import SimpleNamespace
+from tests.transport_socket import JsonSocket
 from unittest.mock import AsyncMock
 
 import pytest
@@ -37,7 +38,7 @@ async def hub():
         _admitted = {}
 
     OwnedHub.configure(PluginRegistry())
-    websocket = SimpleNamespace(
+    websocket = JsonSocket(
         state=SimpleNamespace(plugin_generation="owned"),
         client_state=WebSocketState.CONNECTED,
         application_state=WebSocketState.CONNECTED,

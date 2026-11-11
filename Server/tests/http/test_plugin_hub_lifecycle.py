@@ -6,6 +6,7 @@ import asyncio  # noqa: ANYIO_OK -- the hub owns asyncio futures and tasks.
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from tests.transport_socket import JsonSocket
 from unittest.mock import AsyncMock
 
 import anyio
@@ -43,7 +44,7 @@ def isolated_hub(monkeypatch: pytest.MonkeyPatch) -> PluginRegistry:
 async def command_socket(isolated_hub: PluginRegistry):
     PluginHub.configure(isolated_hub)
     await isolated_hub.register("session", "Fixture", "owned-hash", "6000.3")
-    socket = SimpleNamespace(
+    socket = JsonSocket(
         state=SimpleNamespace(
             plugin_registered=True,
             plugin_session_id="session",

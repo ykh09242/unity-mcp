@@ -12,6 +12,7 @@ from tests.test_large_result_assembler import frames
 from tests.test_operation_scheduler import settled
 from tests.timing import await_signal, watchdog_timeout
 from transport import plugin_hub as hub_module
+from transport import payload_processing
 from transport.models import CommandResultMessage, PongMessage
 from transport.large_result_assembler import LargeResultProtocolError
 from transport.plugin_registry import PluginRegistry
@@ -661,7 +662,8 @@ async def test_result_worker_holds_budget_until_exit_and_fences_delivery(
     expected = (
         {"text": "x" * (256 * 1024)} if large else {str(index): "x" * 60000 for index in range(100)}
     )
-    native = hub_module.bounded_json_text if large else hub_module.response_size
+    target = payload_processing if large else hub_module
+    native = target.bounded_json_text if large else target.response_size
 
     def held(*args, **kwargs):
         assert get_ident() != owner_thread, "Expensive result work ran on the owner loop"
@@ -673,7 +675,7 @@ async def test_result_worker_holds_budget_until_exit_and_fences_delivery(
             raise LargeResultProtocolError("result_capacity", COMMAND_ID)
         return native(*args, **kwargs)
 
-    monkeypatch.setattr(hub_module, "bounded_json_text" if large else "response_size", held)
+    monkeypatch.setattr(target, "bounded_json_text" if large else "response_size", held)
 
     async def receive():
         if not large:

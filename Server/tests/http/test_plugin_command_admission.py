@@ -16,6 +16,7 @@ import pytest
 import pytest_asyncio
 import anyio
 import transport.plugin_hub as hub_module
+import transport.payload_processing as payload_module
 from fastmcp import Client
 from starlette.websockets import WebSocketState
 import httpx
@@ -60,6 +61,11 @@ async def admission_hub(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Plugin
 async def register_socket(registry: PluginRegistry, session: str, user: str) -> AsyncMock:
     await registry.register(session, session, session, "test", user_id=user)
     socket = AsyncMock()
+
+    async def send_text(text):
+        await socket.send_json(json.loads(text))
+
+    socket.send_text = send_text
     socket.state = SimpleNamespace(
         user_id=user, plugin_registered=True, plugin_session_id=session, plugin_generation=session
     )
@@ -383,7 +389,7 @@ async def test_session_admission_rejects_before_building_payload(admission_hub, 
     socket = await register_socket(admission_hub, "a", "alice")
     first = await start_command("a", {"timeout_seconds": 3600})
     original_uuid = hub_module.uuid.uuid4
-    original_message = hub_module.ExecuteCommandMessage
+    original_message = payload_module.ExecuteCommandMessage
     try:
         await asyncio.sleep(0)
 
@@ -391,7 +397,7 @@ async def test_session_admission_rejects_before_building_payload(admission_hub, 
             raise AssertionError("Rejected command allocated an ID or execute model")
 
         monkeypatch.setattr(hub_module.uuid, "uuid4", unexpected_work)
-        monkeypatch.setattr(hub_module, "ExecuteCommandMessage", unexpected_work)
+        monkeypatch.setattr(payload_module, "ExecuteCommandMessage", unexpected_work)
 
         # A saturated request must not even traverse its parameters.
         class Untouchable(dict):
@@ -403,7 +409,7 @@ async def test_session_admission_rejects_before_building_payload(admission_hub, 
         assert result["data"]["reason"] == "command_capacity"
     finally:
         monkeypatch.setattr(hub_module.uuid, "uuid4", original_uuid)
-        monkeypatch.setattr(hub_module, "ExecuteCommandMessage", original_message)
+        monkeypatch.setattr(payload_module, "ExecuteCommandMessage", original_message)
         first.cancel()
         await asyncio.gather(first, return_exceptions=True)
     assert PluginHub._pending == {}

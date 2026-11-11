@@ -5,6 +5,7 @@ import json
 import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from tests.transport_socket import bind_json_text
 from unittest.mock import AsyncMock
 
 import pytest
@@ -244,6 +245,7 @@ async def test_retained_results_budget_spans_delayed_consumers(isolated, monkeyp
                 )
 
             ws.send_json.side_effect = answer
+            bind_json_text(ws)
             return ws
 
         await socket("a", "alice")

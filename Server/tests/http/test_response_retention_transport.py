@@ -3,6 +3,7 @@
 import asyncio
 import time
 from types import SimpleNamespace
+from tests.transport_socket import bind_json_text
 from unittest.mock import AsyncMock
 
 import fastmcp
@@ -52,6 +53,7 @@ async def plugin_result_delivery(remote_delivery):
         )
 
     ws.send_json.side_effect = answer
+    bind_json_text(ws)
     try:
         yield
     finally:

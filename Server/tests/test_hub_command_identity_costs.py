@@ -3,6 +3,7 @@
 import asyncio
 from contextlib import nullcontext
 from types import SimpleNamespace
+from tests.transport_socket import JsonSocket
 from typing import ClassVar
 
 import pytest
@@ -67,7 +68,7 @@ async def command_hub(monkeypatch):
             websocket, CommandResultMessage(id=message["id"], result=result)
         )
 
-    websocket = SimpleNamespace(
+    websocket = JsonSocket(
         state=SimpleNamespace(
             plugin_generation="generation",
             plugin_registered=True,
