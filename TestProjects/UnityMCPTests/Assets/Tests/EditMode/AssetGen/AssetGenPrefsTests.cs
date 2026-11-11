@@ -116,6 +116,30 @@ namespace MCPForUnityTests.Editor.AssetGen
 
         [TestCase(false)]
         [TestCase(true)]
+        public void AssetPathNormalization_UsesPlatformRootComparisonAndPreservesSuffix(bool rootOnly)
+        {
+            string root = Application.dataPath.ToUpperInvariant();
+            string path = rootOnly ? root : Path.Combine(root, "Refs/MixedCase.png");
+            bool accepted = AssetGenPaths.TryGetAssetsRelativePath(path, out string relative);
+
+            if (Path.DirectorySeparatorChar == '\\')
+            {
+                Assert.IsTrue(accepted);
+                Assert.AreEqual(rootOnly ? "Assets" : "Assets/Refs/MixedCase.png", relative);
+                Assert.IsTrue(AssetGenPaths.TryGetAssetsFolder(rootOnly ? root : Path.Combine(root, "Refs/MixedCase"), out _));
+            }
+            else if (root != Application.dataPath)
+                Assert.IsFalse(accepted, "a case-sensitive filesystem must retain the shared boundary policy");
+        }
+
+        [Test]
+        public void AssetPathNormalization_RejectsAbsoluteSiblingWithAssetsPrefix()
+        {
+            Assert.IsFalse(AssetGenPaths.TryGetAssetsRelativePath(Application.dataPath + "Sibling/Ref.png", out _));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void OutputFolder_RejectsExistingFileAtDestinationOrAncestor(bool ancestor)
         {
             string relative = "Assets/__McpOutputFile_" + Guid.NewGuid().ToString("N") + ".txt";

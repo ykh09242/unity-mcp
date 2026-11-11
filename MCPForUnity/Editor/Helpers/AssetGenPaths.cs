@@ -58,17 +58,15 @@ namespace MCPForUnity.Editor.Helpers
 
                 string full = MCPForUnity.Runtime.Helpers.SafePathUtility.ResolveWithinRoot(Application.dataPath, abs).Replace('\\', '/');
                 string dataPath = Path.GetFullPath(Application.dataPath).Replace('\\', '/').TrimEnd('/');
-                if (string.Equals(full, dataPath, StringComparison.Ordinal))
+                // ResolveWithinRoot already applies the platform's containment comparison.
+                // Comparing the root again ordinally rejects valid case-only Windows paths.
+                if (full.Length == dataPath.Length)
                 {
                     projectRelative = "Assets";
                     return true;
                 }
 
-                string prefix = dataPath + "/";
-                if (!full.StartsWith(prefix, StringComparison.Ordinal))
-                    return false;
-
-                projectRelative = "Assets/" + full.Substring(prefix.Length);
+                projectRelative = "Assets/" + full.Substring(dataPath.Length + 1);
                 return true;
             }
             catch
@@ -92,7 +90,8 @@ namespace MCPForUnity.Editor.Helpers
                     projectRelative = null;
                     return false;
                 }
-                if (string.Equals(current, assetsRoot, StringComparison.Ordinal))
+                // The path was contained above; stop at that root regardless of its casing.
+                if (current.Length == assetsRoot.Length)
                     break;
                 current = Path.GetDirectoryName(current)?.Replace('\\', '/');
             }
