@@ -21,6 +21,7 @@ namespace MCPForUnity.Editor.Services
             public bool PipelineFinished;
             public string NativeTaskTermination;
             public string RecoveryReason;
+            public bool InvocationUncertain;
         }
 
         private Checkpoint state;
@@ -28,8 +29,9 @@ namespace MCPForUnity.Editor.Services
         private Task nativeTask;
         private readonly Func<object, Task> readTask;
         private bool finishTurnObserved;
+        private bool failedTriggerCanStart;
         internal Action Changed;
-        private bool HasCompletion => state != null && (state.PipelineFinished || state.NativeTaskTermination != null);
+        private bool HasCompletion => state != null && !state.InvocationUncertain && (state.PipelineFinished || state.NativeTaskTermination != null);
         internal bool AwaitingQuiescence => HasCompletion && !state.RefreshDecisionPending;
         internal Checkpoint State =>
             state == null
@@ -45,6 +47,7 @@ namespace MCPForUnity.Editor.Services
                     PipelineFinished = state.PipelineFinished,
                     NativeTaskTermination = state.NativeTaskTermination,
                     RecoveryReason = state.RecoveryReason,
+                    InvocationUncertain = state.InvocationUncertain,
                 };
 
         internal OwnedCompilationReservation(Checkpoint restored = null, Func<object, Task> readTask = null)
@@ -64,7 +67,11 @@ namespace MCPForUnity.Editor.Services
                         || (restored.Phase == "finished" && (restored.PipelineFinished || terminated))
                         || restored.Phase == "recovery_required"
                     );
-                bool finished = valid && (restored.PipelineFinished || terminated) && (restored.Phase == "finished" || restored.Phase == "recovery_required");
+                bool finished =
+                    valid
+                    && !restored.InvocationUncertain
+                    && (restored.PipelineFinished || terminated)
+                    && (restored.Phase == "finished" || restored.Phase == "recovery_required");
                 string recoveryReason =
                     finished ? null
                     : !valid ? "invalid_compilation_checkpoint"
@@ -80,6 +87,7 @@ namespace MCPForUnity.Editor.Services
                     NativeTaskTermination = finished ? restored.NativeTaskTermination : null,
                     RefreshCycleObserved = restored.RefreshCycleObserved,
                     RecoveryReason = recoveryReason,
+                    InvocationUncertain = restored.InvocationUncertain,
                 };
             }
         }
@@ -118,11 +126,28 @@ namespace MCPForUnity.Editor.Services
             return true;
         }
 
+        internal void InvocationFailed(string generation)
+        {
+            if (state == null || state.Generation != generation)
+                return;
+            // A native call that threw may already have queued compilation. Keep a
+            // separate uncertainty fence: a cycle observed before this failure cannot
+            // prove the later invocation settled. Only a subsequent start in this
+            // domain can restore pairing; a reload cannot adopt a replacement cycle.
+            state.InvocationUncertain = true;
+            state.Phase = "recovery_required";
+            state.RecoveryReason = "compilation_trigger_outcome_unknown";
+            failedTriggerCanStart = true;
+            Changed?.Invoke();
+        }
+
         internal void Started(object value)
         {
             ObserveNativeCompletion();
-            if (state == null || (state.Phase != "pending" && !(state.RefreshDecisionPending && HasCompletion)))
+            if (state == null || (state.Phase != "pending" && !failedTriggerCanStart && !(state.RefreshDecisionPending && HasCompletion)))
                 return;
+            failedTriggerCanStart = false;
+            state.InvocationUncertain = false;
             context = value;
             nativeTask = readTask(value);
             state.RefreshCycleObserved |= state.RefreshDecisionPending;
@@ -141,7 +166,7 @@ namespace MCPForUnity.Editor.Services
             context = null;
             nativeTask = null;
             state.PipelineFinished = true;
-            state.Phase = "finished";
+            state.Phase = state.InvocationUncertain ? "recovery_required" : "finished";
             finishTurnObserved = false;
             Changed?.Invoke();
         }
@@ -156,8 +181,9 @@ namespace MCPForUnity.Editor.Services
             context = null;
             nativeTask = null;
             state.NativeTaskTermination = termination;
-            state.Phase = "finished";
-            state.RecoveryReason = null;
+            state.Phase = state.InvocationUncertain ? "recovery_required" : "finished";
+            if (!state.InvocationUncertain)
+                state.RecoveryReason = null;
             finishTurnObserved = false;
             Changed?.Invoke();
         }
@@ -211,6 +237,8 @@ namespace MCPForUnity.Editor.Services
                         "The saved compilation reservation is invalid, so its ownership and completion evidence cannot be trusted.",
                     "compilation_context_unavailable" =>
                         "Unity reported a compilation start without a usable pipeline context, so its matching finish cannot be identified.",
+                    "compilation_trigger_outcome_unknown" =>
+                        "A script import or compilation trigger threw after native invocation. It may have queued compilation; a later start in this domain can still be paired with its finish.",
                     _ => "A compilation reservation survived an assembly reload without a matching finish witness; its pipeline context cannot be restored.",
                 };
                 return new NativeRecoveryDetails(

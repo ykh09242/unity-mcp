@@ -651,6 +651,31 @@ namespace MCPForUnityTests.Editor.Tools
         private void Run(Action<string> import, Action compile, Action<string> error) => process.Invoke(null, new object[] { import, compile, error });
 
         [Test]
+        public void ScheduledRefreshPublishesAdmissionBeforeAnyNativeInvocation()
+        {
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+            var scheduled = scheduler.GetField("_scheduled", flags);
+            Assert.IsFalse((bool)scheduled.GetValue(null), "Run with no preexisting deferred script callback.");
+            var reservation = MCPForUnity.Editor.Services.CompilationJobTracker.Reservation;
+            Assert.IsNull(reservation.State, "Run with no owned compilation.");
+            try
+            {
+                scheduler
+                    .GetMethod("Schedule", BindingFlags.Static | BindingFlags.Public)
+                    .Invoke(null, new object[] { "Assets/DeferredAdmissionProbe.cs", TimeSpan.FromMinutes(1) });
+                Assert.IsTrue((bool)scheduler.GetProperty("HasPendingNativeRefresh", flags).GetValue(null));
+                Assert.IsTrue(MCPForUnity.Editor.Services.Transport.NativeOperationBarriers.TryGetBlocker("manage_build", null, out var blocker));
+                Assert.AreEqual("native_job_active", blocker.Reason);
+                Assert.IsNull(reservation.State, "Queuing must not pretend that the native trigger already ran.");
+            }
+            finally
+            {
+                scheduler.GetMethod("CancelCallback", flags).Invoke(null, null);
+            }
+            Assert.IsFalse((bool)scheduler.GetProperty("HasPendingNativeRefresh", flags).GetValue(null));
+        }
+
+        [Test]
         public void FirstImportFailureRetainsWholeBatchAndReportsFailure()
         {
             paths.Add("Assets/One.cs");

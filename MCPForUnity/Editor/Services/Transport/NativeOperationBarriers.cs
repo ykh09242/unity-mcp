@@ -22,6 +22,7 @@ namespace MCPForUnity.Editor.Services.Transport
         internal bool PackageQuery;
         internal bool PackageMutationRecovery;
         internal bool PackageQueryRecovery;
+        internal bool DeferredScriptRefresh;
     }
 
     // Admission reads actual owners, never Activity rows or public job outcomes. All reads
@@ -35,6 +36,20 @@ namespace MCPForUnity.Editor.Services.Transport
         // Lost invocations and all other native families remain admission fences.
         internal static bool TryGetBuildContinuationBlocker(string jobId, string batchId, out NativeAdmissionBlocker blocker) =>
             Evaluate("manage_build", null, Capture(buildJobId: jobId, buildBatchId: batchId), out blocker);
+
+        // A delayed script import excludes only its queued callback and the exact
+        // compilation reservation it acquired. Every foreign owner still fences it.
+        internal static bool TryGetScriptRefreshBlocker(string generation, out NativeAdmissionBlocker blocker)
+        {
+            var state = Capture();
+            state.DeferredScriptRefresh = false;
+            if (generation != null && CompilationJobTracker.Reservation.State?.Generation == generation && state.OwnedCompilation != "recovery_required")
+            {
+                state.OwnedCompilation = null;
+                state.CompilationRecovery = null;
+            }
+            return Evaluate("manage_script", null, state, out blocker);
+        }
 
         // General readiness shares ordinary-read admission. Read-only UPM queries
         // still fence Client calls/execute_code, but do not block every tool.
@@ -105,6 +120,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 PackageQuery = ManagePackages.HasNativeQuery,
                 PackageMutationRecovery = ManagePackages.MutationRecoveryRequired,
                 PackageQueryRecovery = ManagePackages.QueryRecoveryRequired,
+                DeferredScriptRefresh = RefreshDebounce.HasPendingNativeRefresh,
             };
         }
 
@@ -124,6 +140,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 || state.OwnedJob
                 || state.RecoveryDetails != null
                 || state.OwnedCompilation != null
+                || state.DeferredScriptRefresh
                 || state.PackageMutation
                 || packageCandidate && state.PackageQuery
                     ? "native_job_active"

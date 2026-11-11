@@ -407,6 +407,71 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsTrue(owner.AbortBeforeStart(generation));
         }
 
+        [Test]
+        public void FailedNativeInvocationPublishesRecoveryAndLateStartCanSettle()
+        {
+            var owner = new OwnedCompilationReservation();
+            string generation = owner.Reserve("deferred-script", 100, refreshing: true);
+            owner.InvocationFailed(generation);
+            owner.CompleteRefreshDecision(generation);
+            Assert.AreEqual("recovery_required", owner.Blocker(1));
+            Assert.AreEqual("compilation_trigger_outcome_unknown", owner.Recovery(1).Reason);
+            Assert.AreEqual("inspect_native_work_then_restart_editor", owner.Recovery(1).Action);
+            Quiesce(owner);
+            Assert.AreEqual("recovery_required", owner.Blocker(1), "Idle cannot prove a failed native call did not queue compilation.");
+
+            var context = new object();
+            owner.Started(context);
+            Assert.AreEqual("native_job_active", owner.Blocker(1), "A late start in the same domain restores a usable completion observer.");
+            owner.Finished(context);
+            Quiesce(owner);
+            Assert.IsNull(owner.Blocker(1));
+        }
+
+        [Test]
+        public void FailedInvocationCannotAdoptAnUnrelatedCycleAfterReload()
+        {
+            var owner = new OwnedCompilationReservation();
+            string generation = owner.Reserve("deferred-script", 100, refreshing: true);
+            owner.InvocationFailed(generation);
+            owner.CompleteRefreshDecision(generation);
+            var restored = new OwnedCompilationReservation(owner.State);
+            var context = new object();
+            restored.Started(context);
+            restored.Finished(context);
+            Quiesce(restored);
+            Assert.AreEqual("recovery_required", restored.Blocker(1));
+            Assert.AreEqual("compilation_context_lost_on_reload", restored.Recovery(1).Reason);
+            Assert.AreEqual("inspect_native_work_then_restart_editor", restored.Recovery(1).Action);
+            Assert.IsNull(new OwnedCompilationReservation().Blocker(1), "A fresh Editor session has no SessionState checkpoint to restore.");
+        }
+
+        [Test]
+        public void LaterFailedInvocationCannotUseAnEarlierCycleCompletion()
+        {
+            var owner = new OwnedCompilationReservation();
+            string generation = owner.Reserve("deferred-script", 100, refreshing: true);
+            var earlier = new object();
+            owner.Started(earlier);
+            owner.Finished(earlier);
+            owner.InvocationFailed(generation);
+            owner.CompleteRefreshDecision(generation);
+            Quiesce(owner);
+            Assert.AreEqual("recovery_required", owner.Blocker(1), "Earlier completion cannot prove the later native invocation did not queue work.");
+            Assert.AreEqual("compilation_trigger_outcome_unknown", owner.Recovery(1).Reason);
+            var restored = new OwnedCompilationReservation(owner.State);
+            Quiesce(restored);
+            Assert.AreEqual("recovery_required", restored.Blocker(1), "A checkpoint must not restore the superseded completion witness.");
+            var later = new object();
+            owner.Started(later);
+            owner.Finished(earlier);
+            Quiesce(owner);
+            Assert.AreEqual("native_job_active", owner.Blocker(1));
+            owner.Finished(later);
+            Quiesce(owner);
+            Assert.IsNull(owner.Blocker(1));
+        }
+
         private static void Quiesce(OwnedCompilationReservation owner)
         {
             owner.ObserveQuiescence(true);

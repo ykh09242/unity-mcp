@@ -8,6 +8,7 @@ using System.Threading;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -4936,6 +4937,9 @@ namespace MCPForUnity.Editor.Tools
     {
         private static readonly object _lock = new object();
         private static readonly HashSet<string> _paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> _scheduledPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static string[] _activePaths;
+        private static bool _processing;
 
         // The timestamp of the most recent schedule request.
         private static DateTime _lastRequest;
@@ -4943,17 +4947,55 @@ namespace MCPForUnity.Editor.Tools
         // Guard to ensure we only have a single ticking callback running.
         private static bool _scheduled;
         private static bool _compilePending;
+        private static bool _stopped;
+        private static TimeSpan _window;
+        private static EditorApplication.CallbackFunction _tickCallback;
+        private static long _callbackGeneration;
+
+        internal static bool HasPendingNativeRefresh
+        {
+            get
+            {
+                lock (_lock)
+                    return _scheduled && !EditorApplication.isPlayingOrWillChangePlaymode;
+            }
+        }
+
+        static RefreshDebounce()
+        {
+            AssemblyReloadEvents.beforeAssemblyReload += Stop;
+            EditorApplication.quitting += Stop;
+            EditorApplication.playModeStateChanged += OnPlayModeChanged;
+        }
 
         public static void Schedule(string relPath, TimeSpan window)
         {
             // Record that work is pending and track the path in a threadsafe way.
             lock (_lock)
             {
-                _paths.Add(relPath);
+                if (_stopped)
+                    throw new InvalidOperationException("The deferred script refresh scheduler is shutting down.");
+                if (!string.IsNullOrEmpty(relPath))
+                    _paths.Add(relPath);
+                if (_processing)
+                {
+                    // A callback may save another script during import. This new
+                    // request must not also authorize replay of a failed batch path.
+                    if (!string.IsNullOrEmpty(relPath))
+                        _scheduledPaths.Add(relPath);
+                }
+                else
+                    _scheduledPaths.UnionWith(_paths);
                 _lastRequest = DateTime.UtcNow;
+                _window = window;
+
+                // Unity defers script compilation while playing. Keep the saved paths
+                // for Edit Mode without making Play observation wait for that work.
+                if (EditorApplication.isPlayingOrWillChangePlaymode)
+                    return;
 
                 // If a debounce timer is already scheduled it will pick up the new request.
-                if (_scheduled)
+                if (_scheduled || _processing)
                     return;
 
                 _scheduled = true;
@@ -4961,36 +5003,185 @@ namespace MCPForUnity.Editor.Tools
 
             // Kick off a ticking callback that waits until the window has elapsed
             // from the last request before performing the refresh.
-            EditorApplication.delayCall += () => Tick(window);
+            ScheduleTick(window);
             // Nudge the editor loop so ticks run even if the window is unfocused
             EditorApplication.QueuePlayerLoopUpdate();
         }
 
-        private static void Tick(TimeSpan window)
+        private static void Tick(TimeSpan window, long callbackGeneration)
         {
+            if (callbackGeneration != _callbackGeneration)
+                return;
+            _tickCallback = null;
             bool ready;
             lock (_lock)
             {
+                if (_stopped || !_scheduled || _processing)
+                    return;
                 // Only proceed once the debounce window has fully elapsed.
                 ready = (DateTime.UtcNow - _lastRequest) >= window;
-                if (ready)
-                {
-                    _scheduled = false;
-                }
             }
 
-            if (!ready)
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
             {
-                // Window has not yet elapsed; check again on the next editor tick.
-                EditorApplication.delayCall += () => Tick(window);
+                DetachCallback();
+                return;
+            }
+            if (ManageScript.RequireExplicitConsent() != null)
+            {
+                CancelCallback();
                 return;
             }
 
-            ProcessPending(
-                p => AssetDatabase.ImportAsset(p, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport),
-                () => UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation(),
-                message => McpLog.Error(message)
-            );
+            if (!ready || NativeOperationBarriers.TryGetScriptRefreshBlocker(null, out _))
+            {
+                // The callback is still owned; it must not wait on its own queued marker.
+                ScheduleTick(window);
+                return;
+            }
+
+            string generation = null;
+            bool nativeInvoked = false;
+            bool nativeInvocationFailed = false;
+            lock (_lock)
+            {
+                _processing = true;
+                _activePaths = _scheduledPaths.ToArray();
+                _scheduledPaths.Clear();
+            }
+            void SettleFailure()
+            {
+                if (generation == null)
+                    return;
+                if (nativeInvocationFailed)
+                    CompilationJobTracker.Reservation.InvocationFailed(generation);
+                else if (!nativeInvoked)
+                    CompilationJobTracker.Reservation.AbortBeforeStart(generation);
+            }
+            void InvokeNative(Action invocation)
+            {
+                // A refusal before the next call does not invalidate completion
+                // evidence for earlier successful imports in this batch.
+                Revalidate(generation);
+                nativeInvoked = true;
+                try
+                {
+                    invocation();
+                }
+                catch
+                {
+                    nativeInvocationFailed = true;
+                    throw;
+                }
+            }
+            try
+            {
+                // Publish native ownership before the first import can trigger compilation.
+                generation = CompilationJobTracker.Reservation.Reserve(Guid.NewGuid().ToString("N"), EditorApplication.timeSinceStartup + 60, refreshing: true);
+                ProcessPending(
+                    p => InvokeNative(() => AssetDatabase.ImportAsset(p, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport)),
+                    () =>
+                    {
+                        // An import may already have started (and even finished) the
+                        // owned cycle. Do not enqueue an unobservable second request.
+                        if (!CompilationJobTracker.Reservation.CompleteRefreshDecision(generation))
+                        {
+                            InvokeNative(() => UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation());
+                        }
+                    },
+                    message =>
+                    {
+                        SettleFailure();
+                        McpLog.Error(message);
+                    }
+                );
+            }
+            catch (Exception error)
+            {
+                SettleFailure();
+                McpLog.Error("[ManageScript] Deferred refresh could not acquire native ownership: " + error.Message);
+            }
+            finally
+            {
+                if (generation != null)
+                    CompilationJobTracker.Reservation.CompleteRefreshDecision(generation);
+                DetachCallback();
+                lock (_lock)
+                {
+                    _processing = false;
+                    _activePaths = null;
+                }
+                ResumeScheduled();
+            }
+        }
+
+        private static void Revalidate(string generation)
+        {
+            if (_stopped || EditorApplication.isPlayingOrWillChangePlaymode || ManageScript.RequireExplicitConsent() != null)
+                throw new InvalidOperationException("Deferred script refresh was cancelled before its native invocation.");
+            if (CompilationJobTracker.Reservation.State?.Generation != generation)
+                throw new InvalidOperationException("Deferred script refresh no longer owns its compilation reservation.");
+            if (NativeOperationBarriers.TryGetScriptRefreshBlocker(generation, out var blocker))
+                throw new InvalidOperationException("Deferred script refresh blocked: " + blocker.Reason);
+        }
+
+        private static void ScheduleTick(TimeSpan window)
+        {
+            long generation = ++_callbackGeneration;
+            _tickCallback = () => Tick(window, generation);
+            EditorApplication.delayCall += _tickCallback;
+        }
+
+        private static void CancelCallback()
+        {
+            DetachCallback();
+            lock (_lock)
+                _scheduledPaths.Clear();
+        }
+
+        private static void DetachCallback()
+        {
+            _callbackGeneration++;
+            if (_tickCallback != null)
+                EditorApplication.delayCall -= _tickCallback;
+            _tickCallback = null;
+            lock (_lock)
+                _scheduled = false;
+        }
+
+        private static void OnPlayModeChanged(PlayModeStateChange state)
+        {
+            if (state != PlayModeStateChange.EnteredEditMode)
+            {
+                DetachCallback();
+                return;
+            }
+            ResumeScheduled();
+        }
+
+        private static void ResumeScheduled()
+        {
+            lock (_lock)
+            {
+                if (_stopped || _processing || _scheduled || _scheduledPaths.Count == 0 || EditorApplication.isPlayingOrWillChangePlaymode)
+                    return;
+                _scheduled = true;
+            }
+            ScheduleTick(_window);
+            EditorApplication.QueuePlayerLoopUpdate();
+        }
+
+        private static void Stop()
+        {
+            _stopped = true;
+            CancelCallback();
+            // Uninvoked work cannot cross a reload. Source files are already saved;
+            // only an actual native reservation survives via its existing checkpoint.
+            lock (_lock)
+            {
+                _paths.Clear();
+                _compilePending = false;
+            }
         }
 
         // One attempt per scheduled batch. A later Schedule explicitly retries retained work.
@@ -4999,8 +5190,9 @@ namespace MCPForUnity.Editor.Tools
             string[] batch;
             lock (_lock)
             {
-                batch = _paths.ToArray();
-                _paths.Clear();
+                batch = _processing ? _activePaths : _paths.ToArray();
+                foreach (string path in batch)
+                    _paths.Remove(path);
             }
             int next = 0;
             try
@@ -5029,8 +5221,8 @@ namespace MCPForUnity.Editor.Tools
                 reportFailure(
                     "[ManageScript] Deferred refresh failed: "
                         + e.Message
-                        + ". Saved source was not replayed. Remaining imports and compilation are retained until another script refresh is scheduled; "
-                        + "alternatively inspect the Editor and refresh manually."
+                        + ". Saved source was not replayed. Remaining imports and compilation are retained. "
+                        + "Inspect native compilation/recovery status before explicitly scheduling another refresh or refreshing manually."
                 );
             }
         }
