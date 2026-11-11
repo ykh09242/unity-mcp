@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import json
@@ -310,3 +311,107 @@ def test_archive_workflow_adds_only_linux_315_and_retains_cross_os_311_behavior(
         if step.get("name") == "Exercise installed MCP, HTTP and CLI behavior"
     )
     assert behavior["run"].count(" -I -W error ") == 2
+
+
+def test_candidate_resolution_is_complete_before_probes_and_retained_on_failure():
+    config = yaml.safe_load((ROOT / ".github/workflows/python-tests.yml").read_text())
+    job = config["jobs"]["installed_archive"]
+    install = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Install candidate archive without runtime lock"
+    )
+    program = install["run"]
+    assert program.index("uv pip install") < program.index("uv pip freeze")
+    assert program.index("uv pip freeze") < program.index('"ARCHIVE_PYTHON=$python"')
+    assert "candidate_sha = $revision" in program
+    assert "archive_sha256 = $archiveDigest" in program
+    assert 'uv --version > "$evidence/toolchain.txt"' in program
+    assert "print(sys.version); print(sys.executable); print(platform.platform())" in program
+    assert 'uv pip freeze --no-config --python $python > "$evidence/resolved.txt"' in program
+    behavior = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Exercise installed MCP, HTTP and CLI behavior"
+    )
+    assert "> .tmp/candidate-archive/behavior.json" in behavior["run"]
+    assert "> .tmp/candidate-archive/registration.jsonl" in behavior["run"]
+    upload = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert upload["if"] == "always()"
+    assert upload["with"]["path"] == ".tmp/candidate-archive/"
+    rows = [(os_name, "3.11") for os_name in job["strategy"]["matrix"]["os"]]
+    rows.append(("ubuntu-26.04", "3.15"))
+    names = {
+        upload["with"]["name"]
+        .replace("${{ matrix.os }}", os_name)
+        .replace("${{ matrix.python-version }}", version)
+        for os_name, version in rows
+    }
+    assert len(names) == len(rows)
+
+
+@pytest.mark.parametrize("failed_probe", ["behavior", "registration"])
+def test_candidate_failed_probe_retains_stderr_and_preserves_json_and_resolution(
+    tmp_path, failed_probe
+):
+    shell = shutil.which("pwsh")
+    if shell is None:
+        pytest.skip("The cross-platform workflow's PowerShell interpreter is unavailable")
+    config = yaml.safe_load((ROOT / ".github/workflows/python-tests.yml").read_text())
+    job = config["jobs"]["installed_archive"]
+    behavior = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Exercise installed MCP, HTTP and CLI behavior"
+    )
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for name, script in (
+        ("behavior", "check_server_archive.py"),
+        ("registration", "check_server_startup.py"),
+    ):
+        (tools / script).write_text(
+            "import json, sys\n"
+            f"print(json.dumps({{'probe': '{name}'}}))\n"
+            f"sys.stderr.write('inert {name} diagnostic\\n')\n"
+            f"sys.exit({7 if name == failed_probe else 0})\n",
+            encoding="utf-8",
+        )
+    evidence = tmp_path / ".tmp/candidate-archive"
+    evidence.mkdir(parents=True)
+    (evidence / "resolved.txt").write_text("first==1\nsecond==2\n", encoding="utf-8")
+    script = tmp_path / "probe.ps1"
+    script.write_text(behavior["run"], encoding="utf-8")
+    result = subprocess.run(
+        [shell, "-NoProfile", "-File", str(script)],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "GITHUB_WORKSPACE": str(tmp_path),
+            "ARCHIVE_PYTHON": sys.executable,
+            "ARCHIVE_CANDIDATE_SHA": "a" * 40,
+            "ARCHIVE_FILE": str(tmp_path / "inert.zip"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert (evidence / f"{failed_probe}.stderr.log").read_text(encoding="utf-8").strip() == (
+        f"inert {failed_probe} diagnostic"
+    )
+    assert json.loads((evidence / "behavior.json").read_text(encoding="utf-8")) == {
+        "probe": "behavior"
+    }
+    if failed_probe == "registration":
+        assert json.loads((evidence / "registration.jsonl").read_text(encoding="utf-8")) == {
+            "probe": "registration"
+        }
+    assert (evidence / "resolved.txt").read_text(encoding="utf-8") == "first==1\nsecond==2\n"
+    upload = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert upload["if"] == "always()"
+    assert upload["with"]["path"] == evidence.relative_to(tmp_path).as_posix() + "/"
