@@ -7,6 +7,7 @@ from uuid import uuid4
 from core.config import config
 from core.server_build import RUNNING_SERVER
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
 from contextvars import Context, ContextVar
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
@@ -1401,6 +1402,13 @@ class UnityConnectionPool:
         self._resync_tasks: set[asyncio.Task] = set()
         self._resync_workers: set[asyncio.Future] = set()
         self._close_task: asyncio.Task | None = None
+        # Business readers can occupy every default worker while waiting for
+        # cancellation. Bound both independent control threads and queued work.
+        self._control_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="unity-stdio-control"
+        )
+        self._control_capacity = threading.BoundedSemaphore(self.MAX_CONNECTIONS)
+        self._control_cancelled = threading.Event()
 
         # Check for default instance from environment
         env_default = os.environ.get("UNITY_MCP_DEFAULT_INSTANCE", "").strip()
@@ -1824,6 +1832,7 @@ class UnityConnectionPool:
 
         with self._async_selection_lock:
             self._retired = True
+            self._control_cancelled.set()
             if self._close_task is None:
                 self._close_task = asyncio.create_task(self._close_generation(), context=Context())
             close_task = self._close_task
@@ -1868,6 +1877,10 @@ class UnityConnectionPool:
 
     def disconnect_all(self):
         """Disconnect all active connections and release this pool's discovery generation."""
+        with self._async_selection_lock:
+            self._control_cancelled.set()
+        if self._retired:
+            self._control_executor.shutdown(wait=True)
         # Async retirement owns pending selectors through their actual exit.
         # A reusable synchronous reset instead fences them with a new epoch.
         if self._retired:
@@ -1892,6 +1905,11 @@ class UnityConnectionPool:
             self._known_instances = {}
             self._target_refreshes.clear()
             self._last_full_scan = None
+        with self._async_selection_lock:
+            if not self._retired:
+                # Reopen only after old connections lose authority. Pending
+                # controls retain the previous generation's retired fence.
+                self._control_cancelled = threading.Event()
         # Disposal can wait for a command. Never hold pool/scan coordination
         # while an individual connection's owner settles its I/O.
         for instance_id, conn in connections:
@@ -2920,45 +2938,70 @@ async def _cancel_stdio_resume(
     resume = owner.invocation
     if resume is None:
         return
+    # Capture before snapshotting or queuing: scheduling never renews I/O time.
+    control_deadline = time.monotonic() + 1.0
     # The business reader can still receive a reply. Keep the control reader's
     # proof state separate while retaining the exact invocation and deadline.
     control_resume = replace(resume, action="cancel")
     params = owner.snapshot(params)
-
-    def cancel():
-        receipt_token = execution_owner.set(None)
-        control = UnityConnection(
-            host=connection.host,
-            port=connection.port,
-            instance_id=connection.instance_id,
-            auth_token_provider=connection.auth_token_provider,
-            allow_legacy_auth=False,
-            selected_target=connection.selected_target,
-        )
-        try:
-            control.send_command(
-                command,
-                params,
-                max_attempts=0,
-                deadline=time.monotonic() + 1.0,
-                _resume=control_resume,
-            )
-        finally:
-            control.disconnect()
-            execution_owner.reset(receipt_token)
-
-    loop = asyncio.get_running_loop()
     pool = _resync_pool.get()
     if pool is None and connection._pool_owner is not None:
         pool = connection._pool_owner()
-    if pool is not None and pool._retired:
-        return
-    worker = submit_owned_executor(loop, None, cancel)
-    if pool is not None:
+    if pool is None:
+        pool = get_unity_connection_pool()
+    control_cancelled = pool._control_cancelled
+
+    def still_current():
+        return (
+            not pool._retired
+            and not connection._retired
+            and not control_cancelled.is_set()
+            and time.monotonic() < control_deadline
+        )
+
+    def cancel():
+        try:
+            if not still_current():
+                return
+            receipt_token = execution_owner.set(None)
+            control = UnityConnection(
+                host=connection.host,
+                port=connection.port,
+                instance_id=connection.instance_id,
+                auth_token_provider=connection.auth_token_provider,
+                allow_legacy_auth=False,
+                selected_target=connection.selected_target,
+            )
+            try:
+                control.send_command(
+                    command,
+                    params,
+                    max_attempts=0,
+                    deadline=control_deadline,
+                    _resume=control_resume,
+                    _operation_guard=still_current,
+                    _cancelled=control_cancelled,
+                )
+            finally:
+                control.disconnect()
+                execution_owner.reset(receipt_token)
+        finally:
+            # A cancelled/expired async waiter cannot release physical capacity.
+            pool._control_capacity.release()
+
+    loop = asyncio.get_running_loop()
+    with pool._async_selection_lock:
+        if not still_current() or not pool._control_capacity.acquire(blocking=False):
+            return
+        try:
+            worker = submit_owned_executor(loop, pool._control_executor, cancel)
+        except BaseException:
+            pool._control_capacity.release()
+            raise
         pool._resync_workers.add(worker)
         worker.add_done_callback(pool._resync_workers.discard)
     worker.add_done_callback(_consume_async_exception)
-    with anyio.move_on_after(1.0, shield=True):
+    with anyio.move_on_after(max(0.0, control_deadline - time.monotonic()), shield=True):
         await asyncio.shield(worker)
 
 
