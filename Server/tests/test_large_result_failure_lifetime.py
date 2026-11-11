@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock
 from core.config import config
 from transport.charge_ledger import ChargeLedger
 import transport.large_result_assembler as assembly
+import transport.plugin_hub as hub_module
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
 
@@ -139,7 +140,7 @@ async def owned_hub(monkeypatch):
             await OwnedHub.shutdown()
 
 
-async def failed_transfer(state, kind):
+async def failed_transfer(state, kind, *, background=False):
     expected = {"type": "command_result", "id": CID, "result": {"body": "x" * SIZE}}
     if kind == "wrong_id":
         expected["id"] = "wrong-id"
@@ -171,16 +172,25 @@ async def failed_transfer(state, kind):
     for offset in range(0, len(wire), assembly.CHUNK_PAYLOAD_BYTES):
         frame = assembly.MAGIC + CID.encode() + offset.to_bytes(4, "big")
         frame += wire[offset : offset + assembly.CHUNK_PAYLOAD_BYTES]
-        await state.hub._handle_large_result(state.socket, frame)
+        token = hub_module._ingress_scope.set(hub_module._IngressScope(None, background))
+        try:
+            await state.hub._handle_large_result(state.socket, frame)
+        finally:
+            hub_module._ingress_scope.reset(token)
+    if background:
+        await asyncio.gather(*state.cls._result_tasks)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True], ids=["direct", "detached"])
 @pytest.mark.parametrize(
     "kind", ["crc", "bomb", "invalid_utf8", "invalid_json", "wrong_id", "wrong_type"]
 )
-async def test_failure_releases_buffer_before_close_can_suspend(owned_hub, kind, executor_handoff):
+async def test_failure_releases_buffer_before_close_can_suspend(
+    owned_hub, kind, executor_handoff, background
+):
     state = owned_hub
-    task = asyncio.create_task(failed_transfer(state, kind))
+    task = asyncio.create_task(failed_transfer(state, kind, background=background))
     try:
         await await_signal(state.entered, "state.entered")
         if executor_handoff is not None and kind not in {"crc", "bomb"}:
@@ -188,6 +198,7 @@ async def test_failure_releases_buffer_before_close_can_suspend(owned_hub, kind,
         gc.collect()
         assert state.cls._raw_results.total_bytes == 0
         assert state.cls._large_results.retained_bytes == 0
+        assert state.cls._retained_results.total_bytes == 0
         assert all(reference() is None for reference in state.buffers)
         # Invalid transfer settling still belongs to the disconnect/command path.
         assert not state.future.done()
@@ -201,10 +212,13 @@ async def test_failure_releases_buffer_before_close_can_suspend(owned_hub, kind,
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True], ids=["direct", "detached"])
 @pytest.mark.parametrize("kind", ["crc", "wrong_id", "invalid_json"])
-async def test_cancel_during_failed_transfer_close_does_not_retain_buffer(owned_hub, kind):
+async def test_cancel_during_failed_transfer_close_does_not_retain_buffer(
+    owned_hub, kind, background
+):
     state = owned_hub
-    task = asyncio.create_task(failed_transfer(state, kind))
+    task = asyncio.create_task(failed_transfer(state, kind, background=background))
     try:
         await await_signal(state.entered, "state.entered")
         task.cancel()
@@ -242,8 +256,11 @@ async def test_unexpected_worker_failure_preserves_diagnostics(owned_hub, monkey
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True], ids=["direct", "detached"])
 @pytest.mark.parametrize("kind", ["crc", "invalid_json"])
-async def test_failure_close_keeps_other_generation_allocation_and_owner_charge(owned_hub, kind):
+async def test_failure_close_keeps_other_generation_allocation_and_owner_charge(
+    owned_hub, kind, background
+):
     state = owned_hub
     other = "22222222-2222-4333-8444-555555555555"
     other_socket = SimpleNamespace(
@@ -256,7 +273,7 @@ async def test_failure_close_keeps_other_generation_allocation_and_owner_charge(
     state.cls._large_results.begin("bob-generation", other, SIZE, 17)
     other_buffer = state.buffers[0]
     other_charge = state.cls._raw_results.total_bytes
-    task = asyncio.create_task(failed_transfer(state, kind))
+    task = asyncio.create_task(failed_transfer(state, kind, background=background))
     try:
         await await_signal(state.entered, "state.entered")
         gc.collect()

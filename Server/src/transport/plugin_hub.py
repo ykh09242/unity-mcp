@@ -3498,9 +3498,12 @@ class PluginHub(WebSocketEndpoint):
                 work.owner.adopt(work.ingress.graph_owner)
 
             async def run():
+                nonlocal operation
                 token = _ingress_scope.set(None)
                 try:
-                    await operation()
+                    pending = operation()
+                    operation = None
+                    await pending
                 except ReceiptUnavailable:
                     await self._fail_result_persistence(websocket, work)
                 except Exception as error:
@@ -3687,7 +3690,9 @@ class PluginHub(WebSocketEndpoint):
                 )
                 work = None
                 return
-            await self._finish_large_result(websocket, completed, work)
+            pending = self._finish_large_result(websocket, completed, work)
+            completed = None
+            await pending
         except ReceiptUnavailable:
             if work is not None:
                 await self._fail_result_persistence(websocket, work)
@@ -3741,6 +3746,10 @@ class PluginHub(WebSocketEndpoint):
                 if payload.reason in {"result_capacity", "result_transfer_timeout"}:
                     work.entry["future"].set_result(response_limit_error(payload.reason))
                     return
+            # The worker has settled and every caller has handed off its raw
+            # payload reference. Close may suspend; do not retain its charge.
+            # Keep result_work claimed until final settlement to reject duplicates.
+            work.owner.release()
             await websocket.close(code=4400, reason="Invalid large result transfer")
             return
         await self._handle_command_result(websocket, payload, _work=work)
