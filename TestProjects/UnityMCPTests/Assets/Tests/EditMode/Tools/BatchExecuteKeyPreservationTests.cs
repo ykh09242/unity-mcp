@@ -348,6 +348,14 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase("manage_ugui")]
         [TestCase("manage_terrain")]
+        [TestCase("manage_input_actions")]
+        [TestCase("manage_localization")]
+        [TestCase("manage_play_scenario")]
+        [TestCase("manage_scenario_recording")]
+        [TestCase("manage_object_handles_v2")]
+        [TestCase("manage_reference_graph")]
+        [TestCase("cancel_test_job")]
+        [TestCase("export_test_job")]
         public void ExactHandlerKeys_AndNestedPayloadsRemainUnchanged(string tool)
         {
             var source = JObject.Parse(
@@ -360,6 +368,104 @@ namespace MCPForUnityTests.Editor.Tools
             var normalized = (JObject)method.Invoke(null, new object[] { source, tool });
             Assert.IsTrue(JToken.DeepEquals(source, normalized), normalized.ToString());
             Assert.AreNotSame(source["device_profiles"], normalized["device_profiles"]);
+        }
+
+        [TestCase("get_test_job", "page_size")]
+        [TestCase("capture_ui_snapshot", "component_type")]
+        [TestCase("capture_ui_snapshot", "identity_map")]
+        [TestCase("manage_scene", "timeout_seconds")]
+        [TestCase("manage_editor", "wait_until")]
+        [TestCase("manage_editor", "timeout_seconds")]
+        [TestCase("manage_editor", "job_id")]
+        [TestCase("manage_editor", "restore_token")]
+        [TestCase("manage_editor", "aspect_ratio")]
+        public void MixedLegacyHandlers_PreserveExactReaderFieldsAndHistoricalCamelCase(string tool, string field)
+        {
+            var source = new JObject { [field] = JValue.CreateNull(), ["legacy_value"] = false };
+            var method = typeof(BatchExecute).GetMethod(
+                "NormalizeParameterKeys",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic
+            );
+            var normalized = (JObject)method.Invoke(null, new object[] { source, tool });
+            Assert.AreEqual(JTokenType.Null, normalized[field]?.Type, normalized.ToString());
+            Assert.IsFalse(normalized.Value<bool>("legacyValue"));
+            Assert.IsNull(normalized["legacy_value"]);
+            Assert.IsTrue(source.ContainsKey("legacy_value"), "Normalization must not mutate caller input.");
+        }
+
+        [TestCase("get_test_job", "page_size", "pageSize")]
+        [TestCase("capture_ui_snapshot", "component_type", "componentType")]
+        [TestCase("manage_scene", "timeout_seconds", "timeoutSeconds")]
+        [TestCase("manage_editor", "wait_until", "waitUntil")]
+        public void MixedExactReaderFields_RetainHistoricalAliasConflictRefusal(string tool, string exact, string alias)
+        {
+            var source = new JObject { [exact] = JValue.CreateNull(), [alias] = false };
+            var original = source.DeepClone();
+            var method = typeof(BatchExecute).GetMethod(
+                "NormalizeParameterKeys",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic
+            );
+            var error = Assert.Throws<System.Reflection.TargetInvocationException>(() => method.Invoke(null, new object[] { source, tool }));
+            Assert.IsInstanceOf<System.ArgumentException>(error.InnerException);
+            StringAssert.Contains("Conflicting aliases", error.InnerException.Message);
+            Assert.IsTrue(JToken.DeepEquals(original, source));
+        }
+
+        [Test]
+        public void ExactObjectHandleSelector_CapturesTheSameNativeObjectThroughBatch()
+        {
+            using var availability = new MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState(new[] { "manage_object_handles_v2" });
+            var request = new JObject { ["action"] = "capture", ["instance_id"] = testGo.GetInstanceIDCompat() };
+            var envelope = JObject.FromObject(
+                BatchExecute
+                    .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_object_handles_v2", ["params"] = request }) })
+                    .GetAwaiter()
+                    .GetResult()
+            );
+            Assert.IsTrue(envelope.Value<bool>("success"), envelope.ToString());
+            Assert.AreEqual(testGo.GetInstanceIDCompat(), (int)envelope.SelectToken("data.results[0].result.data.instanceID"));
+            Assert.IsNotEmpty((string)envelope.SelectToken("data.results[0].result.data.handle"));
+        }
+
+        [TestCase("cancel_test_job")]
+        [TestCase("export_test_job")]
+        [TestCase("manage_play_scenario")]
+        [TestCase("manage_scenario_recording")]
+        public void ExactJobIdentifiers_ReachTheSameNativeLookupThroughBatch(string tool)
+        {
+            using var availability = new MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState(new[] { tool });
+            var request = new JObject { ["action"] = "status", ["job_id"] = System.Guid.NewGuid().ToString("N") };
+            object direct;
+            switch (tool)
+            {
+                case "cancel_test_job":
+                    request.Remove("action");
+                    direct = CancelTestJob.HandleCommand(request);
+                    break;
+                case "export_test_job":
+                    request.Remove("action");
+                    request["format"] = "nunit";
+                    direct = ExportTestJob.HandleCommand(request);
+                    break;
+                case "manage_play_scenario":
+                    direct = ManagePlayScenario.HandleCommand(request);
+                    break;
+                default:
+                    request["recording_id"] = request["job_id"];
+                    request.Remove("job_id");
+                    direct = ManageScenarioRecording.HandleCommand(request);
+                    break;
+            }
+            var expected = JObject.FromObject(direct);
+            Assert.IsFalse(expected.Value<bool>("success"), expected.ToString());
+            var envelope = JObject.FromObject(
+                BatchExecute
+                    .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = tool, ["params"] = request }) })
+                    .GetAwaiter()
+                    .GetResult()
+            );
+            Assert.IsFalse(envelope.Value<bool>("success"), envelope.ToString());
+            Assert.IsTrue(JToken.DeepEquals(expected, envelope.SelectToken("data.results[0].result")), envelope.ToString());
         }
 
         [TestCase(false)]

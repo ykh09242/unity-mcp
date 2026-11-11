@@ -580,7 +580,17 @@ namespace MCPForUnity.Editor.Tools
 
             // These handlers own exact keys, including snake_case diagnostics and proof keys.
             // Preserve the direct-call contract instead of applying legacy camelCase conversion.
-            if (toolName == "manage_script")
+            if (
+                toolName == "manage_script"
+                || toolName == "manage_input_actions"
+                || toolName == "manage_localization"
+                || toolName == "manage_play_scenario"
+                || toolName == "manage_scenario_recording"
+                || toolName == "manage_object_handles_v2"
+                || toolName == "manage_reference_graph"
+                || toolName == "cancel_test_job"
+                || toolName == "export_test_job"
+            )
                 return (JObject)source.DeepClone();
 
             if (toolName == "manage_ugui")
@@ -605,11 +615,27 @@ namespace MCPForUnity.Editor.Tools
 
             // Preserve historical camelCase reader compatibility for the other legacy built-ins.
             var normalized = new JObject();
+            var aliasValues = new Dictionary<string, JToken>(StringComparer.Ordinal);
             foreach (var property in source.Properties())
             {
-                string normalizedName = ToCamelCase(property.Name);
-                if (normalized.Property(normalizedName) != null && !JToken.DeepEquals(normalized[normalizedName], property.Value))
-                    throw new ArgumentException($"Conflicting aliases for '{normalizedName}'. Provide one value.");
+                // These otherwise legacy handlers also have exact readers for selected fields.
+                bool exactKey =
+                    toolName == "get_test_job" && property.Name == "page_size"
+                    || toolName == "capture_ui_snapshot" && (property.Name == "component_type" || property.Name == "identity_map")
+                    || toolName == "manage_scene" && property.Name == "timeout_seconds"
+                    || toolName == "manage_editor"
+                        && (
+                            property.Name == "wait_until"
+                            || property.Name == "timeout_seconds"
+                            || property.Name == "job_id"
+                            || property.Name == "restore_token"
+                            || property.Name == "aspect_ratio"
+                        );
+                string legacyName = ToCamelCase(property.Name);
+                if (aliasValues.TryGetValue(legacyName, out JToken previous) && !JToken.DeepEquals(previous, property.Value))
+                    throw new ArgumentException($"Conflicting aliases for '{legacyName}'. Provide one value.");
+                aliasValues[legacyName] = property.Value;
+                string normalizedName = exactKey ? property.Name : legacyName;
                 normalized[normalizedName] = property.Value.DeepClone();
             }
             return normalized;

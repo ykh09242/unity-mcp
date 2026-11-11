@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -80,6 +81,27 @@ namespace MCPForUnityTests.Editor.Tools
             return Succeed(action, values);
         }
 
+        private JObject Batch(string action, JObject values)
+        {
+            CommandRegistry.Initialize();
+            using var consent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute", "manage_input_actions");
+            using var availability = new MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState(new[] { "manage_input_actions" });
+            var request = (JObject)values.DeepClone();
+            request["action"] = action;
+            request["path"] = path;
+            var original = request.DeepClone();
+            var envelope = JObject.FromObject(
+                BatchExecute
+                    .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_input_actions", ["params"] = request }) })
+                    .GetAwaiter()
+                    .GetResult()
+            );
+            Assert.IsTrue(JToken.DeepEquals(original, request), "Batch dispatch must preserve the caller's request.");
+            var result = envelope.SelectToken("data.results[0].result") as JObject;
+            Assert.IsNotNull(result, envelope.ToString());
+            return result;
+        }
+
         private (string map, string action, string binding) CreateOneBinding()
         {
             Succeed("create_asset");
@@ -112,6 +134,81 @@ namespace MCPForUnityTests.Editor.Tools
             var asset = AssetDatabase.LoadAssetAtPath(path, assetType);
             Assert.IsNotNull(asset, "The real Input System importer must produce a native asset.");
             return JObject.Parse((string)assetType.GetMethod("ToJson", Type.EmptyTypes).Invoke(asset, null));
+        }
+
+        [Test]
+        public void BatchMutationAndPagedRead_PreserveExactSnakeCaseRevisionAndSelectors()
+        {
+            var ids = CreateOneBinding();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            string revision = (string)Succeed("read")["revision"];
+            JObject edited = Batch(
+                "set_binding",
+                new JObject
+                {
+                    ["map_id"] = ids.map,
+                    ["binding_id"] = ids.binding,
+                    ["binding_path"] = "<Keyboard>/enter",
+                    ["expected_revision"] = revision,
+                }
+            );
+            Assert.IsTrue(edited.Value<bool>("success"), edited.ToString());
+            JObject read = Batch(
+                "read",
+                new JObject
+                {
+                    ["page_size"] = 1,
+                    ["cursor"] = 1,
+                    ["expected_revision"] = edited["data"]["revision"],
+                }
+            );
+            Assert.IsTrue(read.Value<bool>("success"), read.ToString());
+            Assert.AreEqual(1, read["data"]["rows"].Count());
+            Assert.AreEqual(edited["data"]["revision"], read["data"]["revision"]);
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            Assert.AreEqual(ids.binding, (string)NativeJson()["maps"][0]["bindings"][0]["id"]);
+            Assert.AreEqual("<Keyboard>/enter", (string)NativeJson()["maps"][0]["bindings"][0]["path"]);
+        }
+
+        [TestCase("expected_revision", "null")]
+        [TestCase("expected_revision", "true")]
+        [TestCase("map_id", "[]")]
+        [TestCase("binding_id", "false")]
+        [TestCase("binding_path", "42")]
+        [TestCase("expectedRevision", "\"alias\"")]
+        public void BatchMalformedMutation_RefusesBeforeSourceChanges(string field, string value)
+        {
+            var ids = CreateOneBinding();
+            string full = AssetPathUtility.GetFullAssetPath(path);
+            byte[] before = File.ReadAllBytes(full);
+            string revision = (string)Succeed("read")["revision"];
+            var request = new JObject
+            {
+                ["map_id"] = ids.map,
+                ["binding_id"] = ids.binding,
+                ["binding_path"] = "<Keyboard>/enter",
+                ["expected_revision"] = revision,
+            };
+            request[field] = JToken.Parse(value);
+            JObject result = Batch("set_binding", request);
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(full));
+            Assert.AreEqual(revision, (string)Succeed("read")["revision"]);
+            Assert.AreEqual("<Keyboard>/space", (string)NativeJson()["maps"][0]["bindings"][0]["path"]);
+        }
+
+        [TestCase("null")]
+        [TestCase("true")]
+        [TestCase("\"1\"")]
+        [TestCase("0")]
+        public void BatchMalformedPageSize_RefusesInsteadOfFallingBack(string value)
+        {
+            CreateOneBinding();
+            byte[] before = File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(path));
+            JObject result = Batch("read", new JObject { ["page_size"] = JToken.Parse(value) });
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("page_size", result.ToString());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(path)));
         }
 
         [Test]

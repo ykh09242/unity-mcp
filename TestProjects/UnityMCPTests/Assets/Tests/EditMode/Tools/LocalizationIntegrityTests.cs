@@ -2,6 +2,8 @@ using System;
 using System.Collections;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -66,6 +68,83 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         private string Revision(Object table) => Inspect(table)["tables"][0].Value<string>("revision");
+
+        private JObject SendBatch(string action, JObject request)
+        {
+            CommandRegistry.Initialize();
+            using var consent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute", "manage_localization");
+            using var availability = new MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState(new[] { "manage_localization" });
+            request = (JObject)request.DeepClone();
+            request["action"] = action;
+            var original = request.DeepClone();
+            var envelope = JObject.FromObject(
+                BatchExecute
+                    .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_localization", ["params"] = request }) })
+                    .GetAwaiter()
+                    .GetResult()
+            );
+            Assert.IsTrue(JToken.DeepEquals(original, request));
+            var result = envelope.SelectToken("data.results[0].result") as JObject;
+            Assert.IsNotNull(result, envelope.ToString());
+            return result;
+        }
+
+        [Test]
+        public void BatchReadAndRevisionMutation_PreserveExactSnakeCaseFields()
+        {
+            JObject read = SendBatch("inspect", new JObject { ["table_paths"] = new JArray(PathOf(frTable)), ["argument_names"] = new JArray("player") });
+            Assert.IsTrue(read.Value<bool>("success"), read.ToString());
+            string revision = (string)read["data"]["tables"][0]["revision"];
+            string guid = AssetDatabase.AssetPathToGUID(PathOf(frTable));
+            JObject result = SendBatch(
+                "set_string_entry",
+                new JObject
+                {
+                    ["table_path"] = PathOf(frTable),
+                    ["key_id"] = "102",
+                    ["value"] = "Conserve",
+                    ["is_smart"] = false,
+                    ["expected_revision"] = revision,
+                }
+            );
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            string path = PathOf(frTable);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+            frTable = AssetDatabase.LoadMainAssetAtPath(path);
+            Assert.AreEqual("Conserve", Get(Entry(frTable, 102), "Value"));
+            Assert.AreEqual("Bonjour", Get(Entry(frTable, 101), "Value"));
+            Assert.IsFalse((bool)Get(Entry(frTable, 102), "IsSmart"));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            Assert.AreNotEqual(revision, Revision(frTable));
+        }
+
+        [TestCase("expected_revision", "null")]
+        [TestCase("expected_revision", "42")]
+        [TestCase("key_id", "102")]
+        [TestCase("is_smart", "\"false\"")]
+        [TestCase("table_path", "[]")]
+        [TestCase("expectedRevision", "\"alias\"")]
+        public void BatchMalformedMutation_RefusesBeforeNativeOrSourceChanges(string field, string value)
+        {
+            string revision = Revision(frTable);
+            string path = PathOf(frTable);
+            byte[] before = System.IO.File.ReadAllBytes(path);
+            var request = new JObject
+            {
+                ["table_path"] = path,
+                ["key_id"] = "101",
+                ["value"] = "Overwrite",
+                ["is_smart"] = false,
+                ["expected_revision"] = revision,
+            };
+            request[field] = JToken.Parse(value);
+            JObject result = SendBatch("set_string_entry", request);
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual("Bonjour", Get(Entry(frTable, 101), "Value"));
+            Assert.IsFalse(EditorUtility.IsDirty(frTable));
+            CollectionAssert.AreEqual(before, System.IO.File.ReadAllBytes(path));
+            Assert.AreEqual(revision, Revision(frTable));
+        }
 
         [Test]
         public void LongLocalizedTextRoundTripsWithoutTruncation()
