@@ -45,6 +45,7 @@ from cli.main import cli
 from cli.utils import connection
 import cli.commands.editor as editor
 from types import SimpleNamespace
+from tests.test_source_freshness_contracts import current
 client_type = httpx.AsyncClient
 connection.read_local_auth_token = lambda host, port: "owned-fixture"
 requests = []
@@ -52,9 +53,13 @@ reply = None
 def respond(request):
     body = json.loads(request.content)
     assert request.url.path == "/api/command"
-    assert body["unity_instance"] == "Selected@owned"
+    assert body["unity_instance"] == "Selected@0123456789abcdef"
     requests.append(body)
+    if body["type"] == "get_compile_job":
+        assert body["params"]["observe_source"] is True
+        return httpx.Response(200, json={"success": True, "source_freshness": current()})
     if body["type"] == "run_tests":
+        assert body["params"]["source_token"] == current()["source_token"]
         return httpx.Response(200, json={"success": True, "data": {
             "job_id": "owned-job", "status": "running"}})
     assert body["type"] == "get_test_job"
@@ -82,11 +87,11 @@ for label, reply, expected in cases:
             now = [0.0]
             editor.time = SimpleNamespace(monotonic=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay))
             requests.clear()
-            result = CliRunner().invoke(cli, ["--instance", "Selected@owned", "--format", output_format, *command, "--details", "--failed-only"])
+            result = CliRunner().invoke(cli, ["--instance", "Selected@0123456789abcdef", "--format", output_format, *command, "--details", "--failed-only"])
             waiting = int(command[-1]) > 0
             unsuccessful_completion = waiting and reply.get("data", {}).get("status") in ("failed", "cancelled")
             expected_exit = 1 if not reply["success"] or unsuccessful_completion else 0
-            passed = result.exit_code == expected_exit and len(requests) == (2 if command[1] == "tests" else 1)
+            passed = result.exit_code == expected_exit and len(requests) == (3 if command[1] == "tests" else 1)
             if output_format == "json":
                 passed = passed and json.loads(result.stdout) == reply
             elif output_format == "table" and label == "cancelled":

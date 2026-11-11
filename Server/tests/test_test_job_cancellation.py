@@ -14,6 +14,8 @@ from unittest.mock import AsyncMock
 
 from fastmcp import Client, FastMCP
 import pytest
+from models.source_freshness import parse_freshness
+from tests.test_source_freshness_contracts import current
 
 
 @pytest.mark.asyncio
@@ -74,6 +76,9 @@ async def test_sdk_opt_in_deadline_forwards_once_without_changing_wait_contract(
         module, "get_unity_instance_from_context", AsyncMock(return_value="Game@owned")
     )
     monkeypatch.setattr(module, "preflight", AsyncMock(return_value=None))
+    source = parse_freshness(current())
+    observe = AsyncMock(return_value=source)
+    monkeypatch.setattr("services.source_freshness.ensure_source_freshness", observe)
     send = AsyncMock(return_value={"success": True, "data": {"job_id": "job", "status": "running"}})
     monkeypatch.setattr(module.unity_transport, "send_with_unity_instance", send)
     app = FastMCP("deadline-native-job")
@@ -81,7 +86,13 @@ async def test_sdk_opt_in_deadline_forwards_once_without_changing_wait_contract(
     async with Client(app) as client:
         result = await client.call_tool("run_tests", {"run_timeout_ms": duration})
     assert json.loads(result.content[0].text)["data"]["status"] == "running"
-    assert send.call_args.args[3] == {"mode": "EditMode", "runTimeoutMs": duration}
+    assert send.call_args.args[3] == {
+        "mode": "EditMode",
+        "runTimeoutMs": duration,
+        "source_token": source.source_token,
+        "require_source_freshness": True,
+    }
+    observe.assert_awaited_once()
     send.assert_awaited_once()
 
 

@@ -10,10 +10,12 @@ from mcp_types import CallToolResult, TextContent
 import pytest
 
 from models.models import MCPResponse, ToolDefinitionModel
+from models.source_freshness import parse_freshness
 from models.unity_response import normalize_unity_response, parse_resource_response
 from services.registry import get_registered_tools
 from transport.execution_receipts import _public_projection
 from transport.response_limit_middleware import ResponseLimitMiddleware
+from tests.test_source_freshness_contracts import current
 
 
 FAILURE = {
@@ -43,6 +45,10 @@ async def test_builtin_native_failure_preserves_code_and_mcp_error(monkeypatch, 
         AsyncMock(return_value="Fixture@0123456789abcdef"),
     )
     monkeypatch.setattr(native, "preflight", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "services.source_freshness.ensure_source_freshness",
+        AsyncMock(return_value=parse_freshness(current())),
+    )
     dispatch = AsyncMock(return_value=FAILURE)
     monkeypatch.setattr(native.unity_transport, "send_with_unity_instance", dispatch)
     # When the actual SDK client observes the native refusal.
