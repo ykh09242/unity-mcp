@@ -88,6 +88,7 @@ def snapshot_source(args, output):
                 name
                 for name in names
                 if name in {"Library", "Temp", "Logs", "obj", ".git", "__pycache__"}
+                or (name == "bin" and Path(directory).name == "ScriptDiagnosticsHost~")
                 or name.startswith(".env")
                 or Path(name).suffix.lower() in {".key", ".pem", ".pfx", ".p12"}
             }

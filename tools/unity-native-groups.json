@@ -360,6 +360,16 @@
       ],
       "disruptive": false,
       "platform_exclusions": {}
+    },
+    "script-analysis-host": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.ScriptAnalysisHostTests.InspectionOfMissingHostDoesNotCreateDirectories",
+        "MCPForUnityTests.Editor.Services.ScriptAnalysisHostTests.OversizedAndTruncatedFramesCannotBecomeDiagnostics",
+        "MCPForUnityTests.Editor.Services.ScriptAnalysisHostTests.NativeSetupAndProtocolWorkFromTheInstalledPackage"
+      ],
+      "requires_graphics": false,
+      "disruptive": false,
+      "platform_exclusions": {}
     }
   }
 }

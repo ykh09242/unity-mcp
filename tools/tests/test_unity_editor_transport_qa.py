@@ -143,6 +143,21 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         self.assertEqual(0, self.run_fake(OwnedFakeProcess([0])))
         self.assertIn("-nographics", self.record()["command"])
 
+    def test_host_source_inventory_excludes_only_its_build_output(self):
+        package = self.output / "host-input"
+        host = package / "Editor/ScriptDiagnosticsHost~"
+        (host / "bin").mkdir(parents=True)
+        (host / "Program.cs").write_text("class Host {}")
+        (host / "packages.lock.json").write_text("{}")
+        (host / "bin/ScriptDiagnosticsHost.dll").write_bytes(b"generated")
+        (package / "bin").mkdir()
+        (package / "bin/authored.txt").write_text("preserve unrelated inventory")
+        files = qa.tree_files(package)
+        self.assertIn("Editor/ScriptDiagnosticsHost~/Program.cs", files)
+        self.assertIn("Editor/ScriptDiagnosticsHost~/packages.lock.json", files)
+        self.assertIn("bin/authored.txt", files)
+        self.assertNotIn("Editor/ScriptDiagnosticsHost~/bin/ScriptDiagnosticsHost.dll", files)
+
     def test_launch_uses_execution_filter_and_accepts_original_inventory_assertion(self):
         self.passed_xml()
         self.args.filter = "OwnedFixture.Criterion"

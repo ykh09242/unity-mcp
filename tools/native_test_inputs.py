@@ -39,6 +39,7 @@ def tree_files(root, *, excluded_roots=()):
             name
             for name in names
             if name.lower() not in _EXCLUDED
+            and not (name.lower() == "bin" and Path(directory).name == "ScriptDiagnosticsHost~")
             and not name.startswith(".env")
             and (Path(directory) / name).relative_to(root).as_posix() not in excluded_roots
         )

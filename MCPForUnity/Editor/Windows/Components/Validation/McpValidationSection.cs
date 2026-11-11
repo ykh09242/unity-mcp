@@ -1,5 +1,8 @@
 using System;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.ScriptQuality;
+using MCPForUnity.Editor.Setup;
 using MCPForUnity.Editor.Tools;
 using UnityEditor;
 using UnityEditor.UIElements;
@@ -17,6 +20,8 @@ namespace MCPForUnity.Editor.Windows.Components.Validation
         // UI Elements
         private EnumField validationLevelField;
         private Label validationDescription;
+        private Label analysisStatus;
+        private System.Threading.CancellationTokenSource setupCancellation;
 
         // Data
         private ValidationLevel currentValidationLevel = ValidationLevel.Standard;
@@ -54,6 +59,59 @@ namespace MCPForUnity.Editor.Windows.Components.Validation
             currentValidationLevel = (ValidationLevel)Mathf.Clamp(savedLevel, 0, 3);
             validationLevelField.value = currentValidationLevel;
             UpdateValidationDescription();
+            analysisStatus = new Label();
+            analysisStatus.style.whiteSpace = WhiteSpace.Normal;
+            Root.Add(analysisStatus);
+            Root.Add(
+                new Button(async () =>
+                {
+                    if (ScriptAnalysisHostInstaller.Installing)
+                        return;
+                    setupCancellation = new System.Threading.CancellationTokenSource();
+                    analysisStatus.text = "Setting up the optional analysis host...";
+                    try
+                    {
+                        await ScriptAnalysisHostInstaller.InstallAsync(setupCancellation.Token);
+                        analysisStatus.text = "Analysis host installed. Enable analysis for this Editor session to use it.";
+                    }
+                    catch (Exception error)
+                    {
+                        analysisStatus.text = "Analysis setup: " + error.Message;
+                    }
+                    finally
+                    {
+                        setupCancellation.Dispose();
+                        setupCancellation = null;
+                    }
+                })
+                {
+                    text = "Set up / update analysis host (.NET SDK 10+ required)",
+                }
+            );
+            Root.Add(new Button(() => setupCancellation?.Cancel()) { text = "Cancel analysis host setup" });
+            Root.Add(
+                new Button(() =>
+                {
+                    var result = MCPServiceLocator.ToolConsent.Grant(ScriptAnalysisHost.ConsentName, ToolConsentScope.EditorSession);
+                    analysisStatus.text = result.Succeeded ? "Analysis enabled for this Editor session." : "Analysis consent: " + result.ErrorCode;
+                })
+                {
+                    text = "Enable analysis for this Editor session",
+                }
+            );
+            Root.Add(
+                new Button(() =>
+                {
+                    var result = MCPServiceLocator.ToolConsent.Revoke(ScriptAnalysisHost.ConsentName);
+                    analysisStatus.text = result.Succeeded ? "Analysis disabled." : "Analysis consent: " + result.ErrorCode;
+                })
+                {
+                    text = "Disable analysis",
+                }
+            );
+            Root.Add(new Button(() => analysisStatus.text = ScriptAnalysisHost.Capabilities().ToString()) { text = "Check analysis host status" });
+            analysisStatus.text =
+                "Optional changed-script diagnostics use a separate .NET process. Setup restores pinned dependencies; analysis never installs or changes project code.";
         }
 
         private void RegisterCallbacks()

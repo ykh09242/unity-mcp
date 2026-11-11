@@ -19,6 +19,8 @@ def _metadata_issues(package: Path) -> list[str]:
     """Inspect the shipped tree, including collisions with non-script package assets."""
     issues: list[str] = []
     for script in sorted(package.rglob("*.cs")):
+        if any(part.endswith("~") for part in script.relative_to(package).parts[:-1]):
+            continue
         metadata = script.with_suffix(".cs.meta")
         if not metadata.is_file():
             issues.append(f"Missing script metadata: {script.relative_to(package)}")
@@ -72,6 +74,13 @@ def test_missing_script_metadata_is_reported(tmp_path: Path) -> None:
     metadata = _write_script(tmp_path, "Editor/Helper.cs", "1" * 32)
     metadata.unlink()
     assert _metadata_issues(tmp_path) == [f"Missing script metadata: {Path('Editor/Helper.cs')}"]
+
+
+def test_unity_ignored_host_source_does_not_require_metadata(tmp_path: Path) -> None:
+    host = tmp_path / "Editor" / "ScriptDiagnosticsHost~"
+    host.mkdir(parents=True)
+    (host / "Program.cs").write_text("class Host {}", encoding="utf-8")
+    assert _metadata_issues(tmp_path) == []
 
 
 @pytest.mark.parametrize("guid", ["", "short", "g" * 32, "0" * 32, "1" * 33])

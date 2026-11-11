@@ -299,7 +299,7 @@ resolve_ref() {
 # including disabled optional assemblies; never merge their types into a parent.
 assembly_sources() {
   local srcdir="$1" definition
-  local prune=()
+  local prune=(-name '*~')
   while IFS= read -r -d '' definition; do
     [ "${#prune[@]}" -eq 0 ] || prune+=(-o)
     prune+=(-path "${definition%/*}")

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../../MCPForUnity/Editor/Services/ScriptQuality/AnalysisHostProcess.cs" Link="AnalysisHostProcess.cs" />
+    <Compile Include="../../../../MCPForUnity/Editor/Services/ScriptQuality/AnalysisHostInstallation.cs" Link="AnalysisHostInstallation.cs" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="NUnit" Version="4.4.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />
+    <ProjectReference Include="../../../../MCPForUnity/Editor/ScriptDiagnosticsHost~/ScriptDiagnosticsHost.csproj" />
+  </ItemGroup>
+</Project>

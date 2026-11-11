@@ -60,6 +60,10 @@ TestProjects/UnityMCPTests/Assets/Temp/
 
 # CI test reports (generated during test runs)
 reports/
+MCPForUnity/Editor/ScriptDiagnosticsHost~/bin/
+MCPForUnity/Editor/ScriptDiagnosticsHost~/obj/
+tools/tests/fixtures/script_diagnostics_host/bin/
+tools/tests/fixtures/script_diagnostics_host/obj/
 .release-evidence/
 
 # Local testing harness
