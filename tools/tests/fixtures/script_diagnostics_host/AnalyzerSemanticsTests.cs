@@ -60,6 +60,51 @@ public class AnalyzerSemanticsTests
     }
 
     [Test]
+    public async Task LineOnlyMovementPreservesDiagnosticAnchors()
+    {
+        const string code = "class C { string Read(UnityEngine.Object item) => item?.name; }";
+        var before = await AnalyzerRunner.AnalyzeAsync(Request(code));
+        var after = await AnalyzerRunner.AnalyzeAsync(Request("// inserted line\n\n" + code));
+        var left = before.Diagnostics.Single(d => d.Id == "UNT0008");
+        var right = after.Diagnostics.Single(d => d.Id == "UNT0008");
+        Assert.That(right.Anchor, Is.EqualTo(left.Anchor));
+        Assert.That(right.Line, Is.Not.EqualTo(left.Line));
+        Assert.That(after.EnvironmentSignature, Is.EqualTo(before.EnvironmentSignature));
+    }
+
+    [Test]
+    public async Task EnvironmentSignatureIncludesUnselectedSourceContext()
+    {
+        var before = Request("class C { string Read(UnityEngine.Object item) => item?.name; }");
+        var changed = before.Assemblies[0] with
+        {
+            Sources = before
+                .Assemblies[0]
+                .Sources.Select(s => s.Path.EndsWith("UnityStub.cs") ? s with { Text = s.Text + "\nclass NewContext {}" } : s)
+                .ToArray(),
+        };
+        var left = await AnalyzerRunner.AnalyzeAsync(before);
+        var right = await AnalyzerRunner.AnalyzeAsync(before with { Assemblies = [changed] });
+        Assert.That(right.EnvironmentSignature, Is.Not.EqualTo(left.EnvironmentSignature));
+    }
+
+    [Test]
+    public async Task SyntaxAnchorExposesRelocationWithoutCollapsingDuplicateDiagnostics()
+    {
+        var original = Request("class C { string Read(UnityEngine.Object item) => item?.name + item?.name; }");
+        var renamed = Request("class C { string Renamed(UnityEngine.Object item) => item?.name + item?.name; }");
+        var before = await AnalyzerRunner.AnalyzeAsync(original);
+        var after = await AnalyzerRunner.AnalyzeAsync(renamed);
+        var left = before.Diagnostics.Where(d => d.Id == "UNT0008").ToArray();
+        var right = after.Diagnostics.Where(d => d.Id == "UNT0008").ToArray();
+        Assert.That(left.Length, Is.EqualTo(2));
+        Assert.That(right.Length, Is.EqualTo(2));
+        Assert.That(left[0].Anchor, Is.EqualTo(left[1].Anchor));
+        Assert.That(right[0].Anchor, Is.Not.EqualTo(left[0].Anchor));
+        Assert.That(right[0].SyntaxAnchor, Is.EqualTo(left[0].SyntaxAnchor).And.Not.Empty);
+    }
+
+    [Test]
     public async Task PlainObjectNullPropagationSuggestsIde0031()
     {
         var result = await AnalyzerRunner.AnalyzeAsync(Request("class C { string Read(string item) { return item == null ? null : item.ToString(); } }"));

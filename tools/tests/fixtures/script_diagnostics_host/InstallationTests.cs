@@ -38,5 +38,14 @@ public class InstallationTests
         // Ordinary execution uses the published runtime files without a restore/build.
         var result = await owner.RunAsync("dotnet", [host, "--capabilities"], Path.GetDirectoryName(host)!, null!, true, CancellationToken.None);
         Assert.That(System.Text.Encoding.UTF8.GetString(result), Does.Contain("\"protocol\":1"));
+        string installedSource = AnalysisHostInstallation.SourceSignature(package);
+        Assert.That(AnalysisHostInstallation.ResolveVerifiedHost(cache, installedSource), Is.EqualTo(host));
+        File.AppendAllText(Path.Combine(package, "Protocol.cs"), "\n// newer shipped host\n");
+        string changedSource = AnalysisHostInstallation.SourceSignature(package);
+        Assert.That(changedSource, Is.Not.EqualTo(installedSource));
+        Assert.That(AnalysisHostInstallation.Inspect(cache, out string reason, changedSource), Is.Null);
+        Assert.That(reason, Is.EqualTo("analysis_host_update_required"));
+        Assert.Throws<IOException>(() => AnalysisHostInstallation.ResolveVerifiedHost(cache, changedSource));
+        Assert.That(File.ReadAllBytes(Path.Combine(cache, "current.json")), Is.EqualTo(pointer));
     }
 }

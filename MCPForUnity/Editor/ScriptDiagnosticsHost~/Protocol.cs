@@ -43,6 +43,7 @@ public sealed record DiagnosticRow
     public int? Column { get; init; }
     public bool Suppressed { get; init; }
     public string Anchor { get; init; } = "";
+    public string SyntaxAnchor { get; init; } = "";
     public string? Symbol { get; init; }
     public string Assembly { get; init; } = "";
 }

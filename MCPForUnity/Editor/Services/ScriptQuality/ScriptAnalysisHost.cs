@@ -92,6 +92,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                             ["sdk"] = installation["sdk"],
                             ["runtime"] = installation["runtime"],
                             ["providers"] = installation["providers"],
+                            ["source_signature"] = installation["source_signature"],
                             ["verified_at_unix_ms"] = installation["verified_at_unix_ms"],
                             ["runtime_evidence"] = "verified_at_explicit_setup",
                         },
@@ -112,7 +113,8 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                     throw new InvalidOperationException("analysis_consent_required");
             }
             CheckConsent();
-            string host = await Task.Run(() => ScriptAnalysisHostInstaller.ResolveVerifiedHost(cache), cancellation);
+            string sourceSignature = ScriptAnalysisHostInstaller.ExpectedSourceSignature();
+            string host = await Task.Run(() => ScriptAnalysisHostInstaller.ResolveVerifiedHost(cache, sourceSignature), cancellation);
             using var payload = new LimitedMemoryStream(272L * 1024 * 1024 + 4);
             payload.Write(new byte[4], 0, 4);
             using (var writer = new StreamWriter(payload, new UTF8Encoding(false), 65536, true))
@@ -151,6 +153,8 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             var result = JObject.Parse(Encoding.UTF8.GetString(response));
             if ((int?)result["protocol"] != 1 || (string)result["source_token"] != (string)request["source_token"])
                 throw new InvalidDataException("analysis_response_identity_mismatch");
+            result["host_source_signature"] = sourceSignature;
+            result["environment_signature"] = SourceFreshness.SourceSnapshot.Hash((string)result["environment_signature"] + "\n" + sourceSignature);
             return result;
         }
 

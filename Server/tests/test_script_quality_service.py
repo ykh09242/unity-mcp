@@ -86,3 +86,187 @@ async def test_transport_error_envelope_cannot_settle_an_unknown_native_job(qual
     }
     response = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})
     assert service.jobs[response["job_id"]].terminal is False
+
+
+def native_completion(job_id, *, complete=True, source="a" * 64, rows=None, cursor=None, offset=0):
+    return {
+        "success": True,
+        "data": {
+            "job_id": job_id,
+            "state": "completed",
+            "terminal": True,
+            "editor_generation": "generation",
+            "result": {
+                "protocol": 1,
+                "complete": complete,
+                "stale": False,
+                "source_token": source,
+                "project_id": "project",
+                "context_digest": "context",
+                "environment_signature": "environment",
+                "selected_files": [
+                    {"path": "Assets/A.cs", "guid": "b" * 32, "bytes_sha256": "c" * 64}
+                ],
+                "coverage_gaps": [] if complete else ["partial"],
+                "analyzer_errors": [],
+                "rows": rows or [],
+                "offset": offset,
+                "total_rows": len(rows or []),
+                "next_cursor": cursor,
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_baseline_is_published_only_after_complete_analysis_and_cached(quality):
+    service, _, send = quality
+    start = await service.execute(None, "capture_baseline", {"paths": ["Assets/A.cs"]})
+    job_id = start["data"]["job_id"]
+    assert "baseline_id" not in start["data"]
+    send.return_value = native_completion(job_id)
+    response = await service.execute(None, "status", {"job_id": job_id})
+    assert response["data"]["baseline_id"] == job_id
+    send.reset_mock()
+    send.side_effect = ConnectionError
+    cached = await service.execute(None, "status", {"job_id": job_id})
+    assert cached["data"]["baseline_id"] == job_id
+    send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_partial_capture_does_not_publish_a_baseline(quality):
+    service, _, send = quality
+    start = await service.execute(None, "capture_baseline", {"paths": ["Assets/A.cs"]})
+    job_id = start["data"]["job_id"]
+    send.return_value = native_completion(job_id, complete=False)
+    response = await service.execute(None, "status", {"job_id": job_id})
+    assert response["data"]["baseline_id"] is None
+    assert response["data"]["baseline_reason"] == "baseline_coverage_incomplete"
+
+
+@pytest.mark.asyncio
+async def test_expired_result_does_not_fetch_or_rerun_native_work(quality):
+    service, _, send = quality
+    now = [0.0]
+    service.results.clock = lambda: now[0]
+    start = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})
+    job_id = start["data"]["job_id"]
+    send.return_value = native_completion(job_id)
+    await service.execute(None, "status", {"job_id": job_id})
+    now[0] = 3600
+    send.reset_mock()
+    response = await service.execute(None, "status", {"job_id": job_id})
+    assert response["code"] == "analysis_expired_or_evicted"
+    send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pages_with_changed_source_identity_are_never_published(quality):
+    service, _, send = quality
+    start = await service.execute(None, "capture_baseline", {"paths": ["Assets/A.cs"]})
+    job_id = start["data"]["job_id"]
+    first = native_completion(job_id, cursor="next", rows=[diagnostic_row()])
+    second = native_completion(job_id, source="d" * 64, rows=[diagnostic_row("new")], offset=1)
+    first["data"]["result"]["total_rows"] = 2
+    second["data"]["result"]["total_rows"] = 2
+    send.reset_mock()
+    send.side_effect = [first, second]
+    response = await service.execute(None, "status", {"job_id": job_id})
+    assert response["code"] == "analysis_result_inconsistent"
+    assert service.results.read(job_id, ("local", "project-a"), baseline=True) is None
+    assert send.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_retention_capacity_is_reserved_before_native_dispatch(quality):
+    service, _, send = quality
+    service.results.total_bytes = 1
+    response = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})
+    assert response["code"] == "analysis_retention_capacity"
+    send.assert_not_awaited()
+
+
+def diagnostic_row(anchor="existing"):
+    return {
+        "scope": "selected",
+        "diagnostic": {
+            "id": "UNT0008",
+            "provider": "Unity",
+            "provider_version": "1",
+            "path": "Assets/A.cs",
+            "anchor": anchor,
+            "syntax_anchor": anchor,
+            "symbol": "C.M",
+            "severity": "warning",
+            "message": "Unity null semantics",
+            "suppressed": False,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_completed_baseline_classifies_new_issues_without_reusing_other_owners(quality):
+    service, target, send = quality
+    start = await service.execute(None, "capture_baseline", {"paths": ["Assets/A.cs"]})
+    baseline_id = start["data"]["job_id"]
+    send.return_value = native_completion(baseline_id, rows=[diagnostic_row()])
+    await service.execute(None, "status", {"job_id": baseline_id})
+    send.return_value = {"success": True, "data": {"state": "queued"}}
+    start = await service.execute(
+        None, "analyze", {"paths": ["Assets/A.cs"], "baseline_id": baseline_id}
+    )
+    job_id = start["data"]["job_id"]
+    send.return_value = native_completion(
+        job_id, source="d" * 64, rows=[diagnostic_row(), diagnostic_row("new")]
+    )
+    response = await service.execute(None, "status", {"job_id": job_id, "page_size": 1})
+    page = response["data"]["result"]
+    assert page["counts"] == {"introduced": 1, "existing": 1, "resolved": 0, "unclassified": 0}
+    cursor = page["next_cursor"]
+    assert cursor
+    send.reset_mock()
+    next_page = await service.execute(None, "status", {"job_id": job_id, "cursor": cursor})
+    assert next_page["data"]["result"]["offset"] == 1
+    send.assert_not_awaited()
+    target.scope.key = ("another-user", "project-a")
+    assert (await service.execute(None, "status", {"job_id": job_id, "cursor": cursor}))[
+        "code"
+    ] == "analysis_not_found"
+
+
+@pytest.mark.asyncio
+async def test_wrong_native_job_receipt_retains_uncertain_reservation(quality):
+    service, _, send = quality
+    start = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})
+    job_id = start["data"]["job_id"]
+    send.return_value = native_completion("e" * 32)
+    assert (await service.execute(None, "status", {"job_id": job_id}))[
+        "code"
+    ] == "analysis_result_inconsistent"
+    assert job_id in service.results.active
+
+
+@pytest.mark.asyncio
+async def test_unavailable_native_job_does_not_prove_process_settlement(quality):
+    service, _, send = quality
+    start = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})
+    job_id = start["data"]["job_id"]
+    send.return_value = {
+        "success": True,
+        "data": {"job_id": job_id, "state": "unavailable", "terminal": True},
+    }
+    await service.execute(None, "status", {"job_id": job_id})
+    assert job_id in service.results.active
+
+
+@pytest.mark.asyncio
+async def test_host_update_refusal_releases_pre_admission_reservation(quality):
+    service, _, send = quality
+    send.return_value = {
+        "success": False,
+        "error": "script_quality_unavailable",
+        "data": {"reason": "analysis_host_update_required"},
+    }
+    response = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})
+    assert response["job_id"] not in service.results.active

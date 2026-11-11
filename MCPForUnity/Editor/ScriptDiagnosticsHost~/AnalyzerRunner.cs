@@ -130,20 +130,41 @@ public static class AnalyzerRunner
         }
         if (request.Assemblies.Length == 0)
             gaps.Add("assembly_context_unavailable");
+        var metadata = new Dictionary<string, string>(PathComparer);
+        long metadataBytes = 0;
+        foreach (string reference in request.Assemblies.SelectMany(a => a.References).Distinct(PathComparer))
+        {
+            cancellation.ThrowIfCancellationRequested();
+            using var stream = File.OpenRead(reference);
+            metadataBytes += stream.Length;
+            if (metadataBytes > 256L * 1024 * 1024)
+                throw new InvalidDataException("metadata_context_limit");
+            metadata[reference] = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        }
         string environment = JsonSerializer.Serialize(
             new
             {
                 Providers,
-                inputs = request.Assemblies.Select(a => new
-                {
-                    a.Name,
-                    a.LanguageVersion,
-                    a.Defines,
-                    a.AllowUnsafe,
-                    a.Nullable,
-                    a.RuleSeverities,
-                    a.Configs,
-                }),
+                request.IncludeSuppressed,
+                inputs = request
+                    .Assemblies.OrderBy(a => a.Name, StringComparer.Ordinal)
+                    .Select(a => new
+                    {
+                        a.Name,
+                        a.LanguageVersion,
+                        a.Defines,
+                        a.AllowUnsafe,
+                        a.Nullable,
+                        a.RuleSeverities,
+                        a.Configs,
+                        a.AdditionalFiles,
+                        a.ProjectReferences,
+                        metadata = a.References.OrderBy(path => path, StringComparer.Ordinal).Select(path => new { path, hash = metadata[path] }),
+                        context = a
+                            .Sources.Where(source => !selected.Contains(AnalyzerConfiguration.FullPath(root, source.Path)))
+                            .OrderBy(source => source.Path, StringComparer.Ordinal)
+                            .Select(source => new { source.Path, hash = Hash(source.Text) }),
+                    }),
             }
         );
         return new AnalysisResult
@@ -174,6 +195,7 @@ public static class AnalyzerRunner
         int? line = null,
             column = null;
         string anchor = diagnostic.Id + "\n" + diagnostic.GetMessage();
+        string syntaxAnchor = anchor;
         if (diagnostic.Location.IsInSource)
         {
             var tree = diagnostic.Location.SourceTree!;
@@ -184,7 +206,9 @@ public static class AnalyzerRunner
             var semantic = compilation.GetSemanticModel(tree);
             symbol = semantic.GetEnclosingSymbol(diagnostic.Location.SourceSpan.Start, cancellation)?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
             var node = tree.GetRoot(cancellation).FindNode(diagnostic.Location.SourceSpan, getInnermostNodeForTie: true);
-            anchor += "\n" + symbol + "\n" + string.Join(" ", node.DescendantTokens().Select(t => t.Text));
+            string tokens = string.Join(" ", node.DescendantTokens().Select(t => t.Text));
+            syntaxAnchor += "\n" + tokens;
+            anchor += "\n" + symbol + "\n" + tokens;
         }
         return new DiagnosticRow
         {
@@ -201,6 +225,7 @@ public static class AnalyzerRunner
             Suppressed = diagnostic.IsSuppressed,
             Symbol = symbol,
             Anchor = Hash(anchor),
+            SyntaxAnchor = Hash(syntaxAnchor),
             Assembly = assembly,
             Remediation =
                 diagnostic.Id == "UNT0008" ? "Use an explicit Unity null check before accessing the object; ?. bypasses UnityEngine.Object null semantics."

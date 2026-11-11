@@ -45,7 +45,23 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             }
         }
 
-        internal static JObject Inspect(string root, out string reason)
+        internal static string SourceSignature(string source)
+        {
+            RequireUnlinked(source);
+            var entries = new StringBuilder();
+            foreach (string name in SourceFiles.OrderBy(name => name, StringComparer.Ordinal))
+            {
+                string path = Path.Combine(source, name);
+                RequireUnlinked(path);
+                if (new FileInfo(IoPath(path)).Length > 2 * 1024 * 1024)
+                    throw new IOException("host_source_limit");
+                entries.Append(name).Append('\n').Append(Hash(path)).Append('\n');
+            }
+            using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(entries.ToString()))).Replace("-", "").ToLowerInvariant();
+        }
+
+        internal static JObject Inspect(string root, out string reason, string expectedSource = null)
         {
             reason = "analyzer_unavailable";
             try
@@ -65,6 +81,8 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 RequireUnlinked(host);
                 if (!File.Exists(host))
                     throw new IOException("host_files_missing");
+                if (expectedSource != null && (string)manifest["source_signature"] != expectedSource)
+                    throw new IOException("analysis_host_update_required");
                 reason = null;
                 return manifest;
             }
@@ -75,9 +93,9 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             }
         }
 
-        internal static string ResolveVerifiedHost(string root)
+        internal static string ResolveVerifiedHost(string root, string expectedSource = null)
         {
-            JObject manifest = Inspect(root, out string reason) ?? throw new IOException(reason);
+            JObject manifest = Inspect(root, out string reason, expectedSource) ?? throw new IOException(reason);
             string publish = Path.GetFullPath(Path.Combine(root, (string)manifest["directory"], "publish"));
             var hashes = manifest["hashes"] as JObject ?? throw new IOException("host_integrity_unavailable");
             if (hashes.Count == 0 || hashes.Count > 512)
@@ -106,6 +124,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
         {
             RequireUnlinked(source);
             RequireUnlinked(root);
+            string sourceSignature = SourceSignature(source);
             string pointer = Path.Combine(root, "current.json");
             string expected = File.Exists(pointer) ? Hash(pointer) : null;
             if (expected != null && Inspect(root, out _) == null)
@@ -122,6 +141,8 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                     throw new IOException("host_source_limit");
                 File.Copy(input, Path.Combine(stage, name), false);
             }
+            if (SourceSignature(stage) != sourceSignature)
+                throw new IOException("host_source_changed");
             File.WriteAllText(
                 Path.Combine(stage, "NuGet.Config"),
                 "<configuration><packageSources><clear/><add key=\"nuget.org\" value=\"https://api.nuget.org/v3/index.json\" /></packageSources></configuration>",
@@ -187,6 +208,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             var manifest = new JObject
             {
                 ["schema"] = Schema,
+                ["source_signature"] = sourceSignature,
                 ["directory"] = id,
                 ["sdk"] = sdk,
                 ["runtime"] = result["providers"]?["runtime"],
@@ -197,6 +219,8 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             string pending = Path.Combine(stage, "current.json");
             File.WriteAllText(pending, manifest.ToString(Formatting.None), new UTF8Encoding(false));
             deadline.Token.ThrowIfCancellationRequested();
+            if (SourceSignature(source) != sourceSignature)
+                throw new IOException("host_source_changed");
             RequireUnlinked(root);
             if ((File.Exists(pointer) ? Hash(pointer) : null) != expected)
                 throw new IOException("host_installation_changed");
