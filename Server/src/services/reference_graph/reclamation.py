@@ -50,10 +50,15 @@ def delete_rows(connection, tables, identity, budget):
     for table, column in tables:
         if removed == budget:
             break
-        removed += connection.execute(
+        changed = connection.execute(
             f"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {column}=? LIMIT ?)",
             (identity, budget - removed),
         ).rowcount
+        removed += changed
+        if table == "edges" and changed:
+            # Same-revision physical cleanup must not strand bounded row anchors.
+            # The generation and deletion commit or roll back together.
+            connection.execute("UPDATE graph_cursor_state SET reclamation=reclamation+1 WHERE id=1")
     remaining = any(
         connection.execute(
             f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1", (identity,)

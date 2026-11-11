@@ -68,6 +68,10 @@ snapshot alias changes happen before physical deletion; the queue resumes after
 reopening. Its evidence deletions share the per-call row budget and are included
 in `query_scratch_rows_removed` for response compatibility.
 
+Deleting retired live-edge backing advances a separate persisted reclamation
+generation. Direct `query` cursors can require an explicit restart even at the
+same semantic revision; see the [1024-character cursor contract](reference-graph-queries.md).
+
 Unfinished queries, active worker staging, retained snapshots, mutation receipts,
 unreleased runtime captures, live graph evidence, rules, grants, policies and
 declarations are preserved.

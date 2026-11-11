@@ -52,6 +52,23 @@ the same revision-bound anchor as admitted evidence. Oversized admitted evidence
 still fails explicitly, while excluded evidence payloads are not materialized into
 Python. See the [bounded-work measurements](reference-graph-bounded-work.md).
 
+Direct `query` cursors are at most 1024 characters, including when authored edge
+IDs are long. They retain a compact physical-row anchor and a persisted reclamation
+generation instead of copying an arbitrarily long ordering key. When cleanup
+physically removes retired edges, it atomically advances that generation. A later
+page can therefore return `reference_graph_changed` and require restarting from
+the first page even though the semantic graph revision is unchanged. Reopening
+the server preserves this check. Restarting returns the complete currently visible
+result; callers must discard the earlier partial accumulation rather than append
+the restarted result. This is explicit invalidation, not transparent continuation.
+Legacy stable-key cursors remain accepted, and legacy physical-row cursors retain
+their row/digest checks. Snapshot/traversal ordering keys and immutable snapshot
+comparison cursors retain their existing behavior.
+
+Hidden retired rows consume candidate work but no visible response-byte allowance.
+SQL still suppresses genuinely oversized projections before they enter Python,
+and those rows fail explicitly rather than being mistaken for hidden evidence.
+
 Cancellation signals the producer's SQLite progress callback and drains its physical
 thread before releasing ownership. The callback composes with storage accounting;
 rollback and commit recovery retain their existing transaction guarantees. SQLite

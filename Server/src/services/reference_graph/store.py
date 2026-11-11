@@ -87,9 +87,9 @@ def edge_candidates(connection, condition: str, parameters: tuple, limit: int, *
         + condition
         + " ORDER BY id LIMIT ?), selected AS (SELECT e.*,o.state,n.present,n.path AS target_path,"
         "src.path AS source_path,c.published AS provenance,"
-        f"(s.enabled=1 AND {admission} AND NOT EXISTS "
+        f"COALESCE((s.enabled=1 AND {admission} AND NOT EXISTS "
         "(SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.owner) AND NOT EXISTS "
-        "(SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.target)) AS admitted "
+        "(SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.target)),0) AS admitted "
         "FROM candidates e LEFT JOIN sources s ON s.provider=e.provider "
         "LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider "
         "LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider "
@@ -276,7 +276,9 @@ class GraphStore:
             raise ValueError("Unsupported reference graph schema; preserve the database")
         if connection.execute("SELECT scope FROM graph_meta").fetchone()[0] != self.scope.key:
             raise ValueError("Reference graph identity does not match")
-        return version == self.SCHEMA_VERSION and "evidence_context" in tables
+        return (
+            version == self.SCHEMA_VERSION and {"evidence_context", "graph_cursor_state"} <= tables
+        )
 
     @contextmanager
     def _connect(
@@ -470,6 +472,12 @@ class GraphStore:
                 "CREATE TABLE IF NOT EXISTS graph_admission(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,ready INTEGER NOT NULL)"
             )
             connection.execute("INSERT OR IGNORE INTO graph_admission VALUES (1,0,1)")
+            # An additive capability migration keeps the main identity schema
+            # compatible with offline maintenance and prior static-graph readers.
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS graph_cursor_state(id INTEGER PRIMARY KEY CHECK(id=1),reclamation INTEGER NOT NULL)"
+            )
+            connection.execute("INSERT OR IGNORE INTO graph_cursor_state VALUES (1,0)")
             connection.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
         self._ensure_wal()
 
@@ -772,6 +780,11 @@ class GraphStore:
                 position = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")))
                 if not isinstance(position, dict) or position.get("query") != query_hash:
                     raise ValueError("Cursor belongs to another query")
+                if "reclamation" in position and (
+                    type(position["reclamation"]) is not int
+                    or not 0 <= position["reclamation"] < 2**63
+                ):
+                    raise ValueError("Invalid cursor reclamation generation")
                 if "last_row" in position:
                     if (
                         type(position["last_row"]) is not int
@@ -787,6 +800,11 @@ class GraphStore:
             revision = connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
             if position is not None and position.get("revision") != revision:
                 raise RevisionConflict("Graph changed between pages; restart the query")
+            reclamation = connection.execute(
+                "SELECT reclamation FROM graph_cursor_state WHERE id=1"
+            ).fetchone()[0]
+            if position is not None and position.get("reclamation", reclamation) != reclamation:
+                raise RevisionConflict("Graph rows were reclaimed between pages; restart the query")
             last = ""
             if position is not None:
                 if "last_row" in position:
@@ -858,8 +876,11 @@ class GraphStore:
                         {
                             "query": query_hash,
                             "revision": revision,
+                            "reclamation": reclamation,
                             # A 64-bit row anchor keeps long persisted IDs out of
-                            # the token; the digest rejects a moved/reused rowid.
+                            # the 1024-character token. Physical reclamation
+                            # explicitly invalidates it without a semantic edit;
+                            # the digest still rejects a moved/reused legacy rowid.
                             "last_row": anchor["cursor_row"],
                             "last_hash": _hash(anchor["id"]),
                         }
