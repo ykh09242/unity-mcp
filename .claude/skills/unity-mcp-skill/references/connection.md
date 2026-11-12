@@ -2,6 +2,14 @@
 
 ## Capability Discovery
 
+For task-based discovery, keep the original request in `query` and supply its intent as concise English terms in `catalog_query`. The calling agent performs this language interpretation. The server applies Unicode normalization and lexical ranking to the supplied terms. Preserve exact tool, API and package identifiers. English queries and exact identifiers can omit `catalog_query`.
+
+```json
+{"tool":"manage_tools","params":{"action":"search","query":"inspect a shader graph","catalog_query":"shader graph inspect","limit":3}}
+```
+
+Both query fields accept 1..512 characters and `limit` accepts 1..20. The response retains `query`, reports the effective `matched_query` and identifies `matching` as `lexical`. With no results, follow `next_action` to provide or broaden `catalog_query`. The CLI exposes the same contract through `tool search QUERY --catalog-query "English task terms"`. Search candidates require schema and runtime-availability inspection before execution.
+
 Use the client's tools/resources/template inventory; do not invent prefixed names such as a particular client's `mcp__...` binding. The names below identify server capabilities, not names to assume are already callable.
 
 The default `core` catalog exposes focused tools such as `scene_inspect`, `scene_lifecycle`, `gameobject_create`, `gameobject_edit` and `asset_inspect`. Combined tools such as `manage_scene`, `manage_gameobject`, `manage_asset`, `manage_prefabs`, `manage_camera`, `manage_graphics`, `manage_physics` and `manage_ui` belong to the optional `legacy` compatibility group. Prefer the focused schema; activate `legacy` explicitly only when an existing integration needs its combined actions. Other optional groups are named in [tools-reference.md](tools-reference.md).

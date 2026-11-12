@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 import inspect
-import re
+import unicodedata
 from typing import Callable, Final, Literal, NotRequired, TypedDict, get_args, get_origin
 
 from mcp.types import ToolAnnotations
@@ -16,11 +16,14 @@ class SearchRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     query: StrictStr = Field(min_length=1, max_length=512)
     limit: StrictInt = Field(default=5, ge=1, le=20)
+    catalog_query: StrictStr | None = Field(default=None, min_length=1, max_length=512)
 
-    @field_validator("query")
+    @field_validator("query", "catalog_query")
     @classmethod
-    def nonempty_query(cls, value: str) -> str:
+    def nonempty_query(cls, value: str | None) -> str | None:
         """Normalize surrounding whitespace once at the public boundary."""
+        if value is None:
+            return None
         value = value.strip()
         if not value:
             raise ValueError("Query must contain a non-whitespace character.")
@@ -60,6 +63,11 @@ class SearchResult(TypedDict):
 class SearchResponse(TypedDict):
     scope: Literal["local_catalog", "mcp_context"]
     query: str
+    matched_query: str
+    matching: Literal["lexical"]
+    catalog_language: Literal["en"]
+    next_action: Literal["inspect_candidates", "provide_catalog_query", "broaden_catalog_query"]
+    hint: str
     results: list[SearchResult]
     total_matches: int
     truncated: bool
@@ -84,6 +92,8 @@ _PHYSICS: Final = TaskPurpose(
     ("create-2d-physics", "physics-3d-collision"),
 )
 _UITK: Final = TaskPurpose("ui toolkit uxml uss layout text 레이아웃", ("ui-uitk",))
+# Retain existing aliases for query-only callers. Language-independent discovery
+# uses caller-supplied catalog_query rather than an expanding translation table.
 _PURPOSES: Final = {
     **{item.name: _PHYSICS for item in CAPABILITIES if item.group == "physics"},
     **{item.name: _UITK for item in CAPABILITIES if item.group == "ui"},
@@ -192,8 +202,18 @@ def _declared_actions(entry: SearchEntry) -> list[str]:
     return list(dict.fromkeys(literals(parameter.annotation)))
 
 
+def _normalized(value: str) -> str:
+    return unicodedata.normalize("NFKC", value).casefold()
+
+
 def _words(value: str) -> set[str]:
-    return set(re.findall(r"[^\W_]+", value.casefold()))
+    # Keep combining marks with their letters across scripts. Separators (including
+    # identifier underscores) form boundaries without language-specific word rules.
+    characters = (
+        character if unicodedata.category(character)[0] in "LNM" else " "
+        for character in _normalized(value)
+    )
+    return set("".join(characters).split())
 
 
 def search_catalog(
@@ -204,7 +224,8 @@ def search_catalog(
 ) -> SearchResponse:
     """Rank names, aliases, descriptions and curated intent words without side effects."""
     matches: list[tuple[int, str, SearchResult]] = []
-    query = request.query.casefold()
+    matched_query = request.catalog_query or request.query
+    query = _normalized(matched_query)
     query_words = _words(query)
     for entry in entries:
         name = entry["name"]
@@ -225,9 +246,9 @@ def search_catalog(
         score += len(
             query_words.intersection(_words(" ".join((description, entry.get("group") or ""))))
         )
-        score += 1000 if query == name.casefold() else 0
-        score += 100 if query in name.casefold() else 0
-        score += 20 if query in purpose.keywords.casefold() else 0
+        score += 1000 if query == _normalized(name) else 0
+        score += 100 if query in _normalized(name) else 0
+        score += 20 if query in _normalized(purpose.keywords) else 0
         if not score:
             continue
         effects = {
@@ -255,9 +276,24 @@ def search_catalog(
         }
         matches.append((-score, name, result))
     matches.sort(key=lambda item: (item[0], item[1]))
+    if matches:
+        next_action = "inspect_candidates"
+    elif request.catalog_query is None:
+        next_action = "provide_catalog_query"
+    else:
+        next_action = "broaden_catalog_query"
     return {
         "scope": "mcp_context" if visible_names is not None else "local_catalog",
         "query": request.query,
+        "matched_query": matched_query,
+        "matching": "lexical",
+        "catalog_language": "en",
+        "next_action": next_action,
+        "hint": (
+            "The caller translates task intent from the user's language into English catalog terms "
+            "in catalog_query. Preserve exact tool, API and package identifiers. "
+            "Inspect candidate schemas, or broaden catalog_query when no candidate matches."
+        ),
         "results": [item[2] for item in matches[: request.limit]],
         "total_matches": len(matches),
         "truncated": len(matches) > request.limit,

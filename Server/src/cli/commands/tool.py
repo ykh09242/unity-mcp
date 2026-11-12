@@ -48,6 +48,8 @@ def list_tools():
 
 
 def _validate_query(_ctx, _param, value):
+    if value is None:
+        return None
     if not value.strip() or len(value) > 512:
         raise click.BadParameter("use 1..512 characters including a non-whitespace character")
     return value.strip()
@@ -56,7 +58,12 @@ def _validate_query(_ctx, _param, value):
 @tool.command("search")
 @click.argument("query", callback=_validate_query)
 @click.option("--limit", type=click.IntRange(1, 20), default=5, show_default=True)
-def search(query: str, limit: int) -> None:
+@click.option(
+    "--catalog-query",
+    callback=_validate_query,
+    help="Task intent translated into English catalog terms. Preserve exact tool/API/package identifiers.",
+)
+def search(query: str, limit: int, catalog_query: str | None) -> None:
     """Search the offline local catalog by task purpose, without a Unity connection.
 
     Advertisement and project readiness remain unobserved in this offline scope.
@@ -69,7 +76,9 @@ def search(query: str, limit: int) -> None:
     from utils.module_discovery import discover_modules
 
     list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
-    result = search_catalog(SearchRequest(query=query, limit=limit), get_registered_tools())
+    result = search_catalog(
+        SearchRequest(query=query, catalog_query=catalog_query, limit=limit), get_registered_tools()
+    )
     config = get_config()
     if config.format == "text":
         from cli.utils.task_search_output import format_task_search

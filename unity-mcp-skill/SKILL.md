@@ -27,7 +27,7 @@ Load only the reference needed for the request. The live tool schema wins over a
 
 ## Target And Act
 
-Choose the route from the task before writing custom code. For an unclear route, call `manage_tools(action="search", query="task words")`, inspect the highest relevant candidate and verify its live availability. Search accepts task phrases and exact tool names and reports readiness as unobserved.
+Choose the route from the task before writing custom code. For an unclear route, call `manage_tools(action="search", query="original task", catalog_query="English task terms")`, inspect the highest relevant candidate and verify its live availability. Keep the user's task in `query`. Translate intent from their language into concise English `catalog_query` terms, preserving exact tool, API and package identifiers. English queries and exact identifiers can omit `catalog_query`. The server matches catalog terms lexically and reports readiness as unobserved.
 
 - Shader Graph structure and shader diagnostics use `manage_shader`. Compile one explicitly selected variant when compiler evidence is required.
 - Prefab previews use `capture_prefab`. UI/button interactions use `manage_input` and the existing UI framework's inspection tools.

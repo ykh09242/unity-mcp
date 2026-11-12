@@ -6,6 +6,7 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 
 | Request | Relevant logical tools | Important distinction |
 |---|---|---|
+| Discover a task's tools | `manage_tools` with `action="search"` | Keep the original `query` and translate intent into English `catalog_query` terms across languages. Preserve exact identifiers and inspect candidate schemas |
 | Scene state/save/load | `scene_inspect`, `scene_lifecycle` | Core; preserve unsaved/additive scenes; replacement is not a neutral setup action |
 | Find/create/edit objects | `find_gameobjects`, `gameobject_create`, `gameobject_edit` | Core; search returns IDs; reuse an ID with `search_method="by_id"` |
 | Duplicate/position/place objects | `gameobject_duplicate`, `gameobject_positioning`, `gameobject_placement` | Optional scene group; inspect action-specific references and preview contracts |

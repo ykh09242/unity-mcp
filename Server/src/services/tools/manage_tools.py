@@ -39,7 +39,7 @@ logger = logging.getLogger("mcp-for-unity-server")
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore configured profile), describe (full schema for one tool), "
-        "search (bounded local task-purpose suggestions, without activation). "
+        "search (bounded lexical catalog suggestions, without activation). "
         "Selection changes server tools/list; it does not confirm the client's callable inventory. "
         "Use sync after toggling tools in the Unity Editor GUI."
     ),
@@ -67,7 +67,9 @@ async def manage_tools(
         "Single tool name for activate/deactivate/describe. Discover names with list_groups.",
     ] = None,
     query: Annotated[
-        str | None, Field(max_length=512), "Task-purpose query for search (1..512 characters)."
+        str | None,
+        Field(max_length=512),
+        "Original task query or exact identifier for search (1..512 characters).",
     ] = None,
     limit: Annotated[int, Field(strict=True, ge=1, le=20), "Maximum search results (1..20)."] = 5,
     include_schema: Annotated[
@@ -75,11 +77,18 @@ async def manage_tools(
         Field(strict=True),
         "On single-tool activation, attach its schema and readiness lookup.",
     ] = False,
+    catalog_query: Annotated[
+        str | None,
+        Field(max_length=512),
+        "For search, translate the user's intent from any language into concise English catalog terms here. Preserve exact tool/API/package identifiers. Omit for an English query or exact identifier. The server performs lexical matching.",
+    ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
     discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
     modern = is_sessionless(ctx)
+    if catalog_query is not None and action != "search":
+        return {"success": False, "error": "catalog_query is supported only for search."}
     if include_schema and (action != "activate" or not tool or group is not None):
         return {"success": False, "error": "include_schema requires activating one tool."}
     if action == "search":
@@ -88,14 +97,14 @@ async def manage_tools(
         if group is not None or tool is not None:
             return {
                 "success": False,
-                "error": "search accepts query and limit, without a group or tool selector.",
+                "error": "search accepts query, catalog_query and limit, without a group or tool selector.",
             }
         try:
-            request = SearchRequest(query=query, limit=limit)
+            request = SearchRequest(query=query, catalog_query=catalog_query, limit=limit)
         except ValidationError:
             return {
                 "success": False,
-                "error": "search requires a nonempty query of at most 512 characters and limit 1..20.",
+                "error": "search requires nonempty query/catalog_query strings of at most 512 characters and limit 1..20. catalog_query may be omitted.",
             }
         visible_names = {item.name for item in await _visible_tools(ctx)}
         return search_catalog(request, get_registered_tools(), visible_names=visible_names)

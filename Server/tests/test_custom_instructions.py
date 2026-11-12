@@ -188,5 +188,6 @@ def test_server_appends_guidance_to_actual_fastmcp_instructions(
     # Keep common guidance bounded; task-specific recipes belong in skill resources.
     assert len(default.instructions.encode("utf-8")) <= 3200
     assert 'manage_tools(action="search"' in default.instructions
+    assert 'catalog_query="English task terms"' in default.instructions
     assert "get_compile_job" in default.instructions
     assert custom.instructions == append_custom_instructions(baseline, "Project guidance.")

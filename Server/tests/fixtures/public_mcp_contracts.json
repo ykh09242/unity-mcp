@@ -21144,6 +21144,18 @@
                 ],
                 "type": "string"
               },
+              "catalog_query": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "group": {
                 "anyOf": [
                   {
@@ -47463,6 +47475,18 @@
                   "search"
                 ],
                 "type": "string"
+              },
+              "catalog_query": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "group": {
                 "anyOf": [
