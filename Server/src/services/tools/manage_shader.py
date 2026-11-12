@@ -2,7 +2,7 @@ import base64
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
-from pydantic import StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, field_validator
 from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
@@ -12,16 +12,37 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.pagination import page_integer
 
 
+class ShaderVariantOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    shader_type: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")
+    platform: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")
+    build_target: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")
+    subshader_index: int = Field(default=0, ge=0, le=4095)
+    pass_index: int = Field(default=0, ge=0, le=4095)
+    keywords: list[
+        Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
+    ] = Field(default_factory=list, max_length=64)
+
+    @field_validator("keywords")
+    @classmethod
+    def unique_keywords(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("keywords must be unique")
+        return value
+
+
 @mcp_for_unity_tool(
     group="vfx",
     description=(
-        "Manages shader scripts in Unity (create, read, update, delete). Read-only: read, inspect_graph. "
+        "Manages shader source, graph structure and compiler diagnostics. "
         "read returns a bounded source page (64 KiB by default); follow data.nextOffset with "
         "read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. "
         "inspect_graph takes a full Assets/*.shadergraph path and returns bounded, paged serialized "
-        "nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 4 MiB files; "
-        "at most 100 results per collection per page). This is structural inspection, not package "
-        "validation or graph editing. Modifying actions: create, update, delete."
+        "nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 16 MiB files; "
+        "at most 100 results per collection per page). diagnostics reads cached messages for a "
+        "full .shader/.shadergraph path. compile_variant compiles one explicit variant in idle Edit Mode "
+        "and returns outcome, bytecode size and up to 100 bounded messages. Empty bytecode reports "
+        "no_program. Platform/target support depends on the installed Editor."
     ),
     annotations=ToolAnnotations(
         title="Manage Shader",
@@ -32,12 +53,15 @@ from services.tools.pagination import page_integer
 async def manage_shader(
     ctx: Context,
     action: Annotated[
-        Literal["create", "read", "update", "delete", "inspect_graph"],
-        "Shader CRUD or read-only serialized Shader Graph inspection.",
+        Literal[
+            "create", "read", "update", "delete", "inspect_graph", "diagnostics", "compile_variant"
+        ],
+        "Shader CRUD, graph inspection, cached diagnostics or one explicit variant compilation.",
     ],
-    name: Annotated[str, "Shader name without extension; omitted for inspect_graph."] | None = None,
+    name: Annotated[str, "Shader name without extension; required only for CRUD."] | None = None,
     path: Annotated[
-        str, "Shader directory for CRUD; full .shadergraph asset path for inspect_graph."
+        str,
+        "Shader directory for CRUD; full asset path for inspect_graph/diagnostics/compile_variant.",
     ] = "Assets/",
     contents: Annotated[str, "Shader code for 'create'/'update'"] | None = None,
     page_size: Annotated[int | str, "inspect_graph page size, 1-100 (default 50)."] | None = None,
@@ -50,6 +74,10 @@ async def manage_shader(
         Literal["text", "base64"], "read output encoding; Base64 represents UTF-8 text."
     ]
     | None = None,
+    variant: Annotated[
+        ShaderVariantOptions | None,
+        "Required for compile_variant. Explicit stage, compiler platform, build target, pass and keywords.",
+    ] = None,
 ) -> dict[str, Any]:
     try:
         # Prepare parameters for Unity
@@ -64,7 +92,12 @@ async def manage_shader(
                 params["pageNumber"] = page_integer(page_number, 1, 1, 2_147_483_647, "page_number")
             except ValueError as exc:
                 return {"success": False, "message": str(exc)}
-        elif not name:
+        elif action == "compile_variant":
+            try:
+                params["variant"] = ShaderVariantOptions.model_validate(variant).model_dump()
+            except ValidationError as exc:
+                return {"success": False, "message": str(exc)}
+        elif action != "diagnostics" and not name:
             return {"success": False, "message": f"Action '{action}' requires parameter 'name'."}
 
         if action == "read":
@@ -98,7 +131,11 @@ async def manage_shader(
 
         # Send command via centralized retry helper with instance routing
         response = await send_with_unity_instance(
-            async_send_command_with_retry, unity_instance, "manage_shader", params
+            async_send_command_with_retry,
+            unity_instance,
+            "manage_shader",
+            params,
+            **({"retry_on_reload": False} if action == "compile_variant" else {}),
         )
 
         # Process response from Unity

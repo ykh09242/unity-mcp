@@ -32,6 +32,8 @@ namespace MCPForUnity.Editor.Tools
             string action = @params["action"]?.ToString()?.ToLowerInvariant();
             if (action == "inspect_graph")
                 return ShaderGraphInspection.Inspect(@params);
+            if (action == "diagnostics" || action == "compile_variant")
+                return ShaderDiagnostics.Handle(@params, action == "compile_variant");
             string name = @params["name"]?.ToString();
             string path = @params["path"]?.ToString(); // Relative to Assets/
             string contents = null;
@@ -405,7 +407,7 @@ namespace MCPForUnity.Editor.Tools
                 ["truncated"] = truncated,
                 ["unavailable_reason"] = boundedReason,
                 ["limitations"] =
-                    "Only Unity's currently reported messages are observed after synchronous asset import. Other variants/platforms may remain uncompiled; absence of errors is not proof of compilation. Pending compilation is an Editor-wide signal and may belong to another shader.",
+                    "Only Unity's currently reported messages are observed. Other variants/platforms may remain uncompiled; absence of errors is not proof of compilation. Pending compilation is an Editor-wide signal and may belong to another shader.",
             };
         }
 

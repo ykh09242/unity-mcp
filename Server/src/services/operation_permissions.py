@@ -116,7 +116,8 @@ _ACTIONS: Final = {
         ),
     },
     "manage_shader": {
-        Permission.READ: _names("read inspect_graph"),
+        Permission.READ: _names("read inspect_graph diagnostics"),
+        Permission.RUN: _names("compile_variant"),
         Permission.EDIT: _names("create update delete"),
     },
     "manage_gameobject": {

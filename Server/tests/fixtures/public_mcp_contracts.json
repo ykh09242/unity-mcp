@@ -5397,6 +5397,18 @@
                 ],
                 "default": null
               },
+              "follow_up": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "hint": {
                 "anyOf": [
                   {
@@ -19682,7 +19694,9 @@
                   "read",
                   "update",
                   "delete",
-                  "inspect_graph"
+                  "inspect_graph",
+                  "diagnostics",
+                  "compile_variant"
                 ],
                 "type": "string"
               },
@@ -19795,6 +19809,65 @@
                     "type": "null"
                   }
                 ]
+              },
+              "variant": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "build_target": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "keywords": {
+                        "items": {
+                          "maxLength": 128,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                          "type": "string"
+                        },
+                        "maxItems": 64,
+                        "type": "array"
+                      },
+                      "pass_index": {
+                        "default": 0,
+                        "maximum": 4095,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "platform": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "shader_type": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "subshader_index": {
+                        "default": 0,
+                        "maximum": 4095,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "shader_type",
+                      "platform",
+                      "build_target"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -31644,6 +31717,18 @@
                 ],
                 "default": null
               },
+              "follow_up": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "hint": {
                 "anyOf": [
                   {
@@ -45929,7 +46014,9 @@
                   "read",
                   "update",
                   "delete",
-                  "inspect_graph"
+                  "inspect_graph",
+                  "diagnostics",
+                  "compile_variant"
                 ],
                 "type": "string"
               },
@@ -46042,6 +46129,65 @@
                     "type": "null"
                   }
                 ]
+              },
+              "variant": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "build_target": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "keywords": {
+                        "items": {
+                          "maxLength": 128,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                          "type": "string"
+                        },
+                        "maxItems": 64,
+                        "type": "array"
+                      },
+                      "pass_index": {
+                        "default": 0,
+                        "maximum": 4095,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "platform": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "shader_type": {
+                        "maxLength": 64,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+                        "type": "string"
+                      },
+                      "subshader_index": {
+                        "default": 0,
+                        "maximum": 4095,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "shader_type",
+                      "platform",
+                      "build_target"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [

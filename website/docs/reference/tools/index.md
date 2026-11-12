@@ -184,7 +184,7 @@ UI Toolkit (UXML, USS, UIDocument, optional PanelRenderer) and Canvas-based uGUI
 
 ## `vfx` &nbsp; (3 tools)
 Visual effects – VFX Graph, shaders, procedural textures
-- **[`manage_shader`](./vfx/manage_shader.md)** — Manages shader scripts in Unity (create, read, update, delete).
+- **[`manage_shader`](./vfx/manage_shader.md)** — Manages shader source, graph structure and compiler diagnostics. read returns a bounded source page (64 KiB by default); follow data.nextOffset with read_offset while hasMore is true.
 - **[`manage_texture`](./vfx/manage_texture.md)** — Procedural texture generation for Unity.
 - **[`manage_vfx`](./vfx/manage_vfx.md)** — Manage Unity VFX components (ParticleSystem, VisualEffect, LineRenderer, TrailRenderer).
 

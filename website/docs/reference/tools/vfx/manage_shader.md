@@ -1,7 +1,7 @@
 ---
 title: manage_shader
 sidebar_label: manage_shader
-description: "Manages shader scripts in Unity (create, read, update, delete)."
+description: "Manages shader source, graph structure and compiler diagnostics. read returns a bounded source page (64 KiB by default); follow data.nextOffset with read_offset while hasMore is true."
 ---
 
 # `manage_shader`
@@ -14,21 +14,22 @@ description: "Manages shader scripts in Unity (create, read, update, delete)."
 
 ## Description
 
-Manages shader scripts in Unity (create, read, update, delete). Read-only: read, inspect_graph. read returns a bounded source page (64 KiB by default); follow data.nextOffset with read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. inspect_graph takes a full Assets/*.shadergraph path and returns bounded, paged serialized nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 4 MiB files; at most 100 results per collection per page). This is structural inspection, not package validation or graph editing. Modifying actions: create, update, delete.
+Manages shader source, graph structure and compiler diagnostics. read returns a bounded source page (64 KiB by default); follow data.nextOffset with read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. inspect_graph takes a full Assets/*.shadergraph path and returns bounded, paged serialized nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 16 MiB files; at most 100 results per collection per page). diagnostics reads cached messages for a full .shader/.shadergraph path. compile_variant compiles one explicit variant in idle Edit Mode and returns outcome, bytecode size and up to 100 bounded messages. Empty bytecode reports no_program. Platform/target support depends on the installed Editor.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['create', 'read', 'update', 'delete', 'inspect_graph']` | yes | Shader CRUD or read-only serialized Shader Graph inspection. |
-| `name` | `str \| None` | — | Shader name without extension; omitted for inspect_graph. |
-| `path` | `str` | — | Shader directory for CRUD; full .shadergraph asset path for inspect_graph. |
+| `action` | `Literal['create', 'read', 'update', 'delete', 'inspect_graph', 'diagnostics', 'compile_variant']` | yes | Shader CRUD, graph inspection, cached diagnostics or one explicit variant compilation. |
+| `name` | `str \| None` | — | Shader name without extension; required only for CRUD. |
+| `path` | `str` | — | Shader directory for CRUD; full asset path for inspect_graph/diagnostics/compile_variant. |
 | `contents` | `str \| None` | — | Shader code for 'create'/'update' |
 | `page_size` | `int \| str \| None` | — | inspect_graph page size, 1-100 (default 50). |
 | `page_number` | `int \| str \| None` | — | inspect_graph page number, 1-based. |
 | `read_offset` | `int \| str \| None` | — | read source byte offset after the BOM (default 0). |
 | `read_limit` | `int \| str \| None` | — | read page byte limit, 4-1048576 (default 65536). |
 | `read_encoding` | `Literal['text', 'base64'] \| None` | — | read output encoding; Base64 represents UTF-8 text. |
+| `variant` | `ShaderVariantOptions \| None` | — | Required for compile_variant. Explicit stage, compiler platform, build target, pass and keywords. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
