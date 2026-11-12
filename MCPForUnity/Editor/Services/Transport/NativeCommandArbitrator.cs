@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json;
@@ -129,6 +130,8 @@ namespace MCPForUnity.Editor.Services.Transport
                     instance_generation = Generation,
                     active_reads = reads,
                     active_writers = writers,
+                    owners = active.OrderBy(lease => lease.Started).Take(16).Select(lease => lease.CaptureStatus()).ToArray(),
+                    owners_omitted = Math.Max(0, active.Count - 16),
                 };
             }
         }
@@ -197,6 +200,10 @@ namespace MCPForUnity.Editor.Services.Transport
         {
             internal NativeCommandArbitrator Owner { get; }
             internal ToolOperationMode Mode { get; }
+            internal long Started { get; } = System.Diagnostics.Stopwatch.GetTimestamp();
+            private string tool = "custom_or_unknown";
+            private string phase = "handler";
+            private CancellationToken cancellation;
             private int disposed;
 
             internal Lease(NativeCommandArbitrator owner, ToolOperationMode mode)
@@ -204,6 +211,41 @@ namespace MCPForUnity.Editor.Services.Transport
                 Owner = owner;
                 Mode = mode;
             }
+
+            internal void Describe(string command, bool trustedBuiltIn, CancellationToken token)
+            {
+                if (Owner == null)
+                    return;
+                lock (Owner.gate)
+                {
+                    // Unknown/custom names can be caller-controlled. Never retain parameters,
+                    // raw command IDs, paths or arbitrary exception text in ownership status.
+                    tool =
+                        trustedBuiltIn && command != null && command.Length <= 64 && command.All(c => c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_')
+                            ? command
+                            : "custom_or_unknown";
+                    cancellation = token;
+                }
+            }
+
+            internal void HandlerSettled()
+            {
+                if (Owner != null)
+                    lock (Owner.gate)
+                        phase = "cancellation_settlement";
+            }
+
+            // Called under Owner.gate. Observing status has no authority to release ownership.
+            internal object CaptureStatus() =>
+                new
+                {
+                    tool,
+                    mode = Mode == ToolOperationMode.SharedRead ? "shared_read" : "exclusive",
+                    phase,
+                    age_ms = Math.Max(0, (long)((System.Diagnostics.Stopwatch.GetTimestamp() - Started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency)),
+                    cancellation_requested = cancellation.IsCancellationRequested,
+                    recovery_action = "wait_for_owner_settlement",
+                };
 
             public void Dispose()
             {

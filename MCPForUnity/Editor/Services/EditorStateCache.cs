@@ -507,6 +507,17 @@ namespace MCPForUnity.Editor.Services
                 // This is the key optimization that prevents the 28ms GC spikes.
                 lock (LockObj)
                 {
+                    var refreshed = SnapshotObservation.WithLifecycle(
+                        _cached,
+                        JObject.FromObject(NativeCommandArbitrator.Shared.CaptureStatus()),
+                        CommandResumeState.Journal.CaptureHealth(),
+                        _sequence + 1
+                    );
+                    if (!ReferenceEquals(refreshed, _cached))
+                    {
+                        _cached = refreshed;
+                        _sequence++;
+                    }
                     _observedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     SnapshotObservation.UpdateTimestamp(_cached, _observedUnixMs);
                 }
@@ -520,6 +531,19 @@ namespace MCPForUnity.Editor.Services
         // A successful unchanged observation refreshes liveness without changing content.
         private static class SnapshotObservation
         {
+            internal static JObject WithLifecycle(JObject snapshot, JObject owners, JObject journal, long sequence)
+            {
+                if (JToken.DeepEquals(snapshot["command_ownership"], owners) && JToken.DeepEquals(snapshot["command_resume"], journal))
+                    return snapshot;
+                // Preserve the expensive Unity observation and replace only bounded managed
+                // diagnostics. A new source reference invalidates the publisher's content cache.
+                var updated = (JObject)snapshot.DeepClone();
+                updated["command_ownership"] = owners;
+                updated["command_resume"] = journal;
+                updated["sequence"] = sequence;
+                return updated;
+            }
+
             internal static void UpdateTimestamp(JObject snapshot, long observedAtUnixMs)
             {
                 snapshot["observed_at_unix_ms"] = observedAtUnixMs;
@@ -812,7 +836,10 @@ namespace MCPForUnity.Editor.Services
             _lastTrackedTestFinishedMs = TestRunStatus.FinishedUnixMs;
             _lastTrackedActivityPhase = activityPhase;
             _lastTrackedBatchLimit = snapshot.Settings.BatchExecuteMaxCommands;
-            return JObject.FromObject(snapshot);
+            var content = JObject.FromObject(snapshot);
+            content["command_ownership"] = JObject.FromObject(NativeCommandArbitrator.Shared.CaptureStatus());
+            content["command_resume"] = CommandResumeState.Journal.CaptureHealth();
+            return content;
         }
 
         public static JObject GetSnapshot()

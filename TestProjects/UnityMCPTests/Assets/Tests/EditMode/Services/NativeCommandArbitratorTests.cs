@@ -11,6 +11,48 @@ namespace MCPForUnityTests.Editor.Services
     public class NativeCommandArbitratorTests
     {
         [Test]
+        public void RetainedOwnerDiagnosticsAreBoundedAndCannotReleaseLeases()
+        {
+            var guard = new NativeCommandArbitrator((_, __) => null);
+            var owners = new System.Collections.Generic.List<NativeCommandArbitrator.Lease>();
+            using var canceled = new CancellationTokenSource();
+            try
+            {
+                for (int i = 0; i < 20; i++)
+                {
+                    Assert.IsTrue(
+                        guard.TryAcquire(ToolOperationMode.SharedRead, "get_scene", new JObject { ["secret"] = "private-payload" }, null, out var lease, out _)
+                    );
+                    owners.Add(lease);
+                }
+                var status = JObject.FromObject(guard.CaptureStatus());
+                Assert.IsNotNull(status["owners"], "Retained native owners need bounded attribution, not just a count.");
+                Assert.AreEqual(16, ((JArray)status["owners"]).Count);
+                Assert.AreEqual(4, (int)status["owners_omitted"]);
+                owners[0].Describe("get_scene", true, canceled.Token);
+                owners[1].Describe("private-token-value", false, canceled.Token);
+                canceled.Cancel();
+                owners[0].HandlerSettled();
+                status = JObject.FromObject(guard.CaptureStatus());
+                Assert.AreEqual("get_scene", (string)status["owners"][0]["tool"]);
+                Assert.AreEqual("cancellation_settlement", (string)status["owners"][0]["phase"]);
+                Assert.IsTrue((bool)status["owners"][0]["cancellation_requested"]);
+                Assert.GreaterOrEqual((long)status["owners"][0]["age_ms"], 0);
+                Assert.AreEqual("custom_or_unknown", (string)status["owners"][1]["tool"]);
+                StringAssert.DoesNotContain("private", status.ToString());
+                Assert.IsFalse(guard.TryAcquire(ToolOperationMode.Exclusive, "mutation", null, null, out _, out _));
+            }
+            finally
+            {
+                foreach (var lease in owners)
+                    lease.Dispose();
+            }
+            Assert.AreEqual(0, ((JArray)JObject.FromObject(guard.CaptureStatus())["owners"]).Count);
+            Assert.IsTrue(guard.TryAcquire(ToolOperationMode.Exclusive, "mutation", null, null, out var next, out _));
+            next.Dispose();
+        }
+
+        [Test]
         public void HeldReadsOverlapAndFenceIndependentWriters()
         {
             var guard = new NativeCommandArbitrator((_, __) => null);

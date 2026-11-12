@@ -20,6 +20,47 @@ namespace MCPForUnityTests.Editor.Services
     public class EditorStateObservationTests
     {
         [Test]
+        public void LifecycleHealthIsPresentInActualCachedPublisherFrames()
+        {
+            EditorStateCache.ForceUpdate("lifecycle_diagnostics_test");
+            EditorStateFrame observed = null;
+            using (EditorStateCache.Subscribe(frame => observed = frame))
+            {
+                Assert.IsNotNull(observed);
+                var state = JObject.Parse(observed.ToJson())["state"];
+                Assert.IsNotNull(state["command_ownership"]["owners"]);
+                Assert.IsNotNull(state["command_resume"]["capacity"]);
+                Assert.AreEqual(128, (int)state["command_resume"]["capacity"]["limit"]);
+            }
+        }
+
+        [Test]
+        public void LifecycleDiagnosticsReplacePublishedContentOnlyWhenBoundedFieldsChange()
+        {
+            var helper = typeof(EditorStateCache).GetNestedType("SnapshotObservation", BindingFlags.NonPublic);
+            var refresh = helper.GetMethod("WithLifecycle", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(refresh, "Unchanged Editor activity must not hide retained owners or journal failure from pushed state.");
+            var original = new JObject
+            {
+                ["sequence"] = 7,
+                ["editor"] = new JObject { ["retained"] = true },
+                ["command_ownership"] = new JObject { ["active_writers"] = 0 },
+                ["command_resume"] = new JObject { ["state"] = "available" },
+            };
+            var owners = new JObject { ["active_writers"] = 1, ["owners"] = new JArray(new JObject { ["tool"] = "batch_execute", ["age_ms"] = 50 }) };
+            var health = new JObject { ["state"] = "unavailable", ["reason"] = "persistence_write_failed" };
+            var changed = (JObject)refresh.Invoke(null, new object[] { original, owners, health, 8L });
+            Assert.AreNotSame(original, changed, "The publisher must observe new immutable content, not a mutated source reference.");
+            Assert.AreEqual(7, (long)original["sequence"]);
+            Assert.AreEqual(0, (int)original["command_ownership"]["active_writers"]);
+            Assert.AreEqual(8, (long)changed["sequence"]);
+            Assert.IsTrue((bool)changed["editor"]["retained"]);
+            Assert.AreEqual("persistence_write_failed", (string)changed["command_resume"]["reason"]);
+            var unchanged = refresh.Invoke(null, new object[] { changed, owners.DeepClone(), health.DeepClone(), 9L });
+            Assert.AreSame(changed, unchanged, "Stable idle lifecycle data cannot force another content publication.");
+        }
+
+        [Test]
         public void FailedInitialObservationDoesNotRetainAnUnownedSubscription()
         {
             EditorStateCache.GetSnapshot();

@@ -176,6 +176,8 @@ class EditorStateData(BaseModel):
     assets: EditorStateAssets | None = None
     tests: EditorStateTests | None = None
     native_coordination: EditorStateNativeCoordination | None = None
+    command_ownership: dict | None = None
+    command_resume: dict | None = None
     transport: EditorStateTransport | None = None
     settings: EditorStateSettings | None = None
     advice: EditorStateAdvice | None = None

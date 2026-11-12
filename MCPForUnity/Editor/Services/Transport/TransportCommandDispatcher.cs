@@ -659,6 +659,7 @@ namespace MCPForUnity.Editor.Services.Transport
                     return;
                 }
                 pending.Lease = lease;
+                lease.Describe(command.type, trustedBuiltIn, pending.CancellationToken);
 
                 var logType =
                     resourceMeta != null ? "resource"
@@ -840,6 +841,7 @@ namespace MCPForUnity.Editor.Services.Transport
         {
             try
             {
+                pending.Lease?.HandlerSettled();
                 if (pending.SettleCancellation != null)
                     await pending.SettleCancellation().ConfigureAwait(false);
             }

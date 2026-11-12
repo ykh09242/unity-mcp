@@ -34,6 +34,9 @@ namespace MCPForUnity.Editor.Services.Transport
         private readonly Dictionary<string, Entry> entries = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Ticket> active = new(StringComparer.Ordinal);
         private bool unavailable;
+        private bool snapshotTrusted;
+        private string failureReason;
+        private int persistedBytes;
         internal string SessionId { get; private set; } = Guid.NewGuid().ToString("N");
 
         internal sealed class Ticket
@@ -98,14 +101,17 @@ namespace MCPForUnity.Editor.Services.Transport
             this.write = write;
             this.clock = clock;
             this.continuationPolicy = continuationPolicy ?? ((_, __) => true);
+            string readStage = "storage_read_failed";
             try
             {
                 string text = read();
                 if (string.IsNullOrEmpty(text))
                 {
+                    snapshotTrusted = true;
                     Persist();
                     return;
                 }
+                readStage = "snapshot_invalid";
                 if (Encoding.UTF8.GetByteCount(text) > MaxSnapshotBytes)
                     throw new JsonException("Journal limit");
                 using var input = new JsonTextReader(new StringReader(text)) { DateParseHandling = DateParseHandling.None, MaxDepth = MaxSnapshotDepth };
@@ -137,10 +143,13 @@ namespace MCPForUnity.Editor.Services.Transport
                         throw new JsonException("Invalid checkpoint");
                     entries.Add(entry.id, entry);
                 }
+                snapshotTrusted = true;
+                persistedBytes = Encoding.UTF8.GetByteCount(text);
             }
             catch (Exception)
             {
                 unavailable = true;
+                failureReason = readStage;
             }
         }
 
@@ -148,6 +157,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
         private bool Persist()
         {
+            string writeStage = "snapshot_serialization_failed";
             try
             {
                 var snapshot = new JObject
@@ -158,16 +168,54 @@ namespace MCPForUnity.Editor.Services.Transport
                 };
                 snapshot["digest"] = Digest(SessionId + "\n" + snapshot["entries"].ToString(Formatting.None));
                 string text = snapshot.ToString(Formatting.None);
-                if (Encoding.UTF8.GetByteCount(text) > MaxSnapshotBytes)
+                int bytes = Encoding.UTF8.GetByteCount(text);
+                if (bytes > MaxSnapshotBytes)
+                {
+                    writeStage = "snapshot_size_limit";
                     throw new JsonException("Journal limit");
+                }
+                writeStage = "persistence_write_failed";
                 write(text);
+                persistedBytes = bytes;
                 return true;
             }
             catch (Exception)
             {
                 unavailable = true;
+                failureReason = writeStage;
                 return false;
             }
+        }
+
+        // Retry only a complete, already validated in-memory snapshot. Never reload,
+        // prune, clear, release an owner or schedule a continuation during recovery.
+        internal bool TryRecoverPersistence()
+        {
+            lock (gate)
+            {
+                if (!snapshotTrusted)
+                    return false;
+                if (!unavailable)
+                    return true;
+                if (!Persist())
+                    return false;
+                unavailable = false;
+                failureReason = null;
+                return true;
+            }
+        }
+
+        internal JObject CaptureHealth()
+        {
+            lock (gate)
+                return new JObject
+                {
+                    ["state"] = unavailable ? "unavailable" : "available",
+                    ["reason"] = failureReason,
+                    ["recovery_allowed"] = unavailable && snapshotTrusted,
+                    ["recovery_action"] = unavailable ? (snapshotTrusted ? "retry_persistence" : "inspect_storage_without_reset") : null,
+                    ["capacity"] = CapacityDiagnostics(),
+                };
         }
 
         internal Admission Admit(JObject request, string name, JObject parameters)
@@ -297,15 +345,27 @@ namespace MCPForUnity.Editor.Services.Transport
         // reclaimed, even after the original deadline; never promise that release time.
         private JObject CapacityDiagnostics()
         {
+            long now = clock();
             long? earliest = entries.Values.Where(entry => !active.ContainsKey(entry.id)).Select(entry => (long?)entry.deadline).Min();
+            int reclaimable = entries.Values.Count(entry => entry.deadline <= now && !active.ContainsKey(entry.id));
             return new JObject
             {
                 ["limit"] = MaxEntries,
                 ["occupied"] = entries.Count,
                 ["active"] = active.Count,
                 ["terminal"] = entries.Values.Count(entry => entry.phase == "completed" || entry.phase == "canceled" || entry.phase == "unavailable"),
+                ["unexpired"] = entries.Values.Count(entry => entry.deadline > now),
+                ["expired_active"] = entries.Values.Count(entry => entry.deadline <= now && active.ContainsKey(entry.id)),
+                ["reclaimable"] = reclaimable,
+                ["available"] = MaxEntries - entries.Count + reclaimable,
+                ["last_persisted_bytes"] = persistedBytes,
+                ["snapshot_byte_limit"] = MaxSnapshotBytes,
+                ["recovery_action"] =
+                    entries.Count - reclaimable < MaxEntries ? "none"
+                    : earliest.HasValue ? "wait_for_expiry"
+                    : "wait_for_owner_settlement",
                 ["earliest_reclaim_unix_ms"] = earliest,
-                ["retry_after_ms"] = earliest.HasValue ? Math.Max(0, earliest.Value - clock()) : (long?)null,
+                ["retry_after_ms"] = earliest.HasValue ? Math.Max(0, earliest.Value - now) : (long?)null,
             };
         }
 
@@ -424,8 +484,17 @@ namespace MCPForUnity.Editor.Services.Transport
         private bool Owns(Ticket ticket) =>
             ticket != null && ticket.Owner == this && active.TryGetValue(ticket.Id, out Ticket current) && ReferenceEquals(current, ticket);
 
-        private Admission Reply(JObject request, string state, JToken payload = null, Entry metadata = null) =>
-            new Admission
+        private Admission Reply(JObject request, string state, JToken payload = null, Entry metadata = null)
+        {
+            if (unavailable && payload == null)
+                payload = new JObject
+                {
+                    ["status"] = "error",
+                    ["code"] = "command_resume_unavailable",
+                    ["error"] = "Command resume storage is unavailable. Inspect command_resume health; do not replay or reset the journal.",
+                    ["command_resume_health"] = CaptureHealth(),
+                };
+            return new Admission
             {
                 State = state,
                 Payload = payload?.DeepClone(),
@@ -439,6 +508,7 @@ namespace MCPForUnity.Editor.Services.Transport
                     ["state"] = state,
                 },
             };
+        }
 
         private static string Fingerprint(string name, JObject parameters)
         {
@@ -569,6 +639,13 @@ namespace MCPForUnity.Editor.Services.Transport
             CanContinue
         );
         internal static string SessionId => Journal.SessionId;
+
+        [MenuItem(MCPForUnity.Editor.Constants.ProductInfo.MenuRoot + "/Recovery/Retry Command Resume Persistence")]
+        private static void RetryPersistenceFromMenu()
+        {
+            Journal.TryRecoverPersistence();
+            UnityEngine.Debug.Log("[Unity MCP] Command resume persistence health: " + Journal.CaptureHealth().ToString(Formatting.None));
+        }
 
         private static bool CanContinue(string name, JObject parameters)
         {

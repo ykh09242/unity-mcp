@@ -302,6 +302,110 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual("unavailable", journal.Admit(Request("resume"), "test", new JObject()).State);
         }
 
+        private JObject JournalHealth() => journal.CaptureHealth();
+
+        private bool RecoverJournal() => journal.TryRecoverPersistence();
+
+        [Test]
+        public void PersistenceRecoveryPreservesTerminalFencesAndActiveOwnership()
+        {
+            var completed = journal.Admit(Request(), "test", new JObject());
+            Assert.IsTrue(journal.TryStart(completed.Ticket));
+            journal.Complete(completed.Ticket, new JValue(42));
+            journal.Release(completed.Ticket);
+            const string runningId = "22222222222222222222222222222222";
+            var running = journal.Admit(Request(id: runningId), "test", new JObject());
+            Assert.IsTrue(journal.TryStart(running.Ticket));
+            failWrite = true;
+            var canceled = Request("cancel", runningId);
+            Assert.AreEqual("unavailable", journal.Admit(canceled, "test", new JObject()).State);
+            Assert.AreEqual("persistence_write_failed", (string)JournalHealth()["reason"]);
+            Assert.IsTrue((bool)JournalHealth()["recovery_allowed"]);
+            Assert.IsFalse(RecoverJournal(), "A failed explicit retry cannot clear unavailable state.");
+            failWrite = false;
+            Assert.AreEqual("unavailable", journal.Admit(Request("resume"), "test", new JObject()).State, "Recovery is never automatic.");
+            Assert.IsTrue(RecoverJournal());
+            Assert.AreEqual(1, (int)JournalHealth()["capacity"]["active"], "Recovery cannot release the still-running owner.");
+            Assert.IsNull(journal.Admit(Request("resume", runningId), "test", new JObject()).Ticket);
+            Assert.AreEqual("canceled", journal.Inspect(running.Ticket).State);
+            journal.Complete(running.Ticket, new JValue(7));
+            journal.Release(running.Ticket);
+            journal = Open();
+            Assert.AreEqual(42, (int)journal.Admit(Request("resume"), "test", new JObject()).Payload);
+            Assert.AreEqual("canceled", journal.Admit(Request("resume", runningId), "test", new JObject()).State);
+            Assert.AreEqual(7, (int)journal.Admit(Request("resume", runningId), "test", new JObject()).Payload);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UntrustedInitialSnapshotCannotBeClearedByRecovery(bool readFailure)
+        {
+            stored = "{private_path_and_secret";
+            int writes = 0;
+            journal = new CommandResumeJournal(
+                () => readFailure ? throw new InvalidOperationException("private_path_and_secret") : stored,
+                _ => writes++,
+                () => now
+            );
+            var health = JournalHealth();
+            Assert.AreEqual(readFailure ? "storage_read_failed" : "snapshot_invalid", (string)health["reason"]);
+            Assert.IsFalse((bool)health["recovery_allowed"]);
+            Assert.IsFalse(RecoverJournal());
+            Assert.AreEqual(0, writes, "Unverified fences must never be overwritten by an empty or partially read snapshot.");
+            StringAssert.DoesNotContain("private_path_and_secret", health.ToString());
+            Assert.IsNull(journal.Admit(Request(), "test", new JObject()).Ticket);
+        }
+
+        [Test]
+        public void SustainedMutationBurstsReportSaturationAndRecoverOnlyExpiredReleasedFences()
+        {
+            long snapshotBytes = 0;
+            int admittedCount = 0;
+            int refusedCount = 0;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            for (int burst = 0; burst < 3; burst++)
+            {
+                long deadline = now + 10000;
+                for (int i = 0; i < 160; i++)
+                {
+                    string id = (burst * 160 + i).ToString("x32");
+                    var admitted = journal.Admit(Request(id: id, deadline: deadline), "manage_gameobject", new JObject { ["action"] = "create" });
+                    if (i < CommandResumeJournal.MaxEntries)
+                    {
+                        admittedCount++;
+                        Assert.IsTrue(journal.TryStart(admitted.Ticket));
+                        journal.Complete(admitted.Ticket, new JValue(i));
+                        journal.Release(admitted.Ticket);
+                    }
+                    else
+                    {
+                        refusedCount++;
+                        Assert.IsTrue(admitted.NotStarted);
+                        Assert.AreEqual("wait_for_expiry", (string)admitted.Payload["capacity"]["recovery_action"]);
+                        Assert.AreEqual(0, (int)admitted.Payload["capacity"]["available"]);
+                    }
+                }
+                snapshotBytes = Math.Max(snapshotBytes, Encoding.UTF8.GetByteCount(stored));
+                var health = JournalHealth();
+                Assert.AreEqual(128, (int)health["capacity"]["terminal"]);
+                Assert.AreEqual(128, (int)health["capacity"]["unexpired"]);
+                Assert.AreEqual(10000, (long)health["capacity"]["retry_after_ms"]);
+                var duplicate = journal.Admit(
+                    Request(id: (burst * 160).ToString("x32"), deadline: deadline),
+                    "manage_gameobject",
+                    new JObject { ["action"] = "create" }
+                );
+                Assert.IsNull(duplicate.Ticket);
+                Assert.AreEqual("completed", duplicate.State);
+                now = deadline;
+            }
+            Assert.AreEqual(384, admittedCount);
+            Assert.AreEqual(96, refusedCount);
+            TestContext.WriteLine(
+                $"journal_workload admitted={admittedCount} refused={refusedCount} max_snapshot_bytes={snapshotBytes} elapsed_ms={watch.ElapsedMilliseconds}"
+            );
+        }
+
         [Test]
         public void CompletedCapacityReportsRecoveryWithoutEvictingDuplicateFences()
         {
@@ -337,14 +441,26 @@ namespace MCPForUnityTests.Editor.Services
         [Test]
         public void ActiveCapacityDoesNotPromiseAReclaimBeforeOwnersRelease()
         {
+            CommandResumeJournal.Ticket first = null;
             for (int i = 0; i < CommandResumeJournal.MaxEntries; i++)
-                journal.Admit(Request(id: i.ToString("x32")), "test", new JObject());
+            {
+                var ticket = journal.Admit(Request(id: i.ToString("x32")), "test", new JObject()).Ticket;
+                if (i == 0)
+                    first = ticket;
+            }
             var capacity = journal.Admit(Request(id: new string('f', 32)), "test", new JObject()).Payload["capacity"];
             Assert.IsNotNull(capacity);
             Assert.AreEqual(128, (int)capacity["active"]);
             Assert.AreEqual(0, (int)capacity["terminal"]);
             Assert.AreEqual(JTokenType.Null, capacity["earliest_reclaim_unix_ms"].Type);
             Assert.AreEqual(JTokenType.Null, capacity["retry_after_ms"].Type);
+            now = 10000;
+            var expiredOwners = journal.Admit(Request(id: new string('f', 32), deadline: 20000), "test", new JObject());
+            Assert.IsNull(expiredOwners.Ticket);
+            Assert.AreEqual(128, (int)expiredOwners.Payload["capacity"]["expired_active"]);
+            Assert.AreEqual("wait_for_owner_settlement", (string)expiredOwners.Payload["capacity"]["recovery_action"]);
+            journal.Release(first);
+            Assert.IsNotNull(journal.Admit(Request(id: new string('f', 32), deadline: 20000), "test", new JObject()).Ticket);
         }
 
         [Test]

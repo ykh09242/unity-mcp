@@ -30,7 +30,9 @@ def test_sdk_resource_reuses_push_and_strict_reads_keep_rpc_authority():
                 "observed_at_unix_ms": int(now * 1000),
                 "state": {"schema_version": "unity-mcp/editor_state@2", "sequence": 7,
                           "observed_at_unix_ms": int(now * 1000),
-                          "compilation": {"is_compiling": False, "is_domain_reload_pending": False}},
+                          "compilation": {"is_compiling": False, "is_domain_reload_pending": False},
+                          "command_ownership": {"active_writers": 1, "owners": [{"tool": "batch_execute", "phase": "cancellation_settlement", "age_ms": 1200, "cancellation_requested": True}]},
+                          "command_resume": {"state": "unavailable", "reason": "persistence_write_failed", "recovery_allowed": True, "capacity": {"limit": 128, "occupied": 128}}},
             }
             async def cached(instance, user_id=None):
                 assert instance == "Fixture@fixture"
@@ -62,6 +64,8 @@ def test_sdk_resource_reuses_push_and_strict_reads_keep_rpc_authority():
                     fallback = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
                     # Then the existing RPC supplies the state.
                     assert fallback["data"]["sequence"] == 99
+                    assert fallback["data"]["command_ownership"] == authoritative["command_ownership"]
+                    assert fallback["data"]["command_resume"] == authoritative["command_resume"]
                     assert rpc.await_count == before + 1
                     assert rpc.await_args.kwargs == {"editor_state_read_mode": "ordinary"}
 
@@ -71,6 +75,8 @@ def test_sdk_resource_reuses_push_and_strict_reads_keep_rpc_authority():
                     for _ in range(20):
                         pushed = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
                         assert pushed["data"]["sequence"] == 7
+                        assert pushed["data"]["command_ownership"] == payload["state"]["command_ownership"]
+                        assert pushed["data"]["command_resume"] == payload["state"]["command_resume"]
                     # Then none requires an editor RPC.
                     assert rpc.await_count == before
 
