@@ -14,6 +14,7 @@ from transport.plugin_hub import PluginHub
 from services.execution_receipt_context import owned_to_thread
 from core.config import config
 from transport.protocol import is_sessionless
+from pydantic import Field
 
 
 @mcp_for_unity_tool(
@@ -34,6 +35,9 @@ async def set_active_instance(
     instance: Annotated[
         str, "Target instance (Name@hash, hash prefix, or port number in stdio mode)"
     ],
+    include_context: Annotated[
+        bool, Field(strict=True), "Attach a bounded read-only snapshot of the selected Editor."
+    ] = False,
 ) -> dict[str, Any]:
     value = (instance or "").strip()
     if not value:
@@ -88,7 +92,7 @@ async def set_active_instance(
     middleware = get_unity_instance_middleware()
     await middleware.set_active_instance(ctx, resolved)
 
-    return {
+    result = {
         "success": True,
         "message": f"Active instance set to {resolved}",
         "data": {
@@ -96,3 +100,54 @@ async def set_active_instance(
             "session_id": getattr(ctx, "session_id", None),
         },
     }
+    if include_context:
+        result["data"]["context"] = await selected_context(ctx, resolved)
+    return result
+
+
+async def selected_context(ctx, instance):
+    from services.operation_permissions import authorize_remote_operation
+    from models.response_lifetime import ResponsePollLifetime
+    from services.tools.wait_for_operation import capture_target, fetch_observation
+    from models.unity_response import normalize_unity_response
+    import asyncio
+
+    try:
+        async with asyncio.timeout(3):
+            await authorize_remote_operation("get_editor_state", {}, ctx=ctx)
+            target = await capture_target(ctx)
+            if target is None or target.instance != instance:
+                return {"status": "unavailable", "reason": "selected_editor_identity_unavailable"}
+            async with ResponsePollLifetime() as lifetime:
+                response = await lifetime.fetch(
+                    fetch_observation(target, "get_editor_state", {}), 2
+                )
+            response = normalize_unity_response(response)
+            data = response.get("data") if isinstance(response, dict) else None
+            if not isinstance(data, dict) or response.get("success") is not True:
+                return {"status": "unavailable", "reason": "editor_state_unavailable"}
+            fields = {}
+            for section, keys in (
+                ("unity", ("unity_version", "platform", "is_batch_mode")),
+                ("activity", ("phase", "since_unix_ms")),
+                ("compilation", ("is_compiling", "is_domain_reload_pending")),
+                ("assets", ("is_updating", "external_changes_dirty")),
+                ("native_coordination", ("blocked", "reason", "recovery_action")),
+            ):
+                values = data.get(section)
+                if isinstance(values, dict):
+                    fields[section] = {
+                        key: values[key][:256] if isinstance(values[key], str) else values[key]
+                        for key in keys
+                        if type(values.get(key)) in (bool, int, str)
+                    }
+            return {
+                "status": "observed",
+                "instance": instance,
+                "generation": target.generation,
+                "editor_state": fields,
+                "readiness": "unobserved",
+                "capabilities_resource": "mcpforunity://capabilities",
+            }
+    except Exception as error:
+        return {"status": "unavailable", "reason": type(error).__name__}

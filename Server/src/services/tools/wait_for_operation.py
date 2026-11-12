@@ -24,14 +24,29 @@ from transport.legacy.unity_connection import (
 )
 from transport.plugin_hub import PluginHub, http_request_budget
 
-JobKind = Literal["build", "package", "scenario"]
+JobKind = Literal["build", "package", "scenario", "recording", "auditor", "test"]
 POLL_INTERVAL = 2.0
 _COMMANDS = {
     "build": "manage_build",
     "package": "manage_packages",
     "scenario": "manage_play_scenario",
+    "recording": "manage_recording",
+    "auditor": "manage_project_auditor",
+    "test": "get_test_job",
 }
-_TERMINAL = frozenset({"succeeded", "failed", "cancelled", "skipped", "interrupted", "timed_out"})
+_TERMINAL = frozenset(
+    {
+        "succeeded",
+        "failed",
+        "cancelled",
+        "skipped",
+        "interrupted",
+        "timed_out",
+        "completed",
+        "stopped",
+        "unavailable",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +117,14 @@ async def capture_target(ctx: Context) -> ObservationTarget | None:
 
 async def fetch_status(target: ObservationTarget, kind: JobKind, job_id: str):
     command = _COMMANDS[kind]
-    params = {"action": "status", "job_id": job_id}
+    params = {"action": "status", "audit_id" if kind == "auditor" else "job_id": job_id}
+    if kind == "test":
+        params = {"job_id": job_id, "includeFailedTests": True, "page_size": 10}
+    return await fetch_observation(target, command, params)
+
+
+async def fetch_observation(target: ObservationTarget, command: str, params: dict):
+    """Send one declared read against the captured authenticated generation."""
     if target.session_id is not None:
         current = await PluginHub._read_identity(target.session_id)
         if (
@@ -161,15 +183,25 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
                     "hint": unavailable("observation_generation_changed")["hint"],
                 }
             return response
-    if not isinstance(data, dict) or data.get("job_id") != job_id:
+    identity_key = "audit_id" if kind == "auditor" else "job_id"
+    if not isinstance(data, dict) or data.get(identity_key) != job_id:
         return unavailable("job_observation_identity_mismatch")
-    state = data.get("result" if kind == "build" else "status")
+    state = data.get("result" if kind == "build" else "state" if kind == "auditor" else "status")
     if not isinstance(state, str):
         return unavailable("invalid_job_observation")
     state = state.lower()
+    test_cleanup_pending = False
+    if kind == "test":
+        from services.tools.run_tests import native_test_cleanup_pending
+
+        test_cleanup_pending = native_test_cleanup_pending(data)
     if (
-        data.get("phase") == "finalizing"
+        test_cleanup_pending
+        or data.get("phase") == "finalizing"
         or data.get("runner_resources_released") is False
+        and state in _TERMINAL
+        or kind == "auditor"
+        and data.get("native_owner_retained") is True
         and state in _TERMINAL
     ):
         phase, terminal = "finalizing", False
@@ -184,7 +216,7 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
         phase, terminal = "terminal", True
     elif state in {"pending", "queued", "starting", "waiting"}:
         phase, terminal = "waiting", False
-    elif state in {"building", "running"}:
+    elif state in {"building", "running", "recording"}:
         phase, terminal = "running", False
     elif state == "unknown":
         phase, terminal = "unknown", False
@@ -200,14 +232,66 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
             "job_status": state,
             "wait_status": "observed",
             "job": data,
+            **({"summary": terminal_summary(data)} if terminal else {}),
         },
     }
+
+
+def terminal_summary(data: dict) -> dict:
+    """Retain a compact sample from the observed terminal job without another read."""
+    summary = {}
+    for key in (
+        "error",
+        "reason",
+        "output_path",
+        "package_name",
+        "package_version",
+        "operation",
+        "result_name",
+        "result_version",
+        "frames_recorded",
+        "skipped_sample_slots",
+        "elapsed_seconds",
+        "diagnostic_count",
+        "diagnostic_count_exact",
+        "modules_failed",
+        "modules_interrupted",
+        "results_available",
+        "observation_truncated",
+        "clean",
+    ):
+        value = data.get(key)
+        if type(value) in (str, bool, int, float):
+            summary[key] = value[:1024] if isinstance(value, str) else value
+    result = data.get("result")
+    if isinstance(result, dict) and isinstance(result.get("summary"), dict):
+        summary["counts"] = {
+            key: result["summary"][key]
+            for key in ("total", "passed", "failed", "skipped", "inconclusive", "durationSeconds")
+            if type(result["summary"].get(key)) in (bool, int, float)
+        }
+    progress = data.get("progress")
+    if isinstance(progress, dict) and isinstance(progress.get("failures_so_far"), list):
+        failures = progress["failures_so_far"]
+        summary["failures"] = [
+            {
+                key: row[key][:1024]
+                for key in ("full_name", "message")
+                if isinstance(row.get(key), str)
+            }
+            for row in failures[:10]
+            if isinstance(row, dict)
+        ]
+        summary["failures_truncated"] = (
+            len(failures) > 10 or progress.get("failures_capped") is True
+        )
+    return summary
 
 
 @mcp_for_unity_tool(
     group="core",
     unity_target=None,
-    description="Observe an existing build, package query/mutation/resolve, or single scenario job. "
+    description="Observe an existing test, build, package query/mutation/resolve, single scenario, recording, or Project Auditor job. "
     "Never starts, retries or cancels native work. wait_timeout bounds only this observation (0 is one poll). "
     "Reports waiting/running/finalizing/terminal/unknown with the original job evidence; a failed job is a valid observation. "
     "An authenticated connection is captured once; reload/disconnect requires a fresh explicit observation. "
@@ -226,10 +310,10 @@ async def wait_for_operation(
     job_id: Annotated[str, Field(min_length=1, max_length=1024, pattern=r"^\S+$")],
     wait_timeout: Annotated[int, Field(strict=True, ge=0, le=60)] = 30,
 ) -> dict:
-    if kind == "scenario" and (
+    if kind in {"scenario", "recording", "auditor", "test"} and (
         len(job_id) != 32 or any(c not in "0123456789abcdef" for c in job_id)
     ):
-        return unavailable("invalid_scenario_job_id")
+        return unavailable("invalid_scenario_job_id" if kind == "scenario" else "invalid_job_id")
     loop = asyncio.get_running_loop()
     deadline = test_job_wait_deadline.get()
     if deadline is None:

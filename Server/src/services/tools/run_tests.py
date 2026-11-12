@@ -335,6 +335,7 @@ class RunTestsStartData(BaseModel):
     include_details: bool | None = None
     include_failed_tests: bool | None = None
     source_token: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    completion: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: value is None)
     source_freshness_required: bool | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -511,7 +512,15 @@ async def run_tests(
         bool,
         "Require source, compilation and loaded assembly evidence; upgraded native peers always recheck admission",
     ] = True,
+    wait_timeout: Annotated[
+        int, Field(strict=True, ge=0, le=60), "Optional initial status observation, in seconds."
+    ] = 0,
 ) -> RunTestsStartResponse | MCPResponse:
+    from services.job_completion import prepare_wait, complete_job
+
+    observation_target = await prepare_wait(ctx, wait_timeout)
+    if clear_stuck and wait_timeout:
+        return MCPResponse(success=False, error="wait_timeout requires starting a test job")
     admission_deadline = time.monotonic() + 300.0
     unity_instance = await get_unity_instance_from_context(ctx)
 
@@ -603,11 +612,13 @@ async def run_tests(
     )
 
     if isinstance(response, MCPResponse):
-        return response
+        return await complete_job(ctx, observation_target, "test", response, wait_timeout)
     if isinstance(response, dict):
         if not response.get("success", True):
             return MCPResponse(**response)
-        return RunTestsStartResponse(**response)
+        return await complete_job(
+            ctx, observation_target, "test", RunTestsStartResponse(**response), wait_timeout
+        )
     return MCPResponse(success=False, error=str(response))
 
 

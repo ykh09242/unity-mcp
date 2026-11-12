@@ -70,11 +70,18 @@ async def manage_tools(
         str | None, Field(max_length=512), "Task-purpose query for search (1..512 characters)."
     ] = None,
     limit: Annotated[int, Field(strict=True, ge=1, le=20), "Maximum search results (1..20)."] = 5,
+    include_schema: Annotated[
+        bool,
+        Field(strict=True),
+        "On single-tool activation, attach its schema and readiness lookup.",
+    ] = False,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
     discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
     modern = is_sessionless(ctx)
+    if include_schema and (action != "activate" or not tool or group is not None):
+        return {"success": False, "error": "include_schema requires activating one tool."}
     if action == "search":
         from services.registry.task_search import SearchRequest, search_catalog
 
@@ -138,12 +145,26 @@ async def manage_tools(
         else:
             await operation(names={tool}, components={"tool"})
             changed = True
-        return {
+        result = {
             "activated_tool" if action == "activate" else "deactivated_tool": tool,
             "changed": changed,
             "client_inventory_status": "unconfirmed",
             "message": REFRESH_GUIDANCE,
         }
+        if include_schema:
+            description = await manage_tools(ctx, "describe", tool=tool)
+            result["description"] = description
+            from services.registry.task_search import SearchRequest, search_catalog
+
+            matches = search_catalog(SearchRequest(query=tool, limit=1), [entry])["results"]
+            actions = matches[0]["actions"] if matches else []
+            result["readiness"] = {
+                "status": "unobserved",
+                "next_action": {"tool": tool, "action": "capabilities"}
+                if "capabilities" in actions
+                else {"resource": "mcpforunity://tool-diagnostics"},
+            }
+        return result
 
     if action in ("activate", "deactivate"):
         if not group:

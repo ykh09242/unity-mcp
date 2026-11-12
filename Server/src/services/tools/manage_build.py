@@ -163,7 +163,11 @@ async def manage_build(
     history_revision: Annotated[
         str | None, "report_history: optional 64-hex inventory revision for repeated pages."
     ] = None,
+    wait_timeout: Annotated[int, "Optional initial build job observation, 0..60 seconds."] = 0,
 ) -> dict[str, Any]:
+    from services.job_completion import prepare_wait, complete_job
+
+    observation_target = await prepare_wait(ctx, wait_timeout)
     action_lower = action.lower()
     report_actions = {"report_history", "report", "compare_reports"}
     report_values = (
@@ -365,4 +369,5 @@ async def manage_build(
         if val is not None:
             params_dict[key] = val
 
-    return await _send_build_command(ctx, params_dict)
+    response = await _send_build_command(ctx, params_dict)
+    return await complete_job(ctx, observation_target, "build", response, wait_timeout)

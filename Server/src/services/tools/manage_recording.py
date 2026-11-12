@@ -57,8 +57,14 @@ async def manage_recording(
         Literal["stretch", "fit", "crop"],
         "Resize policy: stretch (default), fit with black padding, or centered crop.",
     ] = "stretch",
+    wait_timeout: Annotated[
+        int, Field(strict=True, ge=0, le=60), "Optional bounded completion observation, in seconds."
+    ] = 0,
 ) -> dict[str, Any]:
     """Validate recording bounds and route one operation to the selected Unity instance."""
+    from services.job_completion import prepare_wait, complete_job
+
+    observation_target = await prepare_wait(ctx, wait_timeout)
     params: dict[str, Any] = {"action": action}
     match action:
         case "start":
@@ -109,9 +115,10 @@ async def manage_recording(
         case unreachable:
             assert_never(unreachable)
     unity_instance = await get_unity_instance_from_context(ctx)
-    return await send_with_unity_instance(
+    response = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
         "manage_recording",
         params,
     )
+    return await complete_job(ctx, observation_target, "recording", response, wait_timeout)

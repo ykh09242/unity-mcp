@@ -115,7 +115,11 @@ async def manage_packages(
     name: Annotated[Optional[str], "Registry name for add_registry/remove_registry."] = None,
     url: Annotated[Optional[str], "Registry URL for add_registry."] = None,
     scopes: Annotated[Optional[list[str]], "Registry scopes for add_registry."] = None,
+    wait_timeout: Annotated[int, "Optional initial job observation, 0..60 seconds."] = 0,
 ) -> dict[str, Any]:
+    from services.job_completion import prepare_wait, complete_job
+
+    observation_target = await prepare_wait(ctx, wait_timeout)
     action_lower = action.lower()
     if any(_has_source_credentials(value) for value in (package, url, query) if value is not None):
         return {
@@ -148,4 +152,5 @@ async def manage_packages(
         if val is not None:
             params_dict[key] = val
 
-    return await _send_packages_command(ctx, params_dict)
+    response = await _send_packages_command(ctx, params_dict)
+    return await complete_job(ctx, observation_target, "package", response, wait_timeout)

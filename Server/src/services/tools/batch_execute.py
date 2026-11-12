@@ -300,6 +300,10 @@ async def batch_execute(
         dict[str, Any] | None,
         "Unmodified target-preview guard to recheck before supported mutations; no rollback or retry guarantee",
     ] = None,
+    verification: Annotated[
+        Literal["off", "scripts"],
+        "scripts runs one final verification for confirmed source writes after the native batch settles.",
+    ] = "off",
 ) -> dict[str, Any]:
     """Execute sequentially, or request a read-only action-name preview.
 
@@ -312,6 +316,8 @@ async def batch_execute(
     """
     if type(validate_only) is not bool:
         raise ValueError("validate_only must be a boolean")
+    if verification not in {"off", "scripts"} or validate_only and verification != "off":
+        raise ValueError("verification must be off, or scripts for an executing batch")
     if preview_scope not in ("action_names", "targets"):
         raise ValueError("preview_scope must be action_names or targets")
     if preview_scope != "action_names" and not validate_only:
@@ -414,4 +420,8 @@ async def batch_execute(
             "message": "The selected peer did not provide the requested dedicated batch validation contract; no execution fallback was attempted.",
             "data": {"reason": "batch_validation_unavailable"},
         }
+    if verification == "scripts":
+        from services.verification.batch import complete_batch
+
+        return await complete_batch(ctx, unity_instance, reply, normalized_commands)
     return reply

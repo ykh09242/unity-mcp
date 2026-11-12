@@ -52,8 +52,14 @@ async def manage_project_auditor(
         Field(max_length=128),
         "issues only: opaque cursor returned by the previous page.",
     ] = None,
+    wait_timeout: Annotated[
+        int, Field(strict=True, ge=0, le=60), "Optional bounded completion observation, in seconds."
+    ] = 0,
 ) -> dict[str, Any]:
     """Validate the public request once and dispatch without implicitly repeating analysis."""
+    from services.job_completion import prepare_wait, complete_job
+
+    observation_target = await prepare_wait(ctx, wait_timeout)
     if action not in ("availability", "start", "status", "issues"):
         return {"success": False, "error": "Unsupported Project Auditor action."}
     if audit_id is not None and (
@@ -105,4 +111,4 @@ async def manage_project_auditor(
             "audit_id": audit_id,
             "observation_hint": "Query status with this audit_id before requesting another audit.",
         }
-    return response
+    return await complete_job(ctx, observation_target, "auditor", response, wait_timeout)

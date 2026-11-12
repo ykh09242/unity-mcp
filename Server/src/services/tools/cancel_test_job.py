@@ -17,6 +17,7 @@ class CancelTestJobData(BaseModel):
     job_id: str = Field(max_length=256)
     status: str = Field(max_length=64)
     native_control: dict[str, Any] | None = None
+    completion: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def require_native_control_after_start(self) -> Self:
@@ -43,7 +44,13 @@ class CancelTestJobResponse(MCPResponse):
 async def cancel_test_job(
     ctx: Context,
     job_id: Annotated[str, Field(pattern=r"^[a-f0-9]{32}$"), "Job ID returned by run_tests"],
+    wait_timeout: Annotated[
+        int, Field(strict=True, ge=0, le=60), "Optional wait for native settlement, in seconds."
+    ] = 0,
 ) -> CancelTestJobResponse | MCPResponse:
+    from services.job_completion import prepare_wait, complete_job
+
+    observation_target = await prepare_wait(ctx, wait_timeout)
     instance = await get_unity_instance_from_context(ctx)
     response = await send_with_unity_instance(
         async_send_command_with_retry, instance, "cancel_test_job", {"job_id": job_id}
@@ -53,7 +60,13 @@ async def cancel_test_job(
         return MCPResponse(success=False, error="Invalid native test cancellation response")
     try:
         return (
-            CancelTestJobResponse.model_validate(value)
+            await complete_job(
+                ctx,
+                observation_target,
+                "test",
+                CancelTestJobResponse.model_validate(value),
+                wait_timeout,
+            )
             if value.get("success")
             else MCPResponse.model_validate(value)
         )

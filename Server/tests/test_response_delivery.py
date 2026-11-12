@@ -14,6 +14,7 @@ from services.response_delivery import ResponseAuthority, ResponseScope, Respons
 from services.tools.read_response import read_response
 from services.response_delivery import response_store
 from transport.response_limit_middleware import ResponseLimitMiddleware
+from utils.retained_response import assemble_response
 
 
 @pytest.mark.asyncio
@@ -53,6 +54,10 @@ async def test_oversized_mutation_runs_once_and_all_bytes_can_be_read(mode, text
         raw = b"".join(chunks)
         assert hashlib.sha256(raw).hexdigest() == handle["sha256"]
         assert json.loads(raw)["content"][0]["text"] == text
+        assembled = await assemble_response(
+            client.call_tool, handle, max_bytes=16 * 1024 * 1024, max_pages=64, fields=["content"]
+        )
+        assert assembled["content"][0]["text"] == text
         released = await client.call_tool(
             "read_response", {"response_id": handle["response_id"], "release": True}
         )
