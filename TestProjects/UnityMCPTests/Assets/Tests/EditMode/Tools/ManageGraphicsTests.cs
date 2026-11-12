@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Tools.Graphics;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -52,8 +53,11 @@ namespace MCPForUnityTests.Editor.Tools
         }
     }
 
+    [Parallelizable(ParallelScope.None)]
     public class ManageGraphicsTests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
+        private UnityEngine.SceneManagement.Scene scene;
         private const string TempRoot = "Assets/Temp/ManageGraphicsTests";
         private bool _hasVolumeSystem;
         private bool _hasSceneView;
@@ -61,6 +65,8 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void SetUp()
         {
+            sceneFixture.PrepareRunnerBootstrap();
+            scene = sceneFixture.Create("McpGraphics_", Guid.NewGuid().ToString("N"));
             EnsureFolder(TempRoot);
 
             var pingResult = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "ping" }));
@@ -76,22 +82,36 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-#if UNITY_2022_2_OR_NEWER
-            foreach (var go in UnityFindObjectsCompat.FindAll<GameObject>())
-#else
-            foreach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>())
-#endif
+            try
             {
-                if (go.name.StartsWith("GfxTest_"))
-                    UnityEngine.Object.DestroyImmediate(go);
+#if UNITY_2022_2_OR_NEWER
+                foreach (var go in UnityFindObjectsCompat.FindAll<GameObject>())
+#else
+                foreach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>())
+#endif
+                {
+                    if (go.scene == scene && go.name.StartsWith("GfxTest_"))
+                        UnityEngine.Object.DestroyImmediate(go);
+                }
+
+                if (AssetDatabase.IsValidFolder(TempRoot))
+                    AssetDatabase.DeleteAsset(TempRoot);
+                CleanupEmptyParentFolders(TempRoot);
+
+                // Reset scene debug mode
+                ManageGraphics.HandleCommand(new JObject { ["action"] = "stats_set_scene_debug", ["mode"] = "Textured" });
             }
-
-            if (AssetDatabase.IsValidFolder(TempRoot))
-                AssetDatabase.DeleteAsset(TempRoot);
-            CleanupEmptyParentFolders(TempRoot);
-
-            // Reset scene debug mode
-            ManageGraphics.HandleCommand(new JObject { ["action"] = "stats_set_scene_debug", ["mode"] = "Textured" });
+            finally
+            {
+                try
+                {
+                    sceneFixture.Close();
+                }
+                finally
+                {
+                    sceneFixture.RestoreRunnerBootstrap();
+                }
+            }
         }
 
         // =====================================================================

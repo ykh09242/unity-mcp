@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Physics;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -20,8 +21,10 @@ using Combine3D = UnityEngine.PhysicMaterialCombine;
 namespace MCPForUnityTests.Editor.Tools
 {
     // Authored native regressions. This audit compiles them without launching the Editor.
+    [Parallelizable(ParallelScope.None)]
     public class PhysicsMaterialIntegrityTests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private string assetRoot;
         private bool ownsAssetRoot;
         private List<GameObject> ownedObjects;
@@ -32,6 +35,8 @@ namespace MCPForUnityTests.Editor.Tools
             assetRoot = "Assets/__McpPhysicsMaterialIntegrity_" + Guid.NewGuid().ToString("N");
             ownsAssetRoot = false;
             ownedObjects = new List<GameObject>();
+            sceneFixture.PrepareRunnerBootstrap();
+            sceneFixture.Create("McpPhysicsMaterial_", Guid.NewGuid().ToString("N"));
             Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot), "Unique owned root must not already exist.");
         }
 
@@ -40,17 +45,31 @@ namespace MCPForUnityTests.Editor.Tools
         {
             try
             {
-                foreach (var gameObject in ownedObjects)
-                    if (gameObject != null)
-                        UnityEngine.Object.DestroyImmediate(gameObject);
+                try
+                {
+                    foreach (var gameObject in ownedObjects)
+                        if (gameObject != null)
+                            UnityEngine.Object.DestroyImmediate(gameObject);
+                }
+                finally
+                {
+                    if (ownsAssetRoot)
+                    {
+                        Assert.IsTrue(assetRoot.StartsWith("Assets/__McpPhysicsMaterialIntegrity_", StringComparison.Ordinal));
+                        Assert.IsTrue(AssetDatabase.DeleteAsset(assetRoot), "Delete only the exact folder created by this fixture.");
+                        ownsAssetRoot = false;
+                    }
+                }
             }
             finally
             {
-                if (ownsAssetRoot)
+                try
                 {
-                    Assert.IsTrue(assetRoot.StartsWith("Assets/__McpPhysicsMaterialIntegrity_", StringComparison.Ordinal));
-                    Assert.IsTrue(AssetDatabase.DeleteAsset(assetRoot), "Delete only the exact folder created by this fixture.");
-                    ownsAssetRoot = false;
+                    sceneFixture.Close();
+                }
+                finally
+                {
+                    sceneFixture.RestoreRunnerBootstrap();
                 }
             }
         }

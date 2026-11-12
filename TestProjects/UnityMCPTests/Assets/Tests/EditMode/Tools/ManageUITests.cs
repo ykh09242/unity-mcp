@@ -13,20 +13,18 @@ using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    [Parallelizable(ParallelScope.None)]
     public class ManageUITests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private const string TempRoot = "Assets/Temp/ManageUITests";
 
         [Test]
-        [Parallelizable(ParallelScope.None)]
         public void ModifyVisualElement_PostEditObservationRetainsResolvedDuplicate()
         {
-            var sceneFixture = new PrefabTestSceneFixture();
             GameObject go = null;
-            sceneFixture.PrepareRunnerBootstrap();
             try
             {
-                sceneFixture.Create("McpUiObservation_", Guid.NewGuid().ToString("N"));
                 go = new GameObject("UIObservation", typeof(UIDocument));
                 var root = go.GetComponent<UIDocument>().rootVisualElement;
                 var first = new Label("first") { name = "duplicate" };
@@ -54,25 +52,39 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 if (go != null)
                     UnityEngine.Object.DestroyImmediate(go);
-                sceneFixture.Close();
-                sceneFixture.RestoreRunnerBootstrap();
             }
         }
 
         [SetUp]
         public void SetUp()
         {
+            sceneFixture.PrepareRunnerBootstrap();
+            sceneFixture.Create("McpUi_", Guid.NewGuid().ToString("N"));
             EnsureFolder(TempRoot);
         }
 
         [TearDown]
         public void TearDown()
         {
-            if (AssetDatabase.IsValidFolder(TempRoot))
+            try
             {
-                AssetDatabase.DeleteAsset(TempRoot);
+                if (AssetDatabase.IsValidFolder(TempRoot))
+                {
+                    AssetDatabase.DeleteAsset(TempRoot);
+                }
+                CleanupEmptyParentFolders(TempRoot);
             }
-            CleanupEmptyParentFolders(TempRoot);
+            finally
+            {
+                try
+                {
+                    sceneFixture.Close();
+                }
+                finally
+                {
+                    sceneFixture.RestoreRunnerBootstrap();
+                }
+            }
         }
 
         // ---- Action validation ----

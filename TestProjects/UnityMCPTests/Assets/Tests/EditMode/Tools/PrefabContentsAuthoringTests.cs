@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Prefabs;
+using MCPForUnityTests.Editor.Helpers;
 using MCPForUnityTests.Editor.Tools.Fixtures;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -11,14 +12,18 @@ using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    [Parallelizable(ParallelScope.None)]
     public class PrefabContentsAuthoringTests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private string folder;
         private string path;
 
         [SetUp]
         public void SetUp()
         {
+            sceneFixture.PrepareRunnerBootstrap();
+            sceneFixture.Create("McpPrefabAuthoring_", Guid.NewGuid().ToString("N"));
             folder = "Assets/PrefabAuthoring_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
             path = folder + "/Panel.prefab";
@@ -37,8 +42,23 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            PrefabPreviewLifecycleProbe.DriftOnEdit = false;
-            AssetDatabase.DeleteAsset(folder);
+            try
+            {
+                PrefabPreviewLifecycleProbe.DriftOnEdit = false;
+                if (!string.IsNullOrEmpty(folder) && AssetDatabase.IsValidFolder(folder))
+                    AssetDatabase.DeleteAsset(folder);
+            }
+            finally
+            {
+                try
+                {
+                    sceneFixture.Close();
+                }
+                finally
+                {
+                    sceneFixture.RestoreRunnerBootstrap();
+                }
+            }
         }
 
         private JObject Modify(string property, JToken value, bool preview = false) =>

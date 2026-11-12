@@ -2,6 +2,7 @@ using System;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -10,8 +11,10 @@ using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    [Parallelizable(ParallelScope.None)]
     public class ManageMaterialPropertiesTests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private const string TempRoot = "Assets/Temp/ManageMaterialPropertiesTests";
         private string _matPath;
 
@@ -137,6 +140,8 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void SetUp()
         {
+            sceneFixture.PrepareRunnerBootstrap();
+            sceneFixture.Create("McpMaterialProperties_", Guid.NewGuid().ToString("N"));
             if (!AssetDatabase.IsValidFolder("Assets/Temp"))
             {
                 AssetDatabase.CreateFolder("Assets", "Temp");
@@ -151,13 +156,27 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (AssetDatabase.IsValidFolder(TempRoot))
+            try
             {
-                AssetDatabase.DeleteAsset(TempRoot);
-            }
+                if (AssetDatabase.IsValidFolder(TempRoot))
+                {
+                    AssetDatabase.DeleteAsset(TempRoot);
+                }
 
-            // Clean up empty parent folders to avoid debris
-            CleanupEmptyParentFolders(TempRoot);
+                // Clean up empty parent folders to avoid debris
+                CleanupEmptyParentFolders(TempRoot);
+            }
+            finally
+            {
+                try
+                {
+                    sceneFixture.Close();
+                }
+                finally
+                {
+                    sceneFixture.RestoreRunnerBootstrap();
+                }
+            }
         }
 
         [Test]

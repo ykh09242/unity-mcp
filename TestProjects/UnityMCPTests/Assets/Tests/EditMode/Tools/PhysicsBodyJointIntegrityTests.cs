@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Physics;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -13,9 +14,18 @@ using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    [Parallelizable(ParallelScope.None)]
     public class PhysicsBodyJointIntegrityTests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private readonly List<GameObject> objects = new List<GameObject>();
+
+        [SetUp]
+        public void SetUp()
+        {
+            sceneFixture.PrepareRunnerBootstrap();
+            sceneFixture.Create("McpPhysicsBodyJoint_", Guid.NewGuid().ToString("N"));
+        }
 
         [Test]
         public void BodyWrite_ObservesExactBodyAndBoundsComponentDiagnostics()
@@ -53,10 +63,24 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            foreach (var go in objects)
-                if (go != null)
-                    UnityEngine.Object.DestroyImmediate(go);
-            objects.Clear();
+            try
+            {
+                foreach (var go in objects)
+                    if (go != null)
+                        UnityEngine.Object.DestroyImmediate(go);
+                objects.Clear();
+            }
+            finally
+            {
+                try
+                {
+                    sceneFixture.Close();
+                }
+                finally
+                {
+                    sceneFixture.RestoreRunnerBootstrap();
+                }
+            }
         }
 
         [TestCase("useGravity")]
@@ -259,8 +283,6 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(2f, go.GetComponent<Rigidbody>().mass);
         }
 
-        [TestCase("true", 0)]
-        [TestCase("false", 0)]
         [TestCase("1", 1)]
         [TestCase("0", 0)]
         public void RawJointSelectorCompatibility_SelectsExpectedOwnedJoint(string selector, int expectedIndex)
@@ -285,8 +307,6 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(expectedIndex == 1 ? 2f : secondBefore, second.breakForce);
         }
 
-        [TestCase("true", 2)]
-        [TestCase("false", 2)]
         [TestCase("1", 1)]
         [TestCase("0", 1)]
         public void RawJointRemovalSelectorCompatibility_PreservesEstablishedCounts(string selector, int expectedRemoved)
@@ -307,8 +327,38 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(first == null);
                 Assert.IsTrue(second != null);
             }
-            else
-                Assert.IsEmpty(go.GetComponents<FixedJoint>());
+        }
+
+        [TestCase("configure_joint", true)]
+        [TestCase("configure_joint", false)]
+        [TestCase("remove_joint", true)]
+        [TestCase("remove_joint", false)]
+        public void BooleanJointSelectorIsRejectedWithoutMutation(string action, bool selector)
+        {
+            var go = Body();
+            var first = go.AddComponent<FixedJoint>();
+            var second = go.AddComponent<FixedJoint>();
+            string beforeFirst = EditorJsonUtility.ToJson(first);
+            string beforeSecond = EditorJsonUtility.ToJson(second);
+            int dirty = EditorUtility.GetDirtyCount(go);
+            int undo = Undo.GetCurrentGroup();
+            LogAssert.Expect(LogType.Error, new Regex("\\[ManagePhysics\\] Action '" + action + "' failed:"));
+            var response = Send(
+                go,
+                action,
+                new JObject
+                {
+                    ["joint_type"] = "fixed",
+                    ["componentIndex"] = selector,
+                    ["properties"] = new JObject { ["breakForce"] = 2 },
+                }
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new[] { first, second }, go.GetComponents<FixedJoint>());
+            Assert.AreEqual(beforeFirst, EditorJsonUtility.ToJson(first));
+            Assert.AreEqual(beforeSecond, EditorJsonUtility.ToJson(second));
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(go));
+            Assert.AreEqual(undo, Undo.GetCurrentGroup());
         }
 
         [Test]

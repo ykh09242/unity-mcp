@@ -88,7 +88,7 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
-        public void PostEditProjection_DistinguishesOverlayAndUnassignedCamera()
+        public void PostEditProjection_UnassignedScreenSpaceCameraUsesNativeOverlayFallback()
         {
             var root = Root(true);
             root.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
@@ -100,11 +100,24 @@ namespace MCPForUnityTests.EditMode.Tools
             Canvas canvas = root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceCamera;
             canvas.worldCamera = null;
-            Assert.AreEqual(RenderMode.ScreenSpaceCamera, canvas.renderMode);
-            Assert.IsNull(canvas.worldCamera, "The unassigned-camera branch requires no inherited or automatically assigned camera.");
+            // The native renderer falls back to Overlay without a camera, even though
+            // the Inspector retains the requested Camera mode in serialized state.
+            using (var serialized = new SerializedObject(canvas))
+            {
+                var mode = serialized.FindProperty("m_RenderMode");
+                Assert.IsNotNull(mode);
+                Assert.AreEqual((int)RenderMode.ScreenSpaceCamera, mode.intValue);
+            }
+            Assert.AreEqual(RenderMode.ScreenSpaceOverlay, canvas.renderMode);
+            Assert.IsNull(canvas.worldCamera);
             JObject camera = Call("set_rect", child, new JObject { ["sizeDelta"] = new JArray(210, 100) });
             Success(camera);
-            Assert.AreEqual("camera_unassigned", camera["data"]["verification"]["projection"]["data"].Value<string>("unavailable_reason"), camera.ToString());
+            JToken projection = camera["data"]["verification"]["projection"];
+            Assert.IsTrue(projection.Value<bool>("success"), camera.ToString());
+            Assert.AreEqual("ScreenSpaceOverlay", projection["data"]["observed_values"].Value<string>("render_mode"), camera.ToString());
+            Assert.AreEqual("pending", projection["data"].Value<string>("status"), camera.ToString());
+            Assert.IsFalse(projection["data"].Value<bool>("complete"), camera.ToString());
+            Assert.AreEqual(new Vector2(210, 100), ((RectTransform)child.transform).sizeDelta);
         }
 
         [Test]
