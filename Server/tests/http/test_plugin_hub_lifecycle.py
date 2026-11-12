@@ -5,6 +5,7 @@ from tests.timing import await_completion, await_signal, watchdog_timeout
 import asyncio  # noqa: ANYIO_OK -- the hub owns asyncio futures and tasks.
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from types import SimpleNamespace
 from tests.transport_socket import JsonSocket
 from unittest.mock import AsyncMock
@@ -12,14 +13,16 @@ from unittest.mock import AsyncMock
 import anyio
 import pytest
 import pytest_asyncio
+from fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.routing import WebSocketRoute
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from core.config import config
+from services.custom_tool_service import CustomToolService
 from transport.charge_ledger import ChargeLedger
-from transport.models import RegisterMessage
+from transport.models import RegisterMessage, RegisterToolsMessage
 from transport.plugin_hub import CommandNotDispatchedError, PluginDisconnectedError, PluginHub
 from transport.plugin_registry import PluginRegistry
 
@@ -306,6 +309,178 @@ async def test_socket_without_a_registered_owner_cannot_dispatch(command_socket,
         await PluginHub.send_command("session", "manage_scene", {})
     command_socket.send_json.assert_not_awaited()
     assert PluginHub._pending == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lock_boundary", ["hub", "registry"])
+async def test_dispatch_disconnect_drains_cleanup_through_repeated_cancellation(
+    isolated_hub: PluginRegistry, monkeypatch: pytest.MonkeyPatch, lock_boundary: str
+) -> None:
+    monkeypatch.setattr(PluginHub, "_admitted", {})
+    monkeypatch.setattr(CustomToolService, "_instance", None)
+    monkeypatch.setattr(PluginHub, "_notify_mcp_tool_list_changed", AsyncMock())
+    app = FastMCP("disconnect-cancellation")
+    service = CustomToolService(app)
+    PluginHub.configure(isolated_hub, mcp=app)
+    incoming = asyncio.Queue()
+    incoming.put_nowait({"type": "websocket.connect"})
+    connected = asyncio.Event()
+    disconnect_entered = asyncio.Event()
+    registry_entered = asyncio.Event()
+    socket_context = ContextVar("disconnect_test_socket")
+    released = []
+    socket = None
+    owner_task = None
+
+    async def send(message):
+        if message["type"] == "websocket.send":
+            connected.set()
+
+    hub = PluginHub({"type": "websocket"}, incoming.get, send)
+    connect = hub.on_connect
+    disconnect = hub.on_disconnect
+    unregister = isolated_hub.unregister
+
+    async def connect_with_lifetime(websocket):
+        nonlocal socket, owner_task
+        socket, owner_task = websocket, asyncio.current_task()
+        token = socket_context.set(websocket)
+
+        def release_context():
+            released.append((asyncio.current_task(), socket_context.get()))
+            socket_context.reset(token)
+
+        hub._credential_lifetime.callback(release_context)
+        await connect(websocket)
+
+    async def observed_disconnect(websocket, close_code):
+        disconnect_entered.set()
+        await disconnect(websocket, close_code)
+
+    async def observed_unregister(*args, **kwargs):
+        registry_entered.set()
+        return await unregister(*args, **kwargs)
+
+    monkeypatch.setattr(hub, "on_connect", connect_with_lifetime)
+    monkeypatch.setattr(hub, "on_disconnect", observed_disconnect)
+    monkeypatch.setattr(isolated_hub, "unregister", observed_unregister)
+    dispatch = asyncio.create_task(hub.dispatch())
+    pending = None
+    ping_task = None
+    try:
+        await await_signal(connected, "WebSocket welcome", producers=(dispatch,))
+        await hub._handle_register(socket, RegisterMessage(project_hash="disconnect-owned"))
+        await hub._handle_register_tools(
+            socket, RegisterToolsMessage(tools=[{"name": "disconnect_tool"}])
+        )
+        session_id = socket.state.plugin_session_id
+        catalog_key = ("http", None, "disconnect-owned")
+        assert catalog_key in service._sources
+        pending = asyncio.get_running_loop().create_future()
+        PluginHub._pending["disconnect-command"] = {"session_id": session_id, "future": pending}
+        ping_task = PluginHub._ping_tasks[session_id]
+        blocked_lock = PluginHub._lock if lock_boundary == "hub" else isolated_hub._lock
+        async with blocked_lock:
+            incoming.put_nowait({"type": "websocket.disconnect", "code": 1000})
+            await await_signal(disconnect_entered, "dispatch disconnect", producers=(dispatch,))
+            if lock_boundary == "registry":
+                await await_signal(registry_entered, "registry unregister", producers=(dispatch,))
+                assert session_id not in PluginHub._connections
+            for index in range(2):
+                dispatch.cancel(f"disconnect cancellation {index}")
+                await asyncio.sleep(0)
+
+        done, _ = await asyncio.wait({dispatch}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
+        assert dispatch in done, "Disconnect cleanup did not finish after releasing its lock"
+        with pytest.raises(asyncio.CancelledError) as failure:
+            dispatch.result()
+        assert failure.value.args == ("disconnect cancellation 0",)
+        assert await isolated_hub.get_session(session_id) is None, (
+            "Cancelled dispatch orphaned the registry session"
+        )
+        assert catalog_key not in service._sources, "Cancelled dispatch retained its tool catalog"
+        assert id(socket) not in PluginHub._admitted
+        assert PluginHub._connections == {}
+        assert PluginHub._pending == {}
+        assert PluginHub._ping_tasks == {}
+        assert PluginHub._last_pong == {}
+        await asyncio.gather(ping_task, return_exceptions=True)
+        assert ping_task.done()
+        assert isinstance(pending.exception(), PluginDisconnectedError)
+        assert released == [(owner_task, socket)], "Task-local lifetime moved off dispatch"
+    finally:
+        if not dispatch.done():
+            dispatch.cancel()
+        await asyncio.gather(dispatch, return_exceptions=True)
+        await PluginHub.shutdown()
+        if ping_task is not None:
+            await asyncio.gather(ping_task, return_exceptions=True)
+        if pending is not None and pending.done() and not pending.cancelled():
+            pending.exception()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_disconnect_waiting_on_old_hub_preserves_replacement(
+    isolated_hub: PluginRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(PluginHub, "_admitted", {})
+    PluginHub.configure(isolated_hub)
+    lock = asyncio.Lock()
+    monkeypatch.setattr(PluginHub, "_lock", lock)
+    hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
+    old = JsonSocket(state=SimpleNamespace(), send_json=AsyncMock(), close=AsyncMock())
+    replacement = JsonSocket(state=SimpleNamespace(), send_json=AsyncMock(), close=AsyncMock())
+    await hub._handle_register(old, RegisterMessage(project_hash="same-project"))
+    old_id = old.state.plugin_session_id
+    old_ping = PluginHub._ping_tasks[old_id]
+    lock_entered = asyncio.Event()
+    acquire = lock.acquire
+
+    async def observed_acquire():
+        lock_entered.set()
+        return await acquire()
+
+    disconnect = None
+    pending = None
+    try:
+        async with lock:
+            monkeypatch.setattr(lock, "acquire", observed_acquire)
+            disconnect = asyncio.create_task(hub.on_disconnect(old, 1001))
+            await await_signal(lock_entered, "old hub disconnect lock", producers=(disconnect,))
+            # Reconfiguration retires the old Hub lock before the old cleanup resumes.
+            PluginHub.configure(isolated_hub)
+            await hub._handle_register(replacement, RegisterMessage(project_hash="same-project"))
+            replacement_id = replacement.state.plugin_session_id
+            replacement_ping = PluginHub._ping_tasks[replacement_id]
+            pending = asyncio.get_running_loop().create_future()
+            PluginHub._pending["replacement-command"] = {
+                "session_id": replacement_id,
+                "future": pending,
+            }
+            for index in range(2):
+                disconnect.cancel(f"old disconnect cancellation {index}")
+                await asyncio.sleep(0)
+        done, _ = await asyncio.wait({disconnect}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
+        assert disconnect in done, "Retired-generation disconnect did not settle"
+        with pytest.raises(asyncio.CancelledError):
+            disconnect.result()
+        assert await isolated_hub.get_session(old_id) is None
+        assert await isolated_hub.get_session_id_by_hash("same-project") == replacement_id
+        assert PluginHub._connections == {replacement_id: replacement}
+        assert PluginHub._ping_tasks == {replacement_id: replacement_ping}
+        assert replacement_id in PluginHub._last_pong
+        assert not replacement_ping.done()
+        assert not pending.done(), "Old disconnect failed the replacement's command"
+        replacement.close.assert_not_awaited()
+    finally:
+        if disconnect is not None:
+            if not disconnect.done():
+                disconnect.cancel()
+            await asyncio.gather(disconnect, return_exceptions=True)
+        await hub.on_disconnect(replacement, 1001)
+        await asyncio.gather(old_ping, return_exceptions=True)
+        if pending is not None and pending.done() and not pending.cancelled():
+            pending.exception()
 
 
 @pytest.mark.asyncio

@@ -738,7 +738,7 @@ class PluginHub(WebSocketEndpoint):
                     pass
             finally:
                 # Level cancellation may interrupt every await: release admission
-                # synchronously, then shield the bounded routing cleanup.
+                # synchronously, then drain independently owned routing cleanup.
                 type(self)._admitted.pop(id(websocket), None)
                 with anyio.CancelScope(shield=True):
                     await self.on_disconnect(websocket, close_code)
@@ -1341,51 +1341,80 @@ class PluginHub(WebSocketEndpoint):
         cls = type(self)
         admitted = cls._admitted.pop(id(websocket), None)
         lock = cls._lock
+        registry = cls._registry
         if lock is None:
             return
-        catalog_changes = []
-        async with lock:
-            if cls._lock is not lock or (
-                admitted is None and all(ws is not websocket for ws in cls._connections.values())
-            ):
-                return
-            cls._discard_socket_state(websocket)
-            session_ids = [sid for sid, ws in cls._connections.items() if ws is websocket]
-            for session_id in session_ids:
-                cls._connections.pop(session_id, None)
-                # Stop the ping loop for this session
-                ping_task = cls._ping_tasks.pop(session_id, None)
-                if ping_task and not ping_task.done():
-                    ping_task.cancel()
-                # Clean up last pong tracking
-                cls._last_pong.pop(session_id, None)
-                # Fail-fast any in-flight commands for this session to avoid waiting for COMMAND_TIMEOUT.
-                pending_ids = [
-                    command_id
-                    for command_id, entry in cls._pending.items()
-                    if entry.get("session_id") == session_id
-                ]
-                if pending_ids:
-                    logger.debug(
-                        f"Cancelling {len(pending_ids)} pending commands for disconnected session"
-                    )
-                for command_id in pending_ids:
-                    entry = cls._pending.pop(command_id, None)
-                    future = entry.get("future") if isinstance(entry, dict) else None
-                    if future and not future.done():
-                        future.set_exception(
-                            PluginDisconnectedError(
-                                f"Unity plugin session {session_id} disconnected while awaiting command_result"
-                            )
-                        )
-                if cls._registry:
-                    catalog_changes.append(await cls._unregister_catalog(cls._registry, session_id))
-                    if cls._lock is not lock:
-                        return
-                logger.info(f"Plugin session {session_id} disconnected ({close_code})")
 
-        for outcome, scope in catalog_changes:
-            await cls._notify_committed_catalog(outcome, scope)
+        async def disconnect() -> None:
+            catalog_changes = []
+            async with lock:
+                if (
+                    cls._lock is not lock
+                    or cls._registry is not registry
+                    or (
+                        admitted is None
+                        and all(ws is not websocket for ws in cls._connections.values())
+                    )
+                ):
+                    return
+                cls._discard_socket_state(websocket)
+                session_ids = [sid for sid, ws in cls._connections.items() if ws is websocket]
+                for session_id in session_ids:
+                    cls._connections.pop(session_id, None)
+                    # Stop the ping loop for this session
+                    ping_task = cls._ping_tasks.pop(session_id, None)
+                    if ping_task and not ping_task.done():
+                        ping_task.cancel()
+                    # Clean up last pong tracking
+                    cls._last_pong.pop(session_id, None)
+                    # Fail in-flight commands without waiting for COMMAND_TIMEOUT.
+                    pending_ids = [
+                        command_id
+                        for command_id, entry in cls._pending.items()
+                        if entry.get("session_id") == session_id
+                    ]
+                    if pending_ids:
+                        logger.debug(
+                            f"Cancelling {len(pending_ids)} pending commands for disconnected session"
+                        )
+                    for command_id in pending_ids:
+                        entry = cls._pending.pop(command_id, None)
+                        future = entry.get("future") if isinstance(entry, dict) else None
+                        if future and not future.done():
+                            future.set_exception(
+                                PluginDisconnectedError(
+                                    f"Unity plugin session {session_id} disconnected while awaiting command_result"
+                                )
+                            )
+                    if registry is not None:
+                        catalog_changes.append(await cls._unregister_catalog(registry, session_id))
+                        if cls._lock is not lock or cls._registry is not registry:
+                            return
+                    logger.info(f"Plugin session {session_id} disconnected ({close_code})")
+
+            for outcome, scope in catalog_changes:
+                await cls._notify_committed_catalog(outcome, scope)
+
+        # Only routing/registry work transfers task ownership. Dispatch still exits
+        # its credential lifetime and resets ContextVar tokens in the original task.
+        cleanup = asyncio.create_task(disconnect())
+        cancellation: asyncio.CancelledError | None = None
+        with anyio.CancelScope(shield=True):
+            while not cleanup.done():
+                try:
+                    await asyncio.wait({cleanup})
+                except asyncio.CancelledError as error:
+                    if cancellation is None:
+                        cancellation = error
+            cleanup_error = None if cleanup.cancelled() else cleanup.exception()
+        try:
+            await anyio.lowlevel.checkpoint_if_cancelled()
+        except asyncio.CancelledError as error:
+            if cancellation is None:
+                cancellation = error
+        if cancellation is not None:
+            raise cancellation from cleanup_error
+        cleanup.result()
 
     # ------------------------------------------------------------------
     # Public API
