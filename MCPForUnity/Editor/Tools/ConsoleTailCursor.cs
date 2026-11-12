@@ -146,6 +146,8 @@ namespace MCPForUnity.Editor.Tools
             internal string Token;
             internal string Identity;
             internal int Next;
+            internal int Origin;
+            internal bool ContentTruncated;
             internal int SnapshotRows;
             internal string First;
             internal string Last;
@@ -223,6 +225,9 @@ namespace MCPForUnity.Editor.Tools
             }
 
             int next = previous?.Next ?? snapshot.Count;
+            int origin = previous?.Origin ?? next;
+            int pageStart = next;
+            bool contentTruncated = previous?.ContentTruncated ?? false;
             string first = previous?.First;
             string last = previous?.Last;
             if (next > 0)
@@ -286,6 +291,7 @@ namespace MCPForUnity.Editor.Tools
                         stop = "payload_budget";
                         break;
                     }
+                    contentTruncated |= ((JObject)item["entry"])["truncated_fields"] is JArray fields && fields.Count > 0;
                 }
                 else
                     filtered++;
@@ -305,6 +311,8 @@ namespace MCPForUnity.Editor.Tools
                     Token = token,
                     Identity = query.Identity,
                     Next = next,
+                    Origin = origin,
+                    ContentTruncated = contentTruncated,
                     SnapshotRows = snapshot.Count,
                     First = first,
                     Last = last,
@@ -328,6 +336,18 @@ namespace MCPForUnity.Editor.Tools
                 ["stop_reason"] = stop,
                 ["loss_unknown"] = true,
                 ["continuity"] = "bounded_anchors",
+                ["coverage"] = new JObject
+                {
+                    ["scope"] = "retained_native_rows_since_checkpoint",
+                    ["checkpoint_rows"] = origin,
+                    ["page_start_rows"] = pageStart,
+                    ["observed_through_rows"] = next,
+                    ["observed_interval_rows"] = next - origin,
+                    ["unobserved_retained_rows"] = snapshot.Count - next,
+                    ["observed_snapshot_complete"] = next == snapshot.Count,
+                    ["content_truncated"] = contentTruncated,
+                    ["loss_reason"] = "native_history_continuity_unproven",
+                },
             };
             return new SuccessResponse("Bounded console tail; loss cannot be ruled out.", data);
         }

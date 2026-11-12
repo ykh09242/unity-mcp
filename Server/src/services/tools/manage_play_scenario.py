@@ -17,6 +17,7 @@ from models.play_scenarios import (
 )
 from pydantic import JsonValue, ValidationError
 from services.registry import mcp_for_unity_tool
+from services.workflow_summaries import attach_summary
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
@@ -103,5 +104,5 @@ async def manage_play_scenario(
         retry_on_reload=False,
     )
     if isinstance(response, MCPResponse):
-        return response.model_dump(exclude_none=True)
-    return response
+        response = response.model_dump(exclude_none=True)
+    return attach_summary(response, "scenario")

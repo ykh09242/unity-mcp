@@ -76,14 +76,26 @@ def console_delta(before, after):
     known = bool(
         before.get("generation")
         and before.get("generation") == after.get("generation")
+        and before.get("filter_identity") == after.get("filter_identity")
         and after.get("loss_unknown") is False
         and not after.get("has_more")
     )
+    findings = []
+    for row in errors[:20]:
+        finding = {}
+        for key in ("type", "message", "file", "line"):
+            value = row.get("entry", {}).get(key)
+            if type(value) in (str, int):
+                finding[key] = value[:1024] if isinstance(value, str) else value
+        findings.append(finding)
     return {
         "state": "failed" if errors else "passed" if known else "incomplete",
         "coverage": "complete" if known else "unknown",
         "reason": None if known else "console_loss_or_reset_not_excluded",
         "observed_error_count": len(errors),
+        "findings": findings,
+        "findings_truncated": len(errors) > 20,
+        "observed_interval": after.get("coverage"),
         "generation": after.get("generation"),
         "cursor": after.get("next_cursor"),
     }

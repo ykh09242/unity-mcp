@@ -132,6 +132,30 @@ def page(module, *, cursor="begin", items=None, **changes):
 
 
 @pytest.mark.asyncio
+async def test_native_interval_coverage_survives_public_validation(console):
+    module, _, send = console
+    coverage = {
+        "scope": "retained_native_rows_since_checkpoint",
+        "checkpoint_rows": 10,
+        "page_start_rows": 10,
+        "observed_through_rows": 10,
+        "observed_interval_rows": 0,
+        "unobserved_retained_rows": 0,
+        "observed_snapshot_complete": True,
+        "content_truncated": False,
+        "loss_reason": "native_history_continuity_unproven",
+    }
+    send.return_value = page(module, snapshot_rows=10, coverage=coverage)
+    result = await module.read_console(SimpleNamespace(), tail_cursor="begin")
+    assert result["success"] is True
+    assert result["data"]["coverage"] == coverage
+    assert result["data"]["loss_unknown"] is True
+    coverage["observed_interval_rows"] = 1
+    rejected = await module.read_console(SimpleNamespace(), tail_cursor="begin")
+    assert rejected["success"] is False
+
+
+@pytest.mark.asyncio
 async def test_console_source_diagnostics_survive_public_tail_validation(console):
     module, _, send = console
     token = f"ct1.{'a' * 32}.{'d' * 32}"

@@ -221,6 +221,28 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void IntervalCoverageCountsRetainedRowsAcrossPagesWithoutCertifyingHistory()
+        {
+            var state = new ConsoleTailCursor();
+            var rows = Rows(3);
+            string token = Token(Read(state, rows));
+            rows.AddRange(Rows(3, new string('x', 9000)));
+            JObject first = Read(state, rows, token, page: 1);
+            JToken partial = first["data"]["coverage"];
+            Assert.AreEqual(3, (int)partial["checkpoint_rows"]);
+            Assert.AreEqual(1, (int)partial["observed_interval_rows"]);
+            Assert.AreEqual(2, (int)partial["unobserved_retained_rows"]);
+            Assert.IsFalse((bool)partial["observed_snapshot_complete"]);
+            JObject last = Read(state, rows, Token(first));
+            JToken coverage = last["data"]["coverage"];
+            Assert.AreEqual(3, (int)coverage["observed_interval_rows"]);
+            Assert.AreEqual(0, (int)coverage["unobserved_retained_rows"]);
+            Assert.IsTrue((bool)coverage["observed_snapshot_complete"]);
+            Assert.IsTrue((bool)coverage["content_truncated"]);
+            Assert.IsTrue((bool)last["data"]["loss_unknown"]);
+        }
+
+        [Test]
         public void OversizedRowBlocksWithoutSkippingEarlierOrBlockedSequence()
         {
             // Given a cursor before one valid and one oversized raw row.

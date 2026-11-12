@@ -246,7 +246,11 @@ async def test_failure_report_is_preserved(route):
     # When: the report is requested.
     result = await manage_play_scenario(SimpleNamespace(), "status", job_id=JOB_ID)
     # Then: the facade does not strip job diagnostics or reinterpret failure.
+    summary = result["data"].pop("summary")
     assert result == report
+    assert summary["status"] == "failed"
+    assert summary["step_counts"]["failed"] == 1
+    assert summary["settled"] is False
 
 
 @pytest.mark.asyncio

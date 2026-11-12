@@ -232,13 +232,17 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
             "job_status": state,
             "wait_status": "observed",
             "job": data,
-            **({"summary": terminal_summary(data)} if terminal else {}),
+            **({"summary": terminal_summary(data, kind)} if terminal else {}),
         },
     }
 
 
-def terminal_summary(data: dict) -> dict:
+def terminal_summary(data: dict, kind: JobKind | None = None) -> dict:
     """Retain a compact sample from the observed terminal job without another read."""
+    if kind == "scenario":
+        from services.workflow_summaries import scenario_summary
+
+        return scenario_summary(data)
     summary = {}
     for key in (
         "error",

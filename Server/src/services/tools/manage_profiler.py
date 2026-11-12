@@ -2,7 +2,9 @@ from typing import Annotated, Any, Optional, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import Field, TypeAdapter, ValidationError
+
+from services.profiler_thresholds import ProfilerThreshold, evaluate_thresholds
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -196,8 +198,24 @@ async def manage_profiler(
         Field(max_length=128),
         "Exact ordinal native object-name prefix for memory_analyze_snapshots; omit for all within budget.",
     ] = None,
+    thresholds: Annotated[
+        list[ProfilerThreshold] | None,
+        Field(min_length=1, max_length=8),
+        "Optional exact-marker statistic limits and native units for window_result only.",
+    ] = None,
 ) -> dict[str, Any]:
     action_lower = action.lower()
+    if thresholds is not None:
+        if action_lower != "window_result":
+            return {"success": False, "message": "thresholds require window_result"}
+        try:
+            thresholds = TypeAdapter(list[ProfilerThreshold]).validate_python(thresholds)
+        except ValidationError:
+            return {"success": False, "message": "Invalid profiler thresholds"}
+        if not 1 <= len(thresholds) <= 8 or len(
+            {(item.marker, item.statistic) for item in thresholds}
+        ) != len(thresholds):
+            return {"success": False, "message": "Provide 1-8 unique marker/statistic thresholds"}
     if action_lower not in ALL_ACTIONS:
         return {
             "success": False,
@@ -281,7 +299,11 @@ async def manage_profiler(
     result = await send_with_unity_instance(
         async_send_command_with_retry, unity_instance, "manage_profiler", params_dict
     )
-    return result if isinstance(result, dict) else {"success": False, "message": str(result)}
+    if not isinstance(result, dict):
+        return {"success": False, "message": str(result)}
+    if thresholds is not None:
+        return evaluate_thresholds(result, window_id, thresholds)
+    return result
 
 
 def _window_error(action, category, markers, frames, warmup, timeout, identity, samples):

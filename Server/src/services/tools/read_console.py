@@ -60,6 +60,19 @@ class ConsoleTailItem(BaseModel):
     entry: ConsoleTailEntry
 
 
+class ConsoleTailCoverage(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    scope: Literal["retained_native_rows_since_checkpoint"]
+    checkpoint_rows: int = Field(ge=0, le=2147483647)
+    page_start_rows: int = Field(ge=0, le=2147483647)
+    observed_through_rows: int = Field(ge=0, le=2147483647)
+    observed_interval_rows: int = Field(ge=0, le=2147483647)
+    unobserved_retained_rows: int = Field(ge=0, le=2147483647)
+    observed_snapshot_complete: bool
+    content_truncated: bool
+    loss_reason: Literal["native_history_continuity_unproven"]
+
+
 class ConsoleTailPage(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     version: Literal[1]
@@ -75,6 +88,7 @@ class ConsoleTailPage(BaseModel):
     stop_reason: Literal["snapshot_end", "page_size", "row_budget", "text_budget", "payload_budget"]
     loss_unknown: Literal[True]
     continuity: Literal["bounded_anchors"]
+    coverage: ConsoleTailCoverage | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -101,6 +115,21 @@ class ConsoleTailPage(BaseModel):
             raise ValueError("Invalid tail literal type")
         if self.next_cursor.split(".")[1] != self.generation:
             raise ValueError("Mismatched tail generation")
+        if self.coverage is not None:
+            coverage = self.coverage
+            if (
+                not coverage.checkpoint_rows
+                <= coverage.page_start_rows
+                <= coverage.observed_through_rows
+                <= self.snapshot_rows
+                or coverage.observed_through_rows - coverage.checkpoint_rows
+                != coverage.observed_interval_rows
+                or coverage.observed_through_rows - coverage.page_start_rows != self.scanned_rows
+                or self.snapshot_rows - coverage.observed_through_rows
+                != coverage.unobserved_retained_rows
+                or coverage.observed_snapshot_complete != (not self.has_more)
+            ):
+                raise ValueError("Inconsistent tail interval coverage")
         return self
 
 
