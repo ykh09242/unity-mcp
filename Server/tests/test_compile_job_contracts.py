@@ -102,6 +102,76 @@ def native_job(compile_id, outcome="failed"):
     return job
 
 
+@pytest.mark.parametrize("state", ["requested", "running", "unavailable"])
+def test_compile_follow_up_keeps_request_and_instance(state):
+    from services.tools.get_compile_job import compile_follow_up, unknown_compile_job
+
+    job = unknown_compile_job("a" * 32, "observation_unavailable")
+    if state != "unavailable":
+        job.update(state=state, reason="")
+    follow_up = compile_follow_up(job, "Fixture@one")
+    assert follow_up["action"] == "poll_same_job"
+    assert follow_up["next_call"] == {
+        "tool": "get_compile_job",
+        "arguments": {"compile_id": "a" * 32, "unity_instance": "Fixture@one"},
+    }
+
+
+@pytest.mark.parametrize(
+    "outcome,reason,action",
+    [
+        ("success", "", "verify_source_freshness"),
+        ("failed", "", "inspect_compiler_diagnostics"),
+        ("unknown", "tracking_unsupported", "inspect_tracking_support"),
+        ("unknown", "not_found", "inspect_job_identity"),
+    ],
+)
+def test_terminal_compile_follow_up_has_no_retry(outcome, reason, action):
+    from services.tools.get_compile_job import compile_follow_up, unknown_compile_job
+
+    job = unknown_compile_job("a" * 32, reason)
+    job["outcome"] = outcome
+    follow_up = compile_follow_up(job, "Fixture@one")
+    assert follow_up["action"] == action
+    assert "next_call" not in follow_up
+
+
+def test_native_recovery_precedes_compile_polling():
+    from services.tools.get_compile_job import compile_follow_up, unknown_compile_job
+
+    job = unknown_compile_job("a" * 32, "observation_unavailable")
+    job["native_coordination"] = {"phase": "recovery_required"}
+    assert compile_follow_up(job, None) == {"action": "inspect_native_recovery"}
+
+
+@pytest.mark.asyncio
+async def test_public_refresh_and_status_expose_the_same_follow_up(monkeypatch):
+    from unittest.mock import AsyncMock
+    from services.tools import get_compile_job as status
+
+    async def send(_sender, _instance, command, params, **_options):
+        job = native_job(params["compile_id"], "unknown")
+        job.update(state="running", collection_complete=False, finished_at_unix_ms=None)
+        return {
+            "success": True,
+            "data": {"compilation": job} if command == "refresh_unity" else job,
+        }
+
+    for module in (refresh_module, status):
+        monkeypatch.setattr(
+            module, "get_unity_instance_from_context", AsyncMock(return_value="Fixture@one")
+        )
+    monkeypatch.setattr(refresh_module.unity_transport, "send_with_unity_instance", send)
+    refreshed = await refresh_module.refresh_unity(None, compile="request", wait_for_ready=False)
+    compile_id = refreshed.data["compilation"]["compile_id"]
+    observed = await status.get_compile_job(None, compile_id)
+    assert refreshed.data["follow_up"] == observed.follow_up
+    assert observed.follow_up["next_call"]["arguments"] == {
+        "compile_id": compile_id,
+        "unity_instance": "Fixture@one",
+    }
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("disconnect", [False, True])
 async def test_ready_editor_returns_failed_compile_without_mutation_replay(monkeypatch, disconnect):

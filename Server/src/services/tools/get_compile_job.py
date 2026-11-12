@@ -271,8 +271,35 @@ async def read_compile_job(
     return result
 
 
+def compile_follow_up(job: dict, instance: str | None, *, recovery_required: bool = False) -> dict:
+    """Suggest observation of the same request without replaying compilation."""
+    coordination = job.get("native_coordination") or {}
+    if recovery_required or coordination.get("phase") == "recovery_required":
+        return {"action": "inspect_native_recovery"}
+    if job["state"] in ("requested", "running") or job["reason"] == "observation_unavailable":
+        arguments = {"compile_id": job["compile_id"]}
+        if instance:
+            arguments["unity_instance"] = instance
+        return {
+            "action": "poll_same_job",
+            "next_call": {"tool": "get_compile_job", "arguments": arguments},
+        }
+    actions = {
+        "success": "verify_source_freshness",
+        "failed": "inspect_compiler_diagnostics",
+    }
+    reason_actions = {
+        "tracking_unsupported": "inspect_tracking_support",
+        "not_found": "inspect_job_identity",
+    }
+    return {
+        "action": actions.get(job["outcome"], reason_actions.get(job["reason"], "inspect_evidence"))
+    }
+
+
 class CompileJobResponse(MCPResponse):
     source_freshness: dict | None = Field(default=None, exclude_if=lambda value: value is None)
+    follow_up: dict | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 @mcp_for_unity_tool(
@@ -301,5 +328,6 @@ async def get_compile_job(
     return CompileJobResponse(
         success=True,
         data=job,
+        follow_up=compile_follow_up(job, instance),
         source_freshness=source.model_dump(by_alias=True) if source else None,
     )

@@ -27,7 +27,12 @@ import transport.legacy.unity_connection as _legacy_conn
 from services.state.external_changes_scanner import external_changes_scanner
 import services.resources.editor_state as editor_state
 from models.native_recovery import parse_coordination
-from services.tools.get_compile_job import parse_compile_job, read_compile_job, unknown_compile_job
+from services.tools.get_compile_job import (
+    compile_follow_up,
+    parse_compile_job,
+    read_compile_job,
+    unknown_compile_job,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -529,6 +534,12 @@ async def refresh_unity(
                 compilation["last_successful_compilation"] = history
             data["last_successful_compilation"] = history
             data["compilation"] = compilation
+            data["follow_up"] = compile_follow_up(
+                compilation,
+                unity_instance or dirty_instance,
+                recovery_required="recovery_required"
+                in ((readiness or {}).get("blocking_reasons") or []),
+            )
             data["source_revision_confirmed"] = False
             # The goal is an observed request-associated pipeline cycle, not a
             # successful compiler outcome or proof of the loaded source revision.
