@@ -15,6 +15,56 @@ namespace MCPForUnityTests.Editor.Tools
     public class ScriptCreationPublicationTests
     {
         [Test]
+        public void DeleteRefreshFailure_RetainsCommittedDeletionWithoutReplayingTrash()
+        {
+            string folder = "Assets/DeletePublication_" + Guid.NewGuid().ToString("N");
+            string path = folder + "/Deleted.txt";
+            const BindingFlags hidden = BindingFlags.Static | BindingFlags.NonPublic;
+            var refresh = typeof(ManageScript).GetField("_deleteScriptRefreshForTests", hidden);
+            Assert.IsNotNull(refresh, "Inject only the follow-up; deletion must use the real AssetDatabase.");
+            object prior = refresh.GetValue(null);
+            int refreshes = 0;
+            try
+            {
+                Directory.CreateDirectory(folder);
+                File.WriteAllText(path, "owned deletion fixture");
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+                refresh.SetValue(
+                    null,
+                    (Action)(
+                        () =>
+                        {
+                            refreshes++;
+                            Assert.IsFalse(File.Exists(path), "The real trash operation must commit before refresh.");
+                            throw new IOException(new string('x', 2000));
+                        }
+                    )
+                );
+                var delete = typeof(ManageScript).GetMethod("DeleteScript", hidden);
+                var response = JObject.FromObject(delete.Invoke(null, new object[] { Path.GetFullPath(path), path }));
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.IsTrue(response["data"].Value<bool>("deleted"));
+                Assert.IsTrue(response["data"].Value<bool>("source_saved"));
+                Assert.AreEqual(path, response["data"].Value<string>("path"));
+                Assert.AreEqual("refresh", response["data"].Value<string>("failed_stage"));
+                Assert.IsFalse(response["data"].Value<bool>("retry_safe"));
+                Assert.LessOrEqual(response["data"].Value<string>("refresh_error").Length, 512);
+                StringAssert.Contains("Inspect", response["data"].Value<string>("recovery"));
+                StringAssert.Contains("Do not replay", response["data"].Value<string>("recovery"));
+                Assert.IsFalse(File.Exists(path));
+                var repeated = JObject.FromObject(delete.Invoke(null, new object[] { Path.GetFullPath(path), path }));
+                Assert.IsFalse(repeated.Value<bool>("success"));
+                Assert.IsNull(repeated["data"]?["deleted"]);
+                Assert.AreEqual(1, refreshes);
+            }
+            finally
+            {
+                refresh.SetValue(null, prior);
+                AssetDatabase.DeleteAsset(folder);
+            }
+        }
+
+        [Test]
         public void ImportFailure_AfterCreateReportsSavedSourceAndDoesNotReplayCreation()
         {
             string folder = "Assets/ScriptPublication_" + Guid.NewGuid().ToString("N");

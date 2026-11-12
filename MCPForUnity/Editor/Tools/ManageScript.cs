@@ -62,6 +62,7 @@ namespace MCPForUnity.Editor.Tools
         private static Action<string> _scriptWriteBeforeCommitForTests = null;
         private static Action<string> _createScriptImportForTests = null;
         private static Action<string, bool> _textEditRefreshForTests = null;
+        private static Action _deleteScriptRefreshForTests = null;
 
         internal static ErrorResponse RequireExplicitConsent()
         {
@@ -2088,13 +2089,17 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Script not found at '{relativePath}'. Cannot delete.");
             }
 
+            bool deleted = false;
             try
             {
                 // Use AssetDatabase.MoveAssetToTrash for safer deletion (allows undo)
-                bool deleted = AssetDatabase.MoveAssetToTrash(relativePath);
+                deleted = AssetDatabase.MoveAssetToTrash(relativePath);
                 if (deleted)
                 {
-                    AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                    if (_deleteScriptRefreshForTests != null)
+                        _deleteScriptRefreshForTests();
+                    else
+                        AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
                     return new SuccessResponse($"Script '{Path.GetFileName(relativePath)}' moved to trash successfully.", new { deleted = true });
                 }
                 else
@@ -2105,6 +2110,24 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception e)
             {
+                if (deleted)
+                    return new ErrorResponse(
+                        "Script was moved to trash, but the subsequent refresh failed.",
+                        new
+                        {
+                            deleted = true,
+                            source_saved = true,
+                            path = relativePath,
+                            uri = $"mcpforunity://path/{relativePath}",
+                            failed_stage = "refresh",
+                            refresh_attempted = true,
+                            refresh_status = "failed",
+                            refresh_confirmation = "unknown",
+                            refresh_error = e.Message.Substring(0, Math.Min(512, e.Message.Length)),
+                            retry_safe = false,
+                            recovery = "Inspect the deleted path and Editor state. Do not replay deletion; request refresh separately if needed.",
+                        }
+                    );
                 return new ErrorResponse($"Error deleting script '{relativePath}': {e.Message}");
             }
         }

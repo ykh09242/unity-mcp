@@ -10,6 +10,40 @@ recovery = importlib.import_module("services.tools.refresh_unity")
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("entrypoint", ["delete_script", "manage_script"])
+async def test_committed_deletion_refresh_failure_is_preserved_without_replay(
+    monkeypatch, entrypoint
+):
+    receipt = {
+        "success": False,
+        "error": "Script was moved to trash, but the subsequent refresh failed.",
+        "data": {
+            "deleted": True,
+            "source_saved": True,
+            "path": "Assets/Foo.cs",
+            "failed_stage": "refresh",
+            "retry_safe": False,
+            "recovery": "Inspect the deleted path. Do not replay deletion; request refresh separately.",
+        },
+    }
+    sender = AsyncMock(return_value=receipt)
+    ready = AsyncMock(return_value=(True, 0))
+    monkeypatch.setattr(scripts, "get_unity_instance_from_context", AsyncMock(return_value=None))
+    monkeypatch.setattr(recovery.unity_transport, "send_with_unity_instance", sender)
+    monkeypatch.setattr(recovery, "wait_for_editor_ready", ready)
+
+    if entrypoint == "delete_script":
+        response = await scripts.delete_script(AsyncMock(), "Assets/Foo.cs")
+    else:
+        response = await scripts.manage_script(AsyncMock(), "delete", "Foo", "Assets")
+
+    assert response == receipt
+    sender.assert_awaited_once()
+    assert sender.await_args.args[3]["action"] == "delete"
+    ready.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "encoded_directory,expected_directory",
     [
