@@ -313,7 +313,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     "active_scene_environment",
                     new JObject
                     {
-                        ["scene_handle"] = UnityEngine.SceneManagement.SceneManager.GetActiveScene().handle,
+#if UNITY_6000_4_OR_NEWER
+                        ["scene_handle"] = UnityEngine.SceneManagement.SceneManager.GetActiveScene().handle.GetRawData(),
+#else
+                        ["scene_handle"] = (int)UnityEngine.SceneManagement.SceneManager.GetActiveScene().handle,
+#endif
                         ["skybox_instance_id"] = RenderSettings.skybox != null ? RenderSettings.skybox.GetInstanceIDCompat() : 0,
                         ["ambient_mode"] = RenderSettings.ambientMode.ToString(),
                         ["ambient_intensity"] = RenderSettings.ambientIntensity,
