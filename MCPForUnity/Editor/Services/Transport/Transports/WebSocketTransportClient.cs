@@ -41,6 +41,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private static readonly TimeSpan DefaultKeepAliveInterval = TimeSpan.FromSeconds(15);
         private static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(300);
+        private static readonly TimeSpan FinalResultDeliveryTimeout = TimeSpan.FromSeconds(2);
 
         private readonly IToolDiscoveryService _toolDiscoveryService;
         private readonly object _ownershipLock = new object();
@@ -1884,7 +1885,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     await progressTask.ConfigureAwait(false);
                     progressStop?.Dispose();
                 }
-                await SendTimedCommandResultAsync(request.Id, response, token, request.Timing).ConfigureAwait(false);
+                await SendBoundedCommandResultAsync(request.Id, response, token, request.Timing).ConfigureAwait(false);
                 request.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
 
                 async Task<object> RunCommandAsync()
@@ -2087,9 +2088,30 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private Task SendTimedCommandResultAsync(string id, object result, CancellationToken token, CommandPhaseTiming timing) =>
             SendCommandResultCoreAsync(id, result, token, timing, SendFrameAsync);
 
+        private async Task SendBoundedCommandResultAsync(string id, object result, CancellationToken ownerToken, CommandPhaseTiming timing)
+        {
+            // A final timeout/cancellation response needs its own delivery budget. Keep
+            // generation ownership separate: a linked send token is not a connection ID.
+            using var delivery = CancellationTokenSource.CreateLinkedTokenSource(ownerToken);
+            delivery.CancelAfter(FinalResultDeliveryTimeout);
+            await SendOwnedCommandResultCoreAsync(id, result, ownerToken, delivery.Token, timing, (buffer, type, sendToken) =>
+                    SendOwnedFrameAsync(buffer, type, ownerToken, sendToken)
+                )
+                .ConfigureAwait(false);
+        }
+
         private Task SendCommandResultCoreAsync(
             string id,
             object result,
+            CancellationToken token,
+            CommandPhaseTiming timing,
+            Func<ArraySegment<byte>, WebSocketMessageType, CancellationToken, Task> sendFrame
+        ) => SendOwnedCommandResultCoreAsync(id, result, token, token, timing, sendFrame);
+
+        private Task SendOwnedCommandResultCoreAsync(
+            string id,
+            object result,
+            CancellationToken ownerToken,
             CancellationToken token,
             CommandPhaseTiming timing,
             Func<ArraySegment<byte>, WebSocketMessageType, CancellationToken, Task> sendFrame
@@ -2103,8 +2125,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             lock (_ownershipLock)
             {
                 token.ThrowIfCancellationRequested();
-                if (!IsCurrentConnectionToken(token))
-                    throw new OperationCanceledException(token);
+                if (!IsCurrentConnectionToken(ownerToken))
+                    throw new OperationCanceledException(ownerToken);
                 negotiated = _largeResultNegotiated;
                 compressionNegotiated = _compressionNegotiated;
             }

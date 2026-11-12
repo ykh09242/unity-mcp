@@ -310,6 +310,48 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [Test]
+        public async Task BoundedFinalDeliveryCannotWriteToReplacementConnectionAfterWriterWait()
+        {
+            using var client = CreateTimingClient(false);
+            using var original = new CancellationTokenSource();
+            using var replacement = new CancellationTokenSource();
+            using var originalSocket = new ClientWebSocket();
+            using var replacementSocket = new ClientWebSocket();
+            SetField(client, "_connectionCts", original);
+            SetField(client, "_socket", originalSocket);
+            var writer = (SemaphoreSlim)GetField(client, "_sendLock");
+            await writer.WaitAsync();
+            bool held = true;
+            try
+            {
+                var send = typeof(WebSocketTransportClient).GetMethod("SendBoundedCommandResultAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+                var pending = (Task)send.Invoke(client, new object[] { "owned-generation-result", new { done = true }, original.Token, null });
+                Assert.IsFalse(pending.IsCompleted);
+                Assert.AreEqual(1, GetField(client, "_activeSends"));
+                SetField(client, "_connectionCts", replacement);
+                SetField(client, "_socket", replacementSocket);
+                writer.Release();
+                held = false;
+                try
+                {
+                    await pending;
+                    Assert.Fail("The old generation must not send after its writer wait.");
+                }
+                catch (OperationCanceledException) { }
+                Assert.AreEqual(WebSocketState.None, originalSocket.State);
+                Assert.AreEqual(WebSocketState.None, replacementSocket.State);
+                Assert.IsFalse(replacement.IsCancellationRequested);
+                Assert.AreEqual(0, GetField(client, "_activeSends"));
+            }
+            finally
+            {
+                if (held)
+                    writer.Release();
+                client.ForceStop();
+            }
+        }
+
         [TestCase("legacy")]
         [TestCase("2026-07-28")]
         [Explicit("Requires the fixed owned production HTTP server and concurrent real SDK owner.")]
@@ -838,6 +880,82 @@ namespace MCPForUnityTests.Editor.Services
             var callbacks = EditorApplication.delayCall?.GetInvocationList() ?? Array.Empty<Delegate>();
             foreach (var callback in callbacks.Except(previousCallbacks))
                 EditorApplication.delayCall -= (EditorApplication.CallbackFunction)callback;
+        }
+
+        [TestCase("completed")]
+        [TestCase("expired")]
+        [TestCase("canceled")]
+        public async Task HeldFinalWriterHasBoundedDeliveryButRetainsActualHandlerOwner(string outcome)
+        {
+            RequireOwnedProgressEditor();
+            using var handlers = new ProgressHandlerScope();
+            using var settings = NativeProgressProbe.EnableTools("batch_execute");
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            const string child = "__bounded_final_delivery";
+            int calls = 0;
+            handlers.Set(child, new MCPForUnity.Editor.Tools.HandlerInfo(child, null, _ =>
+                {
+                    if (Interlocked.Increment(ref calls) > 1)
+                        return Task.FromResult<object>(new { complete = true });
+                    entered.TrySetResult(true);
+                    return outcome == "completed" ? Task.FromResult<object>(new { complete = true }) : release.Task;
+                }));
+            SemaphoreSlim writer = null;
+            bool held = false;
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                await peer.Negotiate(false);
+                await peer.Barrier();
+                writer = (SemaphoreSlim)GetField(client, "_sendLock");
+                await writer.WaitAsync();
+                held = true;
+                var command = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = child }) };
+                string first = Guid.NewGuid().ToString("D");
+                string next = Guid.NewGuid().ToString("D");
+                peer.Send(
+                    new JObject
+                    {
+                        ["type"] = "execute",
+                        ["id"] = first,
+                        ["name"] = "batch_execute",
+                        ["params"] = command,
+                        ["timeout"] = outcome == "expired" ? 1 : 30,
+                    }
+                );
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                if (outcome == "canceled")
+                    peer.Send(new JObject { ["type"] = "cancel", ["id"] = first });
+                peer.Execute(next, "batch_execute", command, false);
+                var work = (ConnectionCommandWork)GetField(client, "_commandWork");
+                var observation = System.Diagnostics.Stopwatch.StartNew();
+                if (outcome != "completed")
+                {
+                    await Task.Delay(3500);
+                    Assert.AreEqual(1, calls, "A delivery timeout cannot release the actual unfinished mutation.");
+                    Assert.IsFalse(work.DrainAsync().IsCompleted);
+                    release.TrySetResult(new { complete = true });
+                }
+                while (calls < 2 && observation.ElapsedMilliseconds < 5000)
+                    await Task.Delay(10);
+                Assert.AreEqual(2, calls, "A held final writer must stop retaining FIFO after its bounded delivery attempt and actual execution settle.");
+                Assert.IsFalse(((CancellationTokenSource)GetField(client, "_connectionCts")).IsCancellationRequested);
+                writer.Release();
+                held = false;
+                await peer.Result(next);
+                await NativeProgressProbe.AwaitOwned(work.DrainAsync());
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                release.TrySetResult(new { complete = true });
+                if (held)
+                    writer.Release();
+                await StopOwnedProgressClient(client);
+            }
         }
 
         [TestCase("force")]
