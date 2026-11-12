@@ -15,7 +15,7 @@ SCRIPT_METADATA: Final = (
 )
 
 
-def _metadata_issues(package: Path) -> list[str]:
+def _metadata_issues(package: Path, *, require_script_metadata: bool = True) -> list[str]:
     """Inspect the shipped tree, including collisions with non-script package assets."""
     issues: list[str] = []
     for script in sorted(package.rglob("*.cs")):
@@ -23,7 +23,8 @@ def _metadata_issues(package: Path) -> list[str]:
             continue
         metadata = script.with_suffix(".cs.meta")
         if not metadata.is_file():
-            issues.append(f"Missing script metadata: {script.relative_to(package)}")
+            if require_script_metadata:
+                issues.append(f"Missing script metadata: {script.relative_to(package)}")
             continue
         text = metadata.read_text(encoding="utf-8")
         guids = GUID.findall(text)
@@ -61,6 +62,12 @@ def _write_script(package: Path, relative: str, guid: str) -> Path:
 def test_shipped_package_scripts_have_valid_unique_metadata() -> None:
     assert list(PACKAGE.rglob("*.cs")), "The package script selection must not be empty"
     assert _metadata_issues(PACKAGE) == []
+
+
+def test_supplied_test_project_metadata_has_valid_unique_guids() -> None:
+    assets = PACKAGE.parent / "TestProjects/UnityMCPTests/Assets"
+    assert list(assets.rglob("*.cs")), "The test script selection must not be empty"
+    assert _metadata_issues(assets, require_script_metadata=False) == []
 
 
 def test_nested_editor_and_runtime_scripts_with_unique_metadata_pass(tmp_path: Path) -> None:
