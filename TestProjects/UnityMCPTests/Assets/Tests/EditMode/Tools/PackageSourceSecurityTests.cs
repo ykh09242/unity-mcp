@@ -18,6 +18,7 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("https://host/repo.git?token=secret")]
         [TestCase("https://host/repo.git?signature=secret")]
         [TestCase("user:secret@host:repo.git")]
+        [TestCase("https://user:synthetic'password@example.test/package.git")]
         public void CredentialSourcesRejectBeforeNativePackageWork(string source)
         {
             // Given a credential-bearing source and an otherwise valid mutation.
@@ -54,6 +55,33 @@ namespace MCPForUnityTests.EditMode.Tools
             StringAssert.Contains("host", response.ToString());
             StringAssert.Contains("repo.git", response.ToString());
             StringAssert.Contains("Resolution failed", response.ToString());
+        }
+
+        [TestCase("https://user:synthetic'password@example.test/package.git")]
+        [TestCase("https://user:synthetic\"password@example.test/package.git")]
+        [TestCase("https://user:synthetic<password>@example.test/package.git")]
+        [TestCase("https://example.test/package.git?token='synthetic-private'")]
+        [TestCase("https://example.test/package.git?token=\"synthetic-private\"")]
+        [TestCase("https://example.test/package.git?token=<synthetic-private>")]
+        [TestCase("user:synthetic'password@example.test:package.git?token=synthetic-private")]
+        public void PunctuationBearingDiagnosticsRedactWholeCandidatesAtEveryProjection(string source)
+        {
+            var response = PackageSourceSecurity.RedactResponse(new { data = new[] { new { message = "Failed (" + source + ")." } } });
+            var job = new PackageJob { Package = source, Error = "Failed: " + source };
+            foreach (
+                string projection in new[]
+                {
+                    PackageSourceSecurity.Redact(source),
+                    response.ToString(),
+                    JObject.FromObject(PackageJobManager.ToSerializable(job)).ToString(),
+                    PackageSourceSecurity.ForStorage(source),
+                }
+            )
+            {
+                StringAssert.DoesNotContain("synthetic", projection);
+                StringAssert.Contains("example.test", projection);
+                StringAssert.Contains("package.git", projection);
+            }
         }
 
         [Test]

@@ -8,8 +8,11 @@ namespace MCPForUnity.Editor.Helpers
     internal static class PackageSourceSecurity
     {
         private static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(100);
-        private static readonly Regex Url = new Regex(@"[a-z][a-z0-9+.-]*://[^\s'""<>]+", RegexOptions.IgnoreCase, MatchTimeout);
-        private static readonly Regex ScpSource = new Regex(@"(?<![\w/])[^\s/:@]+(?::[^\s/@]+)?@[^\s/:]+:[^\s'""<>]+", RegexOptions.None, MatchTimeout);
+
+        // Diagnostic punctuation can also be credential/query data. Consume the whole
+        // non-whitespace candidate rather than exposing a suffix after a quote or bracket.
+        private static readonly Regex Url = new Regex(@"[a-z][a-z0-9+.-]*://\S+", RegexOptions.IgnoreCase, MatchTimeout);
+        private static readonly Regex ScpSource = new Regex(@"(?<![\w/])[^\s/:@]+(?::[^\s/@]+)?@[^\s/:]+:\S+", RegexOptions.None, MatchTimeout);
         private static readonly Regex ScpCredentials = new Regex(@"^[^\s/]*:[^\s/]*@[^\s/]+:", RegexOptions.None, MatchTimeout);
         private static readonly Regex GitPathQuery = new Regex(@"^\?path=[^&#]*$", RegexOptions.IgnoreCase, MatchTimeout);
 
