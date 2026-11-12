@@ -66,6 +66,15 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(expected, importer.defaultSampleSettings.loadType);
             Assert.IsFalse(importer.forceToMono);
             Assert.IsFalse(importer.loadInBackground);
+            var observer = typeof(AudioImportPipeline).Assembly.GetType("MCPForUnity.Editor.Services.AssetGen.Import.ImportObservation", true);
+            var report = (Newtonsoft.Json.Linq.JObject)
+                observer
+                    .GetMethod("Read", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                    .Invoke(null, new object[] { path, result.AssetGuid, "audio" });
+            Assert.IsTrue(report.Value<bool>("complete"), report.ToString());
+            Assert.AreEqual(clip.frequency, (int)report["observed_values"]["frequency"]);
+            Assert.AreEqual(clip.samples, (int)report["observed_values"]["samples"]);
+            Assert.AreEqual(expected.ToString(), (string)report["observed_values"]["load_type"]);
         }
 
         private static AssetGenJob Job() =>

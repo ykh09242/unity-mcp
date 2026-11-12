@@ -88,6 +88,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                             revision = before.Revision,
                             changed = false,
                             content_build_started = false,
+                            verification = request.Value<bool?>("include_preflight") == true ? AddressablesPreflight.ObserveEdit(before, request) : null,
                         }
                     )
                 );
@@ -158,6 +159,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                         {
                             revision = after.Revision,
                             changed = true,
+                            verification = request.Value<bool?>("include_preflight") == true ? AddressablesPreflight.ObserveEdit(after, request) : null,
                             undo_registered = true,
                             content_build_started = false,
                             save_behavior = "Only edited assets are dirty; no global SaveAssets call.",

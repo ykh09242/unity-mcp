@@ -541,7 +541,7 @@ namespace MCPForUnity.Editor.Tools.Localization
             if (isSmart)
                 Selectors(value);
             Expected(p, table, shared);
-            return Persist(
+            object result = Persist(
                 table,
                 () =>
                 {
@@ -554,6 +554,46 @@ namespace MCPForUnity.Editor.Tools.Localization
                 },
                 () => TableRow(table)
             );
+            if (!(result is SuccessResponse))
+                return result;
+            try
+            {
+                object retained = Call(table, "GetEntry", new[] { typeof(long) }, id);
+                string actual = retained == null ? null : (string)Get(retained, "Value");
+                bool actualSmart = retained != null && (bool)Get(retained, "IsSmart");
+                var findings = new JArray();
+                if (actual != value || actualSmart != isSmart)
+                    findings.Add(new JObject { ["code"] = "retained_entry_differs" });
+                bool complete = actual != null && actual.Length <= 65536;
+                if (actualSmart && complete)
+                {
+                    try
+                    {
+                        Selectors(actual);
+                    }
+                    catch (Exception)
+                    {
+                        findings.Add(new JObject { ["code"] = "invalid_smart_format" });
+                    }
+                }
+                var observed = new JObject
+                {
+                    ["table_path"] = AssetDatabase.GetAssetPath(table),
+                    ["key_id"] = idText,
+                    ["exists"] = retained != null,
+                    ["is_smart"] = actualSmart,
+                    ["character_count"] = actual?.Length,
+                    ["matches_requested"] = actual == value && actualSmart == isSmart,
+                };
+                return PostEditVerification.Attach(result, PostEditVerification.Summary("affected_localization_key", observed, findings, complete));
+            }
+            catch (Exception)
+            {
+                return PostEditVerification.Attach(
+                    result,
+                    PostEditVerification.Unavailable("affected_localization_key", "The saved entry could not be observed.")
+                );
+            }
         }
 
         private static bool HasCycle(Object current, Object target, HashSet<int> visited, int depth, bool followSelf)
@@ -605,7 +645,7 @@ namespace MCPForUnity.Editor.Tools.Localization
                 if (FallbackTarget(replacements[index]) != targets[index])
                     throw new InvalidOperationException("fallback_constructor_refused: package did not retain the requested fallback; no metadata changed.");
             Expected(p, locale);
-            return Persist(
+            object result = Persist(
                 locale,
                 () =>
                 {
@@ -617,6 +657,11 @@ namespace MCPForUnity.Editor.Tools.Localization
                 },
                 () => LocaleRow(locale)
             );
+            if (!(result is SuccessResponse success))
+                return result;
+            // Reuse the already bounded persisted row; no second dependency traversal.
+            JObject row = (JObject)((JObject)success.Data)["asset"];
+            return PostEditVerification.Attach(result, PostEditVerification.Summary("affected_locale_fallbacks", row.DeepClone(), (JArray)row["findings"]));
         }
 
         private static object Persist(Object asset, Action apply, Func<JObject> readback)

@@ -182,6 +182,15 @@ namespace MCPForUnity.Editor.Tools.Addressables
         internal static void Validate(JObject request, string action)
         {
             var allowed = new List<string> { "action", "page_number", "page_size", "expected_revision" };
+            if (request.Property("include_preflight") != null)
+            {
+                if (
+                    request["include_preflight"].Type != JTokenType.Boolean
+                    || (action != "set_address" && action != "move_entry" && action != "set_profile_value")
+                )
+                    Fail("invalid_addressables_request", "include_preflight is a boolean for metadata edits only.");
+                allowed.Add("include_preflight");
+            }
             Integer(request["page_number"], 1, 1000000);
             Integer(request["page_size"], 50, 100);
             if (request.Property("expected_revision") != null)

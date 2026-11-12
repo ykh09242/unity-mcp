@@ -132,6 +132,11 @@ async def blender_bridge(
         bool, "import_model: add a Bloom volume when the model has emissive materials."
     ]
     | None = None,
+    verify_import: Annotated[
+        bool,
+        "import_model: inspect imported metadata and bounded material/rig findings without another import.",
+    ]
+    | None = None,
     game_object: Annotated[
         str, "compare_screenshot: name of the placed GameObject to frame in Unity."
     ]
@@ -164,6 +169,8 @@ async def blender_bridge(
             "error": "capture_budget_exceeded",
             "message": "max_size must be between 0 and 8192 pixels.",
         }
+    if verify_import is not None and (type(verify_import) is not bool or action != "import_model"):
+        return {"success": False, "message": "verify_import is a boolean for import_model only."}
     unity_instance = await get_unity_instance_from_context(ctx)
 
     params_dict = {
@@ -182,6 +189,7 @@ async def blender_bridge(
         "autoAnimate": auto_animate,
         "savePrefab": save_prefab,
         "ensureBloom": ensure_bloom,
+        "verifyImport": verify_import,
         "gameObject": game_object,
         "code": code,
         "maxSize": max_size,

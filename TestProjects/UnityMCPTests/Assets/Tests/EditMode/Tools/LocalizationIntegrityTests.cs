@@ -109,6 +109,9 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             string path = PathOf(frTable);
+            Assert.IsTrue((bool)result["data"]["verification"]["complete"], result.ToString());
+            Assert.AreEqual("102", (string)result["data"]["verification"]["observed_values"]["key_id"]);
+            Assert.IsTrue((bool)result["data"]["verification"]["observed_values"]["matches_requested"]);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
             frTable = AssetDatabase.LoadMainAssetAtPath(path);
             Assert.AreEqual("Conserve", Get(Entry(frTable, 102), "Value"));
@@ -376,6 +379,8 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             AssetDatabase.ImportAsset(PathOf(fr), ImportAssetOptions.ForceUpdate);
+            Assert.IsTrue((bool)result["data"]["verification"]["complete"], result.ToString());
+            Assert.AreEqual(PathOf(en), (string)result["data"]["verification"]["observed_values"]["fallback_locale_paths"][0]);
             var entries = (IEnumerable)Get(Get(fr, "Metadata"), "MetadataEntries");
             Assert.AreSame(en, Get(entries.Cast<object>().Single(), "Locale"));
             locales = Send("list_locales", new JObject { ["paths"] = new JArray(PathOf(en)) });

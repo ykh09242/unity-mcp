@@ -722,6 +722,121 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void ScopedPostEditPreflightRetainsEntryAndIgnoresUnrelatedBrokenReference()
+        {
+            JObject response = Call(
+                "set_address",
+                new JObject
+                {
+                    ["entry_guid"] = assetGuid,
+                    ["address"] = "owned/observed",
+                    ["expected_revision"] = Read().Value<string>("revision"),
+                    ["include_preflight"] = true,
+                }
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            JToken verification = response["data"]["verification"];
+            Assert.AreEqual("passed", (string)verification["status"], response.ToString());
+            Assert.IsTrue((bool)verification["complete"]);
+            Assert.AreEqual(assetGuid, (string)verification["observed_values"]["entry"]["guid"]);
+            Assert.AreEqual("owned/observed", (string)verification["observed_values"]["entry"]["address"]);
+            Assert.AreEqual(response["data"]["revision"], verification["observed_values"]["revision"]);
+            Assert.AreEqual("owned/observed", Get(entry, "address"));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void CustomInlineReferenceCannotPassAndUnrelatedGuidFieldsAreNotMissingReferences(bool includeCustomReference)
+        {
+            Type fixtureType = Type.GetType(
+                "MCPForUnityTests.AddressablesFixtures.CustomAddressablesReferenceFixture, MCPForUnity.Addressables.Fixtures",
+                true
+            );
+            Type referenceType = fixtureType.Assembly.GetType("MCPForUnityTests.AddressablesFixtures.UserAssetReference", true);
+            var source = new GameObject("Custom reference fixture");
+            string path = root + "/CustomReference.prefab";
+            try
+            {
+                Component fixture = source.AddComponent(fixtureType);
+                Type colliding = fixtureType.GetField("Colliding").FieldType;
+                Assert.AreEqual("AssetReference", colliding.Name);
+                Assert.IsFalse(Type.GetType("UnityEngine.AddressableAssets.AssetReference, Unity.Addressables", true).IsAssignableFrom(colliding));
+                if (includeCustomReference)
+                    fixtureType.GetField("CustomReference").SetValue(fixture, Activator.CreateInstance(referenceType, new object[] { new string('e', 32) }));
+                using (var serialized = new SerializedObject(fixture))
+                {
+                    Assert.AreEqual(SerializedPropertyType.Generic, serialized.FindProperty("Unrelated").propertyType);
+                    Assert.IsNotNull(serialized.FindProperty("Unrelated.m_AssetGUID"));
+                    Assert.AreEqual("AssetReference", serialized.FindProperty("Colliding").type);
+                    Assert.AreEqual(new string('f', 32), serialized.FindProperty("Colliding.m_AssetGUID").stringValue);
+                    if (includeCustomReference)
+                    {
+                        Assert.AreEqual(SerializedPropertyType.Generic, serialized.FindProperty("CustomReference").propertyType);
+                        Assert.AreEqual(new string('e', 32), serialized.FindProperty("CustomReference.m_AssetGUID").stringValue);
+                    }
+                }
+                PrefabUtility.SaveAsPrefabAsset(source, path);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            object customEntry = Invoke(settings, "CreateOrMoveEntry", guid, first, false, false);
+            Invoke(customEntry, "SetAddress", "owned/custom", false);
+            JObject response = Call(
+                "set_address",
+                new JObject
+                {
+                    ["entry_guid"] = guid,
+                    ["address"] = "owned/custom-observed",
+                    ["expected_revision"] = Read().Value<string>("revision"),
+                    ["include_preflight"] = true,
+                }
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            JToken verification = response["data"]["verification"];
+            Assert.IsFalse((bool)verification["complete"], "Unresolved inline field types must not imply complete reference coverage.");
+            Assert.AreNotEqual("passed", (string)verification["status"]);
+            Assert.IsFalse(
+                verification["findings"]
+                    .Any(f =>
+                        (string)f["code"] == "missing_asset_reference"
+                        && (
+                            (string)f["property_path"] == "Unrelated.m_AssetGUID"
+                            || (string)f["property_path"] == "m_AssetGUID"
+                            || (string)f["property_path"] == "Colliding.m_AssetGUID"
+                        )
+                    ),
+                response.ToString()
+            );
+            Assert.AreEqual("owned/custom-observed", Get(customEntry, "address"));
+        }
+
+        [Test]
+        public void ScopedPostEditPreflightRecognizesManagedReferenceAssemblyIdentity()
+        {
+            JObject response = Call(
+                "set_address",
+                new JObject
+                {
+                    ["entry_guid"] = (string)Get(other, "guid"),
+                    ["address"] = "owned/managed-observed",
+                    ["expected_revision"] = Read().Value<string>("revision"),
+                    ["include_preflight"] = true,
+                }
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            JToken verification = response["data"]["verification"];
+            Assert.IsTrue((bool)verification["complete"], response.ToString());
+            Assert.AreEqual("issues_found", (string)verification["status"]);
+            Assert.IsTrue(
+                verification["findings"].Any(f => (string)f["code"] == "missing_asset_reference" && (string)f["property_path"] == "Reference.m_AssetGUID"),
+                response.ToString()
+            );
+        }
+
+        [Test]
         public void GuardedProfileCorrectionPreservesExistingProfileIdentityAndOtherValues()
         {
             string name = "Local.BuildPath";

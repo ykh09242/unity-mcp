@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.AssetGen;
+using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
 
 namespace MCPForUnity.Editor.Tools.AssetGen
@@ -34,6 +35,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                         new
                         {
                             state = "done",
+                            job_id = job.JobId,
                             recovery_state = job.RecoveryState,
                             recovery_code = job.RecoveryCode,
                             provider_task_id = job.ProviderTaskId,
@@ -43,6 +45,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             asset_guid = job.AssetGuid,
                             model_import_stage = job.ModelImportStage,
                             archive_selection = job.ArchiveSelection,
+                            verification = ImportObservation.Read(job.AssetPath, job.AssetGuid, job.Kind),
                             progress = 1f,
                         }
                     );

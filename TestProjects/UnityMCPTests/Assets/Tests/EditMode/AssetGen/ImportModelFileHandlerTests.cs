@@ -140,6 +140,9 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsFalse(string.IsNullOrEmpty((string)resp["data"]["asset_guid"]));
             Assert.IsTrue(File.Exists(assetPath), "imported file should exist under Assets");
             Assert.AreEqual("usable", (string)resp["data"]["model_import_stage"]);
+            Assert.AreEqual(assetPath, (string)resp["data"]["verification"]["observed_values"]["asset_path"]);
+            Assert.Greater((int)resp["data"]["verification"]["observed_values"]["model"]["meshes_inspected"], 0);
+            Assert.IsTrue((bool)resp["data"]["verification"]["complete"], resp.ToString());
             Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>(assetPath)?.GetComponentInChildren<MeshFilter>(true)?.sharedMesh);
         }
 

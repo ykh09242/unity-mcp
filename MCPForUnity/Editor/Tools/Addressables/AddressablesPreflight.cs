@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -18,6 +19,201 @@ namespace MCPForUnity.Editor.Tools.Addressables
             "UnityEngine.AddressableAssets.Addressables.BuildPath",
             "UnityEngine.AddressableAssets.Addressables.RuntimePath",
         };
+
+        internal static JObject ObserveEdit(AddressablesState state, JObject request)
+        {
+            const string scope = "affected_addressables_entry_or_profile";
+            var findings = new JArray();
+            var observed = new JObject { ["revision"] = state.Revision };
+            bool complete = true;
+            try
+            {
+                string guid = request.Value<string>("entry_guid");
+                if (guid != null)
+                {
+                    JObject entry = ((JArray)state.Document["entries"]).OfType<JObject>().Single(e => e.Value<string>("guid") == guid);
+                    observed["entry"] = entry.DeepClone();
+                    if (entry.Value<bool>("folder"))
+                        complete = false;
+                    else
+                    {
+                        UnityEngine.Object main = AssetDatabase.LoadMainAssetAtPath(entry.Value<string>("path"));
+                        if (main == null)
+                            Add(findings, "missing_entry_asset", new JObject { ["entry_guid"] = guid });
+                        else
+                            ObserveReferences(main, entry, findings, ref complete);
+                    }
+                    string groupGuid = entry.Value<string>("group_guid");
+                    JObject group = ((JArray)state.Document["groups"]).OfType<JObject>().SingleOrDefault(g => g.Value<string>("guid") == groupGuid);
+                    if (group == null)
+                        Add(findings, "missing_entry_group", new JObject { ["group_guid"] = groupGuid });
+                    else
+                    {
+                        var variables = ((JArray)state.Document["variables"]).Select(v => v.Value<string>("id")).ToHashSet();
+                        foreach (JObject schema in (JArray)group["schemas"])
+                        foreach (string field in new[] { "build_path_id", "load_path_id" })
+                            if (schema.Property(field) != null && !variables.Contains(schema.Value<string>(field)))
+                                Add(findings, "missing_group_profile_variable", new JObject { ["field"] = field, ["group_guid"] = groupGuid });
+                    }
+                }
+                else
+                {
+                    string profile = request.Value<string>("profile_id"),
+                        name = request.Value<string>("variable_name");
+                    var variables = ((JArray)state.Document["variables"])
+                        .OfType<JObject>()
+                        .ToDictionary(v => v.Value<string>("name"), v => v.Value<string>("id"));
+                    observed["profile_id"] = profile;
+                    observed["variable_name"] = name;
+                    observed["value"] = state.ProfileValue(profile, variables[name]);
+                    int work = 0;
+                    VisitValue(name, new HashSet<string>(), 0);
+                    void VisitValue(string variable, HashSet<string> active, int depth)
+                    {
+                        if (++work > 128 || depth > 16)
+                        {
+                            complete = false;
+                            return;
+                        }
+                        if (!active.Add(variable))
+                        {
+                            Add(findings, "profile_cycle", new JObject { ["variable_name"] = variable });
+                            return;
+                        }
+                        string raw = state.ProfileValue(profile, variables[variable]);
+                        if (raw == null)
+                            Add(findings, "missing_profile_value", new JObject { ["variable_name"] = variable });
+                        else
+                        {
+                            int tokens = 0;
+                            foreach (Match match in Tokens.Matches(raw))
+                            {
+                                if (++tokens > 64 || findings.Count >= 32)
+                                {
+                                    complete = false;
+                                    break;
+                                }
+                                string token = match.Groups[1].Value;
+                                if (variables.ContainsKey(token))
+                                    VisitValue(token, active, depth + 1);
+                                else if (!Deferred.Contains(token))
+                                    Add(findings, "unknown_profile_token", new JObject { ["token"] = token });
+                            }
+                            if (raw.Count(c => c == '[') != raw.Count(c => c == ']'))
+                                Add(findings, "malformed_profile_token", new JObject());
+                        }
+                        active.Remove(variable);
+                    }
+                }
+            }
+            catch (Exception error)
+            {
+                complete = false;
+                observed["observation_error"] = error.GetType().Name;
+            }
+            return PostEditVerification.Summary(scope, observed, findings, complete);
+        }
+
+        private static void ObserveReferences(UnityEngine.Object main, JObject entry, JArray findings, ref bool complete)
+        {
+            var objects = new List<UnityEngine.Object> { main };
+            if (main is GameObject root)
+            {
+                var queue = new Queue<Transform>();
+                queue.Enqueue(root.transform);
+                int nodes = 0;
+                while (queue.Count > 0 && nodes < 32 && objects.Count < 64)
+                {
+                    Transform node = queue.Dequeue();
+                    nodes++;
+                    var components = PostEditVerification.Components(node.gameObject, out bool all);
+                    complete &= all;
+                    foreach (Component component in components)
+                    {
+                        if (objects.Count >= 64)
+                        {
+                            complete = false;
+                            break;
+                        }
+                        objects.Add(component);
+                    }
+                    for (int i = 0; i < node.childCount; i++)
+                    {
+                        if (nodes + queue.Count >= 32)
+                        {
+                            complete = false;
+                            break;
+                        }
+                        queue.Enqueue(node.GetChild(i));
+                    }
+                }
+                complete &= queue.Count == 0;
+            }
+            int properties = 0;
+            foreach (UnityEngine.Object target in objects)
+            {
+                if (findings.Count >= 32)
+                {
+                    complete = false;
+                    break;
+                }
+                if (target == null)
+                {
+                    Add(findings, "missing_script", Location(entry, ""));
+                    continue;
+                }
+                if (target is Texture || target is Mesh || target is AudioClip)
+                    continue;
+                using var serialized = new SerializedObject(target);
+                SerializedProperty property = serialized.GetIterator();
+                bool enter = true;
+                while (property.Next(enter))
+                {
+                    if (++properties > 1024 || findings.Count >= 32)
+                    {
+                        complete = false;
+                        return;
+                    }
+                    enter = !(property.isArray && property.arraySize > 64);
+                    if (!enter)
+                        complete = false;
+                    if (MissingObjectReference(property))
+                        Add(findings, "missing_object_reference", Location(entry, property.propertyPath));
+                    if (property.propertyType == SerializedPropertyType.String && property.name == "m_AssetGUID")
+                    {
+                        int dot = property.propertyPath.LastIndexOf('.');
+                        // A top-level field belongs to the Unity object, not an inline AssetReference.
+                        if (dot < 0)
+                            continue;
+                        bool? referenceType = IsAssetReference(serialized.FindProperty(property.propertyPath.Substring(0, dot)));
+                        if (!referenceType.HasValue)
+                            complete = false;
+                        if (referenceType != true)
+                            continue;
+                        string reference = property.stringValue;
+                        if (!string.IsNullOrEmpty(reference) && string.IsNullOrEmpty(AssetDatabase.GUIDToAssetPath(reference)))
+                            Add(findings, "missing_asset_reference", Location(entry, property.propertyPath));
+                    }
+                }
+            }
+        }
+
+        private static bool? IsAssetReference(SerializedProperty property)
+        {
+            Type baseType = Type.GetType("UnityEngine.AddressableAssets.AssetReference, Unity.Addressables");
+            if (property == null || baseType == null)
+                return null;
+            if (property.propertyType == SerializedPropertyType.ManagedReference)
+            {
+                string name = property.managedReferenceFullTypename;
+                int split = name.IndexOf(' ');
+                Type actual = split < 0 ? null : Type.GetType(name.Substring(split + 1) + ", " + name.Substring(0, split));
+                return actual == null ? (bool?)null : baseType.IsAssignableFrom(actual);
+            }
+            // Inline serialization exposes only a short name. Even a name matching a package
+            // class may belong to an unrelated user type; only managed references prove identity.
+            return null;
+        }
 
         internal static JArray Read(AddressablesState state)
         {

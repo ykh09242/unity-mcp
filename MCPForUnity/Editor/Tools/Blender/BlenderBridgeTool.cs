@@ -89,6 +89,9 @@ namespace MCPForUnity.Editor.Tools.Blender
 
             var p = new ToolParams(@params);
             string action = (p.Get("action") ?? "status").Trim().ToLowerInvariant();
+            JToken verify = p.GetRaw("verify_import");
+            if (verify != null && (verify.Type != JTokenType.Boolean || action != "import_model"))
+                return new ErrorResponse("verify_import is a boolean for import_model only.");
             int timeout = Math.Max(5, Math.Min(86400, p.GetInt("timeout_seconds", 180) ?? 180));
 
             try
@@ -308,6 +311,7 @@ namespace MCPForUnity.Editor.Tools.Blender
             bool autoAnimate = p.GetBool("auto_animate", true);
             bool savePrefab = p.GetBool("save_prefab", false);
             bool ensureBloom = p.GetBool("ensure_bloom", false);
+            bool verifyImport = p.GetBool("verify_import", false);
 
             string name = p.Get("name");
             if (string.IsNullOrWhiteSpace(name))
@@ -373,6 +377,8 @@ namespace MCPForUnity.Editor.Tools.Blender
                 ["blender_output"] = Truncate(stdout, 400),
                 ["placed"] = false,
             };
+            if (verifyImport)
+                data["verification"] = ImportObservation.Read(assetPath, data.Value<string>("asset_guid"), "model");
 
             cancellationToken.ThrowIfCancellationRequested();
             if (!place || string.IsNullOrEmpty(assetPath))
@@ -422,6 +428,9 @@ namespace MCPForUnity.Editor.Tools.Blender
             cancellationToken.ThrowIfCancellationRequested();
             if (ensureBloom && HasEmissiveMaterial(go))
                 data["bloom"] = await SetupBloomAsync(cancellationToken, parentLease);
+
+            if (verifyImport)
+                data["verification"] = ImportObservation.Placed(assetPath, data.Value<string>("asset_guid"), go);
 
             cancellationToken.ThrowIfCancellationRequested();
             return export.Preserve(new SuccessResponse($"Imported {assetPath} and placed '{go.name}' in the scene.", data));

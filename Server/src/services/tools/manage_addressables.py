@@ -50,6 +50,10 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
     ):
         return "expected_revision has the wrong format or scope."
     write = action.startswith("set_") or action == "move_entry"
+    if "include_preflight" in args:
+        if not write or type(args["include_preflight"]) is not bool:
+            return "include_preflight must be a boolean supplied only for metadata edits."
+        allowed.add("include_preflight")
     if (write or args["page_number"] > 1) and revision is None:
         return "Writes and continuation pages require expected_revision."
     if layout:
@@ -144,6 +148,7 @@ async def manage_addressables(
     variable_name: str | None = None,
     value: str | None = None,
     layout_path: str | None = None,
+    include_preflight: bool | None = None,
 ) -> dict[str, Any]:
     args = {
         k: v
@@ -161,6 +166,7 @@ async def manage_addressables(
             "variable_name": variable_name,
             "value": value,
             "layout_path": layout_path,
+            "include_preflight": include_preflight,
         }.items()
         if v is not None
     }

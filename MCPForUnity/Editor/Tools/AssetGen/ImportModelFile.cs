@@ -106,6 +106,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                     {
                         asset_path = result.AssetPath,
                         asset_guid = result.AssetGuid,
+                        verification = ImportObservation.Read(result.AssetPath, result.AssetGuid, "model"),
                         model_import_stage = result.ModelImportStage,
                         dependency_bundle = dependencyEvidence,
                         archive_selection = result.ArchiveSelection,
