@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools.Graphics;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -70,6 +71,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     {
                         instanceID = go.GetInstanceIDCompat(),
                         cinemachine = false,
+                        verification = RenderingObservation.Camera(cam),
                         hint = "Install com.unity.cinemachine for presets, blending, and virtual camera features.",
                     },
                 };
@@ -179,6 +181,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     {
                         instanceID = go.GetInstanceIDCompat(),
                         cinemachine = true,
+                        verification = RenderingObservation.ReadKnown(cmCamera, "Target", "Lens", "m_Lens", "Priority", "m_Priority"),
                         preset,
                         priority,
                         body = bodyType == null ? null : presetDef.body,
@@ -275,7 +278,12 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 {
                     success = true,
                     message = $"CinemachineBrain added to '{cam.gameObject.name}'.",
-                    data = new { instanceID = cam.gameObject.GetInstanceIDCompat(), alreadyExisted = false },
+                    data = new
+                    {
+                        instanceID = cam.gameObject.GetInstanceIDCompat(),
+                        alreadyExisted = false,
+                        verification = RenderingObservation.ReadKnown(brain, "DefaultBlend", "m_DefaultBlend"),
+                    },
                 };
             }
             finally

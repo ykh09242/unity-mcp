@@ -12,10 +12,27 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         public static Vector4 ParseVector4(JToken token) => VectorParsing.ParseVector4OrDefault(token);
 
-        public static Gradient ParseGradient(JToken token) => VectorParsing.ParseGradientOrDefault(token);
+        public static Gradient ParseGradient(JToken token)
+        {
+            CheckKeyBudget(token, 16);
+            return VectorParsing.ParseGradientOrDefault(token);
+        }
 
-        public static AnimationCurve ParseAnimationCurve(JToken token, float defaultValue = 1f) =>
-            VectorParsing.ParseAnimationCurveOrDefault(token, defaultValue);
+        public static AnimationCurve ParseAnimationCurve(JToken token, float defaultValue = 1f)
+        {
+            CheckKeyBudget(token, 256);
+            return VectorParsing.ParseAnimationCurveOrDefault(token, defaultValue);
+        }
+
+        private static void CheckKeyBudget(JToken token, int limit)
+        {
+            if (token is JArray array && array.Count > limit)
+                throw new System.ArgumentException($"Curve/gradient key count exceeds {limit}.");
+            if (token is JObject value)
+                foreach (string key in new[] { "keys", "colorKeys", "alphaKeys", "color_keys", "alpha_keys" })
+                    if (value[key] is JArray keys && keys.Count > limit)
+                        throw new System.ArgumentException($"Curve/gradient key count exceeds {limit}.");
+        }
 
         public static GameObject FindTargetGameObject(JObject @params) =>
             ObjectResolver.ResolveGameObject(@params["target"], @params["searchMethod"]?.ToString());

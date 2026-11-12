@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools.Graphics;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -41,7 +42,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Camera '{go.name}' now looking at '{target.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat() },
+                data = new { instanceID = go.GetInstanceIDCompat(), verification = RenderingObservation.Camera(cam) },
             };
         }
 
@@ -78,7 +79,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Lens properties set on Camera '{go.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat() },
+                data = new { instanceID = go.GetInstanceIDCompat(), verification = RenderingObservation.Camera(cam, props) },
             };
         }
 
@@ -104,7 +105,12 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Camera '{go.name}' depth set to {depth}.",
-                data = new { instanceID = go.GetInstanceIDCompat(), depth },
+                data = new
+                {
+                    instanceID = go.GetInstanceIDCompat(),
+                    depth,
+                    verification = RenderingObservation.Camera(cam, new JObject { ["depth"] = depth }),
+                },
             };
         }
 
@@ -155,7 +161,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Targets set on CinemachineCamera '{cmCamera.gameObject.name}'.",
-                data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat() },
+                data = new
+                {
+                    instanceID = cmCamera.gameObject.GetInstanceIDCompat(),
+                    verification = RenderingObservation.ReadKnown(cmCamera, "Target", "m_Follow", "m_LookAt"),
+                },
             };
         }
 
@@ -187,7 +197,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Lens properties set on CinemachineCamera '{cmCamera.gameObject.name}'.",
-                data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat() },
+                data = new
+                {
+                    instanceID = cmCamera.gameObject.GetInstanceIDCompat(),
+                    verification = RenderingObservation.ReadKnown(cmCamera, "Lens", "m_Lens"),
+                },
             };
         }
 
@@ -209,7 +223,12 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Priority set to {priority} on CinemachineCamera '{cmCamera.gameObject.name}'.",
-                data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat(), priority },
+                data = new
+                {
+                    instanceID = cmCamera.gameObject.GetInstanceIDCompat(),
+                    priority,
+                    verification = RenderingObservation.ReadKnown(cmCamera, "Priority", "m_Priority"),
+                },
             };
         }
 
@@ -297,14 +316,19 @@ namespace MCPForUnity.Editor.Tools.Cameras
             // Set properties on body component
             propertyError = ApplyPreparedComponentProperties(bodyComponent, setters);
             if (propertyError != null)
-                return propertyError;
+                return PostEditVerification.Attach(propertyError, RenderingObservation.Properties(bodyComponent, props));
             CameraHelpers.MarkDirty(go);
 
             return new
             {
                 success = true,
                 message = $"Body configured on CinemachineCamera '{go.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat(), body = bodyComponent.GetType().Name },
+                data = new
+                {
+                    instanceID = go.GetInstanceIDCompat(),
+                    body = bodyComponent.GetType().Name,
+                    verification = RenderingObservation.Properties(bodyComponent, props),
+                },
             };
         }
 
@@ -351,14 +375,19 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             propertyError = ApplyPreparedComponentProperties(aimComponent, setters);
             if (propertyError != null)
-                return propertyError;
+                return PostEditVerification.Attach(propertyError, RenderingObservation.Properties(aimComponent, props));
             CameraHelpers.MarkDirty(go);
 
             return new
             {
                 success = true,
                 message = $"Aim configured on CinemachineCamera '{go.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat(), aim = aimComponent.GetType().Name },
+                data = new
+                {
+                    instanceID = go.GetInstanceIDCompat(),
+                    aim = aimComponent.GetType().Name,
+                    verification = RenderingObservation.Properties(aimComponent, props),
+                },
             };
         }
 
@@ -389,14 +418,19 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             propertyError = ApplyPreparedComponentProperties(noiseComponent, setters);
             if (propertyError != null)
-                return propertyError;
+                return PostEditVerification.Attach(propertyError, RenderingObservation.Properties(noiseComponent, props));
             CameraHelpers.MarkDirty(go);
 
             return new
             {
                 success = true,
                 message = added ? $"Added noise to CinemachineCamera '{go.name}'." : $"Noise configured on CinemachineCamera '{go.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat(), added },
+                data = new
+                {
+                    instanceID = go.GetInstanceIDCompat(),
+                    added,
+                    verification = RenderingObservation.Properties(noiseComponent, props),
+                },
             };
         }
 
@@ -435,7 +469,12 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = $"Extension '{extTypeName}' added to CinemachineCamera '{go.name}'.",
-                data = new { instanceID = go.GetInstanceIDCompat(), extensionType = extTypeName },
+                data = new
+                {
+                    instanceID = go.GetInstanceIDCompat(),
+                    extensionType = extTypeName,
+                    verification = RenderingObservation.Properties(ext, props),
+                },
             };
         }
 

@@ -30,7 +30,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
 
-            return new { success = true, message = "Created line" };
+            return new
+            {
+                success = true,
+                message = "Created line",
+                data = new { verification = VfxObservation.Renderer(lr) },
+            };
         }
 
         public static object CreateCircle(JObject @params)
@@ -83,7 +88,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
-            return new { success = true, message = $"Created circle with {segments} segments" };
+            return new
+            {
+                success = true,
+                message = $"Created circle with {segments} segments",
+                data = new { verification = VfxObservation.Renderer(lr) },
+            };
         }
 
         public static object CreateArc(JObject @params)
@@ -139,7 +149,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
-            return new { success = true, message = $"Created arc with {segments} segments" };
+            return new
+            {
+                success = true,
+                message = $"Created arc with {segments} segments",
+                data = new { verification = VfxObservation.Renderer(lr) },
+            };
         }
 
         public static object CreateBezier(JObject @params)
@@ -192,7 +207,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
-            return new { success = true, message = $"Created {(isQuadratic ? "quadratic" : "cubic")} Bezier" };
+            return new
+            {
+                success = true,
+                message = $"Created {(isQuadratic ? "quadratic" : "cubic")} Bezier",
+                data = new { verification = VfxObservation.Renderer(lr) },
+            };
         }
 
         private static Action PrepareAppearance(JObject @params, LineRenderer lr)

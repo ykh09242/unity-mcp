@@ -103,7 +103,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             setter(vfx, param, value);
             EditorUtility.SetDirty(vfx);
 
-            return new { success = true, message = $"Set {param} = {value}" };
+            return new
+            {
+                success = true,
+                message = $"Set {param} = {value}",
+                data = new { verification = VfxGraphExposedRead.ObserveExact(vfx, param, typeof(T)) },
+            };
         }
 
         public static object SetVector(JObject @params, int dims)
@@ -162,7 +167,21 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
 
             EditorUtility.SetDirty(vfx);
-            return new { success = true, message = $"Set {param}" };
+            return new
+            {
+                success = true,
+                message = $"Set {param}",
+                data = new
+                {
+                    verification = VfxGraphExposedRead.ObserveExact(
+                        vfx,
+                        param,
+                        dims == 2 ? typeof(Vector2)
+                            : dims == 3 ? typeof(Vector3)
+                            : typeof(Vector4)
+                    ),
+                },
+            };
         }
 
         public static object SetColor(JObject @params)
@@ -187,7 +206,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             vfx.SetVector4(param, new Vector4(color.r, color.g, color.b, color.a));
             EditorUtility.SetDirty(vfx);
 
-            return new { success = true, message = $"Set color {param}" };
+            return new
+            {
+                success = true,
+                message = $"Set color {param}",
+                data = new { verification = VfxGraphExposedRead.ObserveExact(vfx, param, typeof(Vector4)) },
+            };
         }
 
         public static object SetGradient(JObject @params)
@@ -212,7 +236,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             vfx.SetGradient(param, gradient);
             EditorUtility.SetDirty(vfx);
 
-            return new { success = true, message = $"Set gradient {param}" };
+            return new
+            {
+                success = true,
+                message = $"Set gradient {param}",
+                data = new { verification = VfxGraphExposedRead.ObserveExact(vfx, param, typeof(Gradient)) },
+            };
         }
 
         public static object SetTexture(JObject @params)
@@ -244,7 +273,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             vfx.SetTexture(param, tex);
             EditorUtility.SetDirty(vfx);
 
-            return new { success = true, message = $"Set texture {param} = {tex.name}" };
+            return new
+            {
+                success = true,
+                message = $"Set texture {param} = {tex.name}",
+                data = new { verification = VfxGraphExposedRead.ObserveExact(vfx, param, typeof(Texture)) },
+            };
         }
 
         public static object SetMesh(JObject @params)
@@ -276,7 +310,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             vfx.SetMesh(param, mesh);
             EditorUtility.SetDirty(vfx);
 
-            return new { success = true, message = $"Set mesh {param} = {mesh.name}" };
+            return new
+            {
+                success = true,
+                message = $"Set mesh {param} = {mesh.name}",
+                data = new { verification = VfxGraphExposedRead.ObserveExact(vfx, param, typeof(Mesh)) },
+            };
         }
 
         public static object SetCurve(JObject @params)
@@ -301,7 +340,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             vfx.SetAnimationCurve(param, curve);
             EditorUtility.SetDirty(vfx);
 
-            return new { success = true, message = $"Set curve {param}" };
+            return new
+            {
+                success = true,
+                message = $"Set curve {param}",
+                data = new { verification = VfxGraphExposedRead.ObserveExact(vfx, param, typeof(AnimationCurve)) },
+            };
         }
 
         public static object SendEvent(JObject @params)

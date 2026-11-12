@@ -16,6 +16,42 @@ using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    public sealed class RendererObservationFixture : ScriptableObject
+    {
+        public UnityEngine.Object[] m_RendererFeatures = new UnityEngine.Object[17];
+        public float retained = 3;
+    }
+
+    public class RenderingObservationIntegrityTests
+    {
+        [Test]
+        public void RendererObservation_BoundsFeatureSlotsAndRetainsPartialFailure()
+        {
+            var fixture = ScriptableObject.CreateInstance<RendererObservationFixture>();
+            try
+            {
+                JObject report = RenderingObservation.Renderer(fixture);
+                Assert.IsFalse(report.Value<bool>("complete"));
+                Assert.AreEqual(16, ((JArray)report["observed_values"]["features"]).Count);
+                Assert.AreEqual(17, report["observed_values"].Value<int>("feature_count"));
+                JObject properties = RenderingObservation.Properties(fixture, new JObject { ["retained"] = 3, ["missing"] = 9 }, new[] { "missing" });
+                Assert.AreEqual("issues_found", properties.Value<string>("status"));
+                Assert.IsFalse(properties.Value<bool>("complete"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(fixture);
+            }
+        }
+
+        [Test]
+        public void CurveAuthoring_BoundsKeysBeforeAllocation()
+        {
+            var keys = new JArray(Enumerable.Range(0, 257).Select(i => new JObject { ["time"] = i, ["value"] = i }));
+            Assert.Throws<ArgumentException>(() => MCPForUnity.Editor.Tools.Vfx.ManageVfxCommon.ParseAnimationCurve(new JObject { ["keys"] = keys }));
+        }
+    }
+
     public class ManageGraphicsTests
     {
         private const string TempRoot = "Assets/Temp/ManageGraphicsTests";

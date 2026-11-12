@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools.Graphics;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -121,7 +122,10 @@ namespace MCPForUnity.Editor.Tools
                         mat.SetTexture(property, tex);
                         EditorUtility.SetDirty(mat);
                         AssetDatabase.SaveAssetIfDirty(mat);
-                        return new SuccessResponse($"Set texture property {property} on {mat.name}");
+                        return new SuccessResponse(
+                            $"Set texture property {property} on {mat.name}",
+                            new { verification = RenderingObservation.Material(mat, new[] { property }, expected: new JValue(tex.GetInstanceIDCompat())) }
+                        );
                     }
                 }
             }
@@ -136,7 +140,10 @@ namespace MCPForUnity.Editor.Tools
                 apply();
                 EditorUtility.SetDirty(mat);
                 AssetDatabase.SaveAssetIfDirty(mat);
-                return new SuccessResponse($"Set property {property} on {mat.name}");
+                return new SuccessResponse(
+                    $"Set property {property} on {mat.name}",
+                    new { verification = RenderingObservation.Material(mat, new[] { property }, expected: value) }
+                );
             }
             else
             {
@@ -205,7 +212,10 @@ namespace MCPForUnity.Editor.Tools
                 apply();
                 EditorUtility.SetDirty(mat);
                 AssetDatabase.SaveAssetIfDirty(mat);
-                return new SuccessResponse($"Set color on {property}");
+                return new SuccessResponse(
+                    $"Set color on {property}",
+                    new { verification = RenderingObservation.Material(mat, new[] { property }, expected: new JArray(color.r, color.g, color.b, color.a)) }
+                );
             }
             else
             {
@@ -258,13 +268,14 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Slot {slot} out of bounds (count: {sharedMats.Length})");
             }
 
+            Material assigned = mat;
             if (mode == "instance")
             {
                 Undo.IncrementCurrentGroup();
                 int group = Undo.GetCurrentGroup();
                 try
                 {
-                    Material assigned = MaterialLifetimeStore.instance.PrepareInstance(renderer, slot, mat, "Assign Material Instance");
+                    assigned = MaterialLifetimeStore.instance.PrepareInstance(renderer, slot, mat, "Assign Material Instance");
                     EditorUtility.SetDirty(assigned);
                     Undo.CollapseUndoOperations(group);
                 }
@@ -283,7 +294,10 @@ namespace MCPForUnity.Editor.Tools
             }
 
             EditorUtility.SetDirty(renderer);
-            return new SuccessResponse($"Assigned material {mat.name} to {go.name} slot {slot}");
+            return new SuccessResponse(
+                $"Assigned material {mat.name} to {go.name} slot {slot}",
+                new { verification = RenderingObservation.Material(assigned, Array.Empty<string>(), renderer, slot, mode) }
+            );
         }
 
         private static object SetRendererColor(JObject @params)
@@ -383,7 +397,10 @@ namespace MCPForUnity.Editor.Tools
 
                 renderer.SetPropertyBlock(block, slot);
                 EditorUtility.SetDirty(renderer);
-                return new SuccessResponse($"Set renderer color (PropertyBlock) on slot {slot}");
+                return new SuccessResponse(
+                    $"Set renderer color (PropertyBlock) on slot {slot}",
+                    new { verification = ObservePropertyBlock(renderer, slot, sharedMaterials[slot]) }
+                );
             }
             else if (mode == "shared")
             {
@@ -402,7 +419,10 @@ namespace MCPForUnity.Editor.Tools
                     EditorUtility.SetDirty(mat);
                     if (assetPathValidated)
                         AssetDatabase.SaveAssetIfDirty(mat);
-                    return new SuccessResponse("Set shared material color");
+                    return new SuccessResponse(
+                        "Set shared material color",
+                        new { verification = RenderingObservation.Material(mat, ColorProperties(mat, requireColor: true), renderer, slot) }
+                    );
                 }
                 return new ErrorResponse("Invalid slot");
             }
@@ -420,7 +440,10 @@ namespace MCPForUnity.Editor.Tools
                         SetColorProperties(mat, color);
                         EditorUtility.SetDirty(mat);
                         Undo.CollapseUndoOperations(group);
-                        return new SuccessResponse("Set instance material color");
+                        return new SuccessResponse(
+                            "Set instance material color",
+                            new { verification = RenderingObservation.Material(mat, ColorProperties(mat, requireColor: true), renderer, slot, "instance") }
+                        );
                     }
                     catch
                     {
@@ -436,6 +459,41 @@ namespace MCPForUnity.Editor.Tools
             }
 
             return new ErrorResponse($"Unknown mode: {mode}");
+        }
+
+        private static IEnumerable<string> ColorProperties(Material material, bool requireColor = false)
+        {
+            bool found = false;
+            foreach (string property in new[] { "_BaseColor", "_Color" })
+                if (material.HasProperty(property))
+                {
+                    found = true;
+                    yield return property;
+                }
+            if (requireColor && !found)
+                yield return "_Color";
+        }
+
+        private static JObject ObservePropertyBlock(Renderer renderer, int slot, Material material)
+        {
+            try
+            {
+                var block = new MaterialPropertyBlock();
+                renderer.GetPropertyBlock(block, slot);
+                var values = new JObject { ["renderer_instance_id"] = renderer.GetInstanceIDCompat(), ["slot"] = slot };
+                foreach (string property in new[] { "_BaseColor", "_Color" })
+                {
+                    Color color = block.GetColor(property);
+                    values[property] = new JArray(color.r, color.g, color.b, color.a);
+                }
+                var report = PostEditVerification.Summary("exact_renderer_property_block", values);
+                report["ownership"] = "property_block";
+                return report;
+            }
+            catch
+            {
+                return PostEditVerification.Unavailable("exact_renderer_property_block", "observation_unavailable");
+            }
         }
 
         private static void SetColorProperties(Material mat, Color color, bool assetPathValidated = false)
@@ -572,7 +630,14 @@ namespace MCPForUnity.Editor.Tools
                 PrefabUtility.RecordPrefabInstancePropertyModifications(renderer);
 
                 folders.Complete();
-                return new SuccessResponse($"Created unique material at {matPath} and assigned to {go.name}", new { materialPath = matPath });
+                return new SuccessResponse(
+                    $"Created unique material at {matPath} and assigned to {go.name}",
+                    new
+                    {
+                        materialPath = matPath,
+                        verification = RenderingObservation.Material(existing, ColorProperties(existing), renderer, slot, "create_unique"),
+                    }
+                );
             }
             finally
             {
@@ -881,7 +946,10 @@ namespace MCPForUnity.Editor.Tools
                 EditorUtility.SetDirty(material);
                 AssetDatabase.SaveAssetIfDirty(material);
 
-                return new SuccessResponse($"Created material at {materialPath} with shader {shaderName}");
+                return new SuccessResponse(
+                    $"Created material at {materialPath} with shader {shaderName}",
+                    new { verification = RenderingObservation.Material(material, ColorProperties(material)) }
+                );
             }
             finally
             {

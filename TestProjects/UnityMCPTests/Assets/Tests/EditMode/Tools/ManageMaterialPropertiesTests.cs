@@ -14,6 +14,117 @@ namespace MCPForUnityTests.Editor.Tools
         private const string TempRoot = "Assets/Temp/ManageMaterialPropertiesTests";
         private string _matPath;
 
+        [Test]
+        public void SetColor_ReturnsActualPropertyAndSharedOwnership()
+        {
+            var create = ToJObject(
+                ManageMaterial.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["materialPath"] = _matPath,
+                        ["shader"] = "Standard",
+                    }
+                )
+            );
+            Assert.IsTrue(create.Value<bool>("success"), create.ToString());
+            var result = ToJObject(
+                ManageMaterial.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_material_color",
+                        ["materialPath"] = _matPath,
+                        ["property"] = MainColorProperty(),
+                        ["color"] = new JArray(0, 1, 0, 1),
+                    }
+                )
+            );
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var verification = result["data"]["verification"];
+            Assert.AreEqual("passed", verification.Value<string>("status"));
+            Assert.AreEqual("shared", verification.Value<string>("ownership"));
+            var retained = (JArray)verification["observed_values"]["properties"][MainColorProperty()];
+            Assert.AreEqual(0f, retained[0].Value<float>());
+            Assert.AreEqual(1f, retained[1].Value<float>());
+            Assert.AreEqual(0f, retained[2].Value<float>());
+            Assert.AreEqual(1f, retained[3].Value<float>());
+        }
+
+        [TestCase("shared")]
+        [TestCase("instance")]
+        public void RendererColor_UnsupportedShaderCannotPassVerification(string mode)
+        {
+            var shader = Shader.Find("Hidden/MCPForUnityTests/MaterialRenderState");
+            Assert.IsNotNull(shader);
+            var material = new Material(shader);
+            AssetDatabase.CreateAsset(material, _matPath);
+            var target = new GameObject("UnsupportedColorTarget");
+            var renderer = target.AddComponent<MeshRenderer>();
+            renderer.sharedMaterial = material;
+            Material instance = null;
+            try
+            {
+                var result = ToJObject(
+                    ManageMaterial.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "set_renderer_color",
+                            ["target"] = target.GetInstanceIDCompat().ToString(),
+                            ["searchMethod"] = "by_id",
+                            ["mode"] = mode,
+                            ["color"] = new JArray(0, 1, 0, 1),
+                        }
+                    )
+                );
+                instance = renderer.sharedMaterial;
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.AreNotEqual("passed", result["data"]["verification"].Value<string>("status"));
+                Assert.IsFalse(result["data"]["verification"].Value<bool>("complete"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(target);
+                if (instance != null && instance != material && !EditorUtility.IsPersistent(instance))
+                    UnityEngine.Object.DestroyImmediate(instance);
+            }
+        }
+
+        [TestCase(false, 1)]
+        [TestCase(true, 1)]
+        [TestCase(false, 32)]
+        [TestCase(false, 33)]
+        public void SkyboxProperties_KeepFailuresAndObserveResolvedAliases(bool includeAlias, int failureCount)
+        {
+            var shader = Shader.Find("Hidden/MCPForUnityTests/MaterialRenderState");
+            Assert.IsNotNull(shader);
+            var material = new Material(shader);
+            AssetDatabase.CreateAsset(material, _matPath);
+            Material original = RenderSettings.skybox;
+            try
+            {
+                RenderSettings.skybox = material;
+                var properties = new JObject { ["definitely_missing"] = 1 };
+                for (int i = 1; i < failureCount; i++)
+                    properties["missing_" + i] = 1;
+                if (includeAlias)
+                    properties["Value"] = 2;
+                var result = ToJObject(MCPForUnity.Editor.Tools.Graphics.SkyboxOps.SetMaterialProperties(new JObject { ["properties"] = properties }));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                JToken verification = result["data"]["verification"];
+                Assert.AreEqual("issues_found", verification.Value<string>("status"));
+                Assert.IsTrue(verification.Value<bool>("further_fixes_required"));
+                Assert.AreEqual(failureCount > 32, verification.Value<bool>("findings_truncated"));
+                Assert.AreEqual(Math.Min(32, failureCount), ((JArray)verification["findings"]).Count);
+                Assert.AreEqual("definitely_missing", verification["findings"][0].Value<string>("field"));
+                if (includeAlias)
+                    Assert.AreEqual(2f, verification["observed_values"]["properties"].Value<float>("_Value"));
+            }
+            finally
+            {
+                RenderSettings.skybox = original;
+            }
+        }
+
         // Built-in's lit shader (Standard) uses "_Color" as its main color property,
         // while URP/HDRP lit shaders use "_BaseColor". The tool aliases shader "Standard"
         // to the pipeline-appropriate lit shader, so the color property name must match.

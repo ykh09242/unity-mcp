@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools.Graphics;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -211,7 +212,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 success = true,
                 message = "Default blend configured on CinemachineBrain.",
-                data = new { instanceID = brain.gameObject.GetInstanceIDCompat() },
+                data = new
+                {
+                    instanceID = brain.gameObject.GetInstanceIDCompat(),
+                    verification = RenderingObservation.ReadKnown(brain, "DefaultBlend", "m_DefaultBlend"),
+                },
             };
         }
 
@@ -247,7 +252,15 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 {
                     success = true,
                     message = $"Set high priority on '{cmCamera.gameObject.name}' (SetCameraOverride not available).",
-                    data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat(), method = "priority" },
+                    data = new
+                    {
+                        instanceID = cmCamera.gameObject.GetInstanceIDCompat(),
+                        method = "priority",
+                        verification = RenderingObservation.Pending(
+                            RenderingObservation.ReadKnown(cmCamera, "Priority", "m_Priority"),
+                            "camera_blend_not_observed"
+                        ),
+                    },
                 };
             }
 
@@ -282,7 +295,15 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 {
                     success = true,
                     message = $"Forced via priority (override failed: {ex.Message}).",
-                    data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat(), method = "priority" },
+                    data = new
+                    {
+                        instanceID = cmCamera.gameObject.GetInstanceIDCompat(),
+                        method = "priority",
+                        verification = RenderingObservation.Pending(
+                            RenderingObservation.ReadKnown(cmCamera, "Priority", "m_Priority"),
+                            "camera_blend_not_observed"
+                        ),
+                    },
                 };
             }
 
@@ -295,6 +316,10 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     instanceID = cmCamera.gameObject.GetInstanceIDCompat(),
                     overrideId = _overrideId,
                     method = "override",
+                    verification = RenderingObservation.Pending(
+                        RenderingObservation.ReadKnown(cmCamera, "Priority", "m_Priority"),
+                        "camera_blend_not_observed"
+                    ),
                 },
             };
         }

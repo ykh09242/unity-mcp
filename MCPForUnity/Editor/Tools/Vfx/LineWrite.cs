@@ -26,7 +26,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
 
-            return new { success = true, message = $"Set {positions.Length} positions" };
+            return new
+            {
+                success = true,
+                message = $"Set {positions.Length} positions",
+                data = new { verification = VfxObservation.Renderer(lr) },
+            };
         }
 
         public static object AddPosition(JObject @params)
@@ -55,6 +60,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 success = true,
                 message = $"Added position at index {idx}",
                 index = idx,
+                data = new { verification = VfxObservation.Renderer(lr) },
             };
         }
 
@@ -78,7 +84,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
 
-            return new { success = true, message = $"Set position at index {index}" };
+            return new
+            {
+                success = true,
+                message = $"Set position at index {index}",
+                data = new { verification = VfxObservation.Renderer(lr) },
+            };
         }
 
         private static void RequireFinite(float value, string name)
@@ -124,7 +135,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 update();
             PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
-            return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Renderer(lr) },
+            };
         }
 
         public static object SetColor(JObject @params)
@@ -150,13 +166,18 @@ namespace MCPForUnity.Editor.Tools.Vfx
             apply();
             PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
-            return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Renderer(lr) },
+            };
         }
 
         public static object SetMaterial(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
-            return RendererHelpers.SetRendererMaterial(lr, @params, "Set Line Material", ManageVfxCommon.FindMaterialByPath);
+            return VfxObservation.Attach(RendererHelpers.SetRendererMaterial(lr, @params, "Set Line Material", ManageVfxCommon.FindMaterialByPath), lr);
         }
 
         public static object SetProperties(JObject @params)
@@ -235,7 +256,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
-            return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Renderer(lr) },
+            };
         }
 
         private static bool TryParsePositions(JToken token, out Vector3[] positions, out string error)
@@ -284,7 +310,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
 
-            return new { success = true, message = $"Cleared {count} positions" };
+            return new
+            {
+                success = true,
+                message = $"Cleared {count} positions",
+                data = new { verification = VfxObservation.Renderer(lr) },
+            };
         }
     }
 

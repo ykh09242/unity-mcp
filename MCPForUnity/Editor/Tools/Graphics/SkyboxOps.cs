@@ -132,6 +132,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     material = mat.name,
                     shader = mat.shader.name,
                     path = materialPath,
+                    verification = RenderingObservation.Environment(),
                 },
             };
         }
@@ -156,6 +157,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             var set = new List<string>();
             var failed = new List<string>();
+            var observedProperties = new List<string>();
 
             foreach (var kvp in (JObject)propsRaw)
             {
@@ -173,7 +175,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 }
 
                 if (SetMaterialProperty(skyMat, propName, kvp.Value))
+                {
                     set.Add(kvp.Key);
+                    if (observedProperties.Count < 65)
+                        observedProperties.Add(propName);
+                }
                 else
                     failed.Add(kvp.Key);
             }
@@ -191,6 +197,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     material = skyMat.name,
                     set,
                     failed,
+                    verification = RenderingObservation.Material(skyMat, observedProperties, failed: failed),
                 },
             };
         }
@@ -242,6 +249,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     equatorColor = ColorToArray(RenderSettings.ambientEquatorColor),
                     groundColor = ColorToArray(RenderSettings.ambientGroundColor),
                     intensity = RenderSettings.ambientIntensity,
+                    verification = RenderingObservation.Environment(),
                 },
             };
         }
@@ -299,6 +307,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     density = RenderSettings.fogDensity,
                     startDistance = RenderSettings.fogStartDistance,
                     endDistance = RenderSettings.fogEndDistance,
+                    verification = RenderingObservation.Environment(),
                 },
             };
         }
@@ -360,6 +369,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     mode = RenderSettings.defaultReflectionMode.ToString(),
                     resolution = RenderSettings.defaultReflectionResolution,
                     customCubemap = customReflection != null ? AssetDatabase.GetAssetPath(customReflection) : null,
+                    verification = RenderingObservation.Environment(),
                 },
             };
         }
@@ -401,6 +411,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     name = go.name,
                     instanceID = go.GetInstanceIDCompat(),
                     lightType = light.type.ToString(),
+                    verification = RenderingObservation.Environment(),
                 },
             };
         }

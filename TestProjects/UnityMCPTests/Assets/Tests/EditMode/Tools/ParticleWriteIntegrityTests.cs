@@ -27,6 +27,17 @@ namespace MCPForUnityTests.Editor.Tools
         private UnityEngine.Object[] previousSelection;
         private UnityEngine.Object previousActiveObject;
 
+        [Test]
+        public void MainWrite_ObservesExactSystemWithoutPlaying()
+        {
+            JObject result = Call("particle_set_main", new JObject { ["duration"] = 8, ["maxParticles"] = 42 });
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsNotNull(result["data"]?["verification"], result.ToString());
+            Assert.AreEqual(particles.GetInstanceIDCompat(), result["data"]["verification"].Value<int>("target_instance_id"));
+            Assert.IsFalse(particles.isPlaying);
+            Assert.IsFalse(child.isPlaying);
+        }
+
         [OneTimeSetUp]
         public void OneTimeSetUp() => sceneFixture.PrepareRunnerBootstrap();
 

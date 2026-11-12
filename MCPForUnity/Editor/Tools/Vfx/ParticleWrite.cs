@@ -135,7 +135,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 changes.Add("(restarted after duration change)");
             }
 
-            return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Particle(ps, "main") },
+            };
         }
 
         public static object SetEmission(JObject @params)
@@ -172,7 +177,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             foreach (var update in updates)
                 update();
             EditorUtility.SetDirty(ps);
-            return new { success = true, message = $"Updated emission: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated emission: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Particle(ps, "emission") },
+            };
         }
 
         public static object SetShape(JObject @params)
@@ -245,7 +255,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             foreach (var update in updates)
                 update();
             EditorUtility.SetDirty(ps);
-            return new { success = true, message = $"Updated shape: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated shape: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Particle(ps, "shape") },
+            };
         }
 
         public static object SetColorOverLifetime(JObject @params)
@@ -276,7 +291,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             foreach (var update in updates)
                 update();
             EditorUtility.SetDirty(ps);
-            return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Particle(ps, "color") },
+            };
         }
 
         public static object SetSizeOverLifetime(JObject @params)
@@ -338,7 +358,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             foreach (var update in updates)
                 update();
             EditorUtility.SetDirty(ps);
-            return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Particle(ps, "size") },
+            };
         }
 
         public static object SetVelocityOverLifetime(JObject @params)
@@ -393,7 +418,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             foreach (var update in updates)
                 update();
             EditorUtility.SetDirty(ps);
-            return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Particle(ps, "velocity") },
+            };
         }
 
         public static object SetNoise(JObject @params)
@@ -454,7 +484,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             foreach (var update in updates)
                 update();
             EditorUtility.SetDirty(ps);
-            return new { success = true, message = $"Updated noise: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated noise: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Particle(ps, "noise") },
+            };
         }
 
         public static object SetRenderer(JObject @params)
@@ -597,6 +632,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 message = $"Updated renderer: {string.Join(", ", changes)}",
                 materialReplaced = ensureResult.MaterialReplaced,
                 replacementReason = ensureResult.ReplacementReason,
+                data = new { verification = VfxObservation.Renderer(renderer) },
             };
         }
     }

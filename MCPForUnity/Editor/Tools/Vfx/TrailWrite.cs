@@ -24,7 +24,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             PrefabUtility.RecordPrefabInstancePropertyModifications(tr);
             EditorUtility.SetDirty(tr);
 
-            return new { success = true, message = $"Set trail time to {time}s" };
+            return new
+            {
+                success = true,
+                message = $"Set trail time to {time}s",
+                data = new { verification = VfxObservation.Renderer(tr) },
+            };
         }
 
         private static void RequireFinite(float value, string name)
@@ -70,7 +75,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 update();
             PrefabUtility.RecordPrefabInstancePropertyModifications(tr);
             EditorUtility.SetDirty(tr);
-            return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Renderer(tr) },
+            };
         }
 
         public static object SetColor(JObject @params)
@@ -96,13 +106,18 @@ namespace MCPForUnity.Editor.Tools.Vfx
             apply();
             PrefabUtility.RecordPrefabInstancePropertyModifications(tr);
             EditorUtility.SetDirty(tr);
-            return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Renderer(tr) },
+            };
         }
 
         public static object SetMaterial(JObject @params)
         {
             TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
-            return RendererHelpers.SetRendererMaterial(tr, @params, "Set Trail Material", ManageVfxCommon.FindMaterialByPath);
+            return VfxObservation.Attach(RendererHelpers.SetRendererMaterial(tr, @params, "Set Trail Material", ManageVfxCommon.FindMaterialByPath), tr);
         }
 
         public static object SetProperties(JObject @params)
@@ -211,7 +226,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 update();
             PrefabUtility.RecordPrefabInstancePropertyModifications(tr);
             EditorUtility.SetDirty(tr);
-            return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
+            return new
+            {
+                success = true,
+                message = $"Updated: {string.Join(", ", changes)}",
+                data = new { verification = VfxObservation.Renderer(tr) },
+            };
         }
     }
 }

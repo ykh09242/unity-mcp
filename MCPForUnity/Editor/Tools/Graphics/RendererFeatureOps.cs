@@ -242,6 +242,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         name = displayName,
                         type = featureType.Name,
                         instanceId = feature.GetInstanceIDCompat(),
+                        verification = RenderingObservation.Renderer(rendererData, feature, initialProperties as JObject, failed),
                         changed,
                         failed,
                         renderer = selection.Describe(),
@@ -397,7 +398,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Removed renderer feature '{featureName}' at index {targetIndex}.",
-                data = new { renderer = selection.Describe() },
+                data = new { renderer = selection.Describe(), verification = RenderingObservation.Renderer(rendererData) },
             };
         }
 
@@ -469,6 +470,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     result.changed,
                     result.failed,
+                    verification = RenderingObservation.Renderer(rendererData, feature, propertiesToken, result.failed),
                     renderer = selection.Describe(),
                 },
             };
@@ -523,7 +525,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Feature '{feature.name}' {(newState ? "enabled" : "disabled")}.",
-                data = new { renderer = selection.Describe() },
+                data = new
+                {
+                    renderer = selection.Describe(),
+                    verification = RenderingObservation.Renderer(rendererData, feature, new JObject { ["m_Active"] = newState }),
+                },
             };
         }
 
@@ -610,7 +616,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Reordered {featuresList.Count} renderer features.",
-                data = new { renderer = selection.Describe() },
+                data = new { renderer = selection.Describe(), verification = RenderingObservation.Renderer(rendererData) },
             };
         }
 

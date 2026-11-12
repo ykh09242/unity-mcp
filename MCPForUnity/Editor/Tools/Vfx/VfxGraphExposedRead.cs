@@ -33,6 +33,36 @@ namespace MCPForUnity.Editor.Tools.Vfx
         }
 
 #if UNITY_VFX_GRAPH
+        internal static JObject ObserveExact(VisualEffect effect, string parameter, Type type)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(parameter) || parameter.Length > 1024)
+                    return PostEditVerification.Unavailable("exact_vfx_parameter", "parameter_name_budget");
+                // Gradient only exposes copied arrays, without a pre-allocation key-count API.
+                if (type == typeof(Gradient) || type == typeof(AnimationCurve))
+                    return PostEditVerification.Unavailable("exact_vfx_parameter", "native_key_count_unavailable_without_copy");
+                var row = Describe(
+                    effect,
+                    new VFXExposedProperty { name = parameter, type = type },
+                    new Budget
+                    {
+                        CurveKeys = 32,
+                        GradientKeys = 0,
+                        RemainingKeys = 32,
+                    },
+                    false
+                );
+                var report = PostEditVerification.Summary("exact_vfx_parameter; max32_curve_keys", row, complete: (string)row["value_status"] == "available");
+                report["target_instance_id"] = effect.GetInstanceIDCompat();
+                return report;
+            }
+            catch
+            {
+                return PostEditVerification.Unavailable("exact_vfx_parameter", "observation_unavailable");
+            }
+        }
+
         private sealed class Budget
         {
             internal int CurveKeys;

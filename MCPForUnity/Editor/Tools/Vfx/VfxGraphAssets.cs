@@ -396,6 +396,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     gameObject = vfx.gameObject.name,
                     assetName = asset.name,
                     assetPath = assetPath,
+                    verification = Graphics.RenderingObservation.Read(vfx, "m_Asset"),
                 },
             };
         }

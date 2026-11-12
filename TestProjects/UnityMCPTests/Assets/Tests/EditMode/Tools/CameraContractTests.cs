@@ -28,6 +28,25 @@ namespace MCPForUnityTests.Editor.Tools
         private Object[] _originalSelection;
         private Object _originalActiveObject;
 
+        [Test]
+        public void LensWrite_VerifiesExactCameraWithoutActivatingIt()
+        {
+            var result = JObject.FromObject(
+                CameraConfigure.SetBasicCameraLens(
+                    new JObject
+                    {
+                        ["action"] = "set_lens",
+                        ["target"] = _cameraGo.GetInstanceIDCompat().ToString(),
+                        ["properties"] = new JObject { ["fieldOfView"] = 47 },
+                    }
+                )
+            );
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(_camera.GetInstanceIDCompat(), result["data"]["verification"]["observed_values"].Value<int>("camera_instance_id"));
+            Assert.AreEqual(47, result["data"]["verification"]["observed_values"].Value<float>("fieldOfView"));
+            Assert.IsFalse(_camera.enabled);
+        }
+
         [OneTimeSetUp]
         public void OneTimeSetUp() => _sceneFixture.PrepareRunnerBootstrap();
 

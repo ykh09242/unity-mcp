@@ -114,6 +114,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     level = targetIndex,
                     name = names[targetIndex],
                     allLevels = names,
+                    verification = RenderingObservation.Quality(targetIndex),
                 },
             };
         }
@@ -265,7 +266,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = msg,
-                data = new { changed, failed },
+                data = new
+                {
+                    changed,
+                    failed,
+                    verification = RenderingObservation.Properties(pipelineAsset, settingsToken, failed),
+                },
             };
         }
 

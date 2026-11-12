@@ -53,6 +53,7 @@ namespace MCPForUnity.Editor.Tools
                     operation(material);
                 EditorUtility.SetDirty(material);
                 var state = Snapshot(material, renderer, slot, mode);
+                state["verification"] = Graphics.RenderingObservation.Material(material, Array.Empty<string>(), renderer, slot, mode);
                 Undo.CollapseUndoOperations(group);
                 return new SuccessResponse("Updated material render state", state);
             }

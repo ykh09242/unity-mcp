@@ -190,6 +190,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         priority,
                         profilePath = profilePath ?? "(embedded)",
                         effects = addedEffects,
+                        verification = RenderingObservation.Read(volumeComp, "isGlobal", "weight", "priority", "sharedProfile"),
                     },
                 };
             }
@@ -264,7 +265,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Added '{effectName}' to Volume '{(volume as Component)?.gameObject.name}'.",
-                data = new { effect = effectName, volumeInstanceID = (volume as Component)?.gameObject.GetInstanceIDCompat() },
+                data = new
+                {
+                    effect = effectName,
+                    volumeInstanceID = (volume as Component)?.gameObject.GetInstanceIDCompat(),
+                    verification = RenderingObservation.Read(component as UnityEngine.Object, "active"),
+                },
             };
         }
 
@@ -348,6 +354,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     effect = effectName,
                     set = setParams,
                     failed = failedParams,
+                    verification = RenderingObservation.Volume(profile as UnityEngine.Object, targetComponent as UnityEngine.Object, parameters, failedParams),
                     outcome = failedParams.Count > 0 ? (setParams.Count > 0 ? "partial" : "all_failed") : (setParams.Count > 0 ? "applied" : "no_changes"),
                 },
             };
@@ -431,7 +438,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Removed '{effectName}' from Volume.",
-                data = new { effect = effectName },
+                data = new { effect = effectName, verification = RenderingObservation.Read(profile as UnityEngine.Object, "components") },
             };
         }
 
@@ -562,7 +569,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Updated Volume properties: {string.Join(", ", changed)}",
-                data = new { changed },
+                data = new { changed, verification = RenderingObservation.Read(volume as UnityEngine.Object, changed.ToArray()) },
             };
         }
 
@@ -635,7 +642,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     success = true,
                     message = $"Created VolumeProfile at '{path}'.",
-                    data = new { path },
+                    data = new { path, verification = RenderingObservation.Read(profile, "components") },
                 };
             }
             finally

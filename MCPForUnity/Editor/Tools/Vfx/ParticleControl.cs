@@ -97,6 +97,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 message = $"ParticleSystem ready on '{go.name}'",
                 target = go.name,
                 targetId = go.GetInstanceIDCompat(),
+                data = new { verification = VfxObservation.Particle(ps, "main") },
                 createdGameObject,
                 addedParticleSystem,
                 assignedMaterial = renderer?.sharedMaterial?.name,
@@ -162,7 +163,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Undo.RecordObject(ps, $"Toggle {moduleName}");
             update();
             EditorUtility.SetDirty(ps);
-            return new { success = true, message = $"Module '{moduleName}' {(enabled ? "enabled" : "disabled")}" };
+            return new
+            {
+                success = true,
+                message = $"Module '{moduleName}' {(enabled ? "enabled" : "disabled")}",
+                data = new { verification = VfxObservation.ModuleEnabled(ps, moduleName) },
+            };
         }
 
         public static object Control(JObject @params, string action)
@@ -234,6 +240,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
             var burst = new ParticleSystem.Burst(time, minCount, maxCount, cycles, interval);
             burst.probability = @params["probability"]?.ReadScalar<float?>() ?? 1f;
 
+            int idx = ps.emission.burstCount;
+            if (idx >= 256)
+                return new { success = false, message = "Particle burst count exceeds the 256-entry authoring bound." };
+
             // Ensure material is assigned
             var renderer = ParticleCommon.FindParticleSystemRenderer(ps);
             RendererHelpers.EnsureMaterialResult ensureResult = default;
@@ -247,7 +257,6 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Undo.RecordObject(ps, "Add Burst");
             var emission = ps.emission;
 
-            int idx = emission.burstCount;
             var bursts = new ParticleSystem.Burst[idx + 1];
             emission.GetBursts(bursts);
             bursts[idx] = burst;
@@ -259,6 +268,14 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 success = true,
                 message = $"Added burst at t={time}",
                 burstIndex = idx,
+                data = new
+                {
+                    verification = PostEditVerification.Summary(
+                        "exact_particle_burst_count",
+                        new JObject { ["burst_count"] = emission.burstCount },
+                        complete: false
+                    ),
+                },
                 materialReplaced = materialChecked ? ensureResult.MaterialReplaced : false,
                 replacementReason = materialChecked ? ensureResult.ReplacementReason : string.Empty,
             };
@@ -276,7 +293,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             emission.SetBursts(new ParticleSystem.Burst[0]);
 
             EditorUtility.SetDirty(ps);
-            return new { success = true, message = $"Cleared {count} bursts" };
+            return new
+            {
+                success = true,
+                message = $"Cleared {count} bursts",
+                data = new { verification = PostEditVerification.Summary("exact_particle_burst_count", new JObject { ["burst_count"] = emission.burstCount }) },
+            };
         }
     }
 }
