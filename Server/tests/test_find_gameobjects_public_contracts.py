@@ -65,6 +65,13 @@ def test_registered_scoped_gameobject_search_contract(mode, tmp_path):
                 assert requests[-1] == ("Owned@fixture", "find_gameobjects", {"searchMethod": "by_name", "includeInactive": False, "pageSize": 50, "scene_scope": "all_loaded", "conditions": conditions, "max_depth": 64})
                 assert await call({**args, "cursor": "a" * 32, "page_size": 17, "max_depth": 0}) == reply
                 assert requests[-1][2]["cursor"] == "a" * 32 and requests[-1][2]["max_depth"] == 0
+                assert await call({**args, "projection": ["name", "active", "handle"]}) == reply
+                assert requests[-1][2]["projection"] == ["name", "active", "handle"]
+                before = len(requests)
+                gates = module.preflight.await_count
+                invalid_projection = await client.call_tool("find_gameobjects", {**args, "projection": ["name", "name"]}, raise_on_error=False)
+                assert invalid_projection.is_error or json.loads(invalid_projection.content[0].text)["success"] is False
+                assert len(requests) == before and module.preflight.await_count == gates
                 for options in ({"page_size": "2"}, {"page_size": 0}, {"page_size": 501}, {"page_size": True}, {"page_size": 1.5}, {"max_depth": False}, {"max_depth": 129}, {"cursor": 0}, {"cursor": "g" * 32}, {"conditions": []}, {"conditions": [{"search_method":"by_name", "search_term":"x", "extra":True}]}, {"search_term": "\U0001f600" * 257}):
                     before = len(requests)
                     gates = module.preflight.await_count

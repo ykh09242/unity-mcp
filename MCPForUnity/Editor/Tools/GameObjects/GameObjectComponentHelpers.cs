@@ -30,7 +30,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             return null;
         }
 
-        internal static object AddComponentInternal(GameObject targetGo, string typeName, JObject properties)
+        internal static object AddComponentInternal(GameObject targetGo, string typeName, JObject properties, PostEditVerification.Batch observations = null)
         {
             string typeError = ValidateComponentType(typeName, false, out Type componentType);
             if (typeError != null)
@@ -106,6 +106,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 {
                     light.type = LightType.Directional;
                 }
+
+                observations?.Capture(newComponent, properties);
 
                 if (properties != null)
                 {
@@ -343,7 +345,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             return !Attribute.IsDefined(componentType, typeof(DisallowMultipleComponent), inherit: true);
         }
 
-        internal static object RemoveComponentInternal(GameObject targetGo, string typeName)
+        internal static object RemoveComponentInternal(GameObject targetGo, string typeName, PostEditVerification.Batch observations = null)
         {
             if (targetGo == null)
             {
@@ -364,6 +366,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             try
             {
+                observations?.Capture(componentToRemove, removed: true);
                 Undo.DestroyObjectImmediate(componentToRemove);
                 if (componentToRemove != null)
                     return new ErrorResponse($"Unity did not remove component '{typeName}' from '{targetGo.name}'.");
@@ -448,7 +451,12 @@ namespace MCPForUnity.Editor.Tools.GameObjects
         /// <param name="modified">Set to true if at least one property was set successfully.</param>
         /// <returns>An ErrorResponse aggregating any per-component failures, or null if all
         /// (or none) of the requested properties were applied successfully.</returns>
-        internal static object ApplyComponentProperties(GameObject targetGo, JObject componentPropertiesObj, out bool modified)
+        internal static object ApplyComponentProperties(
+            GameObject targetGo,
+            JObject componentPropertiesObj,
+            out bool modified,
+            PostEditVerification.Batch observations = null
+        )
         {
             modified = false;
             if (componentPropertiesObj == null)
@@ -463,7 +471,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 JObject propertiesToSet = prop.Value as JObject;
                 if (propertiesToSet != null)
                 {
-                    var setResult = SetComponentPropertiesInternal(targetGo, compName, propertiesToSet);
+                    var setResult = SetComponentPropertiesInternal(targetGo, compName, propertiesToSet, observations: observations);
                     if (setResult != null)
                     {
                         componentErrors.Add(setResult);
@@ -518,7 +526,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             GameObject targetGo,
             string componentTypeName,
             JObject properties,
-            Component targetComponentInstance = null
+            Component targetComponentInstance = null,
+            PostEditVerification.Batch observations = null
         )
         {
             Component targetComponent = targetComponentInstance;
@@ -539,6 +548,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             Undo.RecordObject(targetComponent, "Set Component Properties");
+            observations?.Capture(targetComponent, properties);
 
             var failures = new List<string>();
             bool anyPropertySet = false;

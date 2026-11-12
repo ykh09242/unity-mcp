@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -521,6 +522,155 @@ namespace MCPForUnity.Editor.Helpers
             if (Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(response, Formatting.None)) > MaxOutputBytes)
                 throw new Failure("projection_limit", "The bounded response envelope cannot represent this projection.");
             return response;
+        }
+
+        internal static JObject ReadRetainedProperties(Object instance, IEnumerable<string> propertyPaths)
+        {
+            const string scope = "requested_serialized_values_and_bounded_reference_scan";
+            if (instance == null)
+                return PostEditVerification.Unavailable(scope, "original_target_unavailable");
+            if (!(instance is Component) && !(instance is ScriptableObject))
+                return PostEditVerification.Unavailable(scope, "unsupported_target_type");
+            var budget = new Budget(CancellationToken.None);
+            var target = new Target { Instance = instance, Route = instance is Component ? "manage_components" : "manage_scriptable_object" };
+            var records = new JArray();
+            bool complete = true;
+            var findings = new JArray();
+            int bytes = 2;
+            string reason = null;
+            try
+            {
+                using var source = new SerializedObject(instance);
+                source.Update();
+                foreach (string requested in propertyPaths ?? Array.Empty<string>())
+                {
+                    if (records.Count == PostEditVerification.MaxProperties)
+                    {
+                        complete = false;
+                        reason = "property_limit";
+                        break;
+                    }
+                    if (string.IsNullOrEmpty(requested) || requested.Length > 512)
+                    {
+                        complete = false;
+                        reason = "unsupported_property_path";
+                        break;
+                    }
+                    SerializedProperty property = null;
+                    try
+                    {
+                        property = ResolvePath(source, requested, budget);
+                    }
+                    catch (Failure)
+                    {
+                        // Common native fields back a public camelCase name with m_PascalCase.
+                        // Only try that exact field; no reflected getter or unbounded fuzzy scan.
+                        if (requested.IndexOf('.') < 0 && !requested.StartsWith("m_", StringComparison.Ordinal))
+                            property = budget.Read("find", requested, () =>
+                                source.FindProperty("m_" + char.ToUpperInvariant(requested[0]) + requested.Substring(1))
+                            );
+                    }
+                    using (property)
+                    {
+                        JObject record =
+                            property == null
+                                ? new JObject { ["requested_property"] = requested, ["value_status"] = "unavailable" }
+                                : Describe(property, target, true, budget);
+                        record["requested_property"] = requested;
+                        int size = Encoding.UTF8.GetByteCount(record.ToString(Formatting.None)) + 1;
+                        if (bytes + size > 16384)
+                        {
+                            complete = false;
+                            reason = "output_budget";
+                            break;
+                        }
+                        bytes += size;
+                        records.Add(record);
+                        if ((string)record["value_status"] != "available" || (bool?)record["value_truncated"] == true)
+                            complete = false;
+                        if (
+                            property != null
+                            && property.propertyType == SerializedPropertyType.ObjectReference
+                            && (string)record["value"]?["state"] == "nonzero"
+                            && budget.Read("value", requested, () => property.objectReferenceValue) == null
+                        )
+                            findings.Add(
+                                new JObject
+                                {
+                                    ["code"] = "missing_reference",
+                                    ["severity"] = "warning",
+                                    ["property_path"] = record["property_path"],
+                                }
+                            );
+                        if (
+                            record["value"] is JContainer value
+                            && value.Descendants().OfType<JProperty>().Any(field => field.Name == "value_status" && (string)field.Value == "nonfinite")
+                        )
+                            complete = false;
+                    }
+                }
+                // Scan only this original object, with a hard cap on visited serialized fields.
+                // No reflected property getters or scene-wide traversal are involved.
+                using var iterator = source.GetIterator();
+                int visited = 0;
+                while (budget.Read("next", "", () => iterator.Next(true)))
+                {
+                    if (++visited > 256)
+                    {
+                        complete = false;
+                        reason = "reference_scan_limit";
+                        break;
+                    }
+                    if (budget.Read("meta", "", () => iterator.propertyType) != SerializedPropertyType.ObjectReference)
+                        continue;
+#if UNITY_6000_4_OR_NEWER
+                    bool nonzero = budget.Read("value", "", () => EntityId.ToULong(iterator.objectReferenceEntityIdValue)) != 0;
+#else
+                    bool nonzero = budget.Read("value", "", () => iterator.objectReferenceInstanceIDValue) != 0;
+#endif
+                    if (nonzero && budget.Read("value", "", () => iterator.objectReferenceValue) == null)
+                    {
+                        string path = budget.Read("meta", "", () => iterator.propertyPath);
+                        if (!findings.OfType<JObject>().Any(finding => (string)finding["property_path"] == path))
+                            findings.Add(
+                                new JObject
+                                {
+                                    ["code"] = "missing_reference",
+                                    ["severity"] = "warning",
+                                    ["property_path"] = Short(path, 512),
+                                }
+                            );
+                        if (findings.Count >= PostEditVerification.MaxFindings)
+                        {
+                            complete = false;
+                            reason = "reference_findings_limit";
+                            break;
+                        }
+                    }
+                }
+            }
+            catch (WorkLimit)
+            {
+                complete = false;
+                reason = "work_budget";
+            }
+            catch (Exception)
+            {
+                // This observation follows a mutation whose outcome must survive an inspector failure.
+                complete = false;
+                reason = "readback_unavailable";
+            }
+            if (instance == null)
+            {
+                complete = false;
+                reason = "original_target_unavailable";
+            }
+            JObject report = PostEditVerification.Summary(scope, records, findings, complete);
+            report["target_instance_id"] = instance != null ? new JValue(instance.GetInstanceIDCompat()) : JValue.CreateNull();
+            report["work"] = budget.Describe();
+            if (reason != null)
+                report["reason"] = reason;
+            return report;
         }
 
         private static JObject Describe(SerializedProperty property, Target target, bool values, Budget budget)

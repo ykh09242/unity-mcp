@@ -20,10 +20,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             GameObject createdObject = null;
             string createdTag = null;
             object result = null;
+            var observations = new PostEditVerification.Batch();
             try
             {
-                result = Create(@params, ref createdObject, ref createdTag);
-                return result;
+                result = Create(@params, ref createdObject, ref createdTag, observations);
             }
             finally
             {
@@ -42,9 +42,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     }
                 }
             }
+            return PostEditVerification.Attach(result, observations.Observe());
         }
 
-        private static object Create(JObject @params, ref GameObject newGo, ref string createdTag)
+        private static object Create(JObject @params, ref GameObject newGo, ref string createdTag, PostEditVerification.Batch observations)
         {
             string name = @params["name"]?.ToString();
             if (string.IsNullOrEmpty(name))
@@ -340,7 +341,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
                     if (!string.IsNullOrEmpty(typeName))
                     {
-                        var addResult = GameObjectComponentHelpers.AddComponentInternal(newGo, typeName, properties);
+                        var addResult = GameObjectComponentHelpers.AddComponentInternal(newGo, typeName, properties, observations);
                         if (addResult != null)
                         {
                             UnityEngine.Object.DestroyImmediate(newGo);
@@ -356,7 +357,12 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             // Set Component Properties (same "componentProperties" argument 'modify' consumes,
             // applied here so it also works at creation time)
-            var componentPropertiesError = GameObjectComponentHelpers.ApplyComponentProperties(newGo, @params["componentProperties"] as JObject, out _);
+            var componentPropertiesError = GameObjectComponentHelpers.ApplyComponentProperties(
+                newGo,
+                @params["componentProperties"] as JObject,
+                out _,
+                observations
+            );
             if (componentPropertiesError != null)
             {
                 UnityEngine.Object.DestroyImmediate(newGo);

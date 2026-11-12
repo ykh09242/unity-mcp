@@ -70,17 +70,18 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             int group = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("Modify GameObject");
             string createdTag = null;
+            var observations = new PostEditVerification.Batch();
             ErrorResponse failure;
             try
             {
-                object result = Apply(@params, targetGo, name, layerId, transformOptions, position, rotation, scale, ref createdTag);
+                object result = Apply(@params, targetGo, name, layerId, transformOptions, position, rotation, scale, ref createdTag, observations);
                 failure = result as ErrorResponse;
                 if (failure == null)
                 {
                     Undo.FlushUndoRecordObjects();
                     Undo.CollapseUndoOperations(group);
                     Undo.IncrementCurrentGroup();
-                    return result;
+                    return PostEditVerification.Attach(result, observations.Observe());
                 }
             }
             catch (Exception e)
@@ -117,7 +118,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 rollbackErrors.Count == 0
                     ? "Reverted recorded Unity edits. Effects of callbacks or nonserialized setters may remain."
                     : "Rollback incomplete: " + string.Join(" ", rollbackErrors);
-            return new ErrorResponse(failure.Error + " " + rollback, failure.Data);
+            return PostEditVerification.Attach(new ErrorResponse(failure.Error + " " + rollback, failure.Data), observations.Observe());
         }
 
         private static object Apply(
@@ -129,7 +130,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Vector3? position,
             Vector3? rotation,
             Vector3? scale,
-            ref string createdTag
+            ref string createdTag,
+            PostEditVerification.Batch observations
         )
         {
             Undo.RecordObject(targetGo.transform, "Modify GameObject Transform");
@@ -211,7 +213,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     string typeName = compToken.ToString();
                     if (!string.IsNullOrEmpty(typeName))
                     {
-                        var removeResult = GameObjectComponentHelpers.RemoveComponentInternal(targetGo, typeName);
+                        var removeResult = GameObjectComponentHelpers.RemoveComponentInternal(targetGo, typeName, observations);
                         if (removeResult != null)
                             return removeResult;
                         modified = true;
@@ -235,7 +237,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
                     if (!string.IsNullOrEmpty(typeName))
                     {
-                        var addResult = GameObjectComponentHelpers.AddComponentInternal(targetGo, typeName, properties);
+                        var addResult = GameObjectComponentHelpers.AddComponentInternal(targetGo, typeName, properties, observations);
                         if (addResult != null)
                             return addResult;
                         modified = true;
@@ -246,7 +248,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             var componentPropertiesError = GameObjectComponentHelpers.ApplyComponentProperties(
                 targetGo,
                 @params["componentProperties"] as JObject,
-                out bool componentPropertiesModified
+                out bool componentPropertiesModified,
+                observations
             );
             if (componentPropertiesError != null)
             {

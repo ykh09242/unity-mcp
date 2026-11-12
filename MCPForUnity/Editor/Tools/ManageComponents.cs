@@ -290,6 +290,9 @@ namespace MCPForUnity.Editor.Tools
             EnsureVfxRendererMaterial(targetGo, newComponent);
 
             // Set properties if provided
+            int originalTargetId = targetGo.GetInstanceIDCompat();
+            int originalComponentId = newComponent.GetInstanceIDCompat();
+            string originalTargetName = targetGo.name;
             var propertyErrors = new List<string>();
             var propertyResults = new JArray();
             if (properties != null && properties.HasValues)
@@ -299,22 +302,26 @@ namespace MCPForUnity.Editor.Tools
                 propertyErrors = SetPropertiesOnComponent(newComponent, properties, propertyResults);
             }
 
-            EditorUtility.SetDirty(targetGo);
-            MarkOwningSceneDirty(targetGo);
+            if (targetGo != null)
+            {
+                EditorUtility.SetDirty(targetGo);
+                MarkOwningSceneDirty(targetGo);
+            }
 
             if (propertyErrors.Count > 0)
             {
                 object failure = new ErrorResponse(
-                    $"Component '{componentTypeName}' added to '{targetGo.name}', but some properties failed to set.",
+                    $"Component '{componentTypeName}' added to '{originalTargetName}', but some properties failed to set.",
                     new
                     {
-                        instanceID = targetGo.GetInstanceIDCompat(),
+                        instanceID = originalTargetId,
                         componentType = type.FullName,
-                        componentInstanceID = newComponent.GetInstanceIDCompat(),
+                        componentInstanceID = originalComponentId,
                         componentAdded = true,
                         mode = "best_effort",
                         results = propertyResults,
                         errors = propertyErrors,
+                        verification = PostEditVerification.Properties(newComponent, properties),
                     }
                 );
                 return WithSelection(failure, createdSelection);
@@ -323,14 +330,15 @@ namespace MCPForUnity.Editor.Tools
             object success = new
             {
                 success = true,
-                message = $"Component '{componentTypeName}' added to '{targetGo.name}'.",
+                message = $"Component '{componentTypeName}' added to '{originalTargetName}'.",
                 data = new
                 {
-                    instanceID = targetGo.GetInstanceIDCompat(),
+                    instanceID = originalTargetId,
                     componentType = type.FullName,
-                    componentInstanceID = newComponent.GetInstanceIDCompat(),
+                    componentInstanceID = originalComponentId,
                     mode = "best_effort",
                     results = propertyResults,
+                    verification = PostEditVerification.Properties(newComponent, properties),
                 },
             };
             return WithSelection(success, createdSelection);
@@ -354,6 +362,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Target GameObject ('{targetToken}') not found using method '{searchMethod ?? "default"}'.");
             }
+            int targetId = targetGo.GetInstanceIDCompat();
+            string targetName = targetGo.name;
 
             string componentTypeName = ParamCoercion.CoerceString(@params["componentType"] ?? @params["component_type"], null);
             if (string.IsNullOrEmpty(componentTypeName))
@@ -385,33 +395,47 @@ namespace MCPForUnity.Editor.Tools
                         $"component_index {componentIndex.Value} out of range. Found {components.Length} '{componentTypeName}' component(s)."
                     );
                 Component selected = selection != null ? selection.Component : components[componentIndex.Value];
+                int removedId = selected.GetInstanceIDCompat();
                 if (!ComponentOps.RemoveComponent(selected, out string removalError))
                     return new ErrorResponse(removalError);
-                EditorUtility.SetDirty(targetGo);
-                MarkOwningSceneDirty(targetGo);
+                if (targetGo != null)
+                {
+                    EditorUtility.SetDirty(targetGo);
+                    MarkOwningSceneDirty(targetGo);
+                }
                 return new
                 {
                     success = true,
-                    message = $"Component '{componentTypeName}' (index {componentIndex.Value}) removed from '{targetGo.name}'.",
-                    data = new { instanceID = targetGo.GetInstanceIDCompat(), componentIndex = componentIndex.Value },
+                    message = $"Component '{componentTypeName}' (index {componentIndex.Value}) removed from '{targetName}'.",
+                    data = new
+                    {
+                        instanceID = targetId,
+                        componentIndex = componentIndex.Value,
+                        verification = PostEditVerification.Removal(selected, removedId),
+                    },
                 };
             }
 
             // Use ComponentOps for the actual operation (removes first instance)
+            Component original = targetGo.GetComponent(type);
+            int originalId = original != null ? original.GetInstanceIDCompat() : 0;
             bool removed = ComponentOps.RemoveComponent(targetGo, type, out string error);
             if (!removed)
             {
                 return new ErrorResponse(error ?? $"Failed to remove component '{componentTypeName}'.");
             }
 
-            EditorUtility.SetDirty(targetGo);
-            MarkOwningSceneDirty(targetGo);
+            if (targetGo != null)
+            {
+                EditorUtility.SetDirty(targetGo);
+                MarkOwningSceneDirty(targetGo);
+            }
 
             return new
             {
                 success = true,
-                message = $"Component '{componentTypeName}' removed from '{targetGo.name}'.",
-                data = new { instanceID = targetGo.GetInstanceIDCompat() },
+                message = $"Component '{componentTypeName}' removed from '{targetName}'.",
+                data = new { instanceID = targetId, verification = PostEditVerification.Removal(original, originalId) },
             };
         }
 
@@ -502,6 +526,8 @@ namespace MCPForUnity.Editor.Tools
                 )
             );
             bool anyPropertySet = false;
+            int originalTargetId = targetGo.GetInstanceIDCompat();
+            var expectedValues = requests.Select(request => new KeyValuePair<string, JToken>(request.Name, request.Value));
             try
             {
                 Undo.RecordObject(component, $"Set property on {componentType}");
@@ -518,7 +544,7 @@ namespace MCPForUnity.Editor.Tools
                     else
                         anyPropertySet = true;
                 }
-                if (anyPropertySet)
+                if (anyPropertySet && component != null && targetGo != null)
                 {
                     if (PrefabUtility.IsPartOfPrefabInstance(component))
                         PrefabUtility.RecordPrefabInstancePropertyModifications(component);
@@ -530,25 +556,27 @@ namespace MCPForUnity.Editor.Tools
                         $"Some properties failed to set on '{componentType}'.",
                         new
                         {
-                            instanceID = targetGo.GetInstanceIDCompat(),
+                            instanceID = originalTargetId,
                             errors,
                             mode = "best_effort",
                             results,
+                            verification = PostEditVerification.CompareProperties(component, expectedValues),
                         }
                     );
                 return new SuccessResponse(
                     $"Properties set on component '{componentType}' on '{targetGo.name}'.",
                     new
                     {
-                        instanceID = targetGo.GetInstanceIDCompat(),
+                        instanceID = originalTargetId,
                         mode = "best_effort",
                         results,
+                        verification = PostEditVerification.CompareProperties(component, expectedValues),
                     }
                 );
             }
             catch (Exception e)
             {
-                if (anyPropertySet)
+                if (anyPropertySet && component != null && targetGo != null)
                 {
                     if (PrefabUtility.IsPartOfPrefabInstance(component))
                         PrefabUtility.RecordPrefabInstancePropertyModifications(component);
@@ -559,9 +587,10 @@ namespace MCPForUnity.Editor.Tools
                     $"Error setting properties on component '{componentType}': {e.Message}",
                     new
                     {
-                        instanceID = targetGo.GetInstanceIDCompat(),
+                        instanceID = originalTargetId,
                         mode = "best_effort",
                         results,
+                        verification = PostEditVerification.CompareProperties(component, expectedValues),
                     }
                 );
             }
@@ -692,7 +721,15 @@ namespace MCPForUnity.Editor.Tools
 
             foreach (var prop in properties.Properties())
             {
-                var error = TrySetProperty(component, prop.Name, prop.Value);
+                string error;
+                try
+                {
+                    error = TrySetProperty(component, prop.Name, prop.Value);
+                }
+                catch (Exception exception)
+                {
+                    error = exception.GetBaseException().Message;
+                }
                 results.Add(
                     new JObject
                     {

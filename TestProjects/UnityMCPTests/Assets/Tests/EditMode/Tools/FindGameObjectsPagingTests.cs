@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
@@ -12,6 +14,14 @@ namespace MCPForUnityTests.Editor.Tools
     public class FindGameObjectsPagingTests
     {
         private readonly List<GameObject> _objects = new List<GameObject>();
+        private PrefabTestSceneFixture projectionFixture;
+
+        private void CreateProjectionScene()
+        {
+            projectionFixture = new PrefabTestSceneFixture();
+            projectionFixture.PrepareRunnerBootstrap();
+            projectionFixture.Create("Projection_", Guid.NewGuid().ToString("N"));
+        }
 
         [TestCase("by_name")]
         [TestCase("by_tag")]
@@ -48,6 +58,61 @@ namespace MCPForUnityTests.Editor.Tools
             foreach (var obj in _objects)
                 UnityEngine.Object.DestroyImmediate(obj);
             _objects.Clear();
+            projectionFixture?.Close();
+            projectionFixture?.RestoreRunnerBootstrap();
+            projectionFixture = null;
+        }
+
+        [Test]
+        public void ProjectionPreservesDefaultIdsAndInactiveDuplicateIdentity()
+        {
+            CreateProjectionScene();
+            string name = "Projection_" + Guid.NewGuid().ToString("N");
+            for (int i = 0; i < 3; i++)
+            {
+                var go = new GameObject(name);
+                _objects.Add(go);
+                go.SetActive(i != 1);
+            }
+            var request = new JObject
+            {
+                ["searchTerm"] = name,
+                ["searchMethod"] = "by_name",
+                ["includeInactive"] = true,
+            };
+            var baseline = JObject.FromObject(FindGameObjects.HandleCommand(request));
+            Assert.IsNull(baseline["data"]["projection"]);
+            request["projection"] = new JArray("name", "active", "transform");
+            var projected = JObject.FromObject(FindGameObjects.HandleCommand(request));
+            Assert.IsTrue((bool)projected["success"], projected.ToString());
+            Assert.IsTrue(JToken.DeepEquals(baseline["data"]["instanceIDs"], projected["data"]["instanceIDs"]));
+            Assert.AreEqual(3, ((JArray)projected["data"]["projection"]).Count);
+            Assert.IsFalse(
+                (bool)((JArray)projected["data"]["projection"]).First(row => (int)row["instanceID"] == _objects[1].GetInstanceIDCompat())["activeSelf"]
+            );
+        }
+
+        [Test]
+        public void ProjectionCapDoesNotTruncateSearchIds()
+        {
+            CreateProjectionScene();
+            string name = "ProjectionCap_" + Guid.NewGuid().ToString("N");
+            for (int i = 0; i < 70; i++)
+                _objects.Add(new GameObject(name));
+            var response = JObject.FromObject(
+                FindGameObjects.HandleCommand(
+                    new JObject
+                    {
+                        ["searchTerm"] = name,
+                        ["searchMethod"] = "by_name",
+                        ["page_size"] = 100,
+                        ["projection"] = new JArray("name"),
+                    }
+                )
+            );
+            Assert.AreEqual(70, ((JArray)response["data"]["instanceIDs"]).Count);
+            Assert.AreEqual(64, ((JArray)response["data"]["projection"]).Count);
+            Assert.IsFalse((bool)response["data"]["projection_verification"]["complete"]);
         }
 
         [TestCase("page_size", "page_number")]

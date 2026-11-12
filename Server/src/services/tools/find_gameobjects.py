@@ -61,7 +61,9 @@ def _scoped_options(search_term, search_method, conditions, page_size, cursor, m
 
 @mcp_for_unity_tool(
     description=(
-        "Search GameObjects by name, tag, layer, component, path or ID; returns IDs only. "
+        "Search GameObjects by name, tag, layer, component, path or ID; defaults to IDs only. "
+        "Optional projection fields name/active/transform/components/handle describe the same returned IDs, "
+        "capped at64 rows,16KiB and16 component names per row; projection_verification reports incomplete coverage. "
         "scene_scope=legacy (default) preserves method-dependent scene selection and numeric offsets. "
         "active uses SceneManager's reported active scene; all_loaded covers loaded ordinary scenes, "
         "excluding preview/prefab stages. Scoped conditions are ANDed (at most eight predicates total). "
@@ -124,8 +126,29 @@ async def find_gameobjects(
     max_depth: Annotated[
         int | None, Field(description="Scoped inclusive depth: root0, default64, maximum128")
     ] = None,
+    projection: Annotated[
+        list[Literal["name", "active", "transform", "components", "handle"]] | None,
+        Field(
+            max_length=5,
+            description="Optional same-ID projection; handles use existing session-scoped lifetime",
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     """Preserve legacy payloads; validate scoped options before refresh-capable preflight."""
+    if projection is not None and (
+        not isinstance(projection, list)
+        or len(projection) > 5
+        or any(not isinstance(field, str) for field in projection)
+        or len(set(projection)) != len(projection)
+        or any(
+            field not in {"name", "active", "transform", "components", "handle"}
+            for field in projection
+        )
+    ):
+        return {
+            "success": False,
+            "message": "projection requires up to five unique supported fields.",
+        }
     if scene_scope not in ("legacy", "active", "all_loaded"):
         return {"success": False, "message": "scene_scope must be legacy, active or all_loaded."}
     if scene_scope == "legacy":
@@ -175,6 +198,8 @@ async def find_gameobjects(
         }
         if scene_scope != "legacy":
             params.update(scene_scope=scene_scope, conditions=conditions, max_depth=max_depth)
+        if projection is not None:
+            params["projection"] = projection
         params = {key: value for key, value in params.items() if value is not None}
         response = await send_with_unity_instance(
             async_send_command_with_retry, unity_instance, "find_gameobjects", params

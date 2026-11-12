@@ -319,9 +319,16 @@ namespace MCPForUnity.Editor.Tools
                 warnings.AddRange(patchApply.warnings);
             }
 
-            AssetPathUtility.GetFullAssetPath(finalPath);
-            EditorUtility.SetDirty(instance);
-            AssetDatabase.SaveAssetIfDirty(instance);
+            try
+            {
+                AssetPathUtility.GetFullAssetPath(finalPath);
+                EditorUtility.SetDirty(instance);
+                AssetDatabase.SaveAssetIfDirty(instance);
+            }
+            catch (Exception exception)
+            {
+                warnings.Add("Asset was created but final persistence did not complete: " + exception.GetBaseException().Message);
+            }
 
             var response = new SuccessResponse(
                 "ScriptableObject created.",
@@ -332,6 +339,7 @@ namespace MCPForUnity.Editor.Tools
                     typeNameResolved = resolvedType.FullName,
                     patchResults,
                     mode = "best_effort",
+                    verification = PatchVerification(instance, patchesToken as JArray, patchResults, warnings),
                     warnings = warnings.Count > 0 ? warnings : null,
                 }
             );
@@ -420,6 +428,7 @@ namespace MCPForUnity.Editor.Tools
                         typeNameResolved = replacement.GetType().FullName,
                         patchResults,
                         mode = "best_effort",
+                        verification = PatchVerification(replacement, patches, patchResults, warnings),
                         warnings = warnings.Count > 0 ? warnings : null,
                     }
                 );
@@ -717,6 +726,7 @@ namespace MCPForUnity.Editor.Tools
                     targetTypeName = target.GetType().FullName,
                     results,
                     mode = "best_effort",
+                    verification = PatchVerification(target, patches, results, warnings),
                     warnings = warnings.Count > 0 ? warnings : null,
                 }
             );
@@ -1442,6 +1452,57 @@ namespace MCPForUnity.Editor.Tools
             return results;
         }
 
+        private static JObject PatchVerification(UnityEngine.Object target, JArray patches, object results, List<string> warnings)
+        {
+            try
+            {
+                var expected = new Dictionary<string, JToken>(StringComparer.Ordinal);
+                bool validPaths = true;
+                foreach (JObject patch in (patches ?? new JArray()).Take(65).OfType<JObject>())
+                {
+                    JToken pathToken = patch["propertyPath"] ?? patch["property_path"] ?? patch["path"];
+                    if (pathToken?.Type != JTokenType.String || string.IsNullOrEmpty((string)pathToken) || ((string)pathToken).Length > 512)
+                    {
+                        validPaths = false;
+                        continue;
+                    }
+                    expected[NormalizePropertyPath((string)pathToken)] = patch["ref"] ?? patch["value"] ?? JValue.CreateNull();
+                }
+                JObject report = PostEditVerification.CompareProperties(target, expected, enumNumbersAreIndices: true);
+                var findings = (JArray)report["findings"];
+                var receipts = results is List<object> list ? list.Take(64).Select(JObject.FromObject).ToArray() : Array.Empty<JObject>();
+                if (results != null)
+                    foreach (JObject receipt in receipts.Where(item => (bool?)item["ok"] == false).Take(32))
+                        findings.Add(
+                            new JObject
+                            {
+                                ["code"] = "patch_failed",
+                                ["index"] = receipt["index"],
+                                ["property_path"] = receipt["propertyPath"],
+                            }
+                        );
+                bool complete = (bool)report["complete"] && validPaths && (patches == null || patches.Count <= 64) && warnings.Count == 0;
+                JObject summary = PostEditVerification.Summary((string)report["scope"], report["observed_values"], findings, complete);
+                foreach (string key in new[] { "status", "complete", "findings", "findings_truncated", "further_fixes_required" })
+                    report[key] = summary[key];
+                report["patch_counts"] = new JObject
+                {
+                    ["scope"] = "first64_patch_receipts",
+                    ["applied"] = receipts.Count(item => (string)item["status"] == "applied"),
+                    ["failed"] = receipts.Count(item => (string)item["status"] == "failed"),
+                    ["skipped"] = receipts.Count(item => (string)item["status"] == "skipped"),
+                    ["unknown"] = receipts.Count(item => (string)item["status"] == "unknown"),
+                };
+                if (warnings.Count > 0)
+                    report["reason"] = "patch_or_persistence_observation_incomplete";
+                return report;
+            }
+            catch (Exception)
+            {
+                return PostEditVerification.Unavailable("patched_serialized_values", "patch_observation_unavailable");
+            }
+        }
+
         private static (List<object> results, List<string> warnings) ApplyPatches(UnityEngine.Object target, JArray patches) =>
             ApplyPatchesCore(target, patches, saveAssets: true);
 
@@ -1508,8 +1569,36 @@ namespace MCPForUnity.Editor.Tools
                 bool committed = false;
                 if (changed)
                 {
-                    AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(target));
-                    committed = so.ApplyModifiedProperties();
+                    try
+                    {
+                        AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(target));
+                        committed = so.ApplyModifiedProperties();
+                    }
+                    catch (Exception exception)
+                    {
+                        results.Add(
+                            new JObject
+                            {
+                                ["propertyPath"] = propertyPath,
+                                ["index"] = i,
+                                ["ok"] = false,
+                                ["status"] = "unknown",
+                                ["message"] = "Serialized commit did not return: " + exception.GetBaseException().Message,
+                            }
+                        );
+                        warnings.Add("A serialized commit did not return; inspect retained values before retrying.");
+                        for (int remaining = i + 1; remaining < patches.Count; remaining++)
+                            results.Add(
+                                new JObject
+                                {
+                                    ["index"] = remaining,
+                                    ["ok"] = false,
+                                    ["status"] = "skipped",
+                                    ["message"] = "Not attempted after uncertain commit.",
+                                }
+                            );
+                        break;
+                    }
                 }
                 JObject receipt = JObject.FromObject(patchResult);
                 receipt["index"] = i;
@@ -1524,10 +1613,17 @@ namespace MCPForUnity.Editor.Tools
 
             if (anyChanged)
             {
-                AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(target));
-                EditorUtility.SetDirty(target);
-                if (saveAssets)
-                    AssetDatabase.SaveAssetIfDirty(target);
+                try
+                {
+                    AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(target));
+                    EditorUtility.SetDirty(target);
+                    if (saveAssets)
+                        AssetDatabase.SaveAssetIfDirty(target);
+                }
+                catch (Exception exception)
+                {
+                    warnings.Add("Patches were attempted but persistence did not complete: " + exception.GetBaseException().Message);
+                }
             }
 
             return (results, warnings);
