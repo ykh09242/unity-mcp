@@ -1109,9 +1109,11 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             bool allowed = HttpEndpointUtility.IsRemoteScope() && HttpEndpointUtility.IsRemoteUrlAllowed(baseUrl, out _);
             string origin = allowed ? HttpEndpointUtility.GetRemoteOrigin(baseUrl) : null;
             string key;
+            bool hasLegacy;
             try
             {
                 key = allowed ? HttpEndpointUtility.GetRemoteApiKey(baseUrl) : string.Empty;
+                hasLegacy = bindLegacyApiKeyButton != null && HttpEndpointUtility.HasLegacyApiKey;
                 remoteKeyStorageErrorShown = false;
             }
             catch (RemoteApiKeyStorageException error)
@@ -1131,7 +1133,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             apiKeyField?.SetEnabled(allowed);
             if (bindLegacyApiKeyButton != null)
             {
-                bool show = HttpEndpointUtility.HasLegacyApiKey && string.IsNullOrEmpty(key);
+                bool show = hasLegacy && string.IsNullOrEmpty(key);
                 bindLegacyApiKeyButton.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
                 bindLegacyApiKeyButton.SetEnabled(allowed);
                 bindLegacyApiKeyButton.text = allowed ? $"Use saved legacy key for {origin}" : "Set a valid remote URL to bind the saved legacy key";

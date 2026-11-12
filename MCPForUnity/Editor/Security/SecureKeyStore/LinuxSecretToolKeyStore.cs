@@ -12,9 +12,19 @@ namespace MCPForUnity.Editor.Security
     {
         private const string Service = SecureKeyStoreConstants.ServiceName;
         private readonly Func<ProcessStartInfo, int> deleteCommand;
+        private readonly Func<ProcessStartInfo, string, (int code, string stdout, string stderr)> runCommand;
 
-        internal LinuxSecretToolKeyStore(Func<ProcessStartInfo, int> deleteCommand = null) =>
-            this.deleteCommand = deleteCommand ?? (info => KeyStoreProcess.Run(info).code);
+        internal LinuxSecretToolKeyStore(Func<ProcessStartInfo, int> deleteCommand = null)
+            : this(deleteCommand, null) { }
+
+        internal LinuxSecretToolKeyStore(
+            Func<ProcessStartInfo, int> deleteCommand,
+            Func<ProcessStartInfo, string, (int code, string stdout, string stderr)> runCommand
+        )
+        {
+            this.runCommand = runCommand ?? ((info, input) => KeyStoreProcess.Run(info, input));
+            this.deleteCommand = deleteCommand;
+        }
 
         internal static bool IsAvailable()
         {
@@ -45,15 +55,17 @@ namespace MCPForUnity.Editor.Security
                 psi.ArgumentList.Add(Service);
                 psi.ArgumentList.Add("account");
                 psi.ArgumentList.Add(providerId);
-                var result = KeyStoreProcess.Run(psi);
-                if (result.code != 0)
+                var result = Execute(psi);
+                if (IsConfirmedAbsence(result))
                     return false;
+                if (result.code != 0)
+                    throw new InvalidOperationException();
                 apiKey = (result.stdout ?? string.Empty).TrimEnd('\n', '\r');
                 return !string.IsNullOrEmpty(apiKey);
             }
             catch
             {
-                return false;
+                throw new InvalidOperationException("Credential lookup could not be confirmed. Check secret-service access and retry.");
             }
         }
 
@@ -73,7 +85,7 @@ namespace MCPForUnity.Editor.Security
             psi.ArgumentList.Add(Service);
             psi.ArgumentList.Add("account");
             psi.ArgumentList.Add(providerId);
-            if (KeyStoreProcess.Run(psi, apiKey).code != 0)
+            if (Execute(psi, apiKey).code != 0)
                 throw new InvalidOperationException("Credential storage could not be confirmed. Check secret-service access and retry.");
         }
 
@@ -87,10 +99,35 @@ namespace MCPForUnity.Editor.Security
             psi.ArgumentList.Add(Service);
             psi.ArgumentList.Add("account");
             psi.ArgumentList.Add(providerId);
-            if (deleteCommand(psi) != 0)
-                throw new InvalidOperationException(
-                    "Credential removal could not be confirmed. The key may already be absent or secret-service access unavailable."
-                );
+            try
+            {
+                // The legacy delete-only seam has no stderr, so only zero confirms success.
+                var result = deleteCommand == null ? Execute(psi) : (code: deleteCommand(psi), stdout: (string)null, stderr: "unconfirmed");
+                if (result.code != 0 && !IsConfirmedAbsence(result))
+                    throw new InvalidOperationException();
+            }
+            catch
+            {
+                throw new InvalidOperationException("Credential removal could not be confirmed. Check secret-service access and retry.");
+            }
+        }
+
+        private static bool IsConfirmedAbsence((int code, string stdout, string stderr) result) =>
+            // secret-tool uses 1 for both no match and failure; failures emit stderr.
+            result.code == 1
+            && string.IsNullOrEmpty(result.stdout)
+            && string.IsNullOrEmpty(result.stderr);
+
+        private (int code, string stdout, string stderr) Execute(ProcessStartInfo info, string input = null)
+        {
+            try
+            {
+                return runCommand(info, input);
+            }
+            catch
+            {
+                throw new InvalidOperationException("Credential operation could not be confirmed. Check secret-service access and retry.");
+            }
         }
 
         private static ProcessStartInfo NewPsi(bool redirectIn = false)

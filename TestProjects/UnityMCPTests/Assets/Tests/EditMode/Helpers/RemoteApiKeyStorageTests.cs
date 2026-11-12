@@ -148,6 +148,18 @@ namespace MCPForUnityTests.Editor.Helpers
             StringAssert.DoesNotContain("synthetic", clearError.ToString());
             Assert.IsTrue(preferences.ContainsKey(EditorPrefKeys.ApiKey));
         }
+
+        [Test]
+        public void GlobalLegacyPresenceReadFailureIsSanitized()
+        {
+            storage = new RemoteApiKeyStorage(
+                () => secure,
+                _ => throw new InvalidOperationException("synthetic-sensitive-error"),
+                _ => Assert.Fail("No deletion")
+            );
+            var error = Assert.Throws<RemoteApiKeyStorageException>(() => _ = storage.HasLegacyApiKey);
+            StringAssert.DoesNotContain("synthetic", error.ToString());
+        }
     }
 
     internal sealed class MemoryRemoteKeyStore : ISecureKeyStore

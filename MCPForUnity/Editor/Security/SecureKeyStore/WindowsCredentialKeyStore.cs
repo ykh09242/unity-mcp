@@ -14,17 +14,30 @@ namespace MCPForUnity.Editor.Security
         private const int CRED_PERSIST_LOCAL_MACHINE = 2;
         private readonly string targetNamespace;
         private readonly Func<string, int> deleteCredential;
+        internal delegate bool ReadCredential(string target, out IntPtr credential, out int error);
+        private readonly ReadCredential readCredential;
+        private readonly Action<IntPtr> freeCredential;
 
         internal WindowsCredentialKeyStore(string targetNamespace = SecureKeyStoreConstants.ServiceName, Func<string, int> deleteCredential = null)
+            : this(targetNamespace, deleteCredential, null, null) { }
+
+        internal WindowsCredentialKeyStore(
+            string targetNamespace,
+            Func<string, int> deleteCredential,
+            ReadCredential readCredential,
+            Action<IntPtr> freeCredential
+        )
         {
             this.targetNamespace = targetNamespace;
             this.deleteCredential = deleteCredential ?? (target => CredDelete(target, CRED_TYPE_GENERIC, 0) ? 0 : Marshal.GetLastWin32Error());
+            this.readCredential = readCredential ?? ReadNative;
+            this.freeCredential = freeCredential ?? CredFree;
         }
 
         private string Target(string providerId) => targetNamespace + ":" + providerId;
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        private struct CREDENTIAL
+        internal struct CREDENTIAL
         {
             public int Flags;
             public int Type;
@@ -52,6 +65,13 @@ namespace MCPForUnity.Editor.Security
         [DllImport("advapi32.dll", EntryPoint = "CredFree")]
         private static extern void CredFree(IntPtr buffer);
 
+        private static bool ReadNative(string target, out IntPtr credential, out int error)
+        {
+            bool found = CredRead(target, CRED_TYPE_GENERIC, 0, out credential);
+            error = found ? 0 : Marshal.GetLastWin32Error();
+            return found;
+        }
+
         public bool Has(string providerId) => TryGet(providerId, out _);
 
         public bool TryGet(string providerId, out string apiKey)
@@ -59,21 +79,35 @@ namespace MCPForUnity.Editor.Security
             apiKey = null;
             if (string.IsNullOrEmpty(providerId))
                 return false;
-            if (!CredRead(Target(providerId), CRED_TYPE_GENERIC, 0, out IntPtr ptr))
-                return false;
             try
             {
-                var cred = Marshal.PtrToStructure<CREDENTIAL>(ptr);
-                if (cred.CredentialBlobSize <= 0 || cred.CredentialBlob == IntPtr.Zero)
-                    return false;
-                byte[] bytes = new byte[cred.CredentialBlobSize];
-                Marshal.Copy(cred.CredentialBlob, bytes, 0, cred.CredentialBlobSize);
-                apiKey = Encoding.UTF8.GetString(bytes);
-                return !string.IsNullOrEmpty(apiKey);
+                if (!readCredential(Target(providerId), out IntPtr ptr, out int error))
+                {
+                    const int ErrorNotFound = 1168;
+                    if (error == ErrorNotFound)
+                        return false;
+                    throw new InvalidOperationException();
+                }
+                try
+                {
+                    var cred = Marshal.PtrToStructure<CREDENTIAL>(ptr);
+                    if (cred.CredentialBlobSize <= 0 || cred.CredentialBlob == IntPtr.Zero)
+                        return false;
+                    byte[] bytes = new byte[cred.CredentialBlobSize];
+                    Marshal.Copy(cred.CredentialBlob, bytes, 0, cred.CredentialBlobSize);
+                    apiKey = Encoding.UTF8.GetString(bytes);
+                    return !string.IsNullOrEmpty(apiKey);
+                }
+                finally
+                {
+                    // Only successful CredRead calls transfer ownership of a buffer.
+                    freeCredential(ptr);
+                }
             }
-            finally
+            catch
             {
-                CredFree(ptr);
+                apiKey = null;
+                throw new InvalidOperationException("Credential lookup could not be confirmed. Check secure-store access and retry.");
             }
         }
 

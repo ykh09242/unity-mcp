@@ -9,8 +9,7 @@ namespace MCPForUnity.Editor.Helpers
     internal sealed class RemoteApiKeyStorageException : InvalidOperationException
     {
         internal RemoteApiKeyStorageException()
-            : base("Remote API key storage failed. Restore access to the platform secure store and retry. The operation was not confirmed.")
-        { }
+            : base("Remote API key storage failed. Restore access to the platform secure store and retry. The operation was not confirmed.") { }
     }
 
     /// <summary>Origin-bound secure persistence and lossless migration of legacy EditorPrefs credentials.</summary>
@@ -27,7 +26,20 @@ namespace MCPForUnity.Editor.Helpers
             this.deletePreference = deletePreference;
         }
 
-        internal bool HasLegacyApiKey => !string.IsNullOrEmpty(readPreference(EditorPrefKeys.ApiKey));
+        internal bool HasLegacyApiKey
+        {
+            get
+            {
+                try
+                {
+                    return !string.IsNullOrEmpty(readPreference(EditorPrefKeys.ApiKey));
+                }
+                catch
+                {
+                    throw new RemoteApiKeyStorageException();
+                }
+            }
+        }
 
         internal static string Identifier(string origin)
         {

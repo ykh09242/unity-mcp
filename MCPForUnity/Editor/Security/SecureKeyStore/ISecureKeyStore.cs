@@ -10,7 +10,7 @@ namespace MCPForUnity.Editor.Security
     /// </summary>
     public interface ISecureKeyStore
     {
-        /// <summary>Resolve the key for a credential id (e.g. "tripo" or an origin-specific remote identifier). Returns false when absent.</summary>
+        /// <summary>Resolve the key for a credential id (e.g. "tripo" or an origin-specific remote identifier). Returns false when absent; throws when backend access cannot be confirmed.</summary>
         bool TryGet(string providerId, out string apiKey);
 
         /// <summary>Store (or overwrite) the key for a provider id. Empty/null deletes it. Throws when storage cannot be confirmed.</summary>
@@ -19,7 +19,7 @@ namespace MCPForUnity.Editor.Security
         /// <summary>Remove the stored key for a provider id (no-op when absent).</summary>
         void Delete(string providerId);
 
-        /// <summary>True when a key exists for the provider id. Never returns the value.</summary>
+        /// <summary>True when a key exists for the provider id. Never returns the value; throws when backend access cannot be confirmed.</summary>
         bool Has(string providerId);
     }
 }
