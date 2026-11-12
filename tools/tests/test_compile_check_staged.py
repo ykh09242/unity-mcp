@@ -414,6 +414,9 @@ def test_test_assembly_inventory_matches_declared_graph() -> None:
             "define": "MCP_ADDRESSABLES_FIXTURE",
         }
     ]
+    assert addressables["includePlatforms"] == [], (
+        "The guarded MonoBehaviour fixture must be runtime-attachable."
+    )
 
 
 def test_missing_owned_assembly_does_not_report_editmode_success(

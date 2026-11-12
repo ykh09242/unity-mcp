@@ -1,7 +1,7 @@
 {
   "name": "MCPForUnity.Addressables.Fixtures",
   "references": ["Unity.Addressables"],
-  "includePlatforms": ["Editor"],
+  "includePlatforms": [],
   "autoReferenced": false,
   "defineConstraints": ["UNITY_INCLUDE_TESTS", "MCP_ADDRESSABLES_FIXTURE"],
   "versionDefines": [

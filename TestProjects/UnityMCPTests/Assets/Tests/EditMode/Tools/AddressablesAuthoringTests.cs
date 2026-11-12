@@ -758,6 +758,7 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 Component fixture = source.AddComponent(fixtureType);
+                Assert.IsNotNull(fixture, "The optional runtime fixture assembly must support attaching its MonoBehaviour.");
                 Type colliding = fixtureType.GetField("Colliding").FieldType;
                 Assert.AreEqual("AssetReference", colliding.Name);
                 Assert.IsFalse(Type.GetType("UnityEngine.AddressableAssets.AssetReference, Unity.Addressables", true).IsAssignableFrom(colliding));
