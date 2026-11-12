@@ -595,6 +595,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             var events = AnimationUtility.GetAnimationEvents(clip).ToList();
             events.Add(animEvent);
             AssetPathUtility.GetFullAssetPath(clipPath);
+            Undo.RecordObject(clip, "Add Animation Event");
             AnimationUtility.SetAnimationEvents(clip, events.ToArray());
 
             EditorUtility.SetDirty(clip);
@@ -661,6 +662,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = false, message = "No matching events found to remove" };
 
             AssetPathUtility.GetFullAssetPath(clipPath);
+            Undo.RecordObject(clip, "Remove Animation Event");
             AnimationUtility.SetAnimationEvents(clip, events.ToArray());
             EditorUtility.SetDirty(clip);
             AssetDatabase.SaveAssetIfDirty(clip);
