@@ -446,7 +446,8 @@ def _checkout_log_records(data: bytes) -> list[str]:
             value = raw[len(continuation_prefix) :]
             require(
                 not value
-                or re.fullmatch(r"[A-Za-z0-9_.*?-]+(?:/[A-Za-z0-9_.*?-]+)+/?", value) is not None
+                or "/" in value
+                and re.fullmatch(r"[A-Za-z0-9_.*?-]+(?:/[A-Za-z0-9_.*?-]+)*/?", value) is not None
                 and not {".", ".."}.intersection(value.split("/")),
                 "Unsupported multiline action path input",
             )
