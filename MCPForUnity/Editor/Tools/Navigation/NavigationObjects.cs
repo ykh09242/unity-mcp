@@ -128,7 +128,7 @@ namespace MCPForUnity.Editor.Tools.Navigation
             JObject properties = new JObject();
             foreach (string field in Fields[kind])
             {
-                object value = NavigationAccess.Get(component, field);
+                object value = ReadProperty(component, field);
                 if (value == null)
                     continue;
                 properties[field] =
@@ -149,6 +149,13 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 ["active_in_hierarchy"] = component.gameObject.activeInHierarchy,
                 ["properties"] = properties,
             };
+            if (component is NavMeshObstacle obstacle && obstacle.shape == NavMeshObstacleShape.Capsule)
+                result["height_readback"] = new JObject
+                {
+                    ["basis"] = "size.y",
+                    ["native_getter"] = obstacle.height,
+                    ["native_getter_differs"] = obstacle.height != obstacle.size.y,
+                };
             if (kind == "surface")
             {
                 NavMeshData data = NavigationAccess.Get(component, "navMeshData") as NavMeshData;
@@ -167,6 +174,16 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 result["path_status"] = agent.isActiveAndEnabled && agent.isOnNavMesh ? new JValue(agent.pathStatus.ToString()) : null;
             }
             return result;
+        }
+
+        private static object ReadProperty(Component component, string field)
+        {
+            // Unity's capsule inspector displays full height (m_Extents.y * 2). Some
+            // native height getters return the half extent although the setter stores
+            // the full authored size. Observe geometry without compensating the setter.
+            if (field == "height" && component is NavMeshObstacle obstacle && obstacle.shape == NavMeshObstacleShape.Capsule)
+                return obstacle.size.y;
+            return NavigationAccess.Get(component, field);
         }
 
         internal static object Add(JObject p)
@@ -279,7 +296,7 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 result.Merge(Read(component));
                 foreach (var update in updates)
                 {
-                    object actual = update.Key.GetValue(component);
+                    object actual = ReadProperty(component, update.Key.Name);
                     observed[update.Key.Name] = result["properties"]?[update.Key.Name]?.DeepClone();
                     if (!Equals(actual, update.Value))
                         findings.Add("Configured property was not retained: " + update.Key.Name);

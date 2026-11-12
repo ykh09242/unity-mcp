@@ -494,11 +494,63 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsNotNull(obstacle);
             Assert.IsFalse(obstacle.enabled);
             Assert.AreEqual(0.75f, obstacle.radius);
-            Assert.AreEqual(3f, obstacle.height);
+            Assert.AreEqual(new Vector3(1.5f, 3f, 1.5f), obstacle.size, result.ToString());
             Assert.IsTrue(obstacle.carving);
             Assert.AreEqual("passed", (string)result["data"]["verification"]["status"]);
             Assert.AreEqual(0.75f, (float)result["data"]["properties"]["radius"]);
             CollectionAssert.Contains(((JArray)result["data"]["warnings"]).Values<string>().ToArray(), "component_disabled");
+            Undo.PerformUndo();
+            Assert.IsNull(root.GetComponent<NavMeshObstacle>());
+            Assert.AreSame(original, root.GetComponent<BoxCollider>());
+        }
+
+        [Test]
+        public void CapsuleHeightReadbackUsesFullGeometryAndKeepsNativeGetter()
+        {
+            // Unity 6000.0's Inspector displays m_Extents.y * 2 as height. The 6000.0.69f1
+            // native getter returns half the entered height while size.y retains it. Keep
+            // the geometry and raw getter evidence distinct; never compensate the setter.
+            JObject result = Add(
+                new JObject
+                {
+                    ["enabled"] = false,
+                    ["shape"] = "Capsule",
+                    ["radius"] = 0.75f,
+                    ["height"] = 3f,
+                    ["carving"] = true,
+                }
+            );
+            Assert.IsTrue((bool)result["success"], result.ToString());
+            var obstacle = root.GetComponent<NavMeshObstacle>();
+            Assert.IsNotNull(obstacle);
+            Assert.AreEqual(new Vector3(1.5f, 3f, 1.5f), obstacle.size, result.ToString());
+            Assert.AreEqual(0.75f, obstacle.radius);
+            Assert.AreEqual(3f, (float)result["data"]["properties"]["height"]);
+            Assert.AreEqual("size.y", (string)result["data"]["height_readback"]["basis"]);
+            Assert.AreEqual(obstacle.height, (float)result["data"]["height_readback"]["native_getter"]);
+            Assert.AreEqual(obstacle.height != obstacle.size.y, (bool)result["data"]["height_readback"]["native_getter_differs"]);
+            JToken verification = result["data"]["verification"];
+            Assert.IsTrue((bool)verification["complete"], result.ToString());
+            Assert.AreEqual(3f, (float)verification["observed_values"]["height"]);
+            Assert.AreEqual("passed", (string)verification["status"], result.ToString());
+            Assert.IsFalse((bool)verification["further_fixes_required"]);
+            Assert.IsEmpty((JArray)verification["findings"]);
+            Type handler = typeof(MCPForUnity.Editor.Tools.ManagePackages).Assembly.GetType("MCPForUnity.Editor.Tools.Navigation.ManageNavigation");
+            JObject readParameters = new JObject
+            {
+                ["action"] = "read",
+                ["kind"] = "obstacle",
+                ["target"] = obstacle.GetInstanceIDCompat(),
+            };
+#if UNITY_6000_4_OR_NEWER
+            readParameters["scene_handle"] = scene.handle.GetRawData();
+#else
+            readParameters["scene_handle"] = (int)scene.handle;
+#endif
+            JObject read = JObject.FromObject(handler.GetMethod("HandleCommand").Invoke(null, new object[] { readParameters }));
+            Assert.IsTrue((bool)read["success"], read.ToString());
+            Assert.AreEqual(3f, (float)read["data"]["properties"]["height"]);
+            Assert.AreEqual(obstacle.height, (float)read["data"]["height_readback"]["native_getter"]);
             Undo.PerformUndo();
             Assert.IsNull(root.GetComponent<NavMeshObstacle>());
             Assert.AreSame(original, root.GetComponent<BoxCollider>());
