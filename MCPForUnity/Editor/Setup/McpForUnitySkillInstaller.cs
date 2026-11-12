@@ -164,6 +164,11 @@ namespace MCPForUnity.Editor.Setup
                 EditorGUILayout.LabelField(_status, EditorStyles.wordWrappedLabel);
             if (_preview != null)
             {
+                EditorGUILayout.LabelField("Installed skills", _preview.InstallationStatus.Replace('_', ' '));
+                EditorGUILayout.LabelField(
+                    $"Compared local contents with {_preview.CommitSha}. Previously recorded revision {_preview.RecordedCommit ?? "unknown"}.",
+                    EditorStyles.wordWrappedLabel
+                );
                 EditorGUILayout.HelpBox(
                     $"Preview: +{_preview.Added.Count} ~{_preview.Updated.Count} -{_preview.Deleted.Count}. "
                         + $"Local preserved: {_preview.Preserved.Count}. Conflicts retained: {_preview.Conflicts.Count}.",

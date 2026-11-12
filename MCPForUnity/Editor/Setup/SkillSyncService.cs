@@ -57,6 +57,13 @@ namespace MCPForUnity.Editor.Setup
             internal readonly Dictionary<string, string> RemoteFiles;
             public string InstallPath { get; }
             public string CommitSha { get; }
+            public string RecordedCommit { get; internal set; }
+            public string InstallationStatus =>
+                !Success ? "unavailable"
+                : Plan.LocalHashes.Count == 0 ? "not_installed"
+                : Conflicts.Count > 0 || Preserved.Count > 0 ? "customized"
+                : Added.Count > 0 || Updated.Count > 0 || Deleted.Count > 0 ? "update_available"
+                : "current";
             public string SourceDescription => Source?.Description;
             public string ReviewSourceUrl => $"https://github.com/{Repository}/tree/{CommitSha}/{SkillSubdir}";
             public string Error { get; }
@@ -268,7 +275,7 @@ namespace MCPForUnity.Editor.Setup
             plan.Metadata[BaselineFile] = Encoding.UTF8.GetBytes(JsonUtility.ToJson(next, true));
             if (!markerExists)
                 plan.Metadata[SyncOwnershipMarker] = Encoding.UTF8.GetBytes(MarkerContents);
-            return new SyncPreview(selection, root, remote, plan);
+            return new SyncPreview(selection, root, remote, plan) { RecordedCommit = baseline?.commit };
         }
 
         internal static SyncResult ApplySourcePreview(

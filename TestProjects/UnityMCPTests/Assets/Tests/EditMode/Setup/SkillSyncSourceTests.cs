@@ -116,6 +116,24 @@ namespace MCPForUnityTests.Editor.Setup
             Assert.AreEqual(A, Property(selected, "Revision"));
         }
 
+        [Test]
+        public void PreviewReportsAbsentCurrentOutdatedAndCustomizedInstallations()
+        {
+            var source = Package(A);
+            var absent = Preview(source, A);
+            Assert.AreEqual("not_installed", absent.InstallationStatus);
+            Assert.IsNull(absent.RecordedCommit);
+            Assert.IsTrue(Apply(absent, () => source, () => Snapshot(A), (_, _) => Encoding.UTF8.GetBytes("skill")).Success);
+            Assert.AreEqual("current", Preview(source, A).InstallationStatus);
+
+            var newer = Preview(Package(B), B, "updated skill");
+            Assert.AreEqual("update_available", newer.InstallationStatus);
+            Assert.AreEqual(A, newer.RecordedCommit);
+            File.WriteAllText(Path.Combine(_install, "SKILL.md"), "local changes");
+            Assert.AreEqual("customized", Preview(Package(B), B, "updated skill").InstallationStatus);
+            Assert.AreEqual("local changes", File.ReadAllText(Path.Combine(_install, "SKILL.md")));
+        }
+
         [TestCase("null")]
         [TestCase("true")]
         [TestCase("42")]
