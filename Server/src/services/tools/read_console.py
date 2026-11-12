@@ -365,33 +365,44 @@ async def read_console(
 
     selected_fields = None
     if fields is not None:
+        field_errors = []
         try:
             selected_fields = _CONSOLE_FIELDS.validate_python(
                 parse_json_payload(fields), strict=True
             )
         except ValidationError:
-            return {
-                "success": False,
-                "message": "fields must be a list of type, message, file, line, or stackTrace.",
-            }
-        if (
+            field_errors.append(
+                "fields must be a list of type, message, file, line, or stackTrace."
+            )
+        if selected_fields is not None and (
             not selected_fields
             or len(set(selected_fields)) != len(selected_fields)
             or not {"type", "message"}.issubset(selected_fields)
         ):
+            field_errors.append("fields must be unique and include both type and message.")
+        if action != "get":
+            field_errors.append("fields is supported only for action=get.")
+        if format not in ("json", "detailed"):
+            field_errors.append("fields requires json or detailed format.")
+        if selected_fields and "stackTrace" in selected_fields and not include_stacktrace:
+            field_errors.append("The stackTrace field requires include_stacktrace=true.")
+        if field_errors:
+            corrected_fields = list(dict.fromkeys(["type", "message", *(selected_fields or [])]))
             return {
                 "success": False,
-                "message": "fields must be unique and include both type and message.",
-            }
-        if action != "get" or format not in ("json", "detailed"):
-            return {
-                "success": False,
-                "message": "fields is supported only for get with json or detailed format.",
-            }
-        if "stackTrace" in selected_fields and not include_stacktrace:
-            return {
-                "success": False,
-                "message": "The stackTrace field requires include_stacktrace=true.",
+                "code": "invalid_console_fields",
+                "message": " ".join(field_errors),
+                "errors": field_errors,
+                "suggested_argument_patch": {
+                    "action": "get",
+                    "format": format if format in ("json", "detailed") else "json",
+                    "fields": corrected_fields,
+                    "include_stacktrace": include_stacktrace or "stackTrace" in corrected_fields,
+                },
+                "hint": (
+                    "For a console read, apply this argument patch to the original call, "
+                    "preserving unity_instance, filters and pagination."
+                ),
             }
 
     if tail:

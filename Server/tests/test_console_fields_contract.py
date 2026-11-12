@@ -146,3 +146,26 @@ async def test_projection_does_not_modify_native_failure_metadata(console):
     assert {key: result[key] for key in failure} == failure
     assert result["observation"]["status"] == "unavailable"
     assert "observation" not in failure
+
+
+@pytest.mark.asyncio
+async def test_field_error_reports_all_constraints_with_a_read_only_patch(console):
+    module, lookup, send = console
+    response = await module.read_console(
+        SimpleNamespace(), fields=["message", "stackTrace", "message"], action="clear"
+    )
+
+    assert response["code"] == "invalid_console_fields"
+    assert len(response["errors"]) == 4
+    patch = response["suggested_argument_patch"]
+    assert patch == {
+        "action": "get",
+        "format": "json",
+        "fields": ["type", "message", "stackTrace"],
+        "include_stacktrace": True,
+    }
+    assert "unity_instance" in response["hint"]
+    lookup.assert_not_awaited()
+    send.assert_not_awaited()
+    corrected = await module.read_console(SimpleNamespace(), **patch)
+    assert corrected["success"] is True
