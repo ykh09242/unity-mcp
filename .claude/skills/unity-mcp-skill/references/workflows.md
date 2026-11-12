@@ -12,6 +12,28 @@ The server coordinates whole invocations for one instance, with local writer fai
 
 Pending jobs can retain barriers through native cleanup after an initial response, public terminal result or cancellation acknowledgement. Follow job identity and returned coordination diagnostics. Additive coordination evidence can accompany a result without changing that result's success semantics. `recovery_required` needs inspection and the returned recovery guidance; it is not permission to replay uncertain work. Never retry a whole batch or mutation because a contender was blocked: earlier children may have executed. Automatic coordination preserves authorization, consent and the bound target.
 
+## Shader Diagnostics
+
+Inspect the known `.shadergraph` path with `manage_shader(action="inspect_graph")` for graph structure. Use `diagnostics` on an imported `.shader` or `.shadergraph` asset for bounded cached compiler messages and up to 100 runtime pass identities. The returned stage and compiler-platform names describe this Editor's enums. Runtime pass availability follows the imported shader and current rendering configuration.
+
+```json
+{"tool":"manage_shader","params":{"action":"diagnostics","path":"Assets/Shaders/Effect.shadergraph"}}
+```
+
+When the task requires compilation, choose an exact runtime subshader/pass and the intended target. This action requires idle Edit Mode and run permission. It compiles one variant and may update Unity's compiler cache. It preserves shader assets and the active build target.
+
+```json
+{"tool":"manage_shader","params":{"action":"compile_variant","path":"Assets/Shaders/Effect.shadergraph","variant":{"shader_type":"Vertex","platform":"D3D","build_target":"StandaloneWindows64","subshader_index":0,"pass_index":0,"keywords":[]}}}
+```
+
+Check `data.outcome` and the bounded messages. `success` covers the selected variant. `failed` contains compiler diagnostics. `no_program` means Unity returned empty bytecode for that selection. Platform/target availability depends on the installed Editor. Several graphics APIs compile multiple stages through `Vertex`. Expand the selection only when required by the task. A timeout requires observation before another compile request. [Unity CompileVariant API](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/ShaderData.Pass.CompileVariant.html).
+
+## Console Fields And Compilation Follow-Up
+
+For compact Console output, provide `format="json"` or `"detailed"` and include both `type` and `message` in `fields`. Selecting `stackTrace` also requires `include_stacktrace=true`. A projection error returns all detected field constraints and `suggested_argument_patch`. For a read, merge that patch into the original arguments while retaining `unity_instance`, filters and pagination.
+
+Keep the original `compile_id` after `refresh_unity(compile="request")`. Follow `data.follow_up.next_call` when present. `get_compile_job` also returns a `follow_up` alongside the strict job data. Terminal failures direct inspection of compiler diagnostics, and unavailable tracking directs inspection of peer support or job identity. Evaluate compiler outcome, Editor readiness and source freshness independently. Retain confirmed results through a reconnect and continue the same job.
+
 ## Objects And Scenes
 
 <!-- default-core:start -->

@@ -186,5 +186,7 @@ def test_server_appends_guidance_to_actual_fastmcp_instructions(
     assert default.instructions == baseline
     # Clients may repeat initialize instructions beside every discovered tool.
     # Keep common guidance bounded; task-specific recipes belong in skill resources.
-    assert len(default.instructions.encode("utf-8")) <= 4000
+    assert len(default.instructions.encode("utf-8")) <= 3200
+    assert 'manage_tools(action="search"' in default.instructions
+    assert "get_compile_job" in default.instructions
     assert custom.instructions == append_custom_instructions(baseline, "Project guidance.")

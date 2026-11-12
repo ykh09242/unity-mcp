@@ -38,6 +38,12 @@ or authentication problem instead of repeatedly activating a group.
 
 Project custom tools may be advertised directly or through `execute_custom_tool`. If available, inspect `mcpforunity://custom-tools` and use the declared custom tool's actual name/parameter schema. Hosted mode supports the authenticated user's enabled project custom tools through this scoped catalog and dispatcher; it does not publish them as process-global MCP methods. Supply the selected `unity_instance` and preserve the catalog's schema, availability and permission checks. Do not dispatch hidden built-in handlers through this tool or a batch: doing so does not reproduce the built-in wrapper's argument mapping or client binding. A returned tool description or an example in this skill does not establish a callable client function.
 
+## Check Installed Skill Contents
+
+After a package update, open the Unity MCP Skill Installer, select **Installed package** and the agent's actual skill destination, then choose **Preview package skills**. The preview compares local file contents with the package-pinned source revision. It reports `not_installed`, `current`, `update_available` or `customized`, together with the compared and previously recorded commits. A copied folder can match even when its previous revision is unknown.
+
+Review the path groups before applying. Local modifications and additions appear as preserved files or conflicts. A recorded revision alone cannot establish content consistency after a partial sync. `current` describes the preview snapshot, and applying an older preview revalidates the local files. Agent clients may need a new chat or reload to use updated instructions. The server's advertised skill resource provides the bundled reference for its running version.
+
 ## Select The Project
 
 Read `mcpforunity://instances` when multiple projects or a stale selection make the target unclear. Prefer the returned full `Name@hash` identifier.

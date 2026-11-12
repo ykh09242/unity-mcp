@@ -27,6 +27,13 @@ Load only the reference needed for the request. The live tool schema wins over a
 
 ## Target And Act
 
+Choose the route from the task before writing custom code. For an unclear route, call `manage_tools(action="search", query="task words")`, inspect the highest relevant candidate and verify its live availability. Search accepts task phrases and exact tool names and reports readiness as unobserved.
+
+- Shader Graph structure and shader diagnostics use `manage_shader`. Compile one explicitly selected variant when compiler evidence is required.
+- Prefab previews use `capture_prefab`. UI/button interactions use `manage_input` and the existing UI framework's inspection tools.
+- Unknown project types and API members use `unity_reflect` before `execute_code`.
+- A pending compilation keeps its original `compile_id` and follows `get_compile_job`.
+
 1. Use the client's supported inventory to resolve missing capabilities or ambiguous Unity instances; verify the project before mutation.
 2. Inspect the specific object, asset or state needed for the task. Use returned IDs and exact asset paths rather than ambiguous names. Check readiness for operations affected by compilation, refresh or a running test job.
 3. Apply the requested change with the narrowest suitable tool. A missing optional package is a capability limit, not permission to install it. Enabling a tool group or executing code does not bypass authorization.

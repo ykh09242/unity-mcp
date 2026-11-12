@@ -528,28 +528,23 @@ def _build_instructions(project_scoped_tools: bool) -> str:
         if project_scoped_tools
         else "Custom tools appear as standard tools after Unity connects."
     )
-    return f"""Unity Editor tools. Check live schemas and minimal relevant state before acting.
+    return f"""Unity Editor tools. Use live schemas and the smallest relevant observation.
 
-Targeting and discovery:
-- Resolve the project through mcpforunity://instances. For ambiguous/multiple Editors, pass unity_instance=Name@hash on tools and _meta.unity_instance on resource reads. Modern sessionless clients require per-request targeting; only supported stateful clients can pin a default with set_active_instance.
-- Resources use exact listed URIs, never names converted to paths. Unity payloads are normally under data. In Codex the resource server key is unityMCP; use the inventory's actual key in other clients.
-- Use the client's exposed tool inventory. For missing optional tools, inspect manage_tools(action="list_groups").discovery before selection; it requires supported client scope/project binding. Static UNITY_MCP_TOOL_PROFILE=full is a configuration option, not permission to change setup. Editor toggles and consent still apply. {custom_tools_note}
+Target and discover
+- Resolve the project through mcpforunity://instances. Pass unity_instance=Name@hash on tools and _meta.unity_instance on resource reads when ambiguous or sessionless. Supported stateful clients can use set_active_instance.
+- Use exact listed resource URIs and the inventory's server key (unityMCP in Codex). Unity payloads usually sit under data.
+- Prefer a dedicated tool. When the route is unclear, use manage_tools(action="search", query="task words") then describe only the candidate. Search reports declarations, with readiness unobserved. For missing optional tools inspect list_groups.discovery before selection. Client scope, project binding, Editor toggles and consent apply. {custom_tools_note}
 
-State and execution:
-- Read mcpforunity://editor/state when lifecycle readiness matters. data.advice.ready_for_tools is readiness, not compilation success. Check the job's compilation outcome/source confirmation and Console diagnostics before using new types. A refresh acknowledgement alone proves neither.
-- Keep original job IDs across reconnects. Inspect uncertain targets and confirmed per-target receipts before retrying only unapplied work. Earlier batch/file edits may persist. Follow documented recovery_required handling. Order dependent edits/checks and inspect each batch result.
-- For tests in the current Play state, preserve the session/scenes/runtime objects: no restart, scene reload, temporary scripts or project refresh. Prefer dedicated tools; proactively use execute_code for authorized runtime work they cannot express when exposed, enabled and consented. Keep safety_checks=true, verify target/API and Play state, return bounded before/after values, and observe async effects without blocking waits. Verify input/UI paths with interaction tools. Never bypass consent or extend scope to persistent/external writes.
-- For temporary state/resources, track ownership and lifetime. Arrange exception-safe restoration/cleanup after their last use with lifecycle-appropriate APIs; preserve requested results and unrelated runtime state.
-- Read data.verification with the mutation receipt. status, complete, scope and findings describe check coverage. Retain confirmed edits and continue the original run/job for pending checks.
+Observe and execute
+- Read mcpforunity://editor/state when lifecycle readiness matters. Evaluate ready_for_tools, compiler outcome and source confirmation separately. Keep compile_id and follow get_compile_job after a pending/uncertain refresh. Inspect diagnostics before using new types.
+- Keep original job IDs across reconnects. Inspect uncertain targets and per-target receipts before retrying unapplied work. Earlier batch/file edits may persist. Follow recovery_required guidance, order dependent calls and inspect every batch result.
+- Preserve an existing Play session, its scenes and runtime objects. Use interaction tools for input/UI paths. For authorized runtime work beyond dedicated tools, proactively use exposed, enabled and consented execute_code with safety_checks=true. Verify target/API and Play state, return bounded before/after values and observe async effects without blocking. Keep persistent/external writes within the authorized scope.
+- Track temporary resources by owner and lifetime. Arrange exception-safe cleanup after last use, preserving requested results and unrelated state. Read data.verification status, complete, scope and findings with mutation receipts, then continue pending checks on the original run/job.
 
-Source edits:
-- Preserve local spacing: inspect both edit boundaries, account for line endings outside the replaced span, and check the diff for unintended blank lines. Keep intentional blank lines and string contents intact.
-- Native application of script_apply_edits(options.preview=true) requires same-host/workspace provenance, a complete candidate, fresh original hash and exact UTF-8 bytes. Use skill://unity-mcp-orchestrator/references/scripts.md for the handoff or direct Unity edits when unavailable. Verify raw bytes/get_sha before refresh, using complete diffs and real file events. After edits, use returned compilation/Console evidence and continue pending runs.
-- Verify installed Unity/package APIs and actual assets before writing code; use unity_reflect/unity_docs when available. Use exact returned targets, forward-slash asset paths and explicit save scope.
-
-Keep context bounded:
-- Read only relevant skill references via the advertised skill://unity-mcp-orchestrator/SKILL.md resource when available. Do not dump every tool schema or whole project catalog.
-- Start with summaries and stop paging once the target is found: hierarchy page_size=50; components include_properties=false/page_size=10; asset search page_size=25/generate_preview=false. Fetch detailed properties, stacks, test failures or images only as needed. Use bounded Console reads/job summaries; retain IDs/cursors for follow-up.
+Edit and verify
+- Verify installed Unity/package APIs with unity_reflect/unity_docs when available. Use exact returned targets, forward-slash asset paths and explicit save scope.
+- Preserve spacing, edit boundaries, line endings and string contents. Native application of script_apply_edits(options.preview=true) requires same-host/workspace provenance, a complete candidate, fresh original hash and exact UTF-8 bytes. Follow skill://unity-mcp-orchestrator/references/scripts.md or use direct Unity edits. Verify raw bytes/get_sha before refresh, with complete diffs and real file events.
+- Read relevant references through skill://unity-mcp-orchestrator/SKILL.md when advertised. Start with summaries and small metadata-only pages. Stop paging at the target. Request detailed values, stacks, failures or images as needed and retain IDs/cursors for follow-up.
 """
 
 
