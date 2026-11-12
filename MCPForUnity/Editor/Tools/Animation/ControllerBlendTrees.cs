@@ -76,6 +76,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     layerIndex,
                     blendParameter,
                     blendType = "Simple1D",
+                    verification = AnimationObservation.Object(blendTree, controllerPath, "m_Name", "m_BlendParameter", "m_Childs"),
                 },
             };
         }
@@ -165,6 +166,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     blendParameterX,
                     blendParameterY,
                     blendType = blendType.ToString(),
+                    verification = AnimationObservation.Object(blendTree, controllerPath, "m_Name", "m_BlendParameter", "m_BlendParameterY", "m_Childs"),
                 },
             };
         }
@@ -249,6 +251,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                         clipPath,
                         threshold,
                         childCount = blendTree.children.Length,
+                        verification = AnimationObservation.Object(blendTree, controllerPath, "m_Childs"),
                     },
                 };
             }
@@ -288,6 +291,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                         clipPath,
                         position = new { x = posX, y = posY },
                         childCount = blendTree.children.Length,
+                        verification = AnimationObservation.Object(blendTree, controllerPath, "m_Childs"),
                     },
                 };
             }

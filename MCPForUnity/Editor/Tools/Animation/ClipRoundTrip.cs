@@ -99,14 +99,18 @@ namespace MCPForUnity.Editor.Tools.Animation
                 EditorUtility.SetDirty(clip);
                 AssetDatabase.SaveAssetIfDirty(clip);
                 Undo.CollapseUndoOperations(group);
+                string finalRevision = AnimationAssetAccess.Revision(path, new UnityEngine.Object[] { clip });
+                JObject verification = AnimationObservation.Curve(clip, selected.Value, selected.Objects, path, finalRevision);
+                verification["binding_id"] = id;
                 return new SuccessResponse(
                     "Selected curve edited; unrelated curves and asset identity retained.",
                     new
                     {
                         binding_id = id,
                         clip_file_id = AnimationAssetAccess.Id(clip),
-                        revision = AnimationAssetAccess.Revision(path, new UnityEngine.Object[] { clip }),
+                        revision = finalRevision,
                         undo_group = group,
+                        verification,
                     }
                 );
             }

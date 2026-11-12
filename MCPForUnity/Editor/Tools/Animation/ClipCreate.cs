@@ -82,6 +82,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                         length,
                         frameRate = clip.frameRate,
                         isLooping = loop,
+                        verification = AnimationObservation.Object(clip, clipPath, "m_SampleRate", "m_AnimationClipSettings"),
                     },
                 };
             }
@@ -233,6 +234,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     propertyPath,
                     type = typeName,
                     keyframeCount = curve.length,
+                    verification = AnimationObservation.Curve(clip, binding, false, clipPath),
                 },
             };
         }
@@ -338,6 +340,11 @@ namespace MCPForUnity.Editor.Tools.Animation
                     type = typeName,
                     curves = new[] { property + suffixes[0], property + suffixes[1], property + suffixes[2] },
                     keyframeCount = keysArray.Count,
+                    verification = AnimationObservation.Group(
+                        AnimationObservation.Curve(clip, bindingX, false, clipPath),
+                        AnimationObservation.Curve(clip, bindingY, false, clipPath),
+                        AnimationObservation.Curve(clip, bindingZ, false, clipPath)
+                    ),
                 },
             };
         }
@@ -392,7 +399,12 @@ namespace MCPForUnity.Editor.Tools.Animation
                 if (!wasLegacy)
                     warning += " Warning: clip was converted to legacy and will not be usable in Mecanim/BlendTrees.";
 
-                return new { success = true, message = $"Assigned clip '{clip.name}' to Animation component on '{go.name}'.{warning}" };
+                return new
+                {
+                    success = true,
+                    message = $"Assigned clip '{clip.name}' to Animation component on '{go.name}'.{warning}",
+                    data = new { verification = AnimationObservation.Object(legacyAnim, clipPath, "m_Animation", "m_Animations", "m_PlayAutomatically") },
+                };
             }
 
             // Add Animation component if no Animator or Animation exists
@@ -411,7 +423,12 @@ namespace MCPForUnity.Editor.Tools.Animation
                 AssetDatabase.SaveAssetIfDirty(clip);
                 AssetDatabase.SaveAssetIfDirty(go);
                 var legacyWarning = !wasLegacy ? " Warning: clip was converted to legacy and will not be usable in Mecanim/BlendTrees." : "";
-                return new { success = true, message = $"Added Animation component and assigned clip '{clip.name}' to '{go.name}'.{legacyWarning}" };
+                return new
+                {
+                    success = true,
+                    message = $"Added Animation component and assigned clip '{clip.name}' to '{go.name}'.{legacyWarning}",
+                    data = new { verification = AnimationObservation.Object(legacyAnim, clipPath, "m_Animation", "m_Animations", "m_PlayAutomatically") },
+                };
             }
 
             // An Animator requires an explicit controller/state edit; no assignment was made.
@@ -613,6 +630,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     stringParameter = animEvent.stringParameter,
                     floatParameter = animEvent.floatParameter,
                     intParameter = animEvent.intParameter,
+                    verification = AnimationObservation.Events(clip, clipPath),
                 },
             };
         }
@@ -676,6 +694,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     clipPath,
                     removedCount,
                     remainingCount = events.Count,
+                    verification = AnimationObservation.Events(clip, clipPath),
                 },
             };
         }

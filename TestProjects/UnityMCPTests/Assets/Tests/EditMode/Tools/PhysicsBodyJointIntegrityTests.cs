@@ -17,6 +17,20 @@ namespace MCPForUnityTests.Editor.Tools
     {
         private readonly List<GameObject> objects = new List<GameObject>();
 
+        [Test]
+        public void BodyWrite_ObservesExactBodyAndBoundsComponentDiagnostics()
+        {
+            var go = Body();
+            for (int i = 0; i < 17; i++)
+                go.AddComponent<BoxCollider>();
+            JObject result = Send(go, "configure_rigidbody", new JObject { ["properties"] = new JObject { ["mass"] = 3 } });
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            JObject verification = (JObject)result["data"]["verification"];
+            Assert.AreEqual(go.GetComponent<Rigidbody>().GetInstanceIDCompat(), verification.Value<int>("target_instance_id"));
+            Assert.IsFalse(verification.Value<bool>("complete"));
+            Assert.AreEqual(3f, go.GetComponent<Rigidbody>().mass);
+        }
+
         private GameObject Body(bool twoD = false)
         {
             var go = new GameObject("PhysicsBodyJoint_" + Guid.NewGuid().ToString("N"));

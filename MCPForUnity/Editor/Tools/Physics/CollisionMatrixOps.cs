@@ -120,6 +120,18 @@ namespace MCPForUnity.Editor.Tools.Physics
                     layer_b = nameB,
                     collide,
                     dimension,
+                    verification = PostEditVerification.Summary(
+                        "exact_collision_layer_pair",
+                        new JObject
+                        {
+                            ["layer_a"] = layerA,
+                            ["layer_b"] = layerB,
+                            ["collide"] =
+                                dimension == "2d"
+                                    ? !Physics2D.GetIgnoreLayerCollision(layerA, layerB)
+                                    : !UnityEngine.Physics.GetIgnoreLayerCollision(layerA, layerB),
+                        }
+                    ),
                 },
             };
         }

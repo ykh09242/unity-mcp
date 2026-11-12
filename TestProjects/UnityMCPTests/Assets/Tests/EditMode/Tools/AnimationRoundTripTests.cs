@@ -64,6 +64,42 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Curves() => Data(Send("clip_get_curves", new JObject { ["page_size"] = 100 }, clipPath));
 
+        [Test]
+        public void NativeClipObservation_ReturnsCompleteRetainedFrameRate()
+        {
+            JObject report = AnimationObservation.Object(clip, clipPath, "m_SampleRate");
+            Assert.AreEqual("passed", report.Value<string>("status"), report.ToString());
+            Assert.IsTrue(report.Value<bool>("complete"));
+            Assert.AreEqual(clip.frameRate, report["observed_values"][0]["value"].Value<float>());
+        }
+
+        [Test]
+        public void ReplaceCurve_ReportsExactBindingAndRetainedRevision()
+        {
+            JObject selected = Binding("m_LocalPosition.x");
+            JObject before = Curves();
+            JObject result = Data(
+                Replace(
+                    selected.Value<string>("binding_id"),
+                    before.Value<string>("revision"),
+                    new JArray(new JObject { ["time"] = 0, ["value"] = 7 }, new JObject { ["time"] = 1, ["value"] = 8 })
+                )
+            );
+            Assert.IsNotNull(result["verification"], result.ToString());
+            Assert.AreEqual(selected.Value<string>("binding_id"), result["verification"].Value<string>("binding_id"));
+            Assert.AreEqual(result.Value<string>("revision"), result["verification"].Value<string>("revision"));
+            JObject verification = (JObject)result["verification"];
+            if (verification.Value<bool>("complete"))
+            {
+                Assert.IsTrue(verification["observed_values"].Value<bool>("exists"));
+                Assert.AreEqual(2, verification["observed_values"].Value<int>("key_count"));
+                Assert.AreEqual(7f, verification["observed_values"]["keys"][0]["value"].Value<float>());
+                Assert.AreEqual(8f, verification["observed_values"]["keys"][1]["value"].Value<float>());
+            }
+            else
+                Assert.AreNotEqual("passed", verification.Value<string>("status"), verification.ToString());
+        }
+
         private JObject Binding(string property) => (JObject)((JArray)Curves()["curves"]).Single(row => row.Value<string>("property") == property);
 
         private JObject Read(string id, int offset = 0, int pageSize = 100) =>
@@ -533,6 +569,37 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Graph(AnimatorController controller) =>
             Data(Send("controller_get_graph", new JObject { ["page_size"] = 100 }, controllerPath: AssetDatabase.GetAssetPath(controller)));
+
+        [Test]
+        public void NativeGraphAssets_ReturnCompleteRetainedFields()
+        {
+            AnimatorController controller = Controller(out AnimatorState state, out _, out _, out AnimatorStateTransition transition, out _);
+            string path = AssetDatabase.GetAssetPath(controller);
+            var tree = new BlendTree { blendParameter = "Speed" };
+            AssetDatabase.AddObjectToAsset(tree, controller);
+            AssetDatabase.SaveAssetIfDirty(controller);
+            foreach (
+                var request in new[]
+                {
+                    (asset: (UnityEngine.Object)controller, field: "m_AnimatorParameters"),
+                    (asset: (UnityEngine.Object)state, field: "m_Speed"),
+                    (asset: (UnityEngine.Object)transition, field: "m_TransitionDuration"),
+                    (asset: (UnityEngine.Object)tree, field: "m_BlendParameter"),
+                }
+            )
+            {
+                JObject report = AnimationObservation.Object(request.asset, path, request.field);
+                Assert.AreEqual("passed", report.Value<string>("status"), report.ToString());
+                Assert.IsTrue(report.Value<bool>("complete"));
+                Assert.AreEqual("available", report["observed_values"][0].Value<string>("value_status"));
+            }
+            Assert.AreEqual(state.speed, AnimationObservation.Object(state, path, "m_Speed")["observed_values"][0]["value"].Value<float>());
+            Assert.AreEqual(
+                transition.duration,
+                AnimationObservation.Object(transition, path, "m_TransitionDuration")["observed_values"][0]["value"].Value<float>()
+            );
+            Assert.AreEqual("Speed", AnimationObservation.Object(tree, path, "m_BlendParameter")["observed_values"][0]["value"].Value<string>());
+        }
 
         [Test]
         public void ControllerConcatenatedPagesMatchCompleteNestedGraph()

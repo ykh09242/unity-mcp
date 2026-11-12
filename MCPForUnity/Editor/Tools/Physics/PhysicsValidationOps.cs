@@ -3,13 +3,145 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
+using UnityEditor;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.Physics
 {
     internal static class PhysicsValidationOps
     {
+        internal static JObject Observe(Component target, JObject requested = null)
+        {
+            try
+            {
+                JObject fields = PostEditVerification.Properties(target, requested);
+                if (target is Joint || target is Joint2D)
+                {
+                    JObject requestedFields = fields;
+                    using var serialized = new SerializedObject(target);
+                    var paths = new List<string>();
+                    foreach (
+                        string path in new[]
+                        {
+                            "m_ConnectedBody",
+                            "m_Anchor",
+                            "m_ConnectedAnchor",
+                            "m_BreakForce",
+                            "m_BreakTorque",
+                            "m_EnableCollision",
+                            "m_Motor",
+                            "m_Limits",
+                            "m_Spring",
+                            "m_XDrive",
+                            "m_YDrive",
+                            "m_ZDrive",
+                        }
+                    )
+                        if (serialized.FindProperty(path) != null)
+                            paths.Add(path);
+                    fields = PostEditVerification.Readback(target, paths);
+                    fields["complete"] = (bool)fields["complete"] && (bool)requestedFields["complete"];
+                    foreach (JToken finding in (JArray)requestedFields["findings"])
+                        if (((JArray)fields["findings"]).Count < PostEditVerification.MaxFindings)
+                            ((JArray)fields["findings"]).Add(finding.DeepClone());
+                    fields["requested_fields"] = requestedFields;
+                }
+                var findings = new JArray();
+                var components = PostEditVerification.Components(target.gameObject, out bool complete);
+                bool has3D = false,
+                    has2D = false;
+                foreach (Component component in components)
+                {
+                    if (component == null)
+                        findings.Add(new JObject { ["code"] = "missing_component" });
+                    has3D |= component is Rigidbody || component is Collider;
+                    has2D |= component is Rigidbody2D || component is Collider2D;
+                    if (component is MeshCollider mesh && !mesh.convex)
+                    {
+                        var body = target.gameObject.GetComponent<Rigidbody>();
+                        if (body != null && !body.isKinematic)
+                            findings.Add(new JObject { ["code"] = "non_convex_dynamic_mesh", ["component_id"] = mesh.GetInstanceIDCompat() });
+                        if (mesh.isTrigger)
+                            findings.Add(new JObject { ["code"] = "non_convex_trigger", ["component_id"] = mesh.GetInstanceIDCompat() });
+                    }
+                }
+                if (has3D && has2D)
+                    findings.Add(new JObject { ["code"] = "mixed_2d_3d_components" });
+                foreach (JToken finding in (JArray)fields["findings"])
+                    if (findings.Count < PostEditVerification.MaxFindings)
+                        findings.Add(finding.DeepClone());
+                var report = PostEditVerification.Summary(
+                    "exact_physics_target; max16_component_slots; no_simulation",
+                    fields["observed_values"],
+                    findings,
+                    complete && (bool)fields["complete"]
+                );
+                report["target_instance_id"] = target.GetInstanceIDCompat();
+                report["game_object_instance_id"] = target.gameObject.GetInstanceIDCompat();
+                report["retained_fields"] = fields;
+                return report;
+            }
+            catch
+            {
+                return PostEditVerification.Unavailable("exact_physics_target", "observation_unavailable");
+            }
+        }
+
+        internal static JObject ObserveAsset(UnityEngine.Object target, IEnumerable<string> paths)
+        {
+            try
+            {
+                var available = new JObject();
+#if UNITY_6000_0_OR_NEWER
+                if (target is PhysicsMaterial material)
+#else
+                if (target is PhysicMaterial material)
+#endif
+                {
+                    available["dynamicFriction"] = material.dynamicFriction;
+                    available["staticFriction"] = material.staticFriction;
+                    available["bounciness"] = material.bounciness;
+                    available["frictionCombine"] = material.frictionCombine.ToString();
+                    available["bounceCombine"] = material.bounceCombine.ToString();
+                }
+                else if (target is PhysicsMaterial2D material2D)
+                {
+                    available["friction"] = material2D.friction;
+                    available["bounciness"] = material2D.bounciness;
+                }
+                else
+                    return PostEditVerification.Unavailable("exact_physics_material", "unsupported_material_type");
+                var values = new JObject();
+                bool complete = true;
+                int count = 0;
+                foreach (string path in paths)
+                {
+                    if (++count > 64)
+                    {
+                        complete = false;
+                        break;
+                    }
+                    if (available.TryGetValue(path, out JToken value))
+                    {
+                        values[path] = value.DeepClone();
+                        if (value.Type == JTokenType.Float && (double.IsNaN(value.Value<double>()) || double.IsInfinity(value.Value<double>())))
+                            complete = false;
+                    }
+                    else
+                        complete = false;
+                }
+                var report = PostEditVerification.Summary("exact_physics_material", values, complete: complete);
+                report["target_instance_id"] = target.GetInstanceIDCompat();
+                return report;
+            }
+            catch
+            {
+                return PostEditVerification.Unavailable("exact_physics_asset", "observation_unavailable");
+            }
+        }
+
         private const string Cat_NonConvexMesh = "non_convex_mesh";
         private const string Cat_MissingRigidbody = "missing_rigidbody";
         private const string Cat_NonUniformScale = "non_uniform_scale";

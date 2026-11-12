@@ -366,6 +366,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     target = go.name,
                     dimension = "3d",
                     changed,
+                    verification = PhysicsValidationOps.Observe(rb, properties),
                 },
             };
         }
@@ -506,6 +507,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     target = go.name,
                     dimension = "2d",
                     changed,
+                    verification = PhysicsValidationOps.Observe(rb2d, properties),
                 },
             };
         }

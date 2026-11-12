@@ -18,6 +18,48 @@ namespace MCPForUnityTests.Editor.Tools
     [Parallelizable(ParallelScope.None)]
     public class ProBuilderUtilityIntegrityTests
     {
+        [Test]
+        public void CenterPivot_ReturnsBoundedExactMeshObservation()
+        {
+            JObject result = JObject.FromObject(
+                ManageProBuilder.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "center_pivot",
+                        ["target"] = mesh.gameObject.GetInstanceIDCompat().ToString(),
+                        ["searchMethod"] = "by_id",
+                    }
+                )
+            );
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsNotNull(result["data"]?["verification"], result.ToString());
+            Assert.That(result["data"]["verification"].ToString(), Does.Contain(mesh.GetInstanceIDCompat().ToString()));
+        }
+
+        [Test]
+        public void MeshObservation_RefusesOversizedGeometryBeforeTriangleWalk()
+        {
+            using var serialized = new SerializedObject(mesh);
+            var positions = serialized.FindProperty("m_Positions");
+            Assert.IsNotNull(positions);
+            positions.arraySize = 8193;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+            JObject report = ProBuilderMeshUtils.Observe(mesh);
+            Assert.IsFalse(report.Value<bool>("complete"));
+            Assert.AreEqual(0, report["observed_values"].Value<int>("index_entries_checked"));
+        }
+
+        [Test]
+        public void MeshObservation_ReportsInvalidIndicesWithoutDereferencingThem()
+        {
+            var faces = (IList)mesh.GetType().GetProperty("faces").GetValue(mesh);
+            var indices = (int[])faces[0].GetType().GetField("m_Indexes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(faces[0]);
+            indices[0] = 100000; // Corrupt the owned fixture without invoking ProBuilder OnValidate.
+            JObject report = ProBuilderMeshUtils.Observe(mesh);
+            Assert.AreEqual("issues_found", report.Value<string>("status"));
+            Assert.That(report["findings"].ToString(), Does.Contain("invalid_triangle_indices"));
+        }
+
 #if UNITY_6000_7_OR_NEWER
         private const MaterialGlobalIlluminationFlags BakedEmission = MaterialGlobalIlluminationFlags.BakedEmission;
         private const MaterialGlobalIlluminationFlags RealtimeEmission = MaterialGlobalIlluminationFlags.RealtimeIndirectEmission;

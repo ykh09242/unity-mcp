@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -10,6 +11,96 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 {
     internal static class ProBuilderMeshUtils
     {
+        internal static JObject Observe(Component mesh)
+        {
+            try
+            {
+                var values = new JObject
+                {
+                    ["instance_id"] = mesh.GetInstanceIDCompat(),
+                    ["vertex_count"] = ManageProBuilder.GetVertexCount(mesh),
+                    ["face_count"] = ManageProBuilder.GetFaceCount(mesh),
+                };
+                using var serialized = new SerializedObject(mesh);
+                using var positions = serialized.FindProperty("m_Positions");
+                using var faces = serialized.FindProperty("m_Faces");
+                bool complete = positions != null && positions.isArray && faces != null && faces.isArray;
+                var findings = new JArray();
+                int invalid = 0,
+                    degenerate = 0,
+                    nonfinite = 0,
+                    work = 0;
+                var used = new HashSet<int>();
+                if (complete && (positions.arraySize > 8192 || faces.arraySize > 512))
+                    complete = false;
+                if (complete)
+                {
+                    for (int i = 0; i < positions.arraySize; i++)
+                    {
+                        Vector3 value = positions.GetArrayElementAtIndex(i).vector3Value;
+                        if (!Finite(value))
+                            nonfinite++;
+                    }
+                    for (int face = 0; face < faces.arraySize; face++)
+                    {
+                        using var entry = faces.GetArrayElementAtIndex(face);
+                        using var indices = entry.FindPropertyRelative("m_Indexes");
+                        if (indices == null || !indices.isArray || indices.arraySize > 16384 - work)
+                        {
+                            complete = false;
+                            break;
+                        }
+                        work += indices.arraySize;
+                        if (indices.arraySize % 3 != 0)
+                            invalid++;
+                        for (int index = 0; index + 2 < indices.arraySize; index += 3)
+                        {
+                            int a = indices.GetArrayElementAtIndex(index).intValue,
+                                b = indices.GetArrayElementAtIndex(index + 1).intValue,
+                                c = indices.GetArrayElementAtIndex(index + 2).intValue;
+                            if (a < 0 || b < 0 || c < 0 || a >= positions.arraySize || b >= positions.arraySize || c >= positions.arraySize)
+                            {
+                                invalid++;
+                                continue;
+                            }
+                            used.Add(a);
+                            used.Add(b);
+                            used.Add(c);
+                            Vector3 first = positions.GetArrayElementAtIndex(a).vector3Value,
+                                second = positions.GetArrayElementAtIndex(b).vector3Value,
+                                third = positions.GetArrayElementAtIndex(c).vector3Value;
+                            if (Vector3.Cross(second - first, third - first).sqrMagnitude < 4e-12f)
+                                degenerate++;
+                        }
+                    }
+                    if (complete && used.Count < positions.arraySize)
+                        findings.Add(new JObject { ["code"] = "unused_vertices", ["count"] = positions.arraySize - used.Count });
+                }
+                if (invalid > 0)
+                    findings.Add(new JObject { ["code"] = "invalid_triangle_indices", ["count"] = invalid });
+                if (degenerate > 0)
+                    findings.Add(new JObject { ["code"] = "degenerate_triangles", ["count"] = degenerate });
+                if (nonfinite > 0)
+                    findings.Add(new JObject { ["code"] = "nonfinite_vertices", ["count"] = nonfinite });
+                values["index_entries_checked"] = work;
+                return PostEditVerification.Summary("exact_probuilder_mesh; max8192_vertices_512_faces_16384_indices", values, findings, complete);
+            }
+            catch
+            {
+                return PostEditVerification.Unavailable("exact_probuilder_mesh", "observation_unavailable");
+            }
+        }
+
+        private static bool Finite(Vector3 value) =>
+            !(
+                float.IsNaN(value.x)
+                || float.IsNaN(value.y)
+                || float.IsNaN(value.z)
+                || float.IsInfinity(value.x)
+                || float.IsInfinity(value.y)
+                || float.IsInfinity(value.z)
+            );
+
         internal static object CenterPivot(JObject @params)
         {
             var pbMesh = ManageProBuilder.RequireProBuilderMesh(@params);

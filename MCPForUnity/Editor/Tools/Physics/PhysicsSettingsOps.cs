@@ -261,7 +261,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Updated {changed.Count} physics 3D setting(s).",
-                data = new { changed },
+                data = new { changed, verification = ObserveSettings("3d") },
             };
         }
 
@@ -275,6 +275,19 @@ namespace MCPForUnity.Editor.Tools.Physics
             "callbacksondisable",
             "autosynctransforms",
         };
+
+        private static JObject ObserveSettings(string dimension)
+        {
+            try
+            {
+                var current = JObject.FromObject(GetSettings(new JObject { ["dimension"] = dimension }));
+                return PostEditVerification.Summary("physics_settings_" + dimension, current["data"]);
+            }
+            catch
+            {
+                return PostEditVerification.Unavailable("physics_settings_" + dimension, "observation_unavailable");
+            }
+        }
 
         private static object SetSettings2D(JObject settings)
         {
@@ -370,7 +383,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Updated {changed.Count} physics 2D setting(s).",
-                data = new { changed },
+                data = new { changed, verification = ObserveSettings("2d") },
             };
         }
 

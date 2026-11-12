@@ -43,6 +43,7 @@ ALL_ACTIONS: list[str] = list(get_args(PhysicsAction))
     group="legacy",
     description=(
         "Manage physics settings, collision matrix, materials, joints, queries, and validation.\n\n"
+        "Authoring writes include exact-target retained state and static findings capped at 16 component slots; no simulation or implicit pair diagnosis.\n"
         "SETTINGS: ping, get_settings, set_settings\n"
         "COLLISION MATRIX: get_collision_matrix, set_collision_matrix\n"
         "MATERIALS: create_physics_material, configure_physics_material, assign_physics_material\n"

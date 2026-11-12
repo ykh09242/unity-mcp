@@ -137,6 +137,7 @@ def _round_trip_error(action: str, properties: dict[str, JsonValue] | None) -> s
     group="animation",
     description=(
         "Manage Unity animation: Animator control and AnimationClip creation. "
+        "Asset edits include bounded changed-binding/node observations and existing revision semantics; unsupported key storage remains incomplete. No playback/evaluation is added. "
         "Action prefixes: animator_* (play, crossfade, set parameters, get info), "
         "controller_* (create AnimatorControllers, add states/transitions/parameters), "
         "clip_* (create clips, add keyframe curves, assign to GameObjects). "

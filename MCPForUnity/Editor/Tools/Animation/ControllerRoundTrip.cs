@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -47,6 +48,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
             string name = delete ? "Delete Animator Graph Object" : "Modify Animator Graph Object";
+            int originalInstanceId = node.Asset.GetInstanceIDCompat();
             Undo.SetCurrentGroupName(name);
             try
             {
@@ -81,6 +83,25 @@ namespace MCPForUnity.Editor.Tools.Animation
                         id = delete ? request[stateAction ? "stateId" : "transitionId"].ToString() : node.Id,
                         kind = node.Kind,
                         undo_group = group,
+                        verification = delete
+                            ? PostEditVerification.Removal(node.Asset, originalInstanceId)
+                            : AnimationObservation.Object(
+                                node.Asset,
+                                graph.Path,
+                                stateAction
+                                    ? new[] { "m_Name", "m_Speed", "m_Motion" }
+                                    : new[]
+                                    {
+                                        "m_Name",
+                                        "m_Conditions",
+                                        "m_DstState",
+                                        "m_DstStateMachine",
+                                        "m_TransitionDuration",
+                                        "m_ExitTime",
+                                        "m_Mute",
+                                        "m_Solo",
+                                    }
+                            ),
                     }
                 );
             }

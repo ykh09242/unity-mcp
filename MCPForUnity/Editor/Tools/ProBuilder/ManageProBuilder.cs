@@ -176,7 +176,60 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 Debug.Log("[MCP] Patched ProBuilderDefault material: zeroed emission and set GI flags to EmissiveIsBlack.");
         }
 
+        [ThreadStatic]
+        private static List<Component> observationTargets;
+
+        [ThreadStatic]
+        private static bool observationTruncated;
+
         public static object HandleCommand(JObject @params)
+        {
+            var previous = observationTargets;
+            bool previousTruncated = observationTruncated;
+            string action = @params?["action"]?.ToString()?.ToLowerInvariant();
+            observationTargets = new[] { "ping", "get_mesh_info", "get_topology", "select_faces", "validate_mesh" }.Contains(action)
+                ? null
+                : new List<Component>();
+            observationTruncated = false;
+            try
+            {
+                object result = HandleCommandCore(@params);
+                if (observationTargets == null || observationTargets.Count == 0)
+                    return result;
+                var reports = new JArray();
+                var findings = new JArray();
+                bool complete = !observationTruncated;
+                foreach (Component target in observationTargets)
+                {
+                    JObject report = ProBuilderMeshUtils.Observe(target);
+                    reports.Add(report);
+                    complete &= (bool)report["complete"];
+                    foreach (JToken finding in (JArray)report["findings"])
+                        if (findings.Count < PostEditVerification.MaxFindings)
+                            findings.Add(finding.DeepClone());
+                }
+                return PostEditVerification.Attach(result, PostEditVerification.Summary("exact_changed_probuilder_meshes; max16", reports, findings, complete));
+            }
+            finally
+            {
+                observationTargets = previous;
+                observationTruncated = previousTruncated;
+            }
+        }
+
+        private static void CaptureObservation(Component target)
+        {
+            if (observationTargets == null || observationTargets.Any(value => ReferenceEquals(value, target)))
+                return;
+            if (observationTargets.Count == 16)
+            {
+                observationTruncated = true;
+                return;
+            }
+            observationTargets.Add(target);
+        }
+
+        private static object HandleCommandCore(JObject @params)
         {
             var p = new ToolParams(@params);
             string action = p.Get("action");
@@ -265,11 +318,13 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             var pbMesh = GetProBuilderMesh(go);
             if (pbMesh == null)
                 throw new Exception($"GameObject '{go.name}' does not have a ProBuilderMesh component.");
+            CaptureObservation(pbMesh);
             return pbMesh;
         }
 
         internal static void RefreshMesh(Component pbMesh)
         {
+            CaptureObservation(pbMesh);
             // ToMesh and Refresh have optional parameters (MeshTopology, RefreshMask) —
             // Type.EmptyTypes won't find them. Use name-only lookup with default args.
             var toMeshMethod = _proBuilderMeshType.GetMethod("ToMesh", Type.EmptyTypes)

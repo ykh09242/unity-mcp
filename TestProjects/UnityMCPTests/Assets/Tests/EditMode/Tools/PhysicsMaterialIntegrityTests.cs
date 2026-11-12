@@ -67,6 +67,19 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static JObject Call(JObject parameters) => JObject.FromObject(ManagePhysics.HandleCommand(parameters));
 
+        [TestCase("3d", "dynamicFriction", 0.6f)]
+        [TestCase("2d", "friction", 0.4f)]
+        public void NativeMaterialObservation_ReturnsCompleteRetainedValue(string dimension, string property, float expected)
+        {
+            UnityEngine.Object material = CreateMaterial(dimension);
+            if (material is PhysicsMaterial2D twoD)
+                twoD.friction = expected;
+            JObject report = PhysicsValidationOps.ObserveAsset(material, new[] { property });
+            Assert.AreEqual("passed", report.Value<string>("status"), report.ToString());
+            Assert.IsTrue(report.Value<bool>("complete"));
+            Assert.AreEqual(expected, report["observed_values"][property].Value<float>());
+        }
+
         private UnityEngine.Object CreateMaterial(string dimension)
         {
             EnsureOwnedRoot();

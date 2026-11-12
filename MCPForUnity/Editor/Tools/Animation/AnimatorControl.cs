@@ -267,6 +267,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             {
                 success = true,
                 message = $"Set {paramType} '{paramName}' = {valueDescription} (default value, Edit mode)" + AnimatorResolver.ResolvedSuffix(go, animator),
+                data = new { verification = AnimationObservation.Object(controller, AssetDatabase.GetAssetPath(controller), "m_AnimatorParameters") },
             };
         }
 

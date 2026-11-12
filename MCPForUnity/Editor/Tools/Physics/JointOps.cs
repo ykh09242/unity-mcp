@@ -146,6 +146,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     jointType = jointComponentType.Name,
                     instanceID = joint.GetInstanceIDCompat(),
                     gameObjectInstanceID = go.GetInstanceIDCompat(),
+                    verification = PhysicsValidationOps.Observe(joint, p.GetRaw("properties") as JObject),
                 },
             };
         }
@@ -333,6 +334,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     jointType = joint.GetType().Name,
                     configured,
                     instanceID = joint.GetInstanceIDCompat(),
+                    verification = PhysicsValidationOps.Observe(joint, properties),
                 },
             };
         }
@@ -405,8 +407,10 @@ namespace MCPForUnity.Editor.Tools.Physics
             }
 
             int removedCount = 0;
+            var verification = new PostEditVerification.Batch();
             foreach (var joint in jointsToRemove)
             {
+                verification.Capture(joint, removed: true);
                 Undo.DestroyObjectImmediate(joint);
                 removedCount++;
             }
@@ -417,7 +421,12 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Removed {removedCount} joint(s) from '{go.name}'.",
-                data = new { removedCount, gameObjectInstanceID = go.GetInstanceIDCompat() },
+                data = new
+                {
+                    removedCount,
+                    gameObjectInstanceID = go.GetInstanceIDCompat(),
+                    verification = verification.Observe(),
+                },
             };
         }
 

@@ -62,6 +62,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     layerIndex = layers.Length - 1,
                     weight,
                     blendingMode = blendingMode.ToString(),
+                    verification = AnimationObservation.Object(controller, controllerPath, "m_AnimatorLayers"),
                 },
             };
         }
@@ -134,6 +135,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     controllerPath,
                     layerName,
                     layerIndex = layerIndex.Value,
+                    verification = AnimationObservation.Object(controller, controllerPath, "m_AnimatorLayers"),
                 },
             };
         }
@@ -206,6 +208,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     layerName,
                     layerIndex = layerIndex.Value,
                     weight,
+                    verification = AnimationObservation.Object(controller, controllerPath, "m_AnimatorLayers"),
                 },
             };
         }

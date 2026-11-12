@@ -146,6 +146,7 @@ def _topology_admission(action: str, properties: Any) -> str | None:
     group="probuilder",
     description=(
         "Manage ProBuilder meshes for in-editor 3D modeling. Requires com.unity.probuilder package.\n\n"
+        "Geometry edits include bounded post-edit health observations (8192 vertices, 512 faces, 16384 index entries per mesh); larger or unsupported data remains incomplete, with no automatic repair.\n"
         "SHAPE CREATION:\n"
         "- create_shape: Create a ProBuilder primitive (shape_type: Cube/Cylinder/Sphere/Plane/Cone/"
         "Torus/Pipe/Arch/Stair/CurvedStair/Door/Prism). Shape-specific params in properties "

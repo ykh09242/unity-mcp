@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -119,6 +120,10 @@ namespace MCPForUnity.Editor.Tools.Physics
                             gameObject = go.name,
                             collider = collider3D.GetType().Name,
                             materialPath,
+                            verification = PhysicsValidationOps.Observe(
+                                collider3D,
+                                new JObject { ["m_Material"] = new JObject { ["instanceID"] = mat3D.GetInstanceIDCompat() } }
+                            ),
                         },
                     };
                 }
@@ -159,6 +164,10 @@ namespace MCPForUnity.Editor.Tools.Physics
                             gameObject = go.name,
                             collider = collider2D.GetType().Name,
                             materialPath,
+                            verification = PhysicsValidationOps.Observe(
+                                collider2D,
+                                new JObject { ["m_Material"] = new JObject { ["instanceID"] = mat2D.GetInstanceIDCompat() } }
+                            ),
                         },
                     };
                 }
@@ -256,6 +265,10 @@ namespace MCPForUnity.Editor.Tools.Physics
                         dimension = "3d",
                         dynamicFriction,
                         staticFriction,
+                        verification = PhysicsValidationOps.ObserveAsset(
+                            mat,
+                            new[] { "dynamicFriction", "staticFriction", "bounciness", "frictionCombine", "bounceCombine" }
+                        ),
                         bounciness,
                         frictionCombine = mat.frictionCombine.ToString(),
                         bounceCombine = mat.bounceCombine.ToString(),
@@ -310,6 +323,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         dimension = "2d",
                         friction,
                         bounciness,
+                        verification = PhysicsValidationOps.ObserveAsset(mat, new[] { "friction", "bounciness" }),
                     },
                 };
             }
@@ -422,7 +436,12 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Updated {changed.Count} property(ies) on 3D physics material at '{path}'.",
-                data = new { path, changed },
+                data = new
+                {
+                    path,
+                    changed,
+                    verification = PhysicsValidationOps.ObserveAsset(mat, changed),
+                },
             };
         }
 
@@ -478,7 +497,12 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Updated {changed.Count} property(ies) on 2D physics material at '{path}'.",
-                data = new { path, changed },
+                data = new
+                {
+                    path,
+                    changed,
+                    verification = PhysicsValidationOps.ObserveAsset(mat, changed),
+                },
             };
         }
 

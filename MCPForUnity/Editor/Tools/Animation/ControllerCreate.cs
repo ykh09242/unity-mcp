@@ -134,6 +134,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     hasMotion = state.motion != null,
                     speed = state.speed,
                     isDefault,
+                    verification = AnimationObservation.Object(state, AssetDatabase.GetAssetPath(controller), "m_Name", "m_Speed", "m_Motion"),
                 },
             };
         }
@@ -287,6 +288,14 @@ namespace MCPForUnity.Editor.Tools.Animation
                     hasExitTime,
                     duration,
                     conditionCount,
+                    verification = AnimationObservation.Object(
+                        transition,
+                        AssetDatabase.GetAssetPath(controller),
+                        "m_Conditions",
+                        "m_DstState",
+                        "m_TransitionDuration",
+                        "m_HasExitTime"
+                    ),
                 },
             };
         }
@@ -385,6 +394,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     parameterName = paramName,
                     parameterType = typeStr,
                     totalParameters = controller.parameters.Length,
+                    verification = AnimationObservation.Object(controller, AssetDatabase.GetAssetPath(controller), "m_AnimatorParameters"),
                 },
             };
         }
@@ -535,6 +545,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     gameObject = go.name,
                     controllerName = controller.name,
                     controllerPath = AssetDatabase.GetAssetPath(controller),
+                    verification = AnimationObservation.Object(animator, AssetDatabase.GetAssetPath(controller), "m_Controller"),
                 },
             };
         }
