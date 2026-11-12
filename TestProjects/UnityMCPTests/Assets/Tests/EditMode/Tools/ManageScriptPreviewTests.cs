@@ -106,12 +106,36 @@ namespace MCPForUnityTests.Editor.Tools
             AssertUnchanged(before, mtime);
             AssertProposal(proposal["data"], Original, false, 1);
             string candidate = proposal["data"].Value<string>("new_contents");
+            request["precondition_sha256"] = proposal["data"]["original_sha256"].DeepClone();
             request["options"]["preview"] = false;
             var applied = Send(request);
             Assert.IsTrue(applied.Value<bool>("success"), applied.ToString());
             Assert.AreEqual(candidate, File.ReadAllText(_path));
             CollectionAssert.AreEqual(new UTF8Encoding(false).GetBytes(candidate), File.ReadAllBytes(_path));
             Assert.AreEqual(proposal["data"].Value<string>("candidate_sha256"), applied["data"].Value<string>("sha256"));
+        }
+
+        [TestCase("edit")]
+        [TestCase("preview_edit")]
+        public void StructuredPrecondition_RefusesSourceChangedAfterPreparation(string action)
+        {
+            var request = Structural("replace_class");
+            var proposal = Send(request);
+            Assert.IsTrue(proposal.Value<bool>("success"), proposal.ToString());
+            request["precondition_sha256"] = proposal["data"]["original_sha256"].DeepClone();
+            request["action"] = action;
+            request["options"]["preview"] = false;
+            string competing = "// external writer\r\n" + Original;
+            Write(competing);
+            var before = File.ReadAllBytes(_path);
+            var mtime = File.GetLastWriteTimeUtc(_path);
+
+            var response = Send(request);
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("stale_file", response.Value<string>("error"));
+            AssertUnchanged(before, mtime);
+            Assert.AreEqual(competing, File.ReadAllText(_path));
         }
 
         [TestCase(false)]

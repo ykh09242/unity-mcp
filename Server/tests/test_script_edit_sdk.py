@@ -201,7 +201,7 @@ def test_modern_sdk_script_literal_formatting_and_preview():
                 })
                 assert public_text_preview.structured_content["success"] is True
                 assert len(sent) == 1
-                assert preview_actions == ["preview_text_edits", "preview_edit", "preview_text_edits"]
+                assert preview_actions == ["preview_text_edits", "preview_text_edits", "preview_edit", "preview_text_edits"]
                 structured = await client.call_tool("script_apply_edits", {
                     "name": "Foo", "path": "Assets", "edits": [{"op": "insert_method", "position": "before", "beforeMethodName": "Existing", "replacement": snippet}],
                 })

@@ -32,7 +32,7 @@ from services.tools.manage_script import (
     _validate_script_name,
     _validate_text_edit_shape,
 )
-from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
+from services.tools.refresh_unity import prepare_edit_recovery, send_mutation, verify_edit_by_sha
 from services.tools.utils import coerce_int, parse_json_payload
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.plugin_hub import capture_http_request_budget
@@ -1437,6 +1437,11 @@ async def script_apply_edits(
 
     unity_instance = await get_unity_instance_from_context(ctx)
 
+    async def _preview_for_recovery(preview_params):
+        return await send_with_unity_instance(
+            async_send_command_with_retry, unity_instance, "manage_script", preview_params
+        )
+
     if mixed:
         # Validate shape and .NET regex syntax before the text phase writes.
         # Matching must wait until that phase has created any dependent anchors.
@@ -1483,19 +1488,6 @@ async def script_apply_edits(
                 if prepared.get("success")
                 else prepared
             )
-        # Get pre-edit SHA for disconnect verification
-        pre_sha = None
-        try:
-            sha_resp = await send_with_unity_instance(
-                async_send_command_with_retry,
-                unity_instance,
-                "manage_script",
-                {"action": "get_sha", "name": name, "path": path},
-            )
-            if isinstance(sha_resp, dict) and sha_resp.get("success"):
-                pre_sha = (sha_resp.get("data") or {}).get("sha256")
-        except Exception:
-            pass
         opts2 = dict(options or {})
         # For structured edits, prefer immediate refresh to avoid missed reloads when Editor is unfocused
         opts2.setdefault("refresh", "immediate")
@@ -1508,10 +1500,21 @@ async def script_apply_edits(
             "edits": edits,
             "options": opts2,
         }
+        pre_sha, expected_sha = await prepare_edit_recovery(
+            unity_instance, params_struct, _preview_for_recovery
+        )
+        if pre_sha is not None:
+            params_struct["precondition_sha256"] = pre_sha
 
         async def _verify():
-            if await verify_edit_by_sha(unity_instance, name, path, pre_sha):
-                return {"success": True, "message": "Edit applied (verified after domain reload)."}
+            if await verify_edit_by_sha(
+                unity_instance, name, path, pre_sha, expected_sha=expected_sha
+            ):
+                return {
+                    "success": True,
+                    "message": "Edit applied (verified after domain reload).",
+                    "data": {"sha256": expected_sha},
+                }
             return {
                 "success": False,
                 "code": "edit_unconfirmed",
@@ -1697,12 +1700,18 @@ async def script_apply_edits(
                 else (options or {}).get("applyMode", "sequential"),
             },
         }
+        text_pre_sha, text_expected_sha = await prepare_edit_recovery(
+            unity_instance, params_text, _preview_for_recovery
+        )
 
         async def _verify_text():
-            if await verify_edit_by_sha(unity_instance, name, path, sha):
+            if await verify_edit_by_sha(
+                unity_instance, name, path, text_pre_sha, expected_sha=text_expected_sha
+            ):
                 return {
                     "success": True,
                     "message": "Text edits applied (verified after domain reload).",
+                    "data": {"sha256": text_expected_sha},
                 }
             return {
                 "success": False,
@@ -1758,10 +1767,23 @@ async def script_apply_edits(
             "edits": struct_edits,
             "options": opts2,
         }
+        if sha is not None:
+            params_struct["precondition_sha256"] = sha
+        struct_pre_sha, struct_expected_sha = await prepare_edit_recovery(
+            unity_instance, params_struct, _preview_for_recovery
+        )
+        if struct_pre_sha is not None:
+            params_struct["precondition_sha256"] = struct_pre_sha
 
         async def _verify_struct():
-            if await verify_edit_by_sha(unity_instance, name, path, sha):
-                return {"success": True, "message": "Edit applied (verified after domain reload)."}
+            if await verify_edit_by_sha(
+                unity_instance, name, path, struct_pre_sha, expected_sha=struct_expected_sha
+            ):
+                return {
+                    "success": True,
+                    "message": "Edit applied (verified after domain reload).",
+                    "data": {"sha256": struct_expected_sha},
+                }
             return {
                 "success": False,
                 "code": "edit_unconfirmed",

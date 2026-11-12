@@ -44,6 +44,8 @@ def routing(monkeypatch):
     async def read(_send, instance, command, params):
         assert command == "manage_script" and instance == "Selected@fixture"
         state.calls.append(params["action"])
+        if params["action"] == "preview_text_edits":
+            return {"success": False, "error": "Controlled older Editor without preparation"}
         assert params["action"] == "read"
         source = SourcePayload(state.source)
         state.payload_refs.append(weakref.ref(source))
@@ -99,7 +101,7 @@ async def test_public_lsp_uses_one_original_line_map(routing, case):
     digest = hashlib.sha256(routing.source.encode()).hexdigest()
     assert routing.maps == [(len(routing.source), digest)]
     assert routing.selects == ["Selected@fixture"]
-    assert routing.calls == ["read", "apply_text_edits"]
+    assert routing.calls == ["read", "preview_text_edits", "apply_text_edits"]
     assert routing.writes[0]["precondition_sha256"] == digest
     assert edits == original_edits
     span = routing.writes[0]["edits"][0]
@@ -129,7 +131,7 @@ async def test_metadata_is_not_reused_across_changed_documents(routing):
     assert len(routing.maps) == 2
     assert routing.maps[0][1] != routing.maps[1][1]
     assert len(routing.selects) == 2
-    assert routing.calls == ["read", "apply_text_edits"] * 2
+    assert routing.calls == ["read", "preview_text_edits", "apply_text_edits"] * 2
 
 
 @pytest.mark.asyncio
@@ -189,7 +191,7 @@ async def scenario():
             result = await client.call_tool("script_apply_edits", {"name":"Fixture", "path":"Assets", "edits":[regression.lsp_edit(), {"op":"regex_replace", "pattern":"ready", "replacement":"set"}]})
             assert json.loads(result.content[0].text)["success"] is True
             assert len(state.maps) == 1
-            assert state.calls == ["read", "apply_text_edits"]
+            assert state.calls == ["read", "preview_text_edits", "apply_text_edits"]
             assert len(state.selects) == 1
 asyncio.run(scenario())
 """

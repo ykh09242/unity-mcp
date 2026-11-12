@@ -36,6 +36,8 @@ async def wire(sender, target, command, params, **kwargs):
     action = params["action"]
     state["calls"].append(action)
     case = state["case"]
+    if action in ("preview_text_edits", "preview_edit"):
+        return {"success": False, "error": "Controlled older Editor does not support preparation"}
     if action == "validate_edit":
         assert len(state["calls"]) == 1
         assert state["text"] == "class Foo {}\n"
@@ -102,14 +104,14 @@ async def main():
                 try:
                     assert response["success"] is (case == "success"), response
                     if case in ("text_failure", "text_disconnect"):
-                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits"]
+                        assert state["calls"] == ["validate_edit", "read", "preview_text_edits", "apply_text_edits"]
                         if case == "text_failure":
                             assert state["text"] == "class Foo {}\n"
                             assert response["error"] == "controlled text failure"
                     elif case in ("missing", "missing_applied", "malformed", "null_hash", "unavailable", "fallback_invalid", "fallback_empty"):
-                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits", "get_sha", "edit"]
+                        assert state["calls"] == ["validate_edit", "read", "preview_text_edits", "apply_text_edits", "get_sha", "preview_edit", "edit"]
                     else:
-                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits", "edit"]
+                        assert state["calls"] == ["validate_edit", "read", "preview_text_edits", "apply_text_edits", "preview_edit", "edit"]
                     if case not in ("success", "text_failure"):
                         assert response.get("code") == "edit_unconfirmed", response
                         assert response["data"]["execution_status"] == "unknown", response

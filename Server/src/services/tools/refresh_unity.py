@@ -8,6 +8,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -309,6 +310,50 @@ async def _send_mutation(
         return resp
     await wait_for_editor_ready(ctx)
     return resp
+
+
+async def prepare_edit_recovery(
+    unity_instance: str | None,
+    params: dict[str, Any],
+    send_preview: Callable[[dict[str, Any]], Awaitable[Any]],
+) -> tuple[str | None, str | None]:
+    """Retain only exact native digests, inside the caller's existing request budget.
+
+    Preparation is read-only and uses the same native engine/options as the write.
+    Older editors may not support it; their original edit route stays available,
+    but a lost write response cannot be confirmed without a complete proposal.
+    Cancellation propagates so preparation cannot admit a write after cancellation.
+    """
+    from services.tools.script_apply_edits import _prepared_handoff
+
+    try:
+        preview = {
+            **params,
+            "action": "preview_text_edits"
+            if params["action"] == "apply_text_edits"
+            else "preview_edit",
+            "options": {**(params.get("options") or {}), "preview": True},
+        }
+        response = await send_preview(preview)
+        expected_path = f"{params['path']}/{params['name']}.cs"
+        path_type = PureWindowsPath if PureWindowsPath(expected_path).drive else PurePosixPath
+        if path_type(expected_path).is_absolute():
+            # File URIs retain absolute identity until Unity verifies its Assets
+            # root. Never accept a proposal from another project with the same name.
+            data = response["data"]
+            if path_type(data["absolute_path"]) != path_type(expected_path):
+                return None, None
+            expected_path = data["path"]
+        prepared = _prepared_handoff(response, unity_instance, expected_path)
+        if prepared.get("success"):
+            data = prepared["data"]
+            original = data["original_sha256"]
+            precondition = params.get("precondition_sha256")
+            if precondition is None or original == precondition.lower():
+                return original, data["candidate_sha256"]
+    except Exception as exc:
+        logger.debug("Exact edit recovery preparation unavailable: %r", exc)
+    return None, None
 
 
 async def verify_edit_by_sha(

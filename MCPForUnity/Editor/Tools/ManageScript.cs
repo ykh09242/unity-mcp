@@ -273,6 +273,13 @@ namespace MCPForUnity.Editor.Tools
                     var optionsError = ValidateScriptOptions(p.GetRaw("options"), out var options);
                     if (optionsError != null)
                         return optionsError;
+                    if (@params["precondition_sha256"] != null)
+                    {
+                        if (@params["precondition_sha256"].Type != JTokenType.String)
+                            return new ErrorResponse("invalid_precondition", "precondition_sha256 must be a SHA256 string.");
+                        options = options == null ? new JObject() : (JObject)options.DeepClone();
+                        options["precondition_sha256"] = @params["precondition_sha256"].DeepClone();
+                    }
                     return EditScript(fullPath, relativePath, name, structEdits, options, action == "preview_edit");
                 }
                 // Internal mixed-edit preflight: inspect input without reading or matching the file.
@@ -2279,6 +2286,15 @@ namespace MCPForUnity.Editor.Tools
             catch (Exception ex)
             {
                 return new ErrorResponse($"Failed to read script: {ex.Message}");
+            }
+
+            var precondition = options?["precondition_sha256"];
+            if (precondition != null)
+            {
+                if (precondition.Type != JTokenType.String || !Regex.IsMatch(precondition.Value<string>(), "^[0-9a-fA-F]{64}$"))
+                    return new ErrorResponse("invalid_precondition", "precondition_sha256 must be a SHA256 string.");
+                if (!string.Equals(precondition.Value<string>(), ComputeSha256(original), StringComparison.OrdinalIgnoreCase))
+                    return new ErrorResponse("stale_file", new { status = "stale_file", current_sha256 = ComputeSha256(original) });
             }
 
             string working = original;

@@ -11,7 +11,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
+from services.tools.refresh_unity import prepare_edit_recovery, send_mutation, verify_edit_by_sha
 from services.tools.utils import coerce_bool, coerce_int
 from transport.unity_transport import send_with_unity_instance
 import transport.legacy.unity_connection
@@ -544,12 +544,26 @@ async def apply_text_edits(
             prepared["data"]["normalizedEdits"] = normalized_edits
         return prepared
 
+    async def _preview_for_recovery(preview_params):
+        return await send_with_unity_instance(
+            transport.legacy.unity_connection.async_send_command_with_retry,
+            unity_instance,
+            "manage_script",
+            preview_params,
+        )
+
+    pre_sha, expected_sha = await prepare_edit_recovery(
+        unity_instance, params, _preview_for_recovery
+    )
+
     async def _verify_edit():
-        if await verify_edit_by_sha(unity_instance, name, directory, precondition_sha256):
+        if await verify_edit_by_sha(
+            unity_instance, name, directory, pre_sha, expected_sha=expected_sha
+        ):
             return {
                 "success": True,
                 "message": "Edit applied (verified after domain reload).",
-                "data": {"normalizedEdits": normalized_edits},
+                "data": {"normalizedEdits": normalized_edits, "sha256": expected_sha},
             }
         return {
             "success": False,

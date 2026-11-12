@@ -38,6 +38,13 @@ async def test_sentinel_ignores_newest_foreign_status(tmp_path, monkeypatch, sel
         scripts, "get_unity_instance_from_context", AsyncMock(return_value="Game@01234567")
     )
     monkeypatch.setattr(scripts, "send_mutation", AsyncMock(return_value={"success": True}))
+    monkeypatch.setattr(
+        scripts,
+        "send_with_unity_instance",
+        AsyncMock(
+            return_value={"success": False, "error": "Controlled Editor without preparation"}
+        ),
+    )
     dispatch = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(legacy, "async_send_command_with_retry", dispatch)
     result = await scripts.apply_text_edits(

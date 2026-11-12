@@ -55,6 +55,11 @@ async def sentinel_wire(monkeypatch):
         assert target == selected["value"]
         return {"success": True}
 
+    async def preview(_sender, target, command, params):
+        assert target == selected["value"] and command == "manage_script"
+        assert params["action"] == "preview_text_edits"
+        return {"success": False, "error": "Controlled Editor without preparation"}
+
     def command(command_type, params, **kwargs):
         sent.append((command_type, params, kwargs))
         loop.call_soon_threadsafe(entered.set)
@@ -78,6 +83,7 @@ async def sentinel_wire(monkeypatch):
     monkeypatch.setattr(legacy, "read_status_file", lambda *args: None)
     monkeypatch.setattr(scripts, "get_unity_instance_from_context", instance)
     monkeypatch.setattr(scripts, "send_mutation", write)
+    monkeypatch.setattr(scripts, "send_with_unity_instance", preview)
     monkeypatch.setattr("glob.glob", lambda *args, **kwargs: [])
     server = FastMCP("sentinel-command-ownership")
     server.add_middleware(ResponseLimitMiddleware())

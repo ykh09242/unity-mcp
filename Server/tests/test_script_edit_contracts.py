@@ -386,7 +386,12 @@ async def test_mixed_preflight_keeps_dotnet_patterns_and_text_created_anchors(mo
     )
 
     assert response["success"] is True
-    assert [call["action"] for call in calls] == ["validate_edit", "read"]
+    assert [call["action"] for call in calls] == [
+        "validate_edit",
+        "read",
+        "preview_text_edits",
+        "preview_edit",
+    ]
     assert calls[0]["edits"][0]["anchor"] == anchor
     assert [call.args[3]["action"] for call in writer.await_args_list] == [
         "apply_text_edits",
@@ -423,8 +428,8 @@ async def test_native_script_rejection_preserves_data_shape(
         reads.append(parameters["action"])
         if parameters["action"] == "validate_edit":
             return failure
-        assert parameters["action"] == "get_sha"
-        return {"success": True, "data": {"sha256": "a" * 64}}
+        assert parameters["action"] == "preview_edit"
+        return failure
 
     monkeypatch.setattr(
         script_edits, "get_unity_instance_from_context", AsyncMock(return_value="Project@abc")
@@ -452,6 +457,6 @@ async def test_native_script_rejection_preserves_data_shape(
         assert reads == ["validate_edit"]
         writer.assert_not_awaited()
     else:
-        assert reads == ["get_sha"]
+        assert reads == ["preview_edit"]
         writer.assert_awaited_once()
         assert writer.call_args.args[3]["action"] == "edit"
