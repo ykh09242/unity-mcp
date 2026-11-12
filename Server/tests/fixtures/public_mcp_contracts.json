@@ -379,6 +379,10 @@
                 ],
                 "default": null
               },
+              "include_dependencies": {
+                "default": false,
+                "type": "boolean"
+              },
               "page_number": {
                 "anyOf": [
                   {
@@ -779,6 +783,17 @@
                 ],
                 "default": null
               },
+              "await_graph_seconds": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "destination": {
                 "anyOf": [
                   {
@@ -1084,6 +1099,17 @@
                   "remove_labels"
                 ],
                 "type": "string"
+              },
+              "await_graph_seconds": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "label_revision": {
                 "anyOf": [
@@ -1434,6 +1460,14 @@
               "validate_only": {
                 "default": false,
                 "type": "boolean"
+              },
+              "verification": {
+                "default": "off",
+                "enum": [
+                  "off",
+                  "scripts"
+                ],
+                "type": "string"
               }
             },
             "required": [
@@ -1705,6 +1739,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verify_import": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -1743,6 +1788,12 @@
                     "type": "null"
                   }
                 ]
+              },
+              "wait_timeout": {
+                "default": 0,
+                "maximum": 60,
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -1770,6 +1821,18 @@
                   },
                   "data": {
                     "properties": {
+                      "completion": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": true,
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
                       "job_id": {
                         "maxLength": 256,
                         "type": "string"
@@ -2364,6 +2427,14 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verification": {
+                "default": "auto",
+                "enum": [
+                  "auto",
+                  "off"
+                ],
+                "type": "string"
               }
             },
             "required": [
@@ -2429,6 +2500,14 @@
                 ]
               },
               "uri": {
+                "type": "string"
+              },
+              "verification": {
+                "default": "auto",
+                "enum": [
+                  "auto",
+                  "off"
+                ],
                 "type": "string"
               }
             },
@@ -3275,6 +3354,28 @@
                   },
                   {
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "projection": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "name",
+                        "active",
+                        "transform",
+                        "components",
+                        "handle"
+                      ],
+                      "type": "string"
+                    },
+                    "maxItems": 5,
+                    "type": "array"
                   },
                   {
                     "type": "null"
@@ -7052,6 +7153,17 @@
                 ],
                 "default": null
               },
+              "include_preflight": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "layout_path": {
                 "anyOf": [
                   {
@@ -7306,6 +7418,17 @@
                 ],
                 "default": null
               },
+              "await_graph_seconds": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "bundle_name": {
                 "anyOf": [
                   {
@@ -7351,6 +7474,10 @@
                 "default": null
               },
               "generate_preview": {
+                "default": false,
+                "type": "boolean"
+              },
+              "include_dependencies": {
                 "default": false,
                 "type": "boolean"
               },
@@ -8108,6 +8235,10 @@
                   }
                 ],
                 "default": null
+              },
+              "wait_timeout": {
+                "default": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -10365,6 +10496,7 @@
                   "capabilities",
                   "read",
                   "create_asset",
+                  "edit",
                   "add_map",
                   "add_action",
                   "add_binding",
@@ -10418,6 +10550,176 @@
                   {
                     "maxLength": 512,
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "commands": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "action": {
+                          "enum": [
+                            "create_asset",
+                            "add_map",
+                            "add_action",
+                            "add_binding",
+                            "set_binding",
+                            "remove_binding"
+                          ],
+                          "type": "string"
+                        },
+                        "action_id": {
+                          "anyOf": [
+                            {
+                              "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\\$[A-Za-z0-9_]{1,64})$",
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "action_type": {
+                          "anyOf": [
+                            {
+                              "enum": [
+                                "Button",
+                                "Value",
+                                "PassThrough"
+                              ],
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "binding_id": {
+                          "anyOf": [
+                            {
+                              "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\\$[A-Za-z0-9_]{1,64})$",
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "binding_path": {
+                          "anyOf": [
+                            {
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "expected_control_type": {
+                          "anyOf": [
+                            {
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "groups": {
+                          "anyOf": [
+                            {
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "interactions": {
+                          "anyOf": [
+                            {
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "map_id": {
+                          "anyOf": [
+                            {
+                              "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\\$[A-Za-z0-9_]{1,64})$",
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "name": {
+                          "anyOf": [
+                            {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "processors": {
+                          "anyOf": [
+                            {
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "ref": {
+                          "anyOf": [
+                            {
+                              "pattern": "^[A-Za-z0-9_]{1,64}$",
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        }
+                      },
+                      "required": [
+                        "action"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 64,
+                    "minItems": 1,
+                    "type": "array"
                   },
                   {
                     "type": "null"
@@ -11723,6 +12025,10 @@
                   }
                 ],
                 "default": null
+              },
+              "wait_timeout": {
+                "default": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -16840,6 +17146,54 @@
                 ],
                 "default": null
               },
+              "thresholds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "marker": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maximum": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "statistic": {
+                          "enum": [
+                            "mean",
+                            "median",
+                            "p95",
+                            "max"
+                          ],
+                          "type": "string"
+                        },
+                        "unit": {
+                          "maxLength": 64,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "marker",
+                        "statistic",
+                        "unit",
+                        "maximum"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "timeout_seconds": {
                 "anyOf": [
                   {
@@ -16969,6 +17323,12 @@
                     "type": "null"
                   }
                 ]
+              },
+              "wait_timeout": {
+                "default": 0,
+                "maximum": 60,
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -17078,6 +17438,12 @@
                     "type": "null"
                   }
                 ]
+              },
+              "wait_timeout": {
+                "default": 0,
+                "maximum": 60,
+                "minimum": 0,
+                "type": "integer"
               },
               "width": {
                 "default": 1280,
@@ -18635,6 +19001,17 @@
                 ],
                 "default": null
               },
+              "scene_handle": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "scene_name": {
                 "anyOf": [
                   {
@@ -18708,6 +19085,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verify": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -19041,6 +19429,14 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verification": {
+                "default": "auto",
+                "enum": [
+                  "auto",
+                  "off"
+                ],
+                "type": "string"
               }
             },
             "required": [
@@ -20686,6 +21082,10 @@
                 ],
                 "default": null
               },
+              "include_schema": {
+                "default": false,
+                "type": "boolean"
+              },
               "limit": {
                 "default": 5,
                 "maximum": 20,
@@ -21598,6 +21998,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verify_target": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "visible": {
                 "anyOf": [
@@ -23407,6 +23818,12 @@
                     "type": "null"
                   }
                 ]
+              },
+              "wait_timeout": {
+                "default": 0,
+                "maximum": 60,
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "type": "object"
@@ -23433,6 +23850,18 @@
                     "anyOf": [
                       {
                         "properties": {
+                          "completion": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": true,
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
                           "include_details": {
                             "anyOf": [
                               {
@@ -23875,6 +24304,17 @@
                 ],
                 "default": null
               },
+              "scene_handle": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "scene_name": {
                 "anyOf": [
                   {
@@ -23934,6 +24374,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verify": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -24168,6 +24619,17 @@
                 ],
                 "default": null
               },
+              "scene_handle": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "unity_instance": {
                 "anyOf": [
                   {
@@ -24356,6 +24818,14 @@
                   "strict"
                 ],
                 "type": "string"
+              },
+              "verification": {
+                "default": "off",
+                "enum": [
+                  "off",
+                  "auto"
+                ],
+                "type": "string"
               }
             },
             "required": [
@@ -24378,6 +24848,10 @@
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
+              "include_context": {
+                "default": false,
+                "type": "boolean"
+              },
               "instance": {
                 "type": "string"
               },
@@ -25197,6 +25671,22 @@
                 ],
                 "type": "string"
               },
+              "component_type": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "auto",
+                      "ui_document",
+                      "panel_renderer"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "contents": {
                 "anyOf": [
                   {
@@ -25327,6 +25817,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verify_target": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -25706,7 +26207,10 @@
                 "enum": [
                   "build",
                   "package",
-                  "scenario"
+                  "scenario",
+                  "recording",
+                  "auditor",
+                  "test"
                 ],
                 "type": "string"
               },
@@ -26122,6 +26626,10 @@
                 ],
                 "default": null
               },
+              "include_dependencies": {
+                "default": false,
+                "type": "boolean"
+              },
               "page_number": {
                 "anyOf": [
                   {
@@ -26522,6 +27030,17 @@
                 ],
                 "default": null
               },
+              "await_graph_seconds": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "destination": {
                 "anyOf": [
                   {
@@ -26827,6 +27346,17 @@
                   "remove_labels"
                 ],
                 "type": "string"
+              },
+              "await_graph_seconds": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "label_revision": {
                 "anyOf": [
@@ -27177,6 +27707,14 @@
               "validate_only": {
                 "default": false,
                 "type": "boolean"
+              },
+              "verification": {
+                "default": "off",
+                "enum": [
+                  "off",
+                  "scripts"
+                ],
+                "type": "string"
               }
             },
             "required": [
@@ -27448,6 +27986,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verify_import": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -27486,6 +28035,12 @@
                     "type": "null"
                   }
                 ]
+              },
+              "wait_timeout": {
+                "default": 0,
+                "maximum": 60,
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -27513,6 +28068,18 @@
                   },
                   "data": {
                     "properties": {
+                      "completion": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": true,
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
                       "job_id": {
                         "maxLength": 256,
                         "type": "string"
@@ -28107,6 +28674,14 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verification": {
+                "default": "auto",
+                "enum": [
+                  "auto",
+                  "off"
+                ],
+                "type": "string"
               }
             },
             "required": [
@@ -28172,6 +28747,14 @@
                 ]
               },
               "uri": {
+                "type": "string"
+              },
+              "verification": {
+                "default": "auto",
+                "enum": [
+                  "auto",
+                  "off"
+                ],
                 "type": "string"
               }
             },
@@ -29018,6 +29601,28 @@
                   },
                   {
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "projection": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "name",
+                        "active",
+                        "transform",
+                        "components",
+                        "handle"
+                      ],
+                      "type": "string"
+                    },
+                    "maxItems": 5,
+                    "type": "array"
                   },
                   {
                     "type": "null"
@@ -32795,6 +33400,17 @@
                 ],
                 "default": null
               },
+              "include_preflight": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "layout_path": {
                 "anyOf": [
                   {
@@ -33049,6 +33665,17 @@
                 ],
                 "default": null
               },
+              "await_graph_seconds": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "bundle_name": {
                 "anyOf": [
                   {
@@ -33094,6 +33721,10 @@
                 "default": null
               },
               "generate_preview": {
+                "default": false,
+                "type": "boolean"
+              },
+              "include_dependencies": {
                 "default": false,
                 "type": "boolean"
               },
@@ -33851,6 +34482,10 @@
                   }
                 ],
                 "default": null
+              },
+              "wait_timeout": {
+                "default": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -36108,6 +36743,7 @@
                   "capabilities",
                   "read",
                   "create_asset",
+                  "edit",
                   "add_map",
                   "add_action",
                   "add_binding",
@@ -36161,6 +36797,176 @@
                   {
                     "maxLength": 512,
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "commands": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "action": {
+                          "enum": [
+                            "create_asset",
+                            "add_map",
+                            "add_action",
+                            "add_binding",
+                            "set_binding",
+                            "remove_binding"
+                          ],
+                          "type": "string"
+                        },
+                        "action_id": {
+                          "anyOf": [
+                            {
+                              "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\\$[A-Za-z0-9_]{1,64})$",
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "action_type": {
+                          "anyOf": [
+                            {
+                              "enum": [
+                                "Button",
+                                "Value",
+                                "PassThrough"
+                              ],
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "binding_id": {
+                          "anyOf": [
+                            {
+                              "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\\$[A-Za-z0-9_]{1,64})$",
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "binding_path": {
+                          "anyOf": [
+                            {
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "expected_control_type": {
+                          "anyOf": [
+                            {
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "groups": {
+                          "anyOf": [
+                            {
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "interactions": {
+                          "anyOf": [
+                            {
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "map_id": {
+                          "anyOf": [
+                            {
+                              "pattern": "^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\\$[A-Za-z0-9_]{1,64})$",
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "name": {
+                          "anyOf": [
+                            {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "processors": {
+                          "anyOf": [
+                            {
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "ref": {
+                          "anyOf": [
+                            {
+                              "pattern": "^[A-Za-z0-9_]{1,64}$",
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        }
+                      },
+                      "required": [
+                        "action"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 64,
+                    "minItems": 1,
+                    "type": "array"
                   },
                   {
                     "type": "null"
@@ -37466,6 +38272,10 @@
                   }
                 ],
                 "default": null
+              },
+              "wait_timeout": {
+                "default": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -42583,6 +43393,54 @@
                 ],
                 "default": null
               },
+              "thresholds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "marker": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maximum": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "statistic": {
+                          "enum": [
+                            "mean",
+                            "median",
+                            "p95",
+                            "max"
+                          ],
+                          "type": "string"
+                        },
+                        "unit": {
+                          "maxLength": 64,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "marker",
+                        "statistic",
+                        "unit",
+                        "maximum"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "timeout_seconds": {
                 "anyOf": [
                   {
@@ -42712,6 +43570,12 @@
                     "type": "null"
                   }
                 ]
+              },
+              "wait_timeout": {
+                "default": 0,
+                "maximum": 60,
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
@@ -42821,6 +43685,12 @@
                     "type": "null"
                   }
                 ]
+              },
+              "wait_timeout": {
+                "default": 0,
+                "maximum": 60,
+                "minimum": 0,
+                "type": "integer"
               },
               "width": {
                 "default": 1280,
@@ -44378,6 +45248,17 @@
                 ],
                 "default": null
               },
+              "scene_handle": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "scene_name": {
                 "anyOf": [
                   {
@@ -44451,6 +45332,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verify": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -44784,6 +45676,14 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verification": {
+                "default": "auto",
+                "enum": [
+                  "auto",
+                  "off"
+                ],
+                "type": "string"
               }
             },
             "required": [
@@ -46429,6 +47329,10 @@
                 ],
                 "default": null
               },
+              "include_schema": {
+                "default": false,
+                "type": "boolean"
+              },
               "limit": {
                 "default": 5,
                 "maximum": 20,
@@ -47341,6 +48245,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verify_target": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "visible": {
                 "anyOf": [
@@ -49150,6 +50065,12 @@
                     "type": "null"
                   }
                 ]
+              },
+              "wait_timeout": {
+                "default": 0,
+                "maximum": 60,
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "type": "object"
@@ -49176,6 +50097,18 @@
                     "anyOf": [
                       {
                         "properties": {
+                          "completion": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": true,
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
                           "include_details": {
                             "anyOf": [
                               {
@@ -49618,6 +50551,17 @@
                 ],
                 "default": null
               },
+              "scene_handle": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "scene_name": {
                 "anyOf": [
                   {
@@ -49677,6 +50621,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verify": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -49911,6 +50866,17 @@
                 ],
                 "default": null
               },
+              "scene_handle": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "unity_instance": {
                 "anyOf": [
                   {
@@ -50099,6 +51065,14 @@
                   "strict"
                 ],
                 "type": "string"
+              },
+              "verification": {
+                "default": "off",
+                "enum": [
+                  "off",
+                  "auto"
+                ],
+                "type": "string"
               }
             },
             "required": [
@@ -50121,6 +51095,10 @@
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
+              "include_context": {
+                "default": false,
+                "type": "boolean"
+              },
               "instance": {
                 "type": "string"
               },
@@ -50940,6 +51918,22 @@
                 ],
                 "type": "string"
               },
+              "component_type": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "auto",
+                      "ui_document",
+                      "panel_renderer"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "contents": {
                 "anyOf": [
                   {
@@ -51070,6 +52064,17 @@
                     "type": "null"
                   }
                 ]
+              },
+              "verify_target": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -51449,7 +52454,10 @@
                 "enum": [
                   "build",
                   "package",
-                  "scenario"
+                  "scenario",
+                  "recording",
+                  "auditor",
+                  "test"
                 ],
                 "type": "string"
               },

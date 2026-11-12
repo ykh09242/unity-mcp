@@ -50,6 +50,7 @@ Cancellation closes local socket work and prevents later local stages once obser
 | `auto_animate` | `bool \| None` | — | import_model: create a looping AnimatorController for imported clips (default true). |
 | `save_prefab` | `bool \| None` | — | import_model: save the placed instance as a prefab next to the asset. |
 | `ensure_bloom` | `bool \| None` | — | import_model: add a Bloom volume when the model has emissive materials. |
+| `verify_import` | `bool \| None` | — | import_model: inspect imported metadata and bounded material/rig findings without another import. |
 | `game_object` | `str \| None` | — | compare_screenshot: name of the placed GameObject to frame in Unity. |
 | `code` | `str \| None` | — | run_python: Python source to execute inside Blender. |
 | `max_size` | `int \| None` | — | screenshot / compare_screenshot: max pixels on the longest side, 0..8192 (default 1000). |

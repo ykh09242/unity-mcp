@@ -117,7 +117,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                         complete = false;
                         break;
                 }
-                var report = PostEditVerification.Summary("exact_particle_module; max32_keys_per_curve", value, complete: complete);
+                var report = PostEditVerification.Summary("exact_particle_module", value, complete: complete);
                 report["target_instance_id"] = system.GetInstanceIDCompat();
                 return report;
             }
@@ -193,7 +193,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     value["length_scale"] = particle.lengthScale;
                     value["velocity_scale"] = particle.velocityScale;
                 }
-                return PostEditVerification.Summary("exact_vfx_renderer; max16_positions_32_curve_keys", value, findings, complete);
+                return PostEditVerification.Summary("exact_vfx_renderer; max16_positions", value, findings, complete);
             }
             catch
             {

@@ -25,6 +25,7 @@ Inspect asset bundles, their contents and dependencies. Read-only inspection; re
 | `page_number` | `int \| str \| None` | — | Page number for pagination (1-based). |
 | `bundle_name` | `str \| None` | — | Registered bundle assignment name for get_bundle_* actions. |
 | `recursive` | `bool` | — | Include indirect bundle dependencies (default false). |
+| `include_dependencies` | `bool` | — | get_bundle_assets only: include the first bounded dependency page without building bundles. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

@@ -45,7 +45,7 @@ Edit C# source using operations scoped to the intended members or text.
 | `name` | `str` | yes | Name of the script to edit |
 | `path` | `str` | yes | Path to the script to edit under Assets/ directory |
 | `edits` | `list[dict[str, Any]] \| str` | yes | List of edits to apply to the script (JSON list or stringified JSON) |
-| `options` | `dict[str, Any] \| None` | — | Options for the script edit |
+| `options` | `dict[str, Any] \| None` | — | Editor options. verification='auto' (default) adds bounded post-save checks; 'off' defers them. |
 | `script_type` | `str` | — | Type of the script to edit |
 | `namespace` | `str \| None` | — | Namespace of the script to edit |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |

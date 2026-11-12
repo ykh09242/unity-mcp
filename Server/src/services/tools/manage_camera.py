@@ -57,8 +57,8 @@ ALL_ACTIONS = (
     description=(
         "Manage cameras (Unity Camera + Cinemachine). Works without Cinemachine using basic Camera; "
         "unlocks presets, pipelines, and blending when Cinemachine is installed. "
-        "Authoring writes include bounded verification for the same camera/component; activation and blend completion remain separate observations. "
-        "Authoring writes include bounded verification for the same camera/component; activation and blend completion remain separate observations. "
+        "Authoring writes include bounded verification of the affected camera or component. "
+        "Activation and blend completion have separate observations. "
         "Use ping to check Cinemachine availability.\n\n"
         "SETUP:\n"
         "- ping: Check if Cinemachine is available\n"

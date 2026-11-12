@@ -30,6 +30,7 @@ Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene V
 | `output_folder` | `str \| None` | — | Project-relative directory within Captures/Recordings, or an absolute path inside it. |
 | `file_name` | `str \| None` | — | New plain filename, optionally ending in .mp4; generated if omitted. |
 | `aspect_mode` | `Literal['stretch', 'fit', 'crop']` | — | Resize policy: stretch (default), fit with black padding, or centered crop. |
+| `wait_timeout` | `int` | — | Optional bounded completion observation, in seconds. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

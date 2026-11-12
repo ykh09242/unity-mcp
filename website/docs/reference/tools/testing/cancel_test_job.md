@@ -21,6 +21,7 @@ Request cancellation of an owned native test job. A queued job cancelled before 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `job_id` | `str` | yes | Job ID returned by run_tests |
+| `wait_timeout` | `int` | — | Optional wait for native settlement, in seconds. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

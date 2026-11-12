@@ -84,8 +84,8 @@ ALL_ACTIONS = (
     description=(
         "Manage rendering graphics: volumes, post-processing, light baking, "
         "rendering stats, pipeline settings, and URP renderer features. "
-        "Authoring results include bounded retained-state verification. Renderer feature checks inspect at most 16 serialized entries and never execute render callbacks. "
-        "Authoring results include bounded retained-state verification. Renderer feature checks inspect at most 16 serialized entries and never execute render callbacks. "
+        "Authoring results include bounded retained-state verification. "
+        "Renderer feature checks inspect at most 16 serialized entries. "
         "Use ping to check pipeline and available features.\n\n"
         "VOLUME (require URP/HDRP):\n"
         "- volume_create, volume_add_effect, volume_set_effect, volume_remove_effect\n"

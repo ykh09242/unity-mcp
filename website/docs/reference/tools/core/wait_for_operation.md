@@ -1,7 +1,7 @@
 ---
 title: wait_for_operation
 sidebar_label: wait_for_operation
-description: "Observe an existing build, package query/mutation/resolve, or single scenario job."
+description: "Observe an existing test, build, package query/mutation/resolve, single scenario, recording, or Project Auditor job."
 ---
 
 # `wait_for_operation`
@@ -14,13 +14,13 @@ description: "Observe an existing build, package query/mutation/resolve, or sing
 
 ## Description
 
-Observe an existing build, package query/mutation/resolve, or single scenario job. Never starts, retries or cancels native work. wait_timeout bounds only this observation (0 is one poll). Reports waiting/running/finalizing/terminal/unknown with the original job evidence; a failed job is a valid observation. An authenticated connection is captured once; reload/disconnect requires a fresh explicit observation. Opt-in modern HTTP Tasks can durably retain this bounded wait; other clients receive ordinary polling results.
+Observe an existing test, build, package query/mutation/resolve, single scenario, recording, or Project Auditor job. Never starts, retries or cancels native work. wait_timeout bounds only this observation (0 is one poll). Reports waiting/running/finalizing/terminal/unknown with the original job evidence; a failed job is a valid observation. An authenticated connection is captured once; reload/disconnect requires a fresh explicit observation. Opt-in modern HTTP Tasks can durably retain this bounded wait; other clients receive ordinary polling results.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `kind` | `Literal['build', 'package', 'scenario']` | yes |  |
+| `kind` | `Literal['build', 'package', 'scenario', 'recording', 'auditor', 'test']` | yes |  |
 | `job_id` | `str` | yes |  |
 | `wait_timeout` | `int` | — |  |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |

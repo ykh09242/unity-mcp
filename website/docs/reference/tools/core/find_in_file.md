@@ -1,7 +1,7 @@
 ---
 title: find_in_file
 sidebar_label: find_in_file
-description: "Searches a C# script with a regex pattern and returns line numbers and excerpts."
+description: "Searches a C# script with a regex pattern and returns line numbers, excerpts and identities of the searched snapshot. bytes_sha256 identifies raw file bytes when supplied by the Editor; sha256 identifies decoded UTF-8 content."
 ---
 
 # `find_in_file`
@@ -14,7 +14,7 @@ description: "Searches a C# script with a regex pattern and returns line numbers
 
 ## Description
 
-Searches a C# script with a regex pattern and returns line numbers and excerpts.
+Searches a C# script with a regex pattern and returns line numbers, excerpts and identities of the searched snapshot. bytes_sha256 identifies raw file bytes when supplied by the Editor; sha256 identifies decoded UTF-8 content.
 
 ## Parameters
 

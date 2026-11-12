@@ -16,6 +16,7 @@ description: "Manage physics settings, collision matrix, materials, joints, quer
 
 Manage physics settings, collision matrix, materials, joints, queries, and validation.
 
+Authoring writes include exact-target retained state and static findings capped at 16 component slots; no simulation or implicit pair diagnosis.
 SETTINGS: ping, get_settings, set_settings
 COLLISION MATRIX: get_collision_matrix, set_collision_matrix
 MATERIALS: create_physics_material, configure_physics_material, assign_physics_material

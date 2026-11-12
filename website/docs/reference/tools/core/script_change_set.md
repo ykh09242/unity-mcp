@@ -14,7 +14,7 @@ description: "Prepare, apply, inspect or recover 1–256 existing C# source repl
 
 ## Description
 
-Prepare, apply, inspect or recover 1–256 existing C# source replacements as one bounded change set. Prepare takes final contents plus each original raw-byte SHA256 (including BOM), validates each file and retains a local recovery manifest without source writes. Apply checks all original source/metadata preconditions before writes. Failures retain ordered confirmed, restored or uncertain outcomes; recovery never overwrites a changed external source. This is not a filesystem-wide transaction, semantic rename or callback rollback. UTF-8 BOM/newlines and metadata are preserved. This request does not schedule a refresh; Unity automatic/deferred source import may still compile changed scripts.
+Prepare, apply, inspect or recover 1–256 existing C# source replacements as one bounded change set. Prepare takes final contents plus each original raw-byte SHA256 (including BOM), validates each file and retains a local recovery manifest without source writes. Apply checks all original source/metadata preconditions before writes. Failures retain ordered confirmed, restored or uncertain outcomes; recovery never overwrites a changed external source. This is not a filesystem-wide transaction, semantic rename or callback rollback. UTF-8 BOM/newlines and metadata are preserved. Default verification='off' does not schedule a refresh; apply with verification='auto' checks the final confirmed selection once and returns findings or the original pending run. Unity automatic/deferred source import may still compile changed scripts.
 
 ## Parameters
 
@@ -24,6 +24,7 @@ Prepare, apply, inspect or recover 1–256 existing C# source replacements as on
 | `files` | `list[ScriptChangeFile] \| None` | — | prepare only: ordered final source buffers. |
 | `change_set_id` | `str \| None` | — | apply/status/recover: identifier returned by prepare. |
 | `validation` | `Literal['basic', 'standard', 'comprehensive', 'strict']` | — |  |
+| `verification` | `Literal['off', 'auto']` | — |  |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

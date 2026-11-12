@@ -27,6 +27,8 @@ Create, read or edit UXML/USS assets, link stylesheets or preview source patches
 | `source_changes` | `dict[str, str] \| None` | — | patch_source: 1..32 existing UXML text/tooltip/class attributes or USS declarations; values <=4096 characters. No insertion/removal or template ownership. |
 | `preview` | `bool` | — | patch_source: true (default) returns SHA256 and exact value edits without writing. False persists source and reimports; live view refresh is separate. |
 | `expected_source_hash` | `str \| None` | — | patch_source apply requires source_hash from preview. Detects changed source before write. UTF8 files <=1 MiB; preserves BOM, surrounding bytes and .meta. |
+| `verify_target` | `str \| None` | — | Optional exact live document target for create/update/link_stylesheet/patch_source writes. Resolved before saving; adds bounded current diagnostics without forcing layout or capture. Source-to-live application remains pending until normal UI updates. |
+| `component_type` | `Literal['auto', 'ui_document', 'panel_renderer'] \| None` | — | UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. Default auto preserves an existing UIDocument, otherwise resolves PanelRenderer; new attachments prefer PanelRenderer when available and fall back to UIDocument. panel_renderer requires Unity 6.5+ API support. |
 | `stylesheet` | `str \| None` | — | Path to USS stylesheet to link (e.g., 'Assets/UI/Styles.uss'). For link_stylesheet. |
 | `filter_type` | `str \| None` | — | Filter UI assets by type: 'uxml', 'uss', 'PanelSettings', or omit for all. For list. |
 | `page_size` | `int \| None` | — | Number of results per page: 1-1000 (default 50). For list. |

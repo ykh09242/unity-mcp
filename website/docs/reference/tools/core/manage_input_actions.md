@@ -14,13 +14,13 @@ description: "Author optional Input System1.7+ .inputactions assets in idle Edit
 
 ## Description
 
-Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and existing parent. add_map/add_action/add_binding/set_binding/remove_binding require expected_revision; exact GUID selectors avoid name ambiguity. Simple bindings only; existing composite/control-scheme data and PlayerInput asset linkage are preserved. Edits save/import immediately; configured importer wrapper generation may compile scripts. Conditional file-backed Undo/Redo is limited to32 edits in the current Editor domain, refuses external drift and does not survive domain reload. Asset creation is not Undoable. Does not simulate input, pair devices, enable actions or install packages.
+Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and existing parent. add_map/add_action/add_binding/set_binding/remove_binding require expected_revision; exact GUID selectors avoid name ambiguity. edit accepts 1..64 ordered commands, validates the final candidate and imports once. Use ref on creation commands and $ref selectors for subsequent commands. Start with create_asset for a new file; existing edits require expected_revision. Commands share the 8 KiB request limit. Simple bindings only; existing composite/control-scheme data and PlayerInput asset linkage are preserved. Edits save/import immediately; configured importer wrapper generation may compile scripts. Conditional file-backed Undo/Redo is limited to32 edits in the current Editor domain, refuses external drift and does not survive domain reload. Asset creation is not Undoable. Does not simulate input, pair devices, enable actions or install packages.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['capabilities', 'read', 'create_asset', 'add_map', 'add_action', 'add_binding', 'set_binding', 'remove_binding']` | yes |  |
+| `action` | `Literal['capabilities', 'read', 'create_asset', 'edit', 'add_map', 'add_action', 'add_binding', 'set_binding', 'remove_binding']` | yes |  |
 | `path` | `str \| None` | — |  |
 | `expected_revision` | `str \| None` | — |  |
 | `map_id` | `str \| None` | — |  |
@@ -35,6 +35,7 @@ Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabil
 | `processors` | `str \| None` | — |  |
 | `page_size` | `int \| None` | — |  |
 | `cursor` | `int \| None` | — |  |
+| `commands` | `list[InputActionCommand] \| None` | — |  |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

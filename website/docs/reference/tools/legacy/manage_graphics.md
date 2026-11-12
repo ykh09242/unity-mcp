@@ -14,7 +14,7 @@ description: "Manage rendering graphics: volumes, post-processing, light baking,
 
 ## Description
 
-Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features. Use ping to check pipeline and available features.
+Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features. Authoring results include bounded retained-state verification. Renderer feature checks inspect at most 16 serialized entries. Use ping to check pipeline and available features.
 
 VOLUME (require URP/HDRP):
 - volume_create, volume_add_effect, volume_set_effect, volume_remove_effect

@@ -38,7 +38,7 @@ Apply small text edits to a C# script identified by URI.
 | `edits` | `list[dict[str, Any]]` | yes | List of edits to apply to the script, i.e. a list of {startLine,startCol,endLine,endCol,newText} (1-indexed!) |
 | `precondition_sha256` | `str \| None` | — | Optional SHA256 of the script to edit, used to prevent concurrent edits |
 | `strict` | `bool \| None` | — | Optional strict flag, used to enforce strict mode |
-| `options` | `dict[str, Any] \| None` | — | Optional options, used to pass additional options to the script editor |
+| `options` | `dict[str, Any] \| None` | — | Editor options. verification='auto' (default) adds bounded post-save analysis and compile observations; 'off' defers them. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

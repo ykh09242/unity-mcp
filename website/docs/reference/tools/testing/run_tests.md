@@ -31,6 +31,7 @@ Starts a Unity test run asynchronously and returns a job_id immediately. Poll wi
 | `run_timeout_ms` | `int \| None` | — | Opt-in native job deadline in milliseconds, including queue/setup. Requires exact supported native control; wait timeout does not cancel Unity. |
 | `clear_stuck` | `bool` | — | Clear an orphaned running job instead of starting a run. Use when a job was lost to a domain reload and is blocking every subsequent run. |
 | `require_source_freshness` | `bool` | — | Require source, compilation and loaded assembly evidence; upgraded native peers always recheck admission |
+| `wait_timeout` | `int` | — | Optional initial status observation, in seconds. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

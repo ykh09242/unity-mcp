@@ -16,6 +16,7 @@ description: "Manage ProBuilder meshes for in-editor 3D modeling."
 
 Manage ProBuilder meshes for in-editor 3D modeling. Requires com.unity.probuilder package.
 
+Geometry edits include bounded post-edit health observations (8192 vertices, 512 faces, 16384 index entries per mesh); larger or unsupported data remains incomplete, with no automatic repair.
 SHAPE CREATION:
 - create_shape: Create a ProBuilder primitive (shape_type: Cube/Cylinder/Sphere/Plane/Cone/Torus/Pipe/Arch/Stair/CurvedStair/Door/Prism). Shape-specific params in properties (size, radius, height, depth, width, segments, rows, columns, innerRadius, outerRadius, etc.).
 - create_poly_shape: Create mesh from 2D polygon footprint (points: [[x,y,z],...], extrudeHeight, flipNormals).

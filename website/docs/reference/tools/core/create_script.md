@@ -24,6 +24,7 @@ Create a new C# script at the given project path.
 | `contents` | `str` | yes | Contents of the script to create (plain text C# code). The server handles Base64 encoding. |
 | `script_type` | `str \| None` | — | Script type (e.g., 'C#') |
 | `namespace` | `str \| None` | — | Namespace for the script |
+| `verification` | `Literal['auto', 'off']` | — | Bounded post-save source verification, with continuation for pending analysis. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

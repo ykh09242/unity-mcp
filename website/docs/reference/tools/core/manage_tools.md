@@ -25,6 +25,7 @@ Manage visible groups or individual feature tools in this session. Actions: list
 | `tool` | `str \| None` | — | Single tool name for activate/deactivate/describe. Discover names with list_groups. |
 | `query` | `str \| None` | — | Task-purpose query for search (1..512 characters). |
 | `limit` | `int` | — | Maximum search results (1..20). |
+| `include_schema` | `bool` | — | On single-tool activation, attach its schema and readiness lookup. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

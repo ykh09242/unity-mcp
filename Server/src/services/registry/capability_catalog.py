@@ -334,7 +334,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "core",
         "Open, Save & Organize Scenes",
         "create load save close_scene set_active_scene move_to_scene",
-        "name path build_index allow_overwrite scene_name scene_path target remove_scene additive template",
+        "name path build_index allow_overwrite scene_name scene_path target remove_scene additive template verify scene_handle",
     ),
     _feature(
         "scene_inspect",
@@ -350,7 +350,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "scene",
         "Validate Scenes",
         "validate",
-        "auto_repair max_objects max_milliseconds continuation",
+        "auto_repair max_objects max_milliseconds continuation scene_handle",
     ),
     _feature(
         "scene_reference_diagnostics",
@@ -375,7 +375,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "assets",
         "Create, Change & Move Assets",
         "import create modify delete duplicate move rename create_folder",
-        "path asset_type properties destination scan_root max_assets max_work recursive page_size page_number reference_revision",
+        "path asset_type properties destination scan_root max_assets max_work recursive page_size page_number reference_revision await_graph_seconds",
     ),
     _feature(
         "asset_reference_diagnostics",
@@ -392,7 +392,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "assets",
         "Asset Labels",
         "get_labels set_labels add_labels remove_labels",
-        "path labels label_targets label_revision",
+        "path labels label_targets label_revision await_graph_seconds",
     ),
     _feature(
         "asset_bundles",
@@ -400,7 +400,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "assets",
         "Asset Bundle Inspection",
         "list_asset_bundles get_bundle_assets get_bundle_dependencies",
-        "bundle_name recursive page_size page_number",
+        "bundle_name recursive page_size page_number include_dependencies",
         effects=READ_ONLY_EFFECTS,
     ),
     _feature(
@@ -409,7 +409,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "ui",
         "UI Toolkit / UXML & USS Source",
         "create read update delete link_stylesheet list patch_source",
-        "path contents stylesheet filter_type page_size page_number inventory_revision source_selector source_changes preview expected_source_hash",
+        "path contents stylesheet filter_type page_size page_number inventory_revision source_selector source_changes preview expected_source_hash verify_target component_type",
     ),
     _feature(
         "ui_document",

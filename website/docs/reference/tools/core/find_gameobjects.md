@@ -1,7 +1,7 @@
 ---
 title: find_gameobjects
 sidebar_label: find_gameobjects
-description: "Search GameObjects by name, tag, layer, component, path or ID; returns IDs only. scene_scope=legacy (default) preserves method-dependent scene selection and numeric offsets. active uses SceneManager's reported active scene; all_loaded co…"
+description: "Search GameObjects by name, tag, layer, component, path or ID; defaults to IDs only."
 ---
 
 # `find_gameobjects`
@@ -14,7 +14,7 @@ description: "Search GameObjects by name, tag, layer, component, path or ID; ret
 
 ## Description
 
-Search GameObjects by name, tag, layer, component, path or ID; returns IDs only. scene_scope=legacy (default) preserves method-dependent scene selection and numeric offsets. active uses SceneManager's reported active scene; all_loaded covers loaded ordinary scenes, excluding preview/prefab stages. Scoped conditions are ANDed (at most eight predicates total). Scoped pages use opaque cursors and require identical options and unchanged scenes. Empty continuation pages are valid: hasMore means remaining scan work, not more matches. totalCount is unknown until complete and then exact only through max_depth (default64, max128). Limits: 32 scene entries, 4096 roots/scene, one root enumeration/page, 4096 managed traversal steps/page, 500 IDs and 16384 output bytes. Root preparation is accounted separately; native Unity calls are synchronous and not time-bounded. Restart after edits, expiry or reload. Use mcpforunity://scene/gameobject/{id} for details or gameobject_edit for edits.
+Search GameObjects by name, tag, layer, component, path or ID; defaults to IDs only. Optional projection fields name/active/transform/components/handle describe the same returned IDs, capped at64 rows,16KiB and16 component names per row; projection_verification reports incomplete coverage. scene_scope=legacy (default) preserves method-dependent scene selection and numeric offsets. active uses SceneManager's reported active scene; all_loaded covers loaded ordinary scenes, excluding preview/prefab stages. Scoped conditions are ANDed (at most eight predicates total). Scoped pages use opaque cursors and require identical options and unchanged scenes. Empty continuation pages are valid: hasMore means remaining scan work, not more matches. totalCount is unknown until complete and then exact only through max_depth (default64, max128). Limits: 32 scene entries, 4096 roots/scene, one root enumeration/page, 4096 managed traversal steps/page, 500 IDs and 16384 output bytes. Root preparation is accounted separately; native Unity calls are synchronous and not time-bounded. Restart after edits, expiry or reload. Use mcpforunity://scene/gameobject/{id} for details or gameobject_edit for edits.
 
 ## Parameters
 
@@ -28,6 +28,7 @@ Search GameObjects by name, tag, layer, component, path or ID; returns IDs only.
 | `scene_scope` | `Literal['legacy', 'active', 'all_loaded']` | — | Explicit scene selection; legacy preserves existing method-dependent scope |
 | `conditions` | `list[dict[str, Any]] \| None` | — | AND predicates with exactly search_method and search_term; max8 including top-level search |
 | `max_depth` | `int \| None` | — | Scoped inclusive depth: root0, default64, maximum128 |
+| `projection` | `list[Literal['name', 'active', 'transform', 'components', 'handle']] \| None` | — | Optional same-ID projection; handles use existing session-scoped lifetime |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

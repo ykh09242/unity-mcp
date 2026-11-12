@@ -5,6 +5,88 @@ from tests.sdk_scenarios import run_sdk_regression, sdk_scenario_host  # noqa: F
 
 
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+def test_composed_workflow_options_reach_focused_tools(mode):
+    run_sdk_regression(
+        r"""
+        import asyncio
+        import re
+        from importlib import import_module
+        from unittest.mock import AsyncMock
+        from fastmcp import Client, FastMCP
+        from core.config import config
+        from services.registry import TOOL_GROUPS
+        from services.tools import register_all_tools
+
+        async def scenario():
+            config.transport_mode = "stdio"
+            config.http_remote_hosted = False
+            scene = import_module("services.tools.manage_scene")
+            ui = import_module("services.tools.manage_ui")
+            addressables = import_module("services.tools.manage_addressables")
+            blender = import_module("services.tools.blender_bridge")
+            for module in (scene, ui, addressables, blender):
+                module.get_unity_instance_from_context = AsyncMock(return_value="Fixture@hash")
+            scene.preflight = AsyncMock(return_value=None)
+            scene.send_with_unity_instance = AsyncMock(return_value={"success": True, "data": {}})
+            ui.send_mutation = AsyncMock(return_value={"success": True, "data": {}})
+            for module in (addressables, blender):
+                module.send_with_unity_instance = AsyncMock(return_value={"success": True, "data": {}})
+            server = FastMCP("workflow-options")
+            register_all_tools(server, project_scoped_tools=False)
+            for group in TOOL_GROUPS:
+                server.enable(tags={f"group:{group}"}, components={"tool"})
+            async with Client(server, mode=MODE) as client:
+                tools = {tool.name: tool for tool in await client.list_tools()}
+                for tool in tools.values():
+                    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", tool.description or "")
+                                 if len(part.strip()) > 40]
+                    assert len(sentences) == len(set(sentences)), tool.name
+                for name in ("manage_camera", "manage_graphics", "manage_vfx"):
+                    assert tools[name].description.count("Authoring ") == 1, name
+                for name, parameters in {
+                    "scene_lifecycle": {"verify", "scene_handle"},
+                    "scene_validate": {"scene_handle"},
+                    "asset_edit": {"await_graph_seconds"},
+                    "asset_labels": {"await_graph_seconds"},
+                    "asset_bundles": {"include_dependencies"},
+                    "ui_source": {"verify_target", "component_type"},
+                    "manage_profiler": {"thresholds"},
+                    "manage_addressables": {"include_preflight"},
+                    "blender_bridge": {"verify_import"},
+                }.items():
+                    assert parameters <= tools[name].input_schema["properties"].keys(), name
+                result = await client.call_tool("scene_lifecycle", {
+                    "action": "save", "scene_handle": 123, "verify": True})
+                assert result.structured_content["success"] is True
+                assert scene.send_with_unity_instance.call_args.args[3]["scene_handle"] == 123
+                assert scene.send_with_unity_instance.call_args.args[3]["verify"] is True
+                result = await client.call_tool("ui_source", {
+                    "action": "update", "path": "Assets/UI/Owned.uss", "contents": "",
+                    "verify_target": "123", "component_type": "ui_document"})
+                assert result.structured_content["success"] is True
+                assert ui.send_mutation.call_args.args[3]["verify_target"] == "123"
+                before = ui.send_mutation.await_count
+                refused = await client.call_tool("ui_source", {
+                    "action": "read", "path": "Assets/UI/Owned.uss", "verify_target": "123"},
+                    raise_on_error=False)
+                assert refused.structured_content["success"] is False
+                assert ui.send_mutation.await_count == before
+                result = await client.call_tool("manage_addressables", {
+                    "action": "set_address", "settings_path": "Assets/AddressableAssetsData/AddressableAssetSettings.asset",
+                    "expected_revision": "addr1:" + "a" * 64, "entry_guid": "b" * 32,
+                    "address": "Updated", "include_preflight": True})
+                assert result.structured_content["success"] is True
+                assert addressables.send_with_unity_instance.call_args.args[3]["include_preflight"] is True
+                result = await client.call_tool("blender_bridge", {
+                    "action": "import_model", "verify_import": True})
+                assert result.structured_content["success"] is True
+                assert blender.send_with_unity_instance.call_args.args[3]["verifyImport"] is True
+        asyncio.run(scenario())
+        """.replace("MODE", repr(mode))
+    )
+
+
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
 def test_focused_create_requires_name_and_conditional_prefab_destination_before_dispatch(mode):
     run_sdk_regression(
         r"""

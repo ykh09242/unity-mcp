@@ -33,6 +33,7 @@ Inspect existing optional Addressables settings (groups, explicit entries and ra
 | `variable_name` | `str \| None` | — |  |
 | `value` | `str \| None` | — |  |
 | `layout_path` | `str \| None` | — |  |
+| `include_preflight` | `bool \| None` | — |  |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

@@ -21,6 +21,7 @@ Delete a C# script by URI or Assets-relative path.
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `uri` | `str` | yes | URI of the script to delete under Assets/ directory, mcpforunity://path/Assets/... or file://... or Assets/... |
+| `verification` | `Literal['auto', 'off']` | — | Bounded post-delete compile/source observations. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

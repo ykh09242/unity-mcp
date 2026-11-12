@@ -76,6 +76,7 @@ FRAME DEBUGGER:
 | `include_objects` | `bool \| None` | — | Return bounded object rows for memory_aggregate (default false). |
 | `object_limit` | `int \| None` | — | Maximum returned object rows per list (default128); totals remain separately scoped. |
 | `name_prefix` | `str \| None` | — | Exact ordinal native object-name prefix for memory_analyze_snapshots; omit for all within budget. |
+| `thresholds` | `list[ProfilerThreshold] \| None` | — | Optional exact-marker statistic limits and native units for window_result only. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
