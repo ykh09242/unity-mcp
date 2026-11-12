@@ -87,6 +87,9 @@ if [ -n "$TEST_PROJECT" ]; then
   while IFS= read -r -d '' definition; do
     entry=${definition#"$TEST_PROJECT/"}
     case "$entry" in
+      # Native Addressables profiles compile this optional fixture. Standalone profiles
+      # lack that package; assembly_sources keeps its sources out of the parent tests.
+      Assets/Tests/EditMode/Tools/AddressablesFixtures/MCPForUnity.Addressables.Fixtures.asmdef) ;;
       Assets/Scripts/TestAsmdef/TestAsmdef.asmdef|Assets/Scripts/ScenarioPlayerFixture/MCPForUnity.ScenarioPlayerFixture.asmdef|Assets/Scripts/ScenarioPlayerFixture/Editor/MCPForUnity.ScenarioPlayerFixture.Editor.asmdef|Assets/Tests/EditMode/MCPForUnityTests.Editor.asmdef|Assets/Tests/PlayMode/MCPForUnityTests.PlayMode.asmdef|Assets/Tests/UI16CaretRuntime/MCPForUnityTests.UI16CaretRuntime.asmdef|Assets/Tests/EditMode/Tools/Input/UGUI/MCPForUnity.Input.UGUI.Tests.asmdef|Assets/Tests/EditMode/Tools/Input/InputSystem/MCPForUnity.Input.InputSystem.Tests.asmdef|Assets/Tests/EditMode/Tools/PlayScenarios/Integration/Runtime/MCPForUnity.PlayScenarios.Integration.Runtime.asmdef|Assets/Tests/EditMode/Tools/PlayScenarios/Integration/Editor/MCPForUnity.PlayScenarios.Integration.Tests.asmdef) ;;
       *) die "unclassified test assembly definition: $entry" ;;
     esac

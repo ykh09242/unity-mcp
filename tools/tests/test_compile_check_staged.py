@@ -263,6 +263,35 @@ def test_unknown_nested_test_assembly_fails_inventory_before_compiler(
     assert not harness.calls.exists()
 
 
+@pytest.mark.parametrize("version", ["2021.3.45f2", "6000.0.84f1", "7000.0.0a7"])
+def test_optional_addressables_fixture_is_classified_without_entering_parent_assembly(
+    harness: CompileHarness, staged_tests: tuple[Path, Path], version: str
+) -> None:
+    project, framework = staged_tests
+    relative = Path("Assets/Tests/EditMode/Tools/AddressablesFixtures")
+    directory = project / relative
+    directory.mkdir(parents=True)
+    source = ROOT / "TestProjects/UnityMCPTests" / relative
+    shutil.copy2(
+        source / "MCPForUnity.Addressables.Fixtures.asmdef",
+        directory / "MCPForUnity.Addressables.Fixtures.asmdef",
+    )
+    (directory / "CustomAddressablesReferenceFixture.cs").write_text(
+        "#error Optional Addressables sources must not enter the parent assembly\n",
+        encoding="utf-8",
+    )
+    result = harness.run(version, test_project=project, framework=framework)
+    assert result.returncode == 0, result.stdout + result.stderr
+    responses = [Path(line) for line in harness.calls.read_text(encoding="utf-8").splitlines()]
+    assert "MCPForUnityTests.EditMode" in {path.stem for path in responses}
+    assert "MCPForUnity.Addressables.Fixtures" not in {path.stem for path in responses}
+    for response in responses:
+        text = response.read_text(encoding="utf-8")
+        assert "AddressablesFixtures/" not in text
+        assert "Unity.Addressables.dll" not in text
+        assert "MCP_ADDRESSABLES_FIXTURE" not in text
+
+
 def test_fixture_assembly_inventory_matches_declared_graph() -> None:
     root = ROOT / "TestProjects/UnityMCPTests/Assets/Scripts"
     expected = {
@@ -316,6 +345,11 @@ def test_test_assembly_inventory_matches_declared_graph() -> None:
             set(),
             set(),
         ),
+        "EditMode/Tools/AddressablesFixtures/MCPForUnity.Addressables.Fixtures.asmdef": (
+            "MCPForUnity.Addressables.Fixtures",
+            {"Unity.Addressables"},
+            {"UNITY_INCLUDE_TESTS", "MCP_ADDRESSABLES_FIXTURE"},
+        ),
         "EditMode/Tools/PlayScenarios/Integration/Runtime/MCPForUnity.PlayScenarios.Integration.Runtime.asmdef": (
             "MCPForUnity.PlayScenarios.Integration.Runtime",
             {"UnityEngine.UI", "MCPForUnity.Runtime"},
@@ -367,6 +401,19 @@ def test_test_assembly_inventory_matches_declared_graph() -> None:
         assert definition["name"] == name
         assert set(definition.get("references", [])) == references
         assert set(definition.get("defineConstraints", [])) == constraints
+
+    addressables = json.loads(
+        (
+            root / "EditMode/Tools/AddressablesFixtures/MCPForUnity.Addressables.Fixtures.asmdef"
+        ).read_text(encoding="utf-8")
+    )
+    assert addressables["versionDefines"] == [
+        {
+            "name": "com.unity.addressables",
+            "expression": "0.0.0",
+            "define": "MCP_ADDRESSABLES_FIXTURE",
+        }
+    ]
 
 
 def test_missing_owned_assembly_does_not_report_editmode_success(
