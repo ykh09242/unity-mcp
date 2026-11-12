@@ -75,6 +75,7 @@ def inspect(
         "checked_commit": None,
         "server_commit": None,
         "baseline_commit": None,
+        "baseline_state": "not_provided",
         "pin_changed": False,
         "requires_current": strict,
         "changed_path_count": 0,
@@ -95,10 +96,21 @@ def inspect(
             "Wrong server identity",
         )
         if baseline is not None:
+            report["baseline_state"] = "unavailable"
             base = resolve_commit(repo, baseline)
             report["baseline_commit"] = base
-            report["pin_changed"] = source_pin(repo, base) != pin
-            report["requires_current"] = strict or report["pin_changed"]
+            try:
+                previous_pin = source_pin(repo, base)
+            except (EvidenceError, ValueError, TypeError, AttributeError):
+                # A valid repair must be able to follow malformed historical
+                # metadata. Require exact current inputs when comparison is unknown.
+                report.update(
+                    baseline_state="invalid_metadata", pin_changed=None, requires_current=True
+                )
+            else:
+                report["baseline_state"] = "valid"
+                report["pin_changed"] = previous_pin != pin
+                report["requires_current"] = strict or report["pin_changed"]
         raw = git(
             repo,
             "diff",

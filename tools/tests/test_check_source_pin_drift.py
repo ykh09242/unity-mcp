@@ -155,6 +155,28 @@ def test_missing_baseline_and_invalid_revision_are_unavailable(history):
     assert drift.exit_status(drift.inspect(repo, "--help")) == 2
 
 
+@pytest.mark.parametrize("additional_server_change", [False, True])
+@pytest.mark.parametrize("broken_inputs", ["{}", "not-json"])
+def test_repairing_invalid_baseline_requires_current_server_inputs(
+    history, additional_server_change, broken_inputs
+):
+    repo, pin, _ = history
+    put(repo, "release-source-inputs.json", broken_inputs)
+    broken = commit(repo)
+    set_pin(repo, pin)
+    if additional_server_change:
+        put(repo, "Server/src/main.py", "# unpinned runtime change\n")
+    commit(repo)
+
+    report = drift.inspect(repo, baseline=broken)
+
+    assert report["baseline_state"] == "invalid_metadata"
+    assert report["requires_current"] is True
+    assert report["pin_changed"] is None
+    assert report["state"] == ("stale" if additional_server_change else "current")
+    assert drift.exit_status(report) == (1 if additional_server_change else 0)
+
+
 def test_truncation_limits_display_only_and_cli_reports_json(history):
     repo, _, _ = history
     for number in range(105):
