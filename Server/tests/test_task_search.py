@@ -154,6 +154,31 @@ async def test_declared_action_metadata_preserves_legacy_wire_arguments(
     assert send.call_args.args[-1]["action"] == normalized
 
 
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("셰이더그래프 검사", "manage_shader"),
+        ("셰이더 그래프 검사", "manage_shader"),
+        ("shader graph inspect", "manage_shader"),
+        ("프리팹 캡처", "capture_prefab"),
+        ("prefab capture", "capture_prefab"),
+        ("버튼 클릭", "manage_input"),
+        ("UI button click", "manage_input"),
+        ("타입 멤버 조회", "unity_reflect"),
+    ],
+)
+def test_task_phrases_rank_the_dedicated_tool_first(query, expected):
+    from cli.main import cli
+
+    result = CliRunner().invoke(cli, ["--format", "json", "tool", "search", query, "--limit", "3"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["results"], query
+    assert payload["results"][0]["name"] == expected
+    assert all(item["readiness"] == "unobserved" for item in payload["results"])
+
+
 def test_korean_intent_finds_official_skill_without_claiming_readiness():
     # Given: the installed built-in catalog without an editor or MCP connection.
     from cli.main import cli

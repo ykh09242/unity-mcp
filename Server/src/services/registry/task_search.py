@@ -90,6 +90,14 @@ _PURPOSES: Final = {
     "manage_physics": _PHYSICS,
     "manage_ui": _UITK,
     "manage_ugui": TaskPurpose("canvas recttransform ui layout 캔버스", ("ui-ugui",)),
+    "manage_shader": TaskPurpose(
+        "shader graph inspect diagnostics compile 셰이더그래프 셰이더 그래프 검사 컴파일"
+    ),
+    "capture_prefab": TaskPurpose("prefab capture preview thumbnail 프리팹 캡처 미리보기"),
+    "manage_input": TaskPurpose("ui button click input pointer 버튼 클릭 입력 포인터"),
+    "unity_reflect": TaskPurpose(
+        "type member method api reflection 타입 멤버 조회 메서드 리플렉션"
+    ),
     "manage_render_volumes": TaskPurpose(
         "bloom volume postprocessing urp 블룸 후처리", ("urp-postprocessing",)
     ),
@@ -209,20 +217,14 @@ def search_catalog(
         aliases = [capability.source] if capability else []
         actions = list(capability.actions) if capability else _declared_actions(entry)
         title = annotations.title or (capability.title if capability else name)
-        words = _words(
-            " ".join(
-                (
-                    name,
-                    title,
-                    description,
-                    entry.get("group") or "",
-                    purpose.keywords,
-                    *aliases,
-                    *actions,
-                )
-            )
+        # Dedicated names and curated tasks outweigh incidental mentions in prose.
+        score = 12 * len(query_words.intersection(_words(name)))
+        score += 8 * len(query_words.intersection(_words(purpose.keywords)))
+        score += 4 * len(query_words.intersection(_words(" ".join((title, *actions)))))
+        score += 2 * len(query_words.intersection(_words(" ".join(aliases))))
+        score += len(
+            query_words.intersection(_words(" ".join((description, entry.get("group") or ""))))
         )
-        score = len(query_words.intersection(words))
         score += 1000 if query == name.casefold() else 0
         score += 100 if query in name.casefold() else 0
         score += 20 if query in purpose.keywords.casefold() else 0
