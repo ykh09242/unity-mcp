@@ -173,6 +173,32 @@ async def test_public_refresh_and_status_expose_the_same_follow_up(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["timeout", "disconnected"])
+async def test_uncertain_refresh_dispatch_recommends_the_original_job(monkeypatch, failure):
+    from unittest.mock import AsyncMock
+
+    sent = []
+
+    async def send(_sender, _instance, _command, params, **_options):
+        sent.append(params["compile_id"])
+        if failure == "timeout":
+            raise TimeoutError
+        return {"success": False, "error": "disconnected"}
+
+    monkeypatch.setattr(
+        refresh_module, "get_unity_instance_from_context", AsyncMock(return_value="Fixture@one")
+    )
+    monkeypatch.setattr(refresh_module.unity_transport, "send_with_unity_instance", send)
+    result = await refresh_module.refresh_unity(None, compile="request", wait_for_ready=False)
+    assert len(sent) == 1
+    assert result.data["compilation"]["reason"] == "observation_unavailable"
+    assert result.data["follow_up"]["next_call"] == {
+        "tool": "get_compile_job",
+        "arguments": {"compile_id": sent[0], "unity_instance": "Fixture@one"},
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("disconnect", [False, True])
 async def test_ready_editor_returns_failed_compile_without_mutation_replay(monkeypatch, disconnect):
     # Given a finished failed compilation on a ready Editor.

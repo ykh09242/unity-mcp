@@ -590,6 +590,8 @@ async def refresh_unity(
         )
     except TimeoutError:
         # Expiry bounds observation, not native side effects. Never replay the write.
+        if compile_id is not None:
+            compilation = unknown_compile_job(compile_id, "observation_unavailable")
         return with_compilation(
             MCPResponse(
                 **command_outcome_unknown(
@@ -629,6 +631,13 @@ async def refresh_unity(
         is_connection_lost = is_connection_lost_after_send(response_dict) or (
             (deadline_after_dispatch or "timeout" in err) and compile == "request"
         )
+        if (
+            compile_id is not None
+            and is_connection_lost
+            and not is_reloading_rejection(response_dict)
+            and compilation["reason"] == "tracking_unsupported"
+        ):
+            compilation = unknown_compile_job(compile_id, "observation_unavailable")
         # A rejected command never ran. Later readiness cannot prove refresh success.
         # Only an ambiguous lost response may recover, without replaying the write.
         if is_reloading_rejection(response_dict) or not wait_for_ready or not is_connection_lost:
