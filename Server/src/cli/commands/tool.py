@@ -88,6 +88,35 @@ def search(query: str, limit: int, catalog_query: str | None) -> None:
         click.echo(format_output(result, config.format))
 
 
+@tool.command("catalog")
+@click.option("--group", help="List tools in one catalog group.")
+@click.option("--tool", "tool_name", help="List actions of one exact tool.")
+@click.option("--offset", type=click.IntRange(min=0), default=0, show_default=True)
+@click.option("--limit", type=click.IntRange(1, 20), default=20, show_default=True)
+def catalog(group: str | None, tool_name: str | None, offset: int, limit: int) -> None:
+    """Browse the complete offline catalog for agent semantic selection.
+
+    Start with the group index, then compare tool purposes and actions. Use
+    tool describe NAME for the live schema before execution.
+    """
+    import json
+    from pathlib import Path
+
+    import services.tools as tools_package
+    from services.registry import get_registered_tools
+    from services.registry.action_catalog import CatalogRequest, browse_catalog
+    from utils.module_discovery import discover_modules
+
+    try:
+        request = CatalogRequest(group=group, tool=tool_name, offset=offset, limit=limit)
+        list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
+        result = browse_catalog(request, get_registered_tools())
+    except ValueError as error:
+        raise click.UsageError(str(error)) from error
+    # Catalog nesting and exact continuation offsets must survive text/table modes.
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def _validate_name(_ctx, _param, value):
     if not 1 <= len(value) <= 128 or not all(
         character.isalnum() or character in "_.-" for character in value

@@ -310,3 +310,4 @@ def test_text_search_reports_empty_results():
     result = CliRunner().invoke(cli, ["--no-project-context", "tool", "search", "unmatchablexyz"])
     assert result.exit_code == 0, result.output
     assert "No matching tools" in result.stdout
+    assert "tool catalog" in result.stdout

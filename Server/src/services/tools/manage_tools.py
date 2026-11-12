@@ -38,7 +38,8 @@ logger = logging.getLogger("mcp-for-unity-server")
         "Actions: list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
-        "reset (restore configured profile), describe (full schema for one tool), "
+        "reset (restore configured profile), describe (full schema for one tool, optionally bind operation), "
+        "catalog (complete group index, paged tools by group or actions by tool), "
         "search (bounded lexical catalog suggestions, without activation). "
         "Selection changes server tools/list; it does not confirm the client's callable inventory. "
         "Use sync after toggling tools in the Unity Editor GUI."
@@ -54,24 +55,35 @@ logger = logging.getLogger("mcp-for-unity-server")
 async def manage_tools(
     ctx: Context,
     action: Annotated[
-        Literal["list_groups", "activate", "deactivate", "sync", "reset", "describe", "search"],
+        Literal[
+            "list_groups",
+            "activate",
+            "deactivate",
+            "sync",
+            "reset",
+            "describe",
+            "search",
+            "catalog",
+        ],
         "Action to perform.",
     ],
     group: Annotated[
         str | None,
-        "Group name for activate/deactivate; select a group or a single tool. "
+        "Group name for activate/deactivate/catalog; select a group or a single tool. "
         "Valid groups: " + ", ".join(sorted(TOOL_GROUPS.keys())),
     ] = None,
     tool: Annotated[
         str | None,
-        "Single tool name for activate/deactivate/describe. Discover names with list_groups.",
+        "Single tool name for activate/deactivate/describe/catalog. Discover names with catalog.",
     ] = None,
     query: Annotated[
         str | None,
         Field(max_length=512),
         "Original task query or exact identifier for search (1..512 characters).",
     ] = None,
-    limit: Annotated[int, Field(strict=True, ge=1, le=20), "Maximum search results (1..20)."] = 5,
+    limit: Annotated[
+        int, Field(strict=True, ge=1, le=20), "Maximum search or catalog page entries (1..20)."
+    ] = 5,
     include_schema: Annotated[
         bool,
         Field(strict=True),
@@ -82,6 +94,14 @@ async def manage_tools(
         Field(max_length=512),
         "For search, translate the user's intent from any language into concise English catalog terms here. Preserve exact tool/API/package identifiers. Omit for an English query or exact identifier. The server performs lexical matching.",
     ] = None,
+    offset: Annotated[
+        int, Field(strict=True, ge=0), "Catalog page offset for a selected group or tool."
+    ] = 0,
+    operation: Annotated[
+        str | None,
+        Field(min_length=1, max_length=128),
+        "For describe, select one exact action from catalog. The returned full schema binds that action.",
+    ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
@@ -89,8 +109,29 @@ async def manage_tools(
     modern = is_sessionless(ctx)
     if catalog_query is not None and action != "search":
         return {"success": False, "error": "catalog_query is supported only for search."}
+    if offset and action != "catalog":
+        return {"success": False, "error": "offset is supported only for catalog."}
+    if operation is not None and action != "describe":
+        return {"success": False, "error": "operation is supported only for describe."}
     if include_schema and (action != "activate" or not tool or group is not None):
         return {"success": False, "error": "include_schema requires activating one tool."}
+    entries = get_registered_tools()
+    if action in ("catalog", "search", "describe") and discovery is not None:
+        entries = [entry for entry in entries if entry["name"] in discovery.definitions]
+    if action == "catalog":
+        from services.registry.action_catalog import CatalogRequest, browse_catalog
+
+        if query is not None:
+            return {
+                "success": False,
+                "error": "catalog uses group or tool selectors without a query.",
+            }
+        try:
+            request = CatalogRequest(group=group, tool=tool, offset=offset, limit=limit)
+            visible_names = {item.name for item in await _visible_tools(ctx)}
+            return browse_catalog(request, entries, visible_names=visible_names)
+        except ValueError as error:
+            return {"success": False, "error": str(error)}
     if action == "search":
         from services.registry.task_search import SearchRequest, search_catalog
 
@@ -107,12 +148,12 @@ async def manage_tools(
                 "error": "search requires nonempty query/catalog_query strings of at most 512 characters and limit 1..20. catalog_query may be omitted.",
             }
         visible_names = {item.name for item in await _visible_tools(ctx)}
-        return search_catalog(request, get_registered_tools(), visible_names=visible_names)
+        return search_catalog(request, entries, visible_names=visible_names)
     if action in ("activate", "deactivate", "reset") and modern:
         if discovery is None or await discovery.scope_key(ctx) is None:
             return {"success": False, "error": UNSCOPED_GUIDANCE}
     if action == "describe":
-        from services.registry.task_search import action_maturity
+        from services.registry.action_catalog import describe_action
 
         if group is not None or not tool:
             return {"success": False, "error": "describe requires a tool name and no group."}
@@ -122,19 +163,17 @@ async def manage_tools(
                 "success": False,
                 "error": "Unknown built-in tool. Use list_groups to discover names.",
             }
-        return {
-            "tool": definition.to_mcp_tool().model_dump(mode="json", exclude_none=True),
-            "maturity": next(
-                (
-                    item.get("maturity", "stable")
-                    for item in get_registered_tools()
-                    if item["name"] == tool.strip()
-                ),
-                "stable",
-            ),
-            "action_maturity": action_maturity(tool.strip()),
-            "note": "Description only; selection and permissions are unchanged.",
-        }
+        entry = next(item for item in entries if item["name"] == tool.strip())
+        visible_names = {item.name for item in await _visible_tools(ctx)}
+        try:
+            return describe_action(
+                entry,
+                definition.to_mcp_tool().model_dump(mode="json", exclude_none=True),
+                operation,
+                visible_names=visible_names,
+            )
+        except ValueError as error:
+            return {"success": False, "error": str(error)}
     if action == "list_groups":
         return await _list_groups(ctx)
 
@@ -163,10 +202,9 @@ async def manage_tools(
         if include_schema:
             description = await manage_tools(ctx, "describe", tool=tool)
             result["description"] = description
-            from services.registry.task_search import SearchRequest, search_catalog
+            from services.registry.action_catalog import declared_actions
 
-            matches = search_catalog(SearchRequest(query=tool, limit=1), [entry])["results"]
-            actions = matches[0]["actions"] if matches else []
+            actions = declared_actions(entry)
             result["readiness"] = {
                 "status": "unobserved",
                 "next_action": {"tool": tool, "action": "capabilities"}

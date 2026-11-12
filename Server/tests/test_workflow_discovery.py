@@ -24,6 +24,7 @@ async def test_activation_can_return_schema_and_declared_readiness(monkeypatch):
         fastmcp=SimpleNamespace(_tool_discovery=discovery), enable_components=AsyncMock()
     )
     monkeypatch.setattr(module, "is_sessionless", lambda _ctx: False)
+    monkeypatch.setattr(module, "_visible_tools", AsyncMock(return_value=[]))
     monkeypatch.setattr(
         module,
         "get_registered_tools",

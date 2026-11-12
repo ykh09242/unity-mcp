@@ -21140,7 +21140,8 @@
                   "sync",
                   "reset",
                   "describe",
-                  "search"
+                  "search",
+                  "catalog"
                 ],
                 "type": "string"
               },
@@ -21176,6 +21177,24 @@
                 "maximum": 20,
                 "minimum": 1,
                 "type": "integer"
+              },
+              "offset": {
+                "default": 0,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "operation": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "query": {
                 "anyOf": [
@@ -47472,7 +47491,8 @@
                   "sync",
                   "reset",
                   "describe",
-                  "search"
+                  "search",
+                  "catalog"
                 ],
                 "type": "string"
               },
@@ -47508,6 +47528,24 @@
                 "maximum": 20,
                 "minimum": 1,
                 "type": "integer"
+              },
+              "offset": {
+                "default": 0,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "operation": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "query": {
                 "anyOf": [

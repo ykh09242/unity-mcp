@@ -4307,6 +4307,18 @@ List project tools or inspect a named server-advertised tool.
 | --- | --- | --- | --- | --- | --- | --- |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp tool catalog`
+
+Browse the complete offline catalog for agent semantic selection. Start with the group index, then compare tool purposes and actions. Use tool describe NAME for the live schema before execution.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --group | text | optional | nargs=1 | — | — | List tools in one catalog group. |
+| --tool | text | optional | nargs=1 | — | — | List actions of one exact tool. |
+| --offset | integer range: [0..None] | optional | nargs=1 | 0 | — |  |
+| --limit | integer range: [1..20] | optional | nargs=1 | 20 | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp tool describe`
 
 Describe NAME for this CLI connection; hidden-tool causes may be unknown.

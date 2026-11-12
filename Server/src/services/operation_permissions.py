@@ -256,7 +256,7 @@ _ACTIONS: Final = {
     },
     "read_console": {Permission.READ: _names("get"), Permission.EDIT: _names("clear")},
     "manage_tools": {
-        Permission.READ: _names("list_groups search describe"),
+        Permission.READ: _names("list_groups search describe catalog"),
         Permission.EDIT: _names("activate deactivate sync reset"),
     },
     "unity_reflect": {Permission.READ: _names("get_type get_member search")},

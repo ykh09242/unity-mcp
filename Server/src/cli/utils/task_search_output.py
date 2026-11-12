@@ -21,9 +21,8 @@ def format_task_search(result: SearchResponse, config: CLIConfig) -> str:
     entries = result["results"]
     lines = [f"Tools: {len(entries)} shown of {result['total_matches']} matches"]
     if not entries:
-        lines.append(
-            "No matching tools. Try an exact tool name or English task terms with --catalog-query."
-        )
+        lines.append("No matching tools. Browse the complete catalog to select by purpose.")
+        lines.append("  " + followup_command(config, ["tool", "catalog"]))
     for entry in entries:
         lines.append(f"\n{entry['name']} [{entry['maturity']}] — {_summary(entry['title'])}")
         if entry["description"]:
