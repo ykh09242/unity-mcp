@@ -19,6 +19,30 @@ namespace MCPForUnity.Editor.Tools
         internal static bool IsAction(string action) =>
             action == "get_dependencies" || action == "get_reverse_references" || action == "preview_move" || action == "preview_delete";
 
+        internal static JObject ObserveTarget(string path, bool expectedExists = true)
+        {
+            try
+            {
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                bool exists = !string.IsNullOrEmpty(guid);
+                return PostEditVerification.Summary(
+                    "affected_asset_metadata_only; no_object_load_or_reference_graph_scan",
+                    new JObject
+                    {
+                        ["path"] = path,
+                        ["exists"] = exists,
+                        ["guid"] = guid,
+                        ["main_type"] = exists ? AssetDatabase.GetMainAssetTypeAtPath(path)?.FullName : null,
+                    },
+                    exists == expectedExists ? null : new JArray(new JObject { ["code"] = "unexpected_asset_existence" })
+                );
+            }
+            catch (Exception)
+            {
+                return PostEditVerification.Unavailable("affected_asset_metadata_only", "metadata_unavailable_after_mutation");
+            }
+        }
+
         internal static bool HasOptions(JObject parameters) =>
             new[] { "scanRoot", "maxAssets", "maxWork", "referenceRevision", "referenceSnapshot", "referenceCursor" }.Any(name => parameters[name] != null);
 

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.Prefabs;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -22,63 +23,18 @@ namespace MCPForUnity.Tests.EditMode.Tools
         private Scene scene;
         private GameObject instance;
         private bool restoreEmptyScene;
-        private bool restoreRunnerDefaultScene;
+        private readonly PrefabTestSceneFixture bootstrapFixture = new PrefabTestSceneFixture();
 
         [OneTimeSetUp]
         public void PrepareRunnerBootstrap()
         {
-            Scene initial = SceneManager.GetActiveScene();
-            if (
-                SceneManager.sceneCount == 1
-                && initial.IsValid()
-                && initial.rootCount != 0
-                && string.IsNullOrEmpty(initial.path)
-                && !initial.isDirty
-                && IsRunnerBootstrapScene(initial)
-            )
-            {
-                // The pinned runner creates this scene after external editor initialization.
-                // Normalize only its exact owned scene once, so per-case cleanup can restore
-                // an empty scene without later mistaking a recreated default scene for user data.
-                EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-                restoreRunnerDefaultScene = true;
-            }
+            bootstrapFixture.PrepareRunnerBootstrap();
         }
 
         [OneTimeTearDown]
         public void RestoreRunnerBootstrap()
         {
-            if (!restoreRunnerDefaultScene)
-                return;
-            Scene current = SceneManager.GetActiveScene();
-            Assert.IsTrue(
-                SceneManager.sceneCount == 1 && current.IsValid() && string.IsNullOrEmpty(current.path) && !current.isDirty && current.rootCount == 0,
-                "The fixture must finish with only its clean empty replacement scene before restoring the runner default."
-            );
-            EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
-        }
-
-        private static bool IsRunnerBootstrapScene(Scene candidate)
-        {
-            Type holderType = typeof(UnityEditor.TestTools.TestRunner.Api.TestRunnerApi).Assembly.GetType(
-                "UnityEditor.TestTools.TestRunner.TestRun.TestJobDataHolder"
-            );
-            FieldInfo runsField = holderType?.GetField("TestRuns");
-            if (runsField == null)
-                return false;
-            foreach (Object holder in Resources.FindObjectsOfTypeAll(holderType))
-            {
-                if (!(runsField.GetValue(holder) is IEnumerable runs))
-                    continue;
-                foreach (object run in runs)
-                {
-                    FieldInfo runningField = run.GetType().GetField("isRunning");
-                    FieldInfo sceneField = run.GetType().GetField("InitTestScene");
-                    if (runningField?.GetValue(run) is bool running && running && sceneField?.GetValue(run) is Scene bootstrap && bootstrap == candidate)
-                        return true;
-                }
-            }
-            return false;
+            bootstrapFixture.RestoreRunnerBootstrap();
         }
 
         [SetUp]
@@ -262,6 +218,20 @@ namespace MCPForUnity.Tests.EditMode.Tools
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.IsTrue(collider.isTrigger);
             Assert.AreEqual(new Vector3(2, 3, 4), collider.size);
+        }
+
+        [Test]
+        public void SelectedPropertyDispositionRetainsUnselectedOverride()
+        {
+            BoxCollider collider = OverrideCollider();
+            string id = PropertyId("m_IsTrigger");
+            JObject result = Command("revert_overrides", new JArray(id));
+            Assert.IsTrue((bool)result["success"], result.ToString());
+            Assert.AreEqual("reverted", (string)result["data"]["dispositions"][0]["disposition"]);
+            Assert.IsFalse(collider.isTrigger);
+            Assert.AreEqual(new Vector3(2, 3, 4), collider.size);
+            Assert.Greater((int)result["data"]["verification"]["observed_values"]["remaining_property_count"], 0);
+            Assert.IsFalse((bool)result["data"]["verification"]["observed_values"]["selected"][0]["still_overridden"]);
         }
 
         [Test]

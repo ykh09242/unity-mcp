@@ -5,6 +5,7 @@ Defines the manage_asset tool for interacting with Unity assets.
 import asyncio
 import json
 import logging
+import math
 import re
 import unicodedata
 from typing import Annotated, Any, Literal
@@ -30,7 +31,7 @@ from services.tools.reference_diagnostics import (
 logger = logging.getLogger("mcp-for-unity-server")
 
 
-async def _send_asset(ctx, instance, params, **kwargs):
+async def _send_asset(ctx, instance, params, *, await_graph_seconds=None, **kwargs):
     from services.reference_graph.mutation_tracking import (
         prepare_duplicate,
         target_paths,
@@ -53,6 +54,7 @@ async def _send_asset(ctx, instance, params, **kwargs):
             **kwargs,
         ),
         preparation_error=preparation_error,
+        await_graph_seconds=await_graph_seconds,
     )
 
 
@@ -296,8 +298,48 @@ async def manage_asset(
         "Recheck the same bounded read/preview or guard move/delete immediately before mutation.",
     ]
     | None = None,
+    await_graph_seconds: Annotated[
+        float | None,
+        "Asset writes only: wait 0..30 seconds for the existing active graph receipt and first diff page; never activates a graph.",
+    ] = None,
+    include_dependencies: Annotated[
+        bool,
+        "get_bundle_assets only: include the first bounded dependency page without building bundles.",
+    ] = False,
 ) -> dict[str, Any]:
     action_l = (action or "").lower()
+    if await_graph_seconds is not None and (
+        isinstance(await_graph_seconds, bool)
+        or not isinstance(await_graph_seconds, (int, float))
+        or not math.isfinite(await_graph_seconds)
+        or not 0 <= await_graph_seconds <= 30
+        or action_l
+        not in {
+            "create",
+            "create_folder",
+            "modify",
+            "move",
+            "rename",
+            "delete",
+            "duplicate",
+            "set_labels",
+            "add_labels",
+            "remove_labels",
+        }
+    ):
+        return {
+            "success": False,
+            "message": "await_graph_seconds requires an asset write and a finite value from 0 to 30.",
+        }
+    if (
+        not isinstance(include_dependencies, bool)
+        or include_dependencies
+        and action_l != "get_bundle_assets"
+    ):
+        return {
+            "success": False,
+            "message": "include_dependencies is only available for get_bundle_assets.",
+        }
     guarded_mutation = action_l in {"move", "delete"} and reference_revision is not None
     if action_l in ASSET_REFERENCE_ACTIONS or guarded_mutation:
         try:
@@ -368,6 +410,7 @@ async def manage_asset(
             params,
             loop=asyncio.get_running_loop(),
             retry_on_reload=not guarded_mutation,
+            await_graph_seconds=await_graph_seconds,
         )
         return result if isinstance(result, dict) else {"success": False, "message": str(result)}
     if any(
@@ -423,6 +466,7 @@ async def manage_asset(
             params,
             loop=asyncio.get_running_loop(),
             retry_on_reload=action_l == "get_labels",
+            await_graph_seconds=await_graph_seconds,
         )
         return result if isinstance(result, dict) else {"success": False, "message": str(result)}
     if any(value is not None for value in (labels, label_targets, label_revision)):
@@ -601,6 +645,40 @@ async def manage_asset(
         unity_instance,
         params_dict,
         loop=loop,
+        await_graph_seconds=await_graph_seconds,
     )
+    if include_dependencies and isinstance(result, dict) and result.get("success"):
+        original = result
+        try:
+            dependency_result = await _send_asset(
+                ctx,
+                unity_instance,
+                {
+                    "action": "get_bundle_dependencies",
+                    "bundleName": bundle_name,
+                    "recursive": recursive,
+                    "pageSize": page_size,
+                    "pageNumber": 1,
+                },
+            )
+            result = {
+                **original,
+                "data": {
+                    **(original.get("data") or {}),
+                    "dependency_projection": dependency_result,
+                },
+            }
+        except Exception as error:
+            result = {
+                **original,
+                "data": {
+                    **(original.get("data") or {}),
+                    "dependency_projection": {
+                        "success": False,
+                        "state": "unavailable",
+                        "reason": type(error).__name__,
+                    },
+                },
+            }
     # Return the result obtained from Unity
     return result if isinstance(result, dict) else {"success": False, "message": str(result)}

@@ -174,6 +174,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         source_hash = plan.Hash,
                         impact = plan.Impact,
                         atomicity = "compare_before_save",
+                        saved = true,
+                        verification = ManagePrefabs.SavedVerification(path, System.Array.Empty<int>(), System.Array.Empty<string>(), plan.Fields),
                     }
                 );
             }

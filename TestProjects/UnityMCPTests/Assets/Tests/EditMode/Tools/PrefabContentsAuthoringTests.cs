@@ -54,6 +54,102 @@ namespace MCPForUnityTests.Editor.Tools
                 )
             );
 
+        [Test]
+        public void SavedContentsReportActualRequestedField()
+        {
+            JObject response = Modify("anchoredPosition", new JArray(21, 43));
+            Assert.IsTrue((bool)response["success"], response.ToString());
+            Assert.IsTrue((bool)response["data"]["saved"]);
+            Assert.AreEqual("passed", (string)response["data"]["verification"]["status"]);
+            JToken value = response["data"]["verification"]["observed_values"][0]["observed_values"][0]["value"];
+            Assert.AreEqual(21, (float)value[0]);
+            Assert.AreEqual(43, (float)value[1]);
+        }
+
+        [TestCase("Collider")]
+        [TestCase("UnityEngine.Collider")]
+        public void SavedContentsReportBaseTypeRequestedField(string selector)
+        {
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                contents.AddComponent<BoxCollider>();
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+            JObject response = JObject.FromObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_contents",
+                        ["prefabPath"] = path,
+                        ["componentProperties"] = new JObject { [selector] = new JObject { ["isTrigger"] = true } },
+                    }
+                )
+            );
+            Assert.IsTrue((bool)response["success"], response.ToString());
+            JToken verification = response["data"]["verification"];
+            Assert.AreEqual("passed", (string)verification["status"], verification.ToString());
+            JToken retained = verification["observed_values"][1]["observed_values"][0];
+            Assert.AreEqual("isTrigger", (string)retained["requested_property"]);
+            Assert.IsTrue((bool)retained["matches_requested"]);
+        }
+
+        [Test]
+        public void SavedVerificationBoundsComponentsAndRequestedFields()
+        {
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                for (int index = 0; index < 20; index++)
+                    contents.AddComponent<BoxCollider>();
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+            var fields = new JObject();
+            for (int index = 0; index < 80; index++)
+                fields["unknown" + index] = index;
+            var requested = new JObject { ["componentProperties"] = new JObject { ["RectTransform"] = fields } };
+            var method = typeof(ManagePrefabs).GetMethod("SavedVerification", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            var result = (JObject)method.Invoke(null, new object[] { path, Array.Empty<int>(), Array.Empty<string>(), requested });
+            Assert.IsFalse((bool)result["complete"], result.ToString());
+            Assert.AreNotEqual("passed", (string)result["status"]);
+            Assert.LessOrEqual(((JArray)result["observed_values"]).Count, 16);
+            Assert.IsTrue(result["further_fixes_required"].Type == JTokenType.Null || (bool)result["further_fixes_required"]);
+        }
+
+        [Test]
+        public void SavedContentsReportsRequestedObjectFieldsAfterRootNameNormalization()
+        {
+            JObject response = JObject.FromObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_contents",
+                        ["prefabPath"] = path,
+                        ["name"] = "RequestedRootName",
+                        ["tag"] = "EditorOnly",
+                        ["layer"] = "Ignore Raycast",
+                    }
+                )
+            );
+            Assert.IsTrue((bool)response["success"], response.ToString());
+            JToken verification = response["data"]["verification"];
+            Assert.AreEqual("issues_found", (string)verification["status"], verification.ToString());
+            Assert.IsTrue((bool)verification["further_fixes_required"]);
+            var values = (JArray)verification["gameobject_values"];
+            Assert.AreEqual(3, values.Count);
+            Assert.IsFalse((bool)values[0]["matches_requested"]);
+            Assert.IsTrue((bool)values[1]["matches_requested"]);
+            Assert.IsTrue((bool)values[2]["matches_requested"]);
+        }
+
         private void CreateAmbiguousHierarchy()
         {
             var contents = PrefabUtility.LoadPrefabContents(path);

@@ -152,7 +152,23 @@ async def manage_scene(
         "validate_references: returned snapshot cursor; captured evidence, not a live revision recheck.",
     ]
     | None = None,
+    verify: Annotated[
+        bool | None,
+        "load/save only: observe the exact affected scene with one100-object/10ms validation slice",
+    ] = None,
+    scene_handle: Annotated[
+        int | None, "validate/save: exact loaded scene handle, including nonactive additive scenes"
+    ] = None,
 ) -> dict[str, Any]:
+    if verify is not None and (type(verify) is not bool or action not in {"load", "save"}):
+        return {"success": False, "message": "verify requires load/save and a boolean value."}
+    if scene_handle is not None and (
+        type(scene_handle) is not int or action not in {"validate", "save"}
+    ):
+        return {
+            "success": False,
+            "message": "scene_handle requires validate/save and an integer identity.",
+        }
     if action == "validate_references":
         try:
             if any(
@@ -323,6 +339,10 @@ async def manage_scene(
             return {"success": False, "message": "target is required for move_to_scene."}
 
         params: dict[str, Any] = {"action": action, **validation_options}
+        if verify is not None:
+            params["verify"] = verify
+        if scene_handle is not None:
+            params["scene_handle"] = scene_handle
         if name:
             params["name"] = name
         if path:

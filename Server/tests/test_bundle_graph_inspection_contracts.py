@@ -43,6 +43,7 @@ def test_bundle_and_graph_inspection_sdk_contracts(tmp_path):
         async def main():
             global raw
             for mode in ("2026-07-28", "legacy"):
+                raw = {"success": True, "message": "Inspected", "data": {"entries": [], "totalEntries": 0, "hasMore": False}}
                 async with Client(server, mode=mode) as client:
                     tools = {tool.name: tool for tool in await client.list_tools()}
                     asset_actions = tools["manage_asset"].inputSchema["properties"]["action"]["enum"]
@@ -69,6 +70,13 @@ def test_bundle_and_graph_inspection_sdk_contracts(tmp_path):
                             assert wire["bundleName"] == "fixture.bundle"
                         if action == "get_bundle_dependencies":
                             assert wire["recursive"] is True
+
+                    before = len(requests)
+                    combined = await client.call_tool("manage_asset", {"action": "get_bundle_assets", "bundle_name": "fixture.bundle", "include_dependencies": True})
+                    assert len(requests) == before + 2, (requests[before:], combined.structured_content)
+                    assert [entry[2]["action"] for entry in requests[-2:]] == ["get_bundle_assets", "get_bundle_dependencies"]
+                    assert combined.structured_content["data"]["dependency_projection"] == raw
+                    assert combined.structured_content["data"]["entries"] == raw["data"]["entries"]
 
                     for action in (
                         "import", "create", "modify", "delete", "duplicate", "move", "rename",

@@ -461,7 +461,7 @@ namespace MCPForUnity.Editor.Tools
 
                 AssetDatabase.SaveAssetIfDirty(newAsset);
                 // AssetDatabase.Refresh(); // CreateAsset often handles refresh
-                var response = new SuccessResponse($"Asset '{fullPath}' created successfully.", GetAssetData(fullPath));
+                var response = SavedAssetResponse(fullPath, $"Asset '{fullPath}' created successfully.");
                 folders.Complete();
                 return response;
             }
@@ -474,6 +474,26 @@ namespace MCPForUnity.Editor.Tools
                 if (newAsset != null && !EditorUtility.IsPersistent(newAsset))
                     UnityEngine.Object.DestroyImmediate(newAsset);
             }
+        }
+
+        private static SuccessResponse SavedAssetResponse(string path, string message)
+        {
+            JObject data;
+            try
+            {
+                data = JObject.FromObject(GetAssetData(path));
+            }
+            catch (Exception)
+            {
+                data = new JObject
+                {
+                    ["path"] = path,
+                    ["saved"] = true,
+                    ["metadata_status"] = "unavailable",
+                };
+            }
+            data["verification"] = AssetReferenceDiagnostics.ObserveTarget(path);
+            return new SuccessResponse(message, data);
         }
 
         private static object CreateFolder(string path, bool includeData = true)
@@ -608,7 +628,7 @@ namespace MCPForUnity.Editor.Tools
                     EditorUtility.SetDirty(asset);
                     // Save only the requested asset file, preserving unrelated dirty assets.
                     AssetDatabase.SaveAssetIfDirty(asset);
-                    return new SuccessResponse($"Asset '{fullPath}' modified successfully.", GetAssetData(fullPath));
+                    return SavedAssetResponse(fullPath, $"Asset '{fullPath}' modified successfully.");
                 }
                 else
                 {
@@ -646,7 +666,10 @@ namespace MCPForUnity.Editor.Tools
                 if (success)
                 {
                     // AssetDatabase.Refresh(); // DeleteAsset usually handles refresh
-                    return new SuccessResponse($"Asset '{fullPath}' deleted successfully.");
+                    return new SuccessResponse(
+                        $"Asset '{fullPath}' deleted successfully.",
+                        new { verification = AssetReferenceDiagnostics.ObserveTarget(fullPath, false) }
+                    );
                 }
                 else
                 {
@@ -697,7 +720,7 @@ namespace MCPForUnity.Editor.Tools
                 if (success)
                 {
                     // AssetDatabase.Refresh();
-                    var response = new SuccessResponse($"Asset '{sourcePath}' duplicated to '{destPath}'.", GetAssetData(destPath));
+                    var response = SavedAssetResponse(destPath, $"Asset '{sourcePath}' duplicated to '{destPath}'.");
                     folders.Complete();
                     return response;
                 }
@@ -749,7 +772,7 @@ namespace MCPForUnity.Editor.Tools
                 if (string.IsNullOrEmpty(moveError))
                 {
                     // AssetDatabase.Refresh(); // MoveAsset usually handles refresh
-                    var response = new SuccessResponse($"Asset moved/renamed from '{sourcePath}' to '{destPath}'.", GetAssetData(destPath));
+                    var response = SavedAssetResponse(destPath, $"Asset moved/renamed from '{sourcePath}' to '{destPath}'.");
                     folders.Complete();
                     return response;
                 }

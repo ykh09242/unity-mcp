@@ -283,6 +283,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         componentCount = sourceObject.GetComponents<Component>().Length,
                         childCount = sourceObject.transform.childCount,
                         materialsPersisted = persistResult.count,
+                        verification = SavedVerification(finalPath, Array.Empty<int>(), Array.Empty<string>(), new JObject()),
                     }
                 );
                 return response;
@@ -906,6 +907,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return new ErrorResponse($"Failed to load prefab contents from '{sanitizedPath}'.");
             }
 
+            bool savedMutation = false;
             try
             {
                 // Find target object within the prefab (defaults to root)
@@ -953,6 +955,15 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 }
 
                 // Save the prefab
+                var targetIndices = new List<int>();
+                var targetNames = new List<string>();
+                for (Transform current = targetGo.transform; current != prefabContents.transform && current != null; current = current.parent)
+                {
+                    targetIndices.Add(current.GetSiblingIndex());
+                    targetNames.Add(current.name);
+                }
+                targetIndices.Reverse();
+                targetNames.Reverse();
                 bool success;
                 sanitizedPath = AssetPathUtility.GetContainedAssetPath(sanitizedPath);
                 PrefabUtility.SaveAsPrefabAsset(prefabContents, sanitizedPath, out success);
@@ -961,6 +972,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 {
                     return new ErrorResponse($"Failed to save prefab asset at '{sanitizedPath}'.");
                 }
+                savedMutation = true;
 
                 McpLog.Info($"[ManagePrefabs] Successfully modified and saved prefab '{sanitizedPath}' (headless).");
 
@@ -971,6 +983,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         prefabPath = sanitizedPath,
                         targetName = targetGo.name,
                         modified = modifyResult.modified,
+                        saved = true,
+                        verification = SavedVerification(sanitizedPath, targetIndices.ToArray(), targetNames.ToArray(), @params),
                         transform = new
                         {
                             position = new
@@ -996,10 +1010,29 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     }
                 );
             }
+            catch (Exception) when (savedMutation)
+            {
+                return new SuccessResponse(
+                    "Prefab saved; post-save observation was unavailable.",
+                    new
+                    {
+                        prefabPath = sanitizedPath,
+                        saved = true,
+                        verification = PostEditVerification.Unavailable("saved_prefab_selected_object", "post_save_observation_failed"),
+                    }
+                );
+            }
             finally
             {
                 // Always unload prefab contents to free memory
-                PrefabUtility.UnloadPrefabContents(prefabContents);
+                try
+                {
+                    PrefabUtility.UnloadPrefabContents(prefabContents);
+                }
+                catch (Exception) when (savedMutation)
+                {
+                    McpLog.Warn("Prefab saved but isolated contents cleanup failed.");
+                }
             }
         }
 
@@ -1947,6 +1980,122 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
         }
 
+        internal static JObject SavedVerification(string path, int[] indices, string[] names, JObject requested)
+        {
+            try
+            {
+                GameObject root = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                if (root == null || indices.Length > 64)
+                    return PostEditVerification.Unavailable("saved_prefab_target", "saved_target_unavailable");
+                Transform selected = root.transform;
+                for (int depth = 0; depth < indices.Length; depth++)
+                {
+                    if (selected.childCount > 256 || indices[depth] >= selected.childCount)
+                        return PostEditVerification.Unavailable("saved_prefab_target", "saved_hierarchy_changed");
+                    Transform child = selected.GetChild(indices[depth]);
+                    if (child.name != names[depth] || selected.Cast<Transform>().Count(item => item.name == child.name) != 1)
+                        return PostEditVerification.Unavailable("saved_prefab_target", "ambiguous_or_changed_saved_hierarchy");
+                    selected = child;
+                }
+                var observations = new PostEditVerification.Batch();
+                var transformValues = new Dictionary<string, JToken>();
+                var properties = requested["componentProperties"] as JObject ?? requested["component_properties"] as JObject;
+                List<Component> components = PostEditVerification.Components(selected.gameObject, out bool componentsComplete);
+                bool ambiguous = !componentsComplete || properties?.Count > 16;
+                var expectations = new Dictionary<Component, IEnumerable<KeyValuePair<string, JToken>>>();
+                foreach (JProperty entry in (properties?.Properties() ?? Enumerable.Empty<JProperty>()).Take(16))
+                {
+                    if (!ComponentResolver.TryResolve(entry.Name, out Type type, out _) || entry.Value is not JObject values)
+                    {
+                        ambiguous = true;
+                        continue;
+                    }
+                    Component[] matches = components.Where(component => component != null && type.IsInstanceOfType(component)).Take(2).ToArray();
+                    if (matches.Length != 1 || !componentsComplete)
+                    {
+                        ambiguous = true;
+                        continue;
+                    }
+                    var pairs = values.Properties().Select(value => new KeyValuePair<string, JToken>(value.Name, value.Value));
+                    expectations[matches[0]] = expectations.TryGetValue(matches[0], out var earlier) ? earlier.Concat(pairs) : pairs;
+                }
+                foreach (var pair in new[] { ("position", "localPosition"), ("rotation", "localEulerAngles"), ("scale", "localScale") })
+                    if (requested[pair.Item1] != null)
+                        transformValues[pair.Item2] = requested[pair.Item1];
+                observations.CaptureProperties(
+                    selected,
+                    expectations.TryGetValue(selected, out var transformExpected) ? transformValues.Concat(transformExpected) : transformValues
+                );
+                foreach (Component component in components)
+                {
+                    if (component == selected)
+                        continue;
+                    observations.CaptureProperties(component, component != null && expectations.TryGetValue(component, out var expected) ? expected : null);
+                }
+                JObject result = observations.Observe();
+                result["scope"] = "saved_prefab_selected_object_fields_and_component_references; no_child_traversal";
+                result["asset_guid"] = AssetDatabase.AssetPathToGUID(path);
+                result["active_self"] = selected.gameObject.activeSelf;
+                var objectValues = new JArray();
+                foreach (string field in new[] { "name", "tag", "layer" })
+                {
+                    string desired = requested[field]?.ToString();
+                    if (desired == null || field != "tag" && desired.Length == 0)
+                        continue;
+                    if (field == "tag" && desired.Length == 0)
+                        desired = "Untagged";
+                    string actual =
+                        field == "name" ? selected.name
+                        : field == "tag" ? selected.gameObject.tag
+                        : LayerMask.LayerToName(selected.gameObject.layer);
+                    bool matches = string.Equals(desired, actual, StringComparison.Ordinal);
+                    objectValues.Add(
+                        new JObject
+                        {
+                            ["property"] = field,
+                            ["value"] = actual.Length > 256 ? actual.Substring(0, 256) : actual,
+                            ["value_truncated"] = actual.Length > 256,
+                            ["matches_requested"] = matches,
+                        }
+                    );
+                    if (!matches)
+                    {
+                        var findings = (JArray)result["findings"];
+                        if (findings.Count < PostEditVerification.MaxFindings)
+                            findings.Add(new JObject { ["code"] = "retained_value_differs", ["property_path"] = field });
+                        else
+                        {
+                            ambiguous = true;
+                            result["findings_truncated"] = true;
+                        }
+                        result["status"] = "issues_found";
+                        result["further_fixes_required"] = true;
+                    }
+                }
+                result["gameobject_values"] = objectValues;
+                if (requested["setActive"]?.Type == JTokenType.Boolean && (bool)requested["setActive"] != selected.gameObject.activeSelf)
+                {
+                    ((JArray)result["findings"]).Add(new JObject { ["code"] = "retained_active_state_differs" });
+                    result["status"] = "issues_found";
+                    result["further_fixes_required"] = true;
+                }
+                if (ambiguous || requested["createChild"] != null || requested["deleteChild"] != null || requested["parent"] != null)
+                {
+                    result["complete"] = false;
+                    if ((string)result["status"] == "passed")
+                    {
+                        result["status"] = "incomplete";
+                        result["further_fixes_required"] = JValue.CreateNull();
+                    }
+                }
+                return result;
+            }
+            catch (Exception)
+            {
+                return PostEditVerification.Unavailable("saved_prefab_selected_object", "saved_state_readback_failed");
+            }
+        }
+
         private static object SavePrefabStage()
         {
             try
@@ -1962,7 +2111,16 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     return new ErrorResponse(errorMessage);
                 }
 
-                return new SuccessResponse($"Saved prefab stage changes for '{prefabPath}'.", new { prefabPath, saved = true });
+                return new SuccessResponse(
+                    $"Saved prefab stage changes for '{prefabPath}'.",
+                    new
+                    {
+                        prefabPath,
+                        saved = true,
+                        stage_dirty = prefabStage.scene.isDirty,
+                        verification = SavedVerification(prefabPath, Array.Empty<int>(), Array.Empty<string>(), new JObject()),
+                    }
+                );
             }
             catch (Exception e)
             {

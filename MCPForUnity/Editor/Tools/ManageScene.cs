@@ -257,6 +257,11 @@ namespace MCPForUnity.Editor.Tools
 
         private static object HandleCommandCore(JObject @params, CancellationToken cancellationToken)
         {
+            if (
+                @params?["verify"] != null
+                && (@params["verify"].Type != JTokenType.Boolean || !new[] { "load", "save" }.Contains(NormalizeAction(@params["action"])))
+            )
+                return new ErrorResponse("verify must be a boolean for load/save only.");
             try
             {
                 McpLog.Info("[ManageScene] HandleCommand: start", always: false);
@@ -423,16 +428,16 @@ namespace MCPForUnity.Editor.Tools
                     if (!string.IsNullOrEmpty(loadPath))
                     {
                         if (cmd.additive == true)
-                            return LoadSceneAdditive(loadPath);
-                        return LoadScene(loadPath);
+                            return LoadSceneAdditive(loadPath, @params);
+                        return LoadScene(loadPath, @params);
                     }
                     else if (buildIndex.HasValue)
-                        return LoadScene(buildIndex.Value, cmd.additive == true);
+                        return LoadScene(buildIndex.Value, cmd.additive == true, @params);
                     else
                         return new ErrorResponse("Either 'name'/'path' or 'buildIndex' must be provided for 'load' action.");
                 case ActionKind.Save:
                     // Save current scene, optionally to a new path
-                    return SaveScene(fullPath, relativePath, cmd.allowOverwrite ?? false);
+                    return SaveScene(fullPath, relativePath, cmd.allowOverwrite ?? false, @params);
                 case ActionKind.GetHierarchy:
                     try
                     {
@@ -674,7 +679,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static object LoadScene(string relativePath)
+        private static object LoadScene(string relativePath, JObject observation = null)
         {
             if (!SceneAssetExists(relativePath))
             {
@@ -687,10 +692,14 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                EditorSceneManager.OpenScene(relativePath, OpenSceneMode.Single);
-                return new SuccessResponse(
-                    $"Scene '{relativePath}' loaded successfully.",
-                    new { path = relativePath, name = Path.GetFileNameWithoutExtension(relativePath) }
+                Scene scene = EditorSceneManager.OpenScene(relativePath, OpenSceneMode.Single);
+                return SceneReceipt(
+                    new SuccessResponse(
+                        $"Scene '{relativePath}' loaded successfully.",
+                        new { path = relativePath, name = Path.GetFileNameWithoutExtension(relativePath) }
+                    ),
+                    scene,
+                    observation
                 );
             }
             catch (Exception e)
@@ -699,7 +708,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static object LoadScene(int buildIndex, bool additive)
+        private static object LoadScene(int buildIndex, bool additive, JObject observation = null)
         {
             if (buildIndex < 0 || buildIndex >= SceneManager.sceneCountInBuildSettings)
             {
@@ -717,16 +726,20 @@ namespace MCPForUnity.Editor.Tools
             {
                 string scenePath = SceneUtility.GetScenePathByBuildIndex(buildIndex);
                 if (additive)
-                    return LoadSceneAdditive(scenePath);
-                EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
-                return new SuccessResponse(
-                    $"Scene at build index {buildIndex} ('{scenePath}') loaded successfully.",
-                    new
-                    {
-                        path = scenePath,
-                        name = Path.GetFileNameWithoutExtension(scenePath),
-                        buildIndex = buildIndex,
-                    }
+                    return LoadSceneAdditive(scenePath, observation);
+                Scene scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
+                return SceneReceipt(
+                    new SuccessResponse(
+                        $"Scene at build index {buildIndex} ('{scenePath}') loaded successfully.",
+                        new
+                        {
+                            path = scenePath,
+                            name = Path.GetFileNameWithoutExtension(scenePath),
+                            buildIndex = buildIndex,
+                        }
+                    ),
+                    scene,
+                    observation
                 );
             }
             catch (Exception e)
@@ -747,12 +760,12 @@ namespace MCPForUnity.Editor.Tools
             return null;
         }
 
-        private static object SaveScene(string fullPath, string relativePath, bool allowOverwrite)
+        private static object SaveScene(string fullPath, string relativePath, bool allowOverwrite, JObject observation = null)
         {
             try
             {
                 using var folders = new AssetFolderScope();
-                Scene currentScene = EditorSceneManager.GetActiveScene();
+                Scene currentScene = SceneValidation.ResolveScene(observation);
                 if (!currentScene.IsValid())
                 {
                     return new ErrorResponse("No valid scene is currently active to save.");
@@ -802,7 +815,7 @@ namespace MCPForUnity.Editor.Tools
                         new { path = finalPath, name = currentScene.name }
                     );
                     folders.Complete();
-                    return response;
+                    return SceneReceipt(response, currentScene, observation);
                 }
                 else
                 {
@@ -2156,7 +2169,7 @@ namespace MCPForUnity.Editor.Tools
             return count;
         }
 
-        private static object LoadSceneAdditive(string scenePath)
+        private static object LoadSceneAdditive(string scenePath, JObject observation = null)
         {
             if (!SceneAssetExists(scenePath))
                 return new ErrorResponse($"Scene not found: '{scenePath}'");
@@ -2166,15 +2179,63 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Scene '{existing.name}' is already loaded.");
 
             var scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
-            return new SuccessResponse(
-                $"Opened '{scene.name}' additively.",
-                new
-                {
-                    sceneName = scene.name,
-                    scenePath = scene.path,
-                    loadedSceneCount = CountLoadedScenes(),
-                }
+            return SceneReceipt(
+                new SuccessResponse(
+                    $"Opened '{scene.name}' additively.",
+                    new
+                    {
+                        sceneName = scene.name,
+                        scenePath = scene.path,
+                        loadedSceneCount = CountLoadedScenes(),
+                    }
+                ),
+                scene,
+                observation
             );
+        }
+
+        private static object SceneReceipt(SuccessResponse response, Scene scene, JObject parameters)
+        {
+            var data = JObject.FromObject(response.Data);
+            try
+            {
+                data["scene_state"] = new JObject
+                {
+                    ["scene_handle"] = SceneValidation.SceneHandle(scene),
+                    ["path"] = scene.path,
+                    ["loaded"] = scene.isLoaded,
+                    ["dirty"] = scene.isDirty,
+                    ["active"] = SceneManager.GetActiveScene() == scene,
+                };
+                if ((bool?)parameters?["verify"] == true)
+                {
+                    object observation = SceneValidation.Handle(
+                        new JObject
+                        {
+                            ["scene_handle"] = SceneValidation.SceneHandle(scene),
+                            ["max_objects"] = 100,
+                            ["max_milliseconds"] = 10,
+                        },
+                        CancellationToken.None
+                    );
+                    JObject result = JObject.FromObject(observation);
+                    var observed = result["data"] as JObject;
+                    data["verification"] =
+                        observed == null
+                            ? PostEditVerification.Unavailable("affected_scene_validation", "validation_unavailable")
+                            : PostEditVerification.Summary(
+                                "affected_scene_validation; one100_object_10ms_slice",
+                                observed,
+                                observed["issues"] as JArray,
+                                (bool?)observed["scanComplete"] == true
+                            );
+                }
+            }
+            catch (Exception)
+            {
+                data["verification"] = PostEditVerification.Unavailable("affected_scene_validation", "scene_state_changed_after_operation");
+            }
+            return new SuccessResponse(response.Message, data);
         }
 
         private static object CloseScene(SceneCommand cmd)

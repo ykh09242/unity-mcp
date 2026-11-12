@@ -159,6 +159,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         prefabPath = assetPath,
                         overrideIds = selectedIds,
                         count = selected.Count,
+                        dispositions = selected.Select(entry => new { overrideId = entry.Id, disposition = apply ? "applied" : "reverted" }).ToArray(),
+                        verification = ObserveRemaining(root, selected, apply),
                     }
                 );
             }
@@ -179,6 +181,105 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             if (args[key].Type != JTokenType.Integer || !int.TryParse(args[key].ToString(), out int value))
                 throw new ArgumentException($"{key} must be a 32-bit integer.");
             return value;
+        }
+
+        private static JObject ObserveRemaining(GameObject root, List<Entry> selected, bool apply)
+        {
+            try
+            {
+                var remaining = new Stack<Transform>();
+                remaining.Push(root.transform);
+                int objects = 0,
+                    fields = 0,
+                    count = 0;
+                bool complete = true;
+                while (remaining.Count > 0)
+                {
+                    Transform current = remaining.Pop();
+                    if (++objects > 128 || current.childCount > 128 - objects - remaining.Count)
+                    {
+                        complete = false;
+                        break;
+                    }
+                    for (int i = 0; i < current.childCount; i++)
+                        remaining.Push(current.GetChild(i));
+                    foreach (Component component in current.GetComponents<Component>())
+                    {
+                        if (component == null)
+                            continue;
+                        using var serialized = new SerializedObject(component);
+                        using var property = serialized.GetIterator();
+                        while (property.Next(true))
+                        {
+                            if (++fields > 1024)
+                            {
+                                complete = false;
+                                break;
+                            }
+                            if (property.prefabOverride && !property.isDefaultOverride)
+                                count++;
+                        }
+                        if (!complete)
+                            break;
+                    }
+                    if (!complete)
+                        break;
+                }
+                var findings = new JArray();
+                var dispositions = new JArray();
+                var fieldsToObserve = new PostEditVerification.Batch();
+                foreach (Entry entry in selected)
+                {
+                    bool? retained = null;
+                    if (entry.Kind == "property" && entry.Instance != null)
+                    {
+                        using var serialized = new SerializedObject(entry.Instance);
+                        using var property = serialized.FindProperty(entry.PropertyPath);
+                        if (property != null)
+                            retained = property.prefabOverride && !property.isDefaultOverride;
+                    }
+                    dispositions.Add(
+                        new JObject
+                        {
+                            ["override_id"] = entry.Id,
+                            ["requested_disposition"] = apply ? "applied" : "reverted",
+                            ["still_overridden"] = retained.HasValue ? new JValue(retained.Value) : JValue.CreateNull(),
+                        }
+                    );
+                    if (retained == true)
+                        findings.Add(new JObject { ["code"] = "selected_override_remaining", ["override_id"] = entry.Id });
+                    if (!retained.HasValue)
+                        complete = false;
+                    if (entry.Kind == "property" && (apply ? entry.Asset : entry.Instance) is Component component)
+                        fieldsToObserve.Capture(
+                            component,
+                            new JObject { [entry.PropertyPath] = entry.Data[apply ? "currentValue" : "prefabValue"]?.DeepClone() }
+                        );
+                }
+                JObject fieldReport = fieldsToObserve.Observe();
+                complete &= (bool)fieldReport["complete"];
+                foreach (JToken finding in (JArray)fieldReport["findings"])
+                    if (findings.Count < 32)
+                        findings.Add(finding.DeepClone());
+                return PostEditVerification.Summary(
+                    "selected_disposition_and_bounded_remaining_property_overrides",
+                    new JObject
+                    {
+                        ["selected"] = dispositions,
+                        ["remaining_property_count"] = count,
+                        ["remaining_count_exact"] = complete,
+                        ["objects_scanned"] = objects,
+                        ["fields_scanned"] = fields,
+                        ["selected_field_verification"] = fieldReport,
+                    },
+                    findings,
+                    complete
+                );
+            }
+            catch (Exception)
+            {
+                return PostEditVerification.Unavailable("selected_prefab_overrides", "post_mutation_observation_failed");
+            }
         }
 
         private static List<Entry> Collect(GameObject root, string assetPath)

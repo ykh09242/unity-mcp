@@ -156,7 +156,15 @@ async def prepare_duplicate(ctx, instance, params):
 
 
 async def tracked_mutation(
-    ctx, instance, command, params, invoke, *, paths=None, preparation_error=None
+    ctx,
+    instance,
+    command,
+    params,
+    invoke,
+    *,
+    paths=None,
+    preparation_error=None,
+    await_graph_seconds=None,
 ):
     service = active_service(ctx, instance)
     if service is not None and preparation_error:
@@ -165,7 +173,12 @@ async def tracked_mutation(
         )
     targets = paths if paths is not None else target_paths(command, params)
     if service is None or not targets:
-        return await invoke()
+        response = await invoke()
+        return (
+            attach_diagnostic(response, {"state": "unavailable", "reason": "graph_not_active"})
+            if await_graph_seconds is not None
+            else response
+        )
     receipt = None
     scope = None
     diagnostic = None
@@ -223,7 +236,12 @@ async def tracked_mutation(
         try:
             diagnostic = await finish("unknown" if uncertain[0] else outcome(response))
         except CredentialLeaseError:
-            raise
+            diagnostic = {
+                "id": receipt["id"],
+                "scope": scope,
+                "state": "unavailable",
+                "reason": "CredentialLeaseError",
+            }
         except (
             OperationPermissionError,
             ValueError,
@@ -237,6 +255,66 @@ async def tracked_mutation(
                 "state": "unconfirmed",
                 "reason": type(error).__name__,
             }
+    if diagnostic is not None and await_graph_seconds is not None and receipt is not None:
+        diagnostic = await advance_receipt(ctx, service, diagnostic, await_graph_seconds)
     if diagnostic is not None:
         return attach_diagnostic(response, diagnostic)
     return response
+
+
+async def advance_receipt(ctx, service, diagnostic, wait_seconds):
+    """Advance only the original receipt and preserve it on every derived failure."""
+    original = dict(diagnostic)
+    try:
+        # A zero wait requests a single nonblocking observation; reserve a small bounded
+        # dispatch allowance, shared by that observation and the first diff page.
+        async with asyncio.timeout(max(0.1, wait_seconds)):
+            response = await service.execute(
+                ctx, "await_mutation", {"id": original["id"], "wait_seconds": wait_seconds}
+            )
+            data = response.get("data", {})
+            receipt = data.get("receipt", {})
+            result = {**original, **receipt, "id": original["id"], "scope": original.get("scope")}
+            if response.get("success") is False:
+                return {
+                    **original,
+                    "state": "unavailable",
+                    "reason": response.get("error", "graph_observation_failed"),
+                }
+            if receipt.get("state") == "synchronized":
+                diff = await service.execute(
+                    ctx, "mutation_diff", {"id": original["id"], "limit": 100}
+                )
+                if diff.get("success") is False:
+                    return {
+                        **result,
+                        "diff_state": "unavailable",
+                        "reason": diff.get("error", "graph_diff_failed"),
+                    }
+                result["first_diff"] = diff.get("data")
+            else:
+                result["pending_reason"] = data.get("pending_reason")
+            return result
+    except TimeoutError:
+        return {
+            **original,
+            "state": "pending",
+            "reason": "observation_deadline",
+            "continue_action": "await_mutation",
+        }
+    except (
+        CredentialLeaseError,
+        OperationPermissionError,
+        ValueError,
+        OSError,
+        RuntimeError,
+        sqlite3.Error,
+        KeyError,
+        TypeError,
+    ) as error:
+        return {
+            **original,
+            "state": "unavailable",
+            "reason": type(error).__name__,
+            "continue_action": "await_mutation",
+        }

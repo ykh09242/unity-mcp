@@ -4,11 +4,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Threading;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -56,6 +58,44 @@ namespace MCPForUnity.Tests.EditMode.Tools
             parameters["action"] = "validate";
             object result = ManageScene.HandleCommand(parameters);
             return result as JObject ?? JObject.FromObject(result);
+        }
+
+        [Test]
+        public void ExactSceneValidationAndSaveDoNotSwitchActiveScene()
+        {
+            assetFolder = "Assets/__McpExactScene_" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", assetFolder.Substring(7));
+            Assert.IsTrue(EditorSceneManager.SaveScene(scene, assetFolder + "/Original.unity"));
+            Scene other = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                SceneManager.SetActiveScene(other);
+                new GameObject("OnlyInOtherScene");
+                SceneManager.SetActiveScene(scene);
+                JObject validation = Validate(new JObject { ["scene_handle"] = SceneValidation.SceneHandle(other) });
+                Assert.IsTrue((bool)validation["success"], validation.ToString());
+                Assert.IsTrue(JToken.DeepEquals(SceneValidation.SceneHandle(other), validation["data"]["scene_handle"]));
+                Assert.AreEqual(1, (int)validation["data"]["objectsScanned"]);
+                JObject saved = JObject.FromObject(
+                    ManageScene.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "save",
+                            ["scene_handle"] = SceneValidation.SceneHandle(other),
+                            ["path"] = assetFolder + "/Other.unity",
+                            ["verify"] = true,
+                        }
+                    )
+                );
+                Assert.IsTrue((bool)saved["success"], saved.ToString());
+                Assert.AreEqual(scene, SceneManager.GetActiveScene());
+                Assert.IsFalse((bool)saved["data"]["scene_state"]["active"]);
+                Assert.AreEqual("passed", (string)saved["data"]["verification"]["status"]);
+            }
+            finally
+            {
+                EditorSceneManager.CloseScene(other, true);
+            }
         }
 
         private GameObject CreateMissingScriptFixture(out string path)

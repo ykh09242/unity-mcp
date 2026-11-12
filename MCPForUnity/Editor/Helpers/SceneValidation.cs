@@ -111,6 +111,31 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
+        internal static JValue SceneHandle(Scene scene)
+        {
+#if UNITY_6000_4_OR_NEWER
+            return new JValue(scene.handle.GetRawData());
+#else
+            return new JValue((int)scene.handle);
+#endif
+        }
+
+        internal static Scene ResolveScene(JObject parameters)
+        {
+            if (parameters?["scene_handle"] == null)
+                return SceneManager.GetActiveScene();
+            JToken requested = parameters["scene_handle"];
+            if (requested.Type != JTokenType.Integer || SceneManager.sceneCount > 256)
+                throw new ArgumentException("scene_handle requires an exact loaded scene identity; at most256 scenes are supported.");
+            for (int index = 0; index < SceneManager.sceneCount; index++)
+            {
+                Scene candidate = SceneManager.GetSceneAt(index);
+                if (candidate.IsValid() && candidate.isLoaded && SceneHandle(candidate).ToString() == requested.ToString())
+                    return candidate;
+            }
+            throw new ArgumentException("scene_handle does not identify a loaded scene.");
+        }
+
         private static int Integer(JToken token, int fallback, int maximum, string name)
         {
             if (token == null || token.Type == JTokenType.Null)
@@ -137,7 +162,7 @@ namespace MCPForUnity.Editor.Helpers
             bool repair = ParamCoercion.CoerceBoolNullable(parameters["autoRepair"] ?? parameters["auto_repair"]) == true;
             if (repair && cursor != null)
                 throw new ArgumentException("auto_repair requires a new complete scan; omit continuation.");
-            Scene scene = SceneManager.GetActiveScene();
+            Scene scene = ResolveScene(parameters);
             if (!scene.IsValid() || !scene.isLoaded)
                 throw new ArgumentException("A loaded active scene is required.");
             if (scene.rootCount > RootLimit)
@@ -247,7 +272,14 @@ namespace MCPForUnity.Editor.Helpers
                     state.Spine.RemoveAt(top);
             }
             cancellation.ThrowIfCancellationRequested();
-            if (epoch != state.Epoch || SceneManager.GetActiveScene() != scene || roots.Count != scene.rootCount || !CheckSpine(state, scene, cancellation))
+            if (
+                epoch != state.Epoch
+                || ResolveScene(parameters) != scene
+                || !scene.IsValid()
+                || !scene.isLoaded
+                || roots.Count != scene.rootCount
+                || !CheckSpine(state, scene, cancellation)
+            )
                 return Stale();
             bool complete = state.Spine.Count == 0 && state.RootIndex == roots.Count;
             if (repair && !complete)
@@ -315,6 +347,8 @@ namespace MCPForUnity.Editor.Helpers
                 new
                 {
                     sceneName = scene.name,
+                    scene_handle = SceneHandle(scene),
+                    scenePath = scene.path,
                     totalIssues = total,
                     missingScripts = state.Missing,
                     brokenPrefabs = state.Broken,
