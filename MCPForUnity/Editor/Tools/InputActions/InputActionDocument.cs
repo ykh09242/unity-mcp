@@ -222,6 +222,70 @@ namespace MCPForUnity.Editor.Tools.InputActions
             return operation == "add_binding" ? (string)selected["id"] : null;
         }
 
+        internal static JArray EditCommands(JObject document, JArray commands)
+        {
+            if (commands == null || commands.Count < 1 || commands.Count > 64)
+                throw new ArgumentException("commands must contain 1..64 ordered objects.");
+            var references = new Dictionary<string, (string operation, string id)>(StringComparer.Ordinal);
+            var created = new JArray();
+            for (int index = 0; index < commands.Count; index++)
+            {
+                if (!(commands[index] is JObject source))
+                    throw new ArgumentException("Every command must be an object.");
+                var request = (JObject)source.DeepClone();
+                string operation = ManageInputActions.Text(request, "action", true, 32);
+                string reference = ManageInputActions.Text(request, "ref", false, 64);
+                request.Remove("ref");
+                ManageInputActions.CommandKeys(request, operation);
+                if (
+                    reference != null
+                    && (
+                        reference.Length == 0
+                        || reference.Any(c => !(c >= 'A' && c <= 'Z') && !(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9') && c != '_')
+                        || references.ContainsKey(reference)
+                    )
+                )
+                    throw new ArgumentException("ref must be a unique nonempty ASCII identifier.");
+                foreach (string key in new[] { "map_id", "action_id", "binding_id" })
+                {
+                    string selector = ManageInputActions.Text(request, key, false, 65);
+                    if (selector == null || !selector.StartsWith("$", StringComparison.Ordinal))
+                        continue;
+                    string expected =
+                        key == "map_id" ? "add_map"
+                        : key == "action_id" ? "add_action"
+                        : "add_binding";
+                    if (!references.TryGetValue(selector.Substring(1), out var resolved) || resolved.operation != expected)
+                        throw new ArgumentException("Local selectors must name an earlier created identity of the correct kind.");
+                    request[key] = resolved.id;
+                }
+                if (operation == "create_asset")
+                {
+                    if (index != 0 || reference != null)
+                        throw new ArgumentException("create_asset is allowed only as the first command and has no ref.");
+                    continue;
+                }
+                string id = Edit(document, operation, request);
+                if (reference != null && id == null)
+                    throw new ArgumentException("Only commands that create identities accept ref.");
+                if (id != null)
+                {
+                    if (reference != null)
+                        references.Add(reference, (operation, id));
+                    created.Add(
+                        new JObject
+                        {
+                            ["command_index"] = index,
+                            ["action"] = operation,
+                            ["ref"] = reference,
+                            ["id"] = id,
+                        }
+                    );
+                }
+            }
+            return created;
+        }
+
         internal static List<JObject> Rows(JObject document)
         {
             var rows = new List<JObject>();

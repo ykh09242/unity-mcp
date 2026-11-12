@@ -443,5 +443,84 @@ namespace MCPForUnityTests.EditMode.Tools
             floor.transform.localScale = new Vector3(6, 1, 8);
         }
     }
+
+    public class NavigationAddWithPropertiesTests
+    {
+        private readonly PrefabTestSceneFixture fixture = new PrefabTestSceneFixture();
+        private Scene scene;
+        private GameObject root;
+        private BoxCollider original;
+
+        [SetUp]
+        public void SetUp()
+        {
+            fixture.PrepareRunnerBootstrap();
+            scene = fixture.Create("__McpNavigationAdd_", Guid.NewGuid().ToString("N"));
+            root = new GameObject("OwnedNavigation");
+            original = root.AddComponent<BoxCollider>();
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            fixture.Close();
+            fixture.RestoreRunnerBootstrap();
+        }
+
+        [Test]
+        public void AddWithInvalidPropertiesLeavesNoComponent()
+        {
+            JObject result = Add(new JObject { ["radius"] = 2, ["size"] = new JArray(1, -1, 1) });
+            Assert.IsFalse((bool)result["success"], result.ToString());
+            Assert.IsNull(root.GetComponent<NavMeshObstacle>());
+            Assert.AreSame(original, root.GetComponent<BoxCollider>());
+        }
+
+        [Test]
+        public void AddWithPropertiesRetainsValuesAndSingleUndoRemovesOwnedComponent()
+        {
+            JObject result = Add(
+                new JObject
+                {
+                    ["enabled"] = false,
+                    ["shape"] = "Capsule",
+                    ["radius"] = 0.75f,
+                    ["height"] = 3f,
+                    ["carving"] = true,
+                }
+            );
+            Assert.IsTrue((bool)result["success"], result.ToString());
+            var obstacle = root.GetComponent<NavMeshObstacle>();
+            Assert.IsNotNull(obstacle);
+            Assert.IsFalse(obstacle.enabled);
+            Assert.AreEqual(0.75f, obstacle.radius);
+            Assert.AreEqual(3f, obstacle.height);
+            Assert.IsTrue(obstacle.carving);
+            Assert.AreEqual("passed", (string)result["data"]["verification"]["status"]);
+            Assert.AreEqual(0.75f, (float)result["data"]["properties"]["radius"]);
+            CollectionAssert.Contains(((JArray)result["data"]["warnings"]).Values<string>().ToArray(), "component_disabled");
+            Undo.PerformUndo();
+            Assert.IsNull(root.GetComponent<NavMeshObstacle>());
+            Assert.AreSame(original, root.GetComponent<BoxCollider>());
+        }
+
+        private JObject Add(JObject properties)
+        {
+            Type handler = typeof(MCPForUnity.Editor.Tools.ManagePackages).Assembly.GetType("MCPForUnity.Editor.Tools.Navigation.ManageNavigation");
+            JObject parameters = new JObject
+            {
+                ["action"] = "add",
+                ["kind"] = "obstacle",
+                ["target"] = root.GetInstanceIDCompat(),
+                ["properties"] = properties,
+#if UNITY_6000_4_OR_NEWER
+                ["scene_handle"] = scene.handle.GetRawData(),
+#else
+                ["scene_handle"] = (int)scene.handle,
+#endif
+            };
+            return JObject.FromObject(handler.GetMethod("HandleCommand").Invoke(null, new object[] { parameters }));
+        }
+    }
 }
 #endif

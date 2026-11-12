@@ -18,6 +18,7 @@ AuthoringAction = Literal[
     "capabilities",
     "read",
     "create_asset",
+    "edit",
     "add_map",
     "add_action",
     "add_binding",
@@ -37,6 +38,48 @@ Name = Annotated[str, Field(strict=True, min_length=1, max_length=128)]
 AssetPath = Annotated[str, Field(strict=True, min_length=1, max_length=2048)]
 PageSize = Annotated[int, Field(strict=True, ge=1, le=100)]
 Cursor = Annotated[int, Field(strict=True, ge=0, le=2048)]
+LocalSelector = Annotated[
+    str,
+    Field(
+        strict=True,
+        pattern=r"^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\$[A-Za-z0-9_]{1,64})$",
+    ),
+]
+
+
+class InputActionCommand(BaseModel):
+    """One strictly bounded candidate edit with optional local result identity."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    action: Literal[
+        "create_asset", "add_map", "add_action", "add_binding", "set_binding", "remove_binding"
+    ]
+    ref: Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9_]{1,64}$")] | None = None
+    map_id: LocalSelector | None = None
+    action_id: LocalSelector | None = None
+    binding_id: LocalSelector | None = None
+    name: Name | None = None
+    action_type: Literal["Button", "Value", "PassThrough"] | None = None
+    expected_control_type: Text | None = None
+    binding_path: Text | None = None
+    groups: Text | None = None
+    interactions: Text | None = None
+    processors: Text | None = None
+
+    @model_validator(mode="after")
+    def command_contract(self) -> "InputActionCommand":
+        values = self.model_dump(exclude_none=True, exclude={"ref"})
+        for key in ("map_id", "action_id", "binding_id"):
+            if key in values:
+                values[key] = "00000000-0000-0000-0000-000000000001"
+        values["path"] = "Assets/Commands.inputactions"
+        if self.action != "create_asset":
+            values["expected_revision"] = "0" * 64
+        InputActionRequest.model_validate(values)
+        if self.ref is not None and self.action not in {"add_map", "add_action", "add_binding"}:
+            raise ValueError("Only identity-creating commands accept ref")
+        return self
 
 
 class InputActionRequest(BaseModel):
@@ -59,6 +102,7 @@ class InputActionRequest(BaseModel):
     processors: Text | None = None
     page_size: PageSize | None = None
     cursor: Cursor | None = None
+    commands: Annotated[list[InputActionCommand], Field(min_length=1, max_length=64)] | None = None
 
     @model_validator(mode="after")
     def action_contract(self) -> "InputActionRequest":
@@ -77,6 +121,35 @@ class InputActionRequest(BaseModel):
                     raise ValueError("Paged continuation requires expected_revision")
             case "create_asset":
                 allowed, required = {"action", "path"}, {"path"}
+            case "edit":
+                allowed, required = common | {"commands"}, {"path", "commands"}
+                references: dict[str, str] = {}
+                assert self.commands is not None
+                creating = False
+                for index, command in enumerate(self.commands):
+                    if index == 0:
+                        creating = command.action == "create_asset"
+                    if command.action == "create_asset" and index != 0:
+                        raise ValueError("create_asset must be the first command")
+                    for key, kind in (
+                        ("map_id", "add_map"),
+                        ("action_id", "add_action"),
+                        ("binding_id", "add_binding"),
+                    ):
+                        selector = getattr(command, key)
+                        if selector is not None and selector.startswith("$"):
+                            if references.get(selector[1:]) != kind:
+                                raise ValueError(
+                                    "Local selectors require an earlier identity of the same kind"
+                                )
+                    if command.ref is not None:
+                        if command.ref in references:
+                            raise ValueError("Local result refs must be unique")
+                        references[command.ref] = command.action
+                if creating == (self.expected_revision is not None):
+                    raise ValueError(
+                        "Existing edits require expected_revision; creation forbids it"
+                    )
             case "add_map":
                 allowed = common | {"name"}
                 required = {"path", "expected_revision", "name"}
@@ -141,7 +214,10 @@ class InputActionRequest(BaseModel):
         "are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. "
         "create_asset requires an unoccupied Assets path and existing parent. add_map/add_action/"
         "add_binding/set_binding/remove_binding require expected_revision; exact GUID selectors avoid "
-        "name ambiguity. Simple bindings only; existing composite/control-scheme data and PlayerInput "
+        "name ambiguity. edit accepts 1..64 ordered commands, validates the final candidate and imports once. "
+        "Use ref on creation commands and $ref selectors for subsequent commands. Start with create_asset "
+        "for a new file; existing edits require expected_revision. Commands share the 8 KiB request limit. "
+        "Simple bindings only; existing composite/control-scheme data and PlayerInput "
         "asset linkage are preserved. Edits save/import immediately; configured importer wrapper "
         "generation may compile scripts. Conditional file-backed Undo/Redo is limited to32 edits in "
         "the current Editor domain, refuses external drift and does not survive domain reload. "
@@ -166,6 +242,7 @@ async def manage_input_actions(
     processors: Text | None = None,
     page_size: PageSize | None = None,
     cursor: Cursor | None = None,
+    commands: Annotated[list[InputActionCommand], Field(min_length=1, max_length=64)] | None = None,
 ) -> dict[str, JsonValue]:
     """Parse strict action-specific authoring values and preserve the selected Editor route."""
     try:
@@ -185,6 +262,7 @@ async def manage_input_actions(
             processors=processors,
             page_size=page_size,
             cursor=cursor,
+            commands=commands,
         )
     except ValidationError as exc:
         return {

@@ -49,6 +49,14 @@ async def main():
         {"action":"add_binding","path":path,"map_id":guid,"action_id":guid,"binding_path":"<Keyboard>/space","groups":"","interactions":"tap(duration=0.2)","expected_revision":revision},
         {"action":"set_binding","path":path,"map_id":guid,"binding_id":guid,"binding_path":"<Gamepad>/buttonSouth","processors":"","expected_revision":revision},
         {"action":"remove_binding","path":path,"map_id":guid,"binding_id":guid,"expected_revision":revision},
+        {"action":"edit","path":path,"commands":[
+            {"action":"create_asset"},
+            {"action":"add_map","name":"Gameplay","ref":"map"},
+            {"action":"add_action","map_id":"$map","name":"Fire","action_type":"Button","ref":"fire"},
+            {"action":"add_binding","map_id":"$map","action_id":"$fire","binding_path":"<Keyboard>/space","ref":"binding"},
+            {"action":"set_binding","map_id":"$map","binding_id":"$binding","binding_path":"<Keyboard>/enter"},
+        ]},
+        {"action":"edit","path":path,"expected_revision":revision,"commands":[{"action":"add_map","name":"Menu"}]},
     ]
     invalid = [
         {"action":"add_map","path":path,"name":"Gameplay"},
@@ -72,6 +80,13 @@ async def main():
         {"action":"set_binding","path":path,"map_id":guid,"binding_id":12,"binding_path":"<Keyboard>/a","expected_revision":revision},
         {"action":"remove_binding","path":path,"map_id":guid,"binding_id":guid,"expected_revision":"old"},
         {"action":"remove_binding","path":path,"map_id":guid,"binding_id":guid,"binding_path":"ignored","expected_revision":revision},
+        {"action":"edit","path":path,"commands":[]},
+        {"action":"edit","path":path,"commands":[{"action":"add_map","name":"Menu"}]},
+        {"action":"edit","path":path,"expected_revision":revision,"commands":[{"action":"create_asset"}]},
+        {"action":"edit","path":path,"commands":[{"action":"create_asset"},{"action":"add_map","name":"One","ref":"same"},{"action":"add_map","name":"Two","ref":"same"}]},
+        {"action":"edit","path":path,"commands":[{"action":"create_asset"},{"action":"add_action","map_id":"$future","name":"Fire","action_type":"Button"}]},
+        {"action":"edit","path":path,"expected_revision":revision,"commands":[{"action":"add_binding","map_id":guid,"action_id":guid,"binding_path":"x","isComposite":True}]},
+        {"action":"edit","path":path,"expected_revision":revision,"commands":[{"action":"add_map","name":"Menu"}]*65},
     ]
     for mode in ("2026-07-28","legacy"):
         async with Client(server, mode=mode) as client:

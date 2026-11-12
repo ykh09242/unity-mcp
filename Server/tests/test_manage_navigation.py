@@ -70,6 +70,31 @@ def test_configuration_retains_false_and_vector(navigation_transport):
     assert navigation_transport["params"]["target"] == -84
 
 
+def test_add_accepts_configuration_and_preserves_verification(monkeypatch, navigation_transport):
+    response = {
+        "success": True,
+        "data": {
+            "component_id": 22,
+            "properties": {"speed": 0},
+            "verification": {"status": "passed"},
+        },
+    }
+    transport = AsyncMock(return_value=response)
+    monkeypatch.setattr("services.tools.manage_navigation.send_with_unity_instance", transport)
+    result = asyncio.run(
+        manage_navigation(
+            SimpleNamespace(),
+            action="add",
+            scene_handle=71,
+            kind="agent",
+            target=11,
+            properties={"speed": 0, "autoBraking": False},
+        )
+    )
+    assert result == response
+    assert transport.call_args.args[3]["properties"] == {"speed": 0, "autoBraking": False}
+
+
 def test_capabilities_values_remain_reusable_for_authoring(monkeypatch, navigation_transport):
     discovery = {
         "success": True,

@@ -45,26 +45,12 @@ namespace MCPForUnity.Editor.Tools.InputActions
                     Keys(p);
                     return Create(path);
                 }
-                switch (action)
+                if (action == "edit")
                 {
-                    case "add_map":
-                        Keys(p, "expected_revision", "name");
-                        break;
-                    case "add_action":
-                        Keys(p, "expected_revision", "map_id", "name", "action_type", "expected_control_type", "interactions", "processors");
-                        break;
-                    case "add_binding":
-                        Keys(p, "expected_revision", "map_id", "action_id", "binding_path", "groups", "interactions", "processors");
-                        break;
-                    case "set_binding":
-                        Keys(p, "expected_revision", "map_id", "binding_id", "binding_path", "groups", "interactions", "processors");
-                        break;
-                    case "remove_binding":
-                        Keys(p, "expected_revision", "map_id", "binding_id");
-                        break;
-                    default:
-                        throw new ArgumentException("Unknown InputAction authoring operation.");
+                    Keys(p, "expected_revision", "commands");
+                    return EditCommands(path, p);
                 }
+                CommandKeys(p, action, true);
                 byte[] before = InputActionDocument.ReadBytes(path);
                 if (Text(p, "expected_revision", true, 64) != InputActionDocument.Digest(before))
                     return new ErrorResponse("stale_revision");
@@ -73,23 +59,7 @@ namespace MCPForUnity.Editor.Tools.InputActions
                 string created = InputActionDocument.Edit(document, action, p);
                 byte[] after = InputActionDocument.Encode(document, before);
                 InputActionDocument.ValidateNative(after);
-                string guid = AssetDatabase.AssetPathToGUID(path);
-                if (string.IsNullOrEmpty(guid) || AssetDatabase.LoadAssetAtPath(path, AssetType) == null)
-                    throw new InvalidOperationException("The source must already be imported as an InputActionAsset.");
-                InputActionFileUndo.Apply(path, guid, before, after);
-                return new SuccessResponse(
-                    "InputAction source saved and imported.",
-                    new
-                    {
-                        path,
-                        asset_guid = guid,
-                        revision = InputActionDocument.Digest(after),
-                        created_id = created,
-                        undo_scope = "current_editor_domain_conditional_file_restore",
-                        creation_undo = false,
-                        import_may_generate_configured_wrapper_code = true,
-                    }
-                );
+                return Save(path, before, after, new JArray(), false, created);
             }
             catch (TargetInvocationException ex)
             {
@@ -119,36 +89,195 @@ namespace MCPForUnity.Editor.Tools.InputActions
 
         private static object Create(string path)
         {
-            string full = AssetPathUtility.GetFullAssetPath(path);
-            if (!Directory.Exists(Path.GetDirectoryName(full)) || File.Exists(full) || File.Exists(full + ".meta"))
-                throw new InvalidOperationException("Creation requires an existing parent and an unoccupied source/meta path.");
-            var document = new JObject
+            EnsureCreationPath(path);
+            JObject document = EmptyDocument(path);
+            byte[] bytes = InputActionDocument.Encode(document, Array.Empty<byte>());
+            InputActionDocument.ValidateNative(bytes);
+            return Save(path, Array.Empty<byte>(), bytes, new JArray(), true);
+        }
+
+        private static JObject EmptyDocument(string path) =>
+            new JObject
             {
                 ["name"] = Path.GetFileNameWithoutExtension(path),
                 ["maps"] = new JArray(),
                 ["controlSchemes"] = new JArray(),
             };
-            byte[] bytes = InputActionDocument.Encode(document, Array.Empty<byte>());
-            InputActionDocument.ValidateNative(bytes);
-            using (var stream = File.Open(full, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+
+        private static void EnsureCreationPath(string path)
+        {
+            string full = AssetPathUtility.GetFullAssetPath(path);
+            if (!Directory.Exists(Path.GetDirectoryName(full)) || File.Exists(full) || File.Exists(full + ".meta"))
+                throw new InvalidOperationException("Creation requires an existing parent and an unoccupied source/meta path.");
+        }
+
+        private static object EditCommands(string path, JObject p)
+        {
+            if (!(p["commands"] is JArray commands) || commands.Count < 1 || commands.Count > 64)
+                throw new ArgumentException("commands must contain 1..64 ordered objects.");
+            bool creation = commands[0] is JObject first && first["action"]?.Type == JTokenType.String && (string)first["action"] == "create_asset";
+            byte[] before;
+            JObject document;
+            if (creation)
             {
-                stream.Write(bytes, 0, bytes.Length);
-                stream.Flush(true);
+                if (p["expected_revision"] != null)
+                    throw new ArgumentException("New assets cannot specify expected_revision.");
+                EnsureCreationPath(path);
+                before = Array.Empty<byte>();
+                document = EmptyDocument(path);
             }
-            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-            if (AssetDatabase.LoadAssetAtPath(path, AssetType) == null)
-                throw new InvalidOperationException("Source was created but native import failed; inspect the source before retrying.");
-            return new SuccessResponse(
-                "Created InputAction source. Asset creation is not Undoable.",
-                new
+            else
+            {
+                before = InputActionDocument.ReadBytes(path);
+                if (Text(p, "expected_revision", true, 64) != InputActionDocument.Digest(before))
+                    return new ErrorResponse("stale_revision");
+                document = InputActionDocument.Parse(before);
+                InputActionDocument.Validate(document);
+            }
+            JArray created = InputActionDocument.EditCommands(document, commands);
+            byte[] after = InputActionDocument.Encode(document, before);
+            InputActionDocument.ValidateNative(after);
+            return Save(path, before, after, created, creation);
+        }
+
+        private static object Save(string path, byte[] before, byte[] after, JArray created, bool creation, string createdId = null)
+        {
+            string guid = creation ? null : AssetDatabase.AssetPathToGUID(path);
+            if (!creation && (string.IsNullOrEmpty(guid) || AssetDatabase.LoadAssetAtPath(path, AssetType) == null))
+                throw new InvalidOperationException("The source must already be imported as an InputActionAsset.");
+            bool changed = creation || !before.SequenceEqual(after);
+            bool saved = !changed;
+            string importError = null;
+            try
+            {
+                if (creation)
                 {
-                    path,
-                    asset_guid = AssetDatabase.AssetPathToGUID(path),
-                    revision = InputActionDocument.Digest(bytes),
-                    creation_undo = false,
-                    undo_scope = "subsequent_edits_in_current_editor_domain_only",
+                    EnsureCreationPath(path);
+                    using (var stream = File.Open(AssetPathUtility.GetFullAssetPath(path), FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        stream.Write(after, 0, after.Length);
+                        stream.Flush(true);
+                    }
+                    saved = true;
+                    AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                    guid = AssetDatabase.AssetPathToGUID(path);
+                    if (string.IsNullOrEmpty(guid) || AssetDatabase.LoadAssetAtPath(path, AssetType) == null)
+                        throw new InvalidOperationException("Native import did not produce an InputActionAsset.");
                 }
+                else if (changed)
+                    InputActionFileUndo.ApplyObserved(path, guid, before, after, afterWrite: () => saved = true);
+            }
+            catch (Exception ex) when (saved)
+            {
+                importError = ex.GetBaseException().Message;
+            }
+            string savedRevision = InputActionDocument.Digest(after);
+            string revision = null;
+            string observationError = null;
+            bool identityMatches = false;
+            try
+            {
+                revision = InputActionDocument.Digest(InputActionDocument.ReadBytes(path));
+                identityMatches = !string.IsNullOrEmpty(guid) && AssetDatabase.AssetPathToGUID(path) == guid;
+            }
+            catch (Exception ex)
+            {
+                observationError = ex.GetBaseException().Message;
+            }
+            bool stale = revision != null && (revision != savedRevision || (!identityMatches && importError == null));
+            var findings = new JArray();
+            if (importError != null)
+                findings.Add(importError.Substring(0, Math.Min(importError.Length, 1024)));
+            if (observationError != null)
+                findings.Add(observationError.Substring(0, Math.Min(observationError.Length, 1024)));
+            if (stale)
+                findings.Add("Source or asset identity changed after saving; created identities belong to the saved candidate.");
+            JObject verification = new JObject
+            {
+                ["status"] = findings.Count > 0 ? "issues_found" : "passed",
+                ["scope"] = "final_candidate_native_validation_and_exact_source_import_readback",
+                ["observed_values"] = new JObject
+                {
+                    ["revision"] = revision,
+                    ["asset_guid"] = guid,
+                    ["identity_matches"] = identityMatches,
+                },
+                ["findings"] = findings,
+                ["complete"] = importError == null && observationError == null && !stale,
+                ["further_fixes_required"] = findings.Count > 0,
+            };
+            if (stale)
+                verification["status"] = "stale";
+            else if (importError != null || observationError != null)
+            {
+                verification["status"] = "unavailable";
+                verification["further_fixes_required"] = JValue.CreateNull();
+            }
+            var data = new JObject
+            {
+                ["path"] = path,
+                ["asset_guid"] = guid,
+                ["revision"] = revision,
+                ["saved_revision"] = savedRevision,
+                ["created_id"] = createdId,
+                ["created_identities"] = created,
+                ["changed"] = changed,
+                ["saved"] = saved,
+                ["import_status"] = importError == null ? (changed ? "completed" : "not_required") : "unavailable",
+                ["undo_scope"] = creation ? "subsequent_edits_in_current_editor_domain_only" : "current_editor_domain_conditional_file_restore",
+                ["creation_undo"] = false,
+                ["import_may_generate_configured_wrapper_code"] = true,
+                ["compilation_observation"] = new JObject
+                {
+                    ["is_compiling"] = EditorApplication.isCompiling,
+                    ["is_updating"] = EditorApplication.isUpdating,
+                    ["complete"] = false,
+                    ["scope"] = "immediate_editor_flags_only; compilation diagnostics are not observed",
+                },
+                ["verification"] = verification,
+            };
+            return new SuccessResponse(
+                importError == null
+                    ? "InputAction source saved and imported."
+                    : "InputAction source saved; import observation failed. Inspect before retrying.",
+                data
             );
+        }
+
+        internal static void CommandKeys(JObject p, string action, bool revision = false)
+        {
+            string[] fields;
+            switch (action)
+            {
+                case "create_asset":
+                    fields = Array.Empty<string>();
+                    break;
+                case "add_map":
+                    fields = new[] { "name" };
+                    break;
+                case "add_action":
+                    fields = new[] { "map_id", "name", "action_type", "expected_control_type", "interactions", "processors" };
+                    break;
+                case "add_binding":
+                    fields = new[] { "map_id", "action_id", "binding_path", "groups", "interactions", "processors" };
+                    break;
+                case "set_binding":
+                    fields = new[] { "map_id", "binding_id", "binding_path", "groups", "interactions", "processors" };
+                    break;
+                case "remove_binding":
+                    fields = new[] { "map_id", "binding_id" };
+                    break;
+                default:
+                    throw new ArgumentException("Unknown InputAction authoring operation.");
+            }
+            if (revision)
+                Keys(p, fields.Concat(new[] { "expected_revision" }).ToArray());
+            else
+            {
+                var allowed = new HashSet<string>(fields, StringComparer.Ordinal) { "action" };
+                if (p.Properties().Any(property => !allowed.Contains(property.Name)))
+                    throw new ArgumentException("Unknown or action-inapplicable command field.");
+            }
         }
 
         private static object Read(string path, JObject p)
@@ -189,7 +318,9 @@ namespace MCPForUnity.Editor.Tools.InputActions
                 package = "com.unity.inputsystem",
                 package_version = version,
                 minimum_version = "1.7.0",
-                actions = new[] { "capabilities", "read", "create_asset", "add_map", "add_action", "add_binding", "set_binding", "remove_binding" },
+                actions = new[] { "capabilities", "read", "create_asset", "edit", "add_map", "add_action", "add_binding", "set_binding", "remove_binding" },
+                max_edit_commands = 64,
+                local_selector_syntax = "$ref (earlier same-request creation of the matching kind)",
                 max_source_bytes = InputActionDocument.MaxBytes,
                 max_maps = 32,
                 max_actions = 256,

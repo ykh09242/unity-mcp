@@ -184,7 +184,7 @@ _ACTIONS: Final = {
     "manage_input_actions": {
         Permission.READ: _names("capabilities read"),
         Permission.EDIT: _names(
-            "create_asset add_map add_action add_binding set_binding remove_binding"
+            "create_asset edit add_map add_action add_binding set_binding remove_binding"
         ),
     },
     "manage_localization": {

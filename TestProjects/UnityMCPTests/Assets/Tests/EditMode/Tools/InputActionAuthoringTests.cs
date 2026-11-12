@@ -137,6 +137,136 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void OrderedEdit_CreatesAndResolvesLocalIdentitiesWithOneImport()
+        {
+            InputActionEditImportObserver.Path = path;
+            InputActionEditImportObserver.Count = 0;
+            JObject result;
+            try
+            {
+                result = Succeed("edit", new JObject { ["commands"] = CreationCommands() });
+                Assert.AreEqual(1, InputActionEditImportObserver.Count, "A multi-command candidate imports exactly once.");
+            }
+            finally
+            {
+                InputActionEditImportObserver.Path = null;
+            }
+            Assert.IsTrue((bool)result["changed"]);
+            Assert.IsTrue((bool)result["saved"]);
+            Assert.AreEqual(3, ((JArray)result["created_identities"]).Count);
+            Assert.AreEqual("passed", (string)result["verification"]["status"]);
+            JObject native = NativeJson();
+            Assert.AreEqual("<Keyboard>/enter", (string)native["maps"][0]["bindings"][0]["path"]);
+            Assert.AreEqual((string)result["revision"], (string)Succeed("read")["revision"]);
+        }
+
+        [Test]
+        public void OrderedEdit_RejectsEntireCandidateBeforeCreatingOrImporting()
+        {
+            JArray commands = CreationCommands();
+            commands.Add(new JObject { ["action"] = "add_map", ["name"] = "Gameplay" });
+            JObject rejected = Call("edit", new JObject { ["commands"] = commands });
+            Assert.IsFalse((bool)rejected["success"], rejected.ToString());
+            Assert.IsFalse(File.Exists(AssetPathUtility.GetFullAssetPath(path)));
+            Assert.IsFalse(File.Exists(AssetPathUtility.GetFullAssetPath(path) + ".meta"));
+        }
+
+        [Test]
+        public void OrderedEdit_RejectsStaleRevisionRepeatedRefsAndCompositeFieldsWithoutChangingBytes()
+        {
+            Succeed("edit", new JObject { ["commands"] = CreationCommands() });
+            string revision = (string)Succeed("read")["revision"];
+            byte[] before = File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(path));
+            foreach (
+                JArray commands in new[]
+                {
+                    new JArray(
+                        new JObject
+                        {
+                            ["action"] = "add_map",
+                            ["name"] = "One",
+                            ["ref"] = "same",
+                        },
+                        new JObject
+                        {
+                            ["action"] = "add_map",
+                            ["name"] = "Two",
+                            ["ref"] = "same",
+                        }
+                    ),
+                    new JArray(
+                        new JObject
+                        {
+                            ["action"] = "add_map",
+                            ["name"] = "One",
+                            ["isComposite"] = true,
+                        }
+                    ),
+                    new JArray(
+                        new JObject
+                        {
+                            ["action"] = "add_action",
+                            ["map_id"] = "$future",
+                            ["name"] = "Fire",
+                            ["action_type"] = "Button",
+                        }
+                    ),
+                }
+            )
+            {
+                JObject rejected = Call("edit", new JObject { ["expected_revision"] = revision, ["commands"] = commands });
+                Assert.IsFalse((bool)rejected["success"], rejected.ToString());
+                CollectionAssert.AreEqual(before, File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(path)));
+            }
+            JObject stale = Call(
+                "edit",
+                new JObject
+                {
+                    ["expected_revision"] = new string('0', 64),
+                    ["commands"] = new JArray(new JObject { ["action"] = "add_map", ["name"] = "Other" }),
+                }
+            );
+            Assert.IsFalse((bool)stale["success"]);
+            StringAssert.Contains("stale_revision", stale.ToString());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(path)));
+        }
+
+        private static JArray CreationCommands() =>
+            new JArray
+            {
+                new JObject { ["action"] = "create_asset" },
+                new JObject
+                {
+                    ["action"] = "add_map",
+                    ["name"] = "Gameplay",
+                    ["ref"] = "map",
+                },
+                new JObject
+                {
+                    ["action"] = "add_action",
+                    ["map_id"] = "$map",
+                    ["name"] = "Fire",
+                    ["action_type"] = "Button",
+                    ["ref"] = "fire",
+                },
+                new JObject
+                {
+                    ["action"] = "add_binding",
+                    ["map_id"] = "$map",
+                    ["action_id"] = "$fire",
+                    ["binding_path"] = "<Keyboard>/space",
+                    ["ref"] = "binding",
+                },
+                new JObject
+                {
+                    ["action"] = "set_binding",
+                    ["map_id"] = "$map",
+                    ["binding_id"] = "$binding",
+                    ["binding_path"] = "<Keyboard>/enter",
+                },
+            };
+
+        [Test]
         public void BatchMutationAndPagedRead_PreserveExactSnakeCaseRevisionAndSelectors()
         {
             var ids = CreateOneBinding();
@@ -561,6 +691,18 @@ namespace MCPForUnityTests.Editor.Tools
             // Then file-backed Undo refuses drift instead of silently replacing external bytes.
             CollectionAssert.AreEqual(external, File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(path)));
             Assert.AreEqual("conflict", (string)Succeed("read")["undo_status"]);
+        }
+    }
+
+    public class InputActionEditImportObserver : AssetPostprocessor
+    {
+        internal static string Path;
+        internal static int Count;
+
+        private static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom)
+        {
+            if (Path != null && imported.Contains(Path))
+                Count++;
         }
     }
 }

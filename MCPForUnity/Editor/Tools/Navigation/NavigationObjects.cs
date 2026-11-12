@@ -179,11 +179,38 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 throw new ArgumentException("add requires a GameObject instance ID in the selected scene.");
             if (go.GetComponents(type).Length != 0)
                 throw new ArgumentException("The target already has this navigation component.");
-            if (p["properties"] != null)
-                throw new ArgumentException("Add a component first, then explicitly configure its returned component_id.");
-            Component component = Undo.AddComponent(go, type);
+            string kind = (string)p["kind"];
+            var updates = ValidateUpdates(type, kind, p["properties"], true);
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("Add Navigation " + kind);
+            Component component = null;
+            try
+            {
+                component = Undo.AddComponent(go, type);
+                if (component == null)
+                    throw new InvalidOperationException("Unity did not create the requested navigation component.");
+                Undo.RecordObject(component, "Configure Navigation " + kind);
+                foreach (var update in updates)
+                    update.Key.SetValue(component, update.Value);
+                if (kind == "link")
+                    component.GetType().GetMethod("UpdateLink", Type.EmptyTypes)?.Invoke(component, null);
+                Undo.FlushUndoRecordObjects();
+                PrefabUtility.RecordPrefabInstancePropertyModifications(component);
+                EditorUtility.SetDirty(component);
+            }
+            catch
+            {
+                // Only the exact component returned by our AddComponent call is owned here.
+                // Do not rewind the Undo stack: user callbacks can register unrelated work.
+                if (component != null)
+                    Undo.DestroyObjectImmediate(component);
+                Undo.CollapseUndoOperations(group);
+                throw;
+            }
             EditorSceneManager.MarkSceneDirty(scene);
-            return new SuccessResponse("Navigation component added; save scene explicitly.", Read(component));
+            Undo.CollapseUndoOperations(group);
+            return AuthoredResult(component, updates, "Navigation component added and configured; save scene explicitly.");
         }
 
         internal static object Configure(JObject p)
@@ -193,19 +220,7 @@ namespace MCPForUnity.Editor.Tools.Navigation
             if (NavigationBakeJobs.Busy(component))
                 throw new InvalidOperationException("A bake is pending for this surface; configuration is refused until it finishes or is cancelled.");
             string kind = (string)p["kind"];
-            if (!(p["properties"] is JObject patch) || patch.Count == 0 || patch.Count > 24)
-                throw new ArgumentException("properties must contain 1..24 explicit supported settings.");
-            var updates = new List<KeyValuePair<PropertyInfo, object>>();
-            foreach (JProperty item in patch.Properties())
-            {
-                if (!Fields[kind].Contains(item.Name))
-                    throw new ArgumentException("Unsupported " + kind + " setting: " + item.Name);
-                PropertyInfo field = component.GetType().GetProperty(item.Name);
-                if (!ConfigurableProperty(field))
-                    throw new ArgumentException("Setting is unavailable in this installed version: " + item.Name);
-                object value = ConvertValue(field, item.Value);
-                updates.Add(new KeyValuePair<PropertyInfo, object>(field, value));
-            }
+            var updates = ValidateUpdates(component.GetType(), kind, p["properties"], false);
             Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("Configure Navigation " + kind);
@@ -221,7 +236,6 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 EditorUtility.SetDirty(component);
                 EditorSceneManager.MarkSceneDirty(component.gameObject.scene);
                 Undo.CollapseUndoOperations(group);
-                return new SuccessResponse("Navigation configuration applied; save scene explicitly.", Read(component));
             }
             catch
             {
@@ -231,6 +245,73 @@ namespace MCPForUnity.Editor.Tools.Navigation
                     component.GetType().GetMethod("UpdateLink", Type.EmptyTypes)?.Invoke(component, null);
                 throw;
             }
+            return AuthoredResult(component, updates, "Navigation configuration applied; save scene explicitly.");
+        }
+
+        private static List<KeyValuePair<PropertyInfo, object>> ValidateUpdates(Type type, string kind, JToken properties, bool optional)
+        {
+            var updates = new List<KeyValuePair<PropertyInfo, object>>();
+            if (optional && properties == null)
+                return updates;
+            if (!(properties is JObject patch) || patch.Count == 0 || patch.Count > 24)
+                throw new ArgumentException("properties must contain 1..24 explicit supported settings.");
+            foreach (JProperty item in patch.Properties())
+            {
+                if (!Fields[kind].Contains(item.Name))
+                    throw new ArgumentException("Unsupported " + kind + " setting: " + item.Name);
+                PropertyInfo field = type.GetProperty(item.Name);
+                if (!ConfigurableProperty(field))
+                    throw new ArgumentException("Setting is unavailable in this installed version: " + item.Name);
+                updates.Add(new KeyValuePair<PropertyInfo, object>(field, ConvertValue(field, item.Value)));
+            }
+            return updates;
+        }
+
+        private static object AuthoredResult(Component component, List<KeyValuePair<PropertyInfo, object>> updates, string message)
+        {
+            JObject result = new JObject { ["component_id"] = component.GetInstanceIDCompat(), ["changed"] = true };
+            var findings = new JArray();
+            var warnings = new JArray();
+            var observed = new JObject();
+            bool complete = true;
+            try
+            {
+                result.Merge(Read(component));
+                foreach (var update in updates)
+                {
+                    object actual = update.Key.GetValue(component);
+                    observed[update.Key.Name] = result["properties"]?[update.Key.Name]?.DeepClone();
+                    if (!Equals(actual, update.Value))
+                        findings.Add("Configured property was not retained: " + update.Key.Name);
+                }
+                if (component is Behaviour behaviour && !behaviour.enabled)
+                    warnings.Add("component_disabled");
+                if ((string)result["kind"] == "surface" && !(bool)result["has_baked_data"])
+                    warnings.Add("surface_has_no_baked_data; bake explicitly when ready");
+                if (component is NavMeshAgent && !(bool)result["is_on_nav_mesh"])
+                    warnings.Add("agent_not_on_nav_mesh; no bake or path query was performed");
+                if (component.GetComponent<NavMeshAgent>() != null && component.GetComponent<NavMeshObstacle>() != null)
+                    warnings.Add("agent_and_obstacle_share_game_object");
+            }
+            catch (Exception ex)
+            {
+                complete = false;
+                findings.Add("Authoring succeeded but readback was unavailable: " + ex.GetBaseException().Message);
+            }
+            result["warnings"] = warnings;
+            result["verification"] = new JObject
+            {
+                ["status"] =
+                    !complete ? "incomplete"
+                    : findings.Count > 0 ? "issues_found"
+                    : "passed",
+                ["scope"] = "configured_component_property_readback_and_static_warnings; no bake or path execution",
+                ["complete"] = complete,
+                ["observed_values"] = observed,
+                ["findings"] = findings,
+                ["further_fixes_required"] = complete ? new JValue(findings.Count > 0) : JValue.CreateNull(),
+            };
+            return new SuccessResponse(message, result);
         }
 
         private static object ConvertValue(PropertyInfo property, JToken token)

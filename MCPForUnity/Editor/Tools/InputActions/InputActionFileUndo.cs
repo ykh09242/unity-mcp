@@ -39,7 +39,10 @@ namespace MCPForUnity.Editor.Tools.InputActions
 
         internal static string Status(string path) => Records.Any(record => record.Path == path && record.Conflict) ? "conflict" : "ready";
 
-        internal static void Apply(string path, string guid, byte[] before, byte[] after, Action beforeCommit = null)
+        internal static void Apply(string path, string guid, byte[] before, byte[] after, Action beforeCommit = null) =>
+            ApplyObserved(path, guid, before, after, beforeCommit);
+
+        internal static void ApplyObserved(string path, string guid, byte[] before, byte[] after, Action beforeCommit = null, Action afterWrite = null)
         {
             foreach (Record expired in Records.Where(record => !File.Exists(AssetPathUtility.GetFullAssetPath(record.Path))).ToArray())
             {
@@ -64,6 +67,7 @@ namespace MCPForUnity.Editor.Tools.InputActions
             try
             {
                 Write(path, guid, before, after, beforeCommit);
+                afterWrite?.Invoke();
                 record.Applied = record.After;
                 state.Bytes = record.After;
                 Records.Add(record);
