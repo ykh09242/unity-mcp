@@ -49,6 +49,14 @@ Protected envelopes require a complete explicit selector and reject unknown fiel
 Retention normalizes a REST result to `{http_status, body}` as structured content.
 Both routes use the same coordinator and existing launch-token authentication.
 
+The local CLI exposes this explicitly as `receipt execute`, `receipt describe`,
+and `receipt get`; see the [CLI guide](../website/docs/guides/cli.md#recover-a-command-after-response-loss).
+`receipt execute` requires a stable request key and a complete explicit target,
+checks the selected store before dispatch, and never falls back to unprotected
+execution or resends after a lost response. The preflight and protected command
+share one total CLI timeout. Result retention remains opt-in. Ordinary commands
+and their internal preparation/poll requests do not inherit receipt options.
+
 `get_execution_receipt(action="get", ...)` takes store ID, full project hash, exactly one
 receipt ID/key and optional `include_result=true`. It returns a stable flat receipt schema;
 normalized `content`, `structuredContent`, `isError` and application `_meta` are an optional

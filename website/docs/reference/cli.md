@@ -36,7 +36,7 @@ Place global options before subcommands. HTTP tokens are discovered automaticall
 
 ## Command groups
 
-Registered groups include `instance`, `scene`, `scene_edit`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `play_scenario`, `scenario_recording`, `prefab`, `material`, `lighting`, `animation`, `sprite`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `doctor`, `physics`, `profiler`, `project_auditor`, `verification`, `tool`, and `custom_tool`. Optional module-load failures can change available groups; installed help is authoritative.
+Registered groups include `instance`, `scene`, `scene_edit`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `play_scenario`, `scenario_recording`, `prefab`, `material`, `lighting`, `animation`, `sprite`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `doctor`, `physics`, `profiler`, `project_auditor`, `verification`, `receipt`, `tool`, and `custom_tool`. Optional module-load failures can change available groups; installed help is authoritative.
 
 CLI verbs/flags are not automatically generated from MCP tool parameters. Use exact help:
 
@@ -47,6 +47,8 @@ unity-mcp scene load --help
 ```
 
 Root commands also include `status`, `instances`, and `raw`. Raw parameters must be a JSON object. Tool discovery, request targeting, consent and budgets still apply. `instance set` deliberately cannot persist a target; `batch` is not a universal atomic transaction or rollback mechanism.
+
+The `receipt` group explicitly protects one native command with a validated store and request key. Its `describe` and `get` commands inspect retained execution records without a connected Editor. Protection is opt-in; see [execution receipts](../guides/cli.md#recover-a-command-after-response-loss) for setup and recovery after an uncertain response.
 
 The `sprite` group uses [`manage_sprite`](./tools/animation/manage_sprite.md) for sheet inspection, slicing, clip creation and controller setup. The beta checkout includes this group; use matching Editor/server revisions and inspect `unity-mcp sprite --help` before changing assets. Published older server pins may not expose it.
 

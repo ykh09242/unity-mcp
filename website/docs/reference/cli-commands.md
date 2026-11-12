@@ -3681,6 +3681,48 @@ Send a raw command to Unity. Examples: unity-mcp raw manage_scene '&#123;"action
 | params | text | optional | nargs=-1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp receipt`
+
+Inspect execution records or explicitly protect one native command.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp receipt describe`
+
+Inspect authenticated store availability without a connected Editor.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp receipt execute`
+
+Protect one native COMMAND, using raw JSON, @file, or -/@- stdin. Requires a full --instance hash and an explicitly enabled server store. It checks store availability first, never resends, and never falls back.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --store-id | text | required | nargs=1 | — | — | Store ID returned by receipt describe. |
+| --idempotency-key | text | required | nargs=1 | — | — | Unique stable 16..128-character request key. |
+| --retain-result | boolean | optional | nargs=1, flag | — | — | Explicitly retain bounded public result data. |
+| command | text | required | nargs=1 | — | — |  |
+| params | text | optional | nargs=-1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp receipt get`
+
+Read observed status; unknown never means a command can be replayed.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --store-id | text | required | nargs=1 | — | — | Store ID returned by receipt describe. |
+| --project-hash | text | required | nargs=1 | — | — | Original full 16-character project hash. |
+| --receipt-id | text | optional | nargs=1 | — | — | The original 32-character receipt ID. |
+| --idempotency-key | text | optional | nargs=1 | — | — | The original case-sensitive request key. |
+| --include-result | boolean | optional | nargs=1, flag | — | — | Request retained result data when available. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp reflect`
 
 Inspect Unity C# APIs via reflection.

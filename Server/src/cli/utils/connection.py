@@ -15,6 +15,7 @@ from core.local_auth import LOCAL_AUTH_HEADER, read_local_auth_token
 from models.unity_response import normalize_unity_response
 from models.connection_diagnosis import no_unity_instances_response
 from services.animator_actions import guarded_animator_batch_member, guarded_animator_parameters
+from services.execution_receipt_identity import ReceiptOptions
 
 
 class UnityConnectionError(Exception):
@@ -173,6 +174,8 @@ async def send_command(
     params: Dict[str, Any],
     config: Optional[CLIConfig] = None,
     timeout: Optional[int] = None,
+    *,
+    execution: ReceiptOptions | None = None,
 ) -> Dict[str, Any]:
     """Send a command to Unity via the MCP HTTP server.
 
@@ -220,8 +223,35 @@ async def send_command(
     if cfg.unity_instance:
         payload["unity_instance"] = cfg.unity_instance
 
+    if execution is not None:
+        from cli.utils.input_errors import CLIInputError
+
+        execution.validate()
+        if exact_hash(cfg.unity_instance) != execution.project_hash:
+            raise CLIInputError("invalid_execution_options", "Execution receipt target mismatch.")
+        if native_command == "get_execution_receipt" or (
+            native_command == "run_tests"
+            and not params.get("clear_stuck")
+            and "source_token" not in params
+        ):
+            raise CLIInputError(
+                "invalid_execution_options",
+                "Receipt control cannot create receipts; protected test starts require an explicit source_token.",
+            )
+        payload["execution"] = {
+            "version": 1,
+            "store_id": execution.store_id,
+            "project_hash": execution.project_hash,
+            "retain_result": execution.retain_result,
+        }
+        if execution.idempotency_key is not None:
+            payload["execution"]["idempotency_key"] = execution.idempotency_key
+
     if guarded:
-        if not is_loopback(cfg.host) or exact_hash(cfg.unity_instance) is None:
+        # Receipt controls authorize stored records without dispatching to a live Editor.
+        if not is_loopback(cfg.host) or (
+            command_type != "get_execution_receipt" and exact_hash(cfg.unity_instance) is None
+        ):
             raise click.UsageError(
                 "Project context requires a local server and a complete explicit instance hash."
             )
@@ -270,7 +300,11 @@ async def send_command(
                     err=True,
                 )
             response.raise_for_status()
-            result = normalize_unity_response(response.json())
+            raw_result = response.json()
+            result = normalize_unity_response(raw_result)
+            if execution is not None and isinstance(raw_result, dict) and isinstance(result, dict):
+                if "execution_receipt" in raw_result:
+                    result = {**result, "execution_receipt": raw_result["execution_receipt"]}
             if source_admitted and isinstance(result, dict):
                 result["unity_instance"] = cfg.unity_instance
             return result

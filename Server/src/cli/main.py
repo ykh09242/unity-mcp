@@ -343,6 +343,7 @@ def register_commands():
         cli.add_command(command)
 
     optional_commands = [
+        ("cli.commands.receipt", "receipt"),
         ("cli.commands.tool", "tool"),
         ("cli.commands.tool", "custom_tool"),
         ("cli.commands.gameobject", "gameobject"),

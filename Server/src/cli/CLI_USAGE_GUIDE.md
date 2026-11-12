@@ -16,6 +16,22 @@
 
 ---
 
+## Optional execution receipts
+
+Use `receipt describe` to inspect the authenticated server's optional store.
+`receipt execute --store-id STORE --idempotency-key KEY COMMAND [JSON]` protects
+one raw native command, requiring a complete global `--instance` selector.
+It checks store availability before sending and never automatically retries or
+falls back. Add `--retain-result` only when public result retention is intended.
+
+After response loss, use `receipt get --store-id STORE --project-hash HASH`
+with exactly one of `--receipt-id ID` or `--idempotency-key KEY`; add
+`--include-result` to retrieve retained output if available. Historical lookup
+does not require a connected Editor. JSON output preserves the MCP receipt
+envelope, and successful lookup does not imply the recorded operation succeeded.
+See the [CLI receipt guide](../../../website/docs/guides/cli.md#recover-a-command-after-response-loss)
+for enablement, key limits, examples and unknown-outcome rules.
+
 ## JSON files and stdin
 
 Explicit JSON arguments accept inline JSON, `@path/to/input.json`, or `-` / `@-`

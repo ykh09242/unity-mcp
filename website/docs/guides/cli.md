@@ -42,6 +42,41 @@ Replace the example ID with a discovered one. Global options go **before** subco
 
 Explicit options override corresponding environment settings, then project-context values, then defaults. Health and inventory requests respect `--timeout`, capped at 5 and 10 seconds respectively. The CLI connects directly to loopback addresses and bypasses environment proxies for commands, health checks and inventory. It loads the current local token for authenticated requests. Non-loopback connections need explicit credentials and trusted transport. See [authentication](./security.md#local-http-authentication).
 
+## Recover a command after response loss
+
+Execution receipts are optional and require an operator-enabled private server store.
+Inspect availability first; this does not require a connected Editor:
+
+```bash
+unity-mcp --format json receipt describe
+unity-mcp --instance "MyGame@0123456789abcdef" --format json receipt execute --store-id STORE_ID --idempotency-key create-object-request-0001 manage_gameobject '{"action":"create","name":"OwnedObject"}'
+unity-mcp --format json receipt get --store-id STORE_ID --project-hash 0123456789abcdef --idempotency-key create-object-request-0001
+```
+
+Replace `STORE_ID` with the returned 32-character store ID and use the complete
+16-character project hash. `receipt execute` accepts one native command and the
+same inline JSON, `@file`, and `-`/`@-` stdin sources as `raw`. It verifies store
+availability, then sends one protected command within the original `--timeout`.
+The request key is case-sensitive and must contain 16-128 ASCII letters, digits,
+underscores, dots, colons, or hyphens. Use a distinct key for a distinct intended
+operation. Receipt options are separate from Unity command parameters.
+
+The CLI never automatically resends or silently falls back to an unprotected
+request. If delivery is lost or receipt metadata is missing, it exits nonzero
+with the store/project/key needed for lookup. `unknown` is not permission to
+replay. An exact duplicate may return an existing observation without executing
+again; see [the execution receipt contract](https://github.com/ykh09242/unity-mcp/blob/beta/docs/execution-receipts-ledger.md).
+This is not an exactly-once guarantee.
+
+Result retention is off unless `receipt execute --retain-result` is supplied.
+Use `receipt get --include-result` to request an available retained result, or
+`--receipt-id` instead of the request key. A successful lookup means the record
+was read; its `status` still determines the observed outcome. Lookup works after
+the Editor disconnects and preserves an explicitly selected project route.
+Protection applies only to `receipt execute`, never to other CLI commands or
+their hidden preparation/polling calls. Protected `run_tests` starts require an
+explicit `source_token` obtained during source preparation.
+
 ## Project-local defaults and protection
 
 From a Unity project or its subdirectories, the CLI automatically discovers
