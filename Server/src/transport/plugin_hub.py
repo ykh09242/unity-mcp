@@ -545,13 +545,18 @@ class PluginHub(WebSocketEndpoint):
         cls._raw_results.pop((generation, command_id), None)
 
     @classmethod
-    def _discard_socket_state(cls, websocket: WebSocket) -> None:
-        # Fence progress before waking failed attempts: an old guard can resume
-        # before the command owner has had a turn to detach its binding.
+    def _detach_socket_progress(cls, websocket: WebSocket) -> None:
+        """Fence only this socket's captured producers without yielding."""
         for entry in cls._pending.values():
             progress = entry.get("progress_owner")
             if entry.get("result_socket") is websocket and progress is not None:
                 progress.detach(entry["progress_source"])
+
+    @classmethod
+    def _discard_socket_state(cls, websocket: WebSocket) -> None:
+        # Fence progress before waking failed attempts: an old guard can resume
+        # before the command owner has had a turn to detach its binding.
+        cls._detach_socket_progress(websocket)
         session_id = getattr(websocket.state, "plugin_session_id", None)
         if isinstance(session_id, str):
             revision = cls._editor_states.change_token(session_id)
@@ -1344,6 +1349,10 @@ class PluginHub(WebSocketEndpoint):
         registry = cls._registry
         if lock is None:
             return
+        # Transferring cleanup to another task yields even when the Hub lock is
+        # free. Revoke queued progress before that scheduling boundary; its guard
+        # can otherwise still authorize against routing awaiting owned cleanup.
+        cls._detach_socket_progress(websocket)
 
         async def disconnect() -> None:
             catalog_changes = []
