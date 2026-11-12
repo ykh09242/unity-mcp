@@ -42,7 +42,7 @@ namespace MCPForUnityTests.Editor.Tools
                 );
                 var delete = typeof(ManageScript).GetMethod("DeleteScript", hidden);
                 var response = JObject.FromObject(delete.Invoke(null, new object[] { Path.GetFullPath(path), path }));
-                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                 Assert.IsTrue(response["data"].Value<bool>("deleted"));
                 Assert.IsTrue(response["data"].Value<bool>("source_saved"));
                 Assert.AreEqual(path, response["data"].Value<string>("path"));
@@ -88,7 +88,7 @@ namespace MCPForUnityTests.Editor.Tools
                     )
                 );
                 var response = Create(path, contents);
-                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                 Assert.IsTrue(response["data"]?.Value<bool>("source_saved") == true, response.ToString());
                 Assert.AreEqual(path, response["data"].Value<string>("path"));
                 Assert.AreEqual("mcpforunity://path/" + path, response["data"].Value<string>("uri"));
@@ -202,7 +202,7 @@ namespace MCPForUnityTests.Editor.Tools
                     false,
                 };
                 var response = JObject.FromObject(method.Invoke(null, arguments));
-                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                 var data = response["data"];
                 Assert.IsTrue(data.Value<bool>("source_saved"), response.ToString());
                 Assert.IsTrue(data.Value<bool>("applied"));

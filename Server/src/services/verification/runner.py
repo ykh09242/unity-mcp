@@ -34,7 +34,9 @@ def source_summary(value):
 
 
 class VerificationRunner:
-    def __init__(self, io, profile, selection, *, baseline_id=None, emit=None):
+    def __init__(
+        self, io, profile, selection, *, baseline_id=None, emit=None, expected_sources=None
+    ):
         self.io, self.profile, self.selection, self.baseline_id = (
             io,
             profile,
@@ -42,6 +44,7 @@ class VerificationRunner:
             baseline_id,
         )
         self.emit = emit or (lambda _: None)
+        self.expected_sources = expected_sources
         self.cancel_requested = False
         self.report = {
             "schema": "verification_report@1",
@@ -197,6 +200,7 @@ class VerificationRunner:
             if key in result
         }
         evidence["analysis_id"] = child["job_id"]
+        evidence["findings"] = []
         severity_counts = {"error": 0, "warning": 0, "info": 0}
         seen = set()
         for _ in range(128):
@@ -219,6 +223,16 @@ class VerificationRunner:
                     and diagnostic.get("severity") in severity_counts
                 ):
                     severity_counts[diagnostic["severity"]] += 1
+                    if len(evidence["findings"]) < 20:
+                        evidence["findings"].append(
+                            {
+                                key: value[:1024] if isinstance(value, str) else value
+                                for key, value in diagnostic.items()
+                                if key
+                                in {"id", "code", "severity", "message", "path", "line", "column"}
+                                and isinstance(value, (str, int, float, bool, type(None)))
+                            }
+                        )
             cursor = result.get("next_cursor")
             if not cursor:
                 break
@@ -235,6 +249,8 @@ class VerificationRunner:
         else:
             state = "incomplete"
             evidence["reason"] = "analysis_page_limit"
+        # Coverage is independent of a failing verdict: observed errors cannot complete a partial scan.
+        evidence["complete"] = state == "passed"
         if any(severity_counts[severity] for severity in self.profile.fail_on) and state != "stale":
             state = "failed"
         evidence["active_severity_counts"] = severity_counts
@@ -435,11 +451,48 @@ class VerificationRunner:
         console = console_delta(before, after)
         self.stage("console", console["state"], console)
 
+    async def observe_saved_sources(self, name):
+        if self.expected_sources is None:
+            return
+        state = "passed"
+        observed = []
+        deadline = self.until("final")
+        for path, expected in self.expected_sources.items():
+            await self.check()
+            directory, filename = path.rsplit("/", 1)
+            response = await self.io.native(
+                "manage_script",
+                {"action": "get_sha", "name": filename[:-3], "path": directory},
+                deadline,
+            )
+            data = response.get("data") or {}
+            absent = (
+                response.get("success") is False
+                and response.get("error") == f"Script not found at '{path}'."
+            )
+            if expected.get("absent"):
+                matched = absent
+                known = absent or response.get("success") is True
+            else:
+                key = "bytes_sha256" if expected.get("bytes_sha256") else "sha256"
+                known = bool(expected.get(key)) and (bool(data.get(key)) or absent)
+                matched = bool(expected.get(key)) and data.get(key) == expected[key]
+            if not matched:
+                if known:
+                    state = "stale"
+                elif state != "stale":
+                    state = "incomplete"
+            observed.append(
+                {"path": path, "matches_saved_source": matched, "identity_available": known}
+            )
+        self.stage(name, state, {"files": observed})
+
     async def run(self):
         try:
             await asyncio.wait_for(
                 self.io.authorize_profile(self.profile), max(0, self.deadline - monotonic())
             )
+            await self.observe_saved_sources("saved_source_before")
             initial, admission = await self.observe(
                 "freshness", self.profile.refresh_policy, self.until("freshness")
             )
@@ -462,6 +515,7 @@ class VerificationRunner:
             await self.observe(
                 "final_freshness", "never", self.until("final"), initial.get("source_token")
             )
+            await self.observe_saved_sources("saved_source_after")
         except VerificationCanceled:
             self.stage("cancellation", "canceled", {"reason": "cancel_requested"})
         except (TimeoutError, ConnectionError, PermissionError, RuntimeError, ValueError) as error:

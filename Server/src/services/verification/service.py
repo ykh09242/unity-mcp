@@ -7,10 +7,12 @@ from time import monotonic
 from uuid import uuid4
 
 from core.config import config
-from models.verification import parse_verification_options
+from models.script_quality import ScriptSelection
+from models.verification import VerificationProfile, parse_verification_options
 from services.credential_lease import bind_credential_lease, require_credential_lease
 from services.operation_permissions import authorize_remote_operation
 from services.registry.operation_target import capture_target
+from services.registry.operation_scheduler import OperationScope
 from services.script_quality.service import ScriptQualityService
 from services.source_freshness import ensure_source_freshness
 from services.tools import get_unity_instance_from_context
@@ -34,6 +36,12 @@ class BoundContext:
 
     async def get_state(self, key, default=None):
         return {"unity_instance": self.instance, "user_id": self.user_id}.get(key, default)
+
+
+@dataclass(frozen=True)
+class VerificationTarget:
+    scope: OperationScope
+    resume_generation: str | None
 
 
 class VerificationIO:
@@ -182,6 +190,19 @@ class VerificationService:
             parsed = parse_verification_options(action, options).model_dump(exclude_none=True)
         except ValueError as error:
             return self.error("invalid_verification_request", str(error)[:2048])
+        if action == "run" and "preparation_id" not in parsed:
+            wait_seconds = parsed.pop("wait_seconds")
+            prepared = await self.execute(ctx, "prepare", parsed)
+            if prepared.get("success") is not True:
+                return prepared
+            return await self.execute(
+                ctx,
+                "run",
+                {
+                    "preparation_id": prepared["data"]["preparation_id"],
+                    "wait_seconds": wait_seconds,
+                },
+            )
         self.trim()
         instance = await get_unity_instance_from_context(ctx)
         lease = await require_credential_lease() if config.http_remote_hosted else None
@@ -282,33 +303,26 @@ class VerificationService:
             if not preparation["ready"]:
                 return self.error("verification_preparation_not_ready")
             async with self.lock:
-                if preparation["run_id"]:
-                    return self.read(preparation["run_id"], owner)
-                io.impact_requested = bool(preparation["baseline_id"])
-                await io.authorize_profile(preparation["profile"])
-                runner = VerificationRunner(
-                    io,
-                    preparation["profile"],
-                    preparation["selection"],
-                    baseline_id=preparation["baseline_id"],
-                )
-                run_id = self.store.create(owner, runner.report)
-                preparation["run_id"] = run_id
-                runner.report.update(
-                    run_id=run_id,
-                    preparation_id=preparation["preparation_id"],
-                    profile_id=preparation["profile_id"],
-                    profile_hash=preparation["profile_hash"],
-                    project_scope=owner[1],
-                    required_permissions=sorted(profile_permissions(preparation["profile"])),
-                )
-                runner.emit = lambda report: self.store.update(run_id, owner, report)
-                runner.publish()
-                self.runners[run_id] = runner
-                self.tasks[run_id] = asyncio.create_task(
-                    self._run(run_id, owner, runner, lease), context=contextvars.Context()
-                )
-                return self.read(run_id, owner)
+                run_id = preparation["run_id"]
+                if run_id is None:
+                    io.impact_requested = bool(preparation["baseline_id"])
+                    run_id = await self.start_runner(
+                        io,
+                        preparation["profile"],
+                        preparation["selection"],
+                        lease,
+                        baseline_id=preparation["baseline_id"],
+                        metadata={
+                            "preparation_id": preparation["preparation_id"],
+                            "profile_id": preparation["profile_id"],
+                            "profile_hash": preparation["profile_hash"],
+                        },
+                    )
+                    preparation["run_id"] = run_id
+            if parsed.get("wait_seconds", 0) > 0:
+                await asyncio.wait({self.tasks[run_id]}, timeout=parsed["wait_seconds"])
+                await io.check()
+            return self.read(run_id, owner)
         identity = parsed["run_id"]
         if self.store.read(identity, owner) is None:
             return self.error("verification_not_found")
@@ -329,6 +343,68 @@ class VerificationService:
                 identity, owner, runner.report, settled=runner.report["native_settled"]
             )
         return self.read(identity, owner)
+
+    async def start_runner(
+        self,
+        io,
+        profile,
+        selection,
+        lease,
+        *,
+        baseline_id=None,
+        expected_sources=None,
+        metadata=None,
+    ):
+        await io.authorize_profile(profile)
+        runner = VerificationRunner(
+            io, profile, selection, baseline_id=baseline_id, expected_sources=expected_sources
+        )
+        owner = io.owner
+        run_id = self.store.create(owner, runner.report)
+        runner.report.update(
+            run_id=run_id,
+            project_scope=owner[1],
+            required_permissions=sorted(profile_permissions(profile)),
+            **(metadata or {}),
+        )
+        runner.emit = lambda report: self.store.update(run_id, owner, report)
+        runner.publish()
+        self.runners[run_id] = runner
+        self.tasks[run_id] = asyncio.create_task(
+            self._run(run_id, owner, runner, lease), context=contextvars.Context()
+        )
+        return run_id
+
+    async def start_edit(self, ctx, instance, *, paths, expected_sources, original_target=None):
+        """Start the fixed source-check profile after a confirmed write, using existing job owners."""
+        # Validation also bounds deletion-only selections, which must never reach an analyzer.
+        ScriptSelection(paths=list(expected_sources))
+        if paths:
+            ScriptSelection(paths=paths)
+        lease = await require_credential_lease() if config.http_remote_hosted else None
+        user_id = lease.user_id if lease else None
+        target = await capture_target(instance, user_id=user_id)
+        if target is None or not target.is_current():
+            return self.error("verification_target_unavailable")
+        bound = BoundContext(ctx.fastmcp, instance, user_id)
+        io = VerificationIO(bound, original_target or target)
+        try:
+            await io.target()
+        except (ConnectionError, ValueError) as error:
+            return self.error(str(error))
+        # Tool defaults never inherit project overrides that could add tests or Play Mode.
+        profile = VerificationProfile(analysis_required=bool(paths), impact="off")
+        self.trim()
+        async with self.lock:
+            identity = await self.start_runner(
+                io,
+                profile,
+                {"paths": paths},
+                lease,
+                expected_sources=expected_sources,
+                metadata={"profile_id": "post-edit", "profile_source": "tool_default"},
+            )
+        return self.read(identity, target.scope.key)
 
     async def _run(self, identity, owner, runner, lease):
         with bind_credential_lease(lease):

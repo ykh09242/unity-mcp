@@ -67,6 +67,12 @@ namespace MCPForUnityTests.Editor.Tools
             using (var sha = SHA256.Create())
                 expected = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(source))).Replace("-", "").ToLowerInvariant();
             Assert.AreEqual(expected, data.Value<string>("sha256"));
+            using (var sha = SHA256.Create())
+            {
+                string raw = BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(_path))).Replace("-", "").ToLowerInvariant();
+                Assert.AreEqual(raw, data.Value<string>("bytes_sha256"));
+                Assert.AreNotEqual(expected, raw, "The BOM belongs to the raw identity.");
+            }
             File.WriteAllText(_path, source + "changed", new UTF8Encoding(false));
             var request = BoundaryRequest("apply_text_edits");
             request["precondition_sha256"] = expected;

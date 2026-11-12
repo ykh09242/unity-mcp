@@ -18,6 +18,7 @@ import transport.unity_transport as transport
 config.transport_mode = "stdio"
 config.http_remote_hosted = False
 calls = []
+after_send = None
 raw = {"success": True, "data": {"change_set_id": "a" * 32, "phase": "prepared", "files": []}}
 
 async def selected(ctx):
@@ -25,6 +26,8 @@ async def selected(ctx):
 
 async def send(sender, instance, command, params, **kwargs):
     calls.append((instance, command, copy.deepcopy(params)))
+    if after_send is not None:
+        after_send()
     return copy.deepcopy(raw)
 
 tools.get_unity_instance_from_context = selected
@@ -42,7 +45,7 @@ def unpack(result):
     return document
 
 async def main():
-    global raw
+    global raw, after_send
     async with Client(server) as client:
         files = [
             {"path": "Assets/First.cs", "expected_bytes_sha256": "b" * 64,
@@ -87,6 +90,90 @@ async def main():
         }}
         response = await client.call_tool("script_change_set", {"action": "recover", "change_set_id": "a" * 32}, raise_on_error=False)
         assert unpack(response) == raw
+
+        from services.registry import operation_invocation as invocation
+        from services.registry.operation_context import active_operation
+        from services.registry.operation_scheduler import OperationScope
+        from services.registry.operation_target import OperationTarget
+        from services.verification import service as verification
+        starts, child_authorizations = [], []
+        denied = False
+        async def authorize(name, params):
+            child_authorizations.append(name)
+            if denied and name == "refresh_unity":
+                raise PermissionError("revoked after source save")
+            return lambda: None
+        selected_target = OperationTarget(
+            OperationScope("local", "fixture", "connection-1"), lambda: True,
+            authorize_public=authorize, resume_generation="process-1",
+        )
+        async def capture(*args, **kwargs):
+            return selected_target
+        async def start_runner(self, io, profile, selection, lease, **kwargs):
+            assert active_operation() is None, "mutation lease retained during verification"
+            await io.authorize_profile(profile)
+            starts.append((io.owner, selection, kwargs["expected_sources"]))
+            return "f" * 32
+        invocation.capture_target = capture
+        verification.capture_target = capture
+        verification.VerificationService.start_runner = start_runner
+        verification.VerificationService.read = lambda *args: {
+            "success": True, "data": {"run_id": "f" * 32, "state": "running", "stages": []},
+        }
+        raw = {"success": False, "code": "partial", "data": {"files": [
+            {"path": "Assets/First.cs", "state": "confirmed", "replace_returned": True,
+             "candidate_bytes_sha256": "b" * 64, "observed_bytes_sha256": "b" * 64},
+            {"path": "Assets/Second.cs", "state": "confirmed", "replace_returned": True,
+             "candidate_bytes_sha256": "c" * 64, "observed_bytes_sha256": "c" * 64},
+            {"path": "Assets/Third.cs", "state": "uncertain", "replace_returned": True,
+             "candidate_bytes_sha256": "d" * 64, "observed_bytes_sha256": "e" * 64},
+        ]}}
+        before = len(calls)
+        response = await client.call_tool("script_change_set", {"action": "apply", "change_set_id": "a" * 32}, raise_on_error=False)
+        assert unpack(response) == raw and not starts
+        assert len(calls) == before + 1
+
+        before = len(calls)
+        response = await client.call_tool("script_change_set", {"action": "apply", "change_set_id": "a" * 32, "verification": "auto"}, raise_on_error=False)
+        document = unpack(response)
+        assert document["success"] is False and document["code"] == "partial"
+        assert document["data"]["files"] == raw["data"]["files"]
+        assert document["data"]["verification"]["status"] == "pending"
+        assert document["data"]["verification_excluded_files"] == 1
+        assert len(calls) == before + 1 and len(starts) == 1
+        assert starts[0] == (("local", "fixture"), {"paths": ["Assets/First.cs", "Assets/Second.cs"]}, {
+            "Assets/First.cs": {"bytes_sha256": "b" * 64}, "Assets/Second.cs": {"bytes_sha256": "c" * 64},
+        })
+        assert {"refresh_unity", "manage_script_quality"}.issubset(child_authorizations)
+
+        denied = True
+        before = len(calls)
+        response = await client.call_tool("script_change_set", {"action": "apply", "change_set_id": "a" * 32, "verification": "auto"}, raise_on_error=False)
+        document = unpack(response)
+        assert document["data"]["verification"]["status"] == "unavailable"
+        assert len(calls) == before + 1 and len(starts) == 1
+
+        denied = False
+        for process, expected_status in (("process-1", "pending"), ("replacement", "stale")):
+            selected_target = OperationTarget(
+                OperationScope("local", "fixture", "before-save"), lambda: True,
+                authorize_public=authorize, resume_generation="process-1",
+            )
+            def replace_target():
+                nonlocal selected_target
+                selected_target = OperationTarget(
+                    OperationScope("local", "fixture", "after-save"), lambda: True,
+                    authorize_public=authorize, resume_generation=process,
+                )
+            after_send = replace_target
+            before, starts_before = len(calls), len(starts)
+            response = await client.call_tool("script_change_set", {"action": "apply", "change_set_id": "a" * 32, "verification": "auto"}, raise_on_error=False)
+            document = unpack(response)
+            assert document["code"] == "partial" and document["data"]["files"] == raw["data"]["files"]
+            assert document["data"]["verification"]["status"] == expected_status, document
+            assert len(calls) == before + 1
+            assert len(starts) == starts_before + (1 if process == "process-1" else 0)
+            after_send = None
 
 anyio.run(main)
 print("SDK prepare/apply/status/recover, bounded preflight and retained conflict outcomes passed")

@@ -71,6 +71,12 @@ class VerificationPrepare(ScriptSelection):
 
 class VerificationStart(QualityOptions):
     preparation_id: QualityId
+    wait_seconds: Annotated[float, Field(ge=0, le=5, allow_inf_nan=False)] = 0
+
+
+class VerificationDirectRun(VerificationPrepare):
+    capture_baseline: Literal[False] = False
+    wait_seconds: Annotated[float, Field(ge=0, le=5, allow_inf_nan=False)] = 0
 
 
 class VerificationRunOptions(QualityOptions):
@@ -94,6 +100,8 @@ VerificationAction = Literal[
 
 
 def parse_verification_options(action, options):
+    if action == "run" and isinstance(options, dict) and "preparation_id" not in options:
+        return VerificationDirectRun.model_validate(options)
     models = {
         "profiles": QualityOptions,
         "set_profile": ProfileWrite,

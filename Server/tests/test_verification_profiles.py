@@ -80,6 +80,20 @@ def test_stage_deadlines_and_test_selectors_are_bounded():
         VerificationProfile.model_validate({"deadlines": {"tests": 601}})
 
 
+def test_direct_run_selection_and_observation_limits():
+    direct = parse_verification_options("run", {"paths": ["Assets/A.cs"], "wait_seconds": 1})
+    assert direct.profile_id == "script-check"
+    for options in (
+        {"paths": ["Assets/A.cs"], "preparation_id": "a" * 32},
+        {"paths": ["Assets/A.cs"], "change_set_id": "a" * 32},
+        {"paths": ["Assets/A.cs"], "capture_baseline": True},
+        {"paths": ["Assets/A.cs"], "wait_seconds": 6},
+        {"paths": ["Assets/A.cs"], "wait_seconds": float("nan")},
+    ):
+        with pytest.raises(ValidationError):
+            parse_verification_options("run", options)
+
+
 def test_verification_public_permissions_do_not_make_status_a_test_grant():
     from services.operation_permissions import Permission, required_permissions
 

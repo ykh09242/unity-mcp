@@ -13,6 +13,7 @@ from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.refresh_unity import prepare_edit_recovery, send_mutation, verify_edit_by_sha
 from services.tools.utils import coerce_bool, coerce_int
+from services.verification.edits import complete_edit
 from transport.unity_transport import send_with_unity_instance
 import transport.legacy.unity_connection
 
@@ -68,6 +69,8 @@ def _normalize_script_options(options: dict[str, Any] | None) -> dict[str, Any]:
     if options is not None and not isinstance(options, dict):
         raise ValueError("Script options must be an object or null")
     parsed = dict(options or {})
+    if parsed.get("verification", "auto") not in ("auto", "off"):
+        raise ValueError("Script option 'verification' must be 'auto' or 'off'")
     for field in ("refresh", "validate", "applyMode", "apply_mode"):
         value = parsed.get(field)
         if value is not None and not isinstance(value, str):
@@ -251,7 +254,8 @@ async def apply_text_edits(
     | None = None,
     strict: Annotated[bool, "Optional strict flag, used to enforce strict mode"] | None = None,
     options: Annotated[
-        dict[str, Any], "Optional options, used to pass additional options to the script editor"
+        dict[str, Any],
+        "Editor options. verification='auto' (default) adds bounded post-save analysis and compile observations; 'off' defers them.",
     ]
     | None = None,
 ) -> dict[str, Any]:
@@ -626,8 +630,13 @@ async def apply_text_edits(
                     task.add_done_callback(_background_tasks.discard, context=TaskContext())
             except Exception:
                 pass
-            return resp
-        return resp
+        return await complete_edit(
+            ctx,
+            unity_instance,
+            resp,
+            [f"{directory}/{name}.cs"],
+            mode=opts.get("verification", "auto"),
+        )
     return {"success": False, "message": str(resp)}
 
 
@@ -650,6 +659,10 @@ async def create_script(
     ],
     script_type: Annotated[str, "Script type (e.g., 'C#')"] | None = None,
     namespace: Annotated[str, "Namespace for the script"] | None = None,
+    verification: Annotated[
+        Literal["auto", "off"],
+        "Bounded post-save source verification, with continuation for pending analysis.",
+    ] = "auto",
 ) -> dict[str, Any]:
     logger.info("Processing create_script")
     name = os.path.splitext(os.path.basename(path))[0]
@@ -715,7 +728,11 @@ async def create_script(
     resp = await send_mutation(
         ctx, unity_instance, "manage_script", params, verify_after_disconnect=_verify_create
     )
-    return resp if isinstance(resp, dict) else {"success": False, "message": str(resp)}
+    return (
+        await complete_edit(ctx, unity_instance, resp, [norm_path], mode=verification)
+        if isinstance(resp, dict)
+        else {"success": False, "message": str(resp)}
+    )
 
 
 @mcp_for_unity_tool(
@@ -732,6 +749,9 @@ async def delete_script(
         str,
         "URI of the script to delete under Assets/ directory, mcpforunity://path/Assets/... or file://... or Assets/...",
     ],
+    verification: Annotated[
+        Literal["auto", "off"], "Bounded post-delete compile/source observations."
+    ] = "auto",
 ) -> dict[str, Any]:
     """Delete a C# script by URI."""
     logger.info("Processing delete_script")
@@ -765,7 +785,13 @@ async def delete_script(
     resp = await send_mutation(
         ctx, unity_instance, "manage_script", params, verify_after_disconnect=_verify_delete
     )
-    return resp if isinstance(resp, dict) else {"success": False, "message": str(resp)}
+    return (
+        await complete_edit(
+            ctx, unity_instance, resp, [f"{directory}/{name}.cs"], mode=verification, deleted=True
+        )
+        if isinstance(resp, dict)
+        else {"success": False, "message": str(resp)}
+    )
 
 
 @mcp_for_unity_tool(
@@ -846,7 +872,21 @@ async def validate_script(
             }
         return {
             "success": True,
-            "data": {"warnings": warnings, "errors": errors, "validation": validation},
+            "data": {
+                "warnings": warnings,
+                "errors": errors,
+                "validation": validation,
+                "diagnostic_sample": [
+                    {
+                        key: value[:1024] if isinstance(value, str) else value
+                        for key, value in diagnostic.items()
+                        if key
+                        in {"id", "code", "severity", "message", "path", "line", "column", "col"}
+                        and isinstance(value, (str, int, float, bool, type(None)))
+                    }
+                    for diagnostic in diags[:10]
+                ],
+            },
         }
     return resp if isinstance(resp, dict) else {"success": False, "message": str(resp)}
 
@@ -874,6 +914,9 @@ async def manage_script(
     script_type: Annotated[str, "Script type (e.g., 'C#')", "Type hint (e.g., 'MonoBehaviour')"]
     | None = None,
     namespace: Annotated[str, "Namespace for the script"] | None = None,
+    verification: Annotated[
+        Literal["auto", "off"], "Bounded post-write source verification for create/delete."
+    ] = "auto",
 ) -> dict[str, Any]:
     logger.info("Processing manage_script")
     try:
@@ -946,6 +989,14 @@ async def manage_script(
                 "manage_script",
                 params,
                 verify_after_disconnect=_verify_mutation,
+            )
+            response = await complete_edit(
+                ctx,
+                unity_instance,
+                response,
+                [f"{path.rstrip('/')}/{name}.cs"],
+                mode=verification,
+                deleted=action == "delete",
             )
 
         if isinstance(response, dict):
@@ -1020,6 +1071,13 @@ async def manage_script_capabilities(ctx: Context) -> dict[str, Any]:
                 "max_edit_payload_bytes": max_edit_payload_bytes,
                 "guards": guards,
                 "extras": extras,
+                "post_edit_verification": {
+                    "availability": "static_contract",
+                    "default": "auto",
+                    "opt_out": "off",
+                    "analyzer_configuration": "unobserved",
+                    "observe_with": {"tool": "manage_script_quality", "action": "capabilities"},
+                },
             },
         }
     except Exception as e:
@@ -1060,7 +1118,11 @@ async def get_sha(
         )
         if isinstance(resp, dict) and resp.get("success"):
             data = resp.get("data", {})
-            minimal = {"sha256": data.get("sha256"), "lengthBytes": data.get("lengthBytes")}
+            minimal = {
+                "sha256": data.get("sha256"),
+                "bytes_sha256": data.get("bytes_sha256"),
+                "lengthBytes": data.get("lengthBytes"),
+            }
             return {"success": True, "data": minimal}
         return resp if isinstance(resp, dict) else {"success": False, "message": str(resp)}
     except Exception as e:

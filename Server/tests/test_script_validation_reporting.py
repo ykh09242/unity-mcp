@@ -64,6 +64,27 @@ async def test_validation_legacy_editor_reports_unknown_engine(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_compact_validation_bounds_diagnostic_fields_and_messages(monkeypatch):
+    monkeypatch.setattr(scripts, "get_unity_instance_from_context", AsyncMock(return_value=None))
+    diagnostic = {
+        "line": 4,
+        "severity": "error",
+        "message": "x" * 10000,
+        "internal_payload": {"unbounded": "y" * 10000},
+    }
+    monkeypatch.setattr(
+        scripts,
+        "send_with_unity_instance",
+        AsyncMock(return_value={"success": True, "data": {"diagnostics": [diagnostic] * 30}}),
+    )
+    result = await scripts.validate_script(AsyncMock(), "Assets/Fixture.cs", "standard")
+    assert result["data"]["errors"] == 30
+    assert len(result["data"]["diagnostic_sample"]) == 10
+    assert len(result["data"]["diagnostic_sample"][0]["message"]) <= 1024
+    assert "internal_payload" not in result["data"]["diagnostic_sample"][0]
+
+
+@pytest.mark.asyncio
 async def test_validation_failure_retains_precise_diagnostic_and_scope(monkeypatch):
     # Given: a failed native validation with a precise compiler location.
     failure = {

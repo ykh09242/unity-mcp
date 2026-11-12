@@ -130,7 +130,7 @@ async def edit(client, force=True):
                     "newText": "x" * (1024 * 1024),
                 }
             ],
-            "options": {"force_sentinel_reload": force},
+            "options": {"force_sentinel_reload": force, "verification": "off"},
         },
         meta={"probe_payload": "y" * (1024 * 1024)},
     )

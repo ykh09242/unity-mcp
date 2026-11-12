@@ -293,7 +293,7 @@ namespace MCPForUnity.Editor.Tools
                         if (!File.Exists(fullPath))
                             return new ErrorResponse($"Script not found at '{relativePath}'.");
 
-                        string text = ReadScriptContents(fullPath);
+                        string text = ReadScriptContentsWithDigest(fullPath, out string rawDigest);
                         string sha = ComputeSha256(text);
                         var fi = new FileInfo(fullPath);
                         long lengthBytes;
@@ -310,6 +310,7 @@ namespace MCPForUnity.Editor.Tools
                             uri = $"mcpforunity://path/{relativePath}",
                             path = relativePath,
                             sha256 = sha,
+                            bytes_sha256 = rawDigest,
                             lengthBytes,
                             lastModifiedUtc = fi.Exists ? fi.LastWriteTimeUtc.ToString("o") : string.Empty,
                         };
@@ -417,7 +418,18 @@ namespace MCPForUnity.Editor.Tools
                 folders.Complete();
 
                 var uri = $"mcpforunity://path/{relativePath}";
-                var ok = new SuccessResponse($"Script '{name}.cs' created successfully at '{relativePath}'.", new { uri, scheduledRefresh = false });
+                var ok = new SuccessResponse(
+                    $"Script '{name}.cs' created successfully at '{relativePath}'.",
+                    new
+                    {
+                        uri,
+                        path = relativePath,
+                        source_saved = true,
+                        sha256 = ComputeSha256(contents),
+                        bytes_sha256 = ComputeSha256(contents),
+                        scheduledRefresh = false,
+                    }
+                );
 
                 refreshAttempted = true;
                 if (_createScriptImportForTests != null)
@@ -429,13 +441,15 @@ namespace MCPForUnity.Editor.Tools
             catch (Exception e)
             {
                 if (sourceSaved)
-                    return new ErrorResponse(
-                        "Script source was created, but a post-publication follow-up failed.",
+                    return new SuccessResponse(
+                        "Script source created. The import/compile follow-up needs attention.",
                         new
                         {
                             path = relativePath,
                             uri = $"mcpforunity://path/{relativePath}",
                             source_saved = true,
+                            sha256 = ComputeSha256(contents),
+                            bytes_sha256 = ComputeSha256(contents),
                             failed_stage = refreshAttempted ? "import_and_compile" : "post_publication",
                             refresh_attempted = refreshAttempted,
                             refresh_status = refreshAttempted ? "failed" : "not_requested",
@@ -480,7 +494,7 @@ namespace MCPForUnity.Editor.Tools
                     if (token != null && (token.Type != JTokenType.Integer || (long)token < 1 || (long)token > int.MaxValue))
                         return new ErrorResponse("invalid_params", $"{key} must be a positive integer.");
                 }
-                string contents = ReadScriptContents(fullPath);
+                string contents = ReadScriptContentsWithDigest(fullPath, out string rawDigest);
                 string sha256 = ComputeSha256(contents);
                 bool windowApplied = parameters["start_line"] != null || parameters["line_count"] != null;
                 if (windowApplied)
@@ -498,6 +512,7 @@ namespace MCPForUnity.Editor.Tools
                     uri,
                     path = relativePath,
                     sha256,
+                    bytes_sha256 = rawDigest,
                     lineWindowApplied = windowApplied,
                     contents = contents,
                     // For large files, also include base64-encoded version
@@ -625,12 +640,22 @@ namespace MCPForUnity.Editor.Tools
                     {
                         uri,
                         path = relativePath,
+                        source_saved = true,
+                        sha256 = ComputeSha256(contents),
+                        bytes_sha256 = ComputeSha256(contents),
                         scheduledRefresh = true,
                     }
                 );
 
                 // Schedule a debounced import/compile on next editor tick to avoid stalling the reply
-                ManageScriptRefreshHelpers.ScheduleScriptRefresh(relativePath);
+                try
+                {
+                    ManageScriptRefreshHelpers.ScheduleScriptRefresh(relativePath);
+                }
+                catch (Exception ex)
+                {
+                    return SavedScriptRefreshFailure(relativePath, ComputeSha256(contents), null, false, ex);
+                }
 
                 return ok;
             }
@@ -918,6 +943,7 @@ namespace MCPForUnity.Editor.Tools
                         editsApplied = spans.Count,
                         source_saved = true,
                         sha256 = newSha,
+                        bytes_sha256 = newSha,
                         scheduledRefresh = !immediate,
                         refresh_status = immediate ? "requested" : "scheduled",
                     }
@@ -926,8 +952,8 @@ namespace MCPForUnity.Editor.Tools
             catch (Exception ex)
             {
                 if (sourceSaved)
-                    return new ErrorResponse(
-                        "Text edits were saved, but refresh failed.",
+                    return new SuccessResponse(
+                        "Text edits saved. The refresh follow-up needs attention.",
                         new
                         {
                             uri = $"mcpforunity://path/{relativePath}",
@@ -936,6 +962,7 @@ namespace MCPForUnity.Editor.Tools
                             applied = true,
                             editsApplied = spans.Count,
                             sha256 = newSha,
+                            bytes_sha256 = newSha,
                             failed_stage = immediate ? "import_and_compile" : "schedule_refresh",
                             scheduledRefresh = (bool?)null,
                             refresh_attempted = true,
@@ -2107,7 +2134,15 @@ namespace MCPForUnity.Editor.Tools
                         _deleteScriptRefreshForTests();
                     else
                         AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-                    return new SuccessResponse($"Script '{Path.GetFileName(relativePath)}' moved to trash successfully.", new { deleted = true });
+                    return new SuccessResponse(
+                        $"Script '{Path.GetFileName(relativePath)}' moved to trash successfully.",
+                        new
+                        {
+                            deleted = true,
+                            source_saved = true,
+                            path = relativePath,
+                        }
+                    );
                 }
                 else
                 {
@@ -2118,8 +2153,8 @@ namespace MCPForUnity.Editor.Tools
             catch (Exception e)
             {
                 if (deleted)
-                    return new ErrorResponse(
-                        "Script was moved to trash, but the subsequent refresh failed.",
+                    return new SuccessResponse(
+                        "Script moved to trash. The refresh follow-up needs attention.",
                         new
                         {
                             deleted = true,
@@ -2805,19 +2840,28 @@ namespace MCPForUnity.Editor.Tools
                         path = relativePath,
                         uri = $"mcpforunity://path/{relativePath}",
                         editsApplied = appliedCount,
+                        source_saved = true,
                         scheduledRefresh = !immediate,
                         sha256 = newSha,
+                        bytes_sha256 = newSha,
                     }
                 );
 
-                if (immediate)
+                try
                 {
-                    McpLog.Info($"[ManageScript] EditScript: immediate refresh for '{relativePath}'", always: false);
-                    ManageScriptRefreshHelpers.ImportAndRequestCompile(relativePath);
+                    if (immediate)
+                    {
+                        McpLog.Info($"[ManageScript] EditScript: immediate refresh for '{relativePath}'", always: false);
+                        ManageScriptRefreshHelpers.ImportAndRequestCompile(relativePath);
+                    }
+                    else
+                    {
+                        ManageScriptRefreshHelpers.ScheduleScriptRefresh(relativePath);
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    ManageScriptRefreshHelpers.ScheduleScriptRefresh(relativePath);
+                    return SavedScriptRefreshFailure(relativePath, newSha, appliedCount, immediate, ex);
                 }
                 return ok;
             }
@@ -2825,6 +2869,30 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Edit failed: {ex.Message}");
             }
+        }
+
+        private static SuccessResponse SavedScriptRefreshFailure(string path, string sha256, int? editsApplied, bool immediate, Exception error)
+        {
+            return new SuccessResponse(
+                "Script source saved. The refresh follow-up needs attention.",
+                new
+                {
+                    path,
+                    uri = $"mcpforunity://path/{path}",
+                    source_saved = true,
+                    applied = true,
+                    editsApplied,
+                    sha256,
+                    bytes_sha256 = sha256,
+                    scheduledRefresh = (bool?)null,
+                    failed_stage = immediate ? "import_and_compile" : "schedule_refresh",
+                    refresh_attempted = true,
+                    refresh_status = "failed",
+                    refresh_confirmation = "unknown",
+                    refresh_error = error.Message.Substring(0, Math.Min(512, error.Message.Length)),
+                    recovery = "Inspect the saved source and Editor import/compile state. Do not replay edits; request refresh separately if needed.",
+                }
+            );
         }
 
         private static bool HasOverlaps(IEnumerable<(int start, int length, string text)> list)

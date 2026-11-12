@@ -20,6 +20,9 @@ def script_boundary(monkeypatch):
     )
     writer = AsyncMock(return_value={"success": True})
     verify = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "services.verification.service.capture_target", AsyncMock(return_value=None)
+    )
     for module in (scripts, structured):
         monkeypatch.setattr(module, "get_unity_instance_from_context", instance)
         monkeypatch.setattr(module, "send_with_unity_instance", reader)

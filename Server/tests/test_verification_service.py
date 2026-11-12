@@ -78,6 +78,37 @@ async def test_repeated_run_uses_one_handle_and_server_restart_does_not_replay(
 
 
 @pytest.mark.asyncio
+async def test_direct_run_prepares_selection_and_wait_expiry_keeps_original_job(
+    service, monkeypatch
+):
+    subject, ctx, _, native = service
+    release = asyncio.Event()
+
+    async def work(self):
+        await release.wait()
+        self.report.update(state="passed", native_settled=True)
+        return self.report
+
+    monkeypatch.setattr("services.verification.runner.VerificationRunner.run", work)
+    monkeypatch.setattr(
+        "services.verification.service.VerificationIO.authorize_profile", AsyncMock()
+    )
+    first = await subject.execute(ctx, "run", {"paths": ["Assets/A.cs"], "wait_seconds": 0.01})
+    assert first["success"]
+    report = first["data"]
+    assert report["selection"] == {"paths": ["Assets/A.cs"]}
+    assert report["state"] == "running"
+    assert len(subject.tasks) == 1 and not next(iter(subject.tasks.values())).cancelled()
+    again = await subject.execute(ctx, "run", {"preparation_id": report["preparation_id"]})
+    assert again["data"]["run_id"] == report["run_id"]
+    assert native.await_count == 1
+    release.set()
+    await asyncio.gather(*subject.tasks.values())
+    terminal = await subject.execute(ctx, "status", {"run_id": report["run_id"]})
+    assert terminal["data"]["state"] == "passed"
+
+
+@pytest.mark.asyncio
 async def test_live_permission_union_is_checked_before_starting_any_background_work(
     service, monkeypatch
 ):
@@ -96,6 +127,48 @@ async def test_live_permission_union_is_checked_before_starting_any_background_w
         await subject.execute(ctx, "run", {"preparation_id": prepared["data"]["preparation_id"]})
     assert not subject.tasks
     assert native.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "generation,resume,owner,allowed",
+    [
+        ("generation", "process", ("u", "p"), True),
+        ("after-reload", "process", ("u", "p"), True),
+        ("after-restart", "other-process", ("u", "p"), False),
+        ("generation", "process", ("other-user", "p"), False),
+        ("generation", "process", ("u", "other-project"), False),
+        ("after-reload", None, ("u", "p"), False),
+    ],
+)
+async def test_edit_keeps_original_process_and_principal_across_deferred_start(
+    service, monkeypatch, generation, resume, owner, allowed
+):
+    from services.verification import service as module
+
+    subject, ctx, original, _ = service
+    fresh = SimpleNamespace(
+        scope=SimpleNamespace(key=owner, generation=generation),
+        resume_generation=resume,
+        is_current=lambda: True,
+        authorize_public=None,
+        public_available=None,
+    )
+    monkeypatch.setattr(module, "capture_target", AsyncMock(return_value=fresh))
+    start = AsyncMock(return_value="a" * 32)
+    monkeypatch.setattr(subject, "start_runner", start)
+    monkeypatch.setattr(subject, "read", lambda *_: {"success": True, "data": {"run_id": "a" * 32}})
+    result = await subject.start_edit(
+        ctx,
+        "Editor@project",
+        paths=["Assets/A.cs"],
+        expected_sources={"Assets/A.cs": {"bytes_sha256": "b" * 64}},
+        original_target=original,
+    )
+    assert result["success"] is allowed
+    assert start.await_count == int(allowed)
+    if not allowed:
+        assert result["code"] == "verification_editor_process_changed"
 
 
 @pytest.mark.asyncio

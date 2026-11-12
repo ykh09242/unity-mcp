@@ -325,6 +325,17 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
     """Wrap once at registration; direct native senders retain their own admission."""
     signature = inspect.signature(function)
     trusted = trusted_tool(function, name)
+    edit_composition = trusted and name in {
+        "apply_text_edits",
+        "script_apply_edits",
+        "create_script",
+        "delete_script",
+        "manage_script",
+        "script_change_set",
+        "batch_execute",
+    }
+    if edit_composition:
+        from services.verification.edits import after_operation, bind_edit_target
     try:
         result_type = inspect.get_annotations(function, eval_str=True).get("return")
     except (NameError, TypeError):
@@ -355,6 +366,7 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
             and Permission.EDIT in required_permissions(name, params)
         )
         check_public_authority = None
+        target = None
 
         async def validate_enabled() -> None:
             server = getattr(ctx, "fastmcp", None)
@@ -380,7 +392,7 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                 if check_public_authority is None:
                     raise CredentialLeaseError()
                 guard = guard_graph_edit(check_public_authority)
-            with guard:
+            with guard, bind_edit_target(target) if edit_composition else nullcontext():
                 if inspect.iscoroutinefunction(function):
                     return await function(*args, **kwargs)
                 return await owned_to_thread(function, *args, **kwargs)
@@ -577,4 +589,6 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
             except OperationCapacityError:
                 return refusal_result(_refusal("operation_capacity"))
 
+    if edit_composition:
+        return after_operation(invoke)
     return invoke

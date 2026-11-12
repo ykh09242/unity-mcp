@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.manage_script import _validate_script_name
+from services.verification.edits import complete_edit
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
 
@@ -64,7 +65,8 @@ class ScriptChangeFile(BaseModel):
         "all original source/metadata preconditions before writes. Failures retain ordered confirmed, "
         "restored or uncertain outcomes; recovery never overwrites a changed external source. "
         "This is not a filesystem-wide transaction, semantic rename or callback rollback. "
-        "UTF-8 BOM/newlines and metadata are preserved. This request does not schedule a refresh; "
+        "UTF-8 BOM/newlines and metadata are preserved. Default verification='off' does not schedule a refresh; "
+        "apply with verification='auto' checks the final confirmed selection once and returns findings or the original pending run. "
         "Unity automatic/deferred source import may still compile changed scripts."
     ),
     annotations=ToolAnnotations(
@@ -81,9 +83,16 @@ async def script_change_set(
         str | None, "apply/status/recover: identifier returned by prepare."
     ] = None,
     validation: Literal["basic", "standard", "comprehensive", "strict"] = "standard",
+    verification: Literal["off", "auto"] = "off",
 ) -> dict[str, JsonValue]:
     """Admit bounded input before selection and preserve native recovery evidence unchanged."""
     params: dict[str, JsonValue]
+    if verification not in {"off", "auto"} or verification == "auto" and action != "apply":
+        return {
+            "success": False,
+            "code": "invalid_change_set",
+            "message": "Automatic verification is available on apply.",
+        }
     match action:
         case "prepare":
             if change_set_id is not None or files is None or not 1 <= len(files) <= 256:
@@ -177,6 +186,27 @@ async def script_change_set(
         paths=paths,
         preparation_error=preparation_error,
     )
+    if verification == "auto" and isinstance(response, dict):
+        data = response.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("files"), list):
+            return response
+        rows = data["files"]
+        expected = {
+            row["path"]: {"bytes_sha256": row["candidate_bytes_sha256"]}
+            for row in rows[:256]
+            if isinstance(row, dict)
+            and isinstance(row.get("path"), str)
+            and isinstance(row.get("candidate_bytes_sha256"), str)
+            and re.fullmatch(r"[a-fA-F0-9]{64}", row["candidate_bytes_sha256"]) is not None
+            and row.get("state") == "confirmed"
+            and row.get("replace_returned") is True
+            and row.get("observed_bytes_sha256") == row.get("candidate_bytes_sha256")
+        }
+        if expected:
+            response = await complete_edit(
+                ctx, instance, response, list(expected), expected_sources=expected
+            )
+            response["data"]["verification_excluded_files"] = len(rows) - len(expected)
     return (
         response
         if isinstance(response, dict)

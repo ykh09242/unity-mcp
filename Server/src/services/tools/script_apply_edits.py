@@ -34,6 +34,7 @@ from services.tools.manage_script import (
 )
 from services.tools.refresh_unity import prepare_edit_recovery, send_mutation, verify_edit_by_sha
 from services.tools.utils import coerce_int, parse_json_payload
+from services.verification.edits import complete_edit
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.plugin_hub import capture_http_request_budget
 from transport.unity_transport import send_with_unity_instance
@@ -1002,7 +1003,9 @@ class _OrderedScriptRequest:
     expires_at: float
 
 
-async def _ordered_script_edits(ctx: Context, request: _OrderedScriptRequest) -> dict[str, Any]:
+async def _ordered_script_edits(
+    ctx: Context, request: _OrderedScriptRequest, selected_instance=None
+) -> dict[str, Any]:
     """Prepare one current buffer at a time, then dispatch at most one final commit."""
     loop = asyncio.get_running_loop()
     instance = None
@@ -1048,6 +1051,8 @@ async def _ordered_script_edits(ctx: Context, request: _OrderedScriptRequest) ->
             if loop.time() >= request.expires_at:
                 raise TimeoutError("Ordered deadline expired before instance selection")
             instance = await get_unity_instance_from_context(ctx)
+            if selected_instance is not None:
+                selected_instance.append(instance)
             response = await send(
                 {
                     "action": "preview_script_buffer",
@@ -1289,10 +1294,38 @@ async def script_apply_edits(
         Union[list[dict[str, Any]], str],
         "List of edits to apply to the script (JSON list or stringified JSON)",
     ],
-    options: Annotated[dict[str, Any], "Options for the script edit"] | None = None,
+    options: Annotated[
+        dict[str, Any],
+        "Editor options. verification='auto' (default) adds bounded post-save checks; 'off' defers them.",
+    ]
+    | None = None,
     script_type: Annotated[str, "Type of the script to edit"] = "MonoBehaviour",
     namespace: Annotated[str, "Namespace of the script to edit"] | None = None,
 ) -> dict[str, Any]:
+    selected_instance = []
+    response = await _apply_script_edits(
+        ctx, name, path, edits, options, script_type, namespace, selected_instance
+    )
+    try:
+        parsed = _normalize_script_options(options)
+        target_name, target_path = _normalize_script_locator(name, path)
+    except ValueError:
+        return response
+    if parsed.get("preview") or not selected_instance:
+        return response
+    instance = selected_instance[0]
+    return await complete_edit(
+        ctx,
+        instance,
+        response,
+        [f"{target_path}/{target_name}.cs"],
+        mode=parsed.get("verification", "auto"),
+    )
+
+
+async def _apply_script_edits(
+    ctx, name, path, edits, options, script_type, namespace, selected_instance
+):
     try:
         options = _normalize_script_options(options)
     except ValueError as exc:
@@ -1427,7 +1460,7 @@ async def script_apply_edits(
         except (ValueError, TypeError, UnicodeError) as exc:
             return _err("invalid_edit", str(exc))
         return await _ordered_script_edits(
-            ctx, _OrderedScriptRequest(name, path, edits, options, expires_at)
+            ctx, _OrderedScriptRequest(name, path, edits, options, expires_at), selected_instance
         )
     if preview and mixed:
         return _err(
@@ -1436,6 +1469,7 @@ async def script_apply_edits(
         )
 
     unity_instance = await get_unity_instance_from_context(ctx)
+    selected_instance.append(unity_instance)
 
     async def _preview_for_recovery(preview_params):
         return await send_with_unity_instance(

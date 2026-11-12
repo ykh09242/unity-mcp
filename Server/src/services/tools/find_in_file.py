@@ -22,7 +22,7 @@ logger = logging.getLogger("mcp-for-unity-server")
 
 @mcp_for_unity_tool(
     unity_target="manage_script",
-    description="Searches a C# script with a regex pattern and returns line numbers and excerpts.",
+    description="Searches a C# script with a regex pattern and returns line numbers, excerpts and identities of the searched snapshot. bytes_sha256 identifies raw file bytes when supplied by the Editor; sha256 identifies decoded UTF-8 content.",
     annotations=ToolAnnotations(
         title="Find in File",
         readOnlyHint=True,
@@ -136,5 +136,11 @@ async def find_in_file(
 
     return {
         "success": True,
-        "data": {"matches": results, "count": len(results), "total_matches": len(found)},
+        "data": {
+            "matches": results,
+            "count": len(results),
+            "total_matches": len(found),
+            "sha256": data.get("sha256"),
+            "bytes_sha256": data.get("bytes_sha256"),
+        },
     }

@@ -37,6 +37,7 @@ async def test_committed_deletion_refresh_failure_is_preserved_without_replay(
     else:
         response = await scripts.manage_script(AsyncMock(), "delete", "Foo", "Assets")
 
+    assert response["data"].pop("verification")["status"] == "unavailable"
     assert response == receipt
     sender.assert_awaited_once()
     assert sender.await_args.args[3]["action"] == "delete"

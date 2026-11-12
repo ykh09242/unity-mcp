@@ -275,7 +275,7 @@ async def main():
                       'dedicated action ' + name + mode)
                 check(wires[0][0] == 'Project@fixture', 'instance routing ' + name + mode)
                 if name == 'get_sha':
-                    check(response['data'] == {'sha256': 'zero', 'lengthBytes': 0},
+                    check(response['data'] == {'sha256': 'zero', 'bytes_sha256': None, 'lengthBytes': 0},
                           'zero byte result ' + mode)
             for include in (False, True):
                 raw = {'success': True, 'data': {'diagnostics': [
@@ -295,6 +295,7 @@ async def main():
                 expected_summary = {'warnings': 1, 'errors': 2}
                 if not include:
                     expected_summary['validation'] = expected_validation
+                    expected_summary['diagnostic_sample'] = raw['data']['diagnostics']
                 check(summary == expected_summary, 'diagnostic summary ' + mode)
                 check(response['data']['validation'] == expected_validation,
                       'legacy validation context is explicitly unknown ' + mode)

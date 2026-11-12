@@ -182,6 +182,30 @@ async def test_partial_or_unclassified_analysis_cannot_pass_required_policy(chan
 
 
 @pytest.mark.asyncio
+async def test_partial_analysis_errors_preserve_incomplete_coverage():
+    from services.verification.edits import verification_summary
+
+    io = IO()
+    io.analysis.update(
+        complete=False,
+        rows=[
+            {
+                "scope": "selected",
+                "diagnostic": {"severity": "error", "message": "Observed error"},
+            }
+        ],
+    )
+    report = await run(io)
+    analysis = next(stage for stage in report["stages"] if stage["name"] == "analysis")
+    assert analysis["state"] == "failed"
+    assert analysis["evidence"]["complete"] is False
+    summary = verification_summary({"success": True, "data": report})
+    assert summary["status"] == "issues_found"
+    assert summary["complete"] is False
+    assert summary["further_fixes_required"] is True
+
+
+@pytest.mark.asyncio
 async def test_zero_tests_and_unknown_console_are_incomplete():
     io = IO()
     io.tests["result"]["summary"].update(total=0, passed=0)
