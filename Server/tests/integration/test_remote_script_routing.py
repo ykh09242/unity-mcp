@@ -1,6 +1,7 @@
 """Remote script reads and writes must never use host-local Unity sockets."""
 
 import importlib
+import hashlib
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -24,17 +25,35 @@ async def test_script_operations_stay_in_authenticated_plugin_session(monkeypatc
     legacy = Mock(side_effect=AssertionError("Host-local Unity must not be accessed"))
     monkeypatch.setattr(unity_connection, "get_unity_connection_pool", legacy)
     calls = []
+    source = "class Foo {}\n"
 
     async def plugin(instance, command, params, **kwargs):
+        nonlocal source
         assert instance == "SameName@samehash"
         assert kwargs["user_id"] == "tenant-a"
-        calls.append(params["action"])
-        if params["action"] == "preview_text_edits":
+        assert command == "manage_script"
+        action = params["action"]
+        calls.append(action)
+        if action in {"preview_text_edits", "preview_edit"}:
             from tests.test_script_preparation import prepared
 
-            original = "class Foo {}\n"
-            return prepared(original, edits_tool._preview_text_spans(original, params["edits"]))
-        return {"success": True, "data": {"contents": "class Foo {}\n", "sha256": "remote-sha"}}
+            candidate = (
+                edits_tool._preview_text_spans(source, params["edits"])
+                if action == "preview_text_edits"
+                else source.replace("class Foo {}", "class Foo { void M() {} }")
+            )
+            return prepared(source, candidate)
+        if action in {"apply_text_edits", "edit"}:
+            assert params["precondition_sha256"] == hashlib.sha256(source.encode()).hexdigest()
+            source = (
+                edits_tool._preview_text_spans(source, params["edits"])
+                if action == "apply_text_edits"
+                else source.replace("class Foo {}", "class Foo { void M() {} }")
+            )
+        return {
+            "success": True,
+            "data": {"contents": source, "sha256": hashlib.sha256(source.encode()).hexdigest()},
+        }
 
     monkeypatch.setattr(unity_transport.PluginHub, "send_command_for_instance", plugin)
     ctx = AsyncMock()
@@ -62,14 +81,22 @@ async def test_script_operations_stay_in_authenticated_plugin_session(monkeypatc
             {"preview": mode == "preview"},
         )
     assert result["success"], result
-    assert calls[0] == (
-        "get_sha" if mode == "structured" else "validate_edit" if mode == "mixed" else "read"
-    )
+    expected_calls = {
+        "preview": ["read", "preview_text_edits"],
+        "text": ["read", "preview_text_edits", "apply_text_edits"],
+        "structured": ["preview_edit", "edit"],
+        "mixed": [
+            "validate_edit",
+            "read",
+            "preview_text_edits",
+            "apply_text_edits",
+            "preview_edit",
+            "edit",
+        ],
+    }
+    assert calls == expected_calls[mode]
     if mode == "preview":
-        assert calls == ["read", "preview_text_edits"]
         assert result["data"]["native_apply"]["status"] == "unavailable_remote"
-    else:
-        assert len(calls) >= 2
     legacy.assert_not_called()
 
 

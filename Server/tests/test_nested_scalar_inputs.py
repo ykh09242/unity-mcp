@@ -39,7 +39,11 @@ async def test_text_option_false_string_applies_edit(script_wire, option):
     assert response["success"] is True
     assert writer.await_count == 1
     assert writer.await_args.args[3]["options"][option] is False
-    reader.assert_not_awaited()
+    reader.assert_awaited_once()
+    preparation = reader.await_args.args[3]
+    assert preparation["action"] == "preview_text_edits"
+    assert preparation["edits"] == writer.await_args.args[3]["edits"]
+    assert preparation["options"] == {option: False, "preview": True}
 
 
 @pytest.mark.asyncio

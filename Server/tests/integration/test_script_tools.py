@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+import hashlib
 
 from .test_helpers import DummyContext, DummyMCP, setup_script_tools
 
@@ -49,13 +50,31 @@ async def test_apply_text_edits_long_file(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_sequential_edits_use_precondition(monkeypatch):
+    from services.tools.script_apply_edits import _preview_text_spans
+    from tests.test_script_preparation import prepared
+
     tools = setup_script_tools()
     apply_edits = tools["apply_text_edits"]
     calls = []
+    original = "class File {}\n"
+    source = original
 
     async def fake_send(cmd, params, **kwargs):
+        nonlocal source
+        assert cmd == "manage_script"
         calls.append(params)
-        return {"success": True, "sha256": f"hash{len(calls)}"}
+        assert params["precondition_sha256"] == hashlib.sha256(source.encode()).hexdigest()
+        candidate = _preview_text_spans(source, params["edits"])
+        if params["action"] == "preview_text_edits":
+            proposal = prepared(source, candidate)
+            proposal["data"].update(
+                path="Assets/Scripts/File.cs",
+                absolute_path="C:/UnityProject/Assets/Scripts/File.cs",
+            )
+            return proposal
+        assert params["action"] == "apply_text_edits"
+        source = candidate
+        return {"success": True, "data": {"sha256": hashlib.sha256(source.encode()).hexdigest()}}
 
     # Patch the send_command_with_retry function at the module level where it's imported
     import transport.legacy.unity_connection
@@ -68,17 +87,32 @@ async def test_sequential_edits_use_precondition(monkeypatch):
     # No need to patch tools.manage_script; it now calls unity_connection.send_command_with_retry
 
     edit1 = {"startLine": 1, "startCol": 0, "endLine": 1, "endCol": 0, "newText": "//header\n"}
-    resp1 = await apply_edits(DummyContext(), "mcpforunity://path/Assets/Scripts/File.cs", [edit1])
+    resp1 = await apply_edits(
+        DummyContext(),
+        "mcpforunity://path/Assets/Scripts/File.cs",
+        [edit1],
+        precondition_sha256=hashlib.sha256(original.encode()).hexdigest(),
+    )
     edit2 = {"startLine": 2, "startCol": 0, "endLine": 2, "endCol": 0, "newText": "//second\n"}
     resp2 = await apply_edits(
         DummyContext(),
         "mcpforunity://path/Assets/Scripts/File.cs",
         [edit2],
-        precondition_sha256=resp1["sha256"],
+        precondition_sha256=resp1["data"]["sha256"],
     )
 
-    assert calls[1]["precondition_sha256"] == resp1["sha256"]
-    assert resp2["sha256"] == "hash2"
+    assert resp1["success"] is True and resp2["success"] is True
+    assert [params["action"] for params in calls] == [
+        "preview_text_edits",
+        "apply_text_edits",
+        "preview_text_edits",
+        "apply_text_edits",
+    ]
+    writes = [params for params in calls if params["action"] == "apply_text_edits"]
+    assert len(writes) == 2
+    assert writes[1]["precondition_sha256"] == resp1["data"]["sha256"]
+    assert source == "//header\n//second\nclass File {}\n"
+    assert resp2["data"]["sha256"] == hashlib.sha256(source.encode()).hexdigest()
 
 
 @pytest.mark.asyncio
