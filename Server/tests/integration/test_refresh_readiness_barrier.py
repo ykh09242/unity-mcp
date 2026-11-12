@@ -141,6 +141,7 @@ async def test_refresh_waits_for_canonical_asset_refresh(
             assert data.pop("compilation_observation_age_seconds") is None
             assert data.pop("source_revision_confirmed") is False
             assert data.pop("last_successful_compilation") is None
+            assert data.pop("follow_up") == {"action": "inspect_tracking_support"}
             assert data == {"timeout": True, "wait_seconds": 300.0}
             assert compilation["compile_id"] == dispatched_compile_id
             assert len(dispatched_compile_id) == 32
