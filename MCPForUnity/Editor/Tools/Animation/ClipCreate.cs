@@ -414,12 +414,12 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = true, message = $"Added Animation component and assigned clip '{clip.name}' to '{go.name}'.{legacyWarning}" };
             }
 
-            // Has Animator - we can't programmatically assign clips to Animator states easily,
-            // so report what the user should do
+            // An Animator requires an explicit controller/state edit; no assignment was made.
             return new
             {
-                success = true,
-                message = $"GameObject '{go.name}' has an Animator component. The clip '{clip.name}' is available at '{clipPath}'. "
+                success = false,
+                message = $"Cannot assign clip '{clip.name}' directly to Animator on '{go.name}'. No changes were made. "
+                    + $"The clip is available at '{clipPath}'. "
                     + "Assign it to an Animator Controller state via the Animator window or create an AnimatorOverrideController.",
             };
         }
