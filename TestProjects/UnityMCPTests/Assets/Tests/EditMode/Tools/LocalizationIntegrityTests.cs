@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Services;
@@ -12,6 +13,7 @@ using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    [Parallelizable(ParallelScope.None)]
     public class LocalizationIntegrityTests
     {
         private string folder;
@@ -23,6 +25,169 @@ namespace MCPForUnityTests.Editor.Tools
         private Object frTable;
         private Object assetTable;
         private Texture2D icon;
+        private Object addressableSettings;
+        private Object previousCurrentConfig;
+        private Object previousLegacyConfig;
+        private object previousSettingsCache;
+        private FieldInfo settingsCacheField;
+        private string currentConfigKey;
+        private string legacyConfigKey;
+        private string originalDefaultFolderGuid;
+        private AddressablesImportScope importScope;
+
+        private sealed class AddressablesImportScope : IDisposable
+        {
+            private readonly IDictionary callbacks;
+            private readonly Dictionary<int, Delegate[]> saved = new Dictionary<int, Delegate[]>();
+            private readonly IList registrations;
+            private readonly List<(int Index, object Value)> savedRegistrations = new List<(int, object)>();
+            private readonly Type settingsType;
+            public Object OwnedSettings;
+
+            public AddressablesImportScope(Type settingsType)
+            {
+                this.settingsType = settingsType;
+                object handler = ImportHandler();
+                Type handlerType = handler.GetType();
+                Assert.IsFalse((bool)handlerType.GetField("m_IsInvoking", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(handler));
+                callbacks = (IDictionary)handlerType.GetField("m_SortedInvocationList", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(handler);
+                registrations = (IList)handlerType.GetField("m_RegisterQueue", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(handler);
+                for (int index = 0; index < registrations.Count; index++)
+                    if (IsSettingsImport(RegistrationCallback(registrations[index])))
+                        savedRegistrations.Add((index, registrations[index]));
+                foreach (var registration in savedRegistrations.AsEnumerable().Reverse())
+                    registrations.RemoveAt(registration.Index);
+                foreach (int order in callbacks.Keys.Cast<int>().ToArray())
+                {
+                    Delegate[] original = ((Delegate)callbacks[order]).GetInvocationList();
+                    if (!original.Any(IsSettingsImport))
+                        continue;
+                    saved.Add(order, original);
+                    SetCallbacks(order, original.Where(callback => !IsSettingsImport(callback)));
+                }
+            }
+
+            private bool IsSettingsImport(Delegate callback) =>
+                settingsType.IsInstanceOfType(callback.Target) && callback.Method.Name == "OnPostprocessAllAssets";
+
+            private static Delegate RegistrationCallback(object registration) => (Delegate)registration.GetType().GetField("Item2").GetValue(registration);
+
+            private void SetCallbacks(int order, IEnumerable<Delegate> values)
+            {
+                Delegate combined = Delegate.Combine(values.ToArray());
+                if (combined == null)
+                    callbacks.Remove(order);
+                else
+                    callbacks[order] = combined;
+            }
+
+            public void Dispose()
+            {
+                // A delayed package initialization can register the temporary default.
+                // Remove only that exact target, never unrelated import observers.
+                foreach (int order in callbacks.Keys.Cast<int>().ToArray())
+                    SetCallbacks(
+                        order,
+                        ((Delegate)callbacks[order])
+                            .GetInvocationList()
+                            .Where(callback => ReferenceEquals(OwnedSettings, null) || !ReferenceEquals(callback.Target, OwnedSettings))
+                    );
+                foreach (var bucket in saved)
+                {
+                    var current = callbacks.Contains(bucket.Key) ? ((Delegate)callbacks[bucket.Key]).GetInvocationList().ToList() : new List<Delegate>();
+                    for (int index = 0; index < bucket.Value.Length; index++)
+                    {
+                        Delegate callback = bucket.Value[index];
+                        if (!IsSettingsImport(callback))
+                            continue;
+                        Delegate next = bucket.Value.Skip(index + 1).FirstOrDefault(current.Contains);
+                        int insertion = next == null ? current.Count : current.IndexOf(next);
+                        current.Insert(insertion, callback);
+                    }
+                    SetCallbacks(bucket.Key, current);
+                }
+                for (int index = registrations.Count - 1; index >= 0; index--)
+                    if (!ReferenceEquals(OwnedSettings, null) && ReferenceEquals(RegistrationCallback(registrations[index]).Target, OwnedSettings))
+                        registrations.RemoveAt(index);
+                foreach (var registration in savedRegistrations)
+                    registrations.Insert(Math.Min(registration.Index, registrations.Count), registration.Value);
+                saved.Clear();
+                savedRegistrations.Clear();
+            }
+        }
+
+        private static object ImportHandler() =>
+            Type.GetType("UnityEditor.AddressableAssets.Settings.AddressablesAssetPostProcessor, Unity.Addressables.Editor", true)
+                .GetProperty("OnPostProcess", BindingFlags.Static | BindingFlags.Public)
+                .GetValue(null);
+
+        private void ConfigureOwnedAddressables()
+        {
+            Type defaults = Type.GetType("UnityEditor.AddressableAssets.AddressableAssetSettingsDefaultObject, Unity.Addressables.Editor", true);
+            Type settingsType = Type.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettings, Unity.Addressables.Editor", true);
+            currentConfigKey = (string)defaults.GetField("kDefaultConfigObjectName").GetValue(null);
+            legacyConfigKey = (string)defaults.GetField("kDefaultConfigAssetName").GetValue(null);
+            FieldInfo cache = defaults.GetField("s_DefaultSettingsObject", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(cache, "The fixture must preserve the package's cached default settings.");
+            EditorBuildSettings.TryGetConfigObject(currentConfigKey, out previousCurrentConfig);
+            EditorBuildSettings.TryGetConfigObject(legacyConfigKey, out previousLegacyConfig);
+            previousSettingsCache = cache.GetValue(null);
+            settingsCacheField = cache;
+            originalDefaultFolderGuid = AssetDatabase.AssetPathToGUID("Assets/AddressableAssetsData");
+            importScope = new AddressablesImportScope(settingsType);
+
+            string settingsFolder = folder + "/Addressables";
+            Assert.IsNotEmpty(AssetDatabase.CreateFolder(folder, "Addressables"));
+            addressableSettings = (Object)
+                settingsType
+                    .GetMethod("Create", new[] { typeof(string), typeof(string), typeof(bool), typeof(bool) })
+                    .Invoke(null, new object[] { settingsFolder, "Settings", false, false });
+            string settingsPath = settingsFolder + "/Settings.asset";
+            AssetDatabase.CreateAsset(addressableSettings, settingsPath);
+            AssetDatabase.SaveAssetIfDirty(addressableSettings);
+            UnityEngine.Resources.UnloadAsset(addressableSettings);
+            addressableSettings = AssetDatabase.LoadAssetAtPath(settingsPath, settingsType);
+            Assert.IsNotNull(addressableSettings);
+            importScope.OwnedSettings = addressableSettings;
+
+            // Installing a persisted current-format config avoids the public setter's
+            // global-folder creation and the legacy getter's automatic migration.
+            var config = ScriptableObject.CreateInstance(defaults);
+            using (var serialized = new SerializedObject(config))
+            {
+                SerializedProperty guid = serialized.FindProperty("m_AddressableAssetSettingsGuid");
+                Assert.IsNotNull(guid);
+                guid.stringValue = AssetDatabase.AssetPathToGUID(settingsPath);
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+            }
+            AssetDatabase.CreateAsset(config, settingsFolder + "/DefaultObject.asset");
+            AssetDatabase.SaveAssetIfDirty(config);
+            EditorBuildSettings.RemoveConfigObject(currentConfigKey);
+            EditorBuildSettings.RemoveConfigObject(legacyConfigKey);
+            EditorBuildSettings.AddConfigObject(currentConfigKey, config, true);
+            cache.SetValue(null, addressableSettings);
+            Assert.AreSame(addressableSettings, defaults.GetMethod("GetSettings").Invoke(null, new object[] { false }));
+        }
+
+        private void RestoreAddressables()
+        {
+            if (settingsCacheField == null)
+                return;
+            try
+            {
+                EditorBuildSettings.RemoveConfigObject(currentConfigKey);
+                EditorBuildSettings.RemoveConfigObject(legacyConfigKey);
+                if (previousCurrentConfig != null)
+                    EditorBuildSettings.AddConfigObject(currentConfigKey, previousCurrentConfig, true);
+                if (previousLegacyConfig != null)
+                    EditorBuildSettings.AddConfigObject(legacyConfigKey, previousLegacyConfig, true);
+            }
+            finally
+            {
+                settingsCacheField.SetValue(null, previousSettingsCache);
+                settingsCacheField = null;
+            }
+        }
 
         private static Type Kind(string name) =>
             AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("UnityEngine.Localization." + name)).FirstOrDefault(t => t != null);
@@ -201,9 +366,23 @@ namespace MCPForUnityTests.Editor.Tools
             if (Kind("Locale") == null)
                 Assert.Ignore("Optional Localization package absent; positive fixture requires com.unity.localization 1.5.12.");
             Assert.AreEqual("1.5.12", UnityEditor.PackageManager.PackageInfo.FindForAssembly(Kind("Locale").Assembly).version);
+            try
+            {
+                InitializeFixture();
+            }
+            catch
+            {
+                Cleanup();
+                throw;
+            }
+        }
+
+        private void InitializeFixture()
+        {
             folder = "Assets/LocalizationIntegrity_" + Guid.NewGuid().ToString("N");
             folderGuid = AssetDatabase.CreateFolder("Assets", folder.Substring(7));
             Assert.IsNotEmpty(folderGuid);
+            ConfigureOwnedAddressables();
             en = (Object)Kind("Locale").GetMethod("CreateLocale", new[] { typeof(string) }).Invoke(null, new object[] { "en" });
             fr = (Object)Kind("Locale").GetMethod("CreateLocale", new[] { typeof(string) }).Invoke(null, new object[] { "fr" });
             AssetDatabase.CreateAsset(en, folder + "/en.asset");
@@ -245,8 +424,149 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void Cleanup()
         {
-            if (folder != null && AssetDatabase.AssetPathToGUID(folder) == folderGuid)
-                AssetDatabase.DeleteAsset(folder);
+            bool ownsFolder = folder != null && AssetDatabase.AssetPathToGUID(folder) == folderGuid;
+            try
+            {
+                // Locale/table deletion callbacks must still see the owned settings,
+                // especially when the saved user configuration is legacy or absent.
+                if (ownsFolder)
+                    foreach (string name in new[] { "en", "fr", "English", "French", "AssetEnglish", "Shared", "AssetShared", "Icon" })
+                    {
+                        string path = folder + "/" + name + ".asset";
+                        if (!string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(path)))
+                            AssetDatabase.DeleteAsset(path);
+                    }
+            }
+            finally
+            {
+                try
+                {
+                    RestoreAddressables();
+                }
+                finally
+                {
+                    try
+                    {
+                        if (ownsFolder)
+                            AssetDatabase.DeleteAsset(folder);
+                    }
+                    finally
+                    {
+                        importScope?.Dispose();
+                        importScope = null;
+                    }
+                }
+            }
+        }
+
+        [Test]
+        public void FixtureLocalesUseOwnedAddressablesWithoutCreatingDefaultFolder()
+        {
+            Assert.AreEqual(originalDefaultFolderGuid, AssetDatabase.AssetPathToGUID("Assets/AddressableAssetsData"));
+            Assert.IsTrue(PathOf(addressableSettings).StartsWith(folder + "/", StringComparison.Ordinal));
+            foreach (Object locale in new[] { en, fr })
+            {
+                object entry = Call(
+                    addressableSettings,
+                    "FindAssetEntry",
+                    new[] { typeof(string), typeof(bool) },
+                    AssetDatabase.AssetPathToGUID(PathOf(locale)),
+                    false
+                );
+                Assert.IsNotNull(entry, "The imported locale must belong to the fixture's Addressables settings.");
+                var group = (Object)Get(entry, "parentGroup");
+                Assert.IsTrue(PathOf(group).StartsWith(folder + "/", StringComparison.Ordinal), PathOf(group));
+            }
+        }
+
+        private static void BeforeSettingsImport(string[] imported, string[] deleted, string[] moved, string[] movedFrom) { }
+
+        private static void AfterSettingsImport(string[] imported, string[] deleted, string[] moved, string[] movedFrom) { }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ExistingSettingsAndImportRegistrationSurviveNestedFixture(bool registerSettings)
+        {
+            object handler = ImportHandler();
+            MethodInfo register = handler.GetType().GetMethod("Register");
+            MethodInfo unregister = handler.GetType().GetMethod("Unregister");
+            Type callbackType = register.GetParameters()[0].ParameterType;
+            var before = Delegate.CreateDelegate(
+                callbackType,
+                typeof(LocalizationIntegrityTests).GetMethod(nameof(BeforeSettingsImport), BindingFlags.Static | BindingFlags.NonPublic)
+            );
+            var after = Delegate.CreateDelegate(
+                callbackType,
+                typeof(LocalizationIntegrityTests).GetMethod(nameof(AfterSettingsImport), BindingFlags.Static | BindingFlags.NonPublic)
+            );
+            var settingsCallback = Delegate.CreateDelegate(
+                callbackType,
+                addressableSettings,
+                addressableSettings.GetType().GetMethod("OnPostprocessAllAssets", BindingFlags.Instance | BindingFlags.NonPublic)
+            );
+            const int order = -137;
+            var registrations = (IList)handler.GetType().GetField("m_RegisterQueue", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(handler);
+            object queuedRegistration = null;
+            var nested = new LocalizationIntegrityTests();
+            try
+            {
+                register.Invoke(handler, new object[] { before, order });
+                if (registerSettings)
+                    register.Invoke(handler, new object[] { settingsCallback, order });
+                register.Invoke(handler, new object[] { after, order });
+                if (registerSettings)
+                {
+                    queuedRegistration = Activator.CreateInstance(registrations.GetType().GetGenericArguments()[0], order, settingsCallback);
+                    registrations.Add(queuedRegistration);
+                }
+                AssetDatabase.SaveAssetIfDirty(addressableSettings);
+                Object[] groups = ((IEnumerable)Get(addressableSettings, "groups")).Cast<Object>().ToArray();
+                string[] entries = groups
+                    .SelectMany(group => ((IEnumerable)Get(group, "entries")).Cast<object>())
+                    .Select(entry => (string)Get(entry, "guid"))
+                    .OrderBy(value => value)
+                    .ToArray();
+                int dirtyCount = EditorUtility.GetDirtyCount(addressableSettings);
+                string serialized = EditorJsonUtility.ToJson(addressableSettings);
+                byte[] bytes = System.IO.File.ReadAllBytes(PathOf(addressableSettings));
+                var callbacks = (IDictionary)
+                    handler.GetType().GetField("m_SortedInvocationList", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(handler);
+                Delegate[] originalOrder = ((Delegate)callbacks[order]).GetInvocationList();
+                object[] originalQueue = registrations.Cast<object>().ToArray();
+
+                nested.Setup();
+                nested.Cleanup();
+
+                CollectionAssert.AreEqual(groups, ((IEnumerable)Get(addressableSettings, "groups")).Cast<Object>().ToArray());
+                CollectionAssert.AreEqual(
+                    entries,
+                    groups
+                        .SelectMany(group => ((IEnumerable)Get(group, "entries")).Cast<object>())
+                        .Select(entry => (string)Get(entry, "guid"))
+                        .OrderBy(value => value)
+                        .ToArray()
+                );
+                Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(addressableSettings));
+                Assert.AreEqual(serialized, EditorJsonUtility.ToJson(addressableSettings));
+                CollectionAssert.AreEqual(bytes, System.IO.File.ReadAllBytes(PathOf(addressableSettings)));
+                CollectionAssert.AreEqual(originalOrder, ((Delegate)callbacks[order]).GetInvocationList());
+                CollectionAssert.AreEqual(originalQueue, registrations.Cast<object>().ToArray());
+            }
+            finally
+            {
+                try
+                {
+                    nested.Cleanup();
+                }
+                finally
+                {
+                    if (queuedRegistration != null)
+                        registrations.Remove(queuedRegistration);
+                    unregister.Invoke(handler, new object[] { before });
+                    unregister.Invoke(handler, new object[] { settingsCallback });
+                    unregister.Invoke(handler, new object[] { after });
+                }
+            }
         }
 
         [Test]
