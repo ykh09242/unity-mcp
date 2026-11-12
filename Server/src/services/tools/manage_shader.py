@@ -17,8 +17,8 @@ class ShaderVariantOptions(BaseModel):
     shader_type: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")
     platform: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")
     build_target: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")
-    subshader_index: int = Field(default=0, ge=0, le=4095)
-    pass_index: int = Field(default=0, ge=0, le=4095)
+    subshader_index: StrictInt = Field(default=0, ge=0, le=4095)
+    pass_index: StrictInt = Field(default=0, ge=0, le=4095)
     keywords: list[
         Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
     ] = Field(default_factory=list, max_length=64)
