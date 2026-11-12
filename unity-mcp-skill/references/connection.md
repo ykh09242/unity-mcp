@@ -2,13 +2,35 @@
 
 ## Capability Discovery
 
-For task-based discovery, keep the original request in `query` and supply its intent as concise English terms in `catalog_query`. The calling agent performs this language interpretation. The server applies Unicode normalization and lexical ranking to the supplied terms. Preserve exact tool, API and package identifiers. English queries and exact identifiers can omit `catalog_query`.
+Interpret the user's goal in its original language and use the complete built-in catalog to select an operation by meaning. Compare the requested outcome, target type, observation versus mutation, input requirements and effects. Preserve exact tool, API and package identifiers.
 
 ```json
-{"tool":"manage_tools","params":{"action":"search","query":"inspect a shader graph","catalog_query":"shader graph inspect","limit":3}}
+{"tool":"manage_tools","params":{"action":"catalog"}}
 ```
 
-Both query fields accept 1..512 characters and `limit` accepts 1..20. The response retains `query`, reports the effective `matched_query` and identifies `matching` as `lexical`. With no results, follow `next_action` to provide or broaden `catalog_query`. The CLI exposes the same contract through `tool search QUERY --catalog-query "English task terms"`. Search candidates require schema and runtime-availability inspection before execution.
+The root index contains every registered built-in tool name grouped by domain, including tools currently hidden from the client. Browse a relevant group for tool descriptions, or select a known tool directly for its actions.
+
+```json
+{"tool":"manage_tools","params":{"action":"catalog","group":"vfx","limit":20}}
+```
+
+```json
+{"tool":"manage_tools","params":{"action":"catalog","tool":"manage_shader","limit":20}}
+```
+
+Group and tool selectors are mutually exclusive. Their pages accept `limit` from 1 to 20 and a nonnegative `offset`. Continue with the returned `next_offset` until the relevant operations are covered. The root group index is complete in one response. Related tasks may span several groups. An empty lexical search result can still be resolved through this index.
+
+Each action card contains an exact invocation selector, purpose, known required/forbidden parameters, maturity and effect hints. `purpose_source="identifier"` means the action name supplies its short label, so interpret it with the enclosing tool description. `effects_scope="tool"` retains conservative tool-wide hints. Conditional requirements remain in the full schema and parameter descriptions. The action card's `invoke.arguments` is a selector to complete with the observed inputs.
+
+```json
+{"tool":"manage_tools","params":{"action":"describe","tool":"manage_shader","operation":"inspect_graph"}}
+```
+
+`describe` binds the selected action in a copy of the full live schema and retains its other constraints. For actionless tools such as `capture_prefab`, omit `operation`. Unknown tool/action names fail explicitly. `advertised` reports this MCP context's visibility, and `readiness="unobserved"` requires a project-specific check when relevant. Resolve selection and permissions through the existing workflow below.
+
+The offline CLI provides the same catalog through `tool catalog`, `tool catalog --group GROUP` and `tool catalog --tool NAME --limit 20 --offset 0`. It emits complete JSON in every output mode, with offline advertisement and readiness left unobserved. Use `tool describe NAME` for the actual connection's schema.
+
+For a known identifier or a lexical shortcut, `manage_tools(action="search", query="original task", catalog_query="English task terms")` and `tool search QUERY --catalog-query "English task terms"` remain available. Both query fields accept 1..512 characters and `limit` accepts 1..20. The optional `catalog_query` supplies translated catalog terms while preserving the original request. Search reports `matching="lexical"`. Return to catalog browsing when its candidates fail to match the intended outcome.
 
 Use the client's tools/resources/template inventory; do not invent prefixed names such as a particular client's `mcp__...` binding. The names below identify server capabilities, not names to assume are already callable.
 

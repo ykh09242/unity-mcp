@@ -533,7 +533,7 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 Target and discover
 - Resolve the project through mcpforunity://instances. Pass unity_instance=Name@hash on tools and _meta.unity_instance on resource reads when ambiguous or sessionless. Supported stateful clients can use set_active_instance.
 - Use exact listed resource URIs and the inventory's server key (unityMCP in Codex). Unity payloads usually sit under data.
-- Prefer a dedicated tool. For unclear routes use manage_tools(action="search", query="original task", catalog_query="English task terms"), then describe the candidate. Translate intent into catalog_query, preserving identifiers. Search reports declarations with readiness unobserved.
+- For unclear routes use manage_tools(action="catalog"). Select by the request's meaning in its language, compare groups/tools and action purposes/effects, then describe the exact tool and operation. Follow next_offset as needed. Prefer focused tools. Search offers lexical matching. Readiness remains unobserved.
 - For missing tools inspect manage_tools(action="list_groups").discovery. Selection needs supported client scope/project binding, Editor toggles and consent. Fixed-inventory clients can use UNITY_MCP_TOOL_PROFILE=full and reconnect. {custom_tools_note}
 
 Observe and execute

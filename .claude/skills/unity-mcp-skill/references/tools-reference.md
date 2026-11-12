@@ -6,7 +6,7 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 
 | Request | Relevant logical tools | Important distinction |
 |---|---|---|
-| Discover a task's tools | `manage_tools` with `action="search"` | Keep the original `query` and translate intent into English `catalog_query` terms across languages. Preserve exact identifiers and inspect candidate schemas |
+| Discover a task's tools | `manage_tools` with `action="catalog"` | Interpret the original request, browse relevant groups/tools and compare action purposes and effects. Describe the selected tool and operation before execution |
 | Scene state/save/load | `scene_inspect`, `scene_lifecycle` | Core; preserve unsaved/additive scenes; replacement is not a neutral setup action |
 | Find/create/edit objects | `find_gameobjects`, `gameobject_create`, `gameobject_edit` | Core; search returns IDs; reuse an ID with `search_method="by_id"` |
 | Duplicate/position/place objects | `gameobject_duplicate`, `gameobject_positioning`, `gameobject_placement` | Optional scene group; inspect action-specific references and preview contracts |
@@ -14,7 +14,7 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | Scripts | `create_script`, `get_sha`, `apply_text_edits`, `script_apply_edits`, `validate_script`, `delete_script` | Read [scripts.md](scripts.md) for preview, concurrency and native-file checks |
 | Inspect assets | `asset_inspect` | Core; find paths and metadata before changes |
 | Asset changes/bundles | `asset_edit`, `asset_labels`, `asset_bundles`, `asset_reference_diagnostics` | Optional assets group; bounded AssetDatabase assignments and reference pages |
-| Prefabs | `prefab_inspect`, `prefab_create`, `prefab_contents`, `prefab_stage`, `prefab_overrides` | Optional prefabs group; instantiate via core gameobject_create; select explicit scene-instance override IDs |
+| Prefabs | `prefab_inspect`, `prefab_create`, `prefab_contents`, `prefab_stage`, `prefab_overrides` | Core inspection and optional prefabs group; inspect asset contents and select explicit scene-instance override IDs |
 | Materials/shaders/textures | `manage_material`, `manage_shader`, `manage_texture` | `inspect_graph` reads supported `.shadergraph` structure; match the installed render pipeline and shader-declared property types for edits |
 | Cameras/capture | `manage_cameras`, `manage_cinemachine`, `capture_camera` | Optional camera group; inspect Cinemachine and capture support |
 | Prefab preview | `capture_prefab` | Use the inspected prefab asset path and review the returned image |

@@ -1,53 +1,64 @@
-# Task-purpose discovery and support status
+# Action catalog and task discovery
 
-Use `manage_tools(action="search", query="URP renderer diagnostics", limit=5)` to
-find built-in tools by task purpose. Search uses local names, focused-capability
-source aliases, descriptions, actions and a small curated English/Korean keyword
-map. It has no hosted search or language-model dependency. Queries contain
-1..512 characters including a non-whitespace character; limits are integers
-1..20. Ordering is deterministic, with exact names ranked first and name-based
-tie breaking. An unmatched valid query returns an empty result page.
+Use `manage_tools(action="catalog")` to read the complete built-in group index.
+The calling agent interprets the user's request in its original language, selects
+relevant groups/tools, compares action purposes and effects, and obtains the full
+schema with `manage_tools(action="describe", tool="NAME", operation="ACTION")`.
+Actionless tools use the tool name alone. The semantic selection runs in the
+calling agent and needs no additional server-side model, embedding service or key.
 
-Search never activates tools, creates selection state or changes authorization.
-Its `advertised` field comes from the same final context availability filter as
-`tools/list`, including authenticated Unity availability. A false value does not
-identify which selection, package or authorization constraint hid the tool.
-Results include the group, conservative whole-tool effect hints, support maturity,
-known static requirements and optional official skill links. `readiness` remains
-`unobserved`: search does not probe Unity, install packages or validate a project.
-Use the tool's actual availability or diagnostics action where provided, and
-refresh the client's inventory after an independently authorized selection change.
+## One catalog projection
 
-The CLI can search before a server or Unity Editor is running:
+`Server/src/services/registry/action_catalog.py` projects registered tool signatures,
+focused `CAPABILITIES`, existing `ACTION_RULES`, annotations and discovery guidance
+into a shared catalog. Tool registration owns action membership and schemas.
+Action contracts own their existing required/forbidden inputs. Catalog guidance
+adds intent descriptions for ambiguous routes and preserves conservative effects
+for operations with callbacks or mixed behavior.
 
-```sh
-unity-mcp --format json tool search "URP renderer diagnostics" --limit 5
-unity-mcp --format json tool search "collision" --limit 3
-```
+Catalog browsing, exact descriptions, lexical search metadata and activation
+readiness lookups consume this projection. New registered actions are included
+automatically. Explicit intent guidance must name existing actions and parameters,
+which the catalog tests check. An action with `purpose_source="identifier"` uses
+its name as a short label and the enclosing tool description for context.
+`effects_scope="tool"` indicates conservative tool-wide effects. Known required
+parameters on cards supplement conditional requirements in the full live schema.
 
-CLI search uses the same matcher and the installed package's local declarations.
-Its `scope` is `local_catalog` and `advertised` is null, because an offline catalog
-cannot observe an MCP connection's callable inventory. MCP search uses
-`scope="mcp_context"`. Neither scope includes project custom-tool declarations.
+## Browsing and execution
 
-`maturity` is separate from enabled state, readiness, permissions and effect hints:
+- The root catalog returns every registered built-in tool name in a complete group
+  index, including currently hidden tools. Project custom tools use the existing
+  project-scoped custom-tool discovery path.
+- `catalog` with `group="GROUP"` returns tool descriptions. With `tool="NAME"` it
+  returns action cards and the enclosing tool description. Select one scope per
+  call. Pages accept `limit` 1..20 and nonnegative `offset`. Follow `next_offset`
+  while more relevant operations remain to be inspected.
+- An action card's `invoke` contains the exact tool and action selector. Complete
+  it with observed inputs. `describe` with `operation` binds that action in a copy
+  of the full schema while retaining conditional constraints. Unknown selections
+  fail explicitly and descriptions preserve the registered schema.
+- `advertised` reports visibility in this MCP context. `readiness="unobserved"`
+  leaves package availability, project state and permission checks to the existing
+  runtime workflow. Catalog requests perform local reads.
+- `tool catalog`, `tool catalog --group GROUP` and `tool catalog --tool NAME` expose
+  the same offline catalog. CLI pages support `--limit` and `--offset` and always
+  emit complete JSON. `tool describe NAME` inspects the actual connection schema.
 
-- `stable`: the compatibility default for existing declarations.
-- `experimental`: a newly introduced contract that may evolve as support develops.
-- `deprecated`: a retained contract for which callers should seek a replacement;
-  this marker alone does not disable or remove it.
+## Lexical compatibility
 
-Mixed tools can expose `action_maturity` overrides in search. In particular,
-`pipeline_get_diagnostics` is experimental while the existing render-pipeline tool
-retains its stable default. Project Auditor is experimental. These markers never
-admit a call or imply a package is installed.
+`manage_tools(action="search", query="original task", catalog_query="English task terms")`
+and `tool search QUERY --catalog-query "English task terms"` remain available for
+lexical shortcuts and existing callers. Queries accept 1..512 characters and
+limits accept integers 1..20. Search retains the original `query`, reports the
+`matched_query` and declares `matching="lexical"`. Names, source aliases, actions,
+descriptions and retained keyword aliases contribute to deterministic ranking.
+The optional `catalog_query` supplies translated terms. Browse the complete
+catalog when candidate meanings fail to satisfy the requested outcome.
 
-Official links point to exact `SKILL.md` files in
-[Unity-Technologies/skills at the reviewed revision](https://github.com/Unity-Technologies/skills/tree/089bedebab64e9e75943b19a364c7aec2162a7e7).
-The maintained mapping covers physics, URP volumes and renderer-feature review,
-UI Toolkit/uGUI, audio routing, localization, package management and Project
-Auditor. A linked skill's prerequisites describe that guidance, not a claim about
-this tool's implementation or observed project readiness.
+Tool and action maturity describe support status independently of visibility
+and runtime readiness. Official skill links retain their reviewed immutable
+revision and provide supplementary guidance. The catalog and its hints are
+independent of the existing admission, permission and retry mechanisms.
 
 ## Public MCP contract snapshots
 
