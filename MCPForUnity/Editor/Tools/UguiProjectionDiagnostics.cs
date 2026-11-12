@@ -225,7 +225,6 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse("invalid_projection_request");
             }
-            var b = new Budget(options);
             GameObject target;
             try
             {
@@ -235,7 +234,27 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse("invalid_or_ambiguous_projection_target");
             }
-            if (!(target.transform is RectTransform))
+            return ObserveExact(target, options);
+        }
+
+        internal static object ObserveExact(GameObject target) =>
+            ObserveExact(
+                target,
+                new Options
+                {
+                    IncludeInactive = true,
+                    Nodes = 1,
+                    Depth = 0,
+                    Evaluations = 512,
+                    Characters = 4096,
+                },
+                true
+            );
+
+        private static object ObserveExact(GameObject target, Options options, bool allowOverlay = false)
+        {
+            var b = new Budget(options);
+            if (target == null || !(target.transform is RectTransform))
                 return new ErrorResponse("invalid_projection_request");
             try
             {
@@ -255,7 +274,7 @@ namespace MCPForUnity.Editor.Tools
                     return Finish(null, new JArray(), b, "unavailable", "canvas_unavailable");
                 canvas = canvas.rootCanvas;
                 if (canvas.renderMode == RenderMode.ScreenSpaceOverlay)
-                    return new ErrorResponse("unsupported_projection_canvas_mode");
+                    return allowOverlay ? UguiDiagnostics.ObserveOverlayExact(target, canvas) : new ErrorResponse("unsupported_projection_canvas_mode");
                 bool supplied = options.Camera != null && options.Camera.Type != JTokenType.Null;
                 if (canvas.renderMode == RenderMode.WorldSpace && !supplied)
                     return new ErrorResponse("camera_required");

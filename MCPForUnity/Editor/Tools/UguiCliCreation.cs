@@ -111,7 +111,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 // The returned data intentionally describes the initial root, like the old CLI.
                 // It is not emitted until all registered changes have completed successfully.
-                return initial;
+                return PostEditVerification.Attach(initial, ManageUGUI.ObserveCreated(root));
             };
         }
 
@@ -141,7 +141,7 @@ namespace MCPForUnity.Editor.Tools
                 Undo.RegisterCreatedObjectUndo(created, $"Create GameObject '{created.name}'");
                 registered = true;
                 Selection.activeGameObject = created;
-                return initial;
+                return (SuccessResponse)PostEditVerification.Attach(initial, ManageUGUI.ObserveCreated(created));
             }
             catch (Exception primaryError)
             {

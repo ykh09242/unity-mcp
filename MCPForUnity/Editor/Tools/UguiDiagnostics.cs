@@ -18,6 +18,30 @@ namespace MCPForUnity.Editor.Tools
         private const int PreviewLimit = 1000;
         private const int FindingLimit = 2000;
         private const int PairLimit = 20000;
+
+        internal static object ObserveOverlayExact(GameObject target, Canvas canvas)
+        {
+            // The caller bounds the ancestor chain first. Observe one existing rectangle;
+            // never construct the preview hierarchy or invoke layout rebuilding.
+            var rect = target.transform as RectTransform;
+            var canvasRect = canvas.transform as RectTransform;
+            if (rect == null || canvasRect == null || !canvas.isActiveAndEnabled || !target.activeInHierarchy)
+                return new ErrorResponse("overlay_geometry_unavailable");
+            Rect bounds = Bounds(rect, canvasRect, canvas.scaleFactor, canvasRect.rect.size * canvas.scaleFactor);
+            var values = new JObject
+            {
+                ["target_instance_id"] = target.GetInstanceIDCompat(),
+                ["canvas_instance_id"] = canvas.GetInstanceIDCompat(),
+                ["render_mode"] = "ScreenSpaceOverlay",
+                ["bounds"] = RectJson(bounds),
+                ["layout_method"] = "current_unforced",
+            };
+            var report = PostEditVerification.Summary("exact_overlay_rectangle; current_sample", values, complete: false);
+            report["reason"] = "normal_layout_update_pending";
+            report["status"] = "pending";
+            return new SuccessResponse("Observed current Overlay rectangle.", report);
+        }
+
         private static readonly HashSet<string> PreviewTypes = new HashSet<string>(StringComparer.Ordinal)
         {
             "UnityEngine.UI.HorizontalLayoutGroup",

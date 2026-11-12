@@ -89,23 +89,13 @@ namespace MCPForUnity.Editor.Tools
             if (!preview)
             {
                 AtomicAssetFile.Replace(full, updated, sourceHash, BeforeCommitForTests);
-                try
+                var importFailure = ManageUI.ImportSavedSource(path, updated, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                if (importFailure != null)
                 {
-                    AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-                }
-                catch (Exception importError)
-                {
-                    return new ErrorResponse(
-                        "source_persisted_import_failed",
-                        new
-                        {
-                            path,
-                            source_hash = sourceHash,
-                            result_hash = Hash(updated),
-                            source_state = "persisted",
-                            import_error = importError.Message,
-                        }
-                    );
+                    var saved = JObject.FromObject(importFailure.Data);
+                    saved["source_hash"] = sourceHash;
+                    saved["result_hash"] = Hash(updated);
+                    return new SuccessResponse(importFailure.Message, saved);
                 }
             }
             return new SuccessResponse(

@@ -138,7 +138,9 @@ namespace MCPForUnityTests.Editor.Tools
                 // When the public authoring action saves successfully but import fails.
                 JObject result = Send(request);
                 // Then the receipt's digest identifies the retained bytes and refresh-only recovery.
-                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual("issues_found", result["data"]["verification"].Value<string>("status"));
+                Assert.IsFalse(result["data"]["verification"].Value<bool>("complete"));
                 Assert.IsTrue(File.Exists(FullPath(path)));
                 byte[] saved = File.ReadAllBytes(FullPath(path));
                 using var sha = SHA256.Create();
@@ -157,6 +159,60 @@ namespace MCPForUnityTests.Editor.Tools
                 }
                 else
                     Assert.AreEqual(".title { color: blue; }", text);
+            }
+            finally
+            {
+                hook.SetValue(null, null);
+            }
+        }
+
+        [Test]
+        public void SavedSource_DefaultObservationHasNoImplicitLiveScope()
+        {
+            JObject result = Send(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = Folder + "/Source.uss",
+                    ["contents"] = ".title { color: red; }",
+                }
+            );
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual("saved_ui_source", result["data"]["verification"].Value<string>("scope"));
+            Assert.AreEqual("not_requested", result["data"]["verification"].Value<string>("live_binding"));
+        }
+
+        [Test]
+        public void SourcePatchImportFailure_RetainsSavedSuccessAndFollowupIssue()
+        {
+            string path = Folder + "/Patch.uss";
+            Send(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["path"] = path,
+                    ["contents"] = ".title { color: red; }",
+                }
+            );
+            var request = new JObject
+            {
+                ["action"] = "patch_source",
+                ["path"] = path,
+                ["source_selector"] = ".title",
+                ["source_changes"] = new JObject { ["color"] = "blue" },
+            };
+            var preview = Send(request);
+            request["preview"] = false;
+            request["expected_source_hash"] = preview["data"]["source_hash"];
+            var hook = typeof(ManageUI).GetField("BeforeSourceImportForTests", BindingFlags.Static | BindingFlags.NonPublic);
+            hook.SetValue(null, (Action<string>)(_ => throw new IOException("injected import failure")));
+            try
+            {
+                JObject result = Send(request);
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.IsTrue(result["data"].Value<bool>("source_saved"));
+                Assert.AreEqual("issues_found", result["data"]["verification"].Value<string>("status"));
+                Assert.That(File.ReadAllText(FullPath(path)), Does.Contain("blue"));
             }
             finally
             {

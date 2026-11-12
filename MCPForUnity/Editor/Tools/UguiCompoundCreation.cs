@@ -255,7 +255,10 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
             if (tx.Errors.Count == 0)
+            {
+                success["data"]["verification"] = ManageUGUI.ObserveCreated(tx.Roles["root"]);
                 return success;
+            }
             return new JObject
             {
                 ["success"] = false,

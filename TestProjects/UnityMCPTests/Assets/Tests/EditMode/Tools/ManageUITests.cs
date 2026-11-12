@@ -15,6 +15,40 @@ namespace MCPForUnityTests.Editor.Tools
     {
         private const string TempRoot = "Assets/Temp/ManageUITests";
 
+        [Test]
+        public void ModifyVisualElement_PostEditObservationRetainsResolvedDuplicate()
+        {
+            var go = new GameObject("UIObservation", typeof(UIDocument));
+            try
+            {
+                var root = go.GetComponent<UIDocument>().rootVisualElement;
+                var first = new Label("first") { name = "duplicate" };
+                var second = new Label("second") { name = "duplicate" };
+                root.Add(first);
+                root.Add(second);
+                var response = ToJObject(
+                    ManageUI.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_visual_element",
+                            ["target"] = go.GetInstanceID().ToString(),
+                            ["element_path"] = "/1",
+                            ["text"] = "retained",
+                        }
+                    )
+                );
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual("first", first.text);
+                Assert.AreEqual("retained", second.text);
+                Assert.AreEqual("retained", response["data"]["verification"]["observed_values"].Value<string>("text"));
+                Assert.AreEqual("incomplete", response["data"]["verification"].Value<string>("status"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
         [SetUp]
         public void SetUp()
         {

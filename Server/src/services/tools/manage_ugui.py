@@ -749,6 +749,8 @@ async def _diagnose_raycast(
         "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. "
         "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast, diagnose_device_profiles. Mutating actions: create, set_rect, set_layout, "
         "set_text, set_canvas, set_image. Optional uGUI and TextMeshPro support is detected in the Editor. "
+        "Writes include bounded data.verification for the same target, with retained serialized fields and "
+        "current UI observations. Layout remains pending until normal updates; verification never rebuilds or captures. "
         "diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera "
         "geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility. "
         "diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes. "

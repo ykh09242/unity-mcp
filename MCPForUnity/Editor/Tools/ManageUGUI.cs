@@ -426,6 +426,7 @@ namespace MCPForUnity.Editor.Tools
                         instance_id = go.GetInstanceIDCompat(),
                         path = PathOf(go),
                         element_type = kind,
+                        verification = ObserveAfterEdit(go, (rt, rectValues), (visual, componentValues)),
                         warnings = kind == "button"
                             ? new[] { "Button requires an EventSystem and input module in the scene to receive input." }
                             : Array.Empty<string>(),
@@ -539,6 +540,7 @@ namespace MCPForUnity.Editor.Tools
                         path = PathOf(go),
                         applied = new JArray(props.Properties().Select(p => p.Name)),
                         image = ImageState(image, type),
+                        verification = ObserveAfterEdit(go, (image, values)),
                     }
                 );
             });
@@ -687,7 +689,7 @@ namespace MCPForUnity.Editor.Tools
                 Apply(canvas, cv);
                 if (scaler != null && sv.Count > 0)
                     Apply(scaler, sv);
-                return Changed(go);
+                return Changed(go, (canvas, cv), (scaler, sv));
             });
         }
 
@@ -745,7 +747,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 var component = c != null ? c : Undo.AddComponent(go, type);
                 Apply(component, assignments);
-                return Changed(go);
+                return Changed(go, (component, assignments));
             });
         }
 
@@ -754,12 +756,81 @@ namespace MCPForUnity.Editor.Tools
             return Mutate(label, () =>
             {
                 Apply(component, values);
-                return Changed(go);
+                return Changed(go, (component, values));
             });
         }
 
-        private static object Changed(GameObject go) =>
-            new SuccessResponse("Updated uGUI element.", new { instance_id = go.GetInstanceIDCompat(), path = PathOf(go) });
+        private static object Changed(GameObject go, params (Component component, List<Assignment> values)[] edits) =>
+            new SuccessResponse(
+                "Updated uGUI element.",
+                new
+                {
+                    instance_id = go.GetInstanceIDCompat(),
+                    path = PathOf(go),
+                    verification = ObserveAfterEdit(go, edits),
+                }
+            );
+
+        internal static JObject ObserveCreated(GameObject go) => ObserveAfterEdit(go);
+
+        private static JObject ObserveAfterEdit(GameObject go, params (Component component, List<Assignment> values)[] edits)
+        {
+            try
+            {
+                var batch = new PostEditVerification.Batch();
+                foreach (var edit in edits.Take(16))
+                {
+                    if (edit.component == null)
+                        continue;
+                    batch.CaptureProperties(
+                        edit.component,
+                        edit.values.Take(PostEditVerification.MaxProperties)
+                            .Select(value => new KeyValuePair<string, JToken>(value.Property.Name, ExpectedValue(value.Value)))
+                    );
+                }
+                if (edits.Length == 0)
+                {
+                    foreach (Component component in PostEditVerification.Components(go, out _))
+                        batch.Capture(component);
+                }
+                JObject report = batch.Observe();
+                report["scope"] = "exact_ugui_target; retained_fields_and_current_ui; max16_components";
+                report["target_instance_id"] = go.GetInstanceIDCompat();
+                report["complete"] = false;
+                if ((string)report["status"] != "issues_found")
+                {
+                    report["status"] = go.activeInHierarchy ? "pending" : "incomplete";
+                    report["further_fixes_required"] = JValue.CreateNull();
+                }
+                report["reason"] = go.activeInHierarchy ? "normal_layout_update_pending" : "inactive_target";
+                report["projection"] = JObject.FromObject(UguiProjectionDiagnostics.ObserveExact(go));
+                var text = edits.Select(edit => edit.component).FirstOrDefault(component => component != null && component.GetType().FullName == Tmp);
+                if (text != null)
+                    report["text_layout"] = UguiTmpLayoutDiagnostics.ObserveDirtyState(text);
+                return report;
+            }
+            catch
+            {
+                return PostEditVerification.Unavailable("exact_ugui_target", "post_edit_observation_unavailable");
+            }
+        }
+
+        private static JToken ExpectedValue(object value)
+        {
+            if (value is UnityEngine.Object target)
+                return new JObject { ["instanceID"] = target != null ? target.GetInstanceIDCompat() : 0 };
+            if (value == null)
+                return JValue.CreateNull();
+            if (value is Enum)
+                return new JValue(value.ToString());
+            if (value is Vector2 v2)
+                return new JArray(v2.x, v2.y);
+            if (value is Vector3 v3)
+                return new JArray(v3.x, v3.y, v3.z);
+            if (value is Color color)
+                return new JArray(color.r, color.g, color.b, color.a);
+            return JToken.FromObject(value);
+        }
 
         private static object Mutate(string label, Func<object> change)
         {

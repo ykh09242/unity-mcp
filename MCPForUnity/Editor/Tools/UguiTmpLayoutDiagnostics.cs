@@ -17,6 +17,30 @@ namespace MCPForUnity.Editor.Tools
     {
         internal static Func<Type, UnityEngine.Object[]> InventoryForTests = null;
         internal static Action<Component, string> ObservationForTests = null;
+
+        internal static JObject ObserveDirtyState(Component text)
+        {
+            try
+            {
+                var adapter = Adapter.Create();
+                if (adapter == null || text == null || text.GetType() != adapter.Text)
+                    return PostEditVerification.Unavailable("exact_tmp_dirty_state", "unsupported_tmp_version");
+                // Read fixed engine fields only. No global input inventory, generated text or rebuild.
+                bool dirty = (bool)adapter.TextFields["m_havePropertiesChanged"].GetValue(text) || (bool)adapter.TextFields["m_isLayoutDirty"].GetValue(text);
+                var report = PostEditVerification.Summary("exact_tmp_dirty_state", new JObject { ["dirty"] = dirty }, complete: !dirty);
+                if (dirty)
+                {
+                    report["status"] = "pending";
+                    report["reason"] = "dirty_layout";
+                }
+                return report;
+            }
+            catch
+            {
+                return PostEditVerification.Unavailable("exact_tmp_dirty_state", "unsupported_tmp_version");
+            }
+        }
+
         private const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
         private static readonly string[] MetricNames =
         {

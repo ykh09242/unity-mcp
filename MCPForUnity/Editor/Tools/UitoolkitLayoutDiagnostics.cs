@@ -177,6 +177,31 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
+        internal static object ObserveExact(Component component, VisualElement element)
+        {
+            try
+            {
+                var budget = new Budget(
+                    new ToolParams(
+                        new JObject
+                        {
+                            ["max_depth"] = 0,
+                            ["max_nodes"] = 1,
+                            ["max_evaluations"] = 512,
+                            ["max_characters"] = 4096,
+                            ["max_pairs"] = 0,
+                            ["max_findings"] = 16,
+                        }
+                    )
+                );
+                return ReadResolved(component.gameObject, component, element, budget);
+            }
+            catch
+            {
+                return new ErrorResponse("diagnostics_unavailable");
+            }
+        }
+
         private sealed class DiagnosticException : Exception
         {
             internal DiagnosticException(string message)
@@ -343,6 +368,12 @@ namespace MCPForUnity.Editor.Tools
             // The adapter receives only the exact prevalidated engine component. No shared discovery or source/settings getter runs.
             var adapter = new UIComponentAdapter(component);
             var root = adapter.Root; // Verified built-in PanelRenderer root receiver is the sole callback exception.
+            return ReadResolved(go, component, root, b);
+        }
+
+        private static object ReadResolved(GameObject go, Component component, VisualElement root, Budget b)
+        {
+            var adapter = new UIComponentAdapter(component);
             var nodes = new List<Node>();
             var findings = new JArray();
             var fields = new JArray();

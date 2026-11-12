@@ -60,6 +60,14 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                if (
+                    @params["verify_target"] != null
+                    && (
+                        !new[] { "create", "update", "link_stylesheet", "patch_source" }.Contains(action)
+                        || (action == "patch_source" && (@params.Value<bool?>("preview") ?? true))
+                    )
+                )
+                    return new ErrorResponse("verify_target requires a source write.");
                 if ((@params["inventory_revision"] != null || @params["inventoryRevision"] != null) && action != "list")
                     return new ErrorResponse("inventory_revision requires list.");
                 if ((@params["warmup_updates"] != null || @params["warmupUpdates"] != null) && action != "render_ui")
@@ -75,17 +83,19 @@ namespace MCPForUnity.Editor.Tools
                         return new SuccessResponse("pong", new { tool = "manage_ui" });
 
                     case "create":
-                        return CreateFile(@params);
+                        return ObserveSourceWrite(@params, () => CreateFile(@params));
 
                     case "read":
                         return ReadFile(@params);
 
                     case "patch_source":
                         string patchPath = ValidatePath(@params["path"]?.ToString(), out string patchError);
-                        return patchError != null ? new ErrorResponse(patchError) : UISourcePatch.Execute(@params, patchPath);
+                        return patchError != null ? new ErrorResponse(patchError)
+                            : (@params.Value<bool?>("preview") ?? true) ? UISourcePatch.Execute(@params, patchPath)
+                            : ObserveSourceWrite(@params, () => UISourcePatch.Execute(@params, patchPath));
 
                     case "update":
-                        return UpdateFile(@params);
+                        return ObserveSourceWrite(@params, () => UpdateFile(@params));
 
                     case "attach_ui_document":
                         return AttachUIDocument(@params);
@@ -106,7 +116,7 @@ namespace MCPForUnity.Editor.Tools
                         return RenderUI(@params);
 
                     case "link_stylesheet":
-                        return LinkStylesheet(@params);
+                        return ObserveSourceWrite(@params, () => LinkStylesheet(@params));
 
                     case "delete":
                         return DeleteFile(@params);
@@ -139,7 +149,15 @@ namespace MCPForUnity.Editor.Tools
                 return null;
             }
 
-            path = AssetPathUtility.GetContainedAssetPath(path);
+            try
+            {
+                path = AssetPathUtility.GetContainedAssetPath(path);
+            }
+            catch (ArgumentException ex)
+            {
+                error = "Invalid asset path or traversal sequence: " + ex.Message;
+                return null;
+            }
             if (path == null)
             {
                 error = "Invalid path: contains traversal sequences.";
@@ -158,17 +176,17 @@ namespace MCPForUnity.Editor.Tools
 
         internal static Action<string> BeforeSourceImportForTests;
 
-        private static ErrorResponse ImportSavedSource(string path, byte[] savedBytes)
+        internal static SuccessResponse ImportSavedSource(string path, byte[] savedBytes, ImportAssetOptions options = ImportAssetOptions.ForceUpdate)
         {
             try
             {
                 BeforeSourceImportForTests?.Invoke(path);
-                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+                AssetDatabase.ImportAsset(path, options);
                 return null;
             }
             catch (Exception error)
             {
-                return new ErrorResponse(
+                return new SuccessResponse(
                     "source_persisted_import_failed",
                     new
                     {
@@ -182,8 +200,122 @@ namespace MCPForUnity.Editor.Tools
                         retry_safe = false,
                         recovery_action = "refresh_only",
                         retry_guidance = "Source is already saved. Reimport the retained path; do not replay the authoring action.",
+                        verification = PostEditVerification.Summary(
+                            "saved_ui_source",
+                            new JObject { ["source_saved"] = true },
+                            new JArray(new JObject { ["code"] = "import_failed" }),
+                            complete: false
+                        ),
                     }
                 );
+            }
+        }
+
+        private static object ObserveSourceWrite(JObject parameters, Func<object> write)
+        {
+            UIComponentAdapter binding = null;
+            JToken target = parameters["verify_target"];
+            if (target != null)
+            {
+                if (target.Type != JTokenType.String || string.IsNullOrWhiteSpace(target.Value<string>()) || target.Value<string>().Length > 4096)
+                    return new ErrorResponse("verify_target must be a bounded non-empty target string.");
+                // Resolve before importing, retaining the same component across source publication.
+                binding = UIComponentAdapter.Resolve(ManageUGUI.Resolve(target, true), new ToolParams(parameters).Get("component_type"));
+            }
+            object response = write();
+            if (response is not SuccessResponse success)
+                return response;
+            var data = JObject.FromObject(success.Data);
+            JObject verification;
+            try
+            {
+                if (data["verification"] is JObject existing)
+                    verification = existing;
+                else
+                {
+                    string path = data.Value<string>("path");
+                    string digest = AtomicAssetFile.DigestFile(AssetPathUtility.GetFullAssetPath(path));
+                    var findings = new JArray();
+                    if (data["validationWarnings"] is JArray warnings)
+                        foreach (JToken warning in warnings.Take(PostEditVerification.MaxFindings))
+                            findings.Add(new JObject { ["code"] = "source_validation_warning", ["message"] = BoundObservationText(warning.ToString()) });
+                    bool complete = data["validationWarnings"] is not JArray allWarnings || allWarnings.Count <= PostEditVerification.MaxFindings;
+                    verification = PostEditVerification.Summary(
+                        "saved_ui_source",
+                        new JObject { ["path"] = path, ["bytes_sha256"] = digest },
+                        findings,
+                        complete
+                    );
+                    data["source_saved"] = true;
+                }
+                verification["live_binding"] = binding == null ? "not_requested" : "explicit";
+                if (binding != null)
+                {
+                    verification["live_observation"] = ObserveDocument(binding);
+                    verification["complete"] = false;
+                    if ((string)verification["status"] != "issues_found")
+                        verification["status"] = "pending";
+                    verification["reason"] = "source_to_live_application_unconfirmed";
+                    if ((string)verification["status"] != "issues_found")
+                        verification["further_fixes_required"] = JValue.CreateNull();
+                }
+            }
+            catch
+            {
+                verification = PostEditVerification.Unavailable("saved_ui_source", "post_save_observation_unavailable");
+            }
+            data["verification"] = verification;
+            return new SuccessResponse(success.Message, data);
+        }
+
+        private static string BoundObservationText(string value) => value == null ? null : value.Substring(0, Math.Min(value.Length, 4096));
+
+        private static JObject ObserveDocument(UIComponentAdapter ui)
+        {
+            try
+            {
+                return ObserveVisualElement(ui, ui.Root);
+            }
+            catch
+            {
+                return PostEditVerification.Unavailable("exact_ui_document", "post_edit_observation_unavailable");
+            }
+        }
+
+        private static JObject ObserveVisualElement(UIComponentAdapter ui, VisualElement element)
+        {
+            try
+            {
+                if (ui.Component == null || element == null)
+                    return PostEditVerification.Unavailable("exact_ui_element", "component_or_element_unavailable");
+                var values = new JObject
+                {
+                    ["component_instance_id"] = ui.Component.GetInstanceIDCompat(),
+                    ["name"] = BoundObservationText(element.name),
+                    ["enabled_self"] = element.enabledSelf,
+                    ["display"] = element.style.display.ToString(),
+                    ["tooltip"] = BoundObservationText(element.tooltip),
+                };
+                if (element is TextElement text)
+                    values["text"] = BoundObservationText(text.text);
+                var report = PostEditVerification.Summary("exact_ui_element; current_sample; max1_node_128_ancestors", values, complete: false);
+                report["status"] = "pending";
+                report["reason"] = "normal_style_and_layout_update_pending";
+                if (
+                    !ui.Component.gameObject.activeInHierarchy
+                    || (ui.Component is Behaviour behaviour && !behaviour.isActiveAndEnabled)
+                    || element.panel == null
+                )
+                {
+                    report["status"] = "incomplete";
+                    report["reason"] = "inactive_or_unbound_ui";
+                }
+                report["diagnostics"] = JObject.FromObject(UitoolkitLayoutDiagnostics.ObserveExact(ui.Component, element));
+                return report;
+            }
+            catch
+            {
+                return PostEditVerification.Unavailable("exact_ui_element", "post_edit_observation_unavailable");
             }
         }
 
@@ -445,6 +577,7 @@ namespace MCPForUnity.Editor.Tools
                     sourceAsset = sourceAssetPath,
                     panelSettings = AssetDatabase.GetAssetPath(panelSettings),
                     sortOrder,
+                    verification = ObserveDocument(ui),
                 }
             );
             folders.Complete();
@@ -509,7 +642,15 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("Failed to create PanelSettings asset.");
             }
 
-            var response = new SuccessResponse($"Created PanelSettings at {path}", new { path, applied = changes });
+            var response = new SuccessResponse(
+                $"Created PanelSettings at {path}",
+                new
+                {
+                    path,
+                    applied = changes,
+                    verification = ObservePanelSettings(ps, changes),
+                }
+            );
             folders.Complete();
             return response;
         }
@@ -547,7 +688,27 @@ namespace MCPForUnity.Editor.Tools
             EditorUtility.SetDirty(ps);
             AssetDatabase.SaveAssetIfDirty(ps);
 
-            return new SuccessResponse($"Updated PanelSettings at {path}", new { path, applied = changes });
+            return new SuccessResponse(
+                $"Updated PanelSettings at {path}",
+                new
+                {
+                    path,
+                    applied = changes,
+                    verification = ObservePanelSettings(ps, changes),
+                }
+            );
+        }
+
+        private static JObject ObservePanelSettings(PanelSettings settings, List<string> changed)
+        {
+            try
+            {
+                return PostEditVerification.Readback(settings, changed);
+            }
+            catch
+            {
+                return PostEditVerification.Unavailable("exact_panel_settings", "post_edit_observation_unavailable");
+            }
         }
 
         private static PanelSettings CreateDefaultPanelSettings(string path, AssetFolderScope folders, Action<PanelSettings> configure = null)
@@ -2205,7 +2366,17 @@ namespace MCPForUnity.Editor.Tools
                     File.Delete(fullPath);
                 }
 
-                return new SuccessResponse($"Deleted {Path.GetExtension(path).TrimStart('.')} file at {path}", new { path });
+                return new SuccessResponse(
+                    $"Deleted {Path.GetExtension(path).TrimStart('.')} file at {path}",
+                    new
+                    {
+                        path,
+                        verification = PostEditVerification.Summary(
+                            "exact_ui_source_removal",
+                            new JObject { ["path"] = path, ["exists"] = File.Exists(fullPath) }
+                        ),
+                    }
+                );
             }
             catch (Exception e)
             {
@@ -2277,6 +2448,7 @@ namespace MCPForUnity.Editor.Tools
             string componentKind = ui.Kind;
             string componentName = ui.DisplayName;
             PanelSettings panel = ui.PanelSettings;
+            int componentId = ui.Component.GetInstanceIDCompat();
             Undo.DestroyObjectImmediate(ui.Component);
             EditorUtility.SetDirty(go);
             ReleaseUnusedPanelCache(panel);
@@ -2288,6 +2460,7 @@ namespace MCPForUnity.Editor.Tools
                     gameObject = go.name,
                     componentType = componentKind,
                     removedSourceAsset = sourceAsset,
+                    verification = PostEditVerification.Removal(ui.Component, componentId),
                 }
             );
         }
@@ -2476,9 +2649,28 @@ namespace MCPForUnity.Editor.Tools
                 { "elementType", element.GetType().Name },
                 { "modifications", applied },
                 { "currentClasses", new List<string>(element.GetClasses()) },
+                { "verification", ObserveVisualElement(ui, element) },
             };
             if (skipped.Count > 0)
                 responseData["skipped"] = skipped;
+            var verification = (JObject)responseData["verification"];
+            var retainedStyles = new JArray();
+            foreach (var entry in inlineStyles.Entries.Take(PostEditVerification.MaxProperties))
+            {
+                var retained = new JObject { ["property"] = entry.Property, ["supported"] = entry.Read != null };
+                try
+                {
+                    if (entry.Read != null)
+                        retained["value"] = entry.Read(element);
+                }
+                catch
+                {
+                    retained["supported"] = false;
+                }
+                retainedStyles.Add(retained);
+            }
+            verification["inline_styles"] = retainedStyles;
+            verification["inline_styles_truncated"] = inlineStyles.Entries.Count > PostEditVerification.MaxProperties;
             if (includeStyleResults)
                 responseData["style_results"] = inlineStyles.Report(element, visibility);
 

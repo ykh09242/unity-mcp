@@ -64,6 +64,8 @@ def _canonical_ui_path(path: str) -> str:
         "new objects; ui_document selects UIDocument, while panel_renderer requires Unity 6.5+ "
         "support. modify_visual_element changes live text/classes/styles, not persisted source. "
         "Legacy element_name selects the first match; strict_name=true requires uniqueness. "
+        "Writes include bounded data.verification from the resolved target; current layout can remain pending. "
+        "Source writes only inspect live UI when verify_target explicitly selects a document before the write. "
         "element_path selects current child indices; element_id selects a snapshot identity. "
         "Explicit selectors do not fall back to names.\nFor render_ui, Play Mode queues end-of-frame"
         " capture and returns pending=true. Resume with its capture_id; cancel with that ID and "
@@ -138,6 +140,12 @@ async def manage_ui(
         str, "Target GameObject name or path for attach_ui_document / get_visual_tree / render_ui."
     ]
     | None = None,
+    verify_target: Annotated[
+        str | None,
+        "Optional exact live document target for create/update/link_stylesheet/patch_source writes. "
+        "Resolved before saving; adds bounded current diagnostics without forcing layout or capture. "
+        "Source-to-live application remains pending until normal UI updates.",
+    ] = None,
     component_type: Annotated[
         Literal["auto", "ui_document", "panel_renderer"],
         "UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. "
@@ -371,6 +379,18 @@ async def manage_ui(
     ] = False,
 ) -> dict[str, Any]:
     action_lower = action.lower()
+    if verify_target is not None:
+        if (
+            action_lower not in {"create", "update", "link_stylesheet", "patch_source"}
+            or (action_lower == "patch_source" and preview)
+            or type(verify_target) is not str
+            or not verify_target.strip()
+            or len(verify_target.encode("utf-16-le", errors="surrogatepass")) // 2 > 4096
+        ):
+            return {
+                "success": False,
+                "message": "verify_target requires a source write and a bounded live target.",
+            }
     if inventory_revision is not None:
         if action_lower != "list":
             return {"success": False, "message": "inventory_revision requires list."}
@@ -545,6 +565,8 @@ async def manage_ui(
     params_dict: dict[str, Any] = {
         "action": action_lower,
     }
+    if verify_target is not None:
+        params_dict["verify_target"] = verify_target
 
     if action_lower == "patch_source":
         params_dict["source_selector"] = source_selector

@@ -58,6 +58,82 @@ namespace MCPForUnityTests.EditMode.Tools
         private static void Failure(JObject response) => Assert.That(response["success"]?.Value<bool>(), Is.False, response.ToString());
 
         [Test]
+        public void SetRect_PostEditObservationUsesExactTargetAndDefersLayout()
+        {
+            var first = Root();
+            var duplicate = Root();
+            JObject response = Call("set_rect", first, new JObject { ["sizeDelta"] = new JArray(211, 73) });
+            Success(response);
+            var verification = response["data"]["verification"];
+            Assert.IsNotNull(verification, response.ToString());
+            Assert.AreEqual(first.GetInstanceIDCompat(), verification.Value<int>("target_instance_id"));
+            Assert.AreEqual("pending", verification.Value<string>("status"));
+            Assert.IsFalse(verification.Value<bool>("complete"));
+            Assert.AreEqual(new Vector2(211, 73), ((RectTransform)first.transform).sizeDelta);
+            Assert.AreNotEqual(((RectTransform)first.transform).sizeDelta, ((RectTransform)duplicate.transform).sizeDelta);
+            Assert.IsNotEmpty((JArray)verification["observed_values"]);
+        }
+
+        [Test]
+        public void PostEditProjection_DistinguishesOverlayAndUnassignedCamera()
+        {
+            var root = Root(true);
+            root.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
+            JObject overlay = Call("set_rect", root, new JObject { ["sizeDelta"] = new JArray(200, 100) });
+            Success(overlay);
+            Assert.AreEqual("ScreenSpaceOverlay", overlay["data"]["verification"]["projection"]["data"]["observed_values"].Value<string>("render_mode"));
+            root.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceCamera;
+            JObject camera = Call("set_rect", root, new JObject { ["sizeDelta"] = new JArray(210, 100) });
+            Success(camera);
+            Assert.AreEqual("camera_unassigned", camera["data"]["verification"]["projection"]["data"].Value<string>("unavailable_reason"));
+        }
+
+        [Test]
+        public void PostEditInactiveTarget_RemainsIncomplete()
+        {
+            var root = Root();
+            root.SetActive(false);
+            JObject result = JObject.FromObject(
+                ManageUGUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_rect",
+                        ["target"] = root.GetInstanceIDCompat(),
+                        ["include_inactive"] = true,
+                        ["properties"] = new JObject { ["sizeDelta"] = new JArray(123, 45) },
+                    }
+                )
+            );
+            Success(result);
+            Assert.AreEqual("incomplete", result["data"]["verification"].Value<string>("status"));
+        }
+
+        [Test]
+        public void PostEditProjection_ScaledOverlayUsesPixelSpaceForCanvasCenter()
+        {
+            var root = Root(true);
+            var canvas = root.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.scaleFactor = 2;
+            var canvasRect = (RectTransform)root.transform;
+            canvasRect.sizeDelta = new Vector2(960, 540);
+            var child = new GameObject("ScaledChild", typeof(RectTransform));
+            child.transform.SetParent(root.transform, false);
+            var rect = (RectTransform)child.transform;
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = Vector2.zero;
+            JObject response = Call("set_rect", child, new JObject { ["sizeDelta"] = new JArray(100, 50) });
+            Success(response);
+            JToken bounds = response["data"]["verification"]["projection"]["data"]["observed_values"]["bounds"];
+            Vector2 size = canvasRect.rect.size * canvas.scaleFactor;
+            Assert.Greater(size.x, 0);
+            Assert.AreEqual((size.x - 200) / 2, (float)bounds["x"], 0.01f);
+            Assert.AreEqual((size.y - 100) / 2, (float)bounds["y"], 0.01f);
+            Assert.AreEqual(200, (float)bounds["width"], 0.01f);
+            Assert.AreEqual(100, (float)bounds["height"], 0.01f);
+        }
+
+        [Test]
         public void PingWorksWithOrWithoutOptionalPackages()
         {
             var r = Call("ping");
