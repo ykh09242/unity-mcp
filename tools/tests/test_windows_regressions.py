@@ -28,7 +28,18 @@ def test_windows_selection_includes_proactor_cleanup_and_replacement_retry_bound
         ]
         == 3
     )
-    assert sum(CASES.values()) == 69
+    assert sum(CASES.values()) == 70
+
+
+def test_windows_selection_requires_actual_release_export_junction_rejection():
+    node = (
+        "tools/tests/test_export_release_evidence.py::"
+        "test_linked_destination_parent_is_rejected[junction]"
+    )
+    assert CASES.get(node) == 1
+    assert not any(
+        "test_linked_destination_parent_is_rejected[symlink]" in case for case in CASES
+    ), "The mandatory gate must not depend on symlink creation privileges"
 
 
 def test_windows_selection_executes_bundled_compiler_runtime():
@@ -105,11 +116,20 @@ def test_report_requires_every_selected_case_to_execute(tmp_path):
     suite = ElementTree.Element("testsuite")
     for node, count in CASES.items():
         for index in range(count):
-            ElementTree.SubElement(suite, "testcase", name=f"{node.rsplit('::', 1)[-1]}[{index}]")
+            name = node.rsplit("::", 1)[-1]
+            ElementTree.SubElement(
+                suite, "testcase", name=name if "[" in name else f"{name}[{index}]"
+            )
     report = tmp_path / "results.xml"
     tree = ElementTree.ElementTree(suite)
     tree.write(report)
     assert check_report(report) == sum(CASES.values())
+    junction = next(case for case in suite if case.attrib["name"].endswith("[junction]"))
+    junction.attrib["name"] = junction.attrib["name"].replace("[junction]", "[symlink]")
+    tree.write(report)
+    with pytest.raises(ValueError, match="count mismatch"):
+        check_report(report)
+    junction.attrib["name"] = junction.attrib["name"].replace("[symlink]", "[junction]")
     case = suite[-1]
     for kind in ("skipped", "failure", "error"):
         failure = ElementTree.SubElement(case, kind)

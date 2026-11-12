@@ -43,6 +43,7 @@ CASES: Final = {
     "tools/tests/test_generate_mcpb_windows.py::test_cmd_shim_rejects_impossible_path_characters": 3,
     "tools/tests/test_generate_mcpb_windows.py::test_cmd_shim_failure_preserves_exit_code_and_existing_bundle": 1,
     "tools/tests/test_compile_check.py::test_windows_compiler_layout_uses_bundled_runtime": 1,
+    "tools/tests/test_export_release_evidence.py::test_linked_destination_parent_is_rejected[junction]": 1,
 }
 
 
@@ -53,8 +54,13 @@ def check_report(path: Path) -> int:
         case.find(kind) is not None for case in cases for kind in ("skipped", "failure", "error")
     ):
         raise ValueError("Windows regressions must execute without skips, failures or errors")
-    counts = Counter(case.attrib["name"].split("[", 1)[0] for case in cases)
     expected = {node.rsplit("::", 1)[-1]: count for node, count in CASES.items()}
+    counts = Counter(
+        case.attrib["name"]
+        if case.attrib["name"] in expected
+        else case.attrib["name"].split("[", 1)[0]
+        for case in cases
+    )
     if counts != expected:
         raise ValueError(
             f"Windows regression execution count mismatch: {dict(counts)} != {expected}"
