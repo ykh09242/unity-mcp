@@ -203,7 +203,9 @@ def _declared_actions(entry: SearchEntry) -> list[str]:
 
 
 def _normalized(value: str) -> str:
-    return unicodedata.normalize("NFKC", value).casefold()
+    # Case folding can produce decomposed sequences, including Greek accents.
+    folded = unicodedata.normalize("NFKC", value).casefold()
+    return unicodedata.normalize("NFKC", folded)
 
 
 def _words(value: str) -> set[str]:

@@ -72,6 +72,18 @@ def test_unicode_tokens_preserve_combining_marks_and_normalize_equivalent_forms(
     }
 
 
+@pytest.mark.parametrize("text", ["ΐ", "ΰ", "Μαΐου"])
+@pytest.mark.parametrize("query_upper", [False, True])
+def test_caseless_matching_normalizes_composition_after_case_folding(text, query_upper):
+    from services.registry.task_search import SearchRequest, search_catalog
+
+    query = text.upper() if query_upper else text
+    description = text if query_upper else text.upper()
+    entries = [{"name": "inspect", "group": None, "description": description, "kwargs": {}}]
+    result = search_catalog(SearchRequest(query=query), entries)
+    assert [entry["name"] for entry in result["results"]] == ["inspect"]
+
+
 def test_unmatched_query_explains_catalog_normalization():
     from services.registry.task_search import SearchRequest, search_catalog
 
