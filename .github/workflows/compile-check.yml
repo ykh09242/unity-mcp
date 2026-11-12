@@ -48,6 +48,7 @@ on:
       - tools/unity-ci/**
       - tools/unity_ci_packages.py
       - tools/unity-ci-packages.json
+      - tools/unity-registry-pins.json
       - tools/tests/test_compile_check*.py
       - tools/tests/compile_check_helpers.py
       - tools/tests/test_compile_matrix.py

@@ -54,6 +54,7 @@ on:
       - "tools/unity_ci_packages.py"
       - "tools/unity_ci_package_cache.py"
       - "tools/unity-ci-packages.json"
+      - "tools/unity-registry-pins.json"
       - "tools/unity-versions.json"
       - "tools/unity-ci/**"
       - "tools/tests/test_unity_ci_packages.py"

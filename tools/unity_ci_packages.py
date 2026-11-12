@@ -28,6 +28,7 @@ from typing import TypedDict
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILES = Path(__file__).with_name("unity-ci-packages.json")
+REGISTRY_PINS = Path(__file__).with_name("unity-registry-pins.json")
 PACKAGE_NAME = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)+\Z")
 PACKAGE_VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?\Z")
 UNITY_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)([abfp])(\d+)\Z")
@@ -214,8 +215,22 @@ def _read_registry_bytes(url: str, identity: str) -> bytes:
         attempt += 1
 
 
-def fetch_registry_package(name: str, version: str, destination: Path) -> str:
-    """Fetch an exact official-registry version and verify the registry's archive digest."""
+def registry_pin(name: str, version: str) -> str:
+    """Require an independently reviewed SHA256 before contacting the registry."""
+    pins = read_json(REGISTRY_PINS)
+    artifacts = pins.get("artifacts")
+    digest = artifacts.get(f"{name}@{version}") if isinstance(artifacts, dict) else None
+    if (
+        pins.get("schemaVersion") != 1
+        or not isinstance(digest, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", digest)
+    ):
+        raise PreparationError(f"Missing or invalid reviewed registry pin: {name}@{version}")
+    return digest
+
+
+def download_registry_archive(name: str, version: str) -> bytes:
+    """Fetch official bytes and check publisher SHA1; this alone is not review approval."""
     identity = f"{name}@{version}"
     metadata = json.loads(_read_registry_bytes(f"https://packages.unity.com/{name}", identity))
     release = metadata["versions"].get(version)
@@ -236,8 +251,18 @@ def fetch_registry_package(name: str, version: str, destination: Path) -> str:
     content = _read_registry_bytes(url, identity)
     if hashlib.sha1(content).hexdigest() != expected:
         raise PreparationError(f"Registry integrity mismatch: {name}@{version}")
+    return content
+
+
+def fetch_registry_package(name: str, version: str, destination: Path) -> str:
+    """Check publisher integrity and the committed review pin before any extraction."""
+    expected = registry_pin(name, version)
+    content = download_registry_archive(name, version)
+    actual = hashlib.sha256(content).hexdigest()
+    if actual != expected:
+        raise PreparationError(f"Reviewed registry artifact mismatch: {name}@{version}")
     extract_package(content, destination)
-    return hashlib.sha256(content).hexdigest()
+    return actual
 
 
 def copy_source(source: Path, destination: Path) -> None:

@@ -1,6 +1,7 @@
 """Complete registry fetch contracts with real HTTPResponse bodies and no network."""
 
 from dataclasses import dataclass
+import gzip
 import hashlib
 from http.client import HTTPResponse, IncompleteRead
 import importlib.util
@@ -52,11 +53,11 @@ def response(content: bytes, *, truncated: bool = False) -> HTTPResponse:
 def archive(member: str = "package/package.json") -> bytes:
     content = json.dumps({"name": NAME, "version": VERSION}).encode()
     output = io.BytesIO()
-    with tarfile.open(fileobj=output, mode="w:gz") as bundle:
+    with tarfile.open(fileobj=output, mode="w") as bundle:
         entry = tarfile.TarInfo(member)
         entry.size = len(content)
         bundle.addfile(entry, io.BytesIO(content))
-    return output.getvalue()
+    return gzip.compress(output.getvalue(), mtime=0)
 
 
 def metadata(content: bytes, **dist) -> bytes:
@@ -69,7 +70,7 @@ def metadata(content: bytes, **dist) -> bytes:
 
 
 @pytest.fixture(autouse=True)
-def deny_network(monkeypatch: pytest.MonkeyPatch) -> None:
+def deny_network(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
     def denied(*args, **kwargs):
         raise AssertionError("Real network access is forbidden")
 
@@ -77,6 +78,14 @@ def deny_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket, "create_connection", denied)
     monkeypatch.setattr(socket, "getaddrinfo", denied)
     monkeypatch.setattr(urllib.request, "urlopen", denied)
+    lock = tmp_path_factory.mktemp("reviewed-pins") / "pins.json"
+    lock.write_text(
+        json.dumps(
+            {"schemaVersion": 1, "artifacts": {IDENTITY: hashlib.sha256(archive()).hexdigest()}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(packages, "REGISTRY_PINS", lock)
 
 
 def transport(monkeypatch: pytest.MonkeyPatch, metadata_outcomes, archive_outcomes):
@@ -267,6 +276,12 @@ def test_safe_extraction_preflight_still_applies_after_recovery(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     content = archive("package/../escape")
+    packages.REGISTRY_PINS.write_text(
+        json.dumps(
+            {"schemaVersion": 1, "artifacts": {IDENTITY: hashlib.sha256(content).hexdigest()}}
+        ),
+        encoding="utf-8",
+    )
     calls, delays = transport(
         monkeypatch,
         [response(metadata(content))],

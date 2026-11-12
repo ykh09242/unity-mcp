@@ -702,6 +702,19 @@ def test_optional_dependency_cache_json_formatting_keeps_identity(dependency_cac
     assert helper.identity(request) == original
 
 
+def test_optional_dependency_cache_key_changes_when_reviewed_artifact_pin_changes(dependency_cache):
+    helper, request, calls = dependency_cache
+    original = helper.identity(request)
+    lock = request.repo / "tools/unity-registry-pins.json"
+    document = json.loads(lock.read_text(encoding="utf-8"))
+    identity = "com.unity.nuget.newtonsoft-json@3.2.2"
+    digest = document["artifacts"][identity]
+    document["artifacts"][identity] = ("0" if digest[0] != "0" else "1") + digest[1:]
+    lock.write_text(json.dumps(document), encoding="utf-8")
+    assert helper.identity(request).cache_key != original.cache_key
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     "change",
     ["version", "base-profile", "optional-profile", "default-version", "metadata", "preview-base"],

@@ -26,6 +26,7 @@ LOGIC_INPUTS = (
     "tools/unity_ci_packages.py",
     "tools/unity_ci.py",
     "tools/unity-ci/Dockerfile",
+    "tools/unity-registry-pins.json",
 )
 MANIFEST_INPUTS = (
     "MCPForUnity/package.json",

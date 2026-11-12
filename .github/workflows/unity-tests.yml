@@ -98,6 +98,7 @@ on:
       - tools/unity_ci_packages.py
       - tools/unity_ci_package_cache.py
       - tools/unity-ci-packages.json
+      - tools/unity-registry-pins.json
       - tools/unity-optional-tests.json
 
 # Cancel obsolete in-flight validation for the same PR or trusted manual/reusable ref.
@@ -433,7 +434,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .unity-ci/optional-${{ matrix.unity.version }}/project/Library
-          key: Library-optional-${{ matrix.unity.version }}-${{ hashFiles('tools/unity-versions.json', 'tools/unity-ci-packages.json', 'tools/unity_ci_packages.py') }}
+          key: Library-optional-${{ matrix.unity.version }}-${{ hashFiles('tools/unity-versions.json', 'tools/unity-ci-packages.json', 'tools/unity-registry-pins.json', 'tools/unity_ci_packages.py') }}
 
       # GameCI mounts this home at /root; Unity needs the parent directories before activation.
       - name: Prepare Unity preferences and license directory
@@ -575,7 +576,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.packages.outputs.project_path }}/Library
-          key: Library-${{ matrix.unity.version }}-${{ hashFiles('tools/unity-versions.json', 'tools/unity-ci-packages.json', 'tools/unity_ci_packages.py') }}
+          key: Library-${{ matrix.unity.version }}-${{ hashFiles('tools/unity-versions.json', 'tools/unity-ci-packages.json', 'tools/unity-registry-pins.json', 'tools/unity_ci_packages.py') }}
 
       - name: Start fresh native scenario evidence session
         id: native-session

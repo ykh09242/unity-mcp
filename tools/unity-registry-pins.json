@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "artifacts": {
+    "com.unity.burst@1.8.31": "05030ee30ceffef62d08f2340b4e768dcb6d2256cbc97557eb5ab2624e2b9cae",
+    "com.unity.cinemachine@3.1.7": "8b77a98259c6726ce1795690dc2459f0f26d8d17345d9758f019d8de2653998a",
+    "com.unity.collections@2.7.1": "78a92413b2117dac99b324a3a3c82bc836ad1e0203f12d8ba98840bc812f72fa",
+    "com.unity.editorcoroutines@1.0.1": "accb9f5c2d94520a35696820d7e989e243dd6b8236d83184631a84d5f4d773a9",
+    "com.unity.editorcoroutines@1.1.0": "5b9e41c7838cf278ef0c6e923ceadb9f60660577d2964359d012c81e862b7be2",
+    "com.unity.ext.nunit@2.0.5": "efb4a47f3660f3a0348fe61d5fb6c8f66be7bd0b68d8429877f617cef4e2a506",
+    "com.unity.inputsystem@1.20.1": "495af211eb550949924d57e1697ace77c623608271417e1629187854daad2ac6",
+    "com.unity.mathematics@1.3.3": "ba2dc62bdc0eb7d96869df8d6262fa3cdc0711f2b6ee4f135ad29e6146041215",
+    "com.unity.nuget.mono-cecil@1.11.6": "42a0d6a5b17948d960fdb07552995c35f974d33c960d1c0bd8689e751da7cd60",
+    "com.unity.nuget.newtonsoft-json@3.2.2": "5db19a6ec4478ab974922d155aa32b952bc34abadaa78afc7973cf049b62db41",
+    "com.unity.probuilder@6.1.4": "11fb186a82e7e8fd037662c7c32d87ecd3cb99d5824ed6638d5a9f25ecaa6350",
+    "com.unity.searcher@4.9.5": "8f46f2a1094539a64eaae7716af574693398571929bf2f39c1b6cb901c376e08",
+    "com.unity.settings-manager@2.1.1": "21fafed1676dd59eeeeede0fe13f936a522ac69dda97353f9819e941b0b8854d",
+    "com.unity.splines@2.9.2": "84f669f1e3e7f7fa961f12b7c20d352b7974876a193ed6b5262229516689c64d",
+    "com.unity.test-framework@1.4.6": "9d1bcfea3f886c4e2b30a1014192b9ea78f9296b5172a3bf85e49aec2b784bf4",
+    "com.unity.test-framework.performance@3.7.0": "19c17d91a273deae12cff84a388963ac7d80799681df40797e29567f8f3457c6"
+  }
+}
