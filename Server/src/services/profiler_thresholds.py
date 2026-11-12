@@ -11,7 +11,7 @@ class ProfilerThreshold(BaseModel):
     marker: str = Field(min_length=1, max_length=256)
     statistic: Literal["mean", "median", "p95", "max"]
     unit: str = Field(min_length=1, max_length=64)
-    maximum: float = Field(ge=0, allow_inf_nan=False)
+    maximum: float = Field(strict=True, ge=0, allow_inf_nan=False)
 
 
 def evaluate_thresholds(response, window_id, thresholds):

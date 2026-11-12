@@ -334,6 +334,8 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
         "script_change_set",
         "batch_execute",
     }
+    # Callback identity inspection reads every closure cell, including non-edit routes.
+    bind_edit_target = None
     if edit_composition:
         from services.verification.edits import after_operation, bind_edit_target
     try:

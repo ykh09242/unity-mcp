@@ -61,6 +61,7 @@ def test_complete_mutation_routes_include_readiness_but_pure_routes_do_not(
 
 def test_all_actual_send_mutation_callers_have_explicit_budget_declarations():
     tools = Path(__file__).resolve().parents[1] / "src/services/tools"
+    helper_owners = {("script_apply_edits", "_apply_script_edits"): "script_apply_edits"}
     callers = set()
     for source in tools.glob("*.py"):
         tree = ast.parse(source.read_text(encoding="utf-8-sig"))
@@ -71,7 +72,18 @@ def test_all_actual_send_mutation_callers_have_explicit_budget_declarations():
                 and child.func.id == "send_mutation"
                 for child in ast.walk(node)
             ):
-                callers.add((source.stem, node.name))
+                owner = helper_owners.get((source.stem, node.name), node.name)
+                if owner != node.name:
+                    wrapper = next(
+                        item for item in tree.body if getattr(item, "name", None) == owner
+                    )
+                    assert any(
+                        isinstance(child, ast.Call)
+                        and isinstance(child.func, ast.Name)
+                        and child.func.id == node.name
+                        for child in ast.walk(wrapper)
+                    )
+                callers.add((source.stem, owner))
     assert callers == READINESS_CALLBACKS
 
 

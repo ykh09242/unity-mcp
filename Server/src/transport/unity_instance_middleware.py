@@ -39,6 +39,7 @@ from services.execution_receipt_identity import (
 from transport.local_project_context import full_hash
 from services.registry import get_registered_tools
 from services.registry.operation_invocation import trusted_tool, wrap_tool
+from services.verification.edits import after_operation
 from services.test_results_app import TEST_RESULTS_URI, project_test_results_tools
 from services.operation_permissions import (
     OperationPermissionError,
@@ -81,11 +82,12 @@ _LOCAL_TARGET_CONTROL_TOOLS = frozenset(
 )
 _BUILTIN_WRAPPER_CODES = frozenset(
     code
-    for factory in (log_execution, telemetry_tool, wrap_tool)
+    for factory in (log_execution, telemetry_tool, wrap_tool, after_operation)
     for parent in factory.__code__.co_consts
     if isinstance(parent, CodeType)
     for code in (parent, *parent.co_consts)
-    if isinstance(code, CodeType) and code.co_name in {"_sync_wrapper", "_async_wrapper", "invoke"}
+    if isinstance(code, CodeType)
+    and code.co_name in {"_sync_wrapper", "_async_wrapper", "invoke", "completed"}
 )
 _RECEIPT_CONTROL_CODES = frozenset(
     code
@@ -103,13 +105,18 @@ def _trusted_builtin_callback(callback, name: str, receipt_runtime) -> bool:
     while isinstance(callback, FunctionType):
         if trusted_tool(callback, name):
             return True
-        closure = getclosurevars(callback).nonlocals
+        try:
+            closure = getclosurevars(callback).nonlocals
+        except ValueError:
+            return False
         if name == "get_execution_receipt" and callback.__code__ in _RECEIPT_CONTROL_CODES:
             return receipt_runtime is not None and closure.get("runtime") is receipt_runtime
         if callback.__code__ not in _BUILTIN_WRAPPER_CODES:
             return False
         wrapped = getattr(callback, "__wrapped__", None)
-        if wrapped is None or not any(closure.get(key) is wrapped for key in ("func", "function")):
+        if wrapped is None or not any(
+            closure.get(key) is wrapped for key in ("func", "function", "invoke")
+        ):
             return False
         callback = wrapped
     return False

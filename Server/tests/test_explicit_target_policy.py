@@ -429,6 +429,39 @@ async def test_actual_builtin_callbacks_and_receipt_controls_keep_their_identity
 
 
 @pytest.mark.parametrize(
+    "module,name",
+    [
+        ("manage_script", "apply_text_edits"),
+        ("manage_script", "create_script"),
+        ("manage_script", "delete_script"),
+        ("manage_script", "manage_script"),
+        ("script_apply_edits", "script_apply_edits"),
+        ("script_change_set", "script_change_set"),
+        ("batch_execute", "batch_execute"),
+    ],
+)
+def test_composed_edit_wrappers_retain_actual_builtin_identity(module, name):
+    from services.registry.operation_invocation import wrap_tool
+    from transport.unity_instance_middleware import _trusted_builtin_callback
+
+    callback = getattr(import_module("services.tools." + module), name)
+    wrapped = wrap_tool(callback, name, module)
+    assert _trusted_builtin_callback(wrapped, name, None)
+
+
+def test_unknown_callback_with_empty_closure_is_untrusted():
+    from transport.unity_instance_middleware import _trusted_builtin_callback
+
+    captured = object()
+
+    def unknown():
+        return captured
+
+    del captured
+    assert not _trusted_builtin_callback(unknown, "manage_scene", None)
+
+
+@pytest.mark.parametrize(
     "raw,expected,source", [(None, False, "default"), ("1", True, "environment")]
 )
 def test_running_configuration_reports_policy_and_origin(monkeypatch, raw, expected, source):
