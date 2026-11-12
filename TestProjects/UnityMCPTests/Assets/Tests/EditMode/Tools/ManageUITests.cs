@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -17,11 +18,16 @@ namespace MCPForUnityTests.Editor.Tools
         private const string TempRoot = "Assets/Temp/ManageUITests";
 
         [Test]
+        [Parallelizable(ParallelScope.None)]
         public void ModifyVisualElement_PostEditObservationRetainsResolvedDuplicate()
         {
-            var go = new GameObject("UIObservation", typeof(UIDocument));
+            var sceneFixture = new PrefabTestSceneFixture();
+            GameObject go = null;
+            sceneFixture.PrepareRunnerBootstrap();
             try
             {
+                sceneFixture.Create("McpUiObservation_", Guid.NewGuid().ToString("N"));
+                go = new GameObject("UIObservation", typeof(UIDocument));
                 var root = go.GetComponent<UIDocument>().rootVisualElement;
                 var first = new Label("first") { name = "duplicate" };
                 var second = new Label("second") { name = "duplicate" };
@@ -46,7 +52,10 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                UnityEngine.Object.DestroyImmediate(go);
+                if (go != null)
+                    UnityEngine.Object.DestroyImmediate(go);
+                sceneFixture.Close();
+                sceneFixture.RestoreRunnerBootstrap();
             }
         }
 

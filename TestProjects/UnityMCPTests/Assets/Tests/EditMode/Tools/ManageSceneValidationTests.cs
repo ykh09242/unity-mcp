@@ -65,7 +65,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
         {
             assetFolder = "Assets/__McpExactScene_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", assetFolder.Substring(7));
-            Assert.IsTrue(EditorSceneManager.SaveScene(scene, assetFolder + "/Original.unity"));
+            Assert.IsTrue(EditorSceneManager.SaveScene(scene, assetFolder + "/" + scene.name + ".unity"));
             Scene other = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
             try
             {

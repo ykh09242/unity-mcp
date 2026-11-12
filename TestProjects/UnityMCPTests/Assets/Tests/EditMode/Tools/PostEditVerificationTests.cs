@@ -251,6 +251,10 @@ namespace MCPForUnityTests.Editor.Tools
             var target = ScriptableObject.CreateInstance<VerificationAsset>();
             try
             {
+                Assert.IsNotEmpty(
+                    AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(target)),
+                    "The persisted fixture requires its own MonoScript asset."
+                );
                 AssetDatabase.CreateAsset(material, path + "/Reference.mat");
                 target.reference = material;
                 string assetPath = path + "/Definition.asset";
@@ -422,15 +426,6 @@ namespace MCPForUnityTests.Editor.Tools
                     gameObject.AddComponent<VerificationProbe>().number = 999;
             }
         }
-    }
-
-    public class VerificationAsset : ScriptableObject
-    {
-        public UnityEngine.Object reference;
-        public int[] values = Array.Empty<int>();
-        public int number;
-        public string text;
-        public VerificationChoice choice;
     }
 
     public enum VerificationChoice

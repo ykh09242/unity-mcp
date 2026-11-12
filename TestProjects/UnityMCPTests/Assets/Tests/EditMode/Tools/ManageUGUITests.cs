@@ -6,6 +6,7 @@ using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -13,25 +14,37 @@ using UnityEngine;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
+    [Parallelizable(ParallelScope.None)]
     public class ManageUGUITests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private readonly List<GameObject> roots = new List<GameObject>();
         private string prefix;
 
         [SetUp]
         public void SetUp()
         {
+            sceneFixture.PrepareRunnerBootstrap();
+            sceneFixture.Create("McpUgui_", Guid.NewGuid().ToString("N"));
             prefix = "UGUI_" + Guid.NewGuid().ToString("N");
         }
 
         [TearDown]
         public void TearDown()
         {
-            foreach (var root in roots)
-                if (root != null)
-                    UnityEngine.Object.DestroyImmediate(root);
-            roots.Clear();
-            Undo.ClearAll();
+            try
+            {
+                foreach (var root in roots)
+                    if (root != null)
+                        UnityEngine.Object.DestroyImmediate(root);
+                roots.Clear();
+                Undo.ClearAll();
+            }
+            finally
+            {
+                sceneFixture.Close();
+                sceneFixture.RestoreRunnerBootstrap();
+            }
         }
 
         private GameObject Root(bool canvas = false)
@@ -79,13 +92,19 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             var root = Root(true);
             root.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
-            JObject overlay = Call("set_rect", root, new JObject { ["sizeDelta"] = new JArray(200, 100) });
+            var child = new GameObject("ProjectedChild", typeof(RectTransform));
+            child.transform.SetParent(root.transform, false);
+            JObject overlay = Call("set_rect", child, new JObject { ["sizeDelta"] = new JArray(200, 100) });
             Success(overlay);
             Assert.AreEqual("ScreenSpaceOverlay", overlay["data"]["verification"]["projection"]["data"]["observed_values"].Value<string>("render_mode"));
-            root.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceCamera;
-            JObject camera = Call("set_rect", root, new JObject { ["sizeDelta"] = new JArray(210, 100) });
+            Canvas canvas = root.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceCamera;
+            canvas.worldCamera = null;
+            Assert.AreEqual(RenderMode.ScreenSpaceCamera, canvas.renderMode);
+            Assert.IsNull(canvas.worldCamera, "The unassigned-camera branch requires no inherited or automatically assigned camera.");
+            JObject camera = Call("set_rect", child, new JObject { ["sizeDelta"] = new JArray(210, 100) });
             Success(camera);
-            Assert.AreEqual("camera_unassigned", camera["data"]["verification"]["projection"]["data"].Value<string>("unavailable_reason"));
+            Assert.AreEqual("camera_unassigned", camera["data"]["verification"]["projection"]["data"].Value<string>("unavailable_reason"), camera.ToString());
         }
 
         [Test]
