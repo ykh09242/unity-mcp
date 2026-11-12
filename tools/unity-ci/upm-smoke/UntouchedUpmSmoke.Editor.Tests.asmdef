@@ -1,0 +1,6 @@
+{
+  "name": "UntouchedUpmSmoke.Editor.Tests",
+  "references": [],
+  "includePlatforms": ["Editor"],
+  "optionalUnityReferences": ["TestAssemblies"]
+}

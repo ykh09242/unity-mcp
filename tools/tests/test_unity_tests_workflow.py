@@ -23,7 +23,7 @@ def runner_steps():
 
 def test_every_runner_step_pins_the_action_commit_and_cli_release():
     steps = runner_steps()
-    assert len(steps) == 3  # Domain reload, base EditMode and optional integration runner.
+    assert len(steps) == 4  # Domain reload, base, optional integration and untouched UPM.
     for step in steps:
         # Both failures flow into their XML gate, which checks the raw outcome.
         assert re.search(r"^        continue-on-error: true$", step, re.M), step
@@ -36,7 +36,7 @@ def test_every_runner_step_pins_the_action_commit_and_cli_release():
 
 def test_native_actions_have_fresh_distinct_reservation_and_observation_lineage():
     config = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    for job_name in ("testAllModes", "optionalIntegrations"):
+    for job_name in ("testAllModes", "optionalIntegrations", "untouchedUpmInstall"):
         steps = config["jobs"][job_name]["steps"]
         runners = [step for step in steps if "game-ci/unity-test-runner@" in step.get("uses", "")]
         roots = set()

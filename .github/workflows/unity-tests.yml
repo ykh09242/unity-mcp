@@ -75,6 +75,7 @@ on:
       - TestProjects/UnityMCPTests/**
       - MCPForUnity/Editor/**
       - MCPForUnity/Runtime/**
+      - MCPForUnity/package.json
       - .github/workflows/unity-tests.yml
       - .github/workflows/unity-player-tests.yml
       - tools/*player*e2e*
@@ -96,9 +97,10 @@ on:
       - tools/unity_ci.py
       - tools/unity-ci/**
       - tools/unity_ci_packages.py
+      - tools/unity_upm_smoke.py
+      - tools/unity-registry-pins.json
       - tools/unity_ci_package_cache.py
       - tools/unity-ci-packages.json
-      - tools/unity-registry-pins.json
       - tools/unity-optional-tests.json
 
 # Cancel obsolete in-flight validation for the same PR or trusted manual/reusable ref.
@@ -132,6 +134,7 @@ jobs:
       versions: ${{ steps.set.outputs.versions }}
       optional_versions: ${{ steps.set.outputs.optional_versions }}
       optional_suites: ${{ steps.set.outputs.optional_suites }}
+      upm_versions: ${{ steps.set.outputs.upm_versions }}
     steps:
       - name: Checkout version manifest
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -141,6 +144,7 @@ jobs:
             tools/unity-versions.json
             tools/unity_ci.py
             tools/unity_ci_packages.py
+            tools/unity_upm_smoke.py
             tools/unity-ci-packages.json
             tools/unity-optional-tests.json
           sparse-checkout-cone-mode: false
@@ -167,6 +171,8 @@ jobs:
           set -euo pipefail
           versions=$(python3 tools/unity_ci.py matrix)
           echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          upm_versions=$(python3 tools/unity_upm_smoke.py matrix)
+          echo "upm_versions=$upm_versions" >> "$GITHUB_OUTPUT"
           optional_versions=$(python3 tools/unity_ci_packages.py optional-matrix)
           echo "optional_versions=$optional_versions" >> "$GITHUB_OUTPUT"
           optional_suites=$(python3 -c 'import json; print(json.dumps(json.load(open("tools/unity-optional-tests.json"))["suites"], separators=(",", ":")))')
@@ -504,6 +510,117 @@ jobs:
           path: |
             .release-evidence/
             .unity-ci/optional-${{ matrix.unity.version }}/resolved-packages.json
+          include-hidden-files: true
+          if-no-files-found: error
+
+  untouchedUpmInstall:
+    name: Untouched UPM install Unity ${{ matrix.unity.version }}
+    needs: [matrix, license]
+    if: needs.license.outputs.unity_ok == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        unity: ${{ fromJson(needs.matrix.outputs.upm_versions) }}
+    steps:
+      - name: Checkout distributed package
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Verify beta push commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/beta' && github.repository != 'CoplayDev/unity-mcp'
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Record checked candidate
+        shell: bash
+        env:
+          CANDIDATE_REF: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          if [[ "$CANDIDATE_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            test "$actual" = "$CANDIDATE_REF"
+          fi
+          printf 'Checked candidate: `%s` (requested `%s`)\n' "$actual" "$CANDIDATE_REF" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare exact supported Editor image
+        id: editor
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+        run: python3 tools/unity_ci.py prepare "$UNITY_VERSION" --purpose tests
+
+      - name: Stage original package in a clean UPM project
+        id: package
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+        run: >-
+          python3 tools/unity_upm_smoke.py prepare --unity-version "$UNITY_VERSION"
+          --output ".unity-ci/upm-$UNITY_VERSION"
+
+      - name: Prepare Unity preferences and license directory
+        run: mkdir -p "$HOME/.local/share/unity3d/Unity"
+
+      - name: Reserve UPM outputs [untouchedUpmInstall:${{ matrix.unity.version }}]
+        id: native-output
+        env:
+          RUNNER_STEP: Import original package [untouchedUpmInstall:${{ matrix.unity.version }}]
+          RESERVE_STEP: Reserve UPM outputs [untouchedUpmInstall:${{ matrix.unity.version }}]
+          OBSERVE_STEP: Observe UPM outputs [untouchedUpmInstall:${{ matrix.unity.version }}]
+        run: >-
+          python3 tools/release_execution.py reserve --kind native-editmode
+          --step-name "$RUNNER_STEP" --emitter-step-name "$RESERVE_STEP" --observer-step-name "$OBSERVE_STEP"
+
+      - name: Import original package [untouchedUpmInstall:${{ matrix.unity.version }}]
+        id: tests
+        uses: game-ci/unity-test-runner@32e57712352b500e17974b245a6dce9e11a73213 # v4.4.0
+        continue-on-error: true
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: ${{ steps.package.outputs.project_path }}
+          unityVersion: ${{ matrix.unity.version }}
+          customImage: ${{ steps.editor.outputs.image }}
+          testMode: editmode
+          customParameters: -testFilter UntouchedUpmSmoke.UntouchedPackageInstallTests
+          cliVersion: v0.1.69
+          githubToken: ""
+          artifactsPath: ${{ steps.native-output.outputs.root }}
+
+      - name: Observe UPM outputs [untouchedUpmInstall:${{ matrix.unity.version }}]
+        if: always() && steps.native-output.outcome == 'success' && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure')
+        env:
+          RESERVATION: ${{ steps.native-output.outputs.reservation }}
+          RUNNER_OUTCOME: ${{ steps.tests.outcome }}
+        run: python3 tools/release_execution.py observe --reservation "$RESERVATION" --outcome "$RUNNER_OUTCOME"
+
+      - name: Require untouched UPM installation test body
+        env:
+          RESULTS_XML: ${{ steps.native-output.outputs.results }}
+          TEST_RUN_OUTCOME: ${{ steps.tests.outcome }}
+        run: >-
+          python3 tools/check_unity_test_results.py "$RESULTS_XML" --runner-outcome "$TEST_RUN_OUTCOME"
+          --require-test UntouchedUpmSmoke.UntouchedPackageInstallTests.OriginalManifestImportsAndResolvesDependencies
+
+      - name: Upload UPM installation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: untouched-upm-${{ matrix.unity.version }}
+          path: |
+            .release-evidence/
+            .unity-ci/upm-${{ matrix.unity.version }}/project/.upm-smoke.json
+            .unity-ci/upm-${{ matrix.unity.version }}/project/Packages/
+            .unity-ci/upm-${{ matrix.unity.version }}/package/package.json
           include-hidden-files: true
           if-no-files-found: error
 
