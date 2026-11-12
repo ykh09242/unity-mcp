@@ -13,19 +13,19 @@ namespace MCPForUnityTests.Editor.Helpers
     {
         private readonly Dictionary<string, string> strings = new();
         private readonly Dictionary<string, bool?> flags = new();
+        private RemoteKeyStorageTestScope credentialScope;
 
         [SetUp]
         public void SetUp()
         {
-            foreach (
-                string key in new[] { EditorPrefKeys.HttpTransportScope, EditorPrefKeys.HttpRemoteBaseUrl, EditorPrefKeys.HttpBaseUrl, EditorPrefKeys.ApiKey }
-            )
+            credentialScope = new RemoteKeyStorageTestScope();
+            foreach (string key in new[] { EditorPrefKeys.HttpTransportScope, EditorPrefKeys.HttpRemoteBaseUrl, EditorPrefKeys.HttpBaseUrl })
                 strings[key] = UnityEditor.EditorPrefs.HasKey(key) ? UnityEditor.EditorPrefs.GetString(key) : null;
             foreach (string key in new[] { EditorPrefKeys.UseHttpTransport, EditorPrefKeys.AllowInsecureRemoteHttp, EditorPrefKeys.AllowLanHttpBind })
                 flags[key] = UnityEditor.EditorPrefs.HasKey(key) ? UnityEditor.EditorPrefs.GetBool(key) : (bool?)null;
             UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
             UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "http://remote.example.test");
-            UnityEditor.EditorPrefs.SetString(EditorPrefKeys.ApiKey, "test-only-remote-key");
+            credentialScope.Preferences[EditorPrefKeys.ApiKey] = "test-only-remote-key";
             UnityEditor.EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
             UnityEditor.EditorPrefs.SetBool(EditorPrefKeys.AllowInsecureRemoteHttp, false);
             EditorConfigurationCache.Instance.Refresh();
@@ -34,6 +34,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [TearDown]
         public void TearDown()
         {
+            credentialScope.Dispose();
             foreach (var pair in strings)
                 if (pair.Value == null)
                     UnityEditor.EditorPrefs.DeleteKey(pair.Key);
@@ -180,9 +181,6 @@ namespace MCPForUnityTests.Editor.Helpers
 
         private void SaveKey(string url, string value)
         {
-            string pref = EditorPrefKeys.RemoteApiKeyPrefix + HttpEndpointUtility.GetRemoteOrigin(url);
-            if (!strings.ContainsKey(pref))
-                strings[pref] = UnityEditor.EditorPrefs.HasKey(pref) ? UnityEditor.EditorPrefs.GetString(pref) : null;
             HttpEndpointUtility.SaveRemoteApiKey(url, value);
         }
 

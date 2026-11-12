@@ -5,6 +5,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services;
 using UnityEditor;
 
@@ -120,8 +121,15 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>Authentication headers for generated native MCP client configurations.</summary>
         public static Dictionary<string, string> GetAuthHeaders() => CaptureConnectionSettings().GetAuthHeaders();
 
+        // The injected storage keeps tests away from real preferences and OS credentials.
+        internal static RemoteApiKeyStorage RemoteKeys = new RemoteApiKeyStorage(
+            () => SecureKeyStore.Persistent,
+            key => EditorPrefs.GetString(key, string.Empty),
+            EditorPrefs.DeleteKey
+        );
+
         // A legacy global key has no trustworthy destination. Reading it must never authorize reuse.
-        internal static bool HasLegacyApiKey => !string.IsNullOrEmpty(EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty));
+        internal static bool HasLegacyApiKey => RemoteKeys.HasLegacyApiKey;
 
         internal static string GetRemoteOrigin(string baseUrl)
         {
@@ -138,18 +146,24 @@ namespace MCPForUnity.Editor.Helpers
         internal static string GetRemoteApiKey(string baseUrl)
         {
             string origin = GetRemoteOrigin(baseUrl);
-            return origin == null ? string.Empty : EditorPrefs.GetString(EditorPrefKeys.RemoteApiKeyPrefix + origin, string.Empty);
+            return origin == null ? string.Empty : RemoteKeys.Get(origin);
         }
 
         internal static void SaveRemoteApiKey(string baseUrl, string apiKey)
         {
             if (!IsRemoteUrlAllowed(baseUrl, out string error))
                 throw new InvalidOperationException(error);
-            string pref = EditorPrefKeys.RemoteApiKeyPrefix + GetRemoteOrigin(baseUrl);
-            if (string.IsNullOrEmpty(apiKey))
-                EditorPrefs.DeleteKey(pref);
-            else
-                EditorPrefs.SetString(pref, apiKey);
+            RemoteKeys.Save(GetRemoteOrigin(baseUrl), apiKey);
+        }
+
+        internal static void ClearRemoteApiKey(string baseUrl)
+        {
+            // Local deletion does not send credentials and remains available when HTTP
+            // policy was tightened after this origin was configured.
+            string origin = GetRemoteOrigin(baseUrl);
+            if (origin != null)
+                RemoteKeys.Save(origin, string.Empty);
+            RemoteKeys.ClearLegacyApiKey();
         }
 
         internal static bool BindLegacyApiKey(string approvedOrigin)
@@ -157,9 +171,9 @@ namespace MCPForUnity.Editor.Helpers
             string baseUrl = GetRemoteBaseUrl();
             if (!IsRemoteScope() || approvedOrigin == null || approvedOrigin != GetRemoteOrigin(baseUrl) || !HasLegacyApiKey)
                 return false;
-            SaveRemoteApiKey(baseUrl, EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty));
-            EditorPrefs.DeleteKey(EditorPrefKeys.ApiKey);
-            return true;
+            if (!IsRemoteUrlAllowed(baseUrl, out string error))
+                throw new InvalidOperationException(error);
+            return RemoteKeys.BindLegacy(approvedOrigin);
         }
 
         /// <summary>For logs and status only. Invalid input is never echoed.</summary>

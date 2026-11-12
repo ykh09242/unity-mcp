@@ -9,6 +9,7 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Windows.Components.Connection;
+using MCPForUnityTests.Editor.Helpers;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.UIElements;
@@ -35,15 +36,15 @@ namespace MCPForUnityTests.Editor.Windows
         private int previousGeneration;
         private FakeBridge bridge;
         private FakeServer server;
+        private RemoteKeyStorageTestScope credentialScope;
 
         [SetUp]
         public void SetUp()
         {
+            credentialScope = new RemoteKeyStorageTestScope();
             foreach (string name in new[] { "_bridgeService", "_serverManagementService", "_transportManager" })
                 services[name] = typeof(MCPServiceLocator).GetField(name, StaticFlags).GetValue(null);
-            foreach (
-                string key in new[] { EditorPrefKeys.HttpBaseUrl, EditorPrefKeys.HttpRemoteBaseUrl, EditorPrefKeys.HttpTransportScope, EditorPrefKeys.ApiKey }
-            )
+            foreach (string key in new[] { EditorPrefKeys.HttpBaseUrl, EditorPrefKeys.HttpRemoteBaseUrl, EditorPrefKeys.HttpTransportScope })
                 stringPrefs[key] = (EditorPrefs.HasKey(key), EditorPrefs.GetString(key));
             hadHttp = EditorPrefs.HasKey(EditorPrefKeys.UseHttpTransport);
             previousHttp = EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport, true);
@@ -76,7 +77,7 @@ namespace MCPForUnityTests.Editor.Windows
             EditorConfigurationCache.Instance.SetHttpTransportScope("local");
             EditorPrefs.SetString(EditorPrefKeys.HttpBaseUrl, "http://127.0.0.1:8080");
             EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://server-a.example");
-            EditorPrefs.SetString(EditorPrefKeys.ApiKey, "memory-key");
+            credentialScope.Preferences[EditorPrefKeys.ApiKey] = "memory-key";
             EditorPrefs.SetInt(EditorPrefKeys.UnitySocketPort, 1234);
             SessionState.EraseBool(StdioBridgeReloadHandler.ResumeSessionKey);
         }
@@ -84,6 +85,7 @@ namespace MCPForUnityTests.Editor.Windows
         [TearDown]
         public void TearDown()
         {
+            credentialScope.Dispose();
             EditorConfigurationCache.Instance.SetUseHttpTransport(previousHttp);
             if (!hadHttp)
                 EditorPrefs.DeleteKey(EditorPrefKeys.UseHttpTransport);
@@ -578,9 +580,58 @@ namespace MCPForUnityTests.Editor.Windows
             }
             finally
             {
-                EditorPrefs.DeleteKey(prefA);
-                EditorPrefs.DeleteKey(prefB);
+                credentialScope.Preferences.Remove(prefA);
+                credentialScope.Preferences.Remove(prefB);
             }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SecureStorageFailureShowsRecoveryAndPreservesCredentialState(bool clear)
+        {
+            const string url = "https://ui-storage.example.test";
+            var section = CreateSection();
+            UseHttp("remote");
+            HttpEndpointUtility.SaveRemoteBaseUrl(url);
+            HttpEndpointUtility.SaveRemoteApiKey(url, "synthetic-existing");
+            Invoke(section, "RefreshApiKeyUi");
+            var field = Get<TextField>(section, "apiKeyField");
+            var status = Get<Label>(section, "connectionStatusLabel");
+            status.text = "Existing connection state";
+            string message = null;
+            Set(section, "loginDialog", (Action<string, string, string>)((title, text, button) => message = text));
+            int updates = 0;
+            section.OnManualConfigUpdateRequested += () => updates++;
+            if (clear)
+                credentialScope.Secure.FailDeletes = true;
+            else
+            {
+                field.SetValueWithoutNotify("synthetic-replacement");
+                credentialScope.Secure.FailWrites = true;
+            }
+
+            Assert.DoesNotThrow(() => Invoke(section, clear ? "OnClearApiKeyClicked" : "PersistApiKeyFromField"));
+
+            StringAssert.Contains("secure store", message);
+            StringAssert.Contains("retry", message);
+            StringAssert.DoesNotContain("synthetic", message);
+            Assert.AreEqual("synthetic-existing", HttpEndpointUtility.GetRemoteApiKey(url));
+            Assert.IsTrue(HttpEndpointUtility.HasLegacyApiKey);
+            Assert.AreEqual(clear ? "synthetic-existing" : "synthetic-replacement", field.value);
+            Assert.AreEqual("Existing connection state", status.text);
+            Assert.AreEqual(0, updates);
+        }
+
+        [Test]
+        public void ExplicitClearRemovesOriginAndUnboundLegacyCredentialsThroughInjectedStorage()
+        {
+            const string url = "https://clear.example.test";
+            HttpEndpointUtility.SaveRemoteApiKey(url, "synthetic-existing");
+            credentialScope.Preferences[EditorPrefKeys.RemoteApiKeyPrefix + HttpEndpointUtility.GetRemoteOrigin(url)] = "synthetic-legacy";
+            HttpEndpointUtility.ClearRemoteApiKey(url);
+            Assert.IsEmpty(HttpEndpointUtility.GetRemoteApiKey(url));
+            Assert.IsFalse(HttpEndpointUtility.HasLegacyApiKey);
+            Assert.IsEmpty(credentialScope.Preferences);
         }
 
         private static T Get<T>(McpConnectionSection section, string name)

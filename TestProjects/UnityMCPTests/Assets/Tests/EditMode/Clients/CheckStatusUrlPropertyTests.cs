@@ -6,6 +6,7 @@ using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
+using MCPForUnityTests.Editor.Helpers;
 using NUnit.Framework;
 using UnityEditor;
 
@@ -22,10 +23,12 @@ namespace MCPForUnityTests.Editor.Clients
     {
         private string _tempDir;
         private readonly Dictionary<string, string> _preferences = new();
+        private RemoteKeyStorageTestScope credentialScope;
 
         [SetUp]
         public void SetUp()
         {
+            credentialScope = new RemoteKeyStorageTestScope();
             _tempDir = Path.Combine(Path.GetTempPath(), "UnityMCPTests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_tempDir);
             foreach (
@@ -34,8 +37,6 @@ namespace MCPForUnityTests.Editor.Clients
                     EditorPrefKeys.HttpTransportScope,
                     EditorPrefKeys.HttpRemoteBaseUrl,
                     EditorPrefKeys.HttpBaseUrl,
-                    EditorPrefKeys.ApiKey,
-                    EditorPrefKeys.RemoteApiKeyPrefix + "https://synthetic.example.test:443",
                     EditorPrefKeys.GitUrlOverride,
                 }
             )
@@ -50,6 +51,7 @@ namespace MCPForUnityTests.Editor.Clients
         [TearDown]
         public void TearDown()
         {
+            credentialScope.Dispose();
             try
             {
                 if (Directory.Exists(_tempDir))

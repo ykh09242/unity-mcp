@@ -60,6 +60,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private Button clearApiKeyButton;
         private Button bindLegacyApiKeyButton;
         private string displayedApiKeyOrigin;
+        private bool remoteKeyStorageErrorShown;
         private string cachedLoginUrl;
         private string cachedLoginBaseUrl;
         private Func<string, Task<string>> loginUrlFetcher = FetchLoginUrlAsync;
@@ -1077,15 +1078,29 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 return;
             }
             string apiKey = apiKeyField.text?.Trim() ?? string.Empty;
-            string existingKey = HttpEndpointUtility.GetRemoteApiKey(baseUrl);
-
-            if (apiKey != existingKey)
+            try
             {
-                HttpEndpointUtility.SaveRemoteApiKey(baseUrl, apiKey);
-                OnManualConfigUpdateRequested?.Invoke();
-                UpdateConnectionStatus();
-                McpLog.Info(string.IsNullOrEmpty(apiKey) ? "API key cleared" : "API key updated");
+                string existingKey = HttpEndpointUtility.GetRemoteApiKey(baseUrl);
+                if (apiKey != existingKey)
+                {
+                    HttpEndpointUtility.SaveRemoteApiKey(baseUrl, apiKey);
+                    remoteKeyStorageErrorShown = false;
+                    OnManualConfigUpdateRequested?.Invoke();
+                    UpdateConnectionStatus();
+                    McpLog.Info(string.IsNullOrEmpty(apiKey) ? "API key cleared" : "API key updated");
+                }
             }
+            catch (RemoteApiKeyStorageException error)
+            {
+                ShowRemoteKeyStorageError(error);
+            }
+        }
+
+        private void ShowRemoteKeyStorageError(RemoteApiKeyStorageException error)
+        {
+            if (!remoteKeyStorageErrorShown)
+                loginDialog?.Invoke("API key storage unavailable", error.Message, "OK");
+            remoteKeyStorageErrorShown = true;
         }
 
         private void RefreshApiKeyUi()
@@ -1093,15 +1108,30 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             string baseUrl = HttpEndpointUtility.GetRemoteBaseUrl();
             bool allowed = HttpEndpointUtility.IsRemoteScope() && HttpEndpointUtility.IsRemoteUrlAllowed(baseUrl, out _);
             string origin = allowed ? HttpEndpointUtility.GetRemoteOrigin(baseUrl) : null;
+            string key;
+            try
+            {
+                key = allowed ? HttpEndpointUtility.GetRemoteApiKey(baseUrl) : string.Empty;
+                remoteKeyStorageErrorShown = false;
+            }
+            catch (RemoteApiKeyStorageException error)
+            {
+                displayedApiKeyOrigin = null;
+                apiKeyField?.SetValueWithoutNotify(string.Empty);
+                apiKeyField?.SetEnabled(false);
+                bindLegacyApiKeyButton?.SetEnabled(false);
+                ShowRemoteKeyStorageError(error);
+                return;
+            }
             if (displayedApiKeyOrigin != origin)
             {
                 displayedApiKeyOrigin = origin;
-                apiKeyField?.SetValueWithoutNotify(origin == null ? string.Empty : HttpEndpointUtility.GetRemoteApiKey(baseUrl));
+                apiKeyField?.SetValueWithoutNotify(key);
             }
             apiKeyField?.SetEnabled(allowed);
             if (bindLegacyApiKeyButton != null)
             {
-                bool show = HttpEndpointUtility.HasLegacyApiKey && string.IsNullOrEmpty(HttpEndpointUtility.GetRemoteApiKey(baseUrl));
+                bool show = HttpEndpointUtility.HasLegacyApiKey && string.IsNullOrEmpty(key);
                 bindLegacyApiKeyButton.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
                 bindLegacyApiKeyButton.SetEnabled(allowed);
                 bindLegacyApiKeyButton.text = allowed ? $"Use saved legacy key for {origin}" : "Set a valid remote URL to bind the saved legacy key";
@@ -1111,15 +1141,22 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private void BindLegacyApiKey()
         {
-            if (!HttpEndpointUtility.BindLegacyApiKey(displayedApiKeyOrigin))
+            try
             {
+                if (!HttpEndpointUtility.BindLegacyApiKey(displayedApiKeyOrigin))
+                {
+                    RefreshApiKeyUi();
+                    return;
+                }
+                apiKeyField?.SetValueWithoutNotify(HttpEndpointUtility.GetRemoteApiKey(HttpEndpointUtility.GetRemoteBaseUrl()));
                 RefreshApiKeyUi();
-                return;
+                OnManualConfigUpdateRequested?.Invoke();
+                UpdateConnectionStatus();
             }
-            apiKeyField?.SetValueWithoutNotify(HttpEndpointUtility.GetRemoteApiKey(HttpEndpointUtility.GetRemoteBaseUrl()));
-            RefreshApiKeyUi();
-            OnManualConfigUpdateRequested?.Invoke();
-            UpdateConnectionStatus();
+            catch (RemoteApiKeyStorageException error)
+            {
+                ShowRemoteKeyStorageError(error);
+            }
         }
 
         private async void OnGetApiKeyClicked()
@@ -1235,9 +1272,16 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private void OnClearApiKeyClicked()
         {
             string baseUrl = HttpEndpointUtility.GetRemoteBaseUrl();
-            if (HttpEndpointUtility.IsRemoteUrlAllowed(baseUrl, out _))
-                HttpEndpointUtility.SaveRemoteApiKey(baseUrl, string.Empty);
-            EditorPrefs.DeleteKey(EditorPrefKeys.ApiKey);
+            try
+            {
+                HttpEndpointUtility.ClearRemoteApiKey(baseUrl);
+                remoteKeyStorageErrorShown = false;
+            }
+            catch (RemoteApiKeyStorageException error)
+            {
+                ShowRemoteKeyStorageError(error);
+                return;
+            }
             if (apiKeyField != null)
             {
                 apiKeyField.SetValueWithoutNotify(string.Empty);

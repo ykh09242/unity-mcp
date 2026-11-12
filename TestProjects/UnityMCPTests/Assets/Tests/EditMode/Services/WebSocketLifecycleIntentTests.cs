@@ -12,6 +12,7 @@ using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport.Transports;
+using MCPForUnityTests.Editor.Helpers;
 using NUnit.Framework;
 using UnityEditor;
 
@@ -419,10 +420,10 @@ namespace MCPForUnityTests.Editor.Services
                     EditorPrefKeys.HttpRemoteBaseUrl,
                     EditorPrefKeys.HttpBaseUrl,
                     EditorPrefKeys.SessionId + "_" + ProjectIdentityUtility.GetProjectHash(),
-                    EditorPrefKeys.RemoteApiKeyPrefix + HttpEndpointUtility.GetRemoteOrigin(a),
                 }
             )
                 saved[key] = EditorPrefs.HasKey(key) ? EditorPrefs.GetString(key) : null;
+            using var credentialScope = new RemoteKeyStorageTestScope();
             bool hadInsecure = EditorPrefs.HasKey(EditorPrefKeys.AllowInsecureRemoteHttp);
             bool insecure = EditorPrefs.GetBool(EditorPrefKeys.AllowInsecureRemoteHttp);
             using var client = new WebSocketTransportClient();

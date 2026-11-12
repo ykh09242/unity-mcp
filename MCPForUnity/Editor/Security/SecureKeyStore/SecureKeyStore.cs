@@ -4,7 +4,7 @@ using UnityEngine;
 namespace MCPForUnity.Editor.Security
 {
     /// <summary>
-    /// Entry point for at-rest provider key storage. Selects the best OS secure store for
+    /// Entry point for at-rest Editor credential storage. Selects the best OS secure store for
     /// the current platform and layers the read-only environment-variable override on top.
     /// Keys never transit the MCP bridge; only the C# editor side reads them, at call time.
     /// </summary>
@@ -13,6 +13,9 @@ namespace MCPForUnity.Editor.Security
         private static ISecureKeyStore _current;
 
         public static ISecureKeyStore Current => _current ??= Build();
+
+        // Remote credentials are bound to an origin, never to provider environment variables.
+        internal static ISecureKeyStore Persistent => Current is EnvOverlayKeyStore overlay ? overlay.PersistentStore : Current;
 
         /// <summary>Test seam: substitute an in-memory or temp-dir store.</summary>
         internal static void OverrideForTests(ISecureKeyStore store) => _current = store;
@@ -60,6 +63,8 @@ namespace MCPForUnity.Editor.Security
         }
 
         internal bool HasStoredKey(string providerId) => _inner.Has(providerId);
+
+        internal ISecureKeyStore PersistentStore => _inner;
 
         internal bool HasEnvironmentKey(string providerId) => TryEnvironment(providerId, out _);
 
