@@ -31,7 +31,7 @@ async def test_composition_uses_the_actual_sdk_wire_once(monkeypatch):
             CLIConfig(port=port, unity_instance="Fixture@aaaa1111", timeout=5),
         )
     assert result["data"]["run_id"] == "a" * 32
-    assert calls == [("run", {"preparation_id": "b" * 32})]
+    assert calls == [("run", {"preparation_id": "b" * 32, "wait_seconds": 0})]
     assert trace.count("tools/call") == 1
 
 

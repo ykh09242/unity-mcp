@@ -34,6 +34,11 @@ async def test_validate_script_returns_counts(monkeypatch):
         "data": {
             "warnings": 1,
             "errors": 2,
+            "diagnostic_sample": [
+                {"severity": "warning"},
+                {"severity": "error"},
+                {"severity": "fatal"},
+            ],
             "validation": {
                 "requestedLevel": "basic",
                 "effectiveLevel": "unknown",

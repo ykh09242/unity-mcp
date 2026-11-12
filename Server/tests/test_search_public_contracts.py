@@ -244,13 +244,18 @@ async def main():
                 result = await client.call_tool('find_in_file', {'uri': uri, 'pattern': 'needle'}, raise_on_error=False)
                 sent = requests[before:]
                 check(sent == [('Project@fixture', 'manage_script', {'action': 'read', 'name': 'Foo', 'path': directory})], 'one percent decode preserves project identity across URI forms')
-                check(result.structured_content == {'success': True, 'data': {'matches': expected_matches, 'count': 2, 'total_matches': 2}}, 'real regex/Unicode offsets/excerpts')
+                check(result.structured_content == {'success': True, 'data': {'matches': expected_matches, 'count': 2, 'total_matches': 2, 'sha256': None, 'bytes_sha256': None}}, 'real regex/Unicode offsets/excerpts with absent legacy hash evidence')
                 print('FILE_WIRE', json.dumps({'mode': mode, 'payload': {'uri': uri, 'pattern': 'needle'}, 'wires': sent, 'response': result.structured_content}))
             for data in ({'contentsEncoded': True, 'encodedContents': base64.b64encode(text.encode()).decode()}, {'contents': ''}):
                 raw = {'success': True, 'data': data}
                 result = await client.call_tool('find_in_file', {'uri': 'Assets/Fixture.cs', 'pattern': 'needle', 'max_results': 1, 'ignore_case': False})
                 wanted = expected_matches[1:] if data.get('contentsEncoded') else []
-                check(result.structured_content == {'success': True, 'data': {'matches': wanted, 'count': len(wanted), 'total_matches': len(wanted)}}, 'encoded text/empty/case/limit')
+                check(result.structured_content == {'success': True, 'data': {'matches': wanted, 'count': len(wanted), 'total_matches': len(wanted), 'sha256': None, 'bytes_sha256': None}}, 'encoded text/empty/case/limit')
+            raw = {'success': True, 'data': {'contents': text, 'sha256': 'a' * 64, 'bytes_sha256': 'b' * 64}}
+            before = len(requests)
+            result = await client.call_tool('find_in_file', {'uri': 'Assets/Fixture.cs', 'pattern': 'needle'})
+            check(result.structured_content == {'success': True, 'data': {'matches': expected_matches, 'count': 2, 'total_matches': 2, 'sha256': 'a' * 64, 'bytes_sha256': 'b' * 64}}, 'Editor text and raw-byte hash evidence retained distinctly')
+            check(len(requests[before:]) == 1, 'hash metadata uses the same source read')
             # Match ManageScript.SourceLineWindow: CRLF is one boundary, and
             # separators must not be normalized because offsets address source text.
             for separator in ('\r', '\r\n', '\n', '\v', '\f', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029'):
@@ -261,7 +266,7 @@ async def main():
                             for line, content, start in zip((2, 2, 4), ('needle needle', 'needle needle', 'needle'), starts)]
                 for pattern, wanted in (('needle', expected), ('(?r)needle', expected[::-1])):
                     result = await client.call_tool('find_in_file', {'uri': 'Assets/Fixture.cs', 'pattern': pattern})
-                    check(result.structured_content == {'success': True, 'data': {'matches': wanted, 'count': 3, 'total_matches': 3}}, 'source boundary ' + repr(separator) + ' ' + pattern)
+                    check(result.structured_content == {'success': True, 'data': {'matches': wanted, 'count': 3, 'total_matches': 3, 'sha256': None, 'bytes_sha256': None}}, 'source boundary ' + repr(separator) + ' ' + pattern)
             raw = {'success': False, 'message': 'Controlled read failure', 'data': None}
             result = await client.call_tool('find_in_file', {'uri': 'Assets/Fixture.cs', 'pattern': 'needle'})
             check(result.structured_content == raw, 'native read rejection preserved')

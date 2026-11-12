@@ -4,7 +4,8 @@ from .test_helpers import DummyContext, setup_script_tools
 
 
 @pytest.mark.asyncio
-async def test_get_sha_param_shape_and_routing(monkeypatch):
+@pytest.mark.parametrize("bytes_sha256", [None, "b" * 64])
+async def test_get_sha_param_shape_and_routing(monkeypatch, bytes_sha256):
     tools = setup_script_tools()
     get_sha = tools["get_sha"]
 
@@ -13,7 +14,7 @@ async def test_get_sha_param_shape_and_routing(monkeypatch):
     async def fake_send(cmd, params, **kwargs):
         captured["cmd"] = cmd
         captured["params"] = params
-        return {
+        response = {
             "success": True,
             "data": {
                 "sha256": "abc",
@@ -23,6 +24,9 @@ async def test_get_sha_param_shape_and_routing(monkeypatch):
                 "path": "Assets/Scripts/A.cs",
             },
         }
+        if bytes_sha256 is not None:
+            response["data"]["bytes_sha256"] = bytes_sha256
+        return response
 
     # Patch the send_command_with_retry function at the module level where it's imported
     import transport.legacy.unity_connection
@@ -40,4 +44,4 @@ async def test_get_sha_param_shape_and_routing(monkeypatch):
     assert captured["params"]["name"] == "A"
     assert captured["params"]["path"].endswith("Assets/Scripts")
     assert resp["success"] is True
-    assert resp["data"] == {"sha256": "abc", "lengthBytes": 1}
+    assert resp["data"] == {"sha256": "abc", "bytes_sha256": bytes_sha256, "lengthBytes": 1}

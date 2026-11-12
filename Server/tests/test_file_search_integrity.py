@@ -63,7 +63,23 @@ async def test_line_offsets_and_regex_order_survive_crlf_and_astral_text(
         "matches": expected[::-1] if reverse else expected,
         "count": 3,
         "total_matches": 3,
+        "sha256": None,
+        "bytes_sha256": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_search_preserves_editor_source_and_byte_hashes(search_module):
+    module, sender = search_module
+    sender.return_value = {
+        "success": True,
+        "data": {"contents": "owned", "sha256": "a" * 64, "bytes_sha256": "b" * 64},
+    }
+    response = await module.find_in_file(AsyncMock(), "Assets/Fixture.cs", "owned")
+    assert response["data"]["sha256"] == "a" * 64
+    assert response["data"]["bytes_sha256"] == "b" * 64
+    assert response["data"]["count"] == 1
+    sender.assert_awaited_once()
 
 
 @pytest.mark.asyncio
