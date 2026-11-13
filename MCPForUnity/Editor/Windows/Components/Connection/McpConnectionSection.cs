@@ -77,6 +77,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private string lastHealthStatus;
         private int consecutiveVerifyFailures;
         private double lastLocalServerRunningPollTime;
+        private string localProbeUrl;
+        private Task<bool> localProbe;
         private bool lastLocalServerRunning;
         private int consecutiveServerDownPolls;
         private bool sessionWasRunning;
@@ -221,6 +223,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             transportDropdown.RegisterValueChangedCallback(evt =>
             {
                 autoStartGeneration++;
+                ResetLocalProbe();
                 var selected = (TransportProtocol)evt.newValue;
                 bool useHttp = selected != TransportProtocol.Stdio;
                 EditorConfigurationCache.Instance.SetUseHttpTransport(useHttp);
@@ -334,6 +337,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             if (!string.Equals(previousUrl, HttpEndpointUtility.GetBaseUrl(), StringComparison.Ordinal))
             {
                 autoStartGeneration++;
+                ResetLocalProbe();
                 cachedLoginUrl = null;
                 cachedLoginBaseUrl = null;
             }
@@ -381,19 +385,11 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             bool stdioSelected = !EditorConfigurationCache.Instance.UseHttpTransport;
             bool httpConnectionIntent = !stdioSelected && MCPServiceLocator.TransportManager.HasConnectionIntent(TransportMode.Http);
 
-            // Keep the Start/Stop Server button label in sync even when the session is not running
-            // (e.g., orphaned server after a domain reload).
-            // NOTE: This also updates lastLocalServerRunning which is used below for session toggle visibility.
-            UpdateStartHttpButtonState();
-
-            // A down-poll streak accumulated before/while no session was running must not
-            // carry into a freshly started session — it would satisfy orphan detection
-            // before the first post-start probe refreshes (the poll cadence is 0.75s).
-            if (isRunning && !sessionWasRunning)
-            {
-                consecutiveServerDownPolls = 0;
-            }
+            // A fresh session needs its own observations, including a probe that starts after it connects.
+            if (isRunning != sessionWasRunning)
+                ResetLocalProbe();
             sessionWasRunning = isRunning;
+            UpdateStartHttpButtonState();
 
             // Detect orphaned session: if HTTP Local session thinks it's running but the server is gone,
             // automatically end the session to keep UI in sync with reality.
@@ -651,6 +647,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             bool useHttp = transportDropdown != null && (TransportProtocol)transportDropdown.value != TransportProtocol.Stdio;
             if (!useHttp)
             {
+                ResetLocalProbe();
                 startHttpServerButton.SetEnabled(false);
                 startHttpServerButton.tooltip = string.Empty;
                 return;
@@ -661,28 +658,13 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             bool canStartLocalServer = httpLocalSelected && localUrlAllowedForLaunch;
             bool localServerRunning = false;
 
-            // Avoid running expensive port/PID checks every UI tick; use a fast socket probe for UI state.
             if (httpLocalSelected)
             {
-                double now = EditorApplication.timeSinceStartup;
-                if ((now - lastLocalServerRunningPollTime) > 0.75f || httpServerToggleInProgress)
-                {
-                    lastLocalServerRunningPollTime = now;
-                    lastLocalServerRunning = MCPServiceLocator.Server.IsLocalHttpServerReachable();
-
-                    // Probe results taken while the editor is busy are unreliable (main-thread
-                    // stalls starve the connect wait), so they don't count toward teardown.
-                    if (EditorApplication.isCompiling || EditorApplication.isUpdating)
-                    {
-                        consecutiveServerDownPolls = 0;
-                    }
-                    else
-                    {
-                        consecutiveServerDownPolls = lastLocalServerRunning ? 0 : consecutiveServerDownPolls + 1;
-                    }
-                }
+                PollLocalServer();
                 localServerRunning = lastLocalServerRunning;
             }
+            else
+                ResetLocalProbe();
 
             // Server button only controls server lifecycle (Start/Stop Server).
             // Session lifecycle is handled by the separate connectionToggleButton.
@@ -707,6 +689,43 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                         : localUrlError ?? $"HTTP Local requires a loopback URL ({HttpEndpointUtility.GetHttpLocalHostRequirementText()})."
                 )
                 : string.Empty;
+        }
+
+        private void ResetLocalProbe()
+        {
+            localProbeUrl = null;
+            localProbe = null;
+            lastLocalServerRunning = false;
+            consecutiveServerDownPolls = 0;
+            lastLocalServerRunningPollTime = double.NegativeInfinity;
+        }
+
+        private void PollLocalServer()
+        {
+            string url = HttpEndpointUtility.GetLocalBaseUrl();
+            if (!string.Equals(url, localProbeUrl, StringComparison.Ordinal))
+            {
+                ResetLocalProbe();
+                localProbeUrl = url;
+            }
+
+            double now = EditorApplication.timeSinceStartup;
+            if (localProbe == null && now - lastLocalServerRunningPollTime >= 0.75)
+            {
+                lastLocalServerRunningPollTime = now;
+                localProbe = MCPServiceLocator.Server.ProbeLocalHttpServerAsync(url);
+            }
+            if (localProbe == null || !localProbe.IsCompleted)
+                return;
+
+            bool sampled = localProbe.Status == TaskStatus.RanToCompletion;
+            if (sampled)
+                lastLocalServerRunning = localProbe.Result;
+            else if (localProbe.IsFaulted)
+                McpLog.Debug($"Local HTTP probe failed: {HttpEndpointUtility.RedactUrls(localProbe.Exception.GetBaseException().Message)}");
+            localProbe = null;
+            consecutiveServerDownPolls =
+                sampled && !lastLocalServerRunning && !EditorApplication.isCompiling && !EditorApplication.isUpdating ? consecutiveServerDownPolls + 1 : 0;
         }
 
         private void SetConnectionBlocker(string reason, VisualElement target)
@@ -755,14 +774,19 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             }
 
             var bridgeService = MCPServiceLocator.Bridge;
-            autoStartGeneration++;
+            int generation = ++autoStartGeneration;
+            string url = HttpEndpointUtility.GetLocalBaseUrl();
             httpServerToggleInProgress = true;
             startHttpServerButton?.SetEnabled(false);
 
             try
             {
                 // Check if a local server is running.
-                bool serverRunning = IsHttpLocalSelected() && MCPServiceLocator.Server.IsLocalHttpServerReachable();
+                if (!IsAutoStartContextCurrent(generation, url))
+                    return;
+                bool serverRunning = await MCPServiceLocator.Server.ProbeLocalHttpServerAsync(url);
+                if (!IsAutoStartContextCurrent(generation, url))
+                    return;
 
                 if (serverRunning)
                 {
@@ -771,6 +795,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     HttpBridgeReloadHandler.CancelPendingResume();
                     HttpAutoStartHandler.CancelPendingReconnect();
                     await bridgeService.StopAsync();
+                    if (!IsAutoStartContextCurrent(generation, url))
+                        return;
                     bool stopped = MCPServiceLocator.Server.StopLocalHttpServer();
                     if (stopped)
                     {
@@ -842,10 +868,11 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             {
                 if (!IsAutoStartContextCurrent(generation, url))
                     return;
-                if (server.IsLocalHttpServerReachable())
+                bool reachable = await server.ProbeLocalHttpServerAsync(url);
+                if (!IsAutoStartContextCurrent(generation, url))
+                    return;
+                if (reachable)
                 {
-                    if (!IsAutoStartContextCurrent(generation, url))
-                        return;
                     McpLog.Info($"Server ready on {HttpEndpointUtility.GetDisplayUrl(url)}");
                     bool started = await bridgeService.StartAsync();
                     if (!IsAutoStartContextCurrent(generation, url))

@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.Server;
@@ -16,13 +18,17 @@ namespace MCPForUnity.Editor.Services
     /// <summary>
     /// Service for managing MCP server lifecycle
     /// </summary>
-    public class ServerManagementService : IServerManagementService
+    public class ServerManagementService : IServerManagementService, IAsyncLocalHttpServerProbe
     {
         private readonly IProcessDetector _processDetector;
         private readonly IPidFileManager _pidFileManager;
         private readonly IServerCommandBuilder _commandBuilder;
         private readonly ITerminalLauncher _terminalLauncher;
         private readonly Func<Uri, string, (bool Accepted, string Error)> _shutdownRequester;
+        private Func<Uri, CancellationToken, Task<bool>> _probePort = (uri, token) => Task.Run(() => TryConnectToLocalPort(uri.Host, uri.Port, 250, token));
+        private string _probeUrl;
+        private Task<bool> _probeTask;
+        private CancellationTokenSource _probeCancellation;
 
         /// <summary>Actionable explanation of the last refused or failed stop. Never contains credentials.</summary>
         public string LastStopFailure { get; private set; }
@@ -608,18 +614,36 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private static bool TryConnectToLocalPort(string host, int port, int timeoutMs)
+        // Called on the Editor thread. Only the immutable endpoint and cancellation token cross into the worker.
+        public Task<bool> ProbeLocalHttpServerAsync(string localUrl)
+        {
+            if (_probeTask != null && !_probeTask.IsCompleted && string.Equals(localUrl, _probeUrl, StringComparison.Ordinal))
+                return _probeTask;
+
+            _probeCancellation?.Cancel();
+            _probeCancellation?.Dispose();
+            _probeCancellation = null;
+            _probeTask = null;
+            _probeUrl = localUrl;
+            if (!IsLocalUrl(localUrl) || !Uri.TryCreate(localUrl, UriKind.Absolute, out var uri) || uri.Port <= 0)
+                return Task.FromResult(false);
+
+            _probeCancellation = new CancellationTokenSource();
+            return _probeTask = _probePort(uri, _probeCancellation.Token);
+        }
+
+        private static bool TryConnectToLocalPort(string host, int port, int timeoutMs, CancellationToken token = default)
         {
             try
             {
                 // timeoutMs is an overall budget shared across candidate hosts, so a
                 // filtered/dropped first candidate cannot multiply the worst-case wait
-                // (this can run on the editor UI tick).
+                // across IPv4 and IPv6 loopback candidates.
                 var elapsed = System.Diagnostics.Stopwatch.StartNew();
                 foreach (string target in BuildLocalProbeHosts(host))
                 {
                     int remainingMs = timeoutMs - (int)elapsed.ElapsedMilliseconds;
-                    if (remainingMs <= 0)
+                    if (remainingMs <= 0 || token.IsCancellationRequested)
                     {
                         break;
                     }
@@ -629,7 +653,7 @@ namespace MCPForUnity.Editor.Services
                         using (var client = new TcpClient())
                         {
                             var connectTask = client.ConnectAsync(target, port);
-                            if (connectTask.Wait(remainingMs) && client.Connected)
+                            if (connectTask.Wait(remainingMs, token) && client.Connected)
                             {
                                 return true;
                             }

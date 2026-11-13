@@ -1,5 +1,23 @@
+using System.Threading.Tasks;
+
 namespace MCPForUnity.Editor.Services
 {
+    public interface IAsyncLocalHttpServerProbe
+    {
+        Task<bool> ProbeLocalHttpServerAsync(string localUrl);
+    }
+
+    internal static class LocalHttpProbeExtensions
+    {
+        internal static Task<bool> ProbeLocalHttpServerAsync(this IServerManagementService server, string localUrl)
+        {
+            // Existing injected services may access Editor APIs inside their synchronous method.
+            return server is IAsyncLocalHttpServerProbe probe
+                ? probe.ProbeLocalHttpServerAsync(localUrl)
+                : Task.FromResult(server.IsLocalHttpServerReachable());
+        }
+    }
+
     /// <summary>
     /// Interface for server management operations
     /// </summary>

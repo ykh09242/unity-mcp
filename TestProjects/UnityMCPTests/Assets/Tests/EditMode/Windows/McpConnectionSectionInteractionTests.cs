@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
@@ -446,6 +447,60 @@ namespace MCPForUnityTests.Editor.Windows
                 client.StopGate.TrySetResult(true);
                 manager.StopAsync().GetAwaiter().GetResult();
             }
+        }
+
+        [UnityTest]
+        public IEnumerator LocalProbe_DelayedEndpointChangeSharesWorkAndCountsOnlyFreshFailures()
+        {
+            var section = CreateSection();
+            UseHttp("local");
+            var protocol = typeof(McpConnectionSection).GetNestedType("TransportProtocol", BindingFlags.NonPublic);
+            Get<EnumField>(section, "transportDropdown").SetValueWithoutNotify((Enum)Enum.Parse(protocol, "HTTPLocal"));
+            Set(section, "startHttpServerButton", new Button());
+            var probes = new List<TaskCompletionSource<bool>>();
+            var cancellations = new List<CancellationToken>();
+            var service = new ServerManagementService();
+            Func<Uri, CancellationToken, Task<bool>> probe = (_, cancellation) =>
+            {
+                var completion = new TaskCompletionSource<bool>();
+                probes.Add(completion);
+                cancellations.Add(cancellation);
+                return completion.Task;
+            };
+            typeof(ServerManagementService).GetField("_probePort", InstanceFlags).SetValue(service, probe);
+            MCPServiceLocator.Register<IServerManagementService>(service);
+            bridge.Running = true;
+            section.UpdateConnectionStatus();
+            Task launch = (Task)Invoke(section, "TryAutoStartSessionAsync");
+            section.UpdateConnectionStatus();
+            yield return null;
+            section.UpdateConnectionStatus();
+            Assert.AreEqual(1, probes.Count, "Editor ticks and launch polling must share the pending observation.");
+            Assert.IsFalse(launch.IsCompleted);
+
+            HttpEndpointUtility.SaveLocalBaseUrl("http://127.0.0.1:9090");
+            section.UpdateConnectionStatus();
+            Assert.AreEqual(2, probes.Count);
+            Assert.IsTrue(cancellations[0].IsCancellationRequested);
+            probes[0].SetResult(true);
+            yield return Complete(launch);
+            Assert.AreEqual(0, bridge.StartCalls, "The late old endpoint must not connect or enable Stop Server.");
+            Assert.IsFalse(Get<bool>(section, "lastLocalServerRunning"));
+            for (int failure = 1; failure <= 3; failure++)
+            {
+                Assert.AreEqual(failure + 1, probes.Count);
+                probes[failure].SetResult(false);
+                section.UpdateConnectionStatus();
+                if (failure < 3)
+                {
+                    section.UpdateConnectionStatus();
+                    Assert.AreEqual(failure, Get<int>(section, "consecutiveServerDownPolls"));
+                    Assert.AreEqual(0, bridge.StopCalls);
+                    Set(section, "lastLocalServerRunningPollTime", double.NegativeInfinity);
+                    section.UpdateConnectionStatus();
+                }
+            }
+            Assert.AreEqual(1, bridge.StopCalls);
         }
 
         [TestCase("local", "HTTPLocal")]

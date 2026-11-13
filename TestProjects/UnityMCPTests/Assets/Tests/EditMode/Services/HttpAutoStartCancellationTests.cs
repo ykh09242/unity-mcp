@@ -144,6 +144,22 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [UnityTest]
+        public IEnumerator CanceledAutoStart_DelayedProbeCannotLaunchOrConnect()
+        {
+            var gate = new TaskCompletionSource<bool>();
+            server.ProbeGate = gate.Task;
+            var task = (Task)typeof(HttpAutoStartHandler).GetMethod("AutoStartAsync", StaticFlags).Invoke(null, null);
+            pendingTasks.Add(task);
+            Assert.AreEqual(1, server.Polls);
+            Assert.IsFalse(task.IsCompleted);
+            HttpAutoStartHandler.CancelPendingReconnect();
+            gate.SetResult(false);
+            yield return Complete(task);
+            Assert.AreEqual(0, server.LaunchCalls);
+            Assert.AreEqual(0, bridge.StartCalls);
+        }
+
+        [UnityTest]
         public IEnumerator OldConnectCompletion_PreservesNewPendingReconnect()
         {
             EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
@@ -242,21 +258,29 @@ namespace MCPForUnityTests.Editor.Services
             public Task<BridgeVerificationResult> VerifyAsync() => Task.FromResult(new BridgeVerificationResult());
         }
 
-        private sealed class FakeServer : IServerManagementService
+        private sealed class FakeServer : IServerManagementService, IAsyncLocalHttpServerProbe
         {
             public int Polls;
+            public int LaunchCalls;
+            public Task<bool> ProbeGate;
             public Func<bool> Reachable = () => false;
             public bool HasManagedServerLaunchHandle => false;
 
-            public bool IsLocalHttpServerReachable()
+            public Task<bool> ProbeLocalHttpServerAsync(string localUrl)
             {
                 Polls++;
-                return Reachable();
+                return ProbeGate ?? Task.FromResult(Reachable());
             }
+
+            public bool IsLocalHttpServerReachable() => throw new InvalidOperationException("Auto-start must use the asynchronous probe.");
 
             public bool IsManagedServerLaunchProcessAlive() => true;
 
-            public bool StartLocalHttpServer(bool quiet = false) => throw new InvalidOperationException("Reconnect must never launch a server.");
+            public bool StartLocalHttpServer(bool quiet = false)
+            {
+                LaunchCalls++;
+                throw new InvalidOperationException("Reconnect must never launch a server.");
+            }
 
             public void LogLocalHttpServerLaunchFailure() => throw new InvalidOperationException("Unexpected launch failure.");
 
