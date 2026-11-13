@@ -18,7 +18,7 @@ def encoded_size(value):
     )
 
 
-async def collect_result(first, job_id, fetch):
+async def collect_result(first, job_id, fetch, bind_observation):
     data = first.get("data")
     if not isinstance(data, dict) or data.get("job_id") != job_id:
         raise InconsistentResult()
@@ -59,10 +59,22 @@ async def collect_result(first, job_id, fetch):
         key: value for key, value in result.items() if key not in {"rows", "offset", "next_cursor"}
     }
     total = header.get("total_rows")
-    if type(total) is not int or not 0 <= total <= 10000 or encoded_size(header) > 512 * 1024:
-        raise InconsistentResult()
-    primary, context, offset, seen = [], [], 0, set()
+    generation = data.get("editor_generation")
     header_bytes = encoded_size(header)
+    if (
+        type(total) is not int
+        or not 0 <= total <= 10000
+        or header_bytes > 512 * 1024
+        or not isinstance(generation, str)
+        or not 0 < len(generation) <= 128
+    ):
+        raise InconsistentResult()
+    bind_observation(
+        hashlib.sha256(
+            json.dumps([generation, header], sort_keys=True, separators=(",", ":")).encode()
+        ).digest()
+    )
+    primary, context, offset, seen = [], [], 0, set()
     bytes_seen = header_bytes
     response = first
     for _ in range(64):
@@ -123,6 +135,20 @@ async def collect_result(first, job_id, fetch):
             raise InconsistentResult()
         seen.add(cursor)
         response = await fetch(cursor)
+        if isinstance(response, dict) and response.get("success") is False:
+            detail = response.get("data")
+            reason = detail.get("reason") if isinstance(detail, dict) else None
+            if reason in (
+                "outcome_unknown",
+                "command_deadline_exceeded",
+                "command_not_dispatched",
+                "stale_connection",
+                "read_invalidated",
+                "operation_target_changed",
+                "no_unity_session",
+            ) or (detail is None and isinstance(response.get("error"), str)):
+                # Legacy stdio can return a connection exception as a reasonless MCP error.
+                raise ConnectionError()
     raise InconsistentResult()
 
 

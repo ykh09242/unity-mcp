@@ -31,7 +31,14 @@ class QualityJob:
     terminal: bool = False
     retained: bool = False
     baseline_token: str | None = None
+    observation: bytes | None = None
+    collection_expires: float | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
+    def bind_observation(self, observation):
+        if self.observation is not None and self.observation != observation:
+            raise InconsistentResult()
+        self.observation = observation
 
 
 class ScriptQualityService:
@@ -66,6 +73,13 @@ class ScriptQualityService:
                 "analysis_target_changed", "The selected Editor connection changed before dispatch."
             )
         owner = target.scope.key
+        now = self.results.clock()
+        for identity in list(self.results.active):
+            pending = self.jobs[identity]
+            if pending.collection_expires is not None and pending.collection_expires <= now:
+                self.results.settle(identity, pending.owner)
+                pending.retained = True
+                pending.collection_expires = None
         job_id = parsed.get("job_id") or parsed.get("analysis_id")
         if action in {"status", "cancel", "impact"}:
             job = self.jobs.get(job_id)
@@ -76,6 +90,8 @@ class ScriptQualityService:
                 )
             if job.retained and action in {"status", "cancel"}:
                 return self._page(job_id, job, parsed)
+            if action == "cancel" and job.observation is not None:
+                action = "status"
         if action == "impact":
             from services.script_quality.impact import inspect_script_impact
             from services.reference_graph.store import RevisionConflict
@@ -136,7 +152,14 @@ class ScriptQualityService:
                 return self.error("impact_unavailable", str(error)[:2048])
         if action in {"analyze", "capture_baseline"}:
             if len(self.jobs) >= 512:
-                oldest = next((key for key, item in self.jobs.items() if item.terminal), None)
+                oldest = next(
+                    (
+                        key
+                        for key, item in self.jobs.items()
+                        if item.terminal and key not in self.results.active
+                    ),
+                    None,
+                )
                 if oldest is None:
                     return self.error(
                         "analysis_capacity_unavailable",
@@ -151,11 +174,11 @@ class ScriptQualityService:
                     str(error),
                     "The bounded evidence store has no capacity; settle outstanding jobs first.",
                 )
-            self.jobs[job_id] = QualityJob(owner, instance, action, parsed, monotonic())
+            job = self.jobs[job_id] = QualityJob(owner, instance, action, parsed, monotonic())
             if parsed.get("baseline_id"):
                 baseline = self.results.read(parsed["baseline_id"], owner, baseline=True)
                 if baseline is not None:
-                    self.jobs[job_id].baseline_token = baseline.get("source_token")
+                    job.baseline_token = baseline.get("source_token")
         params = {"action": action, **parsed}
         params.pop("baseline_id", None)
         if job_id is not None:
@@ -194,13 +217,18 @@ class ScriptQualityService:
                     "failed",
                     "canceled",
                 }:
-                    self.jobs[job_id].terminal = True
+                    job.terminal = True
+                    if (
+                        data.get("state") == "completed"
+                        and not job.retained
+                        and job.collection_expires is None
+                    ):
+                        job.collection_expires = self.results.clock() + self.results.ttl
                 if (
                     action == "status"
                     and data.get("state") == "completed"
                     and data.get("terminal") is True
                 ):
-                    job = self.jobs[job_id]
                     async with job.lock:
                         if job.retained:
                             return self._page(job_id, job, parsed)
@@ -219,7 +247,17 @@ class ScriptQualityService:
                                     deadline,
                                 )
 
-                            result = await collect_result(response, job_id, fetch)
+                            result = await collect_result(
+                                response, job_id, fetch, job.bind_observation
+                            )
+                            if (
+                                job.collection_expires is None
+                                or job.collection_expires <= self.results.clock()
+                            ):
+                                self.results.settle(job_id, owner)
+                                job.retained = True
+                                job.collection_expires = None
+                                return self._page(job_id, job, parsed)
                             self.results.complete(
                                 job_id,
                                 owner,
@@ -228,21 +266,26 @@ class ScriptQualityService:
                                 and baseline_eligible(result),
                             )
                             job.retained = True
+                            job.collection_expires = None
                             job.options = {"baseline_id": job.options.get("baseline_id")}
-                        except (
-                            InconsistentResult,
-                            RetentionRefused,
-                            TimeoutError,
-                            ConnectionError,
-                        ):
+                        except (TimeoutError, ConnectionError):
+                            return {
+                                **self.error(
+                                    "analysis_collection_interrupted",
+                                    "Retry status with this job_id to collect the completed analysis.",
+                                ),
+                                "job_id": job_id,
+                            }
+                        except (InconsistentResult, RetentionRefused):
                             self.results.settle(job_id, owner)
                             job.retained = True
+                            job.collection_expires = None
                             return self.error(
                                 "analysis_result_inconsistent",
                                 "The completed native result could not be collected as one bounded source observation.",
                             )
                     return self._page(job_id, job, parsed)
-                if self.jobs[job_id].terminal:
+                if data.get("state") in {"failed", "canceled"} and data.get("terminal") is True:
                     self.results.settle(job_id, owner)
             else:
                 response = {**response, "job_id": job_id}
@@ -261,7 +304,7 @@ class ScriptQualityService:
                     }
                 ):
                     # Only a known pre-admission refusal proves no process exists.
-                    self.jobs[job_id].terminal = True
+                    job.terminal = True
                     self.results.settle(job_id, owner)
         return response
 
@@ -274,7 +317,7 @@ class ScriptQualityService:
             check = await target.authorize_public(command, params)
             check()
         if not target.is_current():
-            raise InconsistentResult("analysis_target_changed")
+            raise ConnectionError("analysis_target_changed")
         response = await asyncio.wait_for(
             send_with_unity_instance(
                 async_send_command_with_retry,
@@ -286,6 +329,8 @@ class ScriptQualityService:
             ),
             max(0, deadline - monotonic()),
         )
+        if not target.is_current():
+            raise ConnectionError("analysis_target_changed")
         if check is not None:
             check()
         return (

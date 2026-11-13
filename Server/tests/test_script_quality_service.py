@@ -221,6 +221,80 @@ async def test_pages_with_changed_source_identity_are_never_published(quality):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", [None, "exception", "unknown", "deadline", "connection"])
+async def test_completed_collection_recovers_without_restarting(quality, interruption):
+    from models import MCPResponse
+    from transport.command_budget import command_outcome_unknown
+    from transport.legacy.unity_connection import _stdio_deadline_response
+
+    service, target, send = quality
+    start = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})
+    job_id = start["data"]["job_id"]
+    first = native_completion(job_id, rows=[diagnostic_row()], cursor="next")
+    last = native_completion(job_id, rows=[diagnostic_row("last")], offset=1)
+    first["data"]["result"]["total_rows"] = last["data"]["result"]["total_rows"] = 2
+    errors = {
+        "exception": TimeoutError(),
+        "unknown": command_outcome_unknown("manage_script_quality", "Connection lost"),
+        "deadline": _stdio_deadline_response("manage_script_quality", None),
+        "connection": MCPResponse(success=False, error="Connection reset by peer"),
+    }
+    send.side_effect = [first, errors[interruption], first, last] if interruption else [first, last]
+    options = {"job_id": job_id}
+    if interruption:
+        interrupted = await service.execute(None, "status", options)
+        assert interrupted["code"] == "analysis_collection_interrupted"
+        assert interrupted["job_id"] == job_id
+        assert job_id in service.results.active
+        target.scope.key = ("other", "project-a")
+        assert (await service.execute(None, "status", options))["code"] == "analysis_not_found"
+        target.scope.key = ("local", "project-a")
+    response = await service.execute(None, "status", options)
+    assert [row["diagnostic"]["anchor"] for row in response["data"]["result"]["rows"]] == [
+        "existing",
+        "last",
+    ]
+    assert job_id not in service.results.active
+    assert [call.args[3]["action"] for call in send.await_args_list] == [
+        "analyze",
+        *(["status"] * (4 if interruption else 2)),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["generation", "source", "expiry"])
+async def test_interrupted_collection_is_bound_to_original_observation_and_lifetime(quality, drift):
+    service, target, send = quality
+    now = [0.0]
+    service.results.clock = lambda: now[0]
+    start = await service.execute(None, "capture_baseline", {"paths": ["Assets/A.cs"]})
+    job_id = start["data"]["job_id"]
+    first = native_completion(job_id, rows=[diagnostic_row()], cursor="next")
+    first["data"]["result"]["total_rows"] = 2
+    send.side_effect = [first, ConnectionError()]
+    assert (await service.execute(None, "status", {"job_id": job_id}))[
+        "code"
+    ] == "analysis_collection_interrupted"
+    if drift == "expiry":
+        now[0] += service.results.ttl
+    else:
+        changed = native_completion(job_id, rows=[diagnostic_row()], cursor="next")
+        changed["data"]["result"]["total_rows"] = 2
+        if drift == "generation":
+            changed["data"]["editor_generation"] = "another-generation"
+        else:
+            changed["data"]["result"]["source_token"] = "d" * 64
+        send.side_effect = [changed]
+    response = await service.execute(None, "status", {"job_id": job_id})
+    assert response["code"] == (
+        "analysis_expired_or_evicted" if drift == "expiry" else "analysis_result_inconsistent"
+    )
+    assert job_id not in service.results.active
+    assert service.results.read(job_id, target.scope.key, baseline=True) is None
+    assert [call.args[3]["action"] for call in send.await_args_list].count("capture_baseline") == 1
+
+
+@pytest.mark.asyncio
 async def test_retention_capacity_is_reserved_before_native_dispatch(quality):
     service, _, send = quality
     service.results.total_bytes = 1
