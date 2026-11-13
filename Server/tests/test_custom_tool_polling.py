@@ -165,6 +165,37 @@ async def test_custom_tool_polling_threads_user_and_job_parameters(service, monk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "observed, expected", [("native-job", "native-job"), (" ", "caller-job"), (None, "caller-job")]
+)
+async def test_pending_job_identity_is_used_for_polls_and_refusal(
+    service, monkeypatch, observed, expected
+):
+    monkeypatch.setattr(module.asyncio, "sleep", AsyncMock())
+    send = AsyncMock(
+        side_effect=[
+            {"_mcp_status": "pending", "data": {"job_id": "later-job"}},
+            module.custom_catalog_changed(),
+        ]
+    )
+    monkeypatch.setattr(module, "send_with_unity_instance", send)
+    params = {"action": "start", "job_id": "caller-job"}
+
+    result = await service._poll_until_complete(
+        "build",
+        "Project@hash",
+        params,
+        {"_mcp_status": "pending", "data": {"job_id": observed}},
+        "status",
+    )
+
+    assert [call.args[3]["job_id"] for call in send.call_args_list] == [expected, expected]
+    assert result.data["job_id"] == expected
+    assert result.data["poll_dispatched"] is False
+    assert params["job_id"] == "caller-job"
+
+
+@pytest.mark.asyncio
 async def test_pending_job_survives_retryable_poll_response(service, monkeypatch):
     # Given: an admitted job encounters a temporary unavailable-session response.
     now = [0.0]

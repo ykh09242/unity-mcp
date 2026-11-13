@@ -655,7 +655,14 @@ class CustomToolService:
         ):
             poll_params = dict(initial_params)
             poll_params["action"] = poll_action or "status"
-            if poll_params.get("job_id") is None and isinstance(initial_response, dict):
+            started = (
+                isinstance(initial_response, dict)
+                and initial_response.get("_mcp_status") == "pending"
+                and initial_response.get("success") is not False
+            )
+            if isinstance(initial_response, dict) and (
+                started or poll_params.get("job_id") is None
+            ):
                 data = initial_response.get("data")
                 job_id = data.get("job_id") if isinstance(data, dict) else None
                 if isinstance(job_id, str) and job_id.strip():
@@ -666,11 +673,6 @@ class CustomToolService:
                 min(deadline, time.monotonic() + timeout)
                 if deadline is not None
                 else time.monotonic() + timeout
-            )
-            started = (
-                isinstance(initial_response, dict)
-                and initial_response.get("_mcp_status") == "pending"
-                and initial_response.get("success") is not False
             )
             response = initial_response
             last_observation = self._poll_observation(response)
