@@ -174,8 +174,9 @@ or `unknown`), `instance_discovery`, and `target_ready`.
 
 With multiple Editors, supply `--instance` before `status`. Readiness uses the local
 command route's selection rules: the complete inventory `hash` matches first and
-must identify exactly one Editor. `Name@Hash` uses the complete hash after the last
-`@`; the name portion does not constrain an exact hash match. If there is no exact
+must identify exactly one Editor. For `Name@Hash`, the name before the last `@`
+and the complete hash must both match that Editor. Supply just the complete hash
+when selection should be independent of the project name. If there is no exact
 hash match, a selector without `@` can match one exact project name. Duplicate
 exact hash matches or duplicate fallback name matches are ambiguous. Hash prefixes
 and transport `session_id` values are not selectors, and whitespace is preserved.
