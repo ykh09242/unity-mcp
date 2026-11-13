@@ -287,43 +287,28 @@ namespace MCPForUnityTests.EditMode.Windows
         [Test]
         public void StdioOnlySuccessKeepsSwitchVisibleUntilUserFinishes()
         {
-            bool had = EditorPrefs.HasKey(EditorPrefKeys.UseHttpTransport);
-            bool previous = EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport);
-            try
-            {
-                EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
-                EditorConfigurationCache.Instance.Refresh();
-                WithReadySetup(
-                    (window, _) =>
-                    {
-                        var client = new Client { Id = "stdio", SupportedTransports = new[] { ConfiguredTransport.Stdio } };
-                        int finished = 0,
-                            opened = 0;
-                        Set(window, "getClients", (Func<IReadOnlyList<IMcpClientConfigurator>>)(() => new[] { client }));
-                        Set(window, "configureClient", (Action<IMcpClientConfigurator>)(_ => { }));
-                        Set(window, "finishSetup", (Action)(() => finished++));
-                        Set(window, "openConnectionControls", (Action)(() => opened++));
-                        Invoke(window, "ShowClientsStep");
-                        Invoke(window, "OnConfigureSelectedClicked");
-                        Assert.Zero(finished);
-                        Assert.IsTrue(EditorConfigurationCache.Instance.UseHttpTransport);
-                        Assert.IsFalse(window.rootVisualElement.Q<Button>("open-connection-controls-button").ClassListContains("hidden"));
-                        Assert.That(window.rootVisualElement.Q("clients-list").Query<Label>().ToList().Any(label => label.text.Contains("Switch to stdio")));
-                        Invoke(window, "OnOpenConnectionControlsClicked");
-                        Assert.AreEqual(1, opened);
-                        Invoke(window, "OnSkipClientsClicked");
-                        Assert.AreEqual(1, finished);
-                    }
-                );
-            }
-            finally
-            {
-                if (had)
-                    EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, previous);
-                else
-                    EditorPrefs.DeleteKey(EditorPrefKeys.UseHttpTransport);
-                EditorConfigurationCache.Instance.Refresh();
-            }
+            WithReadySetup(
+                (window, _) =>
+                {
+                    var client = new Client { Id = "stdio", SupportedTransports = new[] { ConfiguredTransport.Stdio } };
+                    int finished = 0,
+                        opened = 0;
+                    Set(window, "getClients", (Func<IReadOnlyList<IMcpClientConfigurator>>)(() => new[] { client }));
+                    Set(window, "configureClient", (Action<IMcpClientConfigurator>)(_ => { }));
+                    Set(window, "finishSetup", (Action)(() => finished++));
+                    Set(window, "openConnectionControls", (Action)(() => opened++));
+                    Set(window, "useHttpTransport", (Func<bool>)(() => true));
+                    Invoke(window, "ShowClientsStep");
+                    Invoke(window, "OnConfigureSelectedClicked");
+                    Assert.Zero(finished);
+                    Assert.IsFalse(window.rootVisualElement.Q<Button>("open-connection-controls-button").ClassListContains("hidden"));
+                    Assert.That(window.rootVisualElement.Q("clients-list").Query<Label>().ToList().Any(label => label.text.Contains("Switch to stdio")));
+                    Invoke(window, "OnOpenConnectionControlsClicked");
+                    Assert.AreEqual(1, opened);
+                    Invoke(window, "OnSkipClientsClicked");
+                    Assert.AreEqual(1, finished);
+                }
+            );
         }
 
         [Test]

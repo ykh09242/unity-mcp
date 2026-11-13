@@ -75,6 +75,7 @@ namespace MCPForUnity.Editor.Windows
             configurationFailure;
         private Action finishSetup = null;
         private Action openConnectionControls = MCPForUnityEditorWindow.ShowConnectionControls;
+        private Func<bool> useHttpTransport = () => EditorConfigurationCache.Instance.UseHttpTransport;
 
         private DependencyCheckResult _dependencyResult;
         private string _dependencyCheckError;
@@ -446,10 +447,7 @@ namespace MCPForUnity.Editor.Windows
                         configuredClients.Add(configuringClient.Id);
                         retry = false;
                         result = "Configured. This client will not be repeated during retry.";
-                        if (
-                            EditorConfigurationCache.Instance.UseHttpTransport
-                            && ClientConfigurationService.RequiresStdioBridge(configuringClient.SupportedTransports)
-                        )
+                        if (useHttpTransport() && ClientConfigurationService.RequiresStdioBridge(configuringClient.SupportedTransports))
                         {
                             stdioBridgeSwitchPending = true;
                             result += " Switch to stdio and connect using connection controls when ready.";
@@ -539,7 +537,7 @@ namespace MCPForUnity.Editor.Windows
                 clientsResult.text = "Select a client to configure, or choose Skip to finish.";
                 return;
             }
-            if (stdioBridgeSwitchPending && EditorConfigurationCache.Instance.UseHttpTransport)
+            if (stdioBridgeSwitchPending && useHttpTransport())
             {
                 clientsResult.text += "Open connection controls to switch to stdio and connect, or choose Skip to finish later.";
                 return;

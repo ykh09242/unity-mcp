@@ -123,21 +123,17 @@ namespace MCPForUnity.Editor.Clients.Configurators
                     : null;
                 if (migrationOnly && automatic == null)
                     return null;
+                if (HttpEndpointUtility.GetCurrentServerTransport() == ConfiguredTransport.Stdio && GeneratedStdioEntry(unityMcp) == null)
+                {
+                    var status = ValidateManualStdio(unityMcp, GetExpectedPackageSourceForValidation(), out string detail);
+                    client.SetStatus(status, detail);
+                    if (status == McpStatus.Configured)
+                        client.configuredTransport = ConfiguredTransport.Stdio;
+                    return client.status;
+                }
                 if (EntryMatchesCurrentTransport(unityMcp))
                 {
-                    string generated = GeneratedStdioEntry(unityMcp);
-                    if (HttpEndpointUtility.GetCurrentServerTransport() == ConfiguredTransport.Stdio && generated == null)
-                    {
-                        string executable = (string)unityMcp["command"][0];
-                        if (Path.IsPathRooted(executable) && !File.Exists(executable))
-                        {
-                            client.SetStatus(McpStatus.IncorrectPath, "The configured executable path does not exist.");
-                            return client.status;
-                        }
-                        client.SetStatus(McpStatus.Configured, ManualSourceOnlyStatus);
-                    }
-                    else
-                        client.SetStatus(McpStatus.Configured);
+                    client.SetStatus(McpStatus.Configured);
                     client.configuredTransport = HttpEndpointUtility.GetCurrentServerTransport();
                 }
                 else if (automatic != null)
@@ -158,6 +154,28 @@ namespace MCPForUnity.Editor.Clients.Configurators
         }
 
         public override void Configure() => WriteGeneratedConfiguration(GetConfigPath(), null);
+
+        internal static McpStatus ValidateManualStdio(JObject entry, string expectedSource, out string detail)
+        {
+            detail = null;
+            if (
+                entry?["enabled"]?.Value<bool>() == false
+                || !string.Equals((string)entry?["type"], LocalType, StringComparison.OrdinalIgnoreCase)
+                || entry?["command"] is not JArray command
+                || command.Count == 0
+                || command.Any(token => token.Type != JTokenType.String)
+                || !McpConfigurationHelper.PathsEqual(McpConfigurationHelper.ExtractUvxUrl(command.ToObject<string[]>()), expectedSource)
+            )
+                return McpStatus.IncorrectPath;
+            string executable = (string)command[0];
+            if (Path.IsPathRooted(executable) && !File.Exists(executable))
+            {
+                detail = "The configured executable path does not exist.";
+                return McpStatus.IncorrectPath;
+            }
+            detail = ManualSourceOnlyStatus;
+            return McpStatus.Configured;
+        }
 
         private void WriteGeneratedConfiguration(string path, GeneratedClientConfigOwnership.AutomaticRefresh automatic)
         {
