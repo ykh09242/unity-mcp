@@ -29,6 +29,7 @@ from core.sdk_compatibility import is_reviewed_sdk
 from models.tool_outcome import is_execution_failure
 from models.response_limits import (
     MAX_RESPONSE_BYTES,
+    MAX_RESPONSE_DEPTH,
     MAX_RESPONSE_RETAINED_BYTES,
     ResponseOwner,
     bounded_json_text,
@@ -210,6 +211,12 @@ def _public_projection(result: ToolResult) -> CallToolResult:
             for key, value in (wire.meta or {}).items()
             if key not in {META_KEY, "fastmcp"} and not key.startswith("io.modelcontextprotocol/")
         },
+    )
+
+
+def _retained_result_text(raw: bytes) -> str | None:
+    return bounded_json_text(
+        raw, max_bytes=RESULT_BYTES, max_depth=MAX_RESPONSE_DEPTH, max_nodes=100_000
     )
 
 
@@ -458,7 +465,11 @@ class PreparedExecution:
                 if memory is not None:
                     if (
                         response_size(
-                            wire, max_bytes=RESULT_BYTES, max_retained=RESULT_WORKING_BYTES
+                            wire,
+                            max_bytes=RESULT_BYTES,
+                            # Lookup nests this result under structuredContent.result.
+                            max_depth=MAX_RESPONSE_DEPTH - 2,
+                            max_retained=RESULT_WORKING_BYTES,
                         )
                         is None
                     ):
@@ -476,7 +487,7 @@ class PreparedExecution:
                         raw = json.dumps(
                             projection, ensure_ascii=False, separators=(",", ":"), allow_nan=False
                         ).encode("utf-8")
-                        if len(raw) > RESULT_BYTES:
+                        if _retained_result_text(raw) is None:
                             raw, reason = None, "result_too_large"
                 view = await self._finish(
                     "unknown" if _outcome_unknown(wire.structured_content) else "completed",
@@ -722,9 +733,7 @@ class ExecutionReceipts:
             )
             await authority.check()
             if raw is not None:
-                text = bounded_json_text(
-                    raw, max_bytes=RESULT_BYTES, max_depth=64, max_nodes=100000
-                )
+                text = _retained_result_text(raw)
                 if text is None:
                     raise ReceiptUnavailable("execution_receipt_result_invalid")
                 typed = CallToolResult.model_validate(json.loads(text))

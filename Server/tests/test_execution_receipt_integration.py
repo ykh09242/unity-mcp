@@ -108,6 +108,14 @@ async def sdk_wire(
 
     middleware = UnityInstanceMiddleware()
 
+    @server.tool(name="receipt_tree")
+    async def receipt_tree(depth: int) -> ToolResult:
+        counts["body"] += 1
+        tree = []
+        for _ in range(depth):
+            tree = [tree]
+        return ToolResult(content=[], structured_content={"tree": tree})
+
     @server.tool(name="get_test_job")
     async def wait(job_id: str, wait_timeout: int = 1) -> ToolResult:
         counts["body"] += 1
@@ -347,6 +355,56 @@ async def test_control_lookup_is_offline_and_authorized_without_selection(tmp_pa
             "checked": 4,
             "count": 17,
         }
+        assert counts["body"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("depth", "available"), [(60, True), (61, False), (62, False)])
+async def test_nested_result_available_only_when_lookup_and_duplicate_can_deliver(
+    tmp_path, monkeypatch, depth, available
+):
+    async with sdk_wire(tmp_path, monkeypatch) as (runtime, counts, call):
+        params = {
+            "name": "receipt_tree",
+            "arguments": {"depth": depth},
+            "_meta": {META_KEY: options(runtime)},
+        }
+        first = (await call("tools/call", params, "first"))["result"]
+        receipt = first["_meta"][META_KEY]
+        lookup = (
+            await call(
+                "tools/call",
+                {
+                    "name": "get_execution_receipt",
+                    "arguments": {
+                        "action": "get",
+                        "store_id": runtime.store.store_id,
+                        "project_hash": PROJECT,
+                        "receipt_id": receipt["receipt_id"],
+                        "include_result": True,
+                    },
+                },
+                "lookup",
+            )
+        )["result"]["structuredContent"]
+        duplicate = (await call("tools/call", params, "duplicate"))["result"]
+
+        tree = first["structuredContent"]["tree"]
+        for _ in range(depth):
+            (tree,) = tree
+        assert tree == []
+        assert first["isError"] is False
+        assert receipt["status"] == "completed"
+        assert receipt["result_available"] is available
+        assert lookup["result_available"] is available
+        assert duplicate["_meta"][META_KEY] == {**receipt, "replayed": True}
+        if available:
+            assert lookup["result"]["structuredContent"] == first["structuredContent"]
+            assert duplicate["structuredContent"] == first["structuredContent"]
+        else:
+            assert receipt["result_unavailable_reason"] == "result_too_large"
+            assert lookup["result"] is None
+            assert duplicate["structuredContent"]["error"] == "receipt_result_unavailable"
         assert counts["body"] == 1
 
 
