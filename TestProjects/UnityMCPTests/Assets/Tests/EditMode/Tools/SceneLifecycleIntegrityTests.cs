@@ -519,6 +519,46 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void MoveToScene_IntegerIdsNeverFallBackToNumericNames()
+        {
+            var missingName = new GameObject(int.MaxValue.ToString());
+            var largeName = new GameObject("2147483648");
+            var holder = new GameObject("ComponentHolder");
+            var component = holder.AddComponent<BoxCollider>();
+            var texture = new Texture2D(1, 1);
+            var assetName = new GameObject(texture.GetInstanceIDCompat().ToString());
+            SceneManager.MoveGameObjectToScene(missingName, second);
+            SceneManager.MoveGameObjectToScene(largeName, second);
+            SceneManager.MoveGameObjectToScene(assetName, second);
+            try
+            {
+                JObject request = new JObject { ["action"] = "move_to_scene", ["scenePath"] = firstPath };
+                foreach (long id in new long[] { int.MaxValue, 2147483648L, texture.GetInstanceIDCompat() })
+                {
+                    request["target"] = id;
+                    var response = Call(request);
+                    Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                    Assert.AreEqual(second, missingName.scene);
+                    Assert.AreEqual(second, largeName.scene);
+                    Assert.AreEqual(second, assetName.scene);
+                    Assert.AreEqual(first, holder.scene);
+                }
+                request["target"] = missingName.name;
+                Success(Call(request));
+                Assert.AreEqual(first, missingName.scene);
+
+                request["scenePath"] = secondPath;
+                request["target"] = component.GetInstanceIDCompat();
+                Success(Call(request));
+                Assert.AreEqual(second, holder.scene);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(texture);
+            }
+        }
+
+        [Test]
         public void MoveToScene_NumericNameAndLongNameRemainSupported()
         {
             var numeric = new GameObject("2147483647");

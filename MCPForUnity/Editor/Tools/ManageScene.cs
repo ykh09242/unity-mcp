@@ -124,7 +124,7 @@ namespace MCPForUnity.Editor.Tools
             // Multi-scene editing
             public string sceneName { get; set; }
             public string scenePath { get; set; }
-            public string target { get; set; } // GO reference for move_to_scene
+            public JToken target { get; set; } // GO reference for move_to_scene
             public bool? removeScene { get; set; } // for close_scene
             public bool? additive { get; set; } // for load additive mode
             public string template { get; set; } // for create with template
@@ -209,7 +209,7 @@ namespace MCPForUnity.Editor.Tools
                 // Multi-scene editing
                 sceneName = (p["sceneName"] ?? p["scene_name"])?.ToString(),
                 scenePath = (p["scenePath"] ?? p["scene_path"])?.ToString(),
-                target = (p["target"])?.ToString(),
+                target = p["target"],
                 removeScene = ParamCoercion.CoerceBoolNullable(p["removeScene"] ?? p["remove_scene"]),
                 additive = ParamCoercion.CoerceBoolNullable(p["additive"]),
                 template = (p["template"])?.ToString()?.ToLowerInvariant(),
@@ -2334,8 +2334,10 @@ namespace MCPForUnity.Editor.Tools
 
         private static object MoveToScene(SceneCommand cmd)
         {
-            if (string.IsNullOrEmpty(cmd.target))
+            if (cmd.target == null || cmd.target.Type == JTokenType.Null || string.IsNullOrEmpty(cmd.target.ToString()))
                 return new ErrorResponse("'target' (GameObject name/path/instanceID) is required for move_to_scene.");
+            if (cmd.target.Type != JTokenType.String && cmd.target.Type != JTokenType.Integer)
+                return new ErrorResponse("'target' must be a GameObject name/path or integer instance ID.");
 
             var go = ResolveMoveSource(cmd.target, out bool ambiguous);
             if (ambiguous)
@@ -2371,9 +2373,18 @@ namespace MCPForUnity.Editor.Tools
             );
         }
 
-        private static GameObject ResolveMoveSource(string target, out bool ambiguous)
+        private static GameObject ResolveMoveSource(JToken targetToken, out bool ambiguous)
         {
             ambiguous = false;
+            string target = targetToken.ToString();
+            if (targetToken.Type == JTokenType.Integer)
+            {
+                if (!int.TryParse(target, out int exactId))
+                    return null;
+                var exactObject = GameObjectLookup.ResolveInstanceID(exactId);
+                var exact = exactObject as GameObject ?? (exactObject as Component)?.gameObject;
+                return exact != null && exact.scene.IsValid() && exact.scene.isLoaded ? exact : null;
+            }
             if (int.TryParse(target, out int id))
             {
                 var obj = GameObjectLookup.ResolveInstanceID(id);
