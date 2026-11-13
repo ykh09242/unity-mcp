@@ -3,14 +3,14 @@
 import math
 import re
 import struct
-import sys
 import click
 from cli.utils.parsers import admit_json_inputs, json_input_diagnostic
 from typing import Optional, Any
 
 from cli.utils.config import get_config
-from cli.utils.output import format_output, print_error, print_success
+from cli.utils.output import format_output, print_success
 from cli.utils.connection import run_command, handle_unity_errors
+from cli.utils.input_errors import CLIInputError
 from cli.utils.parsers import parse_json_or_exit as try_parse_json
 
 
@@ -427,14 +427,15 @@ def create(
     config = get_config()
     if image_path:
         if color or pattern or palette:
-            print_error("image-path cannot be combined with color, pattern, or palette.")
-            sys.exit(1)
+            raise CLIInputError(
+                "conflicting_texture_inputs",
+                "image-path cannot be combined with color, pattern, or palette.",
+            )
     else:
         try:
             warnings = _validate_texture_dimensions(width, height)
         except ValueError as e:
-            print_error(str(e))
-            sys.exit(1)
+            raise CLIInputError("invalid_texture_dimensions", str(e)) from e
         if config.format != "json":
             for warning in warnings:
                 click.echo(f"⚠️ Warning: {warning}")
@@ -521,14 +522,15 @@ def sprite(
     config = get_config()
     if image_path:
         if color or pattern:
-            print_error("image-path cannot be combined with color or pattern.")
-            sys.exit(1)
+            raise CLIInputError(
+                "conflicting_texture_inputs",
+                "image-path cannot be combined with color or pattern.",
+            )
     else:
         try:
             warnings = _validate_texture_dimensions(width, height)
         except ValueError as e:
-            print_error(str(e))
-            sys.exit(1)
+            raise CLIInputError("invalid_texture_dimensions", str(e)) from e
         if config.format != "json":
             for warning in warnings:
                 click.echo(f"⚠️ Warning: {warning}")
@@ -628,8 +630,10 @@ def _apply_import_flags_to_params(
 
     if as_sprite:
         if has_other_flags:
-            print_error("--as-sprite cannot be combined with other import-setting flags")
-            sys.exit(1)
+            raise CLIInputError(
+                "conflicting_texture_import_settings",
+                "--as-sprite cannot be combined with other import-setting flags",
+            )
         params["spriteSettings"] = {"pivot": [0.5, 0.5], "pixelsPerUnit": 100}
         return True
 
@@ -725,8 +729,10 @@ def modify(
                 json_input_diagnostic(set_pixels, "set-pixels", e), param_hint="--set-pixels"
             ) from e
     elif not has_import:
-        print_error("At least one of --set-pixels or an import-setting flag must be provided")
-        sys.exit(1)
+        raise CLIInputError(
+            "missing_texture_modifications",
+            "At least one of --set-pixels or an import-setting flag must be provided",
+        )
 
     result = run_command("manage_texture", params, config)
     click.echo(format_output(result, config.format))
@@ -819,8 +825,9 @@ def set_import_settings(
     )
 
     if not has_import:
-        print_error("At least one import setting must be specified")
-        sys.exit(1)
+        raise CLIInputError(
+            "missing_texture_import_settings", "At least one import setting must be specified"
+        )
 
     result = run_command("manage_texture", params, config)
     click.echo(format_output(result, config.format))

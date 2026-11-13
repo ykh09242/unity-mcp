@@ -42,13 +42,59 @@ def requests(monkeypatch, tmp_path):
             "invalid_scene_index",
             "Invalid build index: not_an_index",
         ),
+        (
+            ["texture", "modify", "Assets/Tex.png"],
+            "missing_texture_modifications",
+            "At least one of --set-pixels or an import-setting flag must be provided",
+        ),
+        (
+            ["texture", "set-import-settings", "Assets/Tex.png"],
+            "missing_texture_import_settings",
+            "At least one import setting must be specified",
+        ),
+        *[
+            (
+                [
+                    "texture",
+                    command,
+                    "Assets/Tex.png",
+                    "--image-path",
+                    "source.png",
+                    "--color",
+                    "255,0,0",
+                ],
+                "conflicting_texture_inputs",
+                "image-path cannot be combined",
+            )
+            for command in ("create", "sprite")
+        ],
+        *[
+            (
+                ["texture", command, "Assets/Tex.png", "--width", "0"],
+                "invalid_texture_dimensions",
+                "positive",
+            )
+            for command in ("create", "sprite")
+        ],
+        *[
+            (
+                ["texture", command, "Assets/Tex.png", "--as-sprite", "--linear"],
+                "conflicting_texture_import_settings",
+                "--as-sprite cannot be combined with other import-setting flags",
+            )
+            for command in ("modify", "set-import-settings")
+        ],
     ],
 )
 @pytest.mark.parametrize("output_format", ["json", "text", "table"])
 def test_invalid_input_is_local_and_uses_selected_error_stream(
-    requests, command, code, diagnostic, output_format
+    requests, monkeypatch, command, code, diagnostic, output_format
 ):
     # Given: invalid input handled by a command callback rather than Click's parser.
+    def forbidden_client(**_options):
+        pytest.fail("Local input failure must not construct an HTTP client")
+
+    monkeypatch.setattr(connection.httpx, "AsyncClient", forbidden_client)
     # When: the complete CLI runs in each supported output mode.
     result = CliRunner().invoke(cli, ["--format", output_format, *command])
     # Then: JSON has one structured document; human diagnostics remain on stderr.
