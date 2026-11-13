@@ -968,11 +968,11 @@ Trigger a player build. Examples: unity-mcp build run --target windows64 --devel
 
 ## `unity-mcp build scenes`
 
-Read or update the build scene list. Examples: unity-mcp build scenes unity-mcp build scenes --set "Assets/Scenes/Main.unity,Assets/Scenes/Level1.unity"
+Read or update the build scene list. Omit --set to read. An explicitly empty --set clears the list; blank path segments in a nonempty list are rejected. Examples: unity-mcp build scenes unity-mcp build scenes --set "" unity-mcp build scenes --set "Assets/Scenes/Main.unity,Assets/Scenes/Level1.unity"
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| --set | text | optional | nargs=1 | — | — | Comma-separated scene paths to set |
+| --set | text | optional | nargs=1 | — | — | Comma-separated scene paths; use --set "" to clear. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp build settings`

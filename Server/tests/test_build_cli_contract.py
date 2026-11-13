@@ -11,6 +11,47 @@ from cli.commands.build import build
 from cli.utils.config import CLIConfig
 
 
+@pytest.mark.parametrize(
+    "value,scenes",
+    [
+        (None, None),
+        ("", []),
+        (
+            " Assets/Scenes/Main.unity , Assets/Scenes/Level1.unity ",
+            [
+                {"path": "Assets/Scenes/Main.unity", "enabled": True},
+                {"path": "Assets/Scenes/Level1.unity", "enabled": True},
+            ],
+        ),
+    ],
+)
+def test_scenes_distinguishes_read_clear_and_replacement(value, scenes):
+    args = ["scenes"] if value is None else ["scenes", "--set", value]
+    response = {
+        "success": True,
+        "message": f"Updated build scenes ({len(scenes or [])}).",
+        "data": {"scenes": scenes or []},
+    }
+    with patch("cli.commands.build.get_config", return_value=CLIConfig(format="json")):
+        with patch("cli.commands.build.run_command", return_value=response) as send:
+            result = CliRunner().invoke(build, args)
+    assert result.exit_code == 0, result.output
+    expected = {"action": "scenes"}
+    if scenes is not None:
+        expected["scenes"] = scenes
+    assert send.call_args.args[:2] == ("manage_build", expected)
+    assert json.loads(result.output) == response
+
+
+@pytest.mark.parametrize("value", [" ", ",", "Assets/Main.unity,", ",Assets/Main.unity", "a, ,b"])
+def test_scenes_rejects_blank_segments_without_transport(value):
+    with patch("cli.commands.build.run_command") as send:
+        result = CliRunner().invoke(build, ["scenes", "--set", value])
+    assert result.exit_code != 0
+    assert "Scene paths cannot be blank" in result.output
+    send.assert_not_called()
+
+
 @pytest.mark.parametrize("value", [None, "", "NEW"])
 def test_settings_preserves_explicit_empty_value(value):
     args = ["settings", "defines"]

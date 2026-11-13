@@ -248,20 +248,29 @@ def settings(property_name: str, value: Optional[str], target: Optional[str]):
 
 
 @build.command("scenes")
-@click.option("--set", "scene_paths", help="Comma-separated scene paths to set")
+@click.option("--set", "scene_paths", help='Comma-separated scene paths; use --set "" to clear.')
 @handle_unity_errors
 def scenes(scene_paths: Optional[str]):
     """Read or update the build scene list.
 
+    Omit --set to read. An explicitly empty --set clears the list; blank path
+    segments in a nonempty list are rejected.
+
     \b
     Examples:
         unity-mcp build scenes
+        unity-mcp build scenes --set ""
         unity-mcp build scenes --set "Assets/Scenes/Main.unity,Assets/Scenes/Level1.unity"
     """
     config = get_config()
     params = {"action": "scenes"}
-    if scene_paths:
-        scene_list = [{"path": p.strip(), "enabled": True} for p in scene_paths.split(",")]
+    if scene_paths is not None:
+        paths = [p.strip() for p in scene_paths.split(",")] if scene_paths != "" else []
+        if any(not path for path in paths):
+            raise click.BadParameter(
+                'Scene paths cannot be blank; use --set "" to clear the list.', param_hint="--set"
+            )
+        scene_list = [{"path": path, "enabled": True} for path in paths]
         params["scenes"] = scene_list
     result = run_command("manage_build", params, config)
     click.echo(format_output(result, config.format))
