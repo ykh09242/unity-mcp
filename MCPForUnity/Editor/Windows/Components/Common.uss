@@ -731,8 +731,8 @@
 .form-actions { flex-direction: row; flex-wrap: wrap; align-items: center; margin-top: 6px; }
 .form-actions > Button, .client-configuration-review-actions > Button { margin: 4px 8px 4px 0; }
 .client-configuration-review > .help-text { margin-bottom: 8px; }
-.config-preview-scroll { height: 160px; margin: 6px 0 10px 0; min-width: 0; }
-.config-preview-field { flex-grow: 1; min-width: 0; margin: 0; }
+.config-preview-scroll { max-height: 160px; flex-grow: 0; flex-shrink: 0; margin: 6px 0 10px 0; min-width: 0; }
+.config-preview-field { flex-grow: 0; flex-shrink: 0; min-width: 0; margin: 0; }
 .config-preview-field .unity-text-field__input { white-space: normal; }
 #advanced-section, #validation-section { max-width: 900px; }
 #client-section .primary-button { align-self: flex-start; }

@@ -50,6 +50,109 @@ namespace MCPForUnityTests.Editor.Windows
         private sealed class FoldoutWindow : EditorWindow { }
 
         [UnityTest]
+        public IEnumerator ConfigurationPreviewFitsShortContentAndScrollsLongContent()
+        {
+            var window = ScriptableObject.CreateInstance<FoldoutWindow>();
+            var excessiveShortHeights = new List<string>();
+            string evidence = null;
+            if (Guid.TryParseExact(Environment.GetEnvironmentVariable("UNITY_MCP_NATIVE_QA_NONCE"), "N", out _))
+            {
+                evidence = System.IO.Path.GetFullPath(
+                    System.IO.Path.Combine(Application.dataPath, "../Library/McpTestEvidence/preview-" + Guid.NewGuid().ToString("N"))
+                );
+                System.IO.Directory.CreateDirectory(evidence);
+            }
+            try
+            {
+                window.minSize = new Vector2(380, 340);
+                window.ShowUtility();
+                var root = window.rootVisualElement;
+                root.AddToClassList("mcp-editor");
+                var outer = new ScrollView();
+                outer.style.flexGrow = 1;
+                root.Add(outer);
+                AssetDatabase
+                    .LoadAssetAtPath<VisualTreeAsset>("Packages/com.ykh09242.unity-mcp/Editor/Windows/Components/ClientConfig/McpClientConfigSection.uxml")
+                    .CloneTree(outer.contentContainer);
+                var section = CreateSection(new ManualClient());
+                Set(section, "<Root>k__BackingField", root);
+                Invoke(section, "CacheUIElements");
+                var foldout = root.Q<Foldout>("client-review-foldout");
+                foldout.value = true;
+                var scroll = root.Q<ScrollView>("configuration-preview-scroll");
+                var text = root.Q<TextField>("configuration-preview");
+                var status = root.Q<Label>("configuration-change-status");
+                foreach (int width in new[] { 380, 1125 })
+                {
+                    window.position = new Rect(40, 40, width, 700);
+                    typeof(McpClientConfigSection)
+                        .GetMethod("SetConfigurationPreviewVisible", BindingFlags.Instance | BindingFlags.NonPublic)
+                        .Invoke(section, new object[] { true });
+                    foreach (
+                        string value in new[]
+                        {
+                            "Unity MCP entry is unchanged.",
+                            "Change: unchanged. Unity MCP entry only. Transport: HTTP. All values, paths, arguments, headers and user-defined names are redacted. Other settings are preserved.",
+                            new string('x', 240),
+                            string.Join("\n", new string[50]).Replace("\n", "Redacted entry: [REDACTED]\n"),
+                        }
+                    )
+                    {
+                        text.value = value;
+                        scroll.scrollOffset = Vector2.zero;
+                        for (int frame = 0; frame < 12; frame++)
+                            yield return null;
+                        TestContext.Out.WriteLine(
+                            $"PREVIEW_LAYOUT width={width} lines={value.Split('\n').Length} scroll={scroll.worldBound} viewport={scroll.contentViewport.worldBound} field={text.worldBound} input={text.Q(className: "unity-text-field__input").worldBound} status={status.worldBound} range={scroll.verticalScroller.highValue}"
+                        );
+                        if (evidence != null)
+                        {
+                            string path = System.IO.Path.Combine(evidence, $"preview-{width}-{value.Length}.png");
+                            typeof(MCPForUnityTests.EditMode.Windows.OperationActivityTests)
+                                .GetMethod("Capture", BindingFlags.NonPublic | BindingFlags.Static)
+                                .Invoke(null, new object[] { window, path });
+                            TestContext.Out.WriteLine("PREVIEW_CAPTURE " + path);
+                        }
+                        Assert.Greater(scroll.worldBound.height, 0);
+                        Assert.LessOrEqual(scroll.worldBound.height, 161, "Long reviews retain a bounded viewport.");
+                        Assert.LessOrEqual(scroll.horizontalScroller.highValue, 1, "Preview text wraps at narrow widths.");
+                        Assert.LessOrEqual(status.worldBound.yMin - scroll.worldBound.yMax, 20, "Status follows the review viewport.");
+                        if (!value.Contains("\n"))
+                        {
+                            if (scroll.worldBound.height > text.worldBound.height + 4)
+                                excessiveShortHeights.Add(
+                                    $"width={width} characters={value.Length} viewport={scroll.worldBound.height} field={text.worldBound.height}"
+                                );
+                        }
+                        else
+                        {
+                            Assert.Greater(scroll.verticalScroller.highValue, 0, "Long reviews remain scrollable.");
+                            scroll.verticalScroller.value = scroll.verticalScroller.highValue;
+                            yield return null;
+                            Assert.Greater(scroll.scrollOffset.y, 0);
+                        }
+                    }
+                    Invoke(section, "OnCancelConfigurationPreviewClicked");
+                    for (int frame = 0; frame < 4; frame++)
+                        yield return null;
+                    Assert.AreEqual(DisplayStyle.None, scroll.resolvedStyle.display);
+                    Assert.AreEqual(DisplayStyle.None, root.Q<Button>("apply-configuration").resolvedStyle.display);
+                    Assert.AreEqual(DisplayStyle.None, root.Q<Button>("cancel-configuration-preview").resolvedStyle.display);
+                    Assert.IsEmpty(text.value);
+                    foldout.value = false;
+                    yield return null;
+                    Assert.AreEqual(DisplayStyle.None, foldout.contentContainer.resolvedStyle.display);
+                    foldout.value = true;
+                }
+                Assert.IsEmpty(excessiveShortHeights, "Short reviews must not reserve an empty 160px viewport: " + string.Join("; ", excessiveShortHeights));
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+
+        [UnityTest]
         public IEnumerator ConfigurationReviewCollapsesEmptyContentAndRestoresItForAPreview()
         {
             var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
@@ -76,6 +179,7 @@ namespace MCPForUnityTests.Editor.Windows
                 Set(section, "configurationChanges", harness.Service);
                 Invoke(section, "CacheUIElements");
                 Invoke(section, "InitializeUI");
+                Invoke(section, "RegisterCallbacks");
                 root.Q<Foldout>("client-details-foldout").value = true;
                 root.Q<Foldout>("client-review-foldout").value = true;
                 window.ShowUtility();
@@ -91,11 +195,23 @@ namespace MCPForUnityTests.Editor.Windows
                     Assert.AreEqual(DisplayStyle.None, root.Q<Button>("cancel-configuration-preview").resolvedStyle.display);
                     Assert.IsNotEmpty(root.Q<Label>("configuration-change-status").text);
 
-                    Invoke(section, "OnPreviewConfigurationClicked");
+                    typeof(Clickable)
+                        .GetMethod("Invoke", BindingFlags.NonPublic | BindingFlags.Instance)
+                        .Invoke(root.Q<Button>("preview-configuration").clickable, new object[] { null });
                     yield return null;
                     yield return null;
                     Assert.Greater(scroll.worldBound.height, 0);
+                    Assert.LessOrEqual(scroll.worldBound.height, 161, "Normal Preview entry retains a bounded review.");
+                    Assert.LessOrEqual(
+                        scroll.worldBound.height,
+                        root.Q<TextField>("configuration-preview").worldBound.height + 4,
+                        "Normal Preview must fit its short redacted review without a blank viewport."
+                    );
                     Assert.IsNotEmpty(root.Q<TextField>("configuration-preview").value);
+                    StringAssert.Contains(
+                        "All values, paths, arguments, headers and user-defined names are redacted.",
+                        root.Q<TextField>("configuration-preview").value
+                    );
                     Assert.IsTrue(root.Q<Button>("apply-configuration").enabledSelf);
                     Assert.AreEqual(DisplayStyle.Flex, root.Q<Button>("cancel-configuration-preview").resolvedStyle.display);
 
