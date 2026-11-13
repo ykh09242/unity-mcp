@@ -259,9 +259,10 @@ async def read_compile_job(
         message = value.get("error") or value.get("message") or ""
         message = message.lower() if isinstance(message, str) else ""
         data = value.get("data") if isinstance(value.get("data"), dict) else {}
-        if value.get("code") == "unknown_command" or message in (
-            "unknown command",
-            "unknown command: get_compile_job",
+        if (
+            value.get("code") == "unknown_command"
+            or message in ("unknown command", "unknown command: get_compile_job")
+            or message.startswith("unity has no tool or resource named 'get_compile_job'.")
         ):
             return unknown_compile_job(compile_id, "tracking_unsupported")
         if (

@@ -53,6 +53,18 @@ def test_absent_malformed_and_future_compile_contracts_differ(payload, reason):
     "payload,reason",
     [
         ({"success": False, "error": "Unknown command: get_compile_job"}, "tracking_unsupported"),
+        (
+            {
+                "success": False,
+                "error": "Unity has no tool or resource named 'get_compile_job'. If the MCP server "
+                "or CLI is newer than the MCP for Unity package in this project, update the package.",
+            },
+            "tracking_unsupported",
+        ),
+        (
+            {"success": False, "error": "Unity has no tool or resource named 'another_command'."},
+            "observation_rejected",
+        ),
         ({"success": False, "error": "disconnected"}, "observation_unavailable"),
         ({"success": False, "code": "forbidden", "error": "private"}, "observation_rejected"),
         ({"success": True, "data": []}, "invalid_evidence"),
