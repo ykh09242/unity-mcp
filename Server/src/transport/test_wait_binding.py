@@ -286,7 +286,11 @@ def install_test_job_tasks(
         delivery = (
             ResponseDelivery(
                 response_store(server),
-                ResponseAuthority(ResponseScope(principal, project, ""), frozenset({"read"})),
+                ResponseAuthority(
+                    ResponseScope(principal, project, ""),
+                    frozenset({"read"}),
+                    record.operation.instance,
+                ),
             )
             if project is not None and project == full_hash(record.operation.project)
             else None

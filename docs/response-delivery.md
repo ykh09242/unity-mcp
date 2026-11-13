@@ -89,6 +89,15 @@ Verify the complete bytes against `sha256`, then decode UTF-8 and parse JSON.
 Pages may split a multibyte UTF-8 character, so decode UTF-8 after joining bytes.
 There is no caller-controlled page size or filesystem path.
 
+If the original call supplied `unity_instance`, pass it on each page and on release.
+Python clients can pass `unity_instance=...` to `utils.retained_response.assemble_response`.
+The originating server can read or release the result even after the Editor disconnects
+when given the complete 16-hex project hash or the exact `Name@hash` captured with
+the result. The name is compared with the original saved selector even if the project
+has since been renamed. Prefixes and stdio ports still require live resolution.
+Omitting the selector uses normal project selection, including a legacy session's
+active instance. An explicit artifact lookup leaves that selection unchanged.
+
 Call `read_response` with `release = true` to discard a result explicitly. A read
 does not extend its ten-minute monotonic lifetime. Repeated observations of the
 same immutable task result reuse an existing handle without extending expiry.

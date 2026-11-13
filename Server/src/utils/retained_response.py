@@ -14,12 +14,20 @@ _PAGE_BYTES = 256 * 1024
 
 
 async def assemble_response(
-    call_tool, handle, *, max_bytes=1024 * 1024, max_pages=4, timeout_seconds=15, fields=None
+    call_tool,
+    handle,
+    *,
+    unity_instance=None,
+    max_bytes=1024 * 1024,
+    max_pages=4,
+    timeout_seconds=15,
+    fields=None,
 ):
     """Read and verify retained bytes, then optionally select top-level JSON fields.
 
     Pass an existing connected client's call_tool method and the original delivery
-    handle. Limits are checked before retrieval and before decoding each page.
+    handle. Supply the original per-call unity_instance for project-bound reads.
+    Limits are checked before retrieval and before decoding each page.
     Only read_response is called. The original result remains retained on failure.
     """
     if (
@@ -58,9 +66,10 @@ async def assemble_response(
     payload = bytearray()
     with anyio.fail_after(timeout_seconds):
         for _ in range(max_pages):
-            result = await call_tool(
-                "read_response", {"response_id": response_id, "offset": len(payload)}
-            )
+            arguments = {"response_id": response_id, "offset": len(payload)}
+            if unity_instance is not None:
+                arguments["unity_instance"] = unity_instance
+            result = await call_tool("read_response", arguments)
             if not isinstance(result, dict):
                 result = getattr(result, "structured_content", None)
             if not isinstance(result, dict) or result.get("success") is not True:

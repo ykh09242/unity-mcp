@@ -46,11 +46,15 @@ response_delivery: ContextVar[ResponseDelivery | None] = ContextVar(
 )
 
 
-async def capture_response_delivery(ctx: Context | None) -> ResponseDelivery | None:
-    """Use resolved request state, never a caller-provided project or owner argument."""
+async def capture_response_delivery(
+    ctx: Context | None, *, lookup_selector: str | None = None
+) -> ResponseDelivery | None:
+    """Capture resolved state for writes or a project constraint for an artifact lookup."""
     if ctx is None:
         return None
-    instance = await ctx.get_state("unity_instance")
+    instance = (
+        lookup_selector if lookup_selector is not None else await ctx.get_state("unity_instance")
+    )
     project = full_hash(instance) if isinstance(instance, str) else ""
     if isinstance(instance, str) and project is None:
         return None
@@ -75,7 +79,7 @@ async def capture_response_delivery(ctx: Context | None) -> ResponseDelivery | N
         permissions = frozenset(permission.value for permission in Permission)
     return ResponseDelivery(
         response_store(ctx.fastmcp),
-        ResponseAuthority(ResponseScope(principal, project or "", session), permissions),
+        ResponseAuthority(ResponseScope(principal, project or "", session), permissions, instance),
     )
 
 

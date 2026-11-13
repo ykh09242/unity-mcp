@@ -685,7 +685,7 @@ class UnityInstanceMiddleware(Middleware):
             options = execution_options(ctx)
             tool = (
                 await server.get_tool(name, version=component_version(ctx))
-                if options is not None
+                if options is not None or name == "read_response"
                 else await server.get_tool(name)
             )
             if tool is None:
@@ -731,6 +731,17 @@ class UnityInstanceMiddleware(Middleware):
             return await call_next(context)
         receipt = None
         options = execution_options(ctx)
+        selector = params.get("unity_instance")
+        if (
+            options is None
+            and name == "read_response"
+            and isinstance(selector, str)
+            and _trusted_builtin_callback(getattr(tool, "fn", None), name, None)
+            and full_hash(selector.strip()) is not None
+        ):
+            # The built-in compares the exact selector to the stored artifact.
+            # Keep it out of Unity routing and persistent project selection.
+            return await call_next(context)
         if options is not None:
             reject_continuation(ctx)
             runtime = getattr(server, "_execution_receipts", None)

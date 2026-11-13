@@ -31,16 +31,26 @@ async def read_response(
     response_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$", max_length=32)],
     offset: Annotated[int, Field(strict=True, ge=0, le=MAX_RESPONSE_BYTES)] = 0,
     release: Annotated[bool, Field(strict=True)] = False,
+    unity_instance: str | None = None,
 ) -> dict[str, JsonValue]:
     """Authorize before looking up bytes; absent, expired and foreign handles agree."""
-    delivery = await capture_response_delivery(ctx)
+    selector = unity_instance.strip() if unity_instance is not None else None
+    delivery = await capture_response_delivery(ctx, lookup_selector=selector)
+    expected_instance = selector if selector is not None and "@" in selector else None
     if delivery is not None:
         if release:
-            if delivery.store.release(response_id, delivery.authority):
+            if delivery.store.release(
+                response_id, delivery.authority, expected_instance=expected_instance
+            ):
                 return {"success": True, "data": {"state": "released", "response_id": response_id}}
         else:
             try:
-                page = delivery.store.read(response_id, delivery.authority, offset=offset)
+                page = delivery.store.read(
+                    response_id,
+                    delivery.authority,
+                    offset=offset,
+                    expected_instance=expected_instance,
+                )
             except ValueError:
                 return {"success": False, "error": "response_offset_invalid"}
             if page is not None:

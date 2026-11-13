@@ -6,14 +6,16 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from fastmcp import Client, FastMCP
+from fastmcp import Client, Context, FastMCP
 from fastmcp.tools import ToolResult
+from mcp.shared.exceptions import MCPError
 from mcp_types import TextContent
 
 from services.response_delivery import ResponseAuthority, ResponseScope, ResponseStore
 from services.tools.read_response import read_response
 from services.response_delivery import response_store
 from transport.response_limit_middleware import ResponseLimitMiddleware
+from transport.unity_instance_middleware import UnityInstanceMiddleware
 from utils.retained_response import assemble_response
 
 
@@ -176,11 +178,97 @@ async def test_legacy_handle_cannot_be_read_from_another_session():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+async def test_exact_artifact_selector_recovers_after_disconnect_without_routing(mode, monkeypatch):
+    from core.config import config
+    from services.registry.operation_invocation import wrap_tool
+    from transport.response_delivery import capture_response_delivery, retained_response
+
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(config, "transport_mode", "http")
+    one = "First@0123456789abcdef"
+    two = "Second@fedcba9876543210"
+    editors = [SimpleNamespace(id=name, hash=name.split("@")[1]) for name in (one, two)]
+    middleware = UnityInstanceMiddleware()
+    discoveries = []
+
+    async def discover(ctx):
+        discoveries.append(tuple(editors))
+        return editors
+
+    monkeypatch.setattr(middleware, "_discover_instances", discover)
+    server = FastMCP("project-retained-output")
+    server.add_middleware(middleware)
+    server.tool(name="read_response")(wrap_tool(read_response, "read_response", None))
+    original = {"details": "x" * 300_000}
+    executions = []
+
+    @server.tool
+    async def retain(ctx: Context) -> dict:
+        executions.append(await ctx.get_state("unity_instance"))
+        return retained_response(original, await capture_response_delivery(ctx))
+
+    @server.tool
+    async def select(ctx: Context) -> str:
+        selected = await ctx.get_state("unity_instance")
+        await middleware.set_active_instance(ctx, selected)
+        return selected
+
+    @server.tool
+    async def selected(ctx: Context) -> str:
+        return await middleware.get_active_instance(ctx) or "none"
+
+    async with Client(server, mode=mode, cache=False) as client:
+        if mode == "legacy":
+            await client.call_tool("select", {"unity_instance": two})
+        result = await client.call_tool("retain", {"unity_instance": one})
+        handle = result.structured_content
+        response = {"response_id": handle["response_id"]}
+        assert executions == [one]
+        editors.pop(0)
+        before = len(discoveries)
+        assert await assemble_response(client.call_tool, handle, unity_instance=one) == original
+        for selector in (two, "Incorrect@0123456789abcdef"):
+            for release in (False, True):
+                refused = await client.call_tool(
+                    "read_response",
+                    {**response, "unity_instance": selector, "release": release},
+                    raise_on_error=False,
+                )
+                assert refused.structured_content["error"] == "response_not_found"
+        if mode == "legacy":
+            async with Client(server, mode=mode, cache=False) as foreign:
+                refused = await foreign.call_tool(
+                    "read_response", {**response, "unity_instance": one}, raise_on_error=False
+                )
+                assert refused.structured_content["error"] == "response_not_found"
+        assert len(discoveries) == before
+        assert (await client.call_tool("selected", {})).data == (
+            two if mode == "legacy" else "none"
+        )
+        absent = await client.call_tool("read_response", response, raise_on_error=False)
+        assert absent.structured_content["error"] == "response_not_found"
+        with pytest.raises(MCPError):
+            await client.call_tool("read_response", {**response, "unity_instance": "0123456789a"})
+        assert len(discoveries) > before
+        editors.clear()
+        released = await client.call_tool(
+            "read_response", {**response, "unity_instance": "0123456789abcdef", "release": True}
+        )
+        assert released.structured_content["data"]["state"] == "released"
+        assert executions == [one]
+
+
+@pytest.mark.asyncio
 async def test_remote_read_rechecks_original_floor_without_requiring_unrelated_read_grant(
     monkeypatch,
 ):
     from core.config import config
-    from services.credential_lease import CredentialLease, bind_credential_lease
+    from services.credential_lease import (
+        CredentialLease,
+        CredentialLeaseError,
+        bind_credential_lease,
+    )
     from services.operation_permissions import (
         OperationGrants,
         Permission,
@@ -192,8 +280,12 @@ async def test_remote_read_rechecks_original_floor_without_requiring_unrelated_r
     checked = []
 
     class LeaseService:
+        revoked = False
+
         async def check_lease(self, lease):
             checked.append(lease.user_id)
+            if self.revoked:
+                raise CredentialLeaseError()
 
     class RequestContext:
         fastmcp = server
@@ -223,3 +315,23 @@ async def test_remote_read_rechecks_original_floor_without_requiring_unrelated_r
         refused = await read_response(RequestContext(), handle["response_id"])
     assert refused == {"success": False, "error": "response_not_found"}
     assert checked == ["alice", "alice", "alice"]
+
+    class Disconnected(RequestContext):
+        async def get_state(self, name):
+            return None
+
+    ctx = Disconnected()
+    lookup = {"unity_instance": "0123456789abcdef"}
+    foreign = CredentialLease(service, object(), "other", grants)
+    for denied_lease in (weaker, foreign):
+        with bind_credential_lease(denied_lease):
+            for release in (False, True):
+                result = await read_response(ctx, handle["response_id"], release=release, **lookup)
+                assert result == refused
+    with bind_credential_lease(lease):
+        assert (await read_response(ctx, handle["response_id"], **lookup))["success"] is True
+        service.revoked = True
+        for release in (False, True):
+            with pytest.raises(CredentialLeaseError):
+                await read_response(ctx, handle["response_id"], release=release, **lookup)
+    assert response_store(server).retained_bytes > 0

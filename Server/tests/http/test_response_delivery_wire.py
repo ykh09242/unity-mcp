@@ -8,7 +8,6 @@ import httpx
 import pytest
 from fastmcp import FastMCP
 from fastmcp.tools import ToolResult
-from fastmcp.server.middleware import Middleware
 from mcp_types import ImageContent, TextContent
 
 from services.tools.read_response import read_response
@@ -18,6 +17,7 @@ from transport.response_limit_middleware import ResponseLimitMiddleware
 from transport.test_wait_binding import install_test_job_tasks, _SdkResultKernel
 from transport.test_job_tasks import WaitTaskDeliveryMiddleware
 from transport.local_auth_middleware import AUTHENTICATED_LOCAL_STATE
+from transport.unity_instance_middleware import UnityInstanceMiddleware
 from services.test_wait_journal import DeadlineCheckpoint, WaitOperation
 
 
@@ -95,15 +95,8 @@ async def test_task_journal_keeps_full_result_while_tasks_get_delivers_bounded_h
     server = FastMCP("task-delivery")
     project = "0123456789abcdef"
 
-    class ResolvedProject(Middleware):
-        async def on_call_tool(self, context, call_next):
-            await context.fastmcp_context.set_state(
-                "unity_instance", "Fixture@" + project, serializable=False
-            )
-            return await call_next(context)
-
     server.add_middleware(ResponseLimitMiddleware())
-    server.add_middleware(ResolvedProject())
+    server.add_middleware(UnityInstanceMiddleware())
     server.tool(read_response)
     runtime = install_test_job_tasks(server, tmp_path / "tasks", remote_hosted=False)
     assert runtime is not None
@@ -155,7 +148,10 @@ async def test_task_journal_keeps_full_result_while_tasks_get_delivers_bounded_h
                     "tools/call",
                     {
                         "name": "read_response",
-                        "arguments": {"response_id": handles[0]["response_id"]},
+                        "arguments": {
+                            "response_id": handles[0]["response_id"],
+                            "unity_instance": "Fixture@" + project,
+                        },
                     },
                 ),
             )

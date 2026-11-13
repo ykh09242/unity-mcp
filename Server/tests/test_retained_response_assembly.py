@@ -27,10 +27,18 @@ def fixture_payload():
 
 
 @pytest.mark.asyncio
-async def test_assembly_checks_full_digest_before_field_selection():
+@pytest.mark.parametrize("selector", [None, "Fixture@0123456789abcdef", "01234567", 6401])
+async def test_assembly_checks_full_digest_before_field_selection(selector):
     _, handle, call = fixture_payload()
-    assert await assemble_response(call, handle, fields=["summary"]) == {"summary": "saved"}
+    routed = {"unity_instance": selector} if selector is not None else {}
+    assert await assemble_response(call, handle, fields=["summary"], **routed) == {
+        "summary": "saved"
+    }
     assert call.await_count == 2
+    assert [item.args[1] for item in call.await_args_list] == [
+        {"response_id": handle["response_id"], "offset": offset, **routed}
+        for offset in (0, 256 * 1024)
+    ]
 
 
 @pytest.mark.asyncio

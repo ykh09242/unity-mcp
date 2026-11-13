@@ -33,6 +33,8 @@ class ResponseScope:
 class ResponseAuthority:
     scope: ResponseScope
     permissions: frozenset[str]
+    # Preserve the resolved selector at capture for exact named artifact lookups.
+    instance: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,23 +122,31 @@ class ResponseStore:
             "json_encoding": "utf-8",
         }
 
-    def _entry(self, response_id: str, authority: ResponseAuthority) -> _Entry | None:
+    def _entry(
+        self, response_id: str, authority: ResponseAuthority, expected_instance: str | None
+    ) -> _Entry | None:
         self._prune()
         entry = self._entries.get(response_id)
         if (
             entry is None
             or entry.authority.scope != authority.scope
             or not entry.authority.permissions <= authority.permissions
+            or (expected_instance is not None and entry.authority.instance != expected_instance)
         ):
             return None
         return entry
 
     def read(
-        self, response_id: str, authority: ResponseAuthority, *, offset: int = 0
+        self,
+        response_id: str,
+        authority: ResponseAuthority,
+        *,
+        offset: int = 0,
+        expected_instance: str | None = None,
     ) -> dict[str, JsonValue] | None:
         """Copy at most one fixed page; no result graph or file path is accepted."""
         with self._lock:
-            entry = self._entry(response_id, authority)
+            entry = self._entry(response_id, authority, expected_instance)
             if entry is None:
                 return None
             if type(offset) is not int or not 0 <= offset <= len(entry.payload):
@@ -158,9 +168,15 @@ class ResponseStore:
         result["data_base64"] = base64.b64encode(page).decode("ascii")
         return result
 
-    def release(self, response_id: str, authority: ResponseAuthority) -> bool:
+    def release(
+        self,
+        response_id: str,
+        authority: ResponseAuthority,
+        *,
+        expected_instance: str | None = None,
+    ) -> bool:
         with self._lock:
-            entry = self._entry(response_id, authority)
+            entry = self._entry(response_id, authority, expected_instance)
             if entry is None:
                 return False
             self._bytes -= len(entry.payload)
