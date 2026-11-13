@@ -214,6 +214,56 @@ async def test_session_selection_is_explicit_and_stale_selection_fails_closed(ta
 
 
 @pytest.mark.asyncio
+async def test_strict_selection_capacity_failure_preserves_last_committed_choice(
+    target_server, monkeypatch
+):
+    from transport.session_state_store import SessionStateCapacityError, SessionStateStore
+
+    store = SessionStateStore(max_entries=1, max_entry_bytes=512)
+    server = FastMCP("bounded-strict-selection", session_state_store=store)
+    monkeypatch.setattr(Context, "session_id", property(lambda _: "test"))
+    ctx = Context(fastmcp=server)
+    request = SimpleNamespace(fastmcp_context=ctx, message=SimpleNamespace(arguments={}))
+    middleware = target_server.middleware
+    target_server.inventory.append(SimpleNamespace(id=A, hash="aaaaaaaa"))
+
+    await ctx.set_state("occupied", True)
+    with pytest.raises(SessionStateCapacityError):
+        await middleware.set_active_instance(ctx, A)
+    assert await middleware.get_active_instance(ctx) is None
+    with pytest.raises(ToolError, match="explicit_unity_target_required"):
+        await middleware._inject_unity_instance(request, require_explicit=True)
+
+    await ctx.delete_state("occupied")
+    await middleware.set_active_instance(ctx, A)
+    with pytest.raises(SessionStateCapacityError):
+        await middleware.set_active_instance(ctx, "X" * 512 + "@cccccccc")
+    assert await middleware.get_active_instance(ctx) == A
+    await middleware._inject_unity_instance(request, require_explicit=True)
+    assert await ctx.get_state("unity_instance") == A
+
+    await middleware.set_active_instance(ctx, B)
+    assert store.retained_entries == 1
+    assert await middleware.get_active_instance(ctx) == B
+    await middleware._inject_unity_instance(request, require_explicit=True)
+    assert await ctx.get_state("unity_instance") == B
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active,explicit,expected", [(A, A, A), (A, B, None), (None, B, None)])
+async def test_strict_selection_recognizes_only_complete_legacy_pairs(
+    target_server, active, explicit, expected
+):
+    ctx = DummyContext()
+    middleware = target_server.middleware
+    await ctx.set_state(middleware._ACTIVE_INSTANCE_STATE_KEY, active)
+    await ctx.set_state(middleware._EXPLICIT_INSTANCE_STATE_KEY, explicit)
+    assert await middleware.get_active_instance(ctx) == expected
+    await middleware.clear_active_instance(ctx)
+    assert await middleware.get_active_instance(ctx) is None
+
+
+@pytest.mark.asyncio
 async def test_readonly_batch_and_legacy_default_remain_available(target_server, monkeypatch):
     # Given strict mode, a batch consisting only of reads is permitted.
     async with Client(target_server.server, mode="legacy") as client:

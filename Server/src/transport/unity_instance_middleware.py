@@ -225,8 +225,7 @@ class UnityInstanceMiddleware(Middleware):
 
     # Key used in FastMCP's session-scoped state store for the active instance.
     _ACTIVE_INSTANCE_STATE_KEY = "mcpforunity.active_instance"
-    # Only deliberate session selection may populate this key. Older automatic
-    # active state cannot become authority when explicit-target mode is enabled.
+    # Older strict selections used a separate provenance key alongside the active ID.
     _EXPLICIT_INSTANCE_STATE_KEY = "mcpforunity.explicit_instance"
     _TOOL_IDENTITY_STATE_KEY = "mcpforunity.tool_permission_identity"
 
@@ -252,13 +251,23 @@ class UnityInstanceMiddleware(Middleware):
         collapsed multiple clients onto the same record.
         """
         async with self._selection_lock:
-            if config.require_explicit_target and not config.http_remote_hosted:
-                await ctx.set_state(self._EXPLICIT_INSTANCE_STATE_KEY, instance_id)
-            await ctx.set_state(self._ACTIVE_INSTANCE_STATE_KEY, instance_id)
+            selection = (
+                {"explicit": instance_id}
+                if config.require_explicit_target and not config.http_remote_hosted
+                else instance_id
+            )
+            await ctx.set_state(self._ACTIVE_INSTANCE_STATE_KEY, selection)
 
     async def get_active_instance(self, ctx) -> str | None:
         """Retrieve the active instance for this MCP session."""
-        return await ctx.get_state(self._ACTIVE_INSTANCE_STATE_KEY)
+        selection = await ctx.get_state(self._ACTIVE_INSTANCE_STATE_KEY)
+        if isinstance(selection, dict):
+            return selection.get("explicit")
+        if selection and config.require_explicit_target and not config.http_remote_hosted:
+            # Only a matching legacy pair identifies a completed explicit selection.
+            if await ctx.get_state(self._EXPLICIT_INSTANCE_STATE_KEY) != selection:
+                return None
+        return selection
 
     async def clear_active_instance(self, ctx) -> None:
         """Clear the stored instance for this MCP session.
@@ -269,10 +278,6 @@ class UnityInstanceMiddleware(Middleware):
         ``delete_state``.
         """
         async with self._selection_lock:
-            if config.require_explicit_target and not config.http_remote_hosted:
-                await ctx.set_state(
-                    self._EXPLICIT_INSTANCE_STATE_KEY, None, serializable=not is_sessionless(ctx)
-                )
             await ctx.set_state(
                 self._ACTIVE_INSTANCE_STATE_KEY, None, serializable=not is_sessionless(ctx)
             )
@@ -280,11 +285,11 @@ class UnityInstanceMiddleware(Middleware):
     async def _select_if_unset(self, ctx, candidate: str) -> str:
         """Preserve an explicit choice made while automatic discovery awaited."""
         async with self._selection_lock:
-            if config.require_explicit_target and not config.http_remote_hosted:
-                return await ctx.get_state(self._EXPLICIT_INSTANCE_STATE_KEY) or candidate
             current = await self.get_active_instance(ctx)
             if current:
                 return current
+            if config.require_explicit_target and not config.http_remote_hosted:
+                return candidate
             await ctx.set_state(
                 self._ACTIVE_INSTANCE_STATE_KEY, candidate, serializable=not is_sessionless(ctx)
             )
@@ -582,7 +587,7 @@ class UnityInstanceMiddleware(Middleware):
                 # Read/list discovery is request-local and cannot authorize the
                 # next write. Ignore legacy state whose selection origin is unknown.
                 async with self._selection_lock:
-                    active_instance = await ctx.get_state(self._EXPLICIT_INSTANCE_STATE_KEY)
+                    active_instance = await self.get_active_instance(ctx)
                 if active_instance and require_explicit:
                     active_instance = await self._resolve_instance_value(
                         active_instance, ctx, allow_reconnect=allow_reconnect
