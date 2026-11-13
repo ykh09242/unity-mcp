@@ -224,6 +224,83 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }
 
         [Test]
+        public void NextStepWaitsForFinalObservationWithoutRepeatingEvaluation()
+        {
+            var host = new Host();
+            var observer = new Observer();
+            var definition = Definition(",'performance':{'max_frame_time_p95_ms':100}");
+            definition.Steps.Add(new PlayScenarioStep { Name = "Next", Action = "wait_scene" });
+            var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000), host, stepObserver: observer);
+            try
+            {
+                engine.EnteredPlayMode();
+                engine.Tick(1000, true);
+                engine.Tick(1500, true);
+                Assert.That(host.Calls, Is.EqualTo(1));
+                Assert.That(engine.State.Steps[1].Status, Is.EqualTo("pending"));
+                observer.Ready = true;
+                engine.Tick(1501, false);
+                Assert.That(engine.State.Steps[0].Status, Is.EqualTo("passed"));
+                engine.Tick(1502, true);
+                Assert.That(engine.State.Steps[1].Status, Is.EqualTo("passed"));
+                Assert.That(host.Calls, Is.EqualTo(2));
+            }
+            finally
+            {
+                engine.Release();
+            }
+        }
+
+        [Test]
+        public void InterruptDuringFinalObservationReleasesWithoutStartingNextStep()
+        {
+            var host = new Host();
+            var observer = new Observer();
+            var definition = Definition(",'performance':{'max_frame_time_p95_ms':100}");
+            definition.Steps.Add(new PlayScenarioStep { Name = "Next", Action = "wait_scene" });
+            var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000), host, stepObserver: observer);
+            engine.EnteredPlayMode();
+            engine.Tick(1000, true);
+            engine.Interrupt("Assembly reload", 1100);
+            engine.Tick(1500, true);
+            engine.Release();
+            Assert.That(engine.State.Status, Is.EqualTo("failed"));
+            Assert.That(engine.State.Failure.Code, Is.EqualTo("interrupted"));
+            Assert.That(engine.State.Steps[1].Status, Is.EqualTo("skipped"));
+            Assert.That(host.Calls, Is.EqualTo(1));
+            Assert.That(observer.Disposals, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void CancelDuringCleanupObservationNeverReplaysTheReadyCleanupAction()
+        {
+            var host = new Host();
+            var observer = new Observer { Ready = true };
+            var definition = Definition();
+            definition.CleanupSteps.Add(new PlayScenarioStep { Name = "Cleanup", Action = "load_scene" });
+            var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000), host, stepObserver: observer);
+            try
+            {
+                engine.EnteredPlayMode();
+                engine.Tick(1000, true);
+                engine.Tick(1500, true);
+                observer.Ready = false;
+                engine.Tick(1501, true);
+                Assert.That(host.Calls, Is.EqualTo(2));
+                engine.Cancel(1502);
+                Assert.That(observer.Aborts, Is.EqualTo(1));
+                observer.Ready = true;
+                engine.Tick(1800, true);
+                Assert.That(engine.State.Status, Is.EqualTo("cancelled"));
+                Assert.That(host.Calls, Is.EqualTo(2));
+            }
+            finally
+            {
+                engine.Release();
+            }
+        }
+
+        [Test]
         public void UnavailableScreenshotFailsWithoutReplacingExistingFailure()
         {
             var host = new Host();

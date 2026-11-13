@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Linq;
 using MCPForUnity.Editor.Services.PlayScenarios;
+using MCPForUnity.Runtime.PlayScenarios;
 using MCPForUnityTests.PlayScenarios.Integration.Runtime;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -15,6 +16,53 @@ namespace MCPForUnityTests.PlayScenarios.Integration
     public partial class PlayScenarioNativeFlowTests
     {
         private const string RuntimeComponent = "MCPForUnityTests.PlayScenarios.Integration.Runtime.PlayScenarioIntegrationBootstrap";
+
+        private sealed class AllocatingStateProvider : IPlayScenarioStateProvider
+        {
+            internal int Reads;
+
+            public bool TryRead(out PlayScenarioStateValue value)
+            {
+                value = PlayScenarioStateValue.FromBoolean(true);
+                if (++Reads < 4)
+                    return false;
+                System.GC.KeepAlive(new byte[32 * 1024 * 1024]);
+                return true;
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator EditorServiceIncludesFinalWaitStateReadInGcBudget()
+        {
+            const string id = "test.editor-final-read";
+            SaveHardening(
+                new JArray(
+                    new JObject
+                    {
+                        ["name"] = "wait",
+                        ["action"] = "wait_state",
+                        ["state_id"] = id,
+                        ["state_equals"] = true,
+                        ["performance"] = new JObject { ["max_gc_allocated_bytes_per_frame"] = 16 * 1024 * 1024 },
+                    }
+                ),
+                cleanup: false
+            );
+            yield return new EnterPlayMode();
+            var provider = new AllocatingStateProvider();
+            using (PlayScenarioStateRegistry.Register(id, provider))
+            {
+                StartHardening();
+                yield return Finish(NextId);
+                JObject done = Status(NextId);
+                Assert.That(provider.Reads, Is.EqualTo(4), done.ToString());
+                JToken performance = done["steps"].Single(step => (string)step["stage"] == "main")["performance"];
+                Assert.That((long?)performance["gc_allocated_bytes_per_frame_max"], Is.GreaterThanOrEqualTo(32 * 1024 * 1024), done.ToString());
+                Assert.That((string)done["failure"]["code"], Is.EqualTo("performance_budget_failed"));
+                Assert.That((bool)done["runner_resources_released"], Is.True);
+                Assert.That(Resources.FindObjectsOfTypeAll<GameObject>().Any(go => go.name == "__MCP_ScenarioEditorFramePump__"), Is.False);
+            }
+        }
 
         [UnityTest]
         public IEnumerator DelayedErrorAfterPassedClickFailsDuringCompletionObservationAndRunsCleanup()

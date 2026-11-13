@@ -19,6 +19,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static Application.LogCallback _logCallback;
         private static bool _attached;
         private static IDisposable _playRequest;
+        private static PlayScenarioEditorFramePump _framePump;
         private static bool _finalized;
         private static bool _suppressCapture;
         private static int _processedUnexpectedLogCount;
@@ -342,7 +343,22 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
         }
 
-        private static void Tick()
+        private static void Tick() => TickEngine(false);
+
+        private static void TickPlayerFrame()
+        {
+            if (_engine?.RequiresPlayerFrameEvaluation == true)
+                TickEngine(true);
+        }
+
+        private static void StopFramePump()
+        {
+            if (_framePump != null)
+                _framePump.Stop();
+            _framePump = null;
+        }
+
+        private static void TickEngine(bool playerFrame)
         {
             if (_engine == null)
                 return;
@@ -350,6 +366,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             DrainAndApplyErrors();
             if (_failureCapture?.Pending == true)
             {
+                StopFramePump();
                 Synchronize(false);
                 return;
             }
@@ -357,16 +374,21 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 try
                 {
-                    _engine.Tick(
-                        Now,
-                        EditorApplication.isPlaying && !EditorApplication.isPaused && !EditorApplication.isCompiling && !EditorApplication.isUpdating
-                    );
+                    bool ready = EditorApplication.isPlaying && !EditorApplication.isPaused && !EditorApplication.isCompiling && !EditorApplication.isUpdating;
+                    bool measured = _engine.RequiresPlayerFrameEvaluation;
+                    if (ready && measured && _framePump == null)
+                        _framePump = PlayScenarioEditorFramePump.Begin(TickPlayerFrame);
+                    // Editor updates still service wall-clock deadlines while paused. Evaluate a measured action
+                    // only inside the Player loop, whose frame counters exclude EditorApplication.update work.
+                    _engine.Tick(Now, ready && (playerFrame || !measured));
                 }
                 catch (Exception exception)
                 {
                     _engine.Interrupt("Scenario runner failed: " + exception.Message, Now);
                 }
             }
+            if (!_engine.RequiresPlayerFrameEvaluation)
+                StopFramePump();
             DrainAndApplyErrors();
             Synchronize(false);
         }
@@ -423,6 +445,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private static void Detach()
         {
+            StopFramePump();
             if (!_attached)
                 return;
             _attached = false;

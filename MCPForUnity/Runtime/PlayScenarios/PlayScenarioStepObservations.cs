@@ -161,6 +161,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private long observed;
         private string error;
 
+        internal bool IsUnavailable => error != null;
+
         public PlayScenarioPerformanceSamples(PlayScenarioPerformanceOptions options)
         {
             this.options = options ?? throw new ArgumentNullException(nameof(options));

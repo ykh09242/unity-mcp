@@ -26,6 +26,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private RecordingFramePump pump;
         private readonly Stopwatch elapsed = new Stopwatch();
         private long started;
+        private double? evaluationDurationMs;
+        private long frameDeadline;
         private long captureDeadline;
         private bool completed;
 
@@ -42,6 +44,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             this.result = result;
             started = now;
             completed = false;
+            evaluationDurationMs = null;
             elapsed.Restart();
             if (step.Performance == null)
                 return;
@@ -66,6 +69,20 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return true;
             if (!completed)
             {
+                if (!evaluationDurationMs.HasValue)
+                {
+                    elapsed.Stop();
+                    evaluationDurationMs = Math.Max(now - started, elapsed.Elapsed.TotalMilliseconds);
+                    if (sampler != null)
+                        sampler.EndAtCurrentFrame();
+                    frameDeadline = now + 2000;
+                }
+                if (sampler != null && sampler.FinalFramePending)
+                {
+                    if (now < frameDeadline)
+                        return false;
+                    samples.Unavailable("The final evaluation frame was not sampled within two seconds.");
+                }
                 completed = true;
                 FinishPerformance(now);
                 if (step.Screenshot != null)
@@ -82,7 +99,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             elapsed.Stop();
             if (samples != null)
             {
-                result.Performance = samples.Finish(Math.Max(now - started, elapsed.Elapsed.TotalMilliseconds));
+                result.Performance = samples.Finish(evaluationDurationMs ?? Math.Max(now - started, elapsed.Elapsed.TotalMilliseconds));
                 samples = null;
             }
         }
@@ -190,6 +207,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (result != null)
             {
+                if (sampler != null && sampler.FinalFramePending)
+                    samples.Unavailable("The final evaluation frame was not sampled: " + reason);
                 FinishPerformance(now);
                 StopCapture("unavailable", reason);
                 if (step.Screenshot != null && result.Screenshot == null)

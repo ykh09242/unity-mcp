@@ -111,6 +111,17 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             return steps[result.StepIndex];
         }
 
+        internal bool RequiresPlayerFrameEvaluation
+        {
+            get
+            {
+                if (!Running || _stepReady || (State.Phase != "executing" && State.Phase != "cleaning"))
+                    return false;
+                PlayScenarioPerformanceOptions budget = DefinitionStep(State.Steps[State.Cursor]).Performance;
+                return budget?.MaxFrameTimeP95Ms != null || budget?.MaxGcAllocatedBytesPerFrame != null;
+            }
+        }
+
         public void EnteredPlayMode()
         {
             if (!Running || State.Phase != "starting")
@@ -416,10 +427,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (!Running)
                 return;
             _stepObserver.Abort("Step ended with " + status + ": " + error, now);
-            _stepReady = false;
             _resetSnapshot = null;
             if (State.Phase != "cleaning")
             {
+                // Best-effort cleanup keeps its ready latch even if cancellation aborts the observation.
+                _stepReady = false;
                 ClearStateProbe();
                 ClearEventProbe();
             }

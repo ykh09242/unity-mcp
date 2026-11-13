@@ -12,7 +12,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private ProfilerRecorder gc;
         private bool gcSelected;
         private int startedFrame;
-        private int lastFrame;
+        private int lastSampledFrame;
+        private int? finalFrame;
+
+        internal bool FinalFramePending => finalFrame.HasValue && lastSampledFrame < finalFrame.Value && !samples.IsUnavailable;
+
+        internal void EndAtCurrentFrame() => finalFrame = Time.frameCount;
 
         internal static PlayScenarioFrameSampler Begin(PlayScenarioPerformanceSamples samples, bool gcSelected)
         {
@@ -27,7 +32,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 component.samples = samples;
                 component.gcSelected = gcSelected;
                 component.startedFrame = Time.frameCount;
-                component.lastFrame = Time.frameCount;
+                component.lastSampledFrame = component.startedFrame - 1;
                 if (gcSelected)
                 {
                     component.gc = ProfilerRecorder.StartNew(ProfilerCategory.Memory, "GC Allocated In Frame", 1);
@@ -48,9 +53,18 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private void Update()
         {
-            if (samples == null || Time.frameCount <= startedFrame + 1 || lastFrame == Time.frameCount)
+            int frame = Time.frameCount - 1;
+            if (samples == null || frame <= lastSampledFrame || (finalFrame.HasValue && !FinalFramePending))
                 return;
-            lastFrame = Time.frameCount;
+            // Skip the startup frame unless it contains the step's only/final evaluation.
+            if (frame == startedFrame && frame != finalFrame)
+                return;
+            if (frame > finalFrame)
+            {
+                samples.Unavailable("The final evaluation frame was missed by the performance frame source.");
+                return;
+            }
+            lastSampledFrame = frame;
             try
             {
                 samples.AddFrame(Time.unscaledDeltaTime * 1000.0, gcSelected && gc.Valid && gc.Count > 0 ? (long?)gc.LastValue : null);
@@ -64,7 +78,6 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         internal void Stop()
         {
             samples = null;
-            gc.Dispose();
             if (this != null)
                 DestroyImmediate(gameObject);
         }
