@@ -851,7 +851,7 @@ class UnityConnection:
                 self._check_deadline(deadline)
                 if not chunk:
                     if not data:
-                        raise Exception("Connection closed before receiving data")
+                        raise ConnectionError("Connection closed before receiving data")
                     if boundary.at_eof():
                         return data
                     raise _UnityProtocolError(

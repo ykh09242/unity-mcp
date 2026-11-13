@@ -39,6 +39,19 @@ def test_unframed_truncated_eof_is_reported():
         connection.receive_full_response(ChunkSocket([b'{"content":"unfinished']))
 
 
+def test_empty_unframed_reply_closes_connection_without_replaying_mutation(reply_connection):
+    conn, sock = reply_connection(b"")
+    conn.use_framing = False
+    sock.pending = b""
+
+    result = conn.send_command("manage_scene", {"action": "save"}, max_attempts=2)
+
+    assert result.data == {"reason": "outcome_unknown", "command": "manage_scene"}
+    assert result.hint == "inspect_state_before_retry"
+    assert len(sock.sent) == 1
+    assert sock.closed and conn.sock is None
+
+
 def test_unframed_response_size_is_bounded(monkeypatch):
     monkeypatch.setattr("transport.legacy.unity_connection.FRAMED_MAX", 4)
     with pytest.raises(Exception, match="exceeds maximum size"):
