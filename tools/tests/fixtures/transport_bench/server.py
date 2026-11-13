@@ -56,9 +56,13 @@ class MeasuredConnection(UnityConnection):
     queue_path: Path
 
     @contextmanager
-    def _command_lock(self, deadline: float | None) -> Iterator[None]:
+    def _command_lock(
+        self, deadline: float | None, cancelled: threading.Event | None = None
+    ) -> Iterator[None]:
         started = time.perf_counter()
-        with super()._command_lock(deadline):
+        acquire = super()._command_lock
+        # The benchmark also runs against revisions with a deadline-only lock.
+        with acquire(deadline) if cancelled is None else acquire(deadline, cancelled):
             elapsed = (time.perf_counter() - started) * 1000
             with self.queue_path.open("a", encoding="utf-8") as stream:
                 stream.write(
