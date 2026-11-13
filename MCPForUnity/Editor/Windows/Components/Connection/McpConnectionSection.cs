@@ -379,6 +379,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             // EditorConfigurationCache is the source of truth for transport selection after domain reload
             // (EditorPrefs is still used for debugMode and other UI-only state)
             bool stdioSelected = !EditorConfigurationCache.Instance.UseHttpTransport;
+            bool httpConnectionIntent = !stdioSelected && MCPServiceLocator.TransportManager.HasConnectionIntent(TransportMode.Http);
 
             // Keep the Start/Stop Server button label in sync even when the session is not running
             // (e.g., orphaned server after a domain reload).
@@ -404,13 +405,10 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 isRunning = false; // Update local state for the rest of this method
             }
 
-            // For HTTP Local: show session toggle button only when server is running (so user can manually start/end session).
-            // For Stdio/HTTP Remote: always show the session toggle button.
-            // This separates server lifecycle from session lifecycle for multi-instance scenarios.
-            // We use lastLocalServerRunning which was just refreshed by UpdateStartHttpButtonState() above.
+            // A local outage must leave the active session or its reconnect worker cancellable.
             if (connectionToggleButton != null)
             {
-                bool showSessionToggle = !showLocalServerControls || lastLocalServerRunning;
+                bool showSessionToggle = !showLocalServerControls || lastLocalServerRunning || isRunning || httpConnectionIntent;
                 connectionToggleButton.style.display = showSessionToggle ? DisplayStyle.Flex : DisplayStyle.None;
             }
 
@@ -427,6 +425,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 statusIndicator.RemoveFromClassList("disconnected");
                 statusIndicator.AddToClassList("connected");
                 connectionToggleButton.text = stdioSelected ? "End Session" : "Disconnect";
+                connectionToggleButton.tooltip = "End the current session.";
                 connectionToggleButton.SetEnabled(!connectionToggleInProgress);
 
                 // Force the UI to reflect the actual port being used
@@ -443,7 +442,17 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 string resumeStatus = !stdioSelected ? HttpBridgeReloadHandler.ResumeStatus : string.Empty;
                 connectionStatusLabel.tooltip = resumeStatus;
 
-                if (isStdioResuming || isHttpResuming)
+                if (httpConnectionIntent)
+                {
+                    connectionStatusLabel.text = "Reconnecting…";
+                    connectionStatusLabel.tooltip = string.Empty;
+                    statusIndicator.RemoveFromClassList("connected");
+                    statusIndicator.RemoveFromClassList("disconnected");
+                    connectionToggleButton.text = "Stop Reconnecting";
+                    connectionToggleButton.tooltip = "Stop retrying this HTTP connection.";
+                    connectionToggleButton.SetEnabled(!connectionToggleInProgress);
+                }
+                else if (isStdioResuming || isHttpResuming)
                 {
                     connectionStatusLabel.text = isHttpResuming && !string.IsNullOrEmpty(resumeStatus) ? resumeStatus : "Resuming...";
                     // Keep the indicator in a neutral/transitional state
@@ -938,7 +947,10 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             {
                 bool httpRemoteForLog = transportDropdown != null && (TransportProtocol)transportDropdown.value == TransportProtocol.HTTPRemote;
 
-                if (bridgeService.IsRunning)
+                if (
+                    bridgeService.IsRunning
+                    || (EditorConfigurationCache.Instance.UseHttpTransport && MCPServiceLocator.TransportManager.HasConnectionIntent(TransportMode.Http))
+                )
                 {
                     // Clear any resume flags when user manually ends the session to prevent
                     // getting stuck in "Resuming..." state (the flag may have been set by a

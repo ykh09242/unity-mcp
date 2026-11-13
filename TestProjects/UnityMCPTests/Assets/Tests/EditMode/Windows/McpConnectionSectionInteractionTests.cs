@@ -448,6 +448,42 @@ namespace MCPForUnityTests.Editor.Windows
             }
         }
 
+        [TestCase("local", "HTTPLocal")]
+        [TestCase("remote", "HTTPRemote")]
+        public void DroppedHttpSession_ExposesStopUntilExplicitReconnect(string scope, string protocolName)
+        {
+            var section = CreateSection();
+            UseHttp(scope);
+            var protocol = typeof(McpConnectionSection).GetNestedType("TransportProtocol", BindingFlags.NonPublic);
+            Get<EnumField>(section, "transportDropdown").SetValueWithoutNotify((Enum)Enum.Parse(protocol, protocolName));
+            var client = new RetiringHttpClient();
+            client.StopGate.SetResult(true);
+            var manager = MCPServiceLocator.TransportManager;
+            manager.Configure(() => client, () => client);
+            MCPServiceLocator.Register<IBridgeControlService>(new BridgeControlService());
+            Assert.IsTrue(manager.StartAsync(TransportMode.Http).Result);
+            client.DropConnection();
+            server.Reachable = false;
+            section.UpdateConnectionStatus();
+            var button = Get<Button>(section, "connectionToggleButton");
+            Assert.AreEqual("Reconnecting…", Get<Label>(section, "connectionStatusLabel").text);
+            Assert.AreEqual("Stop Reconnecting", button.text);
+            Assert.AreEqual(DisplayStyle.Flex, button.style.display.value);
+            Assert.IsTrue(button.enabledSelf);
+
+            Invoke(section, "OnConnectionToggleClicked");
+            Assert.AreEqual(1, client.StopCalls);
+            Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
+            server.Reachable = true;
+            section.UpdateConnectionStatus();
+            Assert.AreEqual("No Session", Get<Label>(section, "connectionStatusLabel").text);
+            Assert.AreEqual(1, client.StartCalls);
+            Assert.IsTrue(manager.StartAsync(TransportMode.Http).Result);
+            section.UpdateConnectionStatus();
+            StringAssert.StartsWith("Session Active", Get<Label>(section, "connectionStatusLabel").text);
+            Assert.AreEqual(2, client.StartCalls);
+        }
+
         private sealed class RetiringHttpClient : IMcpTransportClient
         {
             public readonly TaskCompletionSource<bool> StopGate = new();
@@ -456,6 +492,8 @@ namespace MCPForUnityTests.Editor.Windows
             public bool IsConnected => State.IsConnected;
             public string TransportName => "controlled-http";
             public TransportState State { get; private set; } = TransportState.Disconnected("controlled-http");
+
+            public void DropConnection() => State = TransportState.Disconnected(TransportName);
 
             public Task<bool> StartAsync()
             {
