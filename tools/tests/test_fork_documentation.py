@@ -220,23 +220,33 @@ def test_pinned_client_and_launch_examples_match_package_source() -> None:
 
 
 def test_upm_install_examples_select_the_fork_subdirectory_and_release() -> None:
-    # Given current package identity/version and the canonical install page.
     package = json.loads(_read(ROOT / "MCPForUnity/package.json"))
-    urls = re.findall(
-        r"https://github\.com/ykh09242/unity-mcp\.git[^\s`]+",
-        _read(SITE / "getting-started/install.md"),
-    )
+    stable = f"ykh09242-v{package['version']}"
+    for page in (
+        SITE / "getting-started/install.md",
+        ROOT / "README.md",
+        ROOT / "docs/i18n/README-zh.md",
+    ):
+        urls = [
+            urlsplit(raw)
+            for raw in re.findall(
+                r"https://github\.com/ykh09242/unity-mcp\.git[^\s`]+", _read(page)
+            )
+        ]
+        assert any(url.fragment == stable for url in urls), (page, stable)
+        assert all(
+            url.query == "path=/MCPForUnity"
+            and (url.fragment == stable or re.fullmatch(r"[0-9a-f]{40}", url.fragment))
+            for url in urls
+        ), page
 
-    # When parsing maintained install URLs, require the current stable tag example.
-    assert urls
-    assert any(urlsplit(raw).fragment == f"ykh09242-v{package['version']}" for raw in urls)
-    for raw in urls:
-        parsed = urlsplit(raw)
-        # Then every example selects the package subdirectory and an immutable revision.
-        assert parsed.query == "path=/MCPForUnity"
-        assert parsed.fragment == f"ykh09242-v{package['version']}" or re.fullmatch(
-            r"[0-9a-f]{40}", parsed.fragment
-        )
+
+def test_server_readme_uses_reviewed_fastmcp_and_mcp_versions() -> None:
+    packages = json.loads(_read(ROOT / "Server/src/core/sdk_compatibility.json"))["packages"]
+    readme = _read(ROOT / "Server/README.md").replace("**", "")
+    for name, label in (("fastmcp", "FastMCP"), ("mcp", "MCP SDK and types")):
+        versions = re.findall(rf"\b{label} (\d+\.\d+\.\d+)\b", readme)
+        assert set(versions) == {packages[name]}
 
 
 def test_cli_examples_name_registered_commands_and_options() -> None:
