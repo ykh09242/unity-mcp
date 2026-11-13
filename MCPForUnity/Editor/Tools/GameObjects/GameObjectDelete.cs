@@ -63,7 +63,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     {
                         error = exception.GetBaseException().Message;
                     }
-                    bool disappeared = UnityObjectIdCompat.InstanceIDToObjectCompat(result.Value<int>("instanceID")) == null;
+                    // The captured native reference belongs to this receipt's ID. Reverse lookup
+                    // can evict a deleted handle from the 6000.6 cache before Undo restores it.
+                    bool disappeared = targetGo == null;
                     result["status"] = disappeared ? "applied" : "failed";
                     result["message"] = error ?? (disappeared ? null : "Unity refused deletion; the GameObject still exists.");
                     if (disappeared)
@@ -91,9 +93,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             // A parent deletion may also have removed targets that were not individually attempted.
-            foreach (JObject result in results)
+            for (int index = 0; index < targets.Count; index++)
             {
-                if (result.Value<string>("status") == "skipped" && UnityObjectIdCompat.InstanceIDToObjectCompat(result.Value<int>("instanceID")) == null)
+                JObject result = (JObject)results[index];
+                if (result.Value<string>("status") == "skipped" && targets[index] == null)
                 {
                     result["status"] = "applied";
                     result["message"] = "Removed by an earlier target deletion.";

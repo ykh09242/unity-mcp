@@ -57,6 +57,7 @@ namespace MCPForUnityTests.Editor.Tools
             int calls = 0;
             int appliedId = 0;
             int failedId = 0;
+            GameObject appliedObject = null;
             int before = Undo.GetCurrentGroup();
             hook.SetValue(
                 null,
@@ -71,6 +72,7 @@ namespace MCPForUnityTests.Editor.Tools
                             return;
                         }
                         appliedId = go.GetInstanceIDCompat();
+                        appliedObject = go;
                         Undo.DestroyObjectImmediate(go);
                     }
                 )
@@ -88,7 +90,7 @@ namespace MCPForUnityTests.Editor.Tools
                 CollectionAssert.AreEqual(new[] { appliedId }, response.SelectToken("data.applied").Values<int>());
                 CollectionAssert.AreEqual(new[] { failedId }, response.SelectToken("data.failed").Values<int>());
                 CollectionAssert.AreEquivalent(ids.Except(new[] { appliedId, failedId }), response.SelectToken("data.skipped").Values<int>());
-                Assert.IsNull(UnityObjectIdCompat.InstanceIDToObjectCompat(appliedId));
+                Assert.IsTrue(appliedObject == null);
                 Assert.IsNotNull(UnityObjectIdCompat.InstanceIDToObjectCompat(failedId));
                 Assert.Greater(Undo.GetCurrentGroup(), before + 1);
 
@@ -96,7 +98,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Undo.RegisterCreatedObjectUndo(next, "Independent next operation");
                 Undo.PerformUndo();
                 Assert.IsTrue(next == null);
-                Assert.IsNull(UnityObjectIdCompat.InstanceIDToObjectCompat(appliedId), "The next Undo must not also undo deletion.");
+                Assert.IsTrue(appliedObject == null, "The next Undo must not also undo deletion.");
                 Undo.PerformUndo();
                 foreach (int id in ids)
                 {
