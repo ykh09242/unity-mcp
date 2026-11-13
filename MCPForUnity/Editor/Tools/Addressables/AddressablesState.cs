@@ -88,6 +88,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
         internal readonly Dictionary<string, object> Groups = new Dictionary<string, object>(StringComparer.Ordinal);
         private int characters;
         internal int ProfileTokenWork;
+        internal JObject PreflightCoverage;
 
         internal static void Fail(string code, string message) => throw new AddressablesException(code, message);
 
@@ -453,6 +454,8 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     "Profile tokens are inspected syntactically; arbitrary static properties and runtime placeholders are not evaluated. No content build or remote deployment is performed."
                 ),
             };
+            if (PreflightCoverage != null)
+                data["reference_scan_coverage"] = PreflightCoverage.DeepClone();
             return Bounded(new SuccessResponse("Addressables inspection", data));
         }
 

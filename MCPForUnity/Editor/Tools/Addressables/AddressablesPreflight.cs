@@ -217,6 +217,8 @@ namespace MCPForUnity.Editor.Tools.Addressables
 
         internal static JArray Read(AddressablesState state)
         {
+            const int arrayElementLimit = 256;
+            int skippedArrays = 0;
             var entries = ((JArray)state.Document["entries"]).OfType<JObject>().Where(e => !e.Value<bool>("builtin")).ToArray();
             if (entries.Length > 256)
                 AddressablesState.Fail("addressables_budget_exceeded", "Preflight is limited to256 explicit entries.");
@@ -279,8 +281,16 @@ namespace MCPForUnity.Editor.Tools.Addressables
                             enter = true;
                             if (++properties > 32768)
                                 AddressablesState.Fail("addressables_budget_exceeded", "Preflight exceeds32768 serialized properties.");
-                            if (property.isArray && property.arraySize > 256)
+                            if (property.isArray && property.arraySize > arrayElementLimit)
+                            {
                                 enter = false;
+                                skippedArrays++;
+                                JObject skipped = Location(entry, property.propertyPath);
+                                skipped["object_identity"] = AddressablesState.Identity(value);
+                                skipped["array_size"] = property.arraySize;
+                                skipped["array_element_limit"] = arrayElementLimit;
+                                Add(issues, "reference_scan_array_skipped", skipped);
+                            }
                             if (MissingObjectReference(property))
                                 Add(issues, "missing_object_reference", Location(entry, property.propertyPath));
                             if (property.propertyType != SerializedPropertyType.String || property.name != "m_AssetGUID")
@@ -343,7 +353,18 @@ namespace MCPForUnity.Editor.Tools.Addressables
             var sorted = new JArray(
                 issues.OrderBy(x => x.Value<string>("code"), StringComparer.Ordinal).ThenBy(x => x.ToString(Formatting.None), StringComparer.Ordinal)
             );
-            state.Revision = AddressablesState.Hash(state.Revision + "|" + sorted.ToString(Formatting.None), "addr1:");
+            state.PreflightCoverage = new JObject
+            {
+                ["scope"] = "serialized_arrays_in_explicit_entry_main_assets_and_prefab_components",
+                ["complete"] = skippedArrays == 0,
+                ["skipped_array_count"] = skippedArrays,
+                ["array_element_limit"] = arrayElementLimit,
+                ["skipped_array_diagnostic_code"] = "reference_scan_array_skipped",
+            };
+            state.Revision = AddressablesState.Hash(
+                state.Revision + "|" + sorted.ToString(Formatting.None) + "|" + state.PreflightCoverage.ToString(Formatting.None),
+                "addr1:"
+            );
             return sorted;
         }
 

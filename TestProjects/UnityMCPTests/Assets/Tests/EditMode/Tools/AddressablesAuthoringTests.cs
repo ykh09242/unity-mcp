@@ -642,6 +642,112 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual("owned/first", Get(other, "address"));
         }
 
+        [TestCase(256, 0)]
+        [TestCase(256, 255)]
+        [TestCase(257, 0)]
+        [TestCase(257, 256)]
+        public void PreflightFindsArrayBoundaryReferenceOrSpecifiesTheSkippedField(int length, int brokenIndex)
+        {
+            var fixture = AssetDatabase.LoadAssetAtPath<AddressablesReferenceFixture>(root + "/Reference.asset");
+            fixture.Reference = null;
+            fixture.References = new object[length];
+            Type referenceType = Type.GetType("UnityEngine.AddressableAssets.AssetReference, Unity.Addressables", true);
+            fixture.References[brokenIndex] = Activator.CreateInstance(referenceType, new object[] { new string('e', 32) });
+            EditorUtility.SetDirty(fixture);
+            AssetDatabase.SaveAssetIfDirty(fixture);
+            byte[] bytes = File.ReadAllBytes(root + "/Reference.asset");
+
+            JObject response = Call("preflight", new JObject { ["page_size"] = 1 });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var data = (JObject)response["data"];
+            var coverage = (JObject)data["reference_scan_coverage"];
+            Assert.IsNotNull(coverage, response.ToString());
+            Assert.AreEqual("serialized_arrays_in_explicit_entry_main_assets_and_prefab_components", coverage.Value<string>("scope"));
+            Assert.AreEqual(256, coverage.Value<int>("array_element_limit"));
+            Assert.AreEqual(length == 256, coverage.Value<bool>("complete"));
+            Assert.AreEqual(length == 256 ? 0 : 1, coverage.Value<int>("skipped_array_count"));
+            Assert.AreEqual(1, data.Value<int>("total"), response.ToString());
+            Assert.AreEqual(1, ((JArray)data["items"]).Count);
+            Assert.IsFalse(data.Value<bool>("has_more"));
+            var diagnostic = (JObject)data["items"][0];
+            Assert.AreEqual(Get(other, "guid"), diagnostic.Value<string>("entry_guid"));
+            Assert.AreEqual(root + "/Reference.asset", diagnostic.Value<string>("path"));
+            if (length == 256)
+            {
+                Assert.AreEqual("missing_asset_reference", diagnostic.Value<string>("code"));
+                Assert.AreEqual("References.Array.data[" + brokenIndex + "].m_AssetGUID", diagnostic.Value<string>("property_path"));
+            }
+            else
+            {
+                Assert.AreEqual(coverage.Value<string>("skipped_array_diagnostic_code"), diagnostic.Value<string>("code"));
+                Assert.AreEqual("References", diagnostic.Value<string>("property_path"));
+                Assert.AreEqual(length, diagnostic.Value<int>("array_size"));
+                Assert.AreEqual(256, diagnostic.Value<int>("array_element_limit"));
+                Assert.AreEqual(Get(other, "guid"), diagnostic["object_identity"].Value<string>("guid"));
+            }
+            Assert.IsNull(Read()["reference_scan_coverage"], "Array coverage applies only to full preflight, not settings inspection.");
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(root + "/Reference.asset"));
+        }
+
+        [Test]
+        public void PreflightPagesSkippedArraysAndRejectsContinuationAfterCoverageChanges()
+        {
+            var fixture = AssetDatabase.LoadAssetAtPath<AddressablesReferenceFixture>(root + "/Reference.asset");
+            fixture.Reference = null;
+            fixture.References = new object[257];
+            EditorUtility.SetDirty(fixture);
+            AssetDatabase.SaveAssetIfDirty(fixture);
+            Invoke(profiles, "SetValue", activeProfile, "Local.BuildPath", "[MissingOwnedVariable]");
+
+            JObject firstPage = Call("preflight", new JObject { ["page_size"] = 1 });
+            Assert.IsTrue(firstPage.Value<bool>("success"), firstPage.ToString());
+            var firstData = (JObject)firstPage["data"];
+            string revision = firstData.Value<string>("revision");
+            Assert.AreEqual(2, firstData.Value<int>("total"));
+            Assert.IsTrue(firstData.Value<bool>("has_more"));
+            JObject secondPage = Call(
+                "preflight",
+                new JObject
+                {
+                    ["page_number"] = 2,
+                    ["page_size"] = 1,
+                    ["expected_revision"] = revision,
+                }
+            );
+            Assert.IsTrue(secondPage.Value<bool>("success"), secondPage.ToString());
+            var secondData = (JObject)secondPage["data"];
+            Assert.AreEqual(1, ((JArray)secondData["items"]).Count);
+            Assert.IsFalse(secondData.Value<bool>("has_more"));
+            Assert.IsTrue(JToken.DeepEquals(firstData["reference_scan_coverage"], secondData["reference_scan_coverage"]));
+            CollectionAssert.AreEquivalent(
+                new[] { "reference_scan_array_skipped", "unknown_profile_token" },
+                ((JArray)firstData["items"]).Concat((JArray)secondData["items"]).Select(row => row.Value<string>("code")).ToArray()
+            );
+
+            foreach (int length in new[] { 258, 256 })
+            {
+                fixture.References = new object[length];
+                EditorUtility.SetDirty(fixture);
+                AssetDatabase.SaveAssetIfDirty(fixture);
+                JObject stale = Call(
+                    "preflight",
+                    new JObject
+                    {
+                        ["page_number"] = 2,
+                        ["page_size"] = 1,
+                        ["expected_revision"] = revision,
+                    }
+                );
+                Assert.IsFalse(stale.Value<bool>("success"), stale.ToString());
+                Assert.AreEqual("stale_addressables_revision", stale.Value<string>("code"));
+                JObject current = Call("preflight", new JObject { ["page_size"] = 1 });
+                Assert.IsTrue(current.Value<bool>("success"), current.ToString());
+                Assert.AreNotEqual(revision, current["data"].Value<string>("revision"));
+                Assert.AreEqual(length == 256, current["data"]["reference_scan_coverage"].Value<bool>("complete"));
+                revision = current["data"].Value<string>("revision");
+            }
+        }
+
         [Test]
         public void GuardedAddressAndGroupMovePreserveGuidLabelsAssetsAndUndo()
         {
