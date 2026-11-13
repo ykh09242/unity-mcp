@@ -22,6 +22,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
         private const string SchemaUrl = "https://opencode.ai/config.json";
         private const string RemoteType = "remote";
         private const string LocalType = "local";
+        internal const string ManualSourceOnlyStatus = "Package source matches; executable launchability has not been verified.";
 
         public OpenCodeConfigurator()
             : base(
@@ -124,7 +125,19 @@ namespace MCPForUnity.Editor.Clients.Configurators
                     return null;
                 if (EntryMatchesCurrentTransport(unityMcp))
                 {
-                    client.SetStatus(McpStatus.Configured);
+                    string generated = GeneratedStdioEntry(unityMcp);
+                    if (HttpEndpointUtility.GetCurrentServerTransport() == ConfiguredTransport.Stdio && generated == null)
+                    {
+                        string executable = (string)unityMcp["command"][0];
+                        if (Path.IsPathRooted(executable) && !File.Exists(executable))
+                        {
+                            client.SetStatus(McpStatus.IncorrectPath, "The configured executable path does not exist.");
+                            return client.status;
+                        }
+                        client.SetStatus(McpStatus.Configured, ManualSourceOnlyStatus);
+                    }
+                    else
+                        client.SetStatus(McpStatus.Configured);
                     client.configuredTransport = HttpEndpointUtility.GetCurrentServerTransport();
                 }
                 else if (automatic != null)

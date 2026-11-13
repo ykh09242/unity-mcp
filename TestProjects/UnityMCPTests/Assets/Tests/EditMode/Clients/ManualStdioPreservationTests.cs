@@ -237,6 +237,33 @@ namespace MCPForUnityTests.Editor.Clients
             }
         }
 
+        [TestCase(false, McpStatus.IncorrectPath)]
+        [TestCase(true, McpStatus.Configured)]
+        public void OpenCodeManualWrapperChecksExplicitPathWithoutExecuting(bool exists, McpStatus expected)
+        {
+            string source = "https://github.com/ykh09242/unity-mcp/archive/0000000000000000000000000000000000000000.zip#subdirectory=Server";
+            SavePath(EditorPrefKeys.GitUrlOverride, source);
+            string executable = Path.Combine(directory, "wrapper");
+            if (exists)
+                File.WriteAllText(executable, "inert wrapper");
+            var entry = new JObject
+            {
+                ["type"] = "local",
+                ["command"] = new JArray(executable, "--from", source, "mcp-for-unity"),
+                ["enabled"] = true,
+                ["custom"] = true,
+            };
+            string path = Path.Combine(directory, "manual-opencode.json");
+            string original = new JObject { ["mcp"] = new JObject { ["unityMCP"] = entry } }.ToString();
+            File.WriteAllText(path, original);
+            Assert.IsNull(OpenCodeConfigurator.GeneratedStdioEntry(entry));
+            var configurator = new SyntheticOpenCodeConfigurator(path);
+            Assert.AreEqual(expected, configurator.CheckStatus(true));
+            if (exists)
+                Assert.AreEqual(OpenCodeConfigurator.ManualSourceOnlyStatus, configurator.Client.configStatus);
+            Assert.AreEqual(original, File.ReadAllText(path));
+        }
+
         private sealed class SyntheticOpenCodeConfigurator : OpenCodeConfigurator
         {
             private readonly string path;

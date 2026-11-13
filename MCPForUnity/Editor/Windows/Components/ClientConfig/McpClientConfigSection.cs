@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Clients;
+using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
@@ -1302,6 +1303,12 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             else
             {
                 clientStatusLabel.text = GetStatusDisplayString(client.Status);
+                if (
+                    client is OpenCodeConfigurator openCode
+                    && client.Status == McpStatus.Configured
+                    && openCode.Client.configStatus == OpenCodeConfigurator.ManualSourceOnlyStatus
+                )
+                    clientStatusLabel.text = "Source Matches (Launch Unverified)";
 
                 switch (client.Status)
                 {
