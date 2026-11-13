@@ -71,7 +71,7 @@ properties can contain `@` strings without any escaping beyond JSON quoting.
 Supported JSON inputs include raw params; script edits; batch inline commands;
 animation curve keys, transition conditions and raw params; asset/component/
 material properties; camera body/aim/extension props; custom-tool params;
-prefab child creation; ProBuilder params, points, edges and index selections;
+prefab child creation; UI image properties; ProBuilder params, points, edges and index selections;
 sprite clips; texture palettes, import settings, sprite pivots and set-pixels;
 VFX line positions/raw params; and physics gravity JSON.
 

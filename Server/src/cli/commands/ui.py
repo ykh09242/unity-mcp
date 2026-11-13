@@ -8,6 +8,7 @@ from typing import Optional
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_success
 from cli.utils.connection import run_command, handle_unity_errors, UnityCommandError
+from cli.utils.parsers import admit_json_inputs
 
 
 @click.group()
@@ -163,11 +164,12 @@ def create_image(name: str, parent: str, sprite: Optional[str]):
 @click.option(
     "--properties",
     required=True,
-    help="Image JSON properties; sprite accepts null, asset path, or {path,name}.",
+    help="Image JSON properties; accepts @file or -/@- stdin. sprite accepts null, asset path, or {path,name}.",
 )
 @handle_unity_errors
 def set_image(target: str, properties: str) -> None:
     """Edit one existing uGUI Image through a single native Undo transaction."""
+    properties = admit_json_inputs(properties=properties)["properties"]
 
     def reject_nonfinite(_value: str) -> None:
         raise click.BadParameter("Finite JSON numbers are required.", param_hint="--properties")

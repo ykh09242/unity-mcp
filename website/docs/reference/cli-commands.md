@@ -4434,7 +4434,7 @@ Edit one existing uGUI Image through a single native Undo transaction.
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | target | text | required | nargs=1 | — | — |  |
-| --properties | text | required | nargs=1 | — | — | Image JSON properties; sprite accepts null, asset path, or &#123;path,name&#125;. |
+| --properties | text | required | nargs=1 | — | — | Image JSON properties; accepts @file or -/@- stdin. sprite accepts null, asset path, or &#123;path,name&#125;. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp verification`
