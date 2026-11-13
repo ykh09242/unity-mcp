@@ -58,6 +58,109 @@ IMPORT_INTEGERS = (
 )
 
 
+@pytest.mark.parametrize("platform_key", ["platform_settings", "platformSettings"])
+def test_import_settings_preserve_android_and_unknown_fields(dispatch, platform_key):
+    # Given platform overrides and future fields whose diagnostics belong to native code.
+    cli, state = dispatch
+    platforms = {"Android": {"overridden": True, "format": "ASTC_6x6", "futureField": None}}
+    settings = {"readable": True, platform_key: platforms, "futureSetting": {"value": False}}
+
+    # When the real CLI admits an importer request.
+    result = CliRunner().invoke(
+        cli,
+        ["texture", "create", "Assets/Owned.png", "--import-settings", json.dumps(settings)],
+    )
+
+    # Then all requested fields reach dispatch under the canonical platform key.
+    assert result.exit_code == 0, (result.exception, result.output)
+    assert state["calls"][0][1]["importSettings"] == {
+        "isReadable": True,
+        "platformSettings": platforms,
+        "futureSetting": {"value": False},
+    }
+
+
+@pytest.mark.parametrize(
+    "settings,expected",
+    [
+        ({"readable": "yes", "isReadable": True}, {"isReadable": True}),
+        ({"texture_type": "sprite", "textureType": "Sprite"}, {"textureType": "Sprite"}),
+        ({"aniso_level": " +1 ", "anisoLevel": 1}, {"anisoLevel": 1}),
+        (
+            {"platform_settings": {"Android": {}}, "platformSettings": {"Android": {}}},
+            {"platformSettings": {"Android": {}}},
+        ),
+    ],
+)
+def test_import_settings_accept_equal_normalized_aliases(dispatch, settings, expected):
+    # Given dual aliases with equal canonical values.
+    cli, state = dispatch
+
+    # When the real CLI admits the request.
+    result = CliRunner().invoke(
+        cli,
+        ["texture", "create", "Assets/Owned.png", "--import-settings", json.dumps(settings)],
+    )
+
+    # Then dispatch receives one canonical field.
+    assert result.exit_code == 0, (result.exception, result.output)
+    assert state["calls"][0][1]["importSettings"] == expected
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"readable": True, "isReadable": False},
+        {"readable": True, "isReadable": 1},
+        {"aniso_level": 1, "anisoLevel": 2},
+        {
+            "platform_settings": {"Android": {"overridden": True}},
+            "platformSettings": {"Android": {"overridden": False}},
+        },
+    ],
+)
+def test_import_settings_reject_conflicting_aliases_without_dispatch(dispatch, settings):
+    # Given aliases that disagree after public normalization.
+    cli, state = dispatch
+
+    # When the CLI validates importer settings.
+    result = CliRunner().invoke(
+        cli,
+        ["texture", "create", "Assets/Owned.png", "--import-settings", json.dumps(settings)],
+    )
+
+    # Then the conflict is explicit and nothing reaches native code.
+    assert result.exit_code == 2, (result.exception, result.output)
+    assert "conflict" in result.output.lower()
+    assert state["calls"] == []
+
+
+@pytest.mark.parametrize("platform_key", ["platform_settings", "platformSettings"])
+@pytest.mark.parametrize("platforms", [None, [], "Android", {"Android": []}])
+def test_import_settings_reject_malformed_platform_container_without_dispatch(
+    dispatch, platform_key, platforms
+):
+    # Given a malformed platform override container.
+    cli, state = dispatch
+
+    # When the CLI validates the importer request.
+    result = CliRunner().invoke(
+        cli,
+        [
+            "texture",
+            "create",
+            "Assets/Owned.png",
+            "--import-settings",
+            json.dumps({platform_key: platforms}),
+        ],
+    )
+
+    # Then platform shape errors stay local and no command is dispatched.
+    assert result.exit_code == 2, (result.exception, result.output)
+    assert "platform_settings" in result.output and "object" in result.output
+    assert state["calls"] == []
+
+
 @pytest.mark.parametrize("field", ["x", "y", "width", "height"])
 @pytest.mark.parametrize("bad", BAD_INTEGERS)
 @pytest.mark.parametrize("output_format", ["json", "text", "table"])

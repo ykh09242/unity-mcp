@@ -12,6 +12,7 @@ from cli.utils.output import format_output, print_success
 from cli.utils.connection import run_command, handle_unity_errors
 from cli.utils.input_errors import CLIInputError
 from cli.utils.parsers import parse_json_or_exit as try_parse_json
+from services.texture_import_settings import finalize_import_settings
 
 
 _TEXTURE_TYPES = {
@@ -334,36 +335,10 @@ def _normalize_import_settings(value: Any) -> dict[str, Any]:
     if "sprite_extrude" in value:
         result["spriteExtrude"] = _normalize_integer(value["sprite_extrude"], "sprite_extrude")
 
-    for key, val in value.items():
-        if key in result:
-            continue
-        if key in (
-            "textureType",
-            "textureShape",
-            "sRGBTexture",
-            "alphaSource",
-            "alphaIsTransparency",
-            "isReadable",
-            "mipmapEnabled",
-            "wrapMode",
-            "wrapModeU",
-            "wrapModeV",
-            "filterMode",
-            "mipmapFilter",
-            "anisoLevel",
-            "maxTextureSize",
-            "textureCompression",
-            "crunchedCompression",
-            "compressionQuality",
-            "spriteImportMode",
-            "spritePixelsPerUnit",
-            "spritePivot",
-            "spriteMeshType",
-            "spriteExtrude",
-        ):
-            result[key] = val
-
-    return result
+    finalized, error = finalize_import_settings(value, result)
+    if error:
+        raise ValueError(error)
+    return finalized
 
 
 @click.group()
