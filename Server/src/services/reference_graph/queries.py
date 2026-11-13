@@ -14,6 +14,7 @@ import uuid
 from models.response_limits import response_size
 from services.reference_graph.store import (
     GraphStore,
+    InvalidGraphRequest,
     RevisionConflict,
     _hash,
     _json,
@@ -56,7 +57,7 @@ def decode_cursor(scope: str, cursor: str) -> dict:
             raise ValueError("Cursor belongs to another scope")
         return data
     except (ValueError, TypeError, UnicodeError) as error:
-        raise ValueError("Invalid graph query cursor") from error
+        raise InvalidGraphRequest("Invalid graph query cursor") from error
 
 
 class GraphQueries:
@@ -113,7 +114,9 @@ class GraphQueries:
     @staticmethod
     def _page_size(limit: int) -> None:
         if type(limit) is not int or not 1 <= limit <= 1000:
-            raise ValueError("Page size must be from 1 to 1000; continue for remaining results")
+            raise InvalidGraphRequest(
+                "Page size must be from 1 to 1000; continue for remaining results"
+            )
 
     @staticmethod
     def _revision(connection) -> int:
@@ -180,7 +183,7 @@ class GraphQueries:
         position = self._decode(cursor)
         identity, sequence = position.get("id"), position.get("sequence")
         if not isinstance(identity, str) or type(sequence) is not int or sequence < 0:
-            raise ValueError("Invalid job cursor")
+            raise InvalidGraphRequest("Invalid job cursor")
         row = bounded_rows(
             connection,
             "SELECT * FROM graph_queries WHERE id=?",
@@ -190,7 +193,7 @@ class GraphQueries:
         if row is not None:
             PageBudget(max_bytes=MAX_REPLAY_BYTES).require(row)
         if row is None or row["abandoned"] or row["kind"] != kind or row["signature"] != signature:
-            raise ValueError("Cursor belongs to another or released query")
+            raise InvalidGraphRequest("Cursor belongs to another or released query")
         if row["revision"] != revision:
             raise RevisionConflict("Graph changed during exploration; start a new query")
         if sequence == row["sequence"] - 1 and row["result"] is not None:
@@ -232,7 +235,7 @@ class GraphQueries:
 
     def explain(self, identity: str) -> dict:
         if not isinstance(identity, str) or not identity:
-            raise ValueError("An edge id is required")
+            raise InvalidGraphRequest("An edge id is required")
         with self.store._connect() as connection:
             rows = bounded_rows(connection, _SELECT + "e.id=?", (identity,))
             budget, edges = PageBudget(), []
@@ -269,7 +272,7 @@ class GraphQueries:
         cursor: str | None = None,
     ) -> dict:
         if not isinstance(target, str) or not target:
-            raise ValueError("A target node is required")
+            raise InvalidGraphRequest("A target node is required")
         return self._traverse(node, target=target, direction=direction, limit=limit, cursor=cursor)
 
     def _traverse(
@@ -284,9 +287,11 @@ class GraphQueries:
     ) -> dict:
         self._page_size(limit)
         if not isinstance(node, str) or not node or direction not in {"incoming", "outgoing"}:
-            raise ValueError("Use a node and incoming/outgoing direction")
+            raise InvalidGraphRequest("Use a node and incoming/outgoing direction")
         if max_depth is not None and (type(max_depth) is not int or max_depth < 1):
-            raise ValueError("max_depth must be positive or omitted for all reachable nodes")
+            raise InvalidGraphRequest(
+                "max_depth must be positive or omitted for all reachable nodes"
+            )
         with self.store._connect(write=True) as connection:
             if connection.execute(
                 "SELECT 1 FROM graph_excluded_nodes WHERE id=? OR id=?", (node, target)
@@ -510,7 +515,7 @@ class GraphQueries:
     def snapshot(self, *, name: str = "", limit: int = 100, cursor: str | None = None) -> dict:
         self._page_size(limit)
         if not isinstance(name, str):
-            raise ValueError("Snapshot name must be a string")
+            raise InvalidGraphRequest("Snapshot name must be a string")
         with self.store._connect(write=True) as connection:
             if not connection.execute("SELECT ready FROM graph_admission WHERE id=1").fetchone()[0]:
                 raise RevisionConflict("Graph admission is incomplete; retry snapshot capture")
@@ -579,12 +584,12 @@ class GraphQueries:
 
     def _snapshot(self, connection, identity: str) -> dict:
         if not isinstance(identity, str) or not identity:
-            raise ValueError("Snapshot id is required")
+            raise InvalidGraphRequest("Snapshot id is required")
         row = connection.execute(
             "SELECT * FROM graph_snapshots WHERE id=? AND state='ready'", (identity,)
         ).fetchone()
         if row is None:
-            raise ValueError("Snapshot is not ready or does not belong to this scope")
+            raise InvalidGraphRequest("Snapshot is not ready or does not belong to this scope")
         result = dict(row)
         admission = connection.execute(
             "SELECT revision,ready FROM graph_admission WHERE id=1"
@@ -608,7 +613,7 @@ class GraphQueries:
         if cursor is not None:
             position = self._decode(cursor)
             if position.get("before") != before or position.get("after") != after:
-                raise ValueError("Cursor belongs to another comparison")
+                raise InvalidGraphRequest("Cursor belongs to another comparison")
             if "last_row" in position:
                 if (
                     type(position["last_row"]) is not int
@@ -616,11 +621,11 @@ class GraphQueries:
                     or position.get("last_side") not in ("before", "after")
                     or not isinstance(position.get("last_hash"), str)
                 ):
-                    raise ValueError("Invalid comparison cursor anchor")
+                    raise InvalidGraphRequest("Invalid comparison cursor anchor")
             elif isinstance(position.get("last"), str):
                 last = position["last"]
             else:
-                raise ValueError("Invalid legacy comparison cursor anchor")
+                raise InvalidGraphRequest("Invalid legacy comparison cursor anchor")
         with self.store._connect() as connection:
             old, new = self._snapshot(connection, before), self._snapshot(connection, after)
             old_backing = snapshot_storage.backing(connection, before)
@@ -634,7 +639,9 @@ class GraphQueries:
                     ),
                 ).fetchone()
                 if anchor is None or _hash(anchor["id"]) != position["last_hash"]:
-                    raise ValueError("Invalid comparison cursor anchor; restart the comparison")
+                    raise InvalidGraphRequest(
+                        "Invalid comparison cursor anchor; restart the comparison"
+                    )
                 last = anchor["id"]
             # Page candidate IDs before comparing payloads. Filtering unchanged
             # rows first would scan a whole identical snapshot in one request.

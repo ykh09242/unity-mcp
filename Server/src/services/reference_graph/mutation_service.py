@@ -9,7 +9,7 @@ import time
 from services.reference_graph.collection_protocol import boolean, change_page
 from services.reference_graph.mutations import MutationReceipts
 from services.reference_graph.reconcile import drained_thread
-from services.reference_graph.store import RevisionConflict
+from services.reference_graph.store import InvalidGraphRequest, RevisionConflict
 from services.registry.operation_context import active_operation
 
 
@@ -21,7 +21,9 @@ async def probe(entry, paths):
     MutationReceipts.paths(paths)
     for path in paths:
         if not await drained_thread(entry.workspace.admitted, path):
-            raise ValueError("Mutation target is excluded by this scope's collection policy")
+            raise InvalidGraphRequest(
+                "Mutation target is excluded by this scope's collection policy"
+            )
     result = await entry.collect("probe", paths=paths)
     rows = result.get("targets")
     if not isinstance(rows, list) or [row.get("path") for row in rows] != paths:
@@ -118,7 +120,7 @@ async def execute(service, entry, editor, action, options):
     identity = options.get("id")
     if action in {"begin_mutation", "add_mutation_targets"}:
         if ("paths" in options) == ("guids" in options):
-            raise ValueError("Supply exactly one target page: paths or inventoried GUIDs")
+            raise InvalidGraphRequest("Supply exactly one target page: paths or inventoried GUIDs")
         paths = (
             await drained_thread(receipts.resolve_guids, options["guids"])
             if "guids" in options
@@ -153,7 +155,7 @@ async def execute(service, entry, editor, action, options):
         or not math.isfinite(wait)
         or wait < 0
     ):
-        raise ValueError(
+        raise InvalidGraphRequest(
             "wait_seconds must be a nonnegative finite request wait; it never expires the receipt"
         )
     service.start(entry, wake=True)

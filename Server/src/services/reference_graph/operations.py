@@ -6,7 +6,7 @@ import json
 import math
 import time
 
-from services.reference_graph.store import _hash
+from services.reference_graph.store import InvalidGraphRequest, _hash
 from services.reference_graph import reclamation, snapshot_storage
 from services.reference_graph.storage_budget import file_sizes
 from services.reference_graph.response_budget import PageBudget, bounded_rows
@@ -21,7 +21,7 @@ CONFIG_FIELDS = {
 
 def configuration(kind, value):
     if kind not in CONFIG_FIELDS or not isinstance(value, dict):
-        raise ValueError("Configuration kind must be rule, source or policy")
+        raise InvalidGraphRequest("Configuration kind must be rule, source or policy")
     clean = {key: item for key, item in value.items() if key in CONFIG_FIELDS[kind]}
     if kind == "source":
         if "mappings" in clean:
@@ -45,16 +45,18 @@ def import_action(options):
     kind = options.get("kind")
     clean = configuration(kind, options.get("config"))
     if clean != options["config"]:
-        raise ValueError("Configuration contains unsupported fields")
+        raise InvalidGraphRequest("Configuration contains unsupported fields")
     if kind == "source" and options.get("reauthorize") is not True:
-        raise ValueError("Importing a source requires explicit reauthorize=true for this scope")
+        raise InvalidGraphRequest(
+            "Importing a source requires explicit reauthorize=true for this scope"
+        )
     if kind != "source" and ("enabled" in options or "reauthorize" in options):
-        raise ValueError("Only sources accept enabled and reauthorize")
+        raise InvalidGraphRequest("Only sources accept enabled and reauthorize")
     result = {"config": clean, "expected_version": options.get("expected_version")}
     if kind != "policy":
         result["id"] = options.get("id")
     elif options.get("id", "policy") != "policy":
-        raise ValueError("Policy id must be policy")
+        raise InvalidGraphRequest("Policy id must be policy")
     if kind == "source":
         result["enabled"] = options.get("enabled", True)
     return {"rule": "set_rule", "source": "set_source", "policy": "set_policy"}[kind], result
@@ -62,9 +64,11 @@ def import_action(options):
 
 def export_config(workspace, *, kind, after="", limit=100):
     if kind not in CONFIG_FIELDS or not isinstance(after, str):
-        raise ValueError("Export kind must be rule, source or policy with a string after cursor")
+        raise InvalidGraphRequest(
+            "Export kind must be rule, source or policy with a string after cursor"
+        )
     if type(limit) is not int or not 1 <= limit <= 1000:
-        raise ValueError("Use 1-1000 entries per page and continue with next_after")
+        raise InvalidGraphRequest("Use 1-1000 entries per page and continue with next_after")
     items, budget, more = [], PageBudget(), False
     with workspace.store._connect() as db:
         if kind == "policy":
@@ -184,9 +188,9 @@ def overview(entry):
 
 def cleanup(workspace, *, before, limit=100):
     if type(before) not in (int, float) or not math.isfinite(before) or before < 0:
-        raise ValueError("before must be a nonnegative Unix timestamp")
+        raise InvalidGraphRequest("before must be a nonnegative Unix timestamp")
     if type(limit) is not int or not 1 <= limit <= 1000:
-        raise ValueError("Use 1-1000 records per cleanup batch; repeat while more is true")
+        raise InvalidGraphRequest("Use 1-1000 records per cleanup batch; repeat while more is true")
     # Initialize/migrate before taking the cleanup writer transaction. All selection
     # and deletion below share its revision and exclude concurrent continuations.
     workspace.queries()

@@ -35,6 +35,11 @@ for the work limits and timing boundaries.
 
 ## Query and inspect uncertainty
 
+The MCP tool returns `invalid_reference_graph_request` for invalid request fields,
+page sizes or cursors. Correct the input before resubmitting. A changed revision
+returns `reference_graph_changed` and requires a fresh read. Connection or storage
+failures return `reference_graph_unavailable`.
+
 ```json
 {"action":"query","options":{"node":"asset:0123456789abcdef0123456789abcdef","direction":"incoming","limit":100}}
 ```

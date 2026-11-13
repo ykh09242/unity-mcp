@@ -21,6 +21,7 @@ from services.reference_graph.store import (
     Edge,
     GraphStore,
     Observation,
+    InvalidGraphRequest,
     RevisionConflict,
     _hash,
     _json,
@@ -679,9 +680,12 @@ class GraphWorkspace:
             or not all(isinstance(p, str) for p in patterns)
             or type(policy.get("respect_gitignore", True)) is not bool
         ):
-            raise ValueError("Policy accepts an exclude pattern list")
-        for pattern in patterns:
-            _pattern(pattern)
+            raise InvalidGraphRequest("Policy accepts an exclude pattern list")
+        try:
+            for pattern in patterns:
+                _pattern(pattern)
+        except ValueError as error:
+            raise InvalidGraphRequest(str(error)) from error
         replacement = {
             "version": expected_version + 1,
             "exclude": patterns,
@@ -1671,7 +1675,7 @@ class GraphWorkspace:
             or type(limit) is not int
             or not 1 <= limit <= 1000
         ):
-            raise ValueError("Use nonnegative offset and page size from 1 to 1000")
+            raise InvalidGraphRequest("Use nonnegative offset and page size from 1 to 1000")
         position = None
         if cursor is not None:
             position = decode_cursor(self.store.scope.key, cursor)
@@ -1686,7 +1690,7 @@ class GraphWorkspace:
                 or type(position.get("offset")) is not int
                 or position["offset"] < 0
             ):
-                raise ValueError("Invalid diagnostics cursor; retain its original node")
+                raise InvalidGraphRequest("Invalid diagnostics cursor; retain its original node")
         with self.store._connect() as connection:
             current = connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
             if (
@@ -1715,7 +1719,7 @@ class GraphWorkspace:
                     (position["row"], owner),
                 ).fetchone()
                 if anchor_row is None or _hash(list(anchor_row)) != position["anchor"]:
-                    raise ValueError(
+                    raise InvalidGraphRequest(
                         "Invalid diagnostics cursor anchor; restart from the first page"
                     )
                 statement += " AND (i.provider,i.ordinal)>(?,?)"

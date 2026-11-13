@@ -13,6 +13,7 @@ from services.reference_graph import reclamation
 from services.reference_graph.response_budget import PageBudget, bounded_rows
 from services.reference_graph.store import (
     Edge,
+    InvalidGraphRequest,
     Observation,
     RevisionConflict,
     _json,
@@ -106,7 +107,7 @@ class RuntimeObservations:
             "SELECT * FROM graph_runtime_sessions WHERE id=?", (identity,)
         ).fetchone()
         if row is None and not missing_ok:
-            raise ValueError("Unknown runtime capture in this scope")
+            raise InvalidGraphRequest("Unknown runtime capture in this scope")
         return row
 
     def begin(self):
@@ -127,7 +128,7 @@ class RuntimeObservations:
     def sessions(self, *, after="", limit=100):
         GraphQueries._page_size(limit)
         if not isinstance(after, str):
-            raise ValueError("Capture cursor must be a string")
+            raise InvalidGraphRequest("Capture cursor must be a string")
         with self.store._connect() as connection:
             rows = [
                 dict(row)
@@ -370,7 +371,7 @@ class RuntimeObservations:
     def events(self, identity, *, after=0, limit=100):
         GraphQueries._page_size(limit)
         if type(after) is not int or after < 0:
-            raise ValueError("Runtime event cursor must be nonnegative")
+            raise InvalidGraphRequest("Runtime event cursor must be nonnegative")
         admission = self.workspace.admission()
         catalog = self.workspace.key_admission()
         with self.store._connect() as connection:
@@ -403,7 +404,7 @@ class RuntimeObservations:
     def handles(self, identity, *, after="", limit=100):
         GraphQueries._page_size(limit)
         if not isinstance(after, str):
-            raise ValueError("Handle cursor must be a string")
+            raise InvalidGraphRequest("Handle cursor must be a string")
         admission = self.workspace.admission()
         catalog = self.workspace.key_admission()
         with self.store._connect() as connection:

@@ -114,6 +114,10 @@ class RevisionConflict(ValueError):
     """Read the current version before retrying a mutation or page."""
 
 
+class InvalidGraphRequest(ValueError):
+    """The caller can correct the action or its options without reconnecting."""
+
+
 def _json(value: object) -> str:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -182,9 +186,9 @@ class Edge:
                 self.target_type,
             )
         ):
-            raise ValueError("Edge text fields must be strings")
+            raise InvalidGraphRequest("Edge text fields must be strings")
         if not self.target or not self.kind or type(self.line) is not int or self.line < 0:
-            raise ValueError("Edges require target, kind and nonnegative source line")
+            raise InvalidGraphRequest("Edges require target, kind and nonnegative source line")
 
 
 def check_owned_path(path: Path) -> Path:
@@ -766,7 +770,7 @@ class GraphStore:
         withhold_edges: bool = False,
     ) -> dict:
         if direction not in ("outgoing", "incoming") or not 1 <= limit <= 10000:
-            raise ValueError("Use incoming/outgoing and a page size from 1 to 10000")
+            raise InvalidGraphRequest("Use incoming/outgoing and a page size from 1 to 10000")
         query_hash = _hash(
             (self.scope.key, node, direction, "partial_static")
             if partial_static
@@ -795,7 +799,7 @@ class GraphStore:
                 elif not isinstance(position.get("last"), str):
                     raise ValueError("Invalid legacy cursor anchor")
             except (ValueError, KeyError, TypeError, UnicodeError) as error:
-                raise ValueError("Invalid reference graph cursor") from error
+                raise InvalidGraphRequest("Invalid reference graph cursor") from error
         with self._connect() as connection:
             revision = connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
             if position is not None and position.get("revision") != revision:
@@ -812,7 +816,9 @@ class GraphStore:
                         "SELECT id FROM edges WHERE rowid=?", (position["last_row"],)
                     ).fetchone()
                     if anchor is None or _hash(anchor["id"]) != position["last_hash"]:
-                        raise ValueError("Invalid reference graph cursor anchor; restart the query")
+                        raise InvalidGraphRequest(
+                            "Invalid reference graph cursor anchor; restart the query"
+                        )
                     last = anchor["id"]
                 else:
                     last = position["last"]
@@ -943,7 +949,7 @@ class GraphStore:
         self, identity: str, owner: str, edge: Edge, *, expected_version: int
     ) -> int:
         if not identity or not owner:
-            raise ValueError("Declaration identity and owner are required")
+            raise InvalidGraphRequest("Declaration identity and owner are required")
         edge = replace(edge, confidence="declared")
         with self._connect(write=True, public_edit=True) as connection:
             old = connection.execute(
@@ -1010,7 +1016,7 @@ class GraphStore:
                 for row in connection.execute("SELECT payload FROM rules WHERE id<>?", (identity,)):
                     rule = json.loads(row[0])
                     if rule.get("enabled", True) and rule.get("call") == call:
-                        raise ValueError("Duplicate enabled wrapper rule call")
+                        raise InvalidGraphRequest("Duplicate enabled wrapper rule call")
             version = expected_version + 1
             connection.execute(
                 "INSERT INTO rules VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version,payload=excluded.payload",

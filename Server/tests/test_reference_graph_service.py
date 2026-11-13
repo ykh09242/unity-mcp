@@ -35,6 +35,33 @@ REQUEST_MARKER = ContextVar("graph_test_request_marker", default=None)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"node": "asset:fixture", "limit": 0},
+        {"node": "asset:fixture", "limti": 10},
+        {"node": "asset:fixture", "direction": "both"},
+        {"limit": 10},
+    ],
+)
+async def test_graph_tool_distinguishes_request_errors_from_unavailability(options):
+    service = ReferenceGraphService()
+    ctx = SimpleNamespace(fastmcp=SimpleNamespace(_reference_graph_service=service))
+    try:
+        rejected = await manage_reference_graph(ctx, "query", options)
+        assert rejected["success"] is False
+        assert rejected["error"] == "invalid_reference_graph_request"
+        assert rejected["message"]
+        assert not service.entries
+
+        missing = SimpleNamespace(fastmcp=SimpleNamespace())
+        unavailable = await manage_reference_graph(missing, "query", {"node": "asset:fixture"})
+        assert unavailable["error"] == "reference_graph_unavailable"
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_live_query_hints_follow_collection_and_disappear_on_completion(setup, monkeypatch):
     service, _, ctx = setup
     monkeypatch.setattr(service, "start", lambda *_, **__: None)

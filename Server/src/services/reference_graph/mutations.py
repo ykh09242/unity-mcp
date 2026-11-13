@@ -12,7 +12,7 @@ import time
 import uuid
 
 from services.reference_graph.queries import GraphQueries, _SELECT
-from services.reference_graph.store import RevisionConflict, _json
+from services.reference_graph.store import InvalidGraphRequest, RevisionConflict, _json
 
 
 class MutationReceipts:
@@ -41,7 +41,9 @@ class MutationReceipts:
     @staticmethod
     def paths(paths):
         if not isinstance(paths, list) or not 1 <= len(paths) <= 1000:
-            raise ValueError("Supply 1-1000 paths per page; append more pages before dispatch")
+            raise InvalidGraphRequest(
+                "Supply 1-1000 paths per page; append more pages before dispatch"
+            )
         for path in paths:
             if (
                 not isinstance(path, str)
@@ -51,15 +53,15 @@ class MutationReceipts:
                 or any(ord(character) < 32 for character in path)
                 or any(not part or part.startswith(".") for part in path.split("/"))
             ):
-                raise ValueError("Mutation targets require admitted, relative asset paths")
+                raise InvalidGraphRequest("Mutation targets require admitted, relative asset paths")
         if len(set(paths)) != len(paths):
-            raise ValueError("A target page cannot contain duplicate paths")
+            raise InvalidGraphRequest("A target page cannot contain duplicate paths")
 
     @staticmethod
     def _row(connection, identity):
         row = connection.execute("SELECT * FROM graph_mutations WHERE id=?", (identity,)).fetchone()
         if row is None:
-            raise ValueError("Unknown or released mutation receipt in this scope")
+            raise InvalidGraphRequest("Unknown or released mutation receipt in this scope")
         return row
 
     def resolve_guids(self, guids):
@@ -72,7 +74,7 @@ class MutationReceipts:
             )
             or len(set(guids)) != len(guids)
         ):
-            raise ValueError("Supply 1-1000 distinct lowercase GUIDs per target page")
+            raise InvalidGraphRequest("Supply 1-1000 distinct lowercase GUIDs per target page")
         with self.store._connect() as connection:
             paths = []
             for guid in guids:
@@ -80,7 +82,7 @@ class MutationReceipts:
                     "SELECT path FROM graph_assets WHERE guid=?", (guid,)
                 ).fetchone()
                 if row is None:
-                    raise ValueError(
+                    raise InvalidGraphRequest(
                         "GUID is not in this graph's current inventory; synchronize it or supply a path"
                     )
                 paths.append(row[0])
@@ -203,7 +205,7 @@ class MutationReceipts:
             "caller_reported",
             "tool_response",
         }:
-            raise ValueError("Outcome must be accepted, failed or unknown")
+            raise InvalidGraphRequest("Outcome must be accepted, failed or unknown")
         with self.store._connect(write=True) as connection:
             row = self._row(connection, identity)
             if row["state"] != "open":

@@ -37,6 +37,7 @@ from services.reference_graph.response_budget import require_response
 from services.reference_graph.store import (
     Edge,
     GraphScope,
+    InvalidGraphRequest,
     RevisionConflict,
     _hash,
     _json,
@@ -1093,16 +1094,36 @@ class ReferenceGraphService:
             "watch": {"enabled"},
         }
         if action not in fields or not isinstance(options, dict) or set(options) - fields[action]:
-            raise ValueError("Unsupported reference graph action or fields")
+            raise InvalidGraphRequest("Unsupported reference graph action or fields")
         for key in ("config", "edge"):
             if key in options and not isinstance(options[key], dict):
-                raise ValueError(key + " must be an object")
+                raise InvalidGraphRequest(key + " must be an object")
         if "limit" in options and (type(options["limit"]) is not int or options["limit"] <= 0):
-            raise ValueError("limit must be a positive integer page size")
+            raise InvalidGraphRequest("limit must be a positive integer page size")
         if action == "declare" and (
             not isinstance(options.get("owner"), str) or not options["owner"]
         ):
-            raise ValueError("A declaration owner id is required")
+            raise InvalidGraphRequest("A declaration owner id is required")
+        if action in {"query", "diagnostics", "impact", "path"} and (
+            not isinstance(options.get("node"), str) or not options["node"]
+        ):
+            raise InvalidGraphRequest("A node id is required, for example asset:<Unity GUID>")
+        if "direction" in options and options["direction"] not in ("incoming", "outgoing"):
+            raise InvalidGraphRequest("Use incoming or outgoing for direction")
+        if action == "path" and (
+            not isinstance(options.get("target"), str) or not options["target"]
+        ):
+            raise InvalidGraphRequest("A target node is required")
+        if action == "diff" and not all(
+            isinstance(options.get(key), str) and options[key] for key in ("before", "after")
+        ):
+            raise InvalidGraphRequest("Supply both snapshot IDs for comparison")
+        if action in {"import_config", "export_config"} and options.get("kind") not in (
+            "rule",
+            "source",
+            "policy",
+        ):
+            raise InvalidGraphRequest("Configuration kind must be rule, source or policy")
         entry, editor = await self.resolve(
             ctx,
             action,
@@ -1170,10 +1191,6 @@ class ReferenceGraphService:
         if policy_choice_required and action not in {"status", "policy"}:
             await drained_thread(workspace.require_restart_policy)
 
-        if action in {"query", "diagnostics", "impact", "path"} and (
-            not isinstance(options.get("node"), str) or not options["node"]
-        ):
-            raise ValueError("A node id is required, for example asset:<Unity GUID>")
         consistency = options.get("consistency", "cached")
         cached_query = action == "query" and consistency == "cached"
 
@@ -1259,19 +1276,21 @@ class ReferenceGraphService:
         local_query_page = False
         if action in {"declare", "remove_declaration", "set_source", "set_rule", "set_policy"}:
             if type(options.get("expected_version")) is not int or options["expected_version"] < 0:
-                raise ValueError("Read current state and supply its nonnegative expected_version")
+                raise InvalidGraphRequest(
+                    "Read current state and supply its nonnegative expected_version"
+                )
         if (
             "id" in fields
             and not (action == "runtime_start" and "id" not in options)
             and (not isinstance(options.get("id"), str) or not options["id"])
         ):
-            raise ValueError("An explicit stable id is required")
-        if consistency not in {"cached", "checked"}:
-            raise ValueError("consistency must be cached or checked")
+            raise InvalidGraphRequest("An explicit stable id is required")
+        if consistency not in ("cached", "checked"):
+            raise InvalidGraphRequest("consistency must be cached or checked")
         checked_providers = None
         if consistency == "checked":
             if options.get("cursor") or options.get("offset", 0):
-                raise ValueError(
+                raise InvalidGraphRequest(
                     "Use checked consistency on the first page, then its revision-bound continuation"
                 )
             if not await entry.engine.reconcile(force_external=True, wait=False):
@@ -1496,12 +1515,16 @@ class ReferenceGraphService:
                 )
             }
         elif action == "declare":
+            try:
+                edge = Edge(**options.get("edge", {}))
+            except (TypeError, ValueError) as error:
+                raise InvalidGraphRequest(str(error)) from error
             data = {
                 "version": await drained_thread(
                     store.put_declaration,
                     options["id"],
                     options.get("owner"),
-                    Edge(**options.get("edge", {})),
+                    edge,
                     expected_version=options["expected_version"],
                 )
             }
@@ -1517,10 +1540,12 @@ class ReferenceGraphService:
             data = {"sources": await drained_thread(store.sources, bounded=True)}
         elif action == "set_source":
             if re.fullmatch(r"[A-Za-z0-9_-]+", options["id"]) is None:
-                raise ValueError("Source id accepts letters, digits, underscore and hyphen")
+                raise InvalidGraphRequest(
+                    "Source id accepts letters, digits, underscore and hyphen"
+                )
             enabled = options.get("enabled", True)
             if type(enabled) is not bool:
-                raise ValueError("enabled must be boolean")
+                raise InvalidGraphRequest("enabled must be boolean")
             configuration = options.get("config", {})
             if enabled:
                 await drained_thread(self._grant, store.scope, configuration)
@@ -1539,7 +1564,10 @@ class ReferenceGraphService:
         elif action == "set_rule":
             rule = options.get("config", {})
             if rule != {"enabled": False}:
-                validate_rule(rule)
+                try:
+                    validate_rule(rule)
+                except ValueError as error:
+                    raise InvalidGraphRequest(str(error)) from error
             data = {
                 "version": await drained_thread(
                     store.put_rule,
@@ -1564,12 +1592,12 @@ class ReferenceGraphService:
             data = {"scheduled": True}
         elif action == "watch":
             if type(options.get("enabled")) is not bool:
-                raise ValueError("enabled must be boolean")
+                raise InvalidGraphRequest("enabled must be boolean")
             data = {"watching": options["enabled"]}
         else:
             data = {}
         if action == "sync" and type(options.get("force", False)) is not bool:
-            raise ValueError("force must be boolean")
+            raise InvalidGraphRequest("force must be boolean")
         await entry.check()
 
         def result_snapshot():
