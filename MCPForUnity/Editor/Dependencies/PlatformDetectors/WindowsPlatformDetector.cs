@@ -191,47 +191,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
             return name.StartsWith("python", StringComparison.OrdinalIgnoreCase) && !name.StartsWith("pythonw", StringComparison.OrdinalIgnoreCase);
         }
 
-        private bool TryFindPythonViaUv(out string version, out string fullPath)
-        {
-            version = null;
-            fullPath = null;
-
-            try
-            {
-                string augmentedPath = BuildAugmentedPath();
-                // Try to list installed python versions via uvx
-                if (!ExecPath.TryRun("uv", "python list", null, out string stdout, out string stderr, 5000, augmentedPath))
-                    return false;
-
-                var lines = stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var line in lines)
-                {
-                    if (line.Contains("<download available>"))
-                        continue;
-
-                    var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length >= 2)
-                    {
-                        string potentialPath = parts[parts.Length - 1];
-                        if (File.Exists(potentialPath) && IsPythonExecutable(potentialPath))
-                        {
-                            if (TryValidatePython(potentialPath, out version, out fullPath))
-                            {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore errors if uv is not installed or fails
-            }
-
-            return false;
-        }
-
-        private bool TryValidatePython(string pythonPath, out string version, out string fullPath)
+        protected virtual bool TryValidatePython(string pythonPath, out string version, out string fullPath)
         {
             version = null;
             fullPath = null;

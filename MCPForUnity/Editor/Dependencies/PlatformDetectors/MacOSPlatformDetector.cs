@@ -47,7 +47,16 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
                     return status;
                 }
 
-                status.ErrorMessage = "Python not found in PATH or standard locations";
+                if (TryFindPythonViaUv(out string uvVersion, out string uvPath))
+                {
+                    status.IsAvailable = true;
+                    status.Version = uvVersion;
+                    status.Path = uvPath;
+                    status.Details = $"Found Python {uvVersion} via uv";
+                    return status;
+                }
+
+                status.ErrorMessage = "Python not found in PATH or local uv installations";
                 status.Details = "Install Python 3.11+ via Homebrew ('brew install python3') and ensure it's in your PATH.";
             }
             catch (Exception ex)
@@ -130,7 +139,7 @@ Note: If using Homebrew, make sure /opt/homebrew/bin is in your PATH.";
             return status;
         }
 
-        private bool TryValidatePython(string pythonPath, out string version, out string fullPath)
+        protected virtual bool TryValidatePython(string pythonPath, out string version, out string fullPath)
         {
             version = null;
             fullPath = null;

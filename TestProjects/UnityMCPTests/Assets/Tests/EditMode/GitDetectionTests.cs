@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Dependencies;
 using MCPForUnity.Editor.Dependencies.Models;
@@ -11,6 +13,199 @@ namespace MCPForUnityTests.Editor
 {
     public class PythonVersionDetectionTests
     {
+        private sealed class PythonProbe : IDisposable
+        {
+            internal readonly string Root = Path.Combine(Path.GetTempPath(), "mcp-python-probe-" + Guid.NewGuid().ToString("N"), "First Last");
+            internal string Selected;
+            internal string Found;
+            internal string Reported = "Python 3.11.14";
+            internal bool FindSucceeds = true;
+            internal bool VersionSucceeds = true;
+            internal int FindCalls;
+            internal int VersionCalls;
+
+            internal PythonProbe()
+            {
+                Directory.CreateDirectory(Root);
+                Selected = Path.Combine(Root, "uv.exe");
+                Found = Path.Combine(Root, "python.exe");
+                File.WriteAllText(Selected, "");
+                File.WriteAllText(Found, "");
+            }
+
+            internal DependencyStatus Uv() => new DependencyStatus("uv") { IsAvailable = true, Path = Selected };
+
+            internal bool Run(string executable, string arguments, out string stdout, out string stderr)
+            {
+                stderr = "";
+                if (arguments == "--version")
+                {
+                    VersionCalls++;
+                    Assert.AreEqual(Found, executable, "Validate the complete path, including spaces.");
+                    stdout = Reported;
+                    return VersionSucceeds;
+                }
+                FindCalls++;
+                Assert.AreEqual(Path.Combine(Root, "uv.exe"), executable, "Use the selected uv or its uvx sibling.");
+                Assert.AreEqual("python find --managed-python --no-python-downloads --system \">=3.11\"", arguments);
+                stdout = Found + "\n";
+                return FindSucceeds;
+            }
+
+            public void Dispose() => Directory.Delete(Path.GetDirectoryName(Root), true);
+        }
+
+        private sealed class WindowsProbe : WindowsPlatformDetector
+        {
+            internal PythonProbe Probe;
+
+            public override DependencyStatus DetectUv() => Probe.Uv();
+
+            protected override bool TryValidatePython(string path, out string version, out string fullPath)
+            {
+                version = "3.10.20";
+                fullPath = path;
+                return false;
+            }
+
+            protected override bool RunPythonDiscoveryCommand(string path, string arguments, out string stdout, out string stderr) =>
+                Probe.Run(path, arguments, out stdout, out stderr);
+
+            protected override bool TryFindInPath(string path, out string fullPath)
+            {
+                fullPath = null;
+                return false;
+            }
+        }
+
+        private sealed class MacProbe : MacOSPlatformDetector
+        {
+            internal PythonProbe Probe;
+
+            public override DependencyStatus DetectUv() => Probe.Uv();
+
+            protected override bool TryValidatePython(string path, out string version, out string fullPath)
+            {
+                version = "3.10.20";
+                fullPath = path;
+                return false;
+            }
+
+            protected override bool RunPythonDiscoveryCommand(string path, string arguments, out string stdout, out string stderr) =>
+                Probe.Run(path, arguments, out stdout, out stderr);
+
+            protected override bool TryFindInPath(string path, out string fullPath)
+            {
+                fullPath = null;
+                return false;
+            }
+        }
+
+        private sealed class LinuxProbe : LinuxPlatformDetector
+        {
+            internal PythonProbe Probe;
+
+            public override DependencyStatus DetectUv() => Probe.Uv();
+
+            protected override bool TryValidatePython(string path, out string version, out string fullPath)
+            {
+                version = "3.10.20";
+                fullPath = path;
+                return false;
+            }
+
+            protected override bool RunPythonDiscoveryCommand(string path, string arguments, out string stdout, out string stderr) =>
+                Probe.Run(path, arguments, out stdout, out stderr);
+
+            protected override bool TryFindInPath(string path, out string fullPath)
+            {
+                fullPath = null;
+                return false;
+            }
+        }
+
+        private static PlatformDetectorBase Detector(int platform, PythonProbe probe) =>
+            platform == 0 ? new WindowsProbe { Probe = probe }
+            : platform == 1 ? new MacProbe { Probe = probe }
+            : new LinuxProbe { Probe = probe };
+
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(2)]
+        public void ManagedPythonWithSpacesMakesEveryPlatformReadyDespiteOldSystemPython(int platform)
+        {
+            using var probe = new PythonProbe();
+            var status = Detector(platform, probe).DetectPython();
+            Assert.IsTrue(status.IsAvailable);
+            Assert.AreEqual(probe.Found, status.Path);
+            Assert.AreEqual("3.11.14", status.Version);
+            Assert.AreEqual(1, probe.FindCalls);
+            Assert.AreEqual(1, probe.VersionCalls);
+            var result = new DependencyCheckResult();
+            result.Dependencies.Add(status);
+            result.Dependencies.Add(probe.Uv());
+            result.GenerateSummary();
+            Assert.IsTrue(result.IsSystemReady, "The dependency wizard must accept a compatible local managed Python.");
+        }
+
+        [TestCase(0, "3.10.20", true, true)]
+        [TestCase(1, "3.10.20", true, true)]
+        [TestCase(2, "3.10.20", true, true)]
+        [TestCase(0, "3.11.14", false, true)]
+        [TestCase(1, "3.11.14", false, true)]
+        [TestCase(2, "3.11.14", false, true)]
+        [TestCase(0, "3.11.14", true, false)]
+        [TestCase(1, "3.11.14", true, false)]
+        [TestCase(2, "3.11.14", true, false)]
+        public void ManagedDiscoveryRejectsOldMissingAndBrokenInterpreters(int platform, string version, bool exists, bool runs)
+        {
+            using var probe = new PythonProbe { Reported = "Python " + version, VersionSucceeds = runs };
+            if (!exists)
+                File.Delete(probe.Found);
+            Assert.IsFalse(Detector(platform, probe).DetectPython().IsAvailable);
+        }
+
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(2)]
+        public void DownloadOnlyPythonNeverTriggersInstallation(int platform)
+        {
+            using var probe = new PythonProbe { FindSucceeds = false, Found = "cpython-3.13 <download available>" };
+            Assert.IsFalse(Detector(platform, probe).DetectPython().IsAvailable);
+            Assert.AreEqual(1, probe.FindCalls);
+            Assert.AreEqual(0, probe.VersionCalls);
+        }
+
+        [Test]
+        public void SelectedUvxUsesItsOwnUvSiblingAndNeverAnotherInstallation()
+        {
+            using var probe = new PythonProbe();
+            probe.Selected = Path.Combine(probe.Root, "uvx.exe");
+            File.WriteAllText(probe.Selected, "");
+            Assert.IsTrue(Detector(0, probe).DetectPython().IsAvailable);
+            File.Delete(Path.Combine(probe.Root, "uv.exe"));
+            Assert.IsFalse(Detector(0, probe).DetectPython().IsAvailable);
+            Assert.AreEqual(1, probe.FindCalls, "A missing selected sibling must not use an unrelated uv on PATH.");
+        }
+
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(2)]
+        public void ManagedDiscoveryValidatesTheSelectedInterpreterAmongSeveralInstalled(int platform)
+        {
+            using var probe = new PythonProbe();
+            File.WriteAllText(Path.Combine(probe.Root, "python3.10.exe"), "");
+            File.WriteAllText(Path.Combine(probe.Root, "python3.11.exe"), "");
+            probe.Found = Path.Combine(probe.Root, "python3.13.exe");
+            probe.Reported = "Python 3.13.2";
+            File.WriteAllText(probe.Found, "");
+            var status = Detector(platform, probe).DetectPython();
+            Assert.IsTrue(status.IsAvailable);
+            Assert.AreEqual(probe.Found, status.Path);
+            Assert.AreEqual("3.13.2", status.Version);
+            Assert.AreEqual(1, probe.VersionCalls, "Validate the interpreter selected by the bounded >=3.11 uv query.");
+        }
+
         [TestCase("3.10.20", false)]
         [TestCase("3.11.0", true)]
         [TestCase("3.11.14", true)]

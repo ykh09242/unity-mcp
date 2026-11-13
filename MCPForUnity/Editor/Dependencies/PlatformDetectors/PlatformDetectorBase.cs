@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using MCPForUnity.Editor.Dependencies.Models;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
@@ -41,6 +42,55 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
         internal string UvxInputPath => capturedUvxPath;
         protected bool HasExplicitUvxOverride => pathsCaptured ? capturedOverride : MCPServiceLocator.Paths.HasUvxPathOverride;
         protected bool HasUvxFallback => pathsCaptured ? capturedFallback : MCPServiceLocator.Paths.HasUvxPathFallback;
+
+        protected bool TryFindPythonViaUv(out string version, out string fullPath)
+        {
+            version = null;
+            fullPath = null;
+            try
+            {
+                var uv = DetectUv();
+                if (!uv.IsAvailable || string.IsNullOrWhiteSpace(uv.Path))
+                    return false;
+                string executable = uv.Path;
+                if (!Path.IsPathRooted(executable) && TryFindInPath(executable, out string resolved))
+                    executable = resolved;
+                // uvx is the tool runner, not the Python-management command. Stay with
+                // its selected installation rather than falling back to another uv on PATH.
+                if (string.Equals(Path.GetFileNameWithoutExtension(executable), "uvx", StringComparison.OrdinalIgnoreCase))
+                    executable = Path.Combine(Path.GetDirectoryName(executable) ?? "", "uv" + Path.GetExtension(executable));
+                if (!Path.IsPathRooted(executable) || !File.Exists(executable))
+                    return false;
+
+                const string arguments = "python find --managed-python --no-python-downloads --system \">=3.11\"";
+                if (!RunPythonDiscoveryCommand(executable, arguments, out string output, out _))
+                    return false;
+                // `python find` emits one full executable path; whitespace within it is significant.
+                string candidate = output.Trim();
+                if (!Path.IsPathRooted(candidate) || !File.Exists(candidate))
+                    return false;
+                if (!RunPythonDiscoveryCommand(candidate, "--version", out string stdout, out string stderr))
+                    return false;
+                string reported = (string.IsNullOrWhiteSpace(stdout) ? stderr : stdout).Trim();
+                if (!reported.StartsWith("Python ", StringComparison.Ordinal))
+                    return false;
+                string detectedVersion = reported.Substring(7);
+                if (!IsSupportedPythonVersion(detectedVersion))
+                    return false;
+                version = detectedVersion;
+                fullPath = candidate;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        protected virtual bool RunPythonDiscoveryCommand(string executable, string arguments, out string stdout, out string stderr)
+        {
+            return ExecPath.TryRun(executable, arguments, null, out stdout, out stderr, 5000);
+        }
 
         public virtual DependencyStatus DetectUv()
         {
