@@ -187,16 +187,13 @@ async def find_in_file(
             }
         )
 
-    return {
-        "success": True,
-        "data": {
-            "matches": results,
-            "count": len(results),
-            "total_matches": len(found),
-            "next_cursor": f"fif1:{fingerprint}:{offset + len(results)}"
-            if offset + len(results) < len(found)
-            else None,
-            "sha256": data.get("sha256"),
-            "bytes_sha256": data.get("bytes_sha256"),
-        },
+    page = {
+        "matches": results,
+        "count": len(results),
+        "total_matches": len(found),
+        "sha256": data.get("sha256"),
+        "bytes_sha256": data.get("bytes_sha256"),
     }
+    if offset + len(results) < len(found):
+        page["next_cursor"] = f"fif1:{fingerprint}:{offset + len(results)}"
+    return {"success": True, "data": page}

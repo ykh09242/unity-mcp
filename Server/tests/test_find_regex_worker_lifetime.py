@@ -321,7 +321,7 @@ async def test_search_continuation_returns_all_1200_matches_once(routing, revers
     assert second["success"] is True
     assert second["data"]["count"] == 200
     assert second["data"]["total_matches"] == 1200
-    assert second["data"]["next_cursor"] is None
+    assert "next_cursor" not in second["data"]
     matches = first["data"]["matches"] + second["data"]["matches"]
     indices = range(1199, -1, -1) if reverse else range(1200)
     assert [match["match"] for match in matches] == [f"needle_{index:04d}" for index in indices]
@@ -347,7 +347,7 @@ async def test_search_continuation_preserves_zero_width_engine_order(routing, pa
         )
         assert result["success"] is True
         actual.extend((match["start"], match["end"]) for match in result["data"]["matches"])
-        cursor = result["data"]["next_cursor"]
+        cursor = result["data"].get("next_cursor")
     assert actual == expected
     assert cursor is None
 
@@ -458,7 +458,7 @@ async def test_sdk_accepts_search_continuation(routing, mode):
         second_page = json.loads(second.content[0].text)
     assert first_page["data"]["matches"][0]["match"] == "needle"
     assert second_page["data"]["matches"][0]["match"] == "NEEDLE"
-    assert second_page["data"]["next_cursor"] is None
+    assert "next_cursor" not in second_page["data"]
 
 
 @pytest.mark.asyncio

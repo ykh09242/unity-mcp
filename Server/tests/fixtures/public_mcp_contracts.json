@@ -3446,6 +3446,17 @@
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
+              "cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "ignore_case": {
                 "anyOf": [
                   {
@@ -29833,6 +29844,17 @@
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
+              "cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "ignore_case": {
                 "anyOf": [
                   {
