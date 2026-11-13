@@ -63,6 +63,18 @@ Detailed information about currently selected objects in the editor, including G
 URI: mcpforunity://editor/selection
 
 
+## `editor_selection_page`
+
+**URI:** `mcpforunity://editor/selection/page{?page_size,cursor,fields}`
+
+Bounded Editor selection with active metadata and object/GameObject/asset GUID counts. page_size defaults to 50 (1-500). fields selects objects (default), gameObjects, assetGUIDs, all, or none for active metadata/counts only. Each requested collection returns at most page_size entries; names are capped at 256 UTF-16 code units. Only page entries require object descriptions; Unity still allocates selection arrays. Follow nextCursor using identical fields/page_size within 30 seconds. Selection changes, reload, expiry or cursor eviction require restarting. The legacy mcpforunity://editor/selection URI remains available.
+
+**Parameters:**
+
+- `page_size` (`int`, optional)
+- `cursor` (`str | None`, optional)
+- `fields` (`Literal['objects', 'gameObjects', 'assetGUIDs', 'all', 'none']`, optional)
+
 ## `editor_state`
 
 **URI:** `mcpforunity://editor/state`
