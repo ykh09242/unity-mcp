@@ -58,8 +58,12 @@ async def admission_hub(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Plugin
             await PluginHub.shutdown()
 
 
-async def register_socket(registry: PluginRegistry, session: str, user: str) -> AsyncMock:
-    await registry.register(session, session, session, "test", user_id=user)
+async def register_socket(
+    registry: PluginRegistry, session: str, user: str, *, editor_generation: str | None = None
+) -> AsyncMock:
+    await registry.register(
+        session, session, session, "test", user_id=user, editor_generation=editor_generation
+    )
     socket = AsyncMock()
 
     async def send_text(text):
@@ -625,7 +629,8 @@ async def test_readiness_probe_propagates_capacity_without_retry_wait(admission_
 
 @pytest.mark.asyncio
 async def test_replacement_session_releases_old_user_payload_quota(admission_hub, monkeypatch):
-    await register_socket(admission_hub, "a", "alice")
+    editor_generation = "a" * 32
+    await register_socket(admission_hub, "a", "alice", editor_generation=editor_generation)
     old = await start_command("a")
     charge = next(iter(PluginHub._pending.values())).get("payload_bytes", 0)
     monkeypatch.setattr(PluginHub, "MAX_PENDING_PAYLOAD_BYTES_PER_USER", charge or 25_000)
@@ -635,7 +640,10 @@ async def test_replacement_session_releases_old_user_payload_quota(admission_hub
     replacement.client_state = replacement.application_state = WebSocketState.CONNECTED
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
     try:
-        await hub.on_receive(replacement, {"type": "register", "project_hash": "a"})
+        await hub.on_receive(
+            replacement,
+            {"type": "register", "project_hash": "a", "resume_generation": editor_generation},
+        )
         assert (await asyncio.wait_for(old, watchdog_timeout()))[
             "hint"
         ] == "inspect_state_before_retry"
