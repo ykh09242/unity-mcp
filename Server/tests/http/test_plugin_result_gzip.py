@@ -81,7 +81,17 @@ def test_gzip_working_and_decoded_peak_are_reserved_before_allocation(client, mo
         required = 5 * start["decoded_bytes"] + 4096 + GZIP_WORKING_BYTES
         monkeypatch.setattr(PluginHub, "MAX_RETAINED_RESULT_BYTES_PER_SESSION", required - 1)
         wire.send_json(start)
-        assert task.result(timeout=watchdog_timeout())["data"]["reason"] == "result_capacity"
+        result = task.result(timeout=watchdog_timeout())
+        assert result["hint"] == "inspect_state_before_retry"
+        assert result["data"] == {
+            "reason": "result_capacity",
+            "phase": "result_delivery",
+            "dispatch": "dispatched",
+            "command_id": cid,
+            "observed": False,
+            "outcome": "unknown",
+            "retry_safe": False,
+        }
         assert PluginHub._raw_results == {}
         for chunk in chunks:
             wire.send_bytes(chunk)

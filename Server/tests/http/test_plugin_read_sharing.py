@@ -13,6 +13,7 @@ from starlette.websockets import WebSocketState
 
 from core.config import config
 from models.response_limits import ResponseOwner, response_owner, response_size
+from models.unity_response import normalize_unity_response
 from services.tools.shared_tool_reads import SharedToolReads
 from services.api_key_service import ApiKeyService, ValidationResult
 from services.credential_lease import CredentialLeaseError
@@ -490,18 +491,70 @@ async def test_readiness_capacity_refusal_has_no_retry_or_tool_dispatch(peer, mo
 
 
 @pytest.mark.asyncio
-async def test_readiness_result_capacity_refusal_does_not_retry(peer, monkeypatch):
-    # Given: the shared source cannot reserve even the ping result.
+@pytest.mark.parametrize("readiness", [True, False], ids=["before_dispatch", "after_dispatch"])
+async def test_result_capacity_preserves_dispatch_phase_without_retry(peer, monkeypatch, readiness):
     monkeypatch.setattr(PluginHub, "MAX_RETAINED_RESULT_BYTES_PER_SESSION", 0)
-    caller = asyncio.create_task(read(peer))
-    probe = await peer.next_command()
-    # When: an otherwise valid response exceeds the source budget.
-    await peer.reply(probe)
-    # Then: it returns the bounded capacity error rather than repeating ping.
-    assert (await asyncio.wait_for(caller, watchdog_timeout()))["data"][
-        "reason"
-    ] == "result_capacity"
-    assert peer.counts() == {"ping": 1}
+    caller = asyncio.create_task(
+        peer.request(
+            PluginHub.send_command_for_instance,
+            "ownedhash",
+            "read_console",
+            {"action": "clear"},
+            user_id="owned-user",
+            retry_on_reload=readiness,
+        )
+    )
+    command = await peer.next_command()
+    assert command["name"] == ("ping" if readiness else "read_console")
+    await peer.reply(command)
+    result = normalize_unity_response(await asyncio.wait_for(caller, watchdog_timeout()))
+    assert result["success"] is False
+    assert result["data"]["reason"] == "result_capacity"
+    if readiness:
+        assert result["data"] == {
+            "reason": "result_capacity",
+            "phase": "readiness",
+            "dispatch": "not_dispatched",
+        }
+        assert "hint" not in result
+    else:
+        assert result["data"] == {
+            "reason": "result_capacity",
+            "phase": "result_delivery",
+            "dispatch": "dispatched",
+            "command_id": command["id"],
+            "observed": True,
+            "outcome": "unknown",
+            "retry_safe": False,
+        }
+        assert result["hint"] == "inspect_state_before_retry"
+    assert peer.counts() == {command["name"]: 1}
+
+
+@pytest.mark.asyncio
+async def test_native_capacity_reason_remains_an_ordinary_response(peer):
+    caller = asyncio.create_task(read(peer, "run_tests"))
+    command = await peer.next_command()
+    native = {"success": False, "data": {"reason": "result_capacity", "source": "handler"}}
+    await peer.reply(command, native)
+    assert await asyncio.wait_for(caller, watchdog_timeout()) == native
+    assert peer.counts() == {"run_tests": 1}
+
+
+@pytest.mark.asyncio
+async def test_oversized_native_result_preserves_observation(peer, monkeypatch):
+    monkeypatch.setattr(PluginHub, "MAX_RESULT_BYTES", 1024)
+    caller = asyncio.create_task(read(peer, "run_tests"))
+    command = await peer.next_command()
+    await peer.reply(command, {"success": True, "data": "discarded" * 1024})
+    result = normalize_unity_response(await asyncio.wait_for(caller, watchdog_timeout()))
+    assert result["data"]["reason"] == "result_payload_limit"
+    assert result["data"]["observed"] is True
+    assert result["data"]["command_id"] == command["id"]
+    assert result["hint"] == "inspect_state_before_retry"
+    assert "discarded" not in str(result)
+    assert len(str(result)) < 512
+    assert peer.counts() == {"run_tests": 1}
 
 
 @pytest.mark.asyncio
@@ -528,10 +581,14 @@ async def test_state_copy_capacity_is_reserved_before_fanout_without_another_rpc
     results = await asyncio.gather(*callers)
     # Then: only one copy is admitted; denial never repeats the editor command.
     assert sum(value["success"] for value in results) == 1
-    assert (
-        next(value for value in results if not value["success"])["data"]["reason"]
-        == "result_capacity"
-    )
+    rejected = next(value for value in results if not value["success"])
+    assert rejected["data"] == {
+        "reason": "result_capacity",
+        "phase": "result_delivery",
+        "dispatch": "dispatched",
+        "command_id": command["id"],
+    }
+    assert "hint" not in rejected
     assert peer.counts() == {"get_editor_state": 1}
     assert len(PluginHub._retained_results) == 1
     for owner in owners:

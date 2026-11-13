@@ -178,6 +178,39 @@ from transport.models import (
 logger = logging.getLogger(__name__)
 
 
+def _reject_result(entry: dict, reason: str, *, observed: bool = False) -> None:
+    # Only this transport-owned settlement can supply result-delivery evidence.
+    # A handler can return the same public reason in its own business response.
+    entry["rejected_result_observed"] = observed
+    entry["future"].set_result(response_limit_error(reason))
+
+
+def _result_limit_response(
+    reason: str,
+    *,
+    phase: str,
+    command_id: str | None = None,
+    observed: bool | None = None,
+    may_mutate: bool = False,
+) -> dict[str, Any]:
+    response = response_limit_error(reason)
+    data = response["data"]
+    data["phase"] = phase
+    data["dispatch"] = "dispatched" if command_id is not None else "not_dispatched"
+    if command_id is not None:
+        data["command_id"] = command_id
+    if observed is not None:
+        data["observed"] = observed
+    if command_id is not None and may_mutate:
+        data.update(outcome="unknown", retry_safe=False)
+        response["hint"] = "inspect_state_before_retry"
+        response["error"] = (
+            "The command result could not be delivered. "
+            "Unity may have applied the command. Inspect its target before retrying."
+        )
+    return response
+
+
 @dataclass(frozen=True, slots=True)
 class _EditorStatePublication:
     """Registry-derived routing captured during the authenticated registration."""
@@ -586,9 +619,7 @@ class PluginHub(WebSocketEndpoint):
             return
         for generation, command_id in cls._large_results.expire():
             if cls._transfer_pending(generation, command_id):
-                cls._pending[command_id]["future"].set_result(
-                    response_limit_error("result_transfer_timeout")
-                )
+                _reject_result(cls._pending[command_id], "result_transfer_timeout")
 
     @staticmethod
     def _socket_lease(websocket: WebSocket) -> CredentialLease | None:
@@ -2676,7 +2707,21 @@ class PluginHub(WebSocketEndpoint):
                     raise
                 if receipt_pin is not None:
                     own_future(send_task, receipt_pin)
-                return await dispatch.observe(send_task, wait_for=asyncio.wait_for)
+                result = await dispatch.observe(send_task, wait_for=asyncio.wait_for)
+                if "rejected_result_observed" in entry:
+                    may_mutate = _catalog_guard is not None or not cls._is_non_mutating(
+                        command_type, params
+                    )
+                    if budget.dispatched and may_mutate and receipt is not None:
+                        receipt.mark_unknown()
+                    return _result_limit_response(
+                        result["data"]["reason"],
+                        phase="result_delivery",
+                        command_id=budget.command_id if budget.dispatched else None,
+                        observed=entry["rejected_result_observed"],
+                        may_mutate=may_mutate,
+                    )
+                return result
             except NativeNotStarted:
                 raise
             except TimeoutError:
@@ -3511,14 +3556,14 @@ class PluginHub(WebSocketEndpoint):
                 or sum(w.entry.get("user_id") == entry.get("user_id") for w in active) >= per_user
                 or sum(w.entry["session_id"] == entry["session_id"] for w in active) >= per_session
             ):
-                entry["future"].set_result(response_limit_error("result_capacity"))
+                _reject_result(entry, "result_capacity")
                 return None
         if (large or background) and ingress is None:
             # Reserve the bounded graph ceiling before traversal/allocation. The
             # two shared response workers therefore cannot build an unbounded queue.
             charge = min(charge, cls._available_result_capacity(entry))
             if charge <= 0:
-                entry["future"].set_result(response_limit_error("result_capacity"))
+                _reject_result(entry, "result_capacity")
                 return None
             # The existing small-result path already measures on the loop. Use
             # its exact charge before detaching, instead of occupying the large
@@ -3533,12 +3578,11 @@ class PluginHub(WebSocketEndpoint):
                     max_retained=charge,
                 )
                 if measured is None:
-                    entry["future"].set_result(
-                        response_limit_error(
-                            "result_capacity"
-                            if charge < cls.MAX_RESULT_RETAINED_BYTES
-                            else "result_payload_limit"
-                        )
+                    _reject_result(
+                        entry,
+                        "result_capacity"
+                        if charge < cls.MAX_RESULT_RETAINED_BYTES
+                        else "result_payload_limit",
                     )
                     return None
                 reserved = measured
@@ -3546,7 +3590,7 @@ class PluginHub(WebSocketEndpoint):
                 # A decoded direct frame has no ingress owner to bound its graph.
                 # Do not park that graph behind a smaller reservation than the
                 # unmeasured worker ceiling.
-                entry["future"].set_result(response_limit_error("result_capacity"))
+                _reject_result(entry, "result_capacity")
                 return None
             ledger = cls._retained_results
             key = "worker:" + str(uuid.uuid4())
@@ -3812,9 +3856,7 @@ class PluginHub(WebSocketEndpoint):
                         else cls._lock is lock and cls._transfer_pending(generation, exc.command_id)
                     )
                     if current:
-                        cls._pending[exc.command_id]["future"].set_result(
-                            response_limit_error(exc.reason)
-                        )
+                        _reject_result(cls._pending[exc.command_id], exc.reason)
                 return
             close_invalid = work is None or cls._result_work_current(websocket, command_id, work)
         except (ValueError, RecursionError):
@@ -3853,8 +3895,10 @@ class PluginHub(WebSocketEndpoint):
                     work.entry["future"].set_exception(RuntimeError(payload.reason))
                     return
                 if payload.reason in {"result_capacity", "result_transfer_timeout"}:
-                    work.entry["future"].set_result(response_limit_error(payload.reason))
+                    _reject_result(work.entry, payload.reason)
                     return
+                if payload.reason == "result_payload_limit":
+                    _reject_result(work.entry, payload.reason)
             # The worker has settled and every caller has handed off its raw
             # payload reference. Close may suspend; do not retain its charge.
             # Keep result_work claimed until final settlement to reject duplicates.
@@ -4062,9 +4106,9 @@ class PluginHub(WebSocketEndpoint):
             work.owner.release()
             if charge is None:
                 if work.max_retained_bytes < cls.MAX_RESULT_RETAINED_BYTES:
-                    future.set_result(response_limit_error("result_capacity"))
+                    _reject_result(entry, "result_capacity", observed=True)
                     return
-                future.set_result(response_limit_error("result_payload_limit"))
+                _reject_result(entry, "result_payload_limit", observed=True)
                 count = getattr(websocket.state, "result_limit_violations", 0)
                 count = count if isinstance(count, int) else 0
                 websocket.state.result_limit_violations = count + 1
@@ -4077,11 +4121,11 @@ class PluginHub(WebSocketEndpoint):
                     work.ingress.graph_owner.release()
                 user_id = entry.get("user_id")
                 if not cls._has_result_capacity(entry, charge):
-                    future.set_result(response_limit_error("result_capacity"))
+                    _reject_result(entry, "result_capacity", observed=True)
                     return
                 result_ledger = entry.get("result_ledger", cls._retained_results)
                 if result_ledger is not cls._retained_results:
-                    future.set_result(response_limit_error("result_capacity"))
+                    _reject_result(entry, "result_capacity", observed=True)
                     return
                 result_ledger[command_id] = {
                     "bytes": charge,
@@ -4093,7 +4137,7 @@ class PluginHub(WebSocketEndpoint):
                 if owner is not None:
                     if owner.released:
                         result_ledger.pop(command_id, None)
-                        future.set_result(response_limit_error("result_capacity"))
+                        _reject_result(entry, "result_capacity", observed=True)
                         return
                     owner.entries.append((result_ledger, command_id))
                     if control_owner is not None:
@@ -4813,7 +4857,7 @@ class PluginHub(WebSocketEndpoint):
                     if outcome == "command_capacity":
                         return cls._command_capacity_response()
                     if outcome == "result_capacity":
-                        return response_limit_error("result_capacity")
+                        return _result_limit_response("result_capacity", phase="readiness")
                     if outcome == "read_invalidated":
                         return cls._unavailable_retry_response("read_invalidated")
                     if outcome == "ready":
@@ -4854,7 +4898,12 @@ class PluginHub(WebSocketEndpoint):
                         on_flight=observe_flight,
                     )
             except SharedReadCapacityError:
-                return response_limit_error("result_capacity")
+                source = budget.active or budget
+                return _result_limit_response(
+                    "result_capacity",
+                    phase="result_delivery",
+                    command_id=source.command_id if source.dispatched else None,
+                )
         if identity is not None and command_type in cls._FAST_FAIL_COMMANDS:
             return await cls.send_command(
                 session_id, command_type, params, _expected_read=identity, _budget=budget
