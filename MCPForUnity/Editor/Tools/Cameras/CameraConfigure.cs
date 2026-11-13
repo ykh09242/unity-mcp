@@ -294,7 +294,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 );
                 if (propertyError != null)
                     return propertyError;
-                bodyComponent = SwapPipelineComponent(go, "Body", bodyType);
+                propertyError = ConfigureComponentAtomically(() => SwapPipelineComponent(go, "Body", bodyType), setters, out bodyComponent);
+                if (propertyError != null)
+                    return propertyError;
             }
             else
             {
@@ -314,7 +316,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             }
 
             // Set properties on body component
-            propertyError = ApplyPreparedComponentProperties(bodyComponent, setters);
+            propertyError = bodyTypeName == null ? ApplyPreparedComponentProperties(bodyComponent, setters) : null;
             if (propertyError != null)
                 return PostEditVerification.Attach(propertyError, RenderingObservation.Properties(bodyComponent, props));
             CameraHelpers.MarkDirty(go);
@@ -354,7 +356,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 propertyError = PrepareComponentPropertiesForTarget(aimType, go.GetComponent(aimType), props, new[] { "aimType", "aim_type" }, out setters, go);
                 if (propertyError != null)
                     return propertyError;
-                aimComponent = SwapPipelineComponent(go, "Aim", aimType);
+                propertyError = ConfigureComponentAtomically(() => SwapPipelineComponent(go, "Aim", aimType), setters, out aimComponent);
+                if (propertyError != null)
+                    return propertyError;
             }
             else
             {
@@ -373,7 +377,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     return propertyError;
             }
 
-            propertyError = ApplyPreparedComponentProperties(aimComponent, setters);
+            propertyError = aimTypeName == null ? ApplyPreparedComponentProperties(aimComponent, setters) : null;
             if (propertyError != null)
                 return PostEditVerification.Attach(propertyError, RenderingObservation.Properties(aimComponent, props));
             CameraHelpers.MarkDirty(go);
@@ -453,6 +457,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             var go = cmCamera.gameObject;
             var existing = go.GetComponent(extType);
+            if (existing != null && props.Count > 1)
+                return new ErrorResponse($"Extension '{extTypeName}' already exists; supplied properties were not applied.");
             if (existing != null)
                 return new { success = true, message = $"Extension '{extTypeName}' already exists on '{go.name}'." };
 
@@ -522,6 +528,35 @@ namespace MCPForUnity.Editor.Tools.Cameras
             using var sub = parent.FindPropertyRelative(subPropName) ?? parent.FindPropertyRelative("m_" + subPropName);
             if (sub != null && sub.propertyType == SerializedPropertyType.Float)
                 sub.floatValue = ParamCoercion.CoerceFloat(value, sub.floatValue);
+        }
+
+        private static ErrorResponse ConfigureComponentAtomically(Func<Component> acquire, List<Action<Component>> setters, out Component component)
+        {
+            Undo.FlushUndoRecordObjects();
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            component = null;
+            ErrorResponse error;
+            try
+            {
+                component = acquire();
+                error = ApplyPreparedComponentProperties(component, setters);
+            }
+            catch (Exception ex)
+            {
+                error = new ErrorResponse($"Failed to configure Cinemachine component: {ex.Message}");
+            }
+
+            Undo.FlushUndoRecordObjects();
+            if (error != null)
+            {
+                Undo.RevertAllDownToGroup(group);
+                component = null;
+            }
+            else
+                Undo.CollapseUndoOperations(group);
+            Undo.IncrementCurrentGroup();
+            return error;
         }
 
         private static Component SwapPipelineComponent(GameObject go, string stage, Type newType)

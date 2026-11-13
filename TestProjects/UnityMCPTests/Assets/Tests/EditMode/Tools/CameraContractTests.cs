@@ -29,6 +29,112 @@ namespace MCPForUnityTests.Editor.Tools
         private Object _originalActiveObject;
 
         [Test]
+        public void FailedPipelineSwapRollsBackOnlyItsOwnUndoGroupAndCanBeRetried()
+        {
+            if (!CameraHelpers.HasCinemachine)
+                Assert.Ignore("Cinemachine is not installed.");
+            var oldType = CameraHelpers.ResolveComponentType("CinemachineThirdPersonFollow");
+            var newType = CameraHelpers.ResolveComponentType("CinemachinePositionComposer");
+            Assert.IsNotNull(oldType);
+            Assert.IsNotNull(newType);
+            var cm = _cameraGo.AddComponent(CameraHelpers.CinemachineCameraType);
+            var old = _cameraGo.AddComponent(oldType);
+            var distance = oldType.GetField("CameraDistance");
+            Assert.IsNotNull(distance);
+            distance.SetValue(old, 7f);
+            Undo.IncrementCurrentGroup();
+            Undo.RecordObject(_camera, "Unrelated edit");
+            _camera.fieldOfView = 42;
+            Undo.FlushUndoRecordObjects();
+
+            var swap = typeof(CameraConfigure).GetMethod("SwapPipelineComponent", BindingFlags.NonPublic | BindingFlags.Static);
+            var configure = typeof(CameraConfigure).GetMethod("ConfigureComponentAtomically", BindingFlags.NonPublic | BindingFlags.Static);
+            Func<Component> acquire = () => (Component)swap.Invoke(null, new object[] { _cameraGo, "Body", newType });
+            var setters = new System.Collections.Generic.List<Action<Component>> { _ => throw new InvalidOperationException("test failure") };
+            var arguments = new object[] { acquire, setters, null };
+            Assert.IsNotNull(configure.Invoke(null, arguments));
+            var restored = CameraHelpers.GetPipelineComponent(cm, "Body");
+            Assert.IsNotNull(restored);
+            Assert.AreEqual(oldType, restored.GetType());
+            Assert.AreEqual(7f, distance.GetValue(restored));
+            Assert.IsNull(_cameraGo.GetComponent(newType));
+            Assert.AreEqual(42, _camera.fieldOfView);
+            Undo.PerformUndo();
+            Assert.AreNotEqual(42, _camera.fieldOfView, "Rollback must not consume the preceding edit.");
+
+            var response = JObject.FromObject(
+                CameraConfigure.SetBody(
+                    new JObject
+                    {
+                        ["target"] = _cameraGo.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["properties"] = new JObject { ["bodyType"] = "CinemachinePositionComposer" },
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsNotNull(_cameraGo.GetComponent(newType));
+            Undo.PerformUndo();
+            restored = CameraHelpers.GetPipelineComponent(cm, "Body");
+            Assert.IsNotNull(restored);
+            Assert.AreEqual(oldType, restored.GetType());
+            Assert.AreEqual(7f, distance.GetValue(restored));
+        }
+
+        [Test]
+        public void FailedAimAdditionRestoresPreviousStage()
+        {
+            if (!CameraHelpers.HasCinemachine)
+                Assert.Ignore("Cinemachine is not installed.");
+            var oldType = CameraHelpers.ResolveComponentType("CinemachinePanTilt");
+            var newType = CameraHelpers.ResolveComponentType("CinemachineRotationComposer");
+            Assert.IsNotNull(oldType);
+            Assert.IsNotNull(newType);
+            var cm = _cameraGo.AddComponent(CameraHelpers.CinemachineCameraType);
+            _cameraGo.AddComponent(oldType);
+            var configure = typeof(CameraConfigure).GetMethod("ConfigureComponentAtomically", BindingFlags.NonPublic | BindingFlags.Static);
+            Func<Component> acquire = () =>
+            {
+                Undo.DestroyObjectImmediate(CameraHelpers.GetPipelineComponent(cm, "Aim"));
+                throw new InvalidOperationException("test addition failure");
+            };
+            var arguments = new object[] { acquire, new System.Collections.Generic.List<Action<Component>>(), null };
+            Assert.IsNotNull(configure.Invoke(null, arguments));
+            Assert.IsNotNull(_cameraGo.GetComponent(oldType));
+            Assert.IsNull(_cameraGo.GetComponent(newType));
+        }
+
+        [Test]
+        public void ExistingExtensionRefusesChangedAndInvalidPropertiesOnRetry()
+        {
+            if (!CameraHelpers.HasCinemachine)
+                Assert.Ignore("Cinemachine is not installed.");
+            _cameraGo.AddComponent(CameraHelpers.CinemachineCameraType);
+            var type = CameraHelpers.ResolveComponentType("CinemachineImpulseListener");
+            Assert.IsNotNull(type);
+            var extension = (Behaviour)_cameraGo.AddComponent(type);
+            extension.enabled = true;
+            foreach (var property in new[] { new JProperty("enabled", false), new JProperty("NoSuchProperty", 1) })
+            {
+                var properties = new JObject { ["extensionType"] = type.Name };
+                properties.Add(property);
+                var response = JObject.FromObject(
+                    CameraConfigure.AddExtension(
+                        new JObject
+                        {
+                            ["target"] = _cameraGo.GetInstanceIDCompat(),
+                            ["searchMethod"] = "by_id",
+                            ["properties"] = properties,
+                        }
+                    )
+                );
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("not applied", response.ToString());
+                Assert.IsTrue(extension.enabled);
+            }
+        }
+
+        [Test]
         public void LensWrite_VerifiesExactCameraWithoutActivatingIt()
         {
             var result = JObject.FromObject(
