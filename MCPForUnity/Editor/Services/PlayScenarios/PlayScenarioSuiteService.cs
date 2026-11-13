@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -26,8 +27,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         static PlayScenarioSuiteService() => Restore();
 
-        internal static bool CanStartChild(string jobId) =>
-            _runner?.Running != true || (_runner.Current?.Status == "running" && _runner.Current.JobId == jobId);
+        internal static bool HasForeignNativeOwner(string childId) =>
+            IsBusy && !(childId != null && _runner.Running && _runner.Current?.Status == "running" && _runner.Current.JobId == childId);
 
         public static object Handle(JObject parameters)
         {
@@ -115,6 +116,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return new ErrorResponse("play_scenario_busy", new { suite_id = _runner?.State.Report.SuiteId });
             if (!EditorReady)
                 return new ErrorResponse("Wait for the editor to finish compiling, importing or changing Play Mode.");
+            if (NativeOperationBarriers.TryGetScenarioBlocker(null, null, out var blocker))
+                return new ErrorResponse(blocker.Reason, blocker.Recovery);
             PlayScenarioSuiteDefinition suite = Store.Get(name);
             PlayScenarioSuiteState state = PlayScenarioSuiteRunner.Create(
                 suite,

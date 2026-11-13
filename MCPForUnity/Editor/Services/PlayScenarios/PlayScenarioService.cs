@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -86,11 +87,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         internal static bool IsBusy =>
             (_engine != null && (!_finalized || _engine.Running || _engine.State.RunnerResourcesReleased == false)) || _failureCapture?.Pending == true;
 
+        internal static bool HasForeignNativeOwner(string startingJobId) =>
+            IsBusy && !(startingJobId != null && _engine?.Running == true && _engine.State.Phase == "starting" && _engine.State.JobId == startingJobId);
+
         public static object Start(string name, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision = null, string dataset = null)
         {
             PlayScenarioDefinition.ValidateName(name);
             PlayScenarioDefinition selected = dataset == null ? null : PlayScenarioParameters.Materialize(Store.Get(name), dataset);
-            return StartCore(selected?.Name ?? name, selected, repeatCount, timeoutSeconds, jobId, sourceRevision);
+            return StartCore(selected?.Name ?? name, selected, repeatCount, timeoutSeconds, jobId, sourceRevision, null);
         }
 
         internal static object Start(PlayScenarioDefinition definition, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision = null)
@@ -98,7 +102,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (definition == null)
                 throw new ArgumentNullException(nameof(definition));
             PlayScenarioDefinition frozen = PlayScenarioParameters.Materialize(definition);
-            return StartCore(frozen.Name, frozen, repeatCount, timeoutSeconds, jobId, sourceRevision);
+            return StartCore(frozen.Name, frozen, repeatCount, timeoutSeconds, jobId, sourceRevision, jobId);
         }
 
         internal static void ValidateSourceRevision(string sourceRevision)
@@ -106,7 +110,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             PlayScenarioReproduction.ValidateSourceRevision(sourceRevision);
         }
 
-        private static object StartCore(string name, PlayScenarioDefinition frozen, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision)
+        private static object StartCore(
+            string name,
+            PlayScenarioDefinition frozen,
+            int repeatCount,
+            int timeoutSeconds,
+            string jobId,
+            string sourceRevision,
+            string suiteChildId
+        )
         {
             ValidateSourceRevision(sourceRevision);
             if (jobId != null)
@@ -125,10 +137,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     return new SuccessResponse("Existing scenario job.", Snapshot(previous));
                 }
             }
-            if (!PlayScenarioSuiteService.CanStartChild(jobId) || IsBusy)
+            if (PlayScenarioSuiteService.HasForeignNativeOwner(suiteChildId) || IsBusy)
                 return new ErrorResponse("play_scenario_busy", new { job_id = _engine?.State.JobId });
             if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode)
                 return new ErrorResponse("Wait for the editor to finish compiling, importing or changing Play Mode.");
+            if (NativeOperationBarriers.TryGetScenarioBlocker(null, suiteChildId, out var blocker))
+                return new ErrorResponse(blocker.Reason, blocker.Recovery);
             PlayScenarioDefinition definition = frozen ?? PlayScenarioParameters.Materialize(Store.Get(name));
             var state = PlayScenarioEngine.Create(definition, jobId ?? Guid.NewGuid().ToString("N"), repeatCount, timeoutSeconds, Now);
             state.Reproduction.UnityVersion = Application.unityVersion;
@@ -328,8 +342,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Tick();
                 return;
             }
-            if (_engine.State.PlayRequested)
+            if (_engine.State.PlayRequested || EditorApplication.isPlayingOrWillChangePlaymode)
                 return;
+            if (!CanContinueStart())
+            {
+                Synchronize(true);
+                return;
+            }
             _engine.State.PlayRequested = true;
             Synchronize(true);
             try
@@ -341,6 +360,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 _engine.Interrupt("Could not enter Play Mode: " + exception.Message, Now);
                 Synchronize(true);
             }
+        }
+
+        private static bool CanContinueStart()
+        {
+            string jobId = _engine.State.JobId;
+            if (!NativeOperationBarriers.TryGetScenarioBlocker(jobId, jobId, out var blocker))
+                return true;
+            _engine.Interrupt("Play Mode entry blocked: " + blocker.Reason, Now);
+            return false;
         }
 
         private static void Tick() => TickEngine(false);
@@ -375,6 +403,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 try
                 {
                     bool ready = EditorApplication.isPlaying && !EditorApplication.isPaused && !EditorApplication.isCompiling && !EditorApplication.isUpdating;
+                    // A user or another callback may have entered Play after reservation. Sample
+                    // ownership on a stable update, after all Play transition observers have run.
+                    if (ready && _engine.State.Phase == "starting" && !EditorStateCache.IsPlayModeTransition && CanContinueStart())
+                        _engine.EnteredPlayMode();
                     bool measured = _engine.RequiresPlayerFrameEvaluation;
                     if (ready && measured && _framePump == null)
                         _framePump = PlayScenarioEditorFramePump.Begin(TickPlayerFrame);
@@ -397,9 +429,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (_engine?.Running != true)
                 return;
-            if (state == PlayModeStateChange.EnteredPlayMode)
-                _engine.EnteredPlayMode();
-            else if (state == PlayModeStateChange.ExitingPlayMode || state == PlayModeStateChange.EnteredEditMode)
+            if (state == PlayModeStateChange.ExitingPlayMode || state == PlayModeStateChange.EnteredEditMode)
             {
                 _suppressCapture = true;
                 _failureCapture?.Stop("Play Mode ended before a screenshot became available.");

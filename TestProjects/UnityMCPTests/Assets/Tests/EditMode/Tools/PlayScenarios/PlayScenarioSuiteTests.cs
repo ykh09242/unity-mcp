@@ -617,7 +617,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
 
         private static void WithCurrentSuite(PlayScenarioSuiteRunner runner, bool finalized, Action test)
         {
-            if (!PlayScenarioSuiteService.CanStartChild(null))
+            if (PlayScenarioSuiteService.IsBusy)
                 Assert.Ignore("An active suite owns the editor.");
             Type service = typeof(PlayScenarioSuiteService);
             FieldInfo runnerField = service.GetField("_runner", BindingFlags.Static | BindingFlags.NonPublic);

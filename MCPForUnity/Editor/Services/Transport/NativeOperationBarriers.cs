@@ -37,6 +37,9 @@ namespace MCPForUnity.Editor.Services.Transport
         internal static bool TryGetBuildContinuationBlocker(string jobId, string batchId, out NativeAdmissionBlocker blocker) =>
             Evaluate("manage_build", null, Capture(buildJobId: jobId, buildBatchId: batchId), out blocker);
 
+        internal static bool TryGetScenarioBlocker(string startingJobId, string suiteChildId, out NativeAdmissionBlocker blocker) =>
+            Evaluate(null, null, Capture(startingJobId: startingJobId, suiteChildId: suiteChildId), out blocker);
+
         // A delayed script import excludes only its queued callback and the exact
         // compilation reservation it acquired. Every foreign owner still fences it.
         internal static bool TryGetScriptRefreshBlocker(string generation, out NativeAdmissionBlocker blocker)
@@ -59,7 +62,13 @@ namespace MCPForUnity.Editor.Services.Transport
             return blocker;
         }
 
-        private static NativeBarrierState Capture(bool? compiling = null, string buildJobId = null, string buildBatchId = null)
+        private static NativeBarrierState Capture(
+            bool? compiling = null,
+            string buildJobId = null,
+            string buildBatchId = null,
+            string startingJobId = null,
+            string suiteChildId = null
+        )
         {
             var retired = TestRunnerService.RetiredRunRecoveryDetails;
             // The matching restored control can settle this marker independently of
@@ -108,8 +117,8 @@ namespace MCPForUnity.Editor.Services.Transport
                     || TestRunnerService.HasOwnedNativeRun
                     || (buildJobId == null ? BuildRunner.HasNativeOwner : BuildRunner.HasForeignNativeOwner(buildJobId, buildBatchId))
                     || BuildPipeline.isBuildingPlayer
-                    || PlayScenarioService.IsBusy
-                    || PlayScenarioSuiteService.IsBusy
+                    || PlayScenarioService.HasForeignNativeOwner(startingJobId)
+                    || PlayScenarioSuiteService.HasForeignNativeOwner(suiteChildId)
                     || scenePending
                     || ProjectAuditorJobs.HasNativeOwner,
                 RecoveryRequired = RequiresRecovery(recovery),

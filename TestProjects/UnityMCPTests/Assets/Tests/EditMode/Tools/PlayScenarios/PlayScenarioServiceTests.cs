@@ -1,10 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.PlayScenarios;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.Build;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -59,6 +63,107 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 SessionState.SetString(SessionKey + ".definition." + i, _savedDefinitions[i]);
             _previous.Clear();
             _previousCheckpoint.Clear();
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void WindowAndSuiteStartsRejectForeignNativeOwnerBeforeReserving(bool runningTest)
+        {
+            string owner = Guid.NewGuid().ToString("N");
+            FieldInfo currentTest = typeof(TestJobManager).GetField("_currentJobId", BindingFlags.Static | BindingFlags.NonPublic);
+            object savedTest = currentTest.GetValue(null);
+            string suiteCheckpoint = SessionState.GetString("MCPForUnity.PlayScenarioSuite.V1", "");
+            if (runningTest && savedTest != null)
+                Assert.Ignore("An active test job owns the editor.");
+            try
+            {
+                if (runningTest)
+                    currentTest.SetValue(null, owner);
+                else
+                    BuildRunner.ReserveNative(owner);
+                var scenario = (ErrorResponse)PlayScenarioService.Start("missing-unadmitted-scenario", 1, 30, owner);
+                Assert.AreEqual("native_job_active", scenario.Error);
+                var suite = (ErrorResponse)
+                    PlayScenarioSuiteService.Handle(
+                        new JObject
+                        {
+                            ["action"] = "suite_run",
+                            ["name"] = "missing-unadmitted-suite",
+                            ["suite_id"] = owner,
+                        }
+                    );
+                Assert.AreEqual("native_job_active", suite.Error);
+                Assert.AreEqual(0, QueuedPlayRequests());
+                Assert.AreEqual(_saved, SessionState.GetString(SessionKey, ""));
+                Assert.AreEqual(suiteCheckpoint, SessionState.GetString("MCPForUnity.PlayScenarioSuite.V1", ""));
+            }
+            finally
+            {
+                if (runningTest)
+                    currentTest.SetValue(null, savedTest);
+                else
+                    BuildRunner.ReleaseNative(owner);
+            }
+        }
+
+        [Test]
+        public void OnlyReservedSuiteChildContinuesAndRechecksForeignWorkBeforeRequestingPlay()
+        {
+            if (PlayScenarioSuiteService.IsBusy || EditorApplication.isPlayingOrWillChangePlaymode)
+                Assert.Ignore("An idle Edit Mode editor is required.");
+            var definition = StartingRun().Scenario;
+            var store = new PlayScenarioStore(Path.GetDirectoryName(UnityEngine.Application.dataPath));
+            if (store.ListReports(null).Count >= 20)
+                Assert.Ignore("Preserve the existing report history.");
+            var state = PlayScenarioSuiteRunner.Create(
+                new PlayScenarioSuiteDefinition
+                {
+                    Name = "admission-suite",
+                    Scenarios = new List<string> { definition.Name },
+                },
+                new[] { definition },
+                1,
+                30,
+                null,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            );
+            var runner = new PlayScenarioSuiteRunner(state, null, null, null, () => { }, () => false);
+            FieldInfo owner = typeof(PlayScenarioSuiteService).GetField("_runner", BindingFlags.Static | BindingFlags.NonPublic);
+            var previous = owner.GetValue(null);
+            string id = runner.Current.JobId;
+            string foreign = Guid.NewGuid().ToString("N");
+            try
+            {
+                owner.SetValue(null, runner);
+                Assert.IsFalse(((IMcpResponse)PlayScenarioService.Start(definition, 1, 30, id)).Success, "Pending children have no admission.");
+                runner.Current.Status = "running";
+                Assert.IsFalse(
+                    ((IMcpResponse)PlayScenarioService.Start(definition.Name, 1, 30, id)).Success,
+                    "A public request cannot claim a suite reservation."
+                );
+                Assert.IsFalse(((IMcpResponse)PlayScenarioService.Start(definition, 1, 30, foreign)).Success);
+                Assert.IsTrue(((IMcpResponse)PlayScenarioService.Start(definition, 1, 30, id)).Success);
+                Assert.IsFalse(NativeOperationBarriers.TryGetScenarioBlocker(id, id, out _));
+                Assert.IsTrue(NativeOperationBarriers.TryGetScenarioBlocker(foreign, id, out _));
+                Assert.IsTrue(NativeOperationBarriers.TryGetScenarioBlocker(id, foreign, out _));
+                BuildRunner.ReserveNative(id); // A coincident ID from a different native family remains foreign.
+                Invoke("RequestPlay");
+                var engine = (PlayScenarioEngine)Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+                Assert.IsFalse(engine.State.PlayRequested);
+                Assert.AreEqual("failed", engine.State.Status);
+                StringAssert.Contains("native_job_active", engine.State.Error);
+                Assert.AreEqual(0, QueuedPlayRequests());
+                var replay = (SuccessResponse)PlayScenarioService.Start(definition, 1, 30, id);
+                Assert.AreEqual("failed", (string)((JObject)replay.Data)["status"]);
+            }
+            finally
+            {
+                BuildRunner.ReleaseNative(id);
+                owner.SetValue(null, previous);
+                string reportPath = Path.Combine(Path.GetDirectoryName(UnityEngine.Application.dataPath), "Library/MCPForUnity/PlayScenarioRuns", id + ".json");
+                if (File.Exists(reportPath))
+                    File.Delete(reportPath);
+            }
         }
 
         [Test]
