@@ -74,7 +74,8 @@ ALL_ACTIONS = (
         "Completed per-frame sums use native units; p95 is nearest-rank, missing is distinct from zero.\n\n"
         "MEMORY SNAPSHOT (requires com.unity.memoryprofiler):\n"
         "- memory_take_snapshot: Capture memory snapshot to file\n"
-        "- memory_list_snapshots: List available .snap files\n"
+        "- memory_list_snapshots: List .snap files in bounded pages; follow next_cursor. "
+        "Order is filesystem-defined, and directory changes during traversal may affect results.\n"
         "- memory_compare_snapshots: Compare legacy file metadata\n\n"
         "MEMORY ANALYSIS (native bytes are distinct from managed/retained size):\n"
         "- memory_aggregate: Bounded hierarchy/shared runtime-resource sums with object deduplication\n"
@@ -125,6 +126,16 @@ async def manage_profiler(
         Optional[str],
         "Search directory for memory_list_snapshots. Project-relative or absolute inside the "
         "project or Unity temporary cache directory.",
+    ] = None,
+    snapshot_limit: Annotated[
+        Optional[int],
+        Field(strict=True, ge=1, le=128),
+        "Maximum snapshot rows per page (default 64); entry and response byte limits may return fewer.",
+    ] = None,
+    snapshot_cursor: Annotated[
+        Optional[str],
+        Field(min_length=32, max_length=32),
+        "One-use next_cursor from memory_list_snapshots; omit search_path when continuing. Expires after two minutes.",
     ] = None,
     snapshot_a: Annotated[
         Optional[str],
@@ -275,6 +286,8 @@ async def manage_profiler(
         "areas": areas,
         "snapshot_path": snapshot_path,
         "search_path": search_path,
+        "snapshot_limit": snapshot_limit,
+        "snapshot_cursor": snapshot_cursor,
         "snapshot_a": snapshot_a,
         "snapshot_b": snapshot_b,
         "page_size": page_size,

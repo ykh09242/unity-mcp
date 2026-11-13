@@ -269,6 +269,76 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [Test]
+        public void SnapshotListingPagesAreBoundedAndCursorsAreOneUse()
+        {
+            string root = Path.Combine(Application.temporaryCachePath, "McpProfilerPages_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                for (int i = 0; i < 140; i++)
+                    File.WriteAllText(Path.Combine(root, i.ToString("D4") + ".snap"), "x");
+                var paths = new System.Collections.Generic.HashSet<string>();
+                string cursor = null;
+                int pages = 0;
+                do
+                {
+                    var args = new JObject { ["action"] = "memory_list_snapshots", ["snapshot_limit"] = 17 };
+                    if (cursor == null)
+                        args["search_path"] = root;
+                    else
+                        args["snapshot_cursor"] = cursor;
+                    var response = ProfilerResponse(args);
+                    Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                    Assert.LessOrEqual(System.Text.Encoding.UTF8.GetByteCount(response.ToString(Newtonsoft.Json.Formatting.None)), 60000);
+                    var rows = (JArray)response["data"]["snapshots"];
+                    Assert.LessOrEqual(rows.Count, 17);
+                    foreach (var row in rows)
+                        Assert.IsTrue(paths.Add(row.Value<string>("path")), "Duplicate snapshot");
+                    if (cursor != null)
+                    {
+                        var replay = ProfilerResponse(new JObject { ["action"] = "memory_list_snapshots", ["snapshot_cursor"] = cursor });
+                        Assert.IsFalse(replay.Value<bool>("success"));
+                    }
+                    cursor = response["data"].Value<string>("next_cursor");
+                    Assert.Less(++pages, 20);
+                } while (cursor != null);
+                Assert.AreEqual(140, paths.Count);
+            }
+            finally
+            {
+                foreach (string file in Directory.GetFiles(root))
+                    File.Delete(file);
+                Directory.Delete(root);
+            }
+        }
+
+        [Test]
+        public void SnapshotListingLimitsVisitsEvenWithoutMatches()
+        {
+            string root = Path.Combine(Application.temporaryCachePath, "McpProfilerEntries_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                for (int i = 0; i < 300; i++)
+                    File.WriteAllText(Path.Combine(root, i.ToString("D4") + ".txt"), "x");
+                var first = ProfilerResponse(new JObject { ["action"] = "memory_list_snapshots", ["search_path"] = root });
+                Assert.IsTrue(first.Value<bool>("success"), first.ToString());
+                Assert.AreEqual(0, ((JArray)first["data"]["snapshots"]).Count);
+                string cursor = first["data"].Value<string>("next_cursor");
+                Assert.IsNotNull(cursor);
+                var second = ProfilerResponse(new JObject { ["action"] = "memory_list_snapshots", ["snapshot_cursor"] = cursor });
+                Assert.IsTrue(second.Value<bool>("success"), second.ToString());
+                Assert.IsNull(second["data"].Value<string>("next_cursor"));
+            }
+            finally
+            {
+                foreach (string file in Directory.GetFiles(root))
+                    File.Delete(file);
+                Directory.Delete(root);
+            }
+        }
+
         [TestCase(false, false)]
         [TestCase(true, false)]
         [TestCase(false, true)]

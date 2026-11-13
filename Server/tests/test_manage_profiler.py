@@ -151,6 +151,23 @@ def test_uses_unity_instance_from_context(mock_unity):
     assert mock_unity["unity_instance"] == "unity-instance-1"
 
 
+def test_snapshot_listing_forwards_cursor_and_limit(mock_unity):
+    cursor = "0123456789abcdef0123456789abcdef"
+    asyncio.run(
+        manage_profiler(
+            SimpleNamespace(),
+            action="memory_list_snapshots",
+            snapshot_limit=3,
+            snapshot_cursor=cursor,
+        )
+    )
+    assert mock_unity["params"] == {
+        "action": "memory_list_snapshots",
+        "snapshot_limit": 3,
+        "snapshot_cursor": cursor,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Param forwarding
 # ---------------------------------------------------------------------------

@@ -3568,11 +3568,13 @@ Compare two memory snapshots.
 
 ## `unity-mcp profiler memory-list`
 
-List available memory snapshot files.
+List snapshots in filesystem order. Follow next_cursor; directory changes may affect results.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | --search-path | text | optional | nargs=1 | — | — | Directory to search for snapshots. |
+| --limit | integer range: [1..128] | optional | nargs=1 | — | — | Maximum rows per page (default 64). |
+| --cursor | text | optional | nargs=1 | — | — | One-use next_cursor from a previous page; omit --search-path. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp profiler memory-snapshot`

@@ -126,13 +126,23 @@ def memory_snapshot(path):
 
 @profiler.command("memory-list")
 @click.option("--search-path", default=None, help="Directory to search for snapshots.")
+@click.option(
+    "--limit", type=click.IntRange(1, 128), default=None, help="Maximum rows per page (default 64)."
+)
+@click.option(
+    "--cursor", default=None, help="One-use next_cursor from a previous page; omit --search-path."
+)
 @handle_unity_errors
-def memory_list(search_path):
-    """List available memory snapshot files."""
+def memory_list(search_path, limit, cursor):
+    """List snapshots in filesystem order. Follow next_cursor; directory changes may affect results."""
     config = get_config()
     params = {"action": "memory_list_snapshots"}
     if search_path:
         params["search_path"] = search_path
+    if limit is not None:
+        params["snapshot_limit"] = limit
+    if cursor is not None:
+        params["snapshot_cursor"] = cursor
     result = run_command("manage_profiler", params, config)
     click.echo(format_output(result, config.format))
 

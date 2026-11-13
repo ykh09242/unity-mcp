@@ -34,7 +34,7 @@ Completed per-frame sums use native units; p95 is nearest-rank, missing is disti
 
 MEMORY SNAPSHOT (requires com.unity.memoryprofiler):
 - memory_take_snapshot: Capture memory snapshot to file
-- memory_list_snapshots: List available .snap files
+- memory_list_snapshots: List .snap files in bounded pages; follow next_cursor. Order is filesystem-defined, and directory changes during traversal may affect results.
 - memory_compare_snapshots: Compare legacy file metadata
 
 MEMORY ANALYSIS (native bytes are distinct from managed/retained size):
@@ -60,6 +60,8 @@ FRAME DEBUGGER:
 | `areas` | `dict[str, bool] \| None` | — | Dict of area name to bool for profiler_set_areas. |
 | `snapshot_path` | `str \| None` | — | Output path for memory_take_snapshot. Project-relative or absolute inside the project or Unity temporary cache directory. |
 | `search_path` | `str \| None` | — | Search directory for memory_list_snapshots. Project-relative or absolute inside the project or Unity temporary cache directory. |
+| `snapshot_limit` | `int \| None` | — | Maximum snapshot rows per page (default 64); entry and response byte limits may return fewer. |
+| `snapshot_cursor` | `str \| None` | — | One-use next_cursor from memory_list_snapshots; omit search_path when continuing. Expires after two minutes. |
 | `snapshot_a` | `str \| None` | — | First snapshot path for memory_compare_snapshots. Project-relative or absolute inside the project or Unity temporary cache directory. |
 | `snapshot_b` | `str \| None` | — | Second snapshot path for memory_compare_snapshots. Project-relative or absolute inside the project or Unity temporary cache directory. |
 | `page_size` | `int \| None` | — | Page size for frame_debugger_get_events (default 50, clamped to 1..500). |

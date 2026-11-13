@@ -2,11 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using UnityEditor;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.Profiler
@@ -201,35 +204,133 @@ namespace MCPForUnity.Editor.Tools.Profiler
             }
         }
 
+        private sealed class SnapshotListing : IDisposable
+        {
+            internal readonly List<string> Dirs;
+            internal int DirectoryIndex;
+            internal IEnumerator<string> Entries;
+            internal JObject Pending;
+            internal DateTime Expires;
+
+            internal SnapshotListing(List<string> dirs)
+            {
+                Dirs = dirs;
+            }
+
+            public void Dispose()
+            {
+                Entries?.Dispose();
+                Entries = null;
+            }
+        }
+
+        private static readonly Dictionary<string, SnapshotListing> SnapshotListings = new Dictionary<string, SnapshotListing>();
+        private const int SnapshotListingCapacity = 8;
+        private const int SnapshotEntryBudget = 256;
+        private const int SnapshotBytesBudget = 48 * 1024;
+
+        private static void DisposeSnapshotListings()
+        {
+            foreach (var listing in SnapshotListings.Values)
+                listing.Dispose();
+            SnapshotListings.Clear();
+            EditorApplication.update -= CleanupSnapshotListings;
+            AssemblyReloadEvents.beforeAssemblyReload -= DisposeSnapshotListings;
+        }
+
+        private static void CleanupSnapshotListings()
+        {
+            var expired = new List<string>();
+            foreach (var item in SnapshotListings)
+                if (item.Value.Expires <= DateTime.UtcNow)
+                    expired.Add(item.Key);
+            foreach (string key in expired)
+            {
+                SnapshotListings[key].Dispose();
+                SnapshotListings.Remove(key);
+            }
+            if (SnapshotListings.Count == 0)
+            {
+                EditorApplication.update -= CleanupSnapshotListings;
+                AssemblyReloadEvents.beforeAssemblyReload -= DisposeSnapshotListings;
+            }
+        }
+
         internal static object ListSnapshots(JObject @params)
         {
+            int limit = MemoryAnalysisParams.Integer(@params, "snapshot_limit", 1, 128, 64);
             var p = new ToolParams(@params);
-            if (!ProfilerPathUtility.TryResolve(p, "search_path", false, true, out string searchPath, out var pathError))
-                return pathError;
-
-            var dirs = new List<string>();
-            if (!string.IsNullOrEmpty(searchPath))
+            JToken cursorToken = @params["snapshot_cursor"];
+            if (
+                cursorToken != null
+                && cursorToken.Type != JTokenType.Null
+                && (cursorToken.Type != JTokenType.String || cursorToken.Value<string>().Length != 32)
+            )
+                throw new ArgumentException("snapshot_cursor must be a returned cursor.");
+            string cursor = cursorToken?.Value<string>();
+            CleanupSnapshotListings();
+            SnapshotListing listing;
+            if (cursor != null)
             {
-                dirs.Add(searchPath);
+                if (p.Get("search_path") != null)
+                    throw new ArgumentException("Omit search_path when continuing a snapshot listing.");
+                if (!SnapshotListings.TryGetValue(cursor, out listing))
+                    return new ErrorResponse("Snapshot cursor is invalid or expired; start a new listing.");
+                SnapshotListings.Remove(cursor);
             }
             else
             {
-                dirs.Add(Path.Combine(Application.temporaryCachePath, "MemoryCaptures"));
-                dirs.Add(Path.Combine(Path.GetDirectoryName(Application.dataPath), "MemoryCaptures"));
+                if (!ProfilerPathUtility.TryResolve(p, "search_path", false, true, out string searchPath, out var pathError))
+                    return pathError;
+                var dirs = new List<string>();
+                if (!string.IsNullOrEmpty(searchPath))
+                    dirs.Add(searchPath);
+                else
+                {
+                    dirs.Add(Path.Combine(Application.temporaryCachePath, "MemoryCaptures"));
+                    dirs.Add(Path.Combine(Path.GetDirectoryName(Application.dataPath), "MemoryCaptures"));
+                }
+                for (int i = 0; i < dirs.Count; i++)
+                    dirs[i] = ProfilerPathUtility.Resolve(dirs[i]);
+                if (Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(dirs)) > 8192)
+                    return new ErrorResponse("Snapshot search paths exceed the response size limit.");
+                listing = new SnapshotListing(dirs);
             }
-
-            var snapshots = new List<object>();
+            var snapshots = new JArray();
+            int bytes = 0;
+            int visited = 0;
+            bool complete = false;
             try
             {
-                for (int i = 0; i < dirs.Count; i++)
+                while (snapshots.Count < limit && visited < SnapshotEntryBudget)
                 {
-                    string dir = dirs[i] = ProfilerPathUtility.Resolve(dirs[i]);
-                    if (!Directory.Exists(dir))
-                        continue;
-                    foreach (string file in Directory.EnumerateFiles(dir, "*.snap"))
+                    if (listing.Pending == null)
                     {
+                        if (listing.Entries == null)
+                        {
+                            if (listing.DirectoryIndex == listing.Dirs.Count)
+                            {
+                                complete = true;
+                                break;
+                            }
+                            string dir = listing.Dirs[listing.DirectoryIndex++];
+                            if (!Directory.Exists(dir))
+                                continue;
+                            listing.Entries = Directory.EnumerateFileSystemEntries(dir).GetEnumerator();
+                        }
+                        if (!listing.Entries.MoveNext())
+                        {
+                            listing.Dispose();
+                            continue;
+                        }
+                        visited++;
+                        string file = listing.Entries.Current;
+                        if (!string.Equals(Path.GetExtension(file), ".snap", StringComparison.OrdinalIgnoreCase))
+                            continue;
                         var fi = new FileInfo(ProfilerPathUtility.Resolve(file));
-                        snapshots.Add(
+                        if ((fi.Attributes & FileAttributes.Directory) != 0)
+                            continue;
+                        listing.Pending = JObject.FromObject(
                             new
                             {
                                 path = fi.FullName,
@@ -239,14 +340,48 @@ namespace MCPForUnity.Editor.Tools.Profiler
                             }
                         );
                     }
+                    int rowBytes = Encoding.UTF8.GetByteCount(listing.Pending.ToString(Formatting.None)) + 1;
+                    if (rowBytes > SnapshotBytesBudget)
+                        throw new ArgumentException("A snapshot path exceeds the response size limit.");
+                    if (bytes + rowBytes > SnapshotBytesBudget)
+                        break;
+                    snapshots.Add(listing.Pending);
+                    listing.Pending = null;
+                    bytes += rowBytes;
                 }
             }
             catch (Exception ex)
             {
+                listing.Dispose();
                 return new ErrorResponse($"Invalid 'search_path': {ex.Message}");
             }
-
-            return new SuccessResponse($"Found {snapshots.Count} snapshot(s).", new { snapshots, searched_dirs = dirs });
+            string nextCursor = null;
+            if (complete)
+                listing.Dispose();
+            else
+            {
+                if (SnapshotListings.Count >= SnapshotListingCapacity)
+                {
+                    listing.Dispose();
+                    return new ErrorResponse("Too many active snapshot listings; retry after they expire.");
+                }
+                nextCursor = Guid.NewGuid().ToString("N");
+                listing.Expires = DateTime.UtcNow.AddMinutes(2);
+                SnapshotListings.Add(nextCursor, listing);
+                EditorApplication.update -= CleanupSnapshotListings;
+                EditorApplication.update += CleanupSnapshotListings;
+                AssemblyReloadEvents.beforeAssemblyReload -= DisposeSnapshotListings;
+                AssemblyReloadEvents.beforeAssemblyReload += DisposeSnapshotListings;
+            }
+            return new SuccessResponse(
+                $"Found {snapshots.Count} snapshot(s).",
+                new
+                {
+                    snapshots,
+                    searched_dirs = listing.Dirs,
+                    next_cursor = nextCursor,
+                }
+            );
         }
 
         internal static object CompareSnapshots(JObject @params)
