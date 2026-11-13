@@ -506,7 +506,7 @@ def release_override():
     """
     config = get_config()
     result = run_command("manage_camera", {"action": "release_override"}, config)
-    click.echo(format_output(result, config.format))
+    click.echo(format_output(result, config.format, show_success_message=True))
 
 
 # =============================================================================
