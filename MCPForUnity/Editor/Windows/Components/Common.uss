@@ -396,6 +396,8 @@
     min-width: 0;
 }
 
+.batch-settings { flex-wrap: wrap; }
+
 .tool-action-button {
     margin-left: 0;
     margin-right: 6px;

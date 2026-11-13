@@ -1215,6 +1215,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         {
             var container = new VisualElement();
             container.AddToClassList("tool-item-actions");
+            container.AddToClassList("batch-settings");
             container.style.flexDirection = FlexDirection.Row;
             container.style.alignItems = Align.Center;
             container.style.marginTop = 4;
