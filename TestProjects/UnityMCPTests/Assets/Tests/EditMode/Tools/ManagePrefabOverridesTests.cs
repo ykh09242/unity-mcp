@@ -129,6 +129,43 @@ namespace MCPForUnity.Tests.EditMode.Tools
             return result["data"]["entries"].Single(e => e.Value<string>("propertyPath") == path).Value<string>("overrideId");
         }
 
+        private JObject WithDetailedRowCount(int expectedCount, Func<JObject> command)
+        {
+            Type implementation = typeof(ManagePrefabs).Assembly.GetType("MCPForUnity.Editor.Tools.Prefabs.PrefabInstanceOverrides", true);
+            FieldInfo observer = implementation.GetField("DetailMaterializedForTests", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(observer);
+            object previous = observer.GetValue(null);
+            int count = 0;
+            observer.SetValue(null, (Action)(() => count++));
+            JObject result;
+            try
+            {
+                result = command();
+            }
+            finally
+            {
+                observer.SetValue(null, previous);
+            }
+            Assert.AreEqual(expectedCount, count, "Only returned listing rows should materialize descriptions and property values.");
+            return result;
+        }
+
+        private JObject ListPage(int offset = 0, int pageSize = 100, int? objectId = null, string propertyFilter = null)
+        {
+            var args = new JObject
+            {
+                ["action"] = "list_overrides",
+                ["target"] = instance.GetInstanceIDCompat(),
+                ["offset"] = offset,
+                ["pageSize"] = pageSize,
+            };
+            if (objectId.HasValue)
+                args["objectId"] = objectId.Value;
+            if (propertyFilter != null)
+                args["propertyFilter"] = propertyFilter;
+            return JObject.FromObject(ManagePrefabs.HandleCommand(args));
+        }
+
         [TestCase("list_overrides")]
         [TestCase("LIST_OVERRIDES")]
         [TestCase("List_Overrides")]
@@ -151,7 +188,8 @@ namespace MCPForUnity.Tests.EditMode.Tools
         public void Revert_OnlySelectedPropertyAndSupportsUndo(string action)
         {
             BoxCollider collider = OverrideCollider();
-            var result = Command(action, new JArray(PropertyId("m_IsTrigger")));
+            string id = PropertyId("m_IsTrigger");
+            var result = WithDetailedRowCount(0, () => Command(action, new JArray(id)));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsFalse(collider.isTrigger);
             Assert.AreEqual(new Vector3(2, 3, 4), collider.size);
@@ -166,7 +204,8 @@ namespace MCPForUnity.Tests.EditMode.Tools
         public void Apply_OnlySelectedPropertyPersistsToAsset(string action)
         {
             OverrideCollider();
-            var result = Command(action, new JArray(PropertyId("m_IsTrigger")), PrefabPath);
+            string id = PropertyId("m_IsTrigger");
+            var result = WithDetailedRowCount(0, () => Command(action, new JArray(id), PrefabPath));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var assetCollider = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath).GetComponentInChildren<BoxCollider>();
             Assert.IsTrue(assetCollider.isTrigger);
@@ -201,13 +240,74 @@ namespace MCPForUnity.Tests.EditMode.Tools
         [Test]
         public void LargePrefabInstanceListsAllAddedOverridesWithBoundedPages()
         {
+            var added = new GameObject[10001];
             for (int index = 0; index < 10001; index++)
-                new GameObject("Added" + index).transform.SetParent(instance.transform, false);
-            JObject result = Command("list_overrides");
+            {
+                added[index] = new GameObject("Added" + index);
+                added[index].transform.SetParent(instance.transform, false);
+            }
+            string[] expectedIds = added
+                .Select(go => "added_gameobject:" + go.GetInstanceIDCompat() + ":added")
+                .OrderBy(id => id, StringComparer.Ordinal)
+                .ToArray();
+            foreach (int offset in new[] { 0, 5000, 10000, 10001 })
+            {
+                int expectedCount = Math.Min(100, 10001 - offset);
+                JObject result = WithDetailedRowCount(expectedCount, () => ListPage(offset));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual(10001, result["data"].Value<int>("total"));
+                var entries = (JArray)result["data"]["entries"];
+                Assert.AreEqual(expectedCount, entries.Count);
+                CollectionAssert.AreEqual(expectedIds.Skip(offset).Take(100), entries.Select(entry => entry.Value<string>("overrideId")));
+                CollectionAssert.AreEqual(
+                    entries.Select(entry => entry["target"].Value<int>("instanceId")),
+                    result["data"]["groups"].Select(group => group["target"].Value<int>("instanceId"))
+                );
+                Assert.AreEqual(offset + expectedCount < 10001 ? (int?)(offset + expectedCount) : null, result["data"].Value<int?>("nextOffset"));
+            }
+            JObject filtered = WithDetailedRowCount(1, () => ListPage(objectId: added[5000].GetInstanceIDCompat()));
+            Assert.AreEqual(1, filtered["data"].Value<int>("total"));
+            Assert.AreEqual(added[5000].name, filtered["data"]["entries"][0]["target"].Value<string>("name"));
+            Assert.AreEqual("Source/" + added[5000].name, filtered["data"]["entries"][0]["target"].Value<string>("path"));
+            JObject noMatches = WithDetailedRowCount(0, () => ListPage(propertyFilter: "m_"));
+            Assert.AreEqual(0, noMatches["data"].Value<int>("total"));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void List_FiltersBeforeMaterializingPropertyValuesAndPreservesGroups(bool useOwnerId)
+        {
+            BoxCollider collider = OverrideCollider();
+            JObject all = Command("list_overrides");
+            int objectId = useOwnerId ? collider.gameObject.GetInstanceIDCompat() : collider.GetInstanceIDCompat();
+            JToken[] expected = all["data"]
+                ["entries"]
+                .Where(entry => entry.Value<string>("propertyPath").IndexOf("m_", StringComparison.OrdinalIgnoreCase) >= 0)
+                .ToArray();
+            Assert.Greater(expected.Length, 1);
+            JObject result = WithDetailedRowCount(1, () => ListPage(1, 1, objectId, "M_"));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-            Assert.AreEqual(10001, result["data"].Value<int>("total"));
-            Assert.AreEqual(100, ((JArray)result["data"]["entries"]).Count);
-            Assert.AreEqual(100, result["data"].Value<int>("nextOffset"));
+            Assert.AreEqual(expected.Length, result["data"].Value<int>("total"));
+            Assert.IsTrue(JToken.DeepEquals(expected[1], result["data"]["entries"][0]), result.ToString());
+            Assert.IsTrue(JToken.DeepEquals(expected[1]["target"], result["data"]["groups"][0]["target"]));
+            CollectionAssert.AreEqual(new[] { expected[1].Value<string>("overrideId") }, result["data"]["groups"][0]["overrideIds"].Values<string>());
+        }
+
+        [TestCase("apply_overrides")]
+        [TestCase("revert_overrides")]
+        public void Writes_RevalidatePreviouslyListedOverridesBeforeChangingAnyProperty(string action)
+        {
+            BoxCollider collider = OverrideCollider();
+            string staleId = PropertyId("m_IsTrigger");
+            string retainedId = PropertyId("m_Size");
+            using (var serialized = new SerializedObject(collider))
+            using (var property = serialized.FindProperty("m_IsTrigger"))
+                PrefabUtility.RevertPropertyOverride(property, InteractionMode.AutomatedAction);
+            JObject result = WithDetailedRowCount(0, () => Command(action, new JArray(retainedId, staleId), action == "apply_overrides" ? PrefabPath : null));
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("no longer exists", result.Value<string>("error"));
+            Assert.AreEqual(new Vector3(2, 3, 4), collider.size);
+            Assert.AreEqual(Vector3.one, AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath).GetComponentInChildren<BoxCollider>().size);
         }
 
         [Test]
@@ -276,7 +376,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
             added.transform.SetParent(instance.transform);
             var result = Command("list_overrides");
             var entry = result["data"]["entries"].Single(e => e.Value<string>("kind") == "added_gameobject");
-            result = Command("revert_overrides", new JArray(entry.Value<string>("overrideId")));
+            result = WithDetailedRowCount(0, () => Command("revert_overrides", new JArray(entry.Value<string>("overrideId"))));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNull(instance.transform.Find("Added"));
             Undo.PerformUndo();
@@ -306,7 +406,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
             OverrideCollider();
             var listed = Command("list_overrides");
             var entry = listed["data"]["entries"].Single(e => e.Value<string>("kind") == "added_gameobject");
-            var result = Command(action, new JArray(entry.Value<string>("overrideId")), PrefabPath);
+            var result = WithDetailedRowCount(0, () => Command(action, new JArray(entry.Value<string>("overrideId")), PrefabPath));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var asset = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath);
             Assert.IsNotNull(asset.transform.Find("Added/Grandchild"));
@@ -321,7 +421,9 @@ namespace MCPForUnity.Tests.EditMode.Tools
             var component = instance.AddComponent<AudioSource>();
             var listed = Command("list_overrides");
             var entry = listed["data"]["entries"].Single(e => e.Value<string>("kind") == "added_component");
-            var result = Command(apply ? "apply_overrides" : "revert_overrides", new JArray(entry.Value<string>("overrideId")), apply ? PrefabPath : null);
+            var result = WithDetailedRowCount(0, () =>
+                Command(apply ? "apply_overrides" : "revert_overrides", new JArray(entry.Value<string>("overrideId")), apply ? PrefabPath : null)
+            );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(apply, instance.GetComponent<AudioSource>() != null);
             Assert.AreEqual(apply, AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath).GetComponent<AudioSource>() != null);

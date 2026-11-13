@@ -17,6 +17,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         private const int MaxObjects = 100000;
         private const int MaxProperties = 4000000;
         private const int MaxRows = 250000;
+        internal static Action DetailMaterializedForTests;
 
         private sealed class Entry
         {
@@ -25,7 +26,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             public Object Instance;
             public Object Asset;
             public string PropertyPath;
-            public JObject Data;
             public GameObject Owner => Instance is Component c ? c.gameObject : (GameObject)Instance;
         }
 
@@ -89,7 +89,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                             pageSize,
                             nextOffset = offset + page.Count < filtered.Count ? (int?)(offset + page.Count) : null,
                             removedGameObjectsSupported = RemovedGameObjectsSupported,
-                            entries = page.Select(e => e.Data).ToArray(),
+                            entries = page.Select(Materialize).ToArray(),
                             groups = page.GroupBy(e => e.Instance.GetInstanceIDCompat())
                                 .Select(g => new { target = Describe(g.First().Instance), overrideIds = g.Select(e => e.Id).ToArray() })
                                 .ToArray(),
@@ -296,14 +296,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     + entry.Instance.GetInstanceIDCompat()
                     + ":"
                     + (entry.PropertyPath ?? entry.Asset?.GetInstanceIDCompat().ToString() ?? "added");
-                entry.Data = new JObject
-                {
-                    ["overrideId"] = entry.Id,
-                    ["kind"] = entry.Kind,
-                    ["target"] = Describe(entry.Instance),
-                    ["assetTarget"] = Describe(entry.Asset),
-                    ["propertyPath"] = entry.PropertyPath,
-                };
                 entries.Add(entry);
             }
             foreach (var item in PrefabUtility.GetObjectOverrides(root, false))
@@ -313,7 +305,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 if (source == null)
                     continue;
                 using var serialized = new SerializedObject(instance);
-                using var prefab = new SerializedObject(source);
                 using var property = serialized.GetIterator();
                 bool enter = true;
                 while (property.Next(enter))
@@ -338,11 +329,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         PropertyPath = property.propertyPath,
                     };
                     Add(entry);
-                    entry.Data["currentValue"] = Value(property);
-                    using var prefabProperty = prefab.FindProperty(property.propertyPath);
-                    entry.Data["prefabValue"] = Value(prefabProperty);
-                    entry.Data["propertyType"] = property.propertyType.ToString();
-                    entry.Data["applySupported"] = IsSelectiveProperty(property);
                 }
             }
             foreach (var item in PrefabUtility.GetAddedComponents(root))
@@ -370,6 +356,31 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 );
 #endif
             return entries.OrderBy(e => e.Id, StringComparer.Ordinal).ToList();
+        }
+
+        private static JObject Materialize(Entry entry)
+        {
+            DetailMaterializedForTests?.Invoke();
+            var data = new JObject
+            {
+                ["overrideId"] = entry.Id,
+                ["kind"] = entry.Kind,
+                ["target"] = Describe(entry.Instance),
+                ["assetTarget"] = Describe(entry.Asset),
+                ["propertyPath"] = entry.PropertyPath,
+            };
+            if (entry.Kind == "property")
+            {
+                using var serialized = new SerializedObject(entry.Instance);
+                using var prefab = new SerializedObject(entry.Asset);
+                using var property = serialized.FindProperty(entry.PropertyPath);
+                using var prefabProperty = prefab.FindProperty(entry.PropertyPath);
+                data["currentValue"] = Value(property);
+                data["prefabValue"] = Value(prefabProperty);
+                data["propertyType"] = property.propertyType.ToString();
+                data["applySupported"] = IsSelectiveProperty(property);
+            }
+            return data;
         }
 
         private static bool RemovedGameObjectsSupported
