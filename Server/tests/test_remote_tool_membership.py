@@ -43,7 +43,9 @@ async def remote_hub(monkeypatch):
 
 
 async def connected(registry, sid="alice", owner="alice", generation="owned-generation"):
-    await registry.register(sid, "Project", "hash", "test", user_id=owner)
+    await registry.register(
+        sid, "Project", "hash", "test", user_id=owner, editor_generation="same-editor-process"
+    )
     websocket = SimpleNamespace(
         state=SimpleNamespace(
             user_id=owner,
