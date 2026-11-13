@@ -1,5 +1,6 @@
 using System.IO;
 using MCPForUnity.Editor.Tools.Animation;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -13,29 +14,59 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class AnimationAssignmentContractTests
     {
-        private const string Root = "Assets/Temp/AnimationAssignmentContractTests";
+        private string Root;
+        private string rootGuid;
         private GameObject target;
         private Scene ownedScene;
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
+
+        [OneTimeSetUp]
+        public void PrepareRunnerBootstrap() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunnerBootstrap() => sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
-        public void SetUp() => EnsureFolder(Root);
+        public void SetUp()
+        {
+            target = null;
+            Root = null;
+            rootGuid = null;
+            string suffix = System.Guid.NewGuid().ToString("N");
+            ownedScene = sceneFixture.Create("McpAnimationAssignment_", suffix);
+            string folderName = "__McpAnimationAssignment_" + suffix;
+            Root = "Assets/" + folderName;
+            Assert.IsFalse(AssetDatabase.IsValidFolder(Root));
+            Assert.IsFalse(Directory.Exists(Path.Combine(Application.dataPath, folderName)));
+            Assert.IsFalse(File.Exists(Path.Combine(Application.dataPath, folderName) + ".meta"));
+            Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(Root));
+            rootGuid = AssetDatabase.CreateFolder("Assets", folderName);
+            Assert.IsNotEmpty(rootGuid);
+            Assert.AreEqual(Root, AssetDatabase.GUIDToAssetPath(rootGuid));
+        }
 
         [TearDown]
         public void TearDown()
         {
             if (target != null)
+            {
+                Assert.AreEqual(ownedScene, target.scene);
                 Object.DestroyImmediate(target);
-            if (ownedScene.IsValid() && ownedScene.isLoaded)
-                EditorSceneManager.CloseScene(ownedScene, true);
-            AssetDatabase.DeleteAsset(Root);
-            CleanupEmptyParentFolders(Root);
+            }
+            sceneFixture.Close();
+            if (!string.IsNullOrEmpty(rootGuid))
+            {
+                Assert.AreEqual(Root, AssetDatabase.GUIDToAssetPath(rootGuid));
+                Assert.AreEqual(rootGuid, AssetDatabase.AssetPathToGUID(Root, AssetPathToGUIDOptions.OnlyExistingAssets));
+                Assert.IsTrue(AssetDatabase.DeleteAsset(Root));
+            }
         }
 
         [TestCase(true)]
         [TestCase(false)]
         public void AnimatorOnly_RefusesWithoutChangingObjectControllerOrClip(bool clipExists)
         {
-            const string clipPath = Root + "/Candidate.anim";
+            string clipPath = Root + "/Candidate.anim";
             var clip = new AnimationClip();
             AssetDatabase.CreateAsset(clip, Root + "/Original.anim");
             if (clipExists)
@@ -81,7 +112,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(false)]
         public void LegacyAssignment_SuccessActuallyAssignsClip(bool existingComponent)
         {
-            const string path = Root + "/Legacy.anim";
+            string path = Root + "/Legacy.anim";
             var clip = new AnimationClip();
             AssetDatabase.CreateAsset(clip, path);
             target = new GameObject("AnimationAssignment_Legacy");
@@ -112,7 +143,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void LegacyPrefabAssignmentPersistsExactInstanceOverridesAfterSceneReopen()
         {
             var animation = CreateLegacyPrefabInstance(out var original, out var replacement, out string prefabPath);
-            string scenePath = Root + "/Assignment.unity";
+            string scenePath = Root + "/McpAnimationAssignment_Assignment.unity";
             Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, scenePath));
             byte[] prefabBefore = File.ReadAllBytes(prefabPath);
             byte[] metaBefore = File.ReadAllBytes(prefabPath + ".meta");
@@ -122,9 +153,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             AssertLegacyAssignment(animation, original, replacement);
             Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene));
-            Assert.IsTrue(EditorSceneManager.CloseScene(ownedScene, true));
             target = null;
-            ownedScene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
+            ownedScene = sceneFixture.ReopenSavedScene();
             var roots = ownedScene.GetRootGameObjects();
             Assert.AreEqual(1, roots.Length);
             target = roots[0];
@@ -174,10 +204,6 @@ namespace MCPForUnityTests.Editor.Tools
             Object.DestroyImmediate(target);
             target = null;
             AssetDatabase.SaveAssets();
-            Scene previousActive = SceneManager.GetActiveScene();
-            ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            if (previousActive.IsValid() && previousActive.isLoaded)
-                SceneManager.SetActiveScene(previousActive);
             target = (GameObject)PrefabUtility.InstantiatePrefab(prefab, ownedScene);
             return target.GetComponent<Animation>();
         }
