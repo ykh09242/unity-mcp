@@ -56,6 +56,8 @@ def validate_remote_url(value: str) -> str:
         try:
             address = ipaddress.ip_address(host)
         except ValueError:
+            if parsed.netloc.startswith("["):
+                raise ValueError("--remote-url has an invalid IPv6 host") from None
             # Reject alternate numeric IPv4 spellings that .NET may interpret as bind-all.
             try:
                 ascii_host = host.encode("idna").decode("ascii")
@@ -72,6 +74,8 @@ def validate_remote_url(value: str) -> str:
             ):
                 raise ValueError("--remote-url has an unsupported host") from None
         else:
+            if parsed.netloc.startswith("[") and address.version != 6:
+                raise ValueError("--remote-url has an invalid IPv6 host")
             if address.is_unspecified:
                 raise ValueError("--remote-url must not use a bind-only host")
     except ValueError as error:
