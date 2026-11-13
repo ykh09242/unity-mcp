@@ -613,7 +613,7 @@ def run_tests(
                     "hint": "Check existing test jobs before starting another run.",
                 }
             )
-        poll_test.callback(job_id, wait, details, failed_only)
+        _poll_test_job(job_id, wait, details, failed_only, config)
         return
 
     click.echo(format_output(result, config.format))
@@ -660,8 +660,18 @@ def poll_test(
         unity-mcp editor poll-test abc123 --wait 60
         unity-mcp editor poll-test abc123 --failed-only
     """
-    config = get_config()
+    _poll_test_job(job_id, wait, details, failed_only, get_config(), page_size, cursor)
 
+
+def _poll_test_job(
+    job_id: str,
+    wait: int,
+    details: bool,
+    failed_only: bool,
+    config: CLIConfig,
+    page_size: int | None = None,
+    cursor: str | None = None,
+):
     params: dict[str, Any] = {"job_id": job_id}
     if details:
         params["includeDetails"] = True

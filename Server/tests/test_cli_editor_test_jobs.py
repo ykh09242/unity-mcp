@@ -81,6 +81,32 @@ def test_cli_wait_stops_without_polling_after_deadline(editor_module, monkeypatc
     send.assert_called_once()
 
 
+@pytest.mark.parametrize("initial_selector", [None, "Fixture"])
+def test_cli_wait_keeps_the_editor_that_started_the_job(
+    editor_module, monkeypatch, initial_selector
+):
+    selected = "Fixture@aaaaaaaaaaaaaaaa"
+    config = CLIConfig(format="json", unity_instance=initial_selector)
+    monkeypatch.setattr(editor_module, "get_config", lambda: config)
+    observed = []
+
+    def send(name, params, config, **kwargs):
+        observed.append(config.unity_instance)
+        if name == "run_tests":
+            return {"success": True, "unity_instance": selected, "data": {"job_id": "job-1"}}
+        assert name == "get_test_job" and params["job_id"] == "job-1"
+        if config.unity_instance != selected:
+            return {"success": False, "error": "ambiguous_unity_instance"}
+        return {"success": True, "data": {"job_id": "job-1", "status": "succeeded"}}
+
+    monkeypatch.setattr(editor_module, "run_command", send)
+    result = CliRunner().invoke(editor_module.editor, ["tests", "--wait", "5"])
+
+    assert result.exit_code == 0, result.output
+    assert observed == [initial_selector, selected]
+    assert json.loads(result.output)["data"]["status"] == "succeeded"
+
+
 def test_cli_wait_returns_unity_errors_immediately(editor_module, monkeypatch):
     send = Mock(return_value={"success": False, "error": "Job not found"})
     monkeypatch.setattr(editor_module, "run_command", send)
