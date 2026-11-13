@@ -335,17 +335,24 @@ def _parse_vector3(value: str) -> list[float]:
 
 
 def _parse_property(prop_str: str) -> tuple[str, str, Any]:
-    """Parse 'Component.prop=value' into (component, prop, value)."""
+    """Parse explicit 'Component::path=value' or legacy 'Component.prop=value'."""
     if "=" not in prop_str:
-        raise click.BadParameter("Must be 'Component.prop=value' format")
-    comp_prop, val_str = prop_str.split("=", 1)
-    if "." not in comp_prop:
-        raise click.BadParameter("Must be 'Component.prop=value' format")
-    component, prop = comp_prop.rsplit(".", 1)
-    if not component.strip() or not prop.strip():
         raise click.BadParameter(
-            f"Component and property must be non-empty in '{comp_prop}', expected 'Component.prop=value'"
+            "Must be 'Component::property.path=value' or 'Component.prop=value'"
         )
+    comp_prop, val_str = prop_str.split("=", 1)
+    if "::" in comp_prop:
+        component, prop = comp_prop.split("::", 1)
+        if "::" in prop:
+            raise click.BadParameter("Use exactly one '::' component/property separator")
+    elif "." in comp_prop:
+        component, prop = comp_prop.rsplit(".", 1)
+    else:
+        raise click.BadParameter(
+            "Must be 'Component::property.path=value' or 'Component.prop=value'"
+        )
+    if not component.strip() or not prop.strip():
+        raise click.BadParameter(f"Component and property must be non-empty in '{comp_prop}'")
 
     val_str = val_str.strip()
 
@@ -374,7 +381,9 @@ def _parse_property(prop_str: str) -> tuple[str, str, Any]:
 @click.option("--add-component", multiple=True, help="Component type to add (repeatable)")
 @click.option("--remove-component", multiple=True, help="Component type to remove (repeatable)")
 @click.option(
-    "--set-property", multiple=True, help="Property as 'Component.prop=value' (repeatable)"
+    "--set-property",
+    multiple=True,
+    help="Property as 'Component::property.path=value'; legacy 'Component.prop=value' also accepted (repeatable).",
 )
 @click.option("--delete-child", multiple=True, help="Child name/path to remove (repeatable)")
 @click.option("--create-child", help="JSON object for child creation Accepts @file or -/@- stdin.")
@@ -412,6 +421,7 @@ def modify(
         unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --delete-child "Turret/Barrel" --delete-child Bullet
         unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --target Weapon --position "0,1,2"
         unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --set-property "Rigidbody.mass=5"
+        unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --set-property "RectTransform::m_AnchoredPosition.x=42"
         unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --create-child '{"name":"Spawn","primitive_type":"Sphere"}'
     """
     create_child = admit_json_inputs(create_child=create_child)["create_child"]

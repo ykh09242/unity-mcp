@@ -763,11 +763,19 @@ unity-mcp prefab close
 unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --target Weapon --position "0,1,2"
 unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --delete-child Child1 --delete-child "Turret/Barrel"
 unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --set-property "Rigidbody.mass=5"
+unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --set-property "RectTransform::m_AnchoredPosition.x=42"
 unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --add-component BoxCollider --remove-component SphereCollider
 unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --create-child '{"name":"Spawn","primitive_type":"Sphere"}'
 unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --name NewName --tag Player --layer UI
 unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --inactive
 ```
+
+Use `Component::property.path=value` for nested serialized fields, including array
+paths such as `Fixture::items.Array.data[0].enabled=false`. Component names may be
+namespace-qualified, for example `UnityEngine.RectTransform::m_AnchoredPosition.x=42`.
+The legacy `Component.prop=value` form remains supported and splits at the final dot;
+use `::` whenever the property itself contains dots. Repeat `--set-property` for
+multiple edits.
 
 ### UI Commands
 

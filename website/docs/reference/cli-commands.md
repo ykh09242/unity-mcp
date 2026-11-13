@@ -3201,7 +3201,7 @@ Get information about a prefab asset. Examples: unity-mcp prefab info "Assets/Pr
 
 ## `unity-mcp prefab modify`
 
-Modify a prefab's contents (headless, no UI). Examples: unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --delete-child Child1 unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --delete-child "Turret/Barrel" --delete-child Bullet unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --target Weapon --position "0,1,2" unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --set-property "Rigidbody.mass=5" unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --create-child '&#123;"name":"Spawn","primitive_type":"Sphere"&#125;'
+Modify a prefab's contents (headless, no UI). Examples: unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --delete-child Child1 unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --delete-child "Turret/Barrel" --delete-child Bullet unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --target Weapon --position "0,1,2" unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --set-property "Rigidbody.mass=5" unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --set-property "RectTransform::m_AnchoredPosition.x=42" unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --create-child '&#123;"name":"Spawn","primitive_type":"Sphere"&#125;'
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -3217,7 +3217,7 @@ Modify a prefab's contents (headless, no UI). Examples: unity-mcp prefab modify 
 | --parent | text | optional | nargs=1 | — | — | New parent object name/path |
 | --add-component | text | optional | nargs=1, repeatable | — | — | Component type to add (repeatable) |
 | --remove-component | text | optional | nargs=1, repeatable | — | — | Component type to remove (repeatable) |
-| --set-property | text | optional | nargs=1, repeatable | — | — | Property as 'Component.prop=value' (repeatable) |
+| --set-property | text | optional | nargs=1, repeatable | — | — | Property as 'Component::property.path=value'; legacy 'Component.prop=value' also accepted (repeatable). |
 | --delete-child | text | optional | nargs=1, repeatable | — | — | Child name/path to remove (repeatable) |
 | --create-child | text | optional | nargs=1 | — | — | JSON object for child creation Accepts @file or -/@- stdin. |
 | --preview-only | boolean | optional | nargs=1, flag | — | — | Inspect serialized changes without saving. |

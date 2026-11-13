@@ -105,6 +105,47 @@ def test_prefab_component_preview_forwards_scope_without_saving(domain_transport
 
 
 @pytest.mark.parametrize(
+    "assignment,component,property_name,value",
+    [
+        ("Rigidbody.mass=5", "Rigidbody", "mass", 5),
+        ("UnityEngine.Rigidbody.mass=5", "UnityEngine.Rigidbody", "mass", 5),
+        ("RectTransform::m_AnchoredPosition.x=42", "RectTransform", "m_AnchoredPosition.x", 42),
+        (
+            "UnityEngine.RectTransform::m_AnchoredPosition.x=42",
+            "UnityEngine.RectTransform",
+            "m_AnchoredPosition.x",
+            42,
+        ),
+        (
+            "Fixture::items.Array.data[0].enabled=false",
+            "Fixture",
+            "items.Array.data[0].enabled",
+            False,
+        ),
+        ("Fixture::label=a=b", "Fixture", "label", "a=b"),
+    ],
+)
+def test_prefab_property_syntax_preserves_wire_component_and_path(
+    domain_transport, assignment, component, property_name, value
+):
+    _, requests = domain_transport
+    result = CliRunner().invoke(
+        cli, ["--format", "json", "prefab", "modify", PREFAB, "--set-property", assignment]
+    )
+    assert result.exit_code == 0, result.output
+    assert len(requests) == 1
+    assert requests[0]["params"]["componentProperties"] == {component: {property_name: value}}
+
+
+@pytest.mark.parametrize("assignment", ["::x=1", "Type::=1", "Type::x::y=1", "Type::x"])
+def test_invalid_explicit_prefab_property_does_not_dispatch(domain_transport, assignment):
+    _, requests = domain_transport
+    result = CliRunner().invoke(cli, ["prefab", "modify", PREFAB, "--set-property", assignment])
+    assert result.exit_code == 2, result.output
+    assert requests == []
+
+
+@pytest.mark.parametrize(
     "options",
     [
         ["--preview-scope", "components", "--set-property", "Rigidbody.mass=2"],
