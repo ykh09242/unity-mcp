@@ -6,7 +6,6 @@ import subprocess
 import sys
 import textwrap
 from dataclasses import asdict
-from importlib import import_module
 
 import httpx
 import pytest
@@ -47,7 +46,7 @@ def isolated_cli_config(monkeypatch):
 
 @pytest.fixture
 def config_transport(monkeypatch):
-    trace = {"warnings": [], "clients": [], "requests": [], "auth": []}
+    trace = {"clients": [], "requests": [], "auth": []}
     client_type = httpx.AsyncClient
 
     def respond(request):
@@ -70,11 +69,6 @@ def config_transport(monkeypatch):
 
     monkeypatch.setattr(connection.httpx, "AsyncClient", client)
     monkeypatch.setattr(connection, "_auth_headers", auth)
-    monkeypatch.setattr(
-        import_module("cli.main"),
-        "warn_if_remote_host",
-        lambda config: trace["warnings"].append(config),
-    )
     return trace
 
 
@@ -95,7 +89,8 @@ def test_invalid_settings_stop_before_configuration_or_transport(
     assert "Invalid value" in result.output and "--" + option in result.output
     assert "Traceback" not in result.output
     assert config_module._config is sentinel
-    assert config_transport == {"warnings": [], "clients": [], "requests": [], "auth": []}
+    assert config_transport == {"clients": [], "requests": [], "auth": []}
+    assert "Security Warning" not in result.stderr
 
 
 @pytest.mark.parametrize("option,env_name,value", INVALID_VALUES)
@@ -161,7 +156,7 @@ def test_valid_settings_resolve_and_reach_transport(
             "success": True,
             "data": {"count": 0, "enabled": False},
         }
-    assert config_transport["warnings"] == [expected] and config_transport["auth"] == [expected]
+    assert config_transport["auth"] == [expected]
 
 
 @pytest.mark.parametrize(

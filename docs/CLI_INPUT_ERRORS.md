@@ -42,6 +42,10 @@ include external source contents, file paths or raw operating-system exceptions.
 Inline JSON syntax diagnostics report line and column without quoting input.
 Human syntax diagnostics retain the shell-quoting example and tip.
 
+Remote-host security warnings are deferred until a connection is attempted and
+appear once per invocation before remote traffic. Local input rejections and
+offline operations therefore leave JSON stderr empty even with a remote host configured.
+
 CLI callbacks raise `CLIInputError`; the shared `handle_unity_errors` boundary owns
 format selection and exit behavior. New command input cases should use that boundary
 with an explicitly documented code rather than constructing JSON in each callback.

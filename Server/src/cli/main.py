@@ -22,7 +22,7 @@ from cli.utils.connection import (
     run_check_connection,
     run_command,
     run_list_instances,
-    warn_if_remote_host,
+    remote_host_warning_scope,
 )
 from cli.utils.output import format_output, print_error, print_info, print_success
 from cli.utils.input_errors import CLIInputError
@@ -72,7 +72,8 @@ class CLIGroup(click.Group):
 
     @handle_unity_errors
     def invoke(self, ctx: click.Context):
-        return super().invoke(ctx)
+        with remote_host_warning_scope():
+            return super().invoke(ctx)
 
 
 @click.group(cls=CLIGroup)
@@ -194,9 +195,6 @@ def cli(
         raise click.UsageError(
             f"Project context rejected ({error.reason}). Verify the selected context and expected project."
         ) from None
-
-    # Security warning for non-localhost connections
-    warn_if_remote_host(config)
 
     set_config(config)
     ctx.config = config

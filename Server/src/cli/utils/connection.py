@@ -1,6 +1,10 @@
 """Connection utilities for CLI to communicate with Unity via MCP server."""
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 import functools
 import json
 import math
@@ -36,6 +40,28 @@ class UnityCommandError(Exception):
 F = TypeVar("F", bound=Callable[..., Any])
 
 PUBLIC_CONNECTION_ERROR: Final = "Unity MCP connection failed. Verify the server is running, reachable, and its local authentication token is available."
+
+
+@dataclass
+class _RemoteHostWarning:
+    """Mutable notice state shared by one invocation and its async/worker contexts."""
+
+    emitted: bool = False
+
+
+_REMOTE_HOST_WARNING: Final[ContextVar[_RemoteHostWarning | None]] = ContextVar(
+    "unity_mcp_remote_host_warning", default=None
+)
+
+
+@contextmanager
+def remote_host_warning_scope() -> Iterator[None]:
+    """Reset warning deduplication for every CLI invocation, including embedded callers."""
+    token = _REMOTE_HOST_WARNING.set(_RemoteHostWarning())
+    try:
+        yield
+    finally:
+        _REMOTE_HOST_WARNING.reset(token)
 
 
 def print_connection_error(error: UnityConnectionError, format_type: str) -> None:
@@ -119,6 +145,11 @@ def warn_if_remote_host(config: CLIConfig) -> None:
 
     local_hosts = ("127.0.0.1", "localhost", "::1", "0.0.0.0")
     if config.host.lower() not in local_hosts:
+        state = _REMOTE_HOST_WARNING.get()
+        if state is not None:
+            if state.emitted:
+                return
+            state.emitted = True
         click.echo(
             "⚠️  Security Warning: Connecting to non-localhost server.\n"
             "   HTTP does not encrypt the launch token or Unity commands.\n"
@@ -137,6 +168,7 @@ def _server_url(config: CLIConfig, path: str) -> str:
 
 
 def _http_client(config: CLIConfig) -> httpx.AsyncClient:
+    warn_if_remote_host(config)
     # A loopback launch token must never reach an intermediary selected by HTTP_PROXY.
     if is_loopback(config.host.strip("[]").lower().removesuffix(".")):
         return httpx.AsyncClient(trust_env=False, follow_redirects=False)
@@ -498,6 +530,8 @@ def run_list_custom_tools(config: Optional[CLIConfig] = None) -> Dict[str, Any]:
 
 def _auth_headers(config: CLIConfig) -> dict[str, str]:
     """Resolve the current launch credential immediately before each request."""
+    # The doctor SDK uses its own HTTP client and resolves these headers in a worker.
+    warn_if_remote_host(config)
     token = read_local_auth_token(config.host, config.port)
     if not token:
         raise UnityConnectionError(
