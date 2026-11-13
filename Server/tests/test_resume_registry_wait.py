@@ -86,16 +86,13 @@ async def test_unrelated_notification_cannot_resolve_resume_or_restart_budget(re
     try:
         await await_signal(resume_wait.entered, "resume waiting", producers=(task,))
         deadline = resume_wait.budget.expires_at
-        resume_wait.entered.clear()
         await resume_wait.registry.register("foreign", "Other", "other-hash", "test")
-        await await_signal(
-            resume_wait.entered, "resume waiting after unrelated change", producers=(task,)
-        )
+        await resume_wait.registry.register_tools_for_session("foreign", [])
         assert not task.done()
-        assert len(resume_wait.lookups) == 2
         assert resume_wait.budget.expires_at == deadline
         await register_target(resume_wait)
         assert await asyncio.wait_for(task, watchdog_timeout()) == "new"
+        assert len(resume_wait.lookups) == 2
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -105,7 +102,7 @@ async def test_unrelated_notification_cannot_resolve_resume_or_restart_budget(re
 @pytest.mark.parametrize("direct", [False, True])
 async def test_resume_wait_cancellation_releases_waiter(resume_wait, direct):
     task = start_wait(resume_wait)
-    event = resume_wait.registry.change_event
+    event = resume_wait.registry.project_change_event("hash", None)
     try:
         await await_signal(resume_wait.entered, "resume waiting", producers=(task,))
         if direct:

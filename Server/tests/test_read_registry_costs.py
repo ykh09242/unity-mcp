@@ -147,7 +147,7 @@ async def test_explicit_success_resolves_hash_without_listing(monkeypatch, remot
 
 
 @pytest.mark.asyncio
-async def test_missing_remote_principal_keeps_listing_guard_even_if_hash_resolves(monkeypatch):
+async def test_missing_remote_principal_rejects_before_lookup_even_if_hash_resolves(monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
     registry = PluginRegistry()
     # A preexisting local mapping must not bypass the remote principal guard.
@@ -155,15 +155,36 @@ async def test_missing_remote_principal_keeps_listing_guard_even_if_hash_resolve
     monkeypatch.setattr(config, "http_remote_hosted", True)
     monkeypatch.setattr(PluginHub, "_registry", registry)
     listing = AsyncMock(wraps=registry.list_sessions)
+    lookup = AsyncMock(wraps=registry.get_session_id_by_hash)
     monkeypatch.setattr(registry, "list_sessions", listing)
-    with pytest.raises(ValueError, match="list_sessions requires user_id"):
+    monkeypatch.setattr(registry, "get_session_id_by_hash", lookup)
+    with pytest.raises(ValueError, match="requires user_id"):
         await PluginHub._resolve_session_id("Synthetic@hash", retry_on_reload=False)
-    listing.assert_awaited_once_with(user_id=None)
+    lookup.assert_not_awaited()
+    listing.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_local_lookup_finishing_after_hosted_switch_cannot_admit_local_mapping(monkeypatch):
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    registry = PluginRegistry()
+    await registry.register("owned-local", "Synthetic", "hash", "test")
+    monkeypatch.setattr(PluginHub, "_registry", registry)
+    original = registry.get_session_id_by_hash
+
+    async def lookup(project_hash):
+        result = await original(project_hash)
+        monkeypatch.setattr(config, "http_remote_hosted", True)
+        return result
+
+    monkeypatch.setattr(registry, "get_session_id_by_hash", lookup)
+    with pytest.raises(NoUnitySessionError):
+        await PluginHub._resolve_session_id("Synthetic@hash", retry_on_reload=False)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("remote", [False, True])
-async def test_explicit_unknown_keeps_existing_miss_and_listing(monkeypatch, remote):
+async def test_explicit_unknown_does_not_scan_inventory(monkeypatch, remote):
     monkeypatch.setattr(config, "http_remote_hosted", remote)
     registry = PluginRegistry()
     monkeypatch.setattr(PluginHub, "_registry", registry)
@@ -172,7 +193,7 @@ async def test_explicit_unknown_keeps_existing_miss_and_listing(monkeypatch, rem
     owner = "owned-user" if remote else None
     with pytest.raises(NoUnitySessionError, match="No Unity plugins"):
         await PluginHub._resolve_session_id("unknown", user_id=owner, retry_on_reload=False)
-    listing.assert_awaited_once_with(user_id=owner)
+    listing.assert_not_awaited()
 
 
 @pytest.mark.asyncio

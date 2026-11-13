@@ -133,7 +133,7 @@ async def test_plugin_hub_no_wait_when_retry_disabled(monkeypatch):
             )
 
         assert mock_registry.get_session_id_by_hash.await_count == 1
-        assert mock_registry.list_sessions.await_count == 1
+        mock_registry.list_sessions.assert_not_awaited()
     finally:
         PluginHub._registry = original_registry
         PluginHub._lock = original_lock

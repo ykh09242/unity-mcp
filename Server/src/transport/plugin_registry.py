@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from weakref import WeakValueDictionary
 
 import asyncio
 
@@ -63,22 +64,43 @@ class PluginRegistry:
         self._user_hash_to_session: dict[tuple[str, str], str] = {}
         self._lock = asyncio.Lock()
         self._change_event = asyncio.Event()
+        self._project_events: WeakValueDictionary[tuple[str | None, str], asyncio.Event] = (
+            WeakValueDictionary()
+        )
 
     @property
     def change_event(self) -> asyncio.Event:
         """Snapshot before lookup so a change before waiting cannot be lost."""
         return self._change_event
 
-    def notify_changed(self) -> None:
-        """Publish synchronously with mapping changes, or wake a replaced registry."""
+    def project_change_event(self, project_hash: str, user_id: str | None) -> asyncio.Event:
+        """The callers observing this route own the event, including during lookup."""
+        key = (user_id, project_hash)
+        event = self._project_events.get(key)
+        if event is None:
+            event = self._project_events[key] = asyncio.Event()
+        return event
+
+    def _notify_inventory_changed(self) -> None:
         event, self._change_event = self._change_event, asyncio.Event()
         event.set()
 
+    def notify_changed(self, project_hash: str | None = None, user_id: str | None = None) -> None:
+        """Publish a routing change, or wake every observer when this registry is cleared."""
+        self._notify_inventory_changed()
+        if project_hash is None:
+            for event in self._project_events.values():
+                event.set()
+            self._project_events.clear()
+        else:
+            event = self._project_events.pop((user_id, project_hash), None)
+            if event is not None:
+                event.set()
+
     async def wait_for_change(self, observed: asyncio.Event, timeout: float) -> bool:
         """Each caller owns its wait task; cancellation never cancels the shared event."""
-        async with self._lock:
-            if observed is not self._change_event:
-                return True
+        if observed.is_set():
+            return True
         try:
             await asyncio.wait_for(observed.wait(), timeout)
             return True
@@ -170,7 +192,7 @@ class PluginRegistry:
                 self._hash_to_session[project_hash] = session_id
 
             self._sessions[session_id] = session
-            self.notify_changed()
+            self.notify_changed(project_hash, user_id)
             return session, evicted_session_id
 
     async def clear(self) -> None:
@@ -214,7 +236,7 @@ class PluginRegistry:
                         mapped = self._user_hash_to_session.get(composite_key)
                         if mapped == session_id:
                             del self._user_hash_to_session[composite_key]
-                self.notify_changed()
+                self.notify_changed(session.project_hash, session.user_id)
                 return True
             return False
 
@@ -256,7 +278,7 @@ class PluginRegistry:
                 session.tools = prepared
                 session.tools_known = True
                 session.tools_revision += 1
-                self.notify_changed()
+                self._notify_inventory_changed()
             if _settings is not None:
                 session.settings_epoch, session.desired_revision = _settings
             return changed

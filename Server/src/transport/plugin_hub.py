@@ -2275,10 +2275,9 @@ class PluginHub(WebSocketEndpoint):
                 return None
             if config.http_remote_hosted and original.user_id is None:
                 return None
-            changed = registry.change_event
-            session_id = await registry.get_session_id_by_hash(
-                original.project_hash, original.user_id if config.http_remote_hosted else None
-            )
+            owner = original.user_id if config.http_remote_hosted else None
+            changed = registry.project_change_event(original.project_hash, owner)
+            session_id = await registry.get_session_id_by_hash(original.project_hash, owner)
             if session_id is None:
                 # The cancellation signal is thread-owned. Check that signal on
                 # bounded ticks, but only a registry change warrants another lookup.
@@ -4527,32 +4526,37 @@ class PluginHub(WebSocketEndpoint):
             else:
                 target_hash = unity_instance
 
+        hosted = config.http_remote_hosted
+        owner = user_id if hosted or pinned is not None else None
+
+        def change_event() -> asyncio.Event:
+            if target_hash and max_wait_s > 0:
+                return registry.project_change_event(target_hash, owner)
+            return registry.change_event
+
         async def _try_once() -> tuple[_SessionRoute | None, int, bool]:
             if cls._registry is not registry:
                 raise NoUnitySessionError("Unity plugin server stopped or replaced")
             explicit_required = config.http_remote_hosted
             # Prefer a specific Unity instance if one was requested
             if target_hash:
-                # In remote-hosted mode with user_id, use user-scoped lookup
-                owner = user_id if config.http_remote_hosted or pinned is not None else None
+                if hosted and not user_id:
+                    raise ValueError("Project resolution requires user_id in remote-hosted mode")
                 if owner:
                     session_id = await registry.get_session_id_by_hash(target_hash, owner)
                 else:
                     session_id = await registry.get_session_id_by_hash(target_hash)
                 if cls._registry is not registry:
                     raise NoUnitySessionError("Unity plugin server stopped or replaced")
-                # Explicit selection never uses the count. Keep the remote
-                # principal guard and miss paths in list_sessions below.
-                if session_id is not None and (not config.http_remote_hosted or user_id):
+                if config.http_remote_hosted != hosted:
+                    raise NoUnitySessionError("Unity plugin server routing mode changed")
+                if session_id is not None:
                     return (
                         _SessionRoute(registry, session_id, target_hash, owner),
                         0,
                         explicit_required,
                     )
-                sessions = await registry.list_sessions(user_id=user_id)
-                if cls._registry is not registry:
-                    raise NoUnitySessionError("Unity plugin server stopped or replaced")
-                return None, len(sessions), explicit_required
+                return None, 0, explicit_required
 
             # No target provided: determine if we can auto-select
             # In remote-hosted mode, filter sessions by user_id
@@ -4585,7 +4589,7 @@ class PluginHub(WebSocketEndpoint):
                 return []
 
         deadline = time.monotonic() + max_wait_s
-        changed = registry.change_event
+        changed = change_event()
         route, session_count, explicit_required = await _try_once()
         if route is None and explicit_required and not target_hash and session_count > 0:
             raise InstanceSelectionRequiredError(
@@ -4616,7 +4620,7 @@ class PluginHub(WebSocketEndpoint):
                 break
             if time.monotonic() >= deadline:
                 break
-            changed = registry.change_event
+            changed = change_event()
             route, session_count, explicit_required = await _try_once()
 
         if route is not None and wait_started is not None:

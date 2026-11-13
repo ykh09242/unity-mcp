@@ -94,6 +94,55 @@ async def test_cancel_one_waiter_does_not_cancel_shared_notification(registry_hu
 
 
 @pytest.mark.asyncio
+async def test_exact_waiters_ignore_other_projects_tenants_and_catalogs(registry_hub, monkeypatch):
+    registry = registry_hub
+    entered = asyncio.Event()
+    wait = registry.wait_for_change
+    count = 0
+
+    async def observe_wait(event, timeout):
+        nonlocal count
+        count += 1
+        if count == 4:
+            entered.set()
+        return await wait(event, timeout)
+
+    lookup = AsyncMock(wraps=registry.get_session_id_by_hash)
+    listing = AsyncMock(wraps=registry.list_sessions)
+    monkeypatch.setattr(registry, "get_session_id_by_hash", lookup)
+    monkeypatch.setattr(registry, "list_sessions", listing)
+    monkeypatch.setattr(registry, "wait_for_change", observe_wait)
+    waiters = [
+        asyncio.create_task(PluginHub._resolve_session_id("hash", user_id="alice"))
+        for _ in range(4)
+    ]
+    try:
+        await await_signal(entered, "four exact waiters entered", producers=waiters)
+        event = registry.project_change_event("hash", "alice")
+        await registry.register("other", "Other", "different", "test", user_id="alice")
+        await registry.register("foreign", "Project", "hash", "test", user_id="bob")
+        await registry.register_tools_for_session("other", [])
+        await registry.unregister("foreign")
+        assert not event.is_set() and lookup.await_count == len(waiters)
+        await registry.register("owned", "Project", "hash", "test", user_id="alice")
+        assert event.is_set()
+        assert await asyncio.gather(*waiters) == ["owned"] * len(waiters)
+        assert lookup.await_count == 2 * len(waiters)
+        listing.assert_not_awaited()
+    finally:
+        for waiter in waiters:
+            waiter.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_registry_drops_unobserved_project_keys(registry_hub):
+    for i in range(128):
+        registry_hub.project_change_event(str(i), "alice")
+    assert not registry_hub._project_events
+
+
+@pytest.mark.asyncio
 async def test_foreign_notifications_keep_absolute_deadline_and_never_resolve(
     registry_hub, monkeypatch
 ):
