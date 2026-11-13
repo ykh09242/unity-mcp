@@ -12,7 +12,7 @@ Use [Install And Connect](https://ykh09242.github.io/unity-mcp/getting-started/i
 4. Configure the intended client, reconnect it, and read `mcpforunity://instances` to verify the Editor identity.
 5. Try [a small first change](https://ykh09242.github.io/unity-mcp/getting-started/first-prompt) in a saved or disposable scene.
 
-Local HTTP uses a fresh token each launch. Reconfigure HTTP MCP clients after restarting the server. Keep token files and generated client configs private.
+Local HTTP uses a fresh token each launch. Verified Codex and Claude Code clients use automatic token-file lookup; configure once after upgrading and reconnect if necessary. Static-header clients need reconfiguration after server restarts. See [client configuration](https://ykh09242.github.io/unity-mcp/getting-started/clients). Keep token files and generated client configs private.
 
 ## Choose the right guide
 
