@@ -15,6 +15,12 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
 {
     internal static class McpReferenceGraphClient
     {
+        internal sealed class GraphChangedException : InvalidOperationException
+        {
+            internal GraphChangedException()
+                : base("The graph, Editor scope or destination version changed. Refresh status and reload before retrying.") { }
+        }
+
         internal static string Identity()
         {
             using var sha = SHA256.Create();
@@ -39,6 +45,20 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                     ? "Authentication is required. Check the account or local server connection in Connect."
                     : "This account cannot perform the action or read that source. Check account permissions and the server's external-folder grant."
             );
+
+        internal static Exception RequestFailure(int statusCode)
+        {
+            if (statusCode == 401 || statusCode == 403)
+                return AuthorizationFailure(statusCode);
+            if (statusCode == 409)
+                return new GraphChangedException();
+            string message = "The graph service is unavailable (HTTP " + statusCode + "). Check the server and Editor connection, then refresh.";
+            if (statusCode == 408 || statusCode == 429 || statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504)
+                return new HttpRequestException(message);
+            return new InvalidOperationException(
+                statusCode == 400 ? "Check the graph request and destination version. External sources require explicit read-access approval." : message
+            );
+        }
 
         internal static async Task<JObject> Send(string action, JObject options, CancellationToken cancellation)
         {
@@ -76,15 +96,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             cancellation.ThrowIfCancellationRequested();
             if (Identity() != identity)
                 throw new OperationCanceledException("Connection identity changed.");
-            if ((int)response.StatusCode == 401 || (int)response.StatusCode == 403)
-                throw AuthorizationFailure((int)response.StatusCode);
             if (!response.IsSuccessStatusCode)
-                throw new InvalidOperationException(
-                    (int)response.StatusCode == 409 ? "The Editor or destination version changed. Refresh and reload the item before applying it."
-                    : (int)response.StatusCode == 400
-                        ? "Check the configuration JSON and destination version. External sources require explicit read-access approval."
-                    : "The graph service is unavailable (HTTP " + (int)response.StatusCode + "). Check the server and Editor connection, then refresh."
-                );
+                throw RequestFailure((int)response.StatusCode);
             JObject result = JObject.Parse(await response.Content.ReadAsStringAsync());
             if (result.Value<bool?>("success") != true)
                 throw new InvalidOperationException("The reference graph is unavailable. Check the server connection and retry.");

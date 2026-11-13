@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Windows.Components.ReferenceGraph;
@@ -248,6 +249,233 @@ namespace MCPForUnityTests.EditMode.Windows
             Assert.AreEqual(25, Root.Q("graph-explorer-rows").childCount);
             Assert.IsNotNull(Root.Q<Button>("graph-explorer-explain-edge-25"));
             Assert.IsTrue(Root.Q<Foldout>("graph-explorer-details").ClassListContains("hidden"));
+        }
+
+        [TestCase(0)]
+        [TestCase(503)]
+        [TestCase(429)]
+        [TestCase(400)]
+        [TestCase(401)]
+        [TestCase(403)]
+        [TestCase(409)]
+        public async Task NextPageFailureRetainsOnlyRetryableContinuations(int statusCode)
+        {
+            int pages = 0;
+            var cursors = new List<string>();
+            using var section = new McpReferenceGraphSection(
+                Root,
+                (action, options, _) =>
+                {
+                    if (action != "query")
+                        return Task.FromResult(Status());
+                    cursors.Add(options.Value<string>("cursor"));
+                    if (++pages == 2)
+                        throw statusCode == 0 ? new HttpRequestException("Connection interrupted") : McpReferenceGraphClient.RequestFailure(statusCode);
+                    return Task.FromResult(Page(pages == 1 ? 0 : 25));
+                },
+                () => "one"
+            );
+            section.SetVisible(true);
+            await section.Run("overview", new JObject());
+            Root.Q<ObjectField>("graph-explorer-asset").value = Asset();
+            Click("graph-explorer-search");
+            var row = Root.Q("graph-edge-edge-0");
+            Click("graph-explorer-next");
+            bool retryable = statusCode == 0 || statusCode == 503 || statusCode == 429;
+            Assert.AreEqual(retryable, Root.Q<Button>("graph-explorer-next").enabledSelf);
+            if (retryable)
+            {
+                Assert.AreSame(row, Root.Q("graph-edge-edge-0"));
+                Assert.That(Root.Q<Label>("graph-explorer-status").text, Does.Contain("Page 1").And.Contain("Next page"));
+                Click("graph-explorer-next");
+                CollectionAssert.AreEqual(new string[] { null, "25", "25" }, cursors);
+                Assert.IsNotNull(Root.Q("graph-edge-edge-25"));
+                Assert.That(Root.Q<Label>("graph-explorer-status").text, Does.Contain("Page 2"));
+            }
+            else
+            {
+                Assert.Zero(Root.Q("graph-explorer-rows").childCount);
+                if (statusCode != 400)
+                    Assert.IsFalse(Root.Q<Button>("graph-explorer-search").enabledInHierarchy);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task RefreshedScopeOrRevisionClearsEarlierPage(bool changedScope)
+        {
+            bool changed = false;
+            using var section = new McpReferenceGraphSection(
+                Root,
+                (action, _, __) =>
+                {
+                    var data = action == "query" ? Page() : Status();
+                    data["scope"] = changed && changedScope ? "other" : "original";
+                    if (changed && !changedScope)
+                        data["graph_status"]["revision"] = 8;
+                    return Task.FromResult(data);
+                },
+                () => "one"
+            );
+            section.SetVisible(true);
+            await section.Run("overview", new JObject());
+            Root.Q<ObjectField>("graph-explorer-asset").value = Asset();
+            Click("graph-explorer-search");
+            Assert.IsNotNull(Root.Q("graph-edge-edge-0"));
+            changed = true;
+            await section.Run("overview", new JObject());
+            Assert.Zero(Root.Q("graph-explorer-rows").childCount);
+            Assert.IsFalse(Root.Q<Button>("graph-explorer-next").enabledSelf);
+        }
+
+        [TestCase("impact", false)]
+        [TestCase("path", true)]
+        public async Task ClosingOnlyReleasesThisPanelsTraversalAndRecoversFailedRelease(string action, bool failRelease)
+        {
+            string owner = Guid.NewGuid().ToString("N"),
+                current = owner;
+            string scope = "original";
+            var released = new List<string>();
+            Task<JObject> Send(string operation, JObject options, System.Threading.CancellationToken _)
+            {
+                var data = Status();
+                data["scope"] = scope;
+                if (operation == action)
+                {
+                    data["query_id"] = "owned";
+                    data["next_cursor"] = "more";
+                }
+                if (operation == "release_query")
+                {
+                    released.Add(options.Value<string>("id"));
+                    if (failRelease && released.Count == 1)
+                        throw new HttpRequestException();
+                }
+                return Task.FromResult(data);
+            }
+            using (var panel = new McpReferenceGraphSection(Root, Send, () => current))
+            {
+                panel.SetVisible(true);
+                await panel.Run("overview", new JObject());
+                await panel.Run(action, new JObject());
+                panel.SetVisible(false);
+                panel.SetVisible(true);
+                Assert.IsEmpty(released);
+            }
+            CollectionAssert.AreEqual(new[] { "owned" }, released);
+            using var reopened = new McpReferenceGraphSection(Root, Send, () => current);
+            current = "other-" + owner;
+            reopened.SetVisible(true);
+            await reopened.Run("overview", new JObject());
+            current = owner;
+            scope = "other";
+            await reopened.Run("overview", new JObject());
+            Assert.AreEqual(1, released.Count, "Release must never run against a replacement connection or graph scope.");
+            scope = "original";
+            await reopened.Run("overview", new JObject());
+            await reopened.Run("overview", new JObject());
+            CollectionAssert.AreEqual(failRelease ? new[] { "owned", "owned" } : new[] { "owned" }, released);
+        }
+
+        [TestCase("impact", false)]
+        [TestCase("path", true)]
+        public async Task DetachedFirstPageReleasesLateHandleOnlyInOriginalConnection(string action, bool changeOwner)
+        {
+            string original = Guid.NewGuid().ToString("N"),
+                owner = original;
+            var completion = new TaskCompletionSource<JObject>();
+            var released = new List<string>();
+            Task<JObject> Send(string operation, JObject options, System.Threading.CancellationToken _)
+            {
+                if (operation == action)
+                    return completion.Task;
+                if (operation == "release_query")
+                    released.Add(owner + "/" + options.Value<string>("id"));
+                return Task.FromResult(Status());
+            }
+            var panel = new McpReferenceGraphSection(Root, Send, () => owner);
+            panel.SetVisible(true);
+            await panel.Run("overview", new JObject());
+            Task first = panel.Run(action, new JObject());
+            if (changeOwner)
+                owner = "other-" + original;
+            panel.Dispose();
+            completion.SetResult(new JObject { ["query_id"] = "late", ["next_cursor"] = "more" });
+            await first;
+            Assert.Zero(Root.childCount);
+            Assert.AreEqual(changeOwner ? 0 : 1, released.Count);
+            owner = original;
+            using var reopened = new McpReferenceGraphSection(Root, Send, () => owner);
+            reopened.SetVisible(true);
+            await reopened.Run("overview", new JObject());
+            CollectionAssert.AreEqual(new[] { original + "/late" }, released);
+        }
+
+        [Test]
+        public async Task ClosingDuringExplicitReleaseDoesNotDispatchAnotherRelease()
+        {
+            int releases = 0;
+            var completion = new TaskCompletionSource<JObject>();
+            var panel = new McpReferenceGraphSection(
+                Root,
+                (action, options, _) =>
+                {
+                    if (action != "release_query")
+                        return Task.FromResult(action == "impact" ? Page() : Status());
+                    releases++;
+                    return completion.Task;
+                },
+                () => "explicit-release"
+            );
+            panel.SetVisible(true);
+            await panel.Run("overview", new JObject());
+            await panel.Run("impact", new JObject());
+            Task release = panel.Run("release_query", new JObject { ["id"] = "retained-query" });
+            panel.Dispose();
+            Assert.AreEqual(1, releases);
+            completion.SetResult(Status());
+            await release;
+            using var reopened = new McpReferenceGraphSection(
+                Root,
+                (action, _, __) =>
+                {
+                    if (action == "release_query")
+                        releases++;
+                    return Task.FromResult(Status());
+                },
+                () => "explicit-release"
+            );
+            reopened.SetVisible(true);
+            await reopened.Run("overview", new JObject());
+            Assert.AreEqual(1, releases);
+        }
+
+        [Test]
+        public async Task ClosingNeverAdoptsAQueryIdFromAContinuation()
+        {
+            var released = new List<string>();
+            using (
+                var panel = new McpReferenceGraphSection(
+                    Root,
+                    (action, options, _) =>
+                    {
+                        var data = Status();
+                        if (action == "path")
+                            data["query_id"] = options["cursor"] == null ? "created-by-panel" : "unrelated";
+                        if (action == "release_query")
+                            released.Add(options.Value<string>("id"));
+                        return Task.FromResult(data);
+                    },
+                    () => "continuation-owner"
+                )
+            )
+            {
+                panel.SetVisible(true);
+                await panel.Run("overview", new JObject());
+                await panel.Run("path", new JObject());
+                await panel.Run("path", new JObject { ["cursor"] = "continuation" });
+            }
+            CollectionAssert.AreEqual(new[] { "created-by-panel" }, released);
         }
 
         [Test]

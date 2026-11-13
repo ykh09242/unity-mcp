@@ -34,6 +34,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             pageAction,
             pageStatus;
         private JObject pageOptions;
+        private long? pageRevision;
+        internal string OwnedQueryId => queryId;
         private int pageNumber;
         private bool available,
             waiting;
@@ -172,6 +174,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         {
             cursor = pageAction = null;
             pageOptions = null;
+            pageRevision = null;
             pageNumber = 0;
             SetCollectionHint(null);
             root.Add(details);
@@ -243,7 +246,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 status.text = (pageStatus == null ? "" : pageStatus + "\n") + message;
         }
 
-        internal void Failed(string action, string message)
+        internal void Failed(string action, string message, bool retryPage = false)
         {
             waiting = false;
             if (action == "explain")
@@ -254,18 +257,24 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 status.text = pageStatus ?? status.text;
                 return;
             }
-            cursor = null;
-            root.Add(details);
-            details.AddToClassList("hidden");
-            rows.Clear();
-            rowButtons.Clear();
-            explanation.text = "";
+            if (retryPage && cursor != null && pageOptions != null)
+            {
+                status.text = pageStatus + "\n" + message + " Use Next page to retry.";
+                return;
+            }
+            ResetPage();
             status.RemoveFromClassList("hidden");
             status.text = message;
             SetAvailable(available);
         }
 
-        internal void Receive(string action, JObject data)
+        internal bool RevisionChanged(JObject data)
+        {
+            long? revision = data.Value<long?>("revision") ?? data["graph_status"]?.Value<long?>("revision");
+            return pageRevision.HasValue && revision.HasValue && revision != pageRevision;
+        }
+
+        internal void Receive(string action, JObject data, bool createsQuery = false)
         {
             waiting = false;
             if (action == "release_query")
@@ -288,7 +297,9 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 return;
             }
             cursor = data.Value<string>("next_cursor");
-            queryId = data.Value<string>("query_id") ?? queryId;
+            if (createsQuery)
+                queryId = data.Value<string>("query_id");
+            pageRevision = data.Value<long?>("revision") ?? data["graph_status"]?.Value<long?>("revision");
             pageNumber++;
             root.Add(details);
             details.AddToClassList("hidden");

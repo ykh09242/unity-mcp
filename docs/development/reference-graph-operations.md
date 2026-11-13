@@ -16,9 +16,21 @@ external evidence is never presented as a freshly verified scan.
 **Retry collection** clears collection backoff and wakes the existing worker.
 Large graph jobs have no new total deadline. Refresh is explicit: the panel does
 not repeatedly count the database or start a second indexing loop. Hiding or
-disposing it cancels its HTTP wait and discards late results; server work or a
-configuration change may already have completed. Refresh before retrying a write.
+closing the panel stops its visible wait. Server work or a configuration change
+may already have completed. Refresh before retrying a write.
 Connection/account changes invalidate displayed state and transfer fields.
+
+**Next page** keeps the current results and cursor after a temporary connection
+or service failure. Retry it to request the same page. A changed graph revision
+or scope requires a new exploration.
+
+Switching tabs keeps an open impact or path traversal. Closing the window
+releases its own query handle. If the release fails, **Refresh status** in the
+same Editor session retries one pending release for the verified connection and
+graph scope. A stopped first-page request can still receive its handle for up
+to 15 seconds and release it without displaying the discarded page. If the
+first response is lost before the Editor receives the handle, the Editor has
+no query ID to release.
 
 ## Configuration transfer
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
@@ -62,6 +63,9 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private readonly IVisualElementScheduledItem waitClock;
         private DateTime waitStarted;
         private string pendingAction;
+        private bool pendingCreatesQuery;
+        private static readonly TimeSpan CloseGrace = TimeSpan.FromSeconds(15);
+        private static readonly HashSet<string> Releasing = new();
         private int currentKind;
         private bool draftDirty;
         private Func<bool> confirmDiscard = () =>
@@ -81,6 +85,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private string nextAfter,
             exportKind,
             exportPage,
+            viewScope,
             viewIdentity;
         private bool visible,
             disposed;
@@ -304,6 +309,72 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             }
         }
 
+        // Only IDs returned by this panel's own traversals enter the close/recovery queue.
+        // Store opaque handles per connection and server-confirmed scope, never the page or credentials.
+        private static string ReleaseKey(string owner, string scope) => "MCPForUnity.ReferenceGraph.ClosedQueries/" + owner + "/" + scope;
+
+        private static List<string> ClosedQueries(string key) =>
+            SessionState.GetString(key, "").Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+
+        private static void QueueRelease(string owner, string scope, string id)
+        {
+            if (owner == null || string.IsNullOrEmpty(id))
+                return;
+            string key = ReleaseKey(owner, scope);
+            var ids = ClosedQueries(key);
+            if (!ids.Contains(id))
+            {
+                ids.Add(id);
+                SessionState.SetString(key, string.Join("\n", ids));
+            }
+        }
+
+        private static void RemoveRelease(string owner, string scope, string id)
+        {
+            string key = ReleaseKey(owner, scope);
+            var ids = ClosedQueries(key);
+            if (ids.Remove(id))
+                SessionState.SetString(key, string.Join("\n", ids));
+        }
+
+        private void RetireQuery(string owner, string scope, string id)
+        {
+            if (id == null)
+                return;
+            QueueRelease(owner, scope, id);
+            if (IsCurrentIdentity(owner) && viewScope == scope)
+                _ = ReleaseClosedQuery(owner, scope, id);
+        }
+
+        private Task RetryRelease(string owner, string scope)
+        {
+            string key = ReleaseKey(owner, scope);
+            string id = ClosedQueries(key).FirstOrDefault(item => !Releasing.Contains(key + "/" + item));
+            return id == null ? Task.CompletedTask : ReleaseClosedQuery(owner, scope, id);
+        }
+
+        private async Task ReleaseClosedQuery(string owner, string scope, string id)
+        {
+            string releaseKey = ReleaseKey(owner, scope) + "/" + id;
+            if (!IsCurrentIdentity(owner) || !Releasing.Add(releaseKey))
+                return;
+            try
+            {
+                using var cancellation = new CancellationTokenSource(CloseGrace);
+                JObject response = await send("release_query", new JObject { ["id"] = id }, cancellation.Token);
+                if ((response.Value<string>("scope") ?? scope) == scope)
+                    RemoveRelease(owner, scope, id);
+            }
+            catch (Exception)
+            {
+                // The next verified overview for this owner may retry this idempotent release.
+            }
+            finally
+            {
+                Releasing.Remove(releaseKey);
+            }
+        }
+
         private void StopWaiting()
         {
             var cancellation = pending;
@@ -312,7 +383,11 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             pendingAction = null;
             waitClock.Pause();
             waitStatus.text = "";
-            cancellation?.Cancel();
+            if (pendingCreatesQuery || action == "release_query")
+                cancellation?.CancelAfter(CloseGrace);
+            else
+                cancellation?.Cancel();
+            pendingCreatesQuery = false;
 
             if (!disposed)
             {
@@ -349,10 +424,10 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             });
         }
 
-        private void Feedback(string action, string text)
+        private void Feedback(string action, string text, bool retryPage = false)
         {
             if (McpReferenceExplorer.Handles(action))
-                explorer.Failed(action, text);
+                explorer.Failed(action, text, retryPage);
             else if (action == "import_config")
                 FormFeedback(text);
             else
@@ -512,8 +587,10 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         {
             StopWaiting();
             drafts.Clear();
+            QueueRelease(viewIdentity, viewScope, explorer.OwnedQueryId);
             explorer.Clear();
             diagnosticGraph = null;
+            viewScope = null;
             viewIdentity = null;
             identity.text = "Connection changed · refresh to verify this account";
             identity.tooltip = null;
@@ -613,7 +690,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             }
             catch
             {
-                Feedback(action, "Check the connection before retrying this request.");
+                Invalidate();
+                Feedback("overview", "Check the connection before retrying this request.");
                 return;
             }
             if (viewIdentity == null || viewIdentity != before)
@@ -626,6 +704,17 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             using var cancellation = new CancellationTokenSource();
             pending = cancellation;
             pendingAction = action;
+            bool createsQuery = (action == "impact" || action == "path") && options["cursor"] == null;
+            pendingCreatesQuery = createsQuery;
+            string scope = viewScope;
+            string releaseId = action == "release_query" ? options.Value<string>("id") : null;
+            string releaseKey = releaseId == null ? null : ReleaseKey(before, scope) + "/" + releaseId;
+            if (releaseKey != null && !Releasing.Add(releaseKey))
+            {
+                pending = null;
+                pendingAction = null;
+                return;
+            }
             var feedbackParent =
                 action == "import_config" ? formMessage.parent
                 : McpReferenceExplorer.Handles(action) ? explorer.FeedbackParent(action)
@@ -647,20 +736,45 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             try
             {
                 JObject data = await send(action, options, cancellation.Token);
+                string responseScope = data.Value<string>("scope");
+                if (releaseKey != null && (responseScope ?? scope) == scope)
+                    RemoveRelease(before, scope, releaseId);
                 if (disposed || !visible || cancellation.IsCancellationRequested || !ReferenceEquals(pending, cancellation))
-                    return;
-                if (before != connectionIdentity())
                 {
+                    if (createsQuery)
+                        RetireQuery(before, responseScope ?? scope, data.Value<string>("query_id"));
+                    if (releaseKey != null && explorer.OwnedQueryId == releaseId && !disposed && IsCurrentIdentity(before) && viewScope == scope)
+                    {
+                        explorer.Receive("release_query", data);
+                        UpdateControls();
+                    }
+                    return;
+                }
+                if (!IsCurrentIdentity(before) || (scope != null && responseScope != null && responseScope != scope))
+                {
+                    if (createsQuery)
+                        QueueRelease(before, responseScope ?? scope, data.Value<string>("query_id"));
                     Invalidate();
                     return;
                 }
                 viewIdentity = before;
+                viewScope = responseScope ?? scope;
+                if (action != "release_query" && explorer.RevisionChanged(data))
+                {
+                    RetireQuery(before, scope, explorer.OwnedQueryId);
+                    explorer.Clear();
+                    if (action == "explain" || options["cursor"] != null)
+                    {
+                        Feedback(action == "explain" ? "query" : action, "The graph revision changed. Explore again for current evidence.");
+                        return;
+                    }
+                }
                 Render(data);
                 updated.RemoveFromClassList("hidden");
                 updated.text = "Updated " + DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
                 if (McpReferenceExplorer.Handles(action))
                 {
-                    explorer.Receive(action, data);
+                    explorer.Receive(action, data, createsQuery);
                     message.AddToClassList("hidden");
                 }
                 else if (action == "export_config")
@@ -712,6 +826,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                     message.AddToClassList("hidden");
                 if (action == "overview" || action == "status" || McpReferenceExplorer.Handles(action))
                     explorer.SetCollectionHint(data["graph_status"]?.Value<string>("hint"));
+                if (action == "overview")
+                    _ = RetryRelease(before, viewScope);
             }
             catch (OperationCanceledException)
             {
@@ -730,6 +846,24 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                     Invalidate();
                     message.RemoveFromClassList("hidden");
                     message.text = error.Message;
+                }
+            }
+            catch (McpReferenceGraphClient.GraphChangedException error) when (McpReferenceExplorer.Handles(action) || action == "overview")
+            {
+                if (!disposed && visible && ReferenceEquals(pending, cancellation))
+                {
+                    Invalidate();
+                    Feedback("overview", error.Message);
+                }
+            }
+            catch (HttpRequestException)
+            {
+                if (!disposed && visible && ReferenceEquals(pending, cancellation))
+                {
+                    if (!IsCurrentIdentity(before))
+                        Invalidate();
+                    else
+                        Feedback(action, "The graph service could not be reached.", options["cursor"] != null);
                 }
             }
             catch (InvalidOperationException error)
@@ -754,10 +888,13 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             }
             finally
             {
+                if (releaseKey != null)
+                    Releasing.Remove(releaseKey);
                 if (ReferenceEquals(pending, cancellation))
                 {
                     pending = null;
                     pendingAction = null;
+                    pendingCreatesQuery = false;
                     waitClock.Pause();
                     waitStatus.text = "";
                 }
@@ -965,6 +1102,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             disposed = true;
             visible = false;
             StopWaiting();
+            RetireQuery(viewIdentity, viewScope, explorer.OwnedQueryId);
             drafts.Clear();
             diagnosticGraph = null;
             DiagnosticsRequested = null;
