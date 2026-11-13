@@ -363,16 +363,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             {
                 iterationRecorded = soak.CurrentIteration > iteration;
             }
-            if (soakStopStatus == null && soak.DeadlineReached(Now))
-            {
-                soakStopStatus = "timed_out";
-                soakStopError = "Player soak exceeded its whole-session wall-clock deadline.";
-            }
-            if (!continueRunning && soakStopStatus == null && (run.Status == "cancelled" || run.Status == "timed_out"))
-            {
-                soakStopStatus = run.Status;
-                soakStopError = run.Error;
-            }
+            PlayScenarioPlayerStop.CompleteIteration(run, continueRunning, soak.DeadlineReached(Now), ref soakStopStatus, ref soakStopError);
             if (!continueRunning || soakStopStatus != null)
             {
                 Complete(PlayScenarioPlayerLogDrain.ExitCode(run));
@@ -530,6 +521,26 @@ namespace MCPForUnity.Runtime.PlayScenarios
             status = cancelled ? "cancelled" : "timed_out";
             error = cancelled ? "Cancelled by caller." : "Player soak exceeded its whole-session wall-clock deadline.";
             engine.Cancel(now);
+        }
+
+        internal static void CompleteIteration(
+            MCPForUnity.Editor.Services.PlayScenarios.PlayScenarioRun run,
+            bool continueRunning,
+            bool deadlineReached,
+            ref string status,
+            ref string error
+        )
+        {
+            if (!continueRunning && (run.Status != "cancelled" || status == null))
+            {
+                status = run.Status == "succeeded" ? null : run.Status;
+                error = run.Status == "succeeded" ? null : run.Error;
+            }
+            else if (status == null && deadlineReached)
+            {
+                status = "timed_out";
+                error = "Player soak exceeded its whole-session wall-clock deadline.";
+            }
         }
     }
 }
