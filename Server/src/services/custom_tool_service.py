@@ -140,8 +140,16 @@ class _CatalogAdmission:
             return self._current()
 
 
-def custom_catalog_changed(reason="custom_tool_catalog_changed", job_id=None):
-    data = {"reason": reason, "dispatched": False}
+def custom_catalog_changed(
+    reason="custom_tool_catalog_changed", job_id=None, *, poll=False, started=False
+):
+    data = {"reason": reason}
+    if poll:
+        data["poll_dispatched"] = False
+        if started:
+            data["dispatched"] = True
+    else:
+        data["dispatched"] = False
     if job_id is not None:
         data["job_id"] = job_id
     return MCPResponse(
@@ -659,6 +667,11 @@ class CustomToolService:
                 if deadline is not None
                 else time.monotonic() + timeout
             )
+            started = (
+                isinstance(initial_response, dict)
+                and initial_response.get("_mcp_status") == "pending"
+                and initial_response.get("success") is not False
+            )
             response = initial_response
             last_observation = self._poll_observation(response)
             initial_response = data = None
@@ -675,12 +688,19 @@ class CustomToolService:
                         if isinstance(response, dict)
                         else None
                     )
-                    if isinstance(failure_data, dict) and failure_data.get("reason") in {
-                        "custom_tool_catalog_changed",
-                        "custom_tool_schema_changed",
-                    }:
+                    if (
+                        isinstance(failure_data, dict)
+                        and failure_data.get("dispatched") is False
+                        and failure_data.get("reason")
+                        in {"custom_tool_catalog_changed", "custom_tool_schema_changed"}
+                    ):
+                        if not poll_response:
+                            return custom_catalog_changed(failure_data["reason"])
                         return custom_catalog_changed(
-                            failure_data["reason"], poll_params.get("job_id")
+                            failure_data["reason"],
+                            poll_params.get("job_id"),
+                            poll=True,
+                            started=started,
                         )
                     failure_data = None
                     status, poll_interval = self._interpret_status(
@@ -696,7 +716,9 @@ class CustomToolService:
                     if remaining <= 0:
                         break
                     if catalog_guard is not None and not catalog_guard.current():
-                        return custom_catalog_changed(job_id=poll_params.get("job_id"))
+                        return custom_catalog_changed(
+                            job_id=poll_params.get("job_id"), poll=True, started=started
+                        )
 
                     await asyncio.sleep(min(poll_interval, remaining))
                     remaining = deadline - time.monotonic()

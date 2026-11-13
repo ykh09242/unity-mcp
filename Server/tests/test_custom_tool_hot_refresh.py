@@ -206,7 +206,10 @@ def test_delayed_stdio_refresh_cannot_overwrite_newer_same_generation(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_polling_revision_change_preserves_job_id_without_replay(monkeypatch):
+@pytest.mark.parametrize("change_during_poll", [False, True])
+async def test_polling_revision_change_preserves_job_id_without_replay(
+    monkeypatch, change_during_poll
+):
     from fastmcp import FastMCP
     from core.config import config
     from models.models import ToolDefinitionModel
@@ -223,20 +226,83 @@ async def test_polling_revision_change_preserves_job_id_without_replay(monkeypat
 
     async def send(_fn, _instance, command, params, **_kw):
         sent.append((command, params))
+        if change_during_poll and len(sent) == 1:
+            return {
+                "success": True,
+                "data": {"job_id": "old-job"},
+                "_mcp_status": "pending",
+                "_mcp_poll_interval": 0.1,
+            }
         service._register_project_tools(
             "a", [ToolDefinitionModel(name="job", poll_action="new_status")]
         )
+        if change_during_poll:
+            return module.custom_catalog_changed()
         return {"success": True, "data": {"job_id": "old-job"}, "_mcp_status": "pending"}
 
     monkeypatch.setattr(module, "send_with_unity_instance", send)
     response = await service.execute_tool("a", "job", "A@a", {})
     assert response.data == {
         "reason": "custom_tool_catalog_changed",
-        "dispatched": False,
+        "dispatched": True,
+        "poll_dispatched": False,
         "job_id": "old-job",
     }
     assert response.hint == "inspect_state_before_retry"
-    assert sent == [("job", {})] and service._active_polls == 0
+    assert sent[0] == ("job", {}) and len(sent) == (2 if change_during_poll else 1)
+    assert service._active_polls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial", [None, {}])
+async def test_polling_catalog_change_does_not_infer_start_from_supplied_job_id(
+    monkeypatch, initial
+):
+    from fastmcp import FastMCP
+    from core.config import config
+    from models.models import ToolDefinitionModel
+    import services.custom_tool_service as module
+
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(module.CustomToolService, "_instance", None)
+    service = module.CustomToolService(FastMCP("uncertain-job-policy"))
+
+    class ChangedGuard:
+        def current(self):
+            return False
+
+    result = await service._poll_until_complete(
+        "job",
+        "A@a",
+        {"job_id": "caller-job"},
+        initial,
+        "status",
+        max_poll_seconds=1,
+        catalog_guard=ChangedGuard(),
+    )
+    assert result.data == {
+        "reason": "custom_tool_catalog_changed",
+        "poll_dispatched": False,
+        "job_id": "caller-job",
+    }
+
+
+@pytest.mark.asyncio
+async def test_polling_initial_refusal_is_not_reported_as_a_started_job(monkeypatch):
+    from fastmcp import FastMCP
+    import services.custom_tool_service as module
+
+    monkeypatch.setattr(module.CustomToolService, "_instance", None)
+    service = module.CustomToolService(FastMCP("refused-job-policy"))
+    result = await service._poll_until_complete(
+        "job",
+        "A@a",
+        {"job_id": "caller-job"},
+        module.custom_catalog_changed(),
+        "status",
+        max_poll_seconds=1,
+    )
+    assert result.data == {"reason": "custom_tool_catalog_changed", "dispatched": False}
 
 
 @pytest.mark.asyncio

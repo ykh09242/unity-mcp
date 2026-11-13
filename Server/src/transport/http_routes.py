@@ -414,7 +414,10 @@ def install_http_routes(
                     and request_budget is not None
                     and result.success is False
                     and result.hint == "inspect_state_before_retry"
-                    and failure.get("dispatched") is False
+                    and (
+                        failure.get("dispatched") is False
+                        or failure.get("poll_dispatched") is False
+                    )
                     and failure.get("reason")
                     in {
                         "custom_tool_catalog_changed",
