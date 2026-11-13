@@ -592,11 +592,23 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
         {
             disabled = false;
             rootVisualElement.Clear();
-            var sheet = AssetDatabase.LoadAssetAtPath<StyleSheet>("Packages/com.ykh09242.unity-mcp/Editor/Windows/MCPForUnityEditorWindow.uss");
-            if (sheet != null && !rootVisualElement.styleSheets.Contains(sheet))
-                rootVisualElement.styleSheets.Add(sheet);
+            string basePath = MCPForUnity.Editor.Helpers.AssetPathUtility.GetMcpPackageRootPath() + "/Editor/Windows/";
+            foreach (string path in new[] { "Components/Common.uss", "MCPForUnityEditorWindow.uss" })
+            {
+                var sheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(basePath + path);
+                if (sheet != null && !rootVisualElement.styleSheets.Contains(sheet))
+                    rootVisualElement.styleSheets.Add(sheet);
+            }
+            rootVisualElement.AddToClassList("mcp-editor");
+            rootVisualElement.EnableInClassList("unity-theme-light", !EditorGUIUtility.isProSkin);
+            rootVisualElement.EnableInClassList("unity-theme-dark", EditorGUIUtility.isProSkin);
             rootVisualElement.AddToClassList("activity-evidence-window");
-            var header = new Label(heading ?? "Operation evidence") { name = "operation-evidence-heading", enableRichText = false };
+            var header = new Label(heading ?? "Operation evidence")
+            {
+                name = "operation-evidence-heading",
+                tooltip = heading ?? "Operation evidence",
+                enableRichText = false,
+            };
             header.AddToClassList("activity-note");
             header.AddToClassList("activity-title");
             rootVisualElement.Add(header);

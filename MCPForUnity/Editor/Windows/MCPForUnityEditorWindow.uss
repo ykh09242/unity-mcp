@@ -195,7 +195,7 @@
 #activity-selected-summary { margin-top: 0; }
 .activity-evidence-window { padding: 8px; }
 .activity-evidence-scroll { flex-grow: 1; min-height: 0; }
-#operation-evidence-heading { flex-shrink: 0; }
+#operation-evidence-heading { flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #operation-evidence-raw, #operation-evidence-text { min-width: 0; }
 #activity-page { align-self: center; margin-right: 8px; margin-bottom: 4px; white-space: normal; }
 
