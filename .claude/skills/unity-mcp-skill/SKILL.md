@@ -30,14 +30,14 @@ Load only the reference needed for the request. The live tool schema wins over a
 Choose the route from the task before writing custom code. For an unclear route, call `manage_tools(action="catalog")`. Interpret the request in its original language, browse relevant groups and tools, and compare action purposes, targets, required inputs and effects. Follow `next_offset` while the relevant action remains unresolved. Use `manage_tools(action="describe", tool="chosen_tool", operation="chosen_action")` to inspect the full schema before execution. Actionless tools use `describe` with the tool alone. Verify live availability and project readiness. See [capability discovery](references/connection.md#capability-discovery) for the browse contract and optional lexical search.
 
 - Shader Graph structure and shader diagnostics use `manage_shader`. Compile one explicitly selected variant when compiler evidence is required.
-- Prefab previews use `capture_prefab`. UI/button interactions use `manage_input` and the existing UI framework's inspection tools.
-- Unknown project types and API members use `unity_reflect` before `execute_code`.
+- Prefab images use `capture_prefab`. Serialized edit previews use `prefab_contents(action="modify_contents", preview_only=true)` with an explicit observation scope when needed. UI/button interactions use `manage_input` and the existing UI framework's inspection tools.
+- Before unfamiliar C# calls, inspect project source or `unity_reflect` for fully qualified types, member signatures, static/instance access and parameter types. Recheck the contract after symbol/member errors.
 - A pending compilation keeps its original `compile_id` and follows `get_compile_job`.
 
 1. Use the client's supported inventory to resolve missing capabilities or ambiguous Unity instances; verify the project before mutation.
 2. Inspect the specific object, asset or state needed for the task. Use returned IDs and exact asset paths rather than ambiguous names. Check readiness for operations affected by compilation, refresh or a running test job.
 3. Apply the requested change with the narrowest suitable tool. A missing optional package is a capability limit, not permission to install it. Enabling a tool group or executing code does not bypass authorization.
-4. Verify the resulting state. For scripts, wait for compilation and inspect diagnostics. For visual work, inspect an image when capture is available. For jobs, poll the returned job ID and distinguish completion from success.
+4. Verify the resulting state. For scripts, wait for compilation and inspect diagnostics. For visual work, inspect an image when capture is available. For jobs, poll the returned job ID and inspect the actual outcome. Report the executed checks, setup, scope, pending gaps and observed cleanup. Attribute native test counts to runner results and identify isolated probes, substituted dependencies and exercised user interactions.
 
 Independent observations may run concurrently after their inputs and Editor target are fixed. Supported connections coordinate same-instance work automatically; keep create/edit/verify dependencies ordered. See [concurrent calls](references/workflows.md#concurrent-calls-and-coordination) for guarantees and limits.
 

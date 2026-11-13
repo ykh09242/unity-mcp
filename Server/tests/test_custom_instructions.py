@@ -192,4 +192,8 @@ def test_server_appends_guidance_to_actual_fastmcp_instructions(
     assert "operation" in default.instructions
     assert "next_offset" in default.instructions
     assert "get_compile_job" in default.instructions
+    assert "parameter types" in default.instructions
+    assert "native test counts" in default.instructions
+    assert "isolated probes" in default.instructions
+    assert "cleanup" in default.instructions
     assert custom.instructions == append_custom_instructions(baseline, "Project guidance.")

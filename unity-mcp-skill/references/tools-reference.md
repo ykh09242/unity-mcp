@@ -17,7 +17,8 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | Prefabs | `prefab_inspect`, `prefab_create`, `prefab_contents`, `prefab_stage`, `prefab_overrides` | Core inspection and optional prefabs group; inspect asset contents and select explicit scene-instance override IDs |
 | Materials/shaders/textures | `manage_material`, `manage_shader`, `manage_texture` | `inspect_graph` reads supported `.shadergraph` structure; match the installed render pipeline and shader-declared property types for edits |
 | Cameras/capture | `manage_cameras`, `manage_cinemachine`, `capture_camera` | Optional camera group; inspect Cinemachine and capture support |
-| Prefab preview | `capture_prefab` | Use the inspected prefab asset path and review the returned image |
+| Prefab image | `capture_prefab` | Use the inspected prefab asset path and review the returned image |
+| Prefab edit preview | `prefab_contents` | Use `modify_contents` with `preview_only=true`. `preview_scope="components"` observes components named by `component_properties` on one target. Inspect scope, completeness and limits |
 | Shader compiler evidence | `manage_shader` | Use `diagnostics` for cached messages and `compile_variant` for one selected stage, platform, target, pass and keyword set |
 | Graphics/lighting | `manage_render_pipeline`, `manage_render_volumes`, `manage_light_baking`, `manage_components` | Optional graphics group except core components; inspect URP/HDRP capabilities |
 | Animation/physics/VFX | `manage_animation`, `query_physics`, `manage_rigidbody`, `manage_physics_joints`, `manage_vfx` | Optional animation, physics or vfx group; query identity/state before native mutations |

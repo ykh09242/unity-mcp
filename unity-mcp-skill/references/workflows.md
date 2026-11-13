@@ -34,6 +34,16 @@ For compact Console output, provide `format="json"` or `"detailed"` and include 
 
 Keep the original `compile_id` after `refresh_unity(compile="request")`. Follow `data.follow_up.next_call` when present. `get_compile_job` also returns a `follow_up` alongside the strict job data. Terminal failures direct inspection of compiler diagnostics, and unavailable tracking directs inspection of peer support or job identity. Evaluate compiler outcome, Editor readiness and source freshness independently. Retain confirmed results through a reconnect and continue the same job.
 
+Use the returned reason to choose recovery. `observation_unavailable` allows a bounded same-job observation after transport recovery. `tracking_unsupported` calls for checking peer support. `invalid_evidence`, `unsupported_schema`, `job_identity_mismatch` and `observation_rejected` require inspecting the contract, peer or requested identity before another attempt. `evidence_diagnostics` contains bounded field/code pairs for rejected evidence. Preserve the original compiler outcome while gathering source evidence. When the returned `next_call` sets `observe_source=true`, call `get_compile_job` with that same `compile_id` and selected instance. After a domain reload, this observation can resolve `reload_requires_observation`. Repeated unchanged invalid evidence needs a contract fix.
+
+## Prefab Edit Previews
+
+Use `prefab_contents(action="modify_contents", preview_only=true)` to inspect serialized changes before saving. The default `preview_scope="prefab"` observes the whole prefab. For component-property work, `preview_scope="components"` observes every supported serialized field on the selected target's components named in `component_properties`. Each component selector must resolve uniquely. This scope accepts component-property edits only. `LoadPrefabContents` still loads the full prefab, and callbacks can affect additional objects or external state.
+
+Read `data.preview.scope`, `complete`, `whole_prefab_complete`, `observed`, `truncated` and unsupported-field counts. In component scope, `complete=true` covers the selected components and `whole_prefab_complete=false` records the remaining prefab coverage. Snapshot limits are 2048 objects, 20000 serialized properties and 4 MiB. Reports retain at most 200 changes within 64 KiB. A `prefab_preview_limit_exceeded` response includes the limit kind, bound, observed count and `follow_up`. Eligible whole-prefab component edits can receive a bounded `next_call` selecting component scope. If that scope also exceeds the limit, choose a smaller component selection or explicitly proceed using other suitable evidence.
+
+Saving remains an explicit edit request. Record the preview's scope and any pending verification when interpreting its changes. Image-based appearance checks use `capture_prefab`.
+
 ## Objects And Scenes
 
 <!-- default-core:start -->
@@ -126,7 +136,7 @@ Choose the narrowest suitable operation:
 
 1. Use available dedicated tools for supported component changes, UI interactions and input. Discover project-specific tools when relevant.
 2. For runtime inspection, test setup, state changes or game-specific method calls that those tools cannot express, proactively select `execute_code` when exposed, enabled in Unity and execution consent is granted. An already-authorized test does not need another request naming this tool. Visibility or group activation alone does not establish native permission. If unavailable or consent-blocked, explain the missing capability or request the missing consent; never alter preferences or use another handler to bypass the restriction.
-3. Inspect the actual runtime target, component and API first, using available object queries, project source or API inspection. Use the selected instance and resolved target identity. Keep code short, bounded and limited to the requested runtime work, with `safety_checks=true`. Check that Play Mode and the expected target/state still hold at execution time; stop on a missing, replaced or ambiguous target rather than mutating a namesake. Return concise observations and before/after values.
+3. Inspect the actual runtime target, component and API first, using available object queries, project source or API inspection. Resolve fully qualified types, overloads, static/instance access and parameter types. Use the selected instance and resolved target identity. Keep code short, bounded and limited to the requested runtime work, with `safety_checks=true`. Check that Play Mode and the expected target/state still hold at execution time; stop on a missing, replaced or ambiguous target rather than mutating a namesake. Return concise observations and before/after values.
 4. Verify the outcome with fresh state reads and relevant UI/Console evidence. For changes that finish over later frames, return promptly and use bounded follow-up observations. Do not block the Editor with sleeps, busy-waits or unbounded loops. If the call times out or reconnects with an uncertain outcome, inspect the existing state before repeating a mutation or using `replay`.
 
 `execute_code` compiles the snippet in memory. Do not create temporary scripts, refresh/recompile the project, restart Play or reload scenes as a workaround for this workflow. Saved `manage_play_scenario` definitions require an initial scene load, and test-runner workflows can change lifecycle state; use those only when their setup/reset matches the request. In-memory code can still have lasting effects: persistent assets, save data and external-service writes need their own authorized scope. Restore only test-owned temporary changes when appropriate and the target is still valid; do not reset unrelated progress or undo the requested final state.
@@ -134,6 +144,16 @@ Choose the narrowest suitable operation:
 Separate test setup from the path being verified. For example, use code to prepare a known health value, then use the appropriate UI/input tool to exercise the requested healing interaction and observe the result. Calling the healing method directly proves only that method path, not a button, raycast or physical-input path. A successful execution response alone does not establish that asynchronous gameplay or visual behavior completed.
 
 Track ownership and lifetime for temporary resources and state changes. Arrange restoration and cleanup even on failure, using `try/finally` or the appropriate lifecycle callback. Restore borrowed state after use; release only resources created for this operation, once all consumers finish. Preserve the requested final state and unrelated objects. For operations spanning frames, cleanup belongs after completion or cancellation, not when the initiating call returns.
+
+For an unfamiliar API, use `unity_reflect(action="search", query=...)` to resolve a type, `get_type` with `class_name` for its member names, and `get_member` with `class_name` and `member_name` for signature details. Search supports `scope="project"` and an optional `assembly` filter. Project source can establish the same contract when available. Reuse verified signatures during the task. A compiler symbol/member error requires re-inspecting the relevant contract before changing the call. Persistently missing members can indicate stale loaded assemblies, which need the compilation/source checks above.
+
+## Reporting Verification Evidence
+
+- Record the target, initial lifecycle state, setup and executed path. State whether the check used the existing game state or test-owned fixtures. List substituted services and settings changed during setup, such as muted audio, along with the affected coverage.
+- Attribute framework test counts and failures to the final native runner result and retain its job identity. Give custom `execute_code` assertions their own probe count and observed values.
+- Name the exercised interaction route, such as direct method invocation, uGUI pointer dispatch, raw input or a complete user flow. Record visual and audio observations when those outcomes matter to the requested check.
+- Verify cleanup after asynchronous consumers finish. Observe restored state and remaining test-owned objects, then report any pending cleanup or unavailable evidence.
+- Match the completion claim to the observed scope. State remaining user-flow checks and unavailable evidence in the final report.
 
 ## Temporary Rendering Resources
 

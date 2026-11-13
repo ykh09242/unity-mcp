@@ -71,6 +71,14 @@ Profiler `window_result` accepts up to eight explicit `thresholds`. Each thresho
 
 Console tail results include checkpoint, page and retained-row interval coverage. Native history can change in ways the available cursor anchors cannot distinguish. `loss_unknown=true` preserves that uncertainty, including when all currently retained rows have been scanned.
 
+## Reporting executed verification
+
+Report the actual target, setup, interaction route and observed scope. Identify test-owned fixtures, substituted services and settings changed for the check. Attribute native framework counts to the final runner result and give custom runtime probes their own assertion counts. Record direct method invocation, UI pointer dispatch, raw input and complete user flows according to the route actually exercised.
+
+For asynchronous work, observe the original job through completion and verify cleanup after its consumers finish. Report restored state, retained requested results, remaining test-owned objects and pending checks. A final report should make any unobserved user-flow, visual or audio outcome explicit.
+
+Prefab serialized previews include `scope`, `complete`, `whole_prefab_complete` and before/after observation counts. `preview_scope="components"` covers the components named by a component-property edit on one target. Its `complete` field applies to that selection. Snapshot-limit failures return `prefab_preview_limit_exceeded` with the observed bound and recovery guidance. Preserve that scope when reporting preview evidence.
+
 ## Discovery and retained responses
 
 `manage_tools` can return a schema when explicitly activating one tool with `include_schema=true`. Readiness hints describe supported actions and carry their observation state. `set_active_instance(include_context=true)` adds a bounded observation from the selected instance.
