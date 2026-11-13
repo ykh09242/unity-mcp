@@ -51,7 +51,7 @@ def get_member(class_name: str, member_name: str):
         },
         config,
     )
-    click.echo(format_output(result, config.format))
+    click.echo(format_output(result, config.format, detailed_lists=True))
 
 
 @reflect.command("search")
