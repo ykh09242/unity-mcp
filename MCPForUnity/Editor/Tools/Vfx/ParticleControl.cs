@@ -11,7 +11,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
     {
         public static object Create(JObject @params)
         {
-            string target = @params["target"]?.ToString();
+            var targetInstruction = @params["target"] as JObject;
+            string target = (targetInstruction != null ? targetInstruction["find"] : @params["target"])?.ToString();
             if (string.IsNullOrWhiteSpace(target))
             {
                 return new { success = false, message = "target is required for particle_create" };
@@ -24,8 +25,33 @@ namespace MCPForUnity.Editor.Tools.Vfx
             bool? looping = @params["looping"] != null ? @params["looping"].ReadScalar<bool>() : null;
 
             GameObject go = ManageVfxCommon.FindTargetGameObject(@params);
+            string searchMethod = (targetInstruction != null ? targetInstruction["method"] : @params["searchMethod"])?.ToString();
+            if (string.IsNullOrEmpty(searchMethod) || string.Equals(searchMethod, "by_id_or_name_or_path", StringComparison.OrdinalIgnoreCase))
+                searchMethod =
+                    int.TryParse(target, out _) ? "by_id"
+                    : target.Contains("/") ? "by_path"
+                    : "by_name";
+            // Explicit identity must never turn a failed lookup into a new root object.
+            // ID lookups may target inactive objects without widening name/path searches.
+            if (go == null && string.Equals(searchMethod, "by_id", StringComparison.OrdinalIgnoreCase))
+            {
+                var inactiveTarget = GameObjectLookup.FindByTarget(new JValue(target), "by_id", includeInactive: true);
+                if (inactiveTarget != null && !EditorUtility.IsPersistent(inactiveTarget) && inactiveTarget.scene.IsValid() && inactiveTarget.scene.isLoaded)
+                    go = inactiveTarget;
+            }
+            if (go == null && !string.Equals(searchMethod, "by_name", StringComparison.OrdinalIgnoreCase))
+                return new { success = false, message = $"Target '{target}' not found for particle_create ({searchMethod})." };
+
             bool createdGameObject = false;
             bool addedParticleSystem = false;
+            bool recordUndo = !EditorApplication.isPlaying;
+            int undoGroup = -1;
+            if (recordUndo)
+            {
+                Undo.IncrementCurrentGroup();
+                undoGroup = Undo.GetCurrentGroup();
+                Undo.SetCurrentGroupName("Create ParticleSystem");
+            }
 
             if (go == null)
             {
@@ -39,12 +65,14 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 go = new GameObject(objectName);
                 createdGameObject = true;
 
-                if (!EditorApplication.isPlaying)
+                if (recordUndo)
                 {
                     Undo.RegisterCreatedObjectUndo(go, $"Create {objectName}");
                 }
             }
 
+            if (recordUndo)
+                Undo.RecordObject(go.transform, "Configure particle transform");
             if (position.HasValue)
             {
                 go.transform.position = position.Value;
@@ -61,11 +89,17 @@ namespace MCPForUnity.Editor.Tools.Vfx
             var ps = go.GetComponent<ParticleSystem>();
             if (ps == null)
             {
-                ps = go.AddComponent<ParticleSystem>();
+                ps = recordUndo ? Undo.AddComponent<ParticleSystem>(go) : go.AddComponent<ParticleSystem>();
                 addedParticleSystem = true;
 
                 // Apply sensible defaults so newly created particles aren't oversized.
+                if (recordUndo)
+                    Undo.RecordObject(ps, "Configure ParticleSystem");
                 RendererHelpers.SetSensibleParticleDefaults(ps);
+            }
+            else if (recordUndo)
+            {
+                Undo.RecordObject(ps, "Configure ParticleSystem");
             }
 
             var renderer = go.GetComponent<ParticleSystemRenderer>();
@@ -86,9 +120,16 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
 
             EditorUtility.SetDirty(go);
-            if (!EditorApplication.isPlaying)
+            if (recordUndo)
             {
-                UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
+                PrefabUtility.RecordPrefabInstancePropertyModifications(go.transform);
+                PrefabUtility.RecordPrefabInstancePropertyModifications(ps);
+                EditorUtility.SetDirty(ps);
+                if (go.scene.IsValid() && go.scene.isLoaded)
+                    UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(go.scene);
+                Undo.FlushUndoRecordObjects();
+                Undo.CollapseUndoOperations(undoGroup);
+                Undo.IncrementCurrentGroup();
             }
 
             return new

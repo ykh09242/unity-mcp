@@ -8,6 +8,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -108,6 +109,169 @@ namespace MCPForUnityTests.Editor.Tools
                 sceneFixture.Close();
                 Selection.objects = previousSelection;
                 Selection.activeObject = previousActiveObject;
+            }
+        }
+
+        [TestCase("{target:0,searchMethod:'by_id'}")]
+        [TestCase("{target:-2147483648}")]
+        [TestCase("{target:'__McpMissingParent__/__McpMissingParticle__'}")]
+        [TestCase("{target:'__McpMissingParticle__',searchMethod:'by_path'}")]
+        [TestCase("{target:{find:'0',method:'by_id'}}")]
+        [TestCase("{target:{find:'__McpMissingParent__/__McpMissingParticle__',method:'by_path'}}")]
+        public void CreateMissingExplicitIdentityDoesNotCreateRootOrDirtyScene(string json)
+        {
+            sceneFixture.ClearDirtiness();
+            int rootCount = ownedScene.rootCount;
+            string before = Snapshot();
+            var request = JObject.Parse(json);
+            request["action"] = "particle_create";
+            request["properties"] = new JObject { ["position"] = new JArray(9, 8, 7), ["looping"] = false };
+
+            JObject response = JObject.FromObject(ManageVFX.HandleCommand(request));
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(rootCount, ownedScene.rootCount);
+            Assert.AreEqual(before, Snapshot());
+            Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [Test]
+        public void CreateByNameCreatesObjectAndUndoRedoRestoresConfiguredSystem()
+        {
+            string name = "__McpCreatedParticle_" + Guid.NewGuid().ToString("N");
+            JObject response = JObject.FromObject(
+                ManageVFX.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "particle_create",
+                        ["target"] = name,
+                        ["searchMethod"] = "by_name",
+                        ["properties"] = new JObject
+                        {
+                            ["position"] = new JArray(9, 8, 7),
+                            ["looping"] = false,
+                            ["playOnAwake"] = false,
+                        },
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(response.Value<bool>("createdGameObject"));
+            Assert.IsTrue(response.Value<bool>("addedParticleSystem"));
+            GameObject created = GameObject.Find(name);
+            Assert.IsNotNull(created);
+            Undo.PerformUndo();
+            Assert.IsTrue(created == null);
+            Undo.PerformRedo();
+            created = GameObject.Find(name);
+            Assert.IsNotNull(created);
+            Assert.AreEqual(new Vector3(9, 8, 7), created.transform.position);
+            Assert.IsFalse(created.GetComponent<ParticleSystem>().main.loop);
+            Assert.IsFalse(created.GetComponent<ParticleSystem>().main.playOnAwake);
+            Assert.IsNotNull(created.GetComponent<ParticleSystemRenderer>().sharedMaterial);
+        }
+
+        [Test]
+        public void CreateExistingInactiveIdRecordsTransformSystemAndMaterialForUndoRedo()
+        {
+            root.SetActive(false);
+            Vector3 position = root.transform.position;
+            Quaternion rotation = root.transform.rotation;
+            Vector3 scale = root.transform.localScale;
+            int rootCount = ownedScene.rootCount;
+            JObject response = Call(
+                "particle_create",
+                new JObject
+                {
+                    ["position"] = new JArray(9, 8, 7),
+                    ["rotation"] = new JArray(10, 20, 30),
+                    ["scale"] = new JArray(2, 3, 4),
+                    ["looping"] = false,
+                    ["playOnAwake"] = true,
+                }
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(response.Value<bool>("createdGameObject"));
+            Assert.IsFalse(response.Value<bool>("addedParticleSystem"));
+            Assert.AreEqual(rootCount, ownedScene.rootCount);
+            Assert.AreSame(particles, root.GetComponent<ParticleSystem>());
+            Material assigned = renderer.sharedMaterial;
+            Assert.IsNotNull(assigned);
+
+            Undo.PerformUndo();
+            Assert.AreEqual(position, root.transform.position);
+            Assert.AreEqual(rotation, root.transform.rotation);
+            Assert.AreEqual(scale, root.transform.localScale);
+            Assert.IsTrue(particles.main.loop);
+            Assert.IsFalse(particles.main.playOnAwake);
+            Assert.IsNull(renderer.sharedMaterial);
+            Assert.IsFalse(root.activeSelf);
+
+            Undo.PerformRedo();
+            Assert.AreEqual(new Vector3(9, 8, 7), root.transform.position);
+            Assert.That(Quaternion.Angle(Quaternion.Euler(10, 20, 30), root.transform.rotation), Is.LessThan(0.001f));
+            Assert.AreEqual(new Vector3(2, 3, 4), root.transform.localScale);
+            Assert.IsFalse(particles.main.loop);
+            Assert.IsTrue(particles.main.playOnAwake);
+            Assert.AreSame(assigned, renderer.sharedMaterial);
+            Assert.IsFalse(root.activeSelf);
+        }
+
+        [Test]
+        public void CreateExistingObjectAddsUndoableComponentsAndDirtiesOnlyOwnerScene()
+        {
+            var target = new GameObject("__McpParticleComponentTarget");
+            target.transform.SetParent(root.transform, false);
+            sceneFixture.ClearDirtiness();
+            Scene unrelated = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                Assert.IsTrue(SceneManager.SetActiveScene(unrelated));
+                Assert.IsFalse(unrelated.isDirty);
+                JObject response = JObject.FromObject(
+                    ManageVFX.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "particle_create",
+                            ["target"] = target.GetInstanceIDCompat(),
+                            ["searchMethod"] = "by_id",
+                            ["properties"] = new JObject
+                            {
+                                ["position"] = new JArray(9, 8, 7),
+                                ["looping"] = false,
+                                ["playOnAwake"] = false,
+                            },
+                        }
+                    )
+                );
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.IsFalse(response.Value<bool>("createdGameObject"));
+                Assert.IsTrue(response.Value<bool>("addedParticleSystem"));
+                Assert.IsNotNull(target.GetComponent<ParticleSystem>());
+                Assert.IsNotNull(target.GetComponent<ParticleSystemRenderer>());
+                Assert.IsTrue(ownedScene.isDirty);
+                Assert.IsFalse(unrelated.isDirty);
+                Assert.AreEqual(unrelated, SceneManager.GetActiveScene());
+
+                Undo.PerformUndo();
+                Assert.IsNotNull(target);
+                Assert.IsNull(target.GetComponent<ParticleSystem>());
+                Assert.IsNull(target.GetComponent<ParticleSystemRenderer>());
+                Assert.AreEqual(Vector3.zero, target.transform.localPosition);
+
+                Undo.PerformRedo();
+                Assert.AreEqual(new Vector3(9, 8, 7), target.transform.position);
+                Assert.IsNotNull(target.GetComponent<ParticleSystem>());
+                Assert.IsFalse(target.GetComponent<ParticleSystem>().main.loop);
+                Assert.IsFalse(target.GetComponent<ParticleSystem>().main.playOnAwake);
+                Assert.IsNotNull(target.GetComponent<ParticleSystemRenderer>().sharedMaterial);
+                Assert.IsFalse(unrelated.isDirty);
+            }
+            finally
+            {
+                SceneManager.SetActiveScene(ownedScene);
+                if (unrelated.IsValid() && unrelated.isLoaded)
+                    EditorSceneManager.CloseScene(unrelated, true);
             }
         }
 
