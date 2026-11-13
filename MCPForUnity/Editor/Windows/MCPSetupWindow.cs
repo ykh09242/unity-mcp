@@ -57,6 +57,7 @@ namespace MCPForUnity.Editor.Windows
         private Label clientsResult;
         private readonly HashSet<string> configuredClients = new();
         private readonly HashSet<string> localServerRequiredClients = new();
+        private bool stdioBridgeSwitchPending;
         private readonly Dictionary<string, bool> clientSelections = new();
         private readonly Dictionary<string, string> clientResults = new();
         private readonly Dictionary<string, Label> clientResultLabels = new();
@@ -281,7 +282,7 @@ namespace MCPForUnity.Editor.Windows
 
         private void PopulateClientsList()
         {
-            openConnectionControlsButton.EnableInClassList("hidden", localServerRequiredClients.Count == 0);
+            openConnectionControlsButton.EnableInClassList("hidden", localServerRequiredClients.Count == 0 && !stdioBridgeSwitchPending);
             openConnectionControlsButton.SetEnabled(!configurationInProgress);
             skipClientsButton.SetEnabled(!configurationInProgress);
             clientsList.Clear();
@@ -345,7 +346,7 @@ namespace MCPForUnity.Editor.Windows
 
         private void OnOpenConnectionControlsClicked()
         {
-            if (!configurationInProgress && localServerRequiredClients.Count > 0)
+            if (!configurationInProgress && (localServerRequiredClients.Count > 0 || stdioBridgeSwitchPending))
                 openConnectionControls();
         }
 
@@ -429,6 +430,14 @@ namespace MCPForUnity.Editor.Windows
                         configuredClients.Add(configuringClient.Id);
                         retry = false;
                         result = "Configured. This client will not be repeated during retry.";
+                        if (
+                            EditorConfigurationCache.Instance.UseHttpTransport
+                            && ClientConfigurationService.RequiresStdioBridge(configuringClient.SupportedTransports)
+                        )
+                        {
+                            stdioBridgeSwitchPending = true;
+                            result += " Switch to stdio and connect using connection controls when ready.";
+                        }
                     }
                     else
                     {
@@ -512,6 +521,11 @@ namespace MCPForUnity.Editor.Windows
             if (configurationSuccess == 0)
             {
                 clientsResult.text = "Select a client to configure, or choose Skip to finish.";
+                return;
+            }
+            if (stdioBridgeSwitchPending && EditorConfigurationCache.Instance.UseHttpTransport)
+            {
+                clientsResult.text += "Open connection controls to switch to stdio and connect, or choose Skip to finish later.";
                 return;
             }
             CompleteSetup();
