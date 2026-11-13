@@ -114,12 +114,15 @@ class ListenStream:
 class PluginStream:
     """Bounded authenticated ASGI websocket peer; next receive is a processing barrier."""
 
-    def __init__(self, app, principal, project_hash, project_name, *, capabilities=()):
+    def __init__(
+        self, app, principal, project_hash, project_name, *, capabilities=(), editor_generation=None
+    ):
         self.app = app
         self.principal = principal
         self.project_hash = project_hash
         self.project_name = project_name
         self.capabilities = capabilities
+        self.editor_generation = editor_generation or secrets.token_hex(16)
         self.started = False
         self.welcome = anyio.Event()
         self.registered = anyio.Event()
@@ -196,6 +199,7 @@ class PluginStream:
                 "project_name": self.project_name,
                 "unity_version": "6000.0",
                 "capabilities": list(self.capabilities),
+                "resume_generation": self.editor_generation,
             }
         )
         await self._wait(self.registered)
@@ -474,7 +478,9 @@ async def test_hosted_catalog_wire_commits_route_and_relist_across_generations(
                         assert found["tenant_live"]["parameters"][0]["type"] == "string"
 
                 streams[0].changed = anyio.Event()
-                replacement = PluginStream(app, "alice-key", "a", "A")
+                replacement = PluginStream(
+                    app, "alice-key", "a", "A", editor_generation=alice.editor_generation
+                )
                 await replacement.connect(group)
                 await wait(alice.done)
                 assert replacement.session_id != alice.session_id
@@ -1047,7 +1053,12 @@ async def test_editor_state_wire_events_are_scoped_committed_and_generation_owne
             assert PluginHub._editor_states.get(peers[0].session_id, "alice") is None
             streams[0].changed = anyio.Event()
             replacement = PluginStream(
-                app, "alice-key", "a", "A", capabilities=("editor_state_v1",)
+                app,
+                "alice-key",
+                "a",
+                "A",
+                capabilities=("editor_state_v1",),
+                editor_generation=peers[0].editor_generation,
             )
             await replacement.connect(group)
             await wait(streams[0].changed)
@@ -1367,7 +1378,7 @@ async def test_resource_ack_boundary_buffers_events_and_cleans_disconnect(
 async def test_nonpush_editor_replacement_and_disconnect_invalidate_polling_resource(
     hosted_catalog,
 ):
-    # Given: an authorized legacy editor and an explicit fixed-resource watcher.
+    # Given: an authorized polling-only editor and an explicit fixed-resource watcher.
     app, runtime = hosted_catalog
     async with app.router.lifespan_context(app):
         async with anyio.create_task_group() as group:
@@ -1378,7 +1389,9 @@ async def test_nonpush_editor_replacement_and_disconnect_invalidate_polling_reso
             await wait(stream.acknowledged)
             old_socket = PluginHub._connections[first.session_id]
             # When: a polling-only editor reconnects, then disconnects.
-            replacement = PluginStream(app, "alice-key", "a", "A")
+            replacement = PluginStream(
+                app, "alice-key", "a", "A", editor_generation=first.editor_generation
+            )
             await replacement.connect(group)
             await wait(stream.changed)
             await anyio.wait_all_tasks_blocked()

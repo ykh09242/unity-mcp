@@ -27,7 +27,7 @@ from transport.plugin_hub import PluginHub
 class ScenePeer(PluginStream):
     """Existing owned WebSocket lifecycle plus observable, bounded command replies."""
 
-    def __init__(self, app, principal, project_hash, name, token=None):
+    def __init__(self, app, principal, project_hash, name, token=None, *, editor_generation=None):
         self.actual_app = app
         self.token = token
         self.commands = []
@@ -43,7 +43,9 @@ class ScenePeer(PluginStream):
             "data": {"path": "Assets/Scenes/A.unity"},
         }
         self.command_send = None
-        super().__init__(self.observed_app, principal, project_hash, name)
+        super().__init__(
+            self.observed_app, principal, project_hash, name, editor_generation=editor_generation
+        )
 
     async def connect(self, group):
         await group.start(self.respond)
@@ -629,7 +631,9 @@ async def test_current_session_replacement_refuses_pending_input(flow_server):
     # Given: one question for a session that is then replaced by the same user's Editor.
     async with connected(flow_server) as (_, client, peer, group):
         first = (await request(client)).json()["result"]
-        replacement = ScenePeer(peer.actual_app, "alice-key", "a", "A")
+        replacement = ScenePeer(
+            peer.actual_app, "alice-key", "a", "A", editor_generation=peer.editor_generation
+        )
         try:
             await replacement.connect(group)
             await replacement.catalog([{"name": "manage_scene"}])
