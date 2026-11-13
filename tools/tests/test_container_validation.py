@@ -184,3 +184,60 @@ def test_negative_controls_require_actual_rejection(tmp_path, monkeypatch):
     )
     with pytest.raises(RuntimeError, match="Invalid COPY"):
         helper.negative_controls(tmp_path, "candidate:fixture")
+
+
+@pytest.mark.parametrize("phase", ["cli", "registration"])
+@pytest.mark.parametrize("timeout", [False, True])
+@pytest.mark.parametrize("byte_output", [False, True])
+@pytest.mark.parametrize("cleanup_failure", [None, "timeout", "oserror"])
+def test_failed_probe_retains_bounded_diagnostics_and_original_failure(
+    monkeypatch, capsys, phase, timeout, byte_output, cleanup_failure
+):
+    helper = load_helper()
+    stdout = "discarded-prefix-" + "x" * helper.PROBE_OUTPUT_LIMIT + "stdout-tail"
+    stderr = "discarded-prefix-" + "x" * helper.PROBE_OUTPUT_LIMIT + "stderr-tail"
+    if byte_output:
+        stdout = stdout.encode() + b"\xff"
+        stderr = stderr.encode() + b"\xff"
+    error = (
+        subprocess.TimeoutExpired(["docker", "run"], 60, output=stdout, stderr=stderr)
+        if timeout
+        else subprocess.CalledProcessError(7, ["docker", "run"], output=stdout, stderr=stderr)
+    )
+    calls = []
+    injected = False
+
+    def run(command, **kwargs):
+        nonlocal injected
+        calls.append(command)
+        if command[1] == "rm" and injected:
+            if cleanup_failure == "timeout":
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            if cleanup_failure == "oserror":
+                raise OSError("Synthetic cleanup failure")
+        elif command[1] == "run" and ("--entrypoint" in command) == (phase == "registration"):
+            injected = True
+            raise error
+        return subprocess.CompletedProcess(command, 0, stdout="Unity MCP (ykh09242)\n")
+
+    monkeypatch.setattr(helper.subprocess, "run", run)
+    with pytest.raises(type(error)) as raised:
+        helper.validate(ROOT)
+    assert raised.value is error
+    diagnostic = capsys.readouterr().err
+    assert "Container probe stdout (truncated to tail):" in diagnostic
+    assert "Container probe stderr (truncated to tail):" in diagnostic
+    assert "stdout-tail" in diagnostic and "stderr-tail" in diagnostic
+    assert "discarded-prefix" not in diagnostic
+    assert len(diagnostic) < 2 * helper.PROBE_OUTPUT_LIMIT + 1000
+    if byte_output:
+        assert "\ufffd" in diagnostic
+    if cleanup_failure:
+        assert "Container probe cleanup failed:" in diagnostic
+    failed = next(
+        command
+        for command in calls
+        if command[1] == "run" and ("--entrypoint" in command) == (phase == "registration")
+    )
+    name = failed[failed.index("--name") + 1]
+    assert ["docker", "rm", "--force", name] in calls

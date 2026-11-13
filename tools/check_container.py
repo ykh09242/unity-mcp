@@ -6,10 +6,12 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
+PROBE_OUTPUT_LIMIT = 4096
 INPUTS = frozenset(
     {
         ".dockerignore",
@@ -56,6 +58,17 @@ def selected(event: Path, root: Path = ROOT) -> bool:
         return True
 
 
+def report_probe_failure(error: subprocess.CalledProcessError | subprocess.TimeoutExpired) -> None:
+    """Expose bounded captured diagnostics, including byte output from timeouts."""
+    for label, output in (("stdout", error.stdout), ("stderr", error.stderr)):
+        if output:
+            tail = output[-PROBE_OUTPUT_LIMIT:]
+            if isinstance(tail, bytes):
+                tail = tail.decode("utf-8", errors="replace")
+            truncated = " (truncated to tail)" if len(output) > PROBE_OUTPUT_LIMIT else ""
+            print(f"Container probe {label}{truncated}:\n{tail}", file=sys.stderr)
+
+
 def probe(root: Path, image: str, arguments: list[str], *, registration: bool = False):
     name = f"unity-mcp-smoke-{uuid.uuid4().hex}"
     command = [
@@ -83,13 +96,24 @@ def probe(root: Path, image: str, arguments: list[str], *, registration: bool = 
             "/app/Server/.venv/bin/python",
         ]
     command += [image, *arguments]
+    probe_succeeded = False
     try:
-        return subprocess.run(command, check=True, timeout=60, capture_output=True, text=True)
+        result = subprocess.run(command, check=True, timeout=60, capture_output=True, text=True)
+        probe_succeeded = True
+        return result
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        report_probe_failure(error)
+        raise
     finally:
         # The exact unique name also covers a lost/timeout run reply. Never clean other containers.
-        subprocess.run(
-            ["docker", "rm", "--force", name], check=False, timeout=15, capture_output=True
-        )
+        try:
+            subprocess.run(
+                ["docker", "rm", "--force", name], check=False, timeout=15, capture_output=True
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            if probe_succeeded:
+                raise
+            print(f"Container probe cleanup failed: {error}", file=sys.stderr)
 
 
 def negative_controls(root: Path, image: str):
