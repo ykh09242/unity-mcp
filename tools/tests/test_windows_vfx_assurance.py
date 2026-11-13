@@ -112,6 +112,37 @@ def test_stale_evidence_rejected_before_editor_launch(tmp_path, monkeypatch):
         vfx.run(Path("Unity.exe"), tmp_path, tmp_path)
 
 
+def test_pre_xml_editor_failure_retains_uploaded_process_evidence(tmp_path, monkeypatch):
+    from player_e2e_process import Invocation, execute
+
+    evidence = tmp_path / "vfx-evidence"
+    monkeypatch.setattr(
+        vfx,
+        "execute",
+        lambda invocation: execute(
+            Invocation(
+                [sys.executable, "-c", "import sys; print('startup failed'); sys.exit(2)"],
+                invocation.directory,
+            )
+        ),
+    )
+    assert vfx.run(Path("Unity.exe"), tmp_path, evidence) == 1
+    assert not (evidence / "results.xml").exists()
+    assert "startup failed" in (evidence / "process.log").read_text()
+    assert json.loads((evidence / "launch.json").read_text())["actual_exit_code"] == 2
+    steps = workflow()["jobs"]["windowsVfx"]["steps"]
+    upload = next(
+        step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert upload["if"] == "always()"
+    paths = set(upload["with"]["path"].splitlines())
+    assert {
+        f".unity-ci/vfx-evidence/{name}" for name in ("results.xml", "process.log", "launch.json")
+    } <= paths
+    assert ".unity-ci/windows-vfx/resolved-packages.json" in paths
+    assert "${{ runner.temp }}/unity-vfx-editor/provision.json" in paths
+
+
 @pytest.mark.parametrize("replacement", [None, [], ["OtherFixture.WrongMethod"]])
 def test_empty_or_wrong_windows_inventory_cannot_fall_back_to_portable_tests(replacement):
     suite = inventory()
