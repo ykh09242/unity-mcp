@@ -406,6 +406,9 @@ namespace MCPForUnityTests.Editor.Windows
                 Invoke(section, "OnConfigureAllClientsClicked");
                 var retryButton = Get<Button>(section, "retryFailedButton");
                 Assert.IsTrue(retryButton.enabledSelf);
+                var attempt = Get<ClientConfigurationAttempt>(section, "retryAttempt");
+                Assert.AreEqual(1, attempt.Failures.Count);
+                Assert.AreEqual(failed.Id, attempt.Failures[0].ClientId);
                 int peerStatuses = peer.StatusCalls;
                 int peerConfigures = peer.ConfigureCalls;
                 failed.ConfigureFails = false;
@@ -969,7 +972,10 @@ namespace MCPForUnityTests.Editor.Windows
             {
                 ConfigureCalls++;
                 if (AllowConfigure && !ConfigureFails)
+                {
+                    CurrentStatus = McpStatus.Configured;
                     return;
+                }
                 if (ConfigureFails)
                     throw new InvalidOperationException("owned-sensitive-marker");
                 throw new InvalidOperationException("Real configuration is forbidden in this test.");
