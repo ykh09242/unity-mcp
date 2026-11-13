@@ -67,6 +67,19 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  upm:
+    needs: [identity]
+    if: vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/unity-upm-install.yml
+    with:
+      ref: ${{ github.sha }}
+      require_upm_install: true
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+
   bridge:
     needs: [identity]
     if: vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'
@@ -146,7 +159,7 @@ jobs:
 
   qualification:
     name: Require complete release qualification
-    needs: [identity, bridge, reload, windows_vfx, player, distribution]
+    needs: [identity, bridge, reload, windows_vfx, player, distribution, upm]
     if: always() && (vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-26.04
     timeout-minutes: 5
@@ -163,14 +176,16 @@ jobs:
           import os
 
           results = json.loads(os.environ['JOB_RESULTS'])
-          required = ('identity', 'bridge', 'reload', 'windows_vfx', 'player', 'distribution')
+          required = ('identity', 'bridge', 'reload', 'windows_vfx', 'player', 'distribution', 'upm')
           missing = [name for name in required if results.get(name, {}).get('result') != 'success']
+          if results.get('upm', {}).get('outputs', {}).get('checked_sha') != os.environ['QUALIFICATION_SHA']:
+              missing.append('exact-SHA UPM installation')
           if missing:
               raise SystemExit('Release is NOT qualified: required evidence failed, was skipped or is missing: ' + ', '.join(missing))
           message = (
               'Exact receiving SHA `' + os.environ['QUALIFICATION_SHA'] + '` passed '
               'selected-server bridge, both real reload probes, Windows VFX, '
-              'Windows standalone Player (Mono, standard) and full distribution canary. '
+              'Windows standalone Player (Mono, standard), untouched UPM installation on floor/current Editors and full distribution canary. '
               'No publication was performed.'
           )
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:

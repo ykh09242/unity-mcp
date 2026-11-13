@@ -23,6 +23,32 @@ def workflow(name):
 
 
 @pytest.mark.parametrize(
+    "outcome", ["failure", "cancelled", "skipped", "missing", "wrong_sha", "missing_sha"]
+)
+def test_qualification_rejects_absent_or_invalid_upm_evidence(monkeypatch, tmp_path, outcome):
+    # Given successful curated checks and invalid untouched installation evidence.
+    gate = workflow("release-qualification.yml")["jobs"]["qualification"]
+    results = {name: {"result": "success"} for name in gate["needs"]}
+    results["upm"] = {"result": outcome, "outputs": {"checked_sha": "a" * 40}}
+    if outcome == "missing":
+        del results["upm"]
+    if outcome == "wrong_sha":
+        results["upm"] = {"result": "success", "outputs": {"checked_sha": "b" * 40}}
+    if outcome == "missing_sha":
+        results["upm"] = {"result": "success", "outputs": {}}
+    monkeypatch.setenv("JOB_RESULTS", json.dumps(results))
+    monkeypatch.setenv("QUALIFICATION_SHA", "a" * 40)
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    program = next(step["run"] for step in gate["steps"] if step.get("id") == "require")
+    # When qualification evaluates the actual workflow predicate.
+    with pytest.raises(SystemExit):
+        exec(compile(program, "qualification-gate", "exec"), {})
+    # Then no release qualification summary is emitted.
+    assert not summary.exists()
+
+
+@pytest.mark.parametrize(
     "path",
     [
         "MCPForUnity/package.json",
@@ -55,6 +81,7 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
         "windows_vfx": "unity-windows-vfx.yml",
         "player": "unity-player-tests.yml",
         "distribution": "distribution-canary.yml",
+        "upm": "unity-upm-install.yml",
     }.items():
         job = jobs[name]
         assert job["uses"] == f"./.github/workflows/{file}"
@@ -64,6 +91,7 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
         assert "github.event_name == 'workflow_dispatch'" in job["if"]
     assert jobs["bridge"]["with"]["pair_mode"] == "selected"
     assert jobs["bridge"]["with"]["require_native"] is True
+    assert jobs["upm"]["with"]["require_upm_install"] is True
     assert jobs["reload"]["with"]["run_assetgen_reload"] is True
     assert jobs["player"]["with"] == {
         "ref": "${{ github.sha }}",
@@ -81,7 +109,7 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
         for key in ("EMAIL", "PASSWORD", "SERIAL")
     }
     assert "secrets" not in jobs["distribution"]
-    for name in ("bridge", "reload"):
+    for name in ("bridge", "reload", "upm"):
         assert set(jobs[name]["secrets"]) == {
             "UNITY_LICENSE",
             "UNITY_EMAIL",
@@ -96,6 +124,7 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
         "windows_vfx",
         "player",
         "distribution",
+        "upm",
     }
     assert "always()" in gate["if"]
     assert "vars.UNITY_RUN_LICENSED_TESTS == 'true'" in gate["if"]
@@ -164,6 +193,7 @@ def test_fork_selection_matches_qualification_trigger():
         call["with"]["qualification_owns_player"]
         == "${{ vars.UNITY_RUN_LICENSED_TESTS == 'true' && needs.changes.outputs.qualification_selected == 'true' }}"
     )
+    assert call["with"]["qualification_owns_upm"] == call["with"]["qualification_owns_player"]
 
 
 @pytest.mark.parametrize(
@@ -227,13 +257,14 @@ def test_player_delegation_requires_the_qualification_commit():
 
 
 @pytest.mark.parametrize(
-    "job", ["identity", "bridge", "reload", "windows_vfx", "player", "distribution"]
+    "job", ["identity", "bridge", "reload", "windows_vfx", "player", "distribution", "upm"]
 )
 @pytest.mark.parametrize("outcome", ["failure", "cancelled", "skipped", "missing", "", "success"])
 def test_qualification_gate_requires_every_actual_success(monkeypatch, tmp_path, job, outcome):
     gate = workflow("release-qualification.yml")["jobs"]["qualification"]
     program = next(step["run"] for step in gate["steps"] if step.get("id") == "require")
     results = {name: {"result": "success"} for name in gate["needs"]}
+    results["upm"]["outputs"] = {"checked_sha": "a" * 40}
     if outcome == "missing":
         del results[job]
     else:

@@ -1,0 +1,263 @@
+name: Untouched UPM installation
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+      require_upm_install:
+        type: boolean
+        default: false
+    secrets:
+      UNITY_LICENSE:
+        required: false
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+      UNITY_SERIAL:
+        required: false
+    outputs:
+      checked_sha:
+        description: Exact commit with both supported-role native installation bodies passing.
+        value: ${{ jobs.required.outputs.checked_sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      upm_versions: ${{ steps.matrix.outputs.upm_versions }}
+      checked_sha: ${{ steps.matrix.outputs.checked_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - id: matrix
+        env:
+          CANDIDATE_REF: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          if [[ "$CANDIDATE_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            test "$actual" = "$CANDIDATE_REF"
+          fi
+          echo "checked_sha=$actual" >> "$GITHUB_OUTPUT"
+          versions=$(python3 tools/unity_upm_smoke.py matrix)
+          echo "upm_versions=$versions" >> "$GITHUB_OUTPUT"
+
+  license:
+    # Keep native execution at a job-level gate; staging is not an installation pass.
+    name: Check Unity installation test policy
+    runs-on: ubuntu-26.04
+    permissions: {}
+    outputs:
+      unity_ok: ${{ steps.detect.outputs.unity_ok || 'false' }}
+    steps:
+      - name: Report license-free validation
+        id: license-free
+        if: vars.UNITY_RUN_LICENSED_TESTS != 'true'
+        run: |
+          {
+            echo "## License-free validation"
+            echo
+            echo "Native Unity tests are **SKIPPED** because licensed Editor execution is disabled."
+            echo "No Unity activation or Editor test execution was attempted."
+            echo "Python tests and license-free compilation remain independent checks."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Detect Unity license secrets
+        id: detect
+        if: vars.UNITY_RUN_LICENSED_TESTS == 'true'
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        run: |
+          set -e
+          if [ -n "$UNITY_EMAIL" ] && [ -n "$UNITY_PASSWORD" ] && { [ -n "$UNITY_LICENSE" ] || [ -n "$UNITY_SERIAL" ]; }; then
+            echo "unity_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "unity_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Explain why the Unity suite will not run
+        if: vars.UNITY_RUN_LICENSED_TESTS == 'true' && steps.detect.outputs.unity_ok != 'true'
+        run: |
+          echo "::warning::Native UPM installation will be SKIPPED - no license secrets in scope (normal for fork PRs)."
+          {
+            echo "## :warning: Unity tests will be SKIPPED"
+            echo
+            echo "No Unity license secrets were in scope, so **no native Unity test will be executed**."
+            echo "The dependent job reports **Skipped**, not a pass."
+            echo
+            echo "GitHub withholds repository secrets from workflow runs triggered by a fork's pull request."
+            echo "To get real signal, a maintainer must run the suite against this code from a trusted context -"
+            echo "run the existing \`workflow_dispatch\` workflow on a reviewed trusted ref in this repository."
+            echo
+            echo "The separate license-free compile matrix and \`Run Python Tests\` DO run on fork PRs."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require licensed UPM installation prerequisites
+        if: inputs.require_upm_install
+        env:
+          LICENSED_POLICY: ${{ vars.UNITY_RUN_LICENSED_TESTS }}
+          UNITY_OK: ${{ steps.detect.outputs.unity_ok || 'false' }}
+        run: |
+          if [ "$LICENSED_POLICY" != 'true' ] || [ "$UNITY_OK" != 'true' ]; then
+            echo "::error::Required UPM installation needs enabled licensed-test policy and available license credentials."
+            exit 1
+          fi
+
+  untouchedUpmInstall:
+    name: Untouched UPM install Unity ${{ matrix.unity.version }}
+    needs: [matrix, license]
+    if: needs.license.outputs.unity_ok == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        unity: ${{ fromJson(needs.matrix.outputs.upm_versions) }}
+    steps:
+      - name: Checkout distributed package
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Verify beta push commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/beta' && github.repository != 'CoplayDev/unity-mcp'
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Record checked candidate
+        shell: bash
+        env:
+          CANDIDATE_REF: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          if [[ "$CANDIDATE_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            test "$actual" = "$CANDIDATE_REF"
+          fi
+          printf 'Checked candidate: `%s` (requested `%s`)\n' "$actual" "$CANDIDATE_REF" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare exact supported Editor image
+        id: editor
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+        run: python3 tools/unity_ci.py prepare "$UNITY_VERSION" --purpose tests
+
+      - name: Stage original package in a clean UPM project
+        id: package
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+        run: >-
+          python3 tools/unity_upm_smoke.py prepare --unity-version "$UNITY_VERSION"
+          --output ".unity-ci/upm-$UNITY_VERSION"
+
+      - name: Prepare Unity preferences and license directory
+        run: mkdir -p "$HOME/.local/share/unity3d/Unity"
+
+      - name: Reserve UPM outputs [untouchedUpmInstall:${{ matrix.unity.version }}]
+        id: native-output
+        env:
+          RUNNER_STEP: Import original package [untouchedUpmInstall:${{ matrix.unity.version }}]
+          RESERVE_STEP: Reserve UPM outputs [untouchedUpmInstall:${{ matrix.unity.version }}]
+          OBSERVE_STEP: Observe UPM outputs [untouchedUpmInstall:${{ matrix.unity.version }}]
+        run: >-
+          python3 tools/release_execution.py reserve --kind native-editmode
+          --step-name "$RUNNER_STEP" --emitter-step-name "$RESERVE_STEP" --observer-step-name "$OBSERVE_STEP"
+
+      - name: Import original package [untouchedUpmInstall:${{ matrix.unity.version }}]
+        id: tests
+        uses: game-ci/unity-test-runner@32e57712352b500e17974b245a6dce9e11a73213 # v4.4.0
+        continue-on-error: true
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: ${{ steps.package.outputs.project_path }}
+          unityVersion: ${{ matrix.unity.version }}
+          customImage: ${{ steps.editor.outputs.image }}
+          testMode: editmode
+          customParameters: -testFilter UntouchedUpmSmoke.UntouchedPackageInstallTests
+          cliVersion: v0.1.69
+          githubToken: ""
+          artifactsPath: ${{ steps.native-output.outputs.root }}
+
+      - name: Observe UPM outputs [untouchedUpmInstall:${{ matrix.unity.version }}]
+        if: always() && steps.native-output.outcome == 'success' && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure')
+        env:
+          RESERVATION: ${{ steps.native-output.outputs.reservation }}
+          RUNNER_OUTCOME: ${{ steps.tests.outcome }}
+        run: python3 tools/release_execution.py observe --reservation "$RESERVATION" --outcome "$RUNNER_OUTCOME"
+
+      - name: Require untouched UPM installation test body
+        env:
+          RESULTS_XML: ${{ steps.native-output.outputs.results }}
+          TEST_RUN_OUTCOME: ${{ steps.tests.outcome }}
+        run: >-
+          python3 tools/check_unity_test_results.py "$RESULTS_XML" --runner-outcome "$TEST_RUN_OUTCOME"
+          --require-test UntouchedUpmSmoke.UntouchedPackageInstallTests.OriginalManifestImportsAndResolvesDependencies
+
+      - name: Upload UPM installation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: untouched-upm-${{ matrix.unity.version }}
+          path: |
+            .release-evidence/
+            .unity-ci/upm-${{ matrix.unity.version }}/project/.upm-smoke.json
+            .unity-ci/upm-${{ matrix.unity.version }}/project/Packages/
+            .unity-ci/upm-${{ matrix.unity.version }}/package/package.json
+          include-hidden-files: true
+          if-no-files-found: error
+
+  required:
+    name: Require both untouched native installations
+    needs: [matrix, license, untouchedUpmInstall]
+    if: always() && (inputs.require_upm_install || needs.license.outputs.unity_ok == 'true')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      checked_sha: ${{ steps.require.outputs.checked_sha }}
+    steps:
+      - id: require
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+          EXPECTED_SHA: ${{ inputs.ref || github.sha }}
+        shell: python
+        run: |
+          import json
+          import os
+          import re
+
+          results = json.loads(os.environ['JOB_RESULTS'])
+          required = ('matrix', 'license', 'untouchedUpmInstall')
+          missing = [name for name in required if results.get(name, {}).get('result') != 'success']
+          if results.get('license', {}).get('outputs', {}).get('unity_ok') != 'true':
+              missing.append('licensed execution')
+          actual = results.get('matrix', {}).get('outputs', {}).get('checked_sha', '')
+          expected = os.environ['EXPECTED_SHA']
+          if not re.fullmatch(r'[0-9a-f]{40}', actual):
+              missing.append('checked SHA')
+          if re.fullmatch(r'[0-9a-fA-F]{40}', expected) and actual != expected:
+              missing.append('exact candidate SHA')
+          if missing:
+              raise SystemExit('UPM installation is NOT qualified: ' + ', '.join(missing))
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('checked_sha=' + actual + '\n')

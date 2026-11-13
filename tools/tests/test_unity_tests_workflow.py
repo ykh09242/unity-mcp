@@ -16,6 +16,7 @@ WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "unit
 
 def runner_steps():
     text = WORKFLOW.read_text(encoding="utf-8")
+    text += "\n" + WORKFLOW.with_name("unity-upm-install.yml").read_text(encoding="utf-8")
     starts = [match.start() for match in re.finditer(r"^      - ", text, re.M)] + [len(text)]
     steps = [text[begin:end] for begin, end in zip(starts, starts[1:])]
     return [step for step in steps if "game-ci/unity-test-runner@" in step]
@@ -36,6 +37,8 @@ def test_every_runner_step_pins_the_action_commit_and_cli_release():
 
 def test_native_actions_have_fresh_distinct_reservation_and_observation_lineage():
     config = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    upm = yaml.safe_load(WORKFLOW.with_name("unity-upm-install.yml").read_text(encoding="utf-8"))
+    config["jobs"]["untouchedUpmInstall"] = upm["jobs"]["untouchedUpmInstall"]
     for job_name in ("testAllModes", "optionalIntegrations", "untouchedUpmInstall"):
         steps = config["jobs"][job_name]["steps"]
         runners = [step for step in steps if "game-ci/unity-test-runner@" in step.get("uses", "")]

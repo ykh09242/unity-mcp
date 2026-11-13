@@ -1,7 +1,8 @@
 # Untouched UPM installation smoke
 
-`unity-tests.yml` runs `untouchedUpmInstall` for the `floor` and `current` roles in
-`tools/unity-versions.json`. Those roles currently select Unity **2021.3.45f2** and
+`unity-upm-install.yml` owns the reusable `untouchedUpmInstall` job, called by
+`unity-tests.yml` and exact release qualification. It runs for the `floor` and
+`current` roles in `tools/unity-versions.json`. Those roles currently select Unity **2021.3.45f2** and
 **6000.6.4f1**. The selector fails if either role is missing or ambiguous; the
 workflow does not maintain a second set of Editor pins.
 
@@ -21,8 +22,8 @@ required body fail the job. Reservation/observation records and package manifest
 are uploaded for review. This is an installation/import smoke; the existing curated
 EditMode, PlayMode, optional integration and compilation matrix remain separate.
 
-The smoke shares the existing `license` job. Without enabled licensed execution
-and available credentials, it reports **Skipped**, which is not native execution
+The reusable workflow preserves the existing `license` policy and credential gate.
+Without enabled licensed execution and available credentials, it reports **Skipped**, which is not native execution
 evidence. Neither staging nor license-free compilation certifies the installation.
 
 To prepare a disposable local fixture without starting Unity:
@@ -34,3 +35,14 @@ python tools/unity_upm_smoke.py prepare --unity-version 2021.3.45f2 --output .un
 
 Use a new output directory for each preparation. Licensed native execution is
 performed by the trusted workflow or an explicitly authorized owned test fixture.
+
+Manual release qualification requires both floor/current native installation results
+at the exact receiving commit, in addition to the curated bridge and other evidence.
+The reusable contract exports `checked_sha` only after the role selector, license
+gate and complete native matrix succeed. Qualification rejects skipped, missing,
+failed or cancelled results and a missing or different `checked_sha`.
+
+On licensed fork beta pushes selected for qualification, `fork-beta-tools.yml`
+delegates these same two bodies to qualification instead of importing twice.
+Other PR, manual and reusable Unity test calls retain their installation smoke.
+License-free pushes continue to skip native qualification and claim no native pass.

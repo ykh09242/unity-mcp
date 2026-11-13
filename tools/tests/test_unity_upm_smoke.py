@@ -55,7 +55,7 @@ def test_smoke_matrix_rejects_missing_or_ambiguous_support_roles(tmp_path, roles
 
 
 def test_smoke_workflow_requires_native_body_under_existing_license_gate():
-    jobs = yaml.safe_load((ROOT / ".github/workflows/unity-tests.yml").read_text())["jobs"]
+    jobs = yaml.safe_load((ROOT / ".github/workflows/unity-upm-install.yml").read_text())["jobs"]
     job = jobs["untouchedUpmInstall"]
     assert job["needs"] == ["matrix", "license"]
     assert job["if"] == "needs.license.outputs.unity_ok == 'true'"
@@ -76,3 +76,95 @@ def test_smoke_workflow_requires_native_body_under_existing_license_gate():
     commands = "\n".join(step.get("run", "") for step in job["steps"])
     assert "unity_upm_smoke.py prepare" in commands
     assert "unity_ci_packages.py prepare" not in commands
+
+
+@pytest.mark.parametrize("job", ["matrix", "license", "untouchedUpmInstall"])
+@pytest.mark.parametrize("outcome", ["failure", "cancelled", "skipped", "missing", "success"])
+def test_required_installation_only_exports_sha_after_all_jobs_pass(
+    monkeypatch, tmp_path, job, outcome
+):
+    # Given a complete two-role native matrix with one varied job result.
+    workflow = yaml.safe_load((ROOT / ".github/workflows/unity-upm-install.yml").read_text())
+    gate = workflow["jobs"]["required"]
+    results = {name: {"result": "success", "outputs": {}} for name in gate["needs"]}
+    results["matrix"]["outputs"]["checked_sha"] = "a" * 40
+    results["license"]["outputs"]["unity_ok"] = "true"
+    if outcome == "missing":
+        del results[job]
+    else:
+        results[job]["result"] = outcome
+    output = tmp_path / "output"
+    monkeypatch.setenv("JOB_RESULTS", json.dumps(results))
+    monkeypatch.setenv("EXPECTED_SHA", "a" * 40)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    program = gate["steps"][0]["run"]
+    # When the reusable workflow evaluates its real evidence gate.
+    if outcome == "success":
+        exec(compile(program, "upm-gate", "exec"), {})
+        # Then the contract exports the exact verified commit.
+        assert output.read_text() == "checked_sha=" + "a" * 40 + "\n"
+    else:
+        with pytest.raises(SystemExit):
+            exec(compile(program, "upm-gate", "exec"), {})
+        assert not output.exists()
+
+
+@pytest.mark.parametrize("actual", ["", "b" * 40, "not-a-sha"])
+def test_required_installation_rejects_different_or_missing_candidate(
+    monkeypatch, tmp_path, actual
+):
+    # Given successful jobs but no matching checked candidate.
+    workflow = yaml.safe_load((ROOT / ".github/workflows/unity-upm-install.yml").read_text())
+    gate = workflow["jobs"]["required"]
+    results = {name: {"result": "success", "outputs": {}} for name in gate["needs"]}
+    results["matrix"]["outputs"]["checked_sha"] = actual
+    results["license"]["outputs"]["unity_ok"] = "true"
+    output = tmp_path / "output"
+    monkeypatch.setenv("JOB_RESULTS", json.dumps(results))
+    monkeypatch.setenv("EXPECTED_SHA", "a" * 40)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    # When the actual gate tries to publish the installation evidence identity.
+    with pytest.raises(SystemExit):
+        exec(compile(gate["steps"][0]["run"], "upm-gate", "exec"), {})
+    # Then no candidate is exported.
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "delegate,event,ref,repository,licensed,same_sha,expected",
+    [
+        (True, "push", "refs/heads/beta", "fork/repo", "true", True, False),
+        (False, "push", "refs/heads/beta", "fork/repo", "true", True, True),
+        (True, "push", "refs/heads/beta", "fork/repo", "false", True, True),
+        (True, "push", "refs/heads/beta", "fork/repo", "true", False, True),
+        (True, "pull_request", "refs/heads/beta", "fork/repo", "true", True, True),
+        (True, "workflow_dispatch", "refs/heads/beta", "fork/repo", "true", True, True),
+        (True, "push", "refs/heads/main", "fork/repo", "true", True, True),
+        (True, "push", "refs/heads/beta", "CoplayDev/unity-mcp", "true", True, True),
+    ],
+)
+def test_upm_delegates_only_matching_licensed_beta_qualification(
+    delegate, event, ref, repository, licensed, same_sha, expected
+):
+    # Given the actual reusable caller and a selected event context.
+    workflow = yaml.safe_load((ROOT / ".github/workflows/unity-tests.yml").read_text())
+    job = workflow["jobs"]["untouchedUpmInstall"]
+    expression = job["if"]
+    values = {
+        "inputs.qualification_owns_upm": delegate,
+        "github.event_name": event,
+        "github.ref": ref,
+        "github.repository": repository,
+        "vars.UNITY_RUN_LICENSED_TESTS": licensed,
+        "inputs.ref": "a" * 40 if same_sha else "b" * 40,
+        "github.sha": "a" * 40,
+    }
+    for name, value in values.items():
+        expression = expression.replace(name, repr(value))
+    expression = expression.replace("&&", " and ").replace("!", " not ").replace(" not =", " !=")
+    # When the job predicate chooses ownership.
+    run_install = eval(expression, {"__builtins__": {}}, {})
+    # Then only exact-SHA licensed fork beta pushes delegate the two native bodies.
+    assert run_install is expected
+    assert job["uses"] == "./.github/workflows/unity-upm-install.yml"
+    assert job["with"]["ref"] == "${{ inputs.ref || github.sha }}"
