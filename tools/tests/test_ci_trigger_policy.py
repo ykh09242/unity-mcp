@@ -177,6 +177,35 @@ def test_shared_report_fixture_retains_beta_python_contract_validation() -> None
     assert jobs["python_tests"]["uses"] == "./.github/workflows/python-tests.yml"
 
 
+@pytest.mark.parametrize("target", ["main", "beta"])
+@pytest.mark.parametrize("activity", ["opened", "synchronize", "reopened"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Example.cs.meta",
+        "TestProjects/UnityMCPTests/Assets/Example.prefab.meta",
+    ],
+)
+def test_test_project_asset_pr_runs_only_the_focused_metadata_contract(target, activity, path):
+    assert selected("test-project-metadata.yml", "pull_request", target, path, activity)
+    assert not selected("python-tests.yml", "pull_request", target, path, activity)
+    job = workflow("test-project-metadata.yml")["jobs"]["metadata"]
+    assert "strategy" not in job
+    runs = "\n".join(step.get("run", "") for step in job["steps"])
+    assert (
+        "test_package_script_metadata.py::test_supplied_test_project_metadata_has_valid_unique_guids"
+        in runs
+    )
+    assert not selected("test-project-metadata.yml", "pull_request", target, path, "closed")
+    assert not selected(
+        "test-project-metadata.yml",
+        "pull_request",
+        target,
+        "TestProjects/UnityMCPTests/Assets/Example.cs",
+        activity,
+    )
+
+
 @pytest.mark.parametrize(
     "path",
     [

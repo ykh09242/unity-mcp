@@ -1,0 +1,34 @@
+name: Test Project Metadata
+
+on:
+  pull_request:
+    branches: [main, beta]
+    paths:
+      - TestProjects/UnityMCPTests/Assets/*.meta
+      - TestProjects/UnityMCPTests/Assets/**/*.meta
+      - tools/tests/test_package_script_metadata.py
+      - .github/workflows/test-project-metadata.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    name: Supplied test project metadata GUIDs
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          python-version: "3.14"
+          enable-cache: false
+      - name: Check supplied test project metadata
+        run: >-
+          uv run --project Server --locked --extra dev python -m pytest
+          tools/tests/test_package_script_metadata.py::test_supplied_test_project_metadata_has_valid_unique_guids
+          -q -W error -o asyncio_default_fixture_loop_scope=function -p no:cacheprovider
