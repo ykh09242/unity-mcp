@@ -188,7 +188,10 @@ async def test_exact_artifact_selector_recovers_after_disconnect_without_routing
     monkeypatch.setattr(config, "transport_mode", "http")
     one = "First@0123456789abcdef"
     two = "Second@fedcba9876543210"
-    editors = [SimpleNamespace(id=name, hash=name.split("@")[1]) for name in (one, two)]
+    editors = [
+        SimpleNamespace(id=name, hash=name.split("@")[1], port=port)
+        for name, port in ((one, 6401), (two, 6402))
+    ]
     middleware = UnityInstanceMiddleware()
     discoveries = []
 
@@ -225,6 +228,18 @@ async def test_exact_artifact_selector_recovers_after_disconnect_without_routing
         handle = result.structured_content
         response = {"response_id": handle["response_id"]}
         assert executions == [one]
+        # Prefixes use the live catalog. Integer ports remain exclusive to stdio.
+        assert (
+            await assemble_response(client.call_tool, handle, unity_instance="0123456789a")
+            == original
+        )
+        with pytest.raises(MCPError):
+            await client.call_tool("read_response", {**response, "unity_instance": 6401})
+        with monkeypatch.context() as stdio:
+            stdio.setattr(config, "transport_mode", "stdio")
+            assert (
+                await assemble_response(client.call_tool, handle, unity_instance=6401) == original
+            )
         editors.pop(0)
         before = len(discoveries)
         assert await assemble_response(client.call_tool, handle, unity_instance=one) == original
@@ -274,6 +289,7 @@ async def test_remote_read_rechecks_original_floor_without_requiring_unrelated_r
         Permission,
         authorize_remote_operation,
     )
+    from transport.response_delivery import response_lookup_selector
 
     monkeypatch.setattr(config, "http_remote_hosted", True)
     server = FastMCP("remote-artifact-floor")
@@ -321,17 +337,21 @@ async def test_remote_read_rechecks_original_floor_without_requiring_unrelated_r
             return None
 
     ctx = Disconnected()
-    lookup = {"unity_instance": "0123456789abcdef"}
     foreign = CredentialLease(service, object(), "other", grants)
-    for denied_lease in (weaker, foreign):
-        with bind_credential_lease(denied_lease):
+    token = response_lookup_selector.set("0123456789abcdef")
+    try:
+        for denied_lease in (weaker, foreign):
+            with bind_credential_lease(denied_lease):
+                for release in (False, True):
+                    assert (
+                        await read_response(ctx, handle["response_id"], release=release) == refused
+                    )
+        with bind_credential_lease(lease):
+            assert (await read_response(ctx, handle["response_id"]))["success"] is True
+            service.revoked = True
             for release in (False, True):
-                result = await read_response(ctx, handle["response_id"], release=release, **lookup)
-                assert result == refused
-    with bind_credential_lease(lease):
-        assert (await read_response(ctx, handle["response_id"], **lookup))["success"] is True
-        service.revoked = True
-        for release in (False, True):
-            with pytest.raises(CredentialLeaseError):
-                await read_response(ctx, handle["response_id"], release=release, **lookup)
+                with pytest.raises(CredentialLeaseError):
+                    await read_response(ctx, handle["response_id"], release=release)
+    finally:
+        response_lookup_selector.reset(token)
     assert response_store(server).retained_bytes > 0

@@ -58,6 +58,7 @@ from transport.plugin_hub import (
 )
 from transport.tool_input_validation import validate_tool_arguments
 from transport.protocol import is_sessionless
+from transport.response_delivery import response_lookup_selector
 from transport.session_state_store import SessionStateCapacityError
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -741,7 +742,12 @@ class UnityInstanceMiddleware(Middleware):
         ):
             # The built-in compares the exact selector to the stored artifact.
             # Keep it out of Unity routing and persistent project selection.
-            return await call_next(context)
+            arguments.pop("unity_instance")
+            token = response_lookup_selector.set(selector.strip())
+            try:
+                return await call_next(context)
+            finally:
+                response_lookup_selector.reset(token)
         if options is not None:
             reject_continuation(ctx)
             runtime = getattr(server, "_execution_receipts", None)

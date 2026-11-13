@@ -8,7 +8,7 @@ from pydantic import Field, JsonValue
 
 from models.response_limits import MAX_RESPONSE_BYTES
 from services.registry import mcp_for_unity_tool
-from transport.response_delivery import capture_response_delivery
+from transport.response_delivery import capture_response_delivery, response_lookup_selector
 
 
 @mcp_for_unity_tool(
@@ -31,10 +31,9 @@ async def read_response(
     response_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$", max_length=32)],
     offset: Annotated[int, Field(strict=True, ge=0, le=MAX_RESPONSE_BYTES)] = 0,
     release: Annotated[bool, Field(strict=True)] = False,
-    unity_instance: str | None = None,
 ) -> dict[str, JsonValue]:
     """Authorize before looking up bytes; absent, expired and foreign handles agree."""
-    selector = unity_instance.strip() if unity_instance is not None else None
+    selector = response_lookup_selector.get()
     delivery = await capture_response_delivery(ctx, lookup_selector=selector)
     expected_instance = selector if selector is not None and "@" in selector else None
     if delivery is not None:

@@ -44,6 +44,9 @@ class ResponseOutcome:
 response_delivery: ContextVar[ResponseDelivery | None] = ContextVar(
     "unity_response_delivery", default=None
 )
+response_lookup_selector: ContextVar[str | None] = ContextVar(
+    "unity_response_lookup_selector", default=None
+)
 
 
 async def capture_response_delivery(
