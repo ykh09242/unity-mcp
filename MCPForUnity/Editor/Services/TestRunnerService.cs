@@ -34,6 +34,7 @@ namespace MCPForUnity.Editor.Services
         private readonly Action<CancellationTokenSource> _observeDiscoveryBudget;
         private readonly SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _lifetimeCancellation = new CancellationTokenSource();
+        private readonly CancellationTokenSource _discoveryLifetime = new CancellationTokenSource();
         private readonly List<ITestResultAdaptor> _leafResults = new List<ITestResultAdaptor>();
         private TaskCompletionSource<TestRunResult> _runCompletionSource;
         private string _trackedJobId;
@@ -188,13 +189,21 @@ namespace MCPForUnity.Editor.Services
 
         public Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode) => GetTestsAsync(mode, _retrievalTimeout);
 
-        public async Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode, TimeSpan budget)
+        public async Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode, TimeSpan budget) =>
+            (await GetTestPageAsync(mode, budget, new PaginationRequest { PageSize = int.MaxValue }, null).ConfigureAwait(true)).Items;
+
+        internal async Task<PaginationResponse<Dictionary<string, string>>> GetTestPageAsync(
+            TestMode? mode,
+            TimeSpan budget,
+            PaginationRequest pagination,
+            string filter
+        )
         {
             if (budget <= TimeSpan.Zero || budget.TotalSeconds > OperationTimeouts.MaximumSeconds)
                 throw new ArgumentOutOfRangeException(nameof(budget));
             ThrowIfDisposed();
             ThrowIfRetiredRunPending();
-            var lifetime = _lifetimeCancellation.Token;
+            var lifetime = _discoveryLifetime.Token;
             using var observation = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
             observation.CancelAfter(budget);
             _observeDiscoveryBudget?.Invoke(observation);
@@ -210,8 +219,7 @@ namespace MCPForUnity.Editor.Services
                 ThrowIfRetiredRunPending();
                 var modes = mode.HasValue ? new[] { mode.Value } : AllModes;
 
-                var results = new List<Dictionary<string, string>>();
-                var seen = new HashSet<string>(StringComparer.Ordinal);
+                var results = new PaginationResponse<Dictionary<string, string>> { Cursor = Math.Max(pagination.Cursor, 0), PageSize = pagination.PageSize };
 
                 foreach (var m in modes)
                 {
@@ -225,10 +233,13 @@ namespace MCPForUnity.Editor.Services
                     lifetime.ThrowIfCancellationRequested();
                     if (root != null)
                     {
-                        CollectFromNode(root, m, results, seen, new List<string>());
+                        await CollectPageAsync(root, m, results, filter, lifetime, cancellationToken).ConfigureAwait(true);
                     }
                 }
 
+                results.Cursor = Math.Min(results.Cursor, results.TotalCount);
+                int end = results.Cursor + results.Items.Count;
+                results.NextCursor = end < results.TotalCount ? end : (int?)null;
                 return results;
             }
             catch (OperationCanceledException) when (!lifetime.IsCancellationRequested)
@@ -421,6 +432,7 @@ namespace MCPForUnity.Editor.Services
             if (_operationLock.CurrentCount > 0)
                 _operationLock.Dispose();
             _lifetimeCancellation.Dispose();
+            _discoveryLifetime.Dispose();
         }
 
         internal static void CheckpointBeforeReload() => CheckpointObservedResults(TestJobManager.CurrentJobId);
@@ -439,6 +451,7 @@ namespace MCPForUnity.Editor.Services
             if (_apiReleased)
                 return;
             _apiReleased = true;
+            _discoveryLifetime.Cancel();
 
             // Releasing the managed callback API is not proof that Unity stopped. Keep an
             // independent owner marker even when native observer binding is unavailable.
@@ -774,51 +787,103 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private static void CollectFromNode(ITestAdaptor node, TestMode mode, List<Dictionary<string, string>> output, HashSet<string> seen, List<string> path)
+        private static async Task CollectPageAsync(
+            ITestAdaptor root,
+            TestMode mode,
+            PaginationResponse<Dictionary<string, string>> page,
+            string filter,
+            CancellationToken lifetime,
+            CancellationToken observation
+        )
         {
-            if (node == null)
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var path = new List<string>();
+            var pending = new Stack<(IEnumerator<ITestAdaptor> Children, bool NamedSuite)>();
+            ITestAdaptor node = root;
+            var slice = System.Diagnostics.Stopwatch.StartNew();
+            int steps = 0;
+            string modeName = mode.ToString();
+            try
             {
-                return;
-            }
-
-            bool hasName = !string.IsNullOrEmpty(node.Name);
-            if (hasName)
-            {
-                path.Add(node.Name);
-            }
-
-            bool hasChildren = node.HasChildren && node.Children != null;
-
-            if (!node.IsSuite)
-            {
-                string fullName = string.IsNullOrEmpty(node.FullName) ? node.Name ?? string.Empty : node.FullName;
-                string key = $"{mode}:{fullName}";
-
-                if (!string.IsNullOrEmpty(fullName) && seen.Add(key))
+                while (node != null || pending.Count > 0)
                 {
-                    string computedPath = path.Count > 0 ? string.Join("/", path) : fullName;
-                    output.Add(
+                    // Unity's synchronization context runs posted continuations on its next update.
+                    // A single native adaptor getter or MoveNext cannot be preempted.
+                    if (steps > 0 && (steps >= 256 || slice.ElapsedMilliseconds >= 4))
+                    {
+                        observation.ThrowIfCancellationRequested();
+                        EditorApplication.QueuePlayerLoopUpdate();
+                        await Task.Yield();
+                        observation.ThrowIfCancellationRequested();
+                        slice.Restart();
+                        steps = 0;
+                    }
+                    lifetime.ThrowIfCancellationRequested();
+                    steps++;
+                    if (node == null)
+                    {
+                        var frame = pending.Peek();
+                        if (!frame.Children.MoveNext())
+                        {
+                            pending.Pop().Children.Dispose();
+                            if (frame.NamedSuite)
+                                path.RemoveAt(path.Count - 1);
+                            continue;
+                        }
+                        node = frame.Children.Current;
+                        if (node == null)
+                            continue;
+                    }
+
+                    var current = node;
+                    node = null;
+                    string name = current.Name;
+                    if (current.IsSuite)
+                    {
+                        var children = current.HasChildren ? current.Children : null;
+                        if (children != null)
+                        {
+                            bool named = !string.IsNullOrEmpty(name);
+                            if (named)
+                                path.Add(name);
+                            pending.Push((children.GetEnumerator(), named));
+                        }
+                        continue;
+                    }
+
+                    string fullName = current.FullName;
+                    if (string.IsNullOrEmpty(fullName))
+                        fullName = name;
+                    if (string.IsNullOrEmpty(fullName) || !seen.Add(fullName))
+                        continue;
+                    if (
+                        !string.IsNullOrEmpty(filter)
+                        && (name ?? "").IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0
+                        && fullName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0
+                    )
+                        continue;
+                    if (page.TotalCount++ < page.Cursor || page.Items.Count >= page.PageSize)
+                        continue;
+                    bool namedLeaf = !string.IsNullOrEmpty(name);
+                    if (namedLeaf)
+                        path.Add(name);
+                    page.Items.Add(
                         new Dictionary<string, string>
                         {
-                            ["name"] = node.Name ?? fullName,
+                            ["name"] = name ?? fullName,
                             ["full_name"] = fullName,
-                            ["path"] = computedPath,
-                            ["mode"] = mode.ToString(),
+                            ["path"] = path.Count == 0 ? fullName : string.Join("/", path),
+                            ["mode"] = modeName,
                         }
                     );
+                    if (namedLeaf)
+                        path.RemoveAt(path.Count - 1);
                 }
             }
-            else if (hasChildren)
+            finally
             {
-                foreach (var child in node.Children)
-                {
-                    CollectFromNode(child, mode, output, seen, path);
-                }
-            }
-
-            if (hasName && path.Count > 0)
-            {
-                path.RemoveAt(path.Count - 1);
+                while (pending.Count > 0)
+                    pending.Pop().Children.Dispose();
             }
         }
 
