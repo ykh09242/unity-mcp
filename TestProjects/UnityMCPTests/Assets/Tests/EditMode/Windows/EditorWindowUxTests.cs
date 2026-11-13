@@ -23,6 +23,100 @@ namespace MCPForUnityTests.EditMode.Windows
 
         private sealed class EvidenceWindow : EditorWindow { }
 
+        [
+            UnityTest,
+            Explicit("Normal main-window entry across every tab; run only in the isolated native QA project with synthetic preferences and client paths.")
+        ]
+        public IEnumerator NormalMainWindowTabsKeepExpandedControlsReachable()
+        {
+            Assert.IsTrue(Guid.TryParseExact(Environment.GetEnvironmentVariable("UNITY_MCP_NATIVE_QA_NONCE"), "N", out _));
+            var window = ScriptableObject.CreateInstance<MCPForUnityEditorWindow>();
+            var overflow = new System.Collections.Generic.List<string>();
+            string directory = Path.GetFullPath(Path.Combine(Application.dataPath, "../Library/McpTestEvidence/main-layout-" + Guid.NewGuid().ToString("N")));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                window.ShowUtility();
+                window.CreateGUI();
+                window.minSize = new Vector2(380, 340);
+                var root = window.rootVisualElement;
+                foreach (int width in new[] { 380, 500, 1125 })
+                {
+                    window.position = new Rect(30, 30, width, 700);
+                    foreach (string page in Pages)
+                    {
+                        root.Q<ToolbarToggle>(page + "-tab").value = true;
+                        for (int frame = 0; frame < 12; frame++)
+                            yield return null;
+                        var scroll = root.Q<ScrollView>(page + "-panel");
+                        Assert.AreEqual(DisplayStyle.Flex, scroll.resolvedStyle.display, page);
+                        Assert.Greater(scroll.childCount, 0, page + " must contain the normal initialized view.");
+                        foreach (var foldout in scroll.Query<Foldout>().ToList())
+                            foldout.SetValueWithoutNotify(true);
+                        for (int frame = 0; frame < 12; frame++)
+                            yield return null;
+                        TestContext.Out.WriteLine(
+                            $"MAIN_TAB_LAYOUT page={page} width={width} viewport={scroll.contentViewport.worldBound} content={scroll.contentContainer.worldBound} horizontalRange={scroll.horizontalScroller.highValue} verticalRange={scroll.verticalScroller.highValue} controls={scroll.Query<Button>().ToList().Count}"
+                        );
+                        if (page == "clients" || page == "advanced")
+                        {
+                            var status = root.Q<Label>(page == "clients" ? "connection-status" : "health-status");
+                            TestContext.Out.WriteLine($"MAIN_STATUS_LAYOUT page={page} width={width} box={status.worldBound}");
+                            for (VisualElement ancestor = status; ancestor != null && ancestor != scroll.contentContainer; ancestor = ancestor.parent)
+                                TestContext.Out.WriteLine(
+                                    $"MAIN_STATUS_ANCESTOR page={page} width={width} type={ancestor.GetType().Name} name={ancestor.name} classes={string.Join(",", ancestor.GetClasses())} box={ancestor.worldBound} basis={ancestor.resolvedStyle.flexBasis} minWidth={ancestor.resolvedStyle.minWidth} grow={ancestor.resolvedStyle.flexGrow} shrink={ancestor.resolvedStyle.flexShrink} direction={ancestor.resolvedStyle.flexDirection} wrap={ancestor.resolvedStyle.flexWrap}"
+                                );
+                            if (status.worldBound.width < 50 || (status.text == "No Session" || status.text == "Unknown") && status.worldBound.height > 24)
+                                overflow.Add($"{page}/{width}: short status text compressed to {status.worldBound}");
+                        }
+                        Assert.Greater(scroll.contentViewport.worldBound.height, 150, page);
+                        if (scroll.horizontalScroller.highValue > 1)
+                        {
+                            overflow.Add($"{page}/{width}: horizontal range {scroll.horizontalScroller.highValue}");
+                            foreach (var element in scroll.Query<VisualElement>().ToList())
+                                if (
+                                    element.worldBound.width > 0
+                                    && element.worldBound.height > 0
+                                    && element.worldBound.xMax > scroll.contentViewport.worldBound.xMax + 1
+                                )
+                                    TestContext.Out.WriteLine(
+                                        $"MAIN_OVERFLOW_LAYOUT page={page} width={width} type={element.GetType().Name} name={element.name} classes={string.Join(",", element.GetClasses())} box={element.worldBound} parent={element.parent?.name}"
+                                    );
+                        }
+                        var controls = scroll.Query<VisualElement>().ToList().Where(element => element is Button || element is TextField || element is Toggle);
+                        foreach (var control in controls)
+                        {
+                            if (control.worldBound.width <= 0 || control.worldBound.height <= 0)
+                                continue;
+                            TestContext.Out.WriteLine($"MAIN_CONTROL_LAYOUT page={page} width={width} name={control.name} box={control.worldBound}");
+                            if (
+                                control.worldBound.xMin < scroll.contentViewport.worldBound.xMin - 1
+                                || control.worldBound.xMax > scroll.contentViewport.worldBound.xMax + 1
+                            )
+                                overflow.Add($"{page}/{width}/{control.name}: {control.worldBound} outside {scroll.contentViewport.worldBound}");
+                        }
+                        scroll.scrollOffset = Vector2.zero;
+                        for (int frame = 0; frame < 4; frame++)
+                            yield return null;
+                        string path = Path.Combine(directory, page + "-" + width + ".png");
+                        typeof(OperationActivityTests)
+                            .GetMethod("Capture", BindingFlags.NonPublic | BindingFlags.Static)
+                            .Invoke(null, new object[] { window, path });
+                        TestContext.Out.WriteLine("MAIN_TAB_CAPTURE " + path);
+                        scroll.verticalScroller.value = scroll.verticalScroller.highValue;
+                        yield return null;
+                        if (scroll.verticalScroller.highValue > 1)
+                            Assert.Greater(scroll.scrollOffset.y, 0, page + " bottom remains reachable.");
+                    }
+                }
+                Assert.IsEmpty(overflow, string.Join("\n", overflow));
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+
         [Test]
         public void PageSelectorPreservesSavedTabAndUpdatesContext()
         {
