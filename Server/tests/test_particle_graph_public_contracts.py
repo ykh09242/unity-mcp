@@ -117,7 +117,12 @@ def test_particle_graph_cli_payloads_and_responses(tmp_path):
         for malformed in ("[bad", "[]", "null", "1", "", " ", [], 1, False):
             before = len(requests)
             result = runner.invoke(cli, ["--format","json","vfx","raw","vfx_set_bool","Effects","--params",json.dumps({"parameter":"Enabled","value":False,"properties":malformed})])
-            check(result.exit_code == 1 and result.stdout == "" and "properties" in result.stderr, "malformed properties local diagnostic " + repr(malformed))
+            check(result.exit_code == 1, "malformed properties local exit " + repr(malformed))
+            if isinstance(malformed, str):
+                diagnostic = json.loads(result.stdout)
+                check(diagnostic.get("success") is False and diagnostic.get("code") == "invalid_json_input" and "properties" in diagnostic.get("error", "") and result.stderr == "", "malformed string properties JSON diagnostic " + repr(malformed))
+            else:
+                check(result.stdout == "" and "properties" in result.stderr, "wrong-shaped properties domain diagnostic " + repr(malformed))
             check(len(requests) == before, "malformed properties rejected before transport " + repr(malformed))
         for malformed in ("[]", "[bad", "null", "1"):
             before = len(requests)

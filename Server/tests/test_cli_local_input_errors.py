@@ -253,6 +253,12 @@ def test_source_file_failures_are_local_and_private(
 
         monkeypatch.setattr(source_input.click, "open_file", fail_read)
     result = CliRunner().invoke(cli, ["--format", output_format, *command, "--file", str(path)])
+    if failure == "directory" and command[0] == "shader":
+        assert result.exit_code == 2, (result.output, result.exception)
+        assert result.stdout == ""
+        assert "Invalid value for" in result.stderr and "--file" in result.stderr
+        assert requests == []
+        return
     assert result.exit_code == 1, (result.output, result.exception)
     assert requests == []
     assert "PRIVATE_MARKER" not in result.output

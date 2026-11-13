@@ -107,7 +107,7 @@ def read_shader(path: str, offset: int, limit: int, encoding: str):
     "-f",
     "file_path",
     default=None,
-    type=click.Path(readable=False),
+    type=click.Path(dir_okay=False, readable=False),
     help="Read shader code from file.",
 )
 @handle_unity_errors
@@ -194,7 +194,7 @@ def create_shader(name: str, path: str, contents: Optional[str], file_path: Opti
     "-f",
     "file_path",
     default=None,
-    type=click.Path(readable=False),
+    type=click.Path(dir_okay=False, readable=False),
     help="Read shader code from file.",
 )
 @handle_unity_errors

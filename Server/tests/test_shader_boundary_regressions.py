@@ -154,11 +154,14 @@ def shader_http(monkeypatch):
 
 
 @pytest.mark.parametrize("action", ["create", "update"])
+@pytest.mark.parametrize("output_format", ["json", "text", "table"])
 def test_shader_file_directory_reports_option_diagnostic_before_request(
-    shader_http, tmp_path, action
+    shader_http, tmp_path, action, output_format
 ):
     _, requests = shader_http
     args = [
+        "--format",
+        output_format,
         "shader",
         action,
         "Owned" if action == "create" else "Assets/Owned.shader",
@@ -167,7 +170,8 @@ def test_shader_file_directory_reports_option_diagnostic_before_request(
     ]
     result = CliRunner().invoke(cli, args)
     assert result.exit_code == 2, (result.output, result.exception)
-    assert "Invalid value for" in result.output and "--file" in result.output
+    assert result.stdout == ""
+    assert "Invalid value for" in result.stderr and "--file" in result.stderr
     assert not requests
 
 

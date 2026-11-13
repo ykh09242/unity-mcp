@@ -32,12 +32,13 @@ on `code`, because diagnostic wording is for people and may change.
 Text and table modes retain their diagnostic on stderr and leave stdout empty.
 Successful command responses and `--help` keep their existing output behavior.
 Click option/argument parsing errors and command-specific `BadParameter` diagnostics
-retain their existing contracts. Shared JSON source failures use this structured
-contract even when the consuming callback has no error decorator.
+retain their existing contracts, including shader `--file` directory rejection
+(exit 2 with an option diagnostic in every output format). Shared JSON source failures
+use this structured contract even when the consuming callback has no error decorator.
 
 JSON `@file` and stdin sources retain their 4 MiB encoded-input limit and accept
 UTF-8 with one optional leading BOM. Code/shader source reads also accept an
-optional UTF-8 BOM and retain their existing size behavior. Diagnostics never
+optional UTF-8 BOM and retain their existing size behavior. Typed input diagnostics never
 include external source contents, file paths or raw operating-system exceptions.
 Inline JSON syntax diagnostics report line and column without quoting input.
 Human syntax diagnostics retain the shell-quoting example and tip.
