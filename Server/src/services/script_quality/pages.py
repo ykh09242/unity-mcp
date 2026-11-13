@@ -1,8 +1,10 @@
 """Bounded native-page assembly and source-bound public result views."""
 
+from dataclasses import dataclass
 import hashlib
 import hmac
 import json
+from struct import Struct
 
 from models.script_quality import ScriptSelection
 from services.script_quality.diagnostic_delta import compare_diagnostics
@@ -152,7 +154,52 @@ async def collect_result(first, job_id, fetch, bind_observation):
     raise InconsistentResult()
 
 
-def result_page(result, baseline, *, identity, owner, secret, size, cursor=None):
+_CATEGORIES = ("introduced", "existing", "resolved", "unclassified")
+_ROW_REFERENCE = Struct("<i")
+
+
+@dataclass(frozen=True)
+class DiagnosticView:
+    revision: str
+    complete: bool
+    reasons: tuple[str, ...]
+    counts: tuple[int, ...]
+    references: bytes
+
+    @property
+    def byte_size(self):
+        return len(self.references) + encoded_size(
+            [self.revision, self.complete, self.reasons, self.counts]
+        )
+
+    def row(self, offset, record, baseline):
+        index = offset
+        for kind, count in zip(_CATEGORIES, self.counts):
+            if index < count:
+                # Without a baseline the sole category has native selected-row order.
+                reference = (
+                    _ROW_REFERENCE.unpack_from(self.references, offset * _ROW_REFERENCE.size)[0]
+                    if self.references
+                    else offset
+                )
+                source = baseline if reference < 0 else record
+                row = {
+                    "classification": kind,
+                    "scope": "selected",
+                    "diagnostic": source.read_row(~reference if reference < 0 else reference),
+                }
+                if kind == "unclassified":
+                    row["observation"] = "baseline" if reference < 0 else "current"
+                return row
+            index -= count
+        return {
+            "classification": "context",
+            "scope": "context",
+            "diagnostic": record.read_row(record.selected_count + index),
+        }
+
+
+def classify_view(identity, result, baseline):
     delta = compare_diagnostics(baseline, result)
     revision = hashlib.sha256(
         json.dumps(
@@ -166,11 +213,35 @@ def result_page(result, baseline, *, identity, owner, secret, size, cursor=None)
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
+    references = bytearray()
+    if baseline is not None:
+        # Nonnegative offsets reference current rows. Signed offsets -(index + 1)
+        # reference baseline rows without keeping its payload alive past eviction.
+        current = {id(row): i for i, row in enumerate(result["diagnostics"])}
+        previous = {id(row): ~i for i, row in enumerate(baseline["diagnostics"])}
+        for kind in _CATEGORIES:
+            for item in delta[kind]:
+                if kind == "unclassified":
+                    source = previous if item["observation"] == "baseline" else current
+                    row = item["diagnostic"]
+                else:
+                    source = previous if kind == "resolved" else current
+                    row = item
+                references.extend(_ROW_REFERENCE.pack(source[id(row)]))
+    return DiagnosticView(
+        revision,
+        delta["complete"],
+        tuple(delta["reasons"]),
+        tuple(len(delta[kind]) for kind in _CATEGORIES),
+        bytes(references),
+    )
 
+
+def result_page(record, baseline, view, header, *, identity, owner, secret, size, cursor=None):
     def signature(offset):
         return hmac.new(
             secret,
-            json.dumps([owner, identity, revision, offset], separators=(",", ":")).encode(),
+            json.dumps([owner, identity, view.revision, offset], separators=(",", ":")).encode(),
             hashlib.sha256,
         ).hexdigest()
 
@@ -182,50 +253,32 @@ def result_page(result, baseline, *, identity, owner, secret, size, cursor=None)
         start = int(parts[0])
         if not hmac.compare_digest(parts[1], signature(start)):
             raise InconsistentResult("invalid_analysis_cursor")
-    rows = [
-        {"classification": kind, "scope": "selected", "diagnostic": row}
-        for kind in ("introduced", "existing", "resolved")
-        for row in delta[kind]
-    ]
-    rows += [
-        {"classification": "unclassified", "scope": "selected", **item}
-        for item in delta["unclassified"]
-    ]
-    rows += [
-        {"classification": "context", "scope": "context", "diagnostic": row}
-        for row in result.get("context_diagnostics", [])
-    ]
-    if start > len(rows):
+    total = sum(view.counts) + header["total_rows"] - record.selected_count
+    if start > total:
         raise InconsistentResult("invalid_analysis_cursor")
-    header = {
-        key: value
-        for key, value in result.items()
-        if key not in {"diagnostics", "context_diagnostics", "total_rows"}
-    }
-    header.update(
-        page_revision=revision,
-        classification_complete=delta["complete"],
-        classification_reasons=delta["reasons"],
-        counts={
-            name: len(delta[name])
-            for name in ("introduced", "existing", "resolved", "unclassified")
-        },
-        total_rows=len(rows),
+    header = dict(
+        header,
+        page_revision=view.revision,
+        classification_complete=view.complete,
+        classification_reasons=list(view.reasons),
+        counts=dict(zip(_CATEGORIES, view.counts)),
+        total_rows=total,
         offset=start,
     )
     budget = encoded_size(header) + 4096
     page, offset = [], start
-    while offset < len(rows) and len(page) < size:
-        length = encoded_size(rows[offset])
+    while offset < total and len(page) < size:
+        row = view.row(offset, record, baseline)
+        length = encoded_size(row)
         if budget + length > 512 * 1024:
             break
         budget += length
-        page.append(rows[offset])
+        page.append(row)
         offset += 1
-    if budget > 512 * 1024 or offset == start and offset < len(rows):
+    if budget > 512 * 1024 or offset == start and offset < total:
         raise InconsistentResult("analysis_page_limit")
     return {
         **header,
         "rows": page,
-        "next_cursor": f"{offset}.{signature(offset)}" if offset < len(rows) else None,
+        "next_cursor": f"{offset}.{signature(offset)}" if offset < total else None,
     }

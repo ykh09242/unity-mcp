@@ -176,9 +176,9 @@ class ScriptQualityService:
                 )
             job = self.jobs[job_id] = QualityJob(owner, instance, action, parsed, monotonic())
             if parsed.get("baseline_id"):
-                baseline = self.results.read(parsed["baseline_id"], owner, baseline=True)
+                baseline = self.results.record(parsed["baseline_id"], owner, baseline=True)
                 if baseline is not None:
-                    job.baseline_token = baseline.get("source_token")
+                    job.baseline_token = baseline.metadata().get("source_token")
         params = {"action": action, **parsed}
         params.pop("baseline_id", None)
         if job_id is not None:
@@ -264,6 +264,8 @@ class ScriptQualityService:
                                 result,
                                 baseline=job.action == "capture_baseline"
                                 and baseline_eligible(result),
+                                comparison_id=job.options.get("baseline_id"),
+                                comparison_token=job.baseline_token,
                             )
                             job.retained = True
                             job.collection_expires = None
@@ -340,21 +342,27 @@ class ScriptQualityService:
         )
 
     def _page(self, identity, job, options):
-        result = self.results.read(identity, job.owner)
-        if result is None:
+        record = self.results.record(identity, job.owner)
+        if record is None:
             return self.error(
                 "analysis_expired_or_evicted",
                 "The retained result is unavailable; this identifier will not re-fetch or rerun native work.",
             )
         baseline = None
-        if job.baseline_token:
-            baseline = self.results.read(job.options.get("baseline_id"), job.owner, baseline=True)
-            if baseline is not None and baseline.get("source_token") != job.baseline_token:
+        if record.comparison is not None:
+            baseline = self.results.record(record.comparison_id, job.owner, baseline=True)
+            if (
+                baseline is not None
+                and baseline.metadata().get("source_token") != job.baseline_token
+            ):
                 baseline = None
+        result = record.metadata()
         try:
             page = result_page(
-                result,
+                record,
                 baseline,
+                record.comparison if baseline else record.unclassified,
+                result,
                 identity=identity,
                 owner=job.owner,
                 secret=self._cursor_secret,

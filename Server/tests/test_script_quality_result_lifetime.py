@@ -76,3 +76,37 @@ def test_returned_payloads_cannot_mutate_retained_evidence():
     cache.read("job", owner)["nested"]["value"] = 2
     assert cache.read("job", owner)["nested"]["value"] == 1
     assert cache.read("job", owner, baseline=True) is None
+
+
+def test_retention_quota_includes_row_offsets_and_comparison_indexes():
+    owner = ("user", "project")
+    payload = {
+        "source_token": "source",
+        "diagnostics": [{"anchor": "row"}],
+        "context_diagnostics": [],
+    }
+
+    def retain(cache):
+        cache.reserve("baseline", owner)
+        cache.complete("baseline", owner, payload, baseline=True)
+        cache.reserve("job", owner)
+        cache.complete("job", owner, payload, comparison_id="baseline", comparison_token="source")
+
+    cache = QualityResults()
+    retain(cache)
+    record = cache.record("job", owner)
+    assert len(record.offsets) == 8
+    assert len(record.comparison.references) == 8
+    assert record.retained_bytes() >= len(record.header) + len(record.rows) + 16
+    assert (
+        cache._bytes(owner)
+        == record.retained_bytes() + cache.record("baseline", owner).retained_bytes()
+    )
+    # This would fit the result and its native row offsets, without the comparison.
+    smaller = QualityResults(
+        reservation_bytes=record.retained_bytes() - len(record.comparison.references)
+    )
+    with pytest.raises(RetentionRefused, match="analysis_result_limit"):
+        retain(smaller)
+    assert "job" in smaller.active and smaller.record("job", owner) is None
+    assert smaller.record("baseline", owner, baseline=True) is not None

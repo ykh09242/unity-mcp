@@ -352,6 +352,104 @@ async def test_completed_baseline_classifies_new_issues_without_reusing_other_ow
 
 
 @pytest.mark.asyncio
+async def test_late_classified_pages_read_only_requested_rows_and_recheck_baseline(
+    quality, monkeypatch
+):
+    import services.script_quality.pages as pages
+    from services.script_quality.results import ResultRecord
+
+    service, target, send = quality
+    now = [0.0]
+    service.results.clock = lambda: now[0]
+    start = await service.execute(None, "capture_baseline", {"paths": ["Assets/A.cs"]})
+    baseline_id = start["data"]["job_id"]
+    send.return_value = native_completion(
+        baseline_id, rows=[diagnostic_row("existing"), diagnostic_row("resolved")]
+    )
+    await service.execute(None, "status", {"job_id": baseline_id})
+    now[0] = 1.0
+    send.return_value = {"success": True, "data": {"state": "queued"}}
+    start = await service.execute(
+        None, "analyze", {"paths": ["Assets/A.cs"], "baseline_id": baseline_id}
+    )
+    job_id = start["data"]["job_id"]
+    context = {**diagnostic_row("context"), "scope": "context"}
+    rows = [diagnostic_row(str(i)) for i in range(128)] + [diagnostic_row("existing"), context]
+    send.return_value = native_completion(job_id, rows=rows)
+    options = {"job_id": job_id, "page_size": 129}
+    page = (await service.execute(None, "status", options))["data"]["result"]
+    assert [r["classification"] for r in page["rows"]] == ["introduced"] * 128 + ["existing"]
+    cursor = page["next_cursor"]
+    visited = []
+    original = ResultRecord.read_row
+
+    def read_row(record, index):
+        visited.append(index)
+        return original(record, index)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("A retained page rebuilt the diagnostic inventory")
+
+    monkeypatch.setattr(pages, "compare_diagnostics", forbidden)
+    monkeypatch.setattr(ResultRecord, "read", forbidden)
+    monkeypatch.setattr(ResultRecord, "read_row", read_row)
+    send.reset_mock()
+    for kind, expected_index in (("resolved", 1), ("context", 129)):
+        response = await service.execute(
+            None, "status", {"job_id": job_id, "page_size": 1, "cursor": cursor}
+        )
+        page = response["data"]["result"]
+        assert page["rows"][0]["classification"] == page["rows"][0]["diagnostic"]["anchor"] == kind
+        assert visited == [expected_index]
+        visited.clear()
+        if page["next_cursor"]:
+            cursor = page["next_cursor"]
+    assert page["next_cursor"] is None
+    target.scope.key = ("other", "project-a")
+    assert (await service.execute(None, "status", options))["code"] == "analysis_not_found"
+    target.scope.key = ("local", "project-a")
+    now[0] = service.results.ttl
+    assert (await service.execute(None, "status", {**options, "cursor": cursor}))[
+        "code"
+    ] == "invalid_analysis_cursor"
+    assert not visited
+    missing = (await service.execute(None, "status", {"job_id": job_id, "page_size": 1}))["data"][
+        "result"
+    ]
+    assert missing["classification_reasons"] == ["baseline_missing"]
+    assert missing["counts"]["unclassified"] == 129
+    assert visited == [0]
+    assert missing["rows"][0]["observation"] == "current"
+    send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_public_page_respects_response_budget_across_native_pages(quality):
+    from services.script_quality.pages import encoded_size
+
+    service, _, send = quality
+    start = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})
+    job_id = start["data"]["job_id"]
+    row = diagnostic_row()
+    row["diagnostic"]["message"] = "x" * 260_000
+    first = native_completion(job_id, rows=[row], cursor="next")
+    last = native_completion(job_id, rows=[row, row], offset=1)
+    first["data"]["result"]["total_rows"] = last["data"]["result"]["total_rows"] = 3
+    send.side_effect = [first, last]
+    response = await service.execute(None, "status", {"job_id": job_id})
+    page = response["data"]["result"]
+    for offset in range(3):
+        assert page["offset"] == offset
+        assert len(page["rows"]) == 1 and encoded_size(page) <= 512 * 1024
+        if offset < 2:
+            follow = await service.execute(
+                None, "status", {"job_id": job_id, "cursor": page["next_cursor"]}
+            )
+            page = follow["data"]["result"]
+    assert page["next_cursor"] is None
+
+
+@pytest.mark.asyncio
 async def test_wrong_native_job_receipt_retains_uncertain_reservation(quality):
     service, _, send = quality
     start = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})

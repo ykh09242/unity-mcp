@@ -4,7 +4,13 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from io import BytesIO
 import json
+from struct import Struct
 from time import monotonic
+
+from services.script_quality.pages import DiagnosticView, classify_view
+
+
+_OFFSET = Struct("<I")
 
 
 class RetentionRefused(ValueError):
@@ -14,9 +20,44 @@ class RetentionRefused(ValueError):
 @dataclass(frozen=True)
 class ResultRecord:
     owner: tuple[str, str]
-    encoded: bytes
+    header: bytes
+    rows: bytes
+    offsets: bytes
+    selected_count: int
+    has_selected: bool
+    has_context: bool
     expires: float
     baseline: bool
+    comparison_id: str | None
+    comparison: DiagnosticView | None
+    unclassified: DiagnosticView | None
+
+    def metadata(self):
+        return json.loads(self.header)
+
+    def retained_bytes(self):
+        return (
+            len(self.header)
+            + len(self.rows)
+            + len(self.offsets)
+            + sum(view.byte_size for view in (self.comparison, self.unclassified) if view)
+        )
+
+    def read_row(self, index):
+        start = _OFFSET.unpack_from(self.offsets, index * _OFFSET.size)[0]
+        end = _OFFSET.unpack_from(self.offsets, (index + 1) * _OFFSET.size)[0]
+        return json.loads(self.rows[start:end])
+
+    def read(self, *, include_context=True):
+        payload = self.metadata()
+        if self.has_selected:
+            payload["diagnostics"] = [self.read_row(i) for i in range(self.selected_count)]
+        if self.has_context and include_context:
+            total = len(self.offsets) // _OFFSET.size - 1
+            payload["context_diagnostics"] = [
+                self.read_row(i) for i in range(self.selected_count, total)
+            ]
+        return payload
 
 
 class QualityResults:
@@ -47,7 +88,7 @@ class QualityResults:
 
     def _bytes(self, owner=None):
         return sum(
-            len(record.encoded)
+            record.retained_bytes()
             for record in self.records.values()
             if owner is None or record.owner == owner
         ) + sum(
@@ -94,30 +135,82 @@ class QualityResults:
         if self.active.get(identity) == owner:
             del self.active[identity]
 
-    def complete(self, identity, owner, payload, *, baseline=False):
+    def complete(
+        self, identity, owner, payload, *, baseline=False, comparison_id=None, comparison_token=None
+    ):
         if self.active.get(identity) != owner:
             raise RetentionRefused("analysis_reservation_missing")
-        output = BytesIO()
-        for chunk in json.JSONEncoder(
-            ensure_ascii=False, separators=(",", ":"), allow_nan=False
-        ).iterencode(payload):
-            encoded = chunk.encode("utf-8")
-            if output.tell() + len(encoded) > self.reservation_bytes:
-                raise RetentionRefused("analysis_result_limit")
-            output.write(encoded)
+        header = {
+            k: v for k, v in payload.items() if k not in {"diagnostics", "context_diagnostics"}
+        }
+        header_bytes = _encode(header, self.reservation_bytes)
+        selected = payload.get("diagnostics", [])
+        context = payload.get("context_diagnostics", [])
+        offsets = bytearray(_OFFSET.pack(0)) if selected or context else bytearray()
+        row_limit = (
+            self.reservation_bytes
+            - len(header_bytes)
+            - (len(selected) + len(context) + 1) * _OFFSET.size
+        )
+        rows = BytesIO()
+        for group in (selected, context):
+            for row in group:
+                rows.write(_encode(row, row_limit - rows.tell()))
+                offsets.extend(_OFFSET.pack(rows.tell()))
+
+        before = self.record(comparison_id, owner, baseline=True) if comparison_id else None
+        missing = comparison = None
+        if "source_token" in header and "diagnostics" in payload:
+            missing = classify_view(identity, payload, None)
+            if (
+                before is not None
+                and comparison_token
+                and before.metadata().get("source_token") == comparison_token
+            ):
+                comparison = classify_view(identity, payload, before.read(include_context=False))
+        record = ResultRecord(
+            owner,
+            header_bytes,
+            rows.getvalue(),
+            bytes(offsets),
+            len(selected),
+            "diagnostics" in payload,
+            "context_diagnostics" in payload,
+            self.clock() + self.ttl,
+            baseline,
+            comparison_id,
+            comparison,
+            missing,
+        )
+        if record.retained_bytes() > self.reservation_bytes:
+            raise RetentionRefused("analysis_result_limit")
         self._expire()
         while sum(record.owner == owner for record in self.records.values()) >= self.max_records:
             self._evict(owner)
         while len(self.records) >= 512:
             self._evict()
-        self.records[identity] = ResultRecord(
-            owner, output.getvalue(), self.clock() + self.ttl, baseline
-        )
+        self.records[identity] = record
         self.settle(identity, owner)
 
-    def read(self, identity, owner, *, baseline=False):
+    def record(self, identity, owner, *, baseline=False):
         self._expire()
         record = self.records.get(identity)
         if record is None or record.owner != owner or baseline and not record.baseline:
             return None
-        return json.loads(record.encoded)
+        return record
+
+    def read(self, identity, owner, *, baseline=False):
+        record = self.record(identity, owner, baseline=baseline)
+        return record.read() if record else None
+
+
+def _encode(value, limit):
+    output = BytesIO()
+    for chunk in json.JSONEncoder(
+        ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    ).iterencode(value):
+        encoded = chunk.encode("utf-8")
+        if output.tell() + len(encoded) > limit:
+            raise RetentionRefused("analysis_result_limit")
+        output.write(encoded)
+    return output.getvalue()

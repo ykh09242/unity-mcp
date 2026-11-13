@@ -218,6 +218,7 @@ namespace MCPForUnityTests.Editor.Tools
                         })
                 ),
                 ["context_diagnostics"] = new JArray(),
+                ["providers"] = new JObject { ["compiler"] = "test-compiler" },
             };
             jobType.GetField("Id", flags).SetValue(job, id);
             jobType.GetField("State", flags).SetValue(job, "completed");
@@ -232,11 +233,45 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.That(cursor, Is.Not.Null);
                 int count = ((JArray)page["result"]["rows"]).Count;
                 Assert.That((int)ScriptDiagnosticJobs.Status(id, 500, cursor)["result"]["offset"], Is.EqualTo(count));
+                var context = (JArray)result["context_diagnostics"];
+                context.Add(new JObject { ["line"] = 101 });
+                context.Add(new JObject { ["line"] = 102 });
+                string CursorAt(int offset) => offset + "." + typeof(ScriptDiagnosticJobs).GetMethod("CursorHash", flags).Invoke(null, new[] { job, offset });
+                var boundary = ScriptDiagnosticJobs.Status(id, 2, CursorAt(99))["result"];
+                Assert.That((string)boundary["rows"][0]["scope"], Is.EqualTo("selected"));
+                Assert.That((int)boundary["rows"][0]["diagnostic"]["line"], Is.EqualTo(100));
+                Assert.That((string)boundary["rows"][1]["scope"], Is.EqualTo("context"));
+                Assert.That((int)boundary["rows"][1]["diagnostic"]["line"], Is.EqualTo(101));
+                boundary["rows"][1]["diagnostic"]["line"] = -1;
+                boundary["providers"]["compiler"] = "modified";
+                Assert.That((int)context[0]["line"], Is.EqualTo(101));
+                Assert.That((string)result["providers"]["compiler"], Is.EqualTo("test-compiler"));
+
+                Assert.Greater(ManagedAllocation.Count(() => GC.KeepAlive(new byte[32])), 0);
+                string late = CursorAt(100);
+                ScriptDiagnosticJobs.Status(id, 1, late);
+                int baseline = ManagedAllocation.Count(() => ScriptDiagnosticJobs.Status(id, 1, late));
+                for (int i = 0; i < 4096; i++)
+                    context.Add(new JObject { ["line"] = i + 103 });
+                late = CursorAt(4196);
+                JObject large = null;
+                int allocations = ManagedAllocation.Count(() => large = ScriptDiagnosticJobs.Status(id, 1, late));
+                Assert.That(allocations, Is.LessThanOrEqualTo(baseline + 16), "An indexed one-row page should allocate independently of inventory size.");
+                Assert.That((int)large["result"]["total_rows"], Is.EqualTo(4198));
+                Assert.That((int)large["result"]["rows"][0]["diagnostic"]["line"], Is.EqualTo(4197));
+                var last = ScriptDiagnosticJobs.Status(id, 1, (string)large["result"]["next_cursor"])["result"];
+                Assert.That((int)last["rows"][0]["diagnostic"]["line"], Is.EqualTo(4198));
+                Assert.That(last["next_cursor"].Type, Is.EqualTo(JTokenType.Null));
                 jobType.GetField("Id", flags).SetValue(job, Guid.NewGuid().ToString("N"));
                 Assert.Throws<ArgumentException>(() => ScriptDiagnosticJobs.Status(id, 100, cursor));
                 jobType.GetField("Id", flags).SetValue(job, id);
                 result["source_token"] = new string('b', 64);
                 Assert.Throws<ArgumentException>(() => ScriptDiagnosticJobs.Status(id, 100, cursor));
+                ((JArray)result["diagnostics"]).Clear();
+                context.Clear();
+                Assert.That(((JArray)ScriptDiagnosticJobs.Status(id, 100, null)["result"]["rows"]).Count, Is.Zero);
+                result["providers"]["compiler"] = new string('x', 512 * 1024);
+                Assert.Throws<InvalidOperationException>(() => ScriptDiagnosticJobs.Status(id, 100, null));
             }
             finally
             {

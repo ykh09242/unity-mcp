@@ -209,32 +209,39 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 if (parts.Length != 2 || !int.TryParse(parts[0], out start) || start < 0 || parts[1] != CursorHash(job, start))
                     throw new ArgumentException("invalid_analysis_cursor");
             }
-            var result = (JObject)job.Result.DeepClone();
-            var rows = ((JArray)result["diagnostics"])
-                .Select(row => new JObject { ["scope"] = "selected", ["diagnostic"] = row })
-                .Concat(((JArray)result["context_diagnostics"]).Select(row => new JObject { ["scope"] = "context", ["diagnostic"] = row }))
-                .ToArray();
-            result.Remove("diagnostics");
-            result.Remove("context_diagnostics");
-            if (start > rows.Length)
+            var selected = (JArray)job.Result["diagnostics"];
+            var context = (JArray)job.Result["context_diagnostics"];
+            int total = selected.Count + context.Count;
+            if (start > total)
                 throw new ArgumentException("invalid_analysis_cursor");
+            var result = new JObject();
+            foreach (var property in job.Result.Properties())
+                if (property.Name != "diagnostics" && property.Name != "context_diagnostics")
+                    result.Add(property.DeepClone());
             var page = new JArray();
             int offset = start;
             int bytes = Encoding.UTF8.GetByteCount(result.ToString(Formatting.None)) + 2048;
-            while (offset < rows.Length && page.Count < size)
+            while (offset < total && page.Count < size)
             {
-                int length = Encoding.UTF8.GetByteCount(rows[offset].ToString(Formatting.None));
+                bool isSelected = offset < selected.Count;
+                var row = new JObject
+                {
+                    ["scope"] = isSelected ? "selected" : "context",
+                    ["diagnostic"] = isSelected ? selected[offset] : context[offset - selected.Count],
+                };
+                int length = Encoding.UTF8.GetByteCount(row.ToString(Formatting.None));
                 if (bytes + length > 512 * 1024)
                     break;
                 bytes += length;
-                page.Add(rows[offset++]);
+                page.Add(row);
+                offset++;
             }
-            if (offset == start && offset < rows.Length)
+            if (offset == start && offset < total || bytes > 512 * 1024)
                 throw new InvalidOperationException("diagnostic_page_limit");
             result["rows"] = page;
-            result["total_rows"] = rows.Length;
+            result["total_rows"] = total;
             result["offset"] = start;
-            result["next_cursor"] = offset < rows.Length ? offset + "." + CursorHash(job, offset) : null;
+            result["next_cursor"] = offset < total ? offset + "." + CursorHash(job, offset) : null;
             response["result"] = result;
             return response;
         }
