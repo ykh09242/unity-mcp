@@ -19,15 +19,19 @@ public class ProcessOwnershipTests
             AppContext.BaseDirectory,
             new BlockingInput(),
             framed: true,
-            cancellation.Token
+            cancellation.Token,
+            jobId: "running"
         );
         for (int i = 0; i < 100 && owner.ActiveProcessId == 0; i++)
             await Task.Delay(20);
         int pid = owner.ActiveProcessId;
         Assert.That(pid, Is.GreaterThan(0));
+        Assert.That(owner.HasActiveChild("running"), Is.True);
+        Assert.That(owner.HasActiveChild("waiting"), Is.False);
         cancellation.Cancel();
         Assert.ThrowsAsync<OperationCanceledException>(async () => await run);
         Assert.That(owner.ActiveProcessId, Is.Zero);
+        Assert.That(owner.HasActiveChild("running"), Is.False);
         Assert.That(owner.Occupied, Is.Zero);
         Assert.That(Exited(pid), Is.True);
     }

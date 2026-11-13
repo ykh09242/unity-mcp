@@ -5,9 +5,12 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.ScriptQuality;
 using MCPForUnity.Editor.Services.SourceFreshness;
+using MCPForUnity.Editor.Setup;
 using MCPForUnity.Editor.Tools;
+using MCPForUnityTests.Editor.Services;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -119,6 +122,78 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.That((bool)result["stale"], Is.True);
             Assert.That(result["coverage_gaps"].Values<string>(), Does.Contain("source_changed_during_analysis"));
             Assert.That((string)result["source_token"], Is.EqualTo(before.Token));
+        }
+
+        [Test]
+        public async Task CancelDuringHostUpdateReleasesAnalysisSlot()
+        {
+            const string path = "Assets/Scripts/TestAsmdef/ScriptQuality/SelectedQualitySource.cs";
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+            var captureGate = (SemaphoreSlim)typeof(SourceFreshnessService).GetField("CaptureGate", flags).GetValue(null);
+            string cache = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "Library", "MCPQualityUpdate-" + Guid.NewGuid().ToString("N")));
+            string previousCache = ScriptAnalysisHost.CacheRootOverrideForTests;
+            string first = Guid.NewGuid().ToString("N"),
+                next = Guid.NewGuid().ToString("N");
+            using var consent = new ScopedConsentTestState(ScriptAnalysisHost.ConsentName);
+            var options = new JObject { ["paths"] = new JArray(path), ["timeout_seconds"] = 180 };
+            ScriptAnalysisHost.CacheRootOverrideForTests = cache;
+            try
+            {
+                var installed = await ScriptAnalysisHostInstaller.InstallAsync(CancellationToken.None);
+                Assert.That((bool?)ScriptAnalysisHost.Capabilities()["available"], Is.True);
+                var update = ScriptAnalysisHostInstaller.InstallAsync(CancellationToken.None);
+                try
+                {
+                    string updateStage = Directory.GetDirectories(cache).Single(p => Path.GetFileName(p) != (string)installed["directory"]);
+                    // Hold capture so only the installer can own a child at cancellation.
+                    await captureGate.WaitAsync();
+                    try
+                    {
+                        ScriptDiagnosticJobs.Start(first, options);
+                        while (!update.IsCompleted && (!File.Exists(Path.Combine(updateStage, "global.json")) || ScriptAnalysisHost.Owner.ActiveProcessId == 0))
+                            await Task.Delay(10);
+                        Assert.That((string)ScriptDiagnosticJobs.Status(first, 1, null)["state"], Is.EqualTo("running"));
+                        Assert.That(ScriptAnalysisHost.Owner.ActiveProcessId, Is.GreaterThan(0));
+                        ScriptDiagnosticJobs.Cancel(first);
+                        var status = await WaitForAnalysis(first);
+                        Assert.That((string)status["state"], Is.EqualTo("canceled"), status.ToString());
+                        Assert.That((bool)status["terminal"], Is.True);
+                    }
+                    finally
+                    {
+                        captureGate.Release();
+                    }
+                }
+                finally
+                {
+                    await update;
+                }
+                Assert.That((string)update.Result["directory"], Is.Not.EqualTo((string)installed["directory"]));
+                ScriptDiagnosticJobs.Start(next, options);
+                var completed = await WaitForAnalysis(next);
+                Assert.That((string)completed["state"], Is.EqualTo("completed"), completed.ToString());
+                Assert.That(completed["result"]["rows"].Any(), Is.True);
+            }
+            finally
+            {
+                ScriptDiagnosticJobs.Cancel(first);
+                ScriptDiagnosticJobs.Cancel(next);
+                ScriptAnalysisHost.CacheRootOverrideForTests = previousCache;
+                if (Directory.Exists(cache))
+                    Directory.Delete(cache, true);
+            }
+        }
+
+        private static async Task<JObject> WaitForAnalysis(string id)
+        {
+            var timeout = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                var status = ScriptDiagnosticJobs.Status(id, 1, null);
+                if ((bool)status["terminal"] || (string)status["state"] == "unsettled" || timeout.Elapsed > TimeSpan.FromSeconds(180))
+                    return status;
+                await Task.Delay(20);
+            }
         }
 
         [Test]

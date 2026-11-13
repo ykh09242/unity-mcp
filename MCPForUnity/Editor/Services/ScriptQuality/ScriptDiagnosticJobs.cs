@@ -88,7 +88,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 var selection = ScriptSelection.Resolve(options);
                 var before = await SourceFreshnessService.CaptureAsync(cancellation);
                 var request = await ScriptCompilationContext.CaptureAsync(selection, before, (bool?)options["include_suppressed"] ?? false, cancellation);
-                var result = await ScriptAnalysisHost.AnalyzeAsync(request, cancellation);
+                var result = await ScriptAnalysisHost.AnalyzeAsync(request, cancellation, job.Id);
                 var after = await SourceFreshnessService.CaptureAsync(cancellation);
                 BindSourceEvidence(result, before, after);
                 result["selected_files"] = new JArray(
@@ -127,7 +127,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             finally
             {
                 // Never advertise settled cancellation or admit more work while the owned process is alive.
-                if (entered && ScriptAnalysisHost.Owner.ActiveProcessId != 0)
+                if (entered && ScriptAnalysisHost.Owner.HasActiveChild(job.Id))
                 {
                     job.State = "unsettled";
                     job.Reason = "analysis_process_unsettled";

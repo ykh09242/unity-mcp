@@ -30,6 +30,7 @@
         "MCPForUnityTests.Editor.Tools.ScriptQualityTests.MissingImportedAssemblyContextIsExplicit",
         "MCPForUnityTests.Editor.Tools.ScriptQualityTests.NativeBoundaryRejectsCallerOwnershipAndFormattingFields",
         "MCPForUnityTests.Editor.Tools.ScriptQualityTests.NativeContextRunsPinnedDiagnosticsAndPreservesSelectedBytes",
+        "MCPForUnityTests.Editor.Tools.ScriptQualityTests.CancelDuringHostUpdateReleasesAnalysisSlot",
         "MCPForUnityTests.Editor.Tools.ScriptQualityTests.ChangedSourceEvidenceCannotBePublishedAsComplete",
         "MCPForUnityTests.Editor.Tools.ScriptQualityTests.ResultPagesAreBoundedAndCursorsCannotCrossJobsOrSources",
         "MCPForUnityTests.Editor.Tools.ScriptQualityTests.ContextReadsUncompiledBytesAndFlagsMissingSourceMembership",

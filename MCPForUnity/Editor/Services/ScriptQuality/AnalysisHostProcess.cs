@@ -16,6 +16,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
         private readonly object _gate = new object();
         private Process _active;
+        private string _activeJobId;
         private int _occupied;
         internal int Occupied => Volatile.Read(ref _occupied);
         internal int ActiveProcessId
@@ -27,6 +28,12 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             }
         }
 
+        internal bool HasActiveChild(string jobId)
+        {
+            lock (_gate)
+                return jobId != null && _active != null && _activeJobId == jobId;
+        }
+
         internal async Task<byte[]> RunAsync(
             string executable,
             string[] arguments,
@@ -34,7 +41,8 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             Stream input,
             bool framed,
             CancellationToken cancellation,
-            Func<Task> beforeStart = null
+            Func<Task> beforeStart = null,
+            string jobId = null
         )
         {
             if (Interlocked.Increment(ref _occupied) > 3)
@@ -81,6 +89,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                         throw new IOException("analysis_process_not_started");
                     started = true;
                     _active = process;
+                    _activeJobId = jobId;
                 }
                 var canceled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                 using var registration = linked.Token.Register(() => canceled.TrySetResult(true));
@@ -145,7 +154,10 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 {
                     lock (_gate)
                         if (_active == process)
+                        {
                             _active = null;
+                            _activeJobId = null;
+                        }
                     process?.Dispose();
                     if (acquired)
                         _slot.Release();

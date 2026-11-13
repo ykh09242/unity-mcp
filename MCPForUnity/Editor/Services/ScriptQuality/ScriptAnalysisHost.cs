@@ -18,8 +18,9 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
         internal const string ConsentName = "script_analysis_host";
         private const string UnsettledKey = "MCPForUnity.ScriptAnalysisHost.Unsettled";
         internal static readonly AnalysisHostProcess Owner = new AnalysisHostProcess();
+        internal static string CacheRootOverrideForTests;
         internal static string ProjectRoot => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-        internal static string CacheRoot => Path.Combine(ProjectRoot, "Library", "MCPForUnity", "ScriptDiagnosticsHost");
+        internal static string CacheRoot => CacheRootOverrideForTests ?? Path.Combine(ProjectRoot, "Library", "MCPForUnity", "ScriptDiagnosticsHost");
 
         static ScriptAnalysisHost()
         {
@@ -101,7 +102,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             };
         }
 
-        internal static async Task<JObject> AnalyzeAsync(JObject request, CancellationToken cancellation)
+        internal static async Task<JObject> AnalyzeAsync(JObject request, CancellationToken cancellation, string jobId)
         {
             string cache = CacheRoot;
             var mainThread = SynchronizationContext.Current ?? throw new InvalidOperationException("main_thread_required");
@@ -130,26 +131,35 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             payload.Position = 0;
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             deadline.CancelAfter(TimeSpan.FromMinutes(5));
-            byte[] response = await Owner.RunAsync("dotnet", new[] { host }, Path.GetDirectoryName(host), payload, true, deadline.Token, () =>
-            {
-                var admission = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                mainThread.Post(
-                    _ =>
-                    {
-                        try
+            byte[] response = await Owner.RunAsync(
+                "dotnet",
+                new[] { host },
+                Path.GetDirectoryName(host),
+                payload,
+                true,
+                deadline.Token,
+                () =>
+                {
+                    var admission = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    mainThread.Post(
+                        _ =>
                         {
-                            CheckConsent();
-                            admission.SetResult(true);
-                        }
-                        catch (Exception e)
-                        {
-                            admission.SetException(e);
-                        }
-                    },
-                    null
-                );
-                return admission.Task;
-            });
+                            try
+                            {
+                                CheckConsent();
+                                admission.SetResult(true);
+                            }
+                            catch (Exception e)
+                            {
+                                admission.SetException(e);
+                            }
+                        },
+                        null
+                    );
+                    return admission.Task;
+                },
+                jobId
+            );
             var result = JObject.Parse(Encoding.UTF8.GetString(response));
             if ((int?)result["protocol"] != 1 || (string)result["source_token"] != (string)request["source_token"])
                 throw new InvalidDataException("analysis_response_identity_mismatch");
