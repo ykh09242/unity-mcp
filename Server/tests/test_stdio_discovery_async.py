@@ -71,6 +71,170 @@ def gated_discovery(monkeypatch, target):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("abandon", ["cancel_first", "cancel_follower", "deadline"])
+async def test_overlapping_exact_selection_shares_only_the_current_listener_observation(
+    local_discovery, monkeypatch, abandon
+):
+    from transport.command_timeout import stdio_request_deadline
+
+    pool, target, middleware, ctx = local_discovery
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), threading.Event()
+    port, generation = 6400, "a" * 32
+    probes = []
+
+    def entries():
+        return [
+            (
+                Path("unity-mcp-status-deadbeef.json"),
+                {
+                    "project_path": target.path,
+                    "unity_port": port,
+                    "listener_generation": generation,
+                },
+                datetime.now(timezone.utc),
+            )
+        ]
+
+    def probe(observed_port):
+        probes.append(observed_port)
+        if len(probes) == 1:
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(watchdog_timeout())
+        return generation
+
+    monkeypatch.setattr(PortDiscovery, "_read_status_entries", entries)
+    monkeypatch.setattr(PortDiscovery, "_try_probe_unity_mcp", probe)
+    deadline = loop.time() + watchdog_timeout(0.25) if abandon == "deadline" else None
+    token = stdio_request_deadline.set(deadline)
+    try:
+        first = asyncio.create_task(middleware._resolve_instance_value(target.id, ctx))
+    finally:
+        stdio_request_deadline.reset(token)
+    requests = [first]
+    try:
+        await await_signal(entered, "first exact target probe", producers=[first])
+        requests.extend(
+            asyncio.create_task(middleware._resolve_instance_value(f" {target.id} ", ctx))
+            for _ in range(8)
+        )
+        await asyncio.sleep(0)
+        abandoned = requests[1] if abandon == "cancel_follower" else first
+        if abandon != "deadline":
+            abandoned.cancel()
+        with pytest.raises(TimeoutError if abandon == "deadline" else asyncio.CancelledError):
+            await abandoned
+    finally:
+        release.set()
+        results = await asyncio.gather(*requests, return_exceptions=True)
+    assert all(
+        result == target.id
+        for request, result in zip(requests, results)
+        if request is not abandoned
+    )
+    assert probes == [6400]
+    assert pool._known_instances[target.id].listener_generation == generation
+    port, generation = 6402, "b" * 32
+    assert await middleware._resolve_instance_value(target.id, ctx) == target.id
+    assert probes == [6400, 6402]
+    assert pool._known_instances[target.id].listener_generation == generation
+    assert pool._connections == {} and ctx.state == {}
+
+
+@pytest.mark.asyncio
+async def test_contended_exact_selectors_keep_separate_bounded_fallback_observations(
+    local_discovery, monkeypatch
+):
+    pool, target, middleware, ctx = local_discovery
+    pool.MAX_CONNECTIONS = 2
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), threading.Event()
+    lookups, inventories = [], []
+
+    def discover(selector):
+        lookups.append(selector)
+        if selector == target.id:
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(watchdog_timeout())
+            return target
+        return None
+
+    def inventory():
+        inventories.append(1)
+        return [target]
+
+    monkeypatch.setattr(PortDiscovery, "discover_unity_instance", discover)
+    monkeypatch.setattr(PortDiscovery, "discover_all_unity_instances", inventory)
+    requests = [asyncio.create_task(middleware._resolve_instance_value(target.id, ctx))]
+    try:
+        await await_signal(entered, "exact target probe", producers=requests)
+        requests.extend(
+            asyncio.create_task(middleware._resolve_instance_value("Missing@cafebabe", ctx))
+            for _ in range(6)
+        )
+        await asyncio.sleep(0)
+        with pytest.raises(ConnectionError, match="selection capacity"):
+            await middleware._resolve_instance_value("Extra@12345678", ctx)
+    finally:
+        release.set()
+        first, *missing = await asyncio.gather(*requests, return_exceptions=True)
+    assert first == target.id
+    assert all(isinstance(error, ValueError) and target.id in str(error) for error in missing)
+    assert lookups == [target.id, "Missing@cafebabe"]
+    assert inventories == [1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reset", [False, True])
+async def test_completed_exact_observation_cannot_satisfy_request_while_delivery_is_pending(
+    local_discovery, monkeypatch, reset
+):
+    pool, target, middleware, ctx = local_discovery
+    observed, deliver = asyncio.Event(), threading.Event()
+    submitted = []
+    submit = uc.submit_owned_executor
+
+    def delay_first_result(loop, executor, function, *args):
+        submitted.append(args[-1])
+        if len(submitted) != 1:
+            return submit(loop, executor, function, *args)
+
+        def delayed(*worker_args):
+            result = function(*worker_args)
+            loop.call_soon_threadsafe(observed.set)
+            assert deliver.wait(watchdog_timeout())
+            return result
+
+        return submit(loop, executor, delayed, *args)
+
+    monkeypatch.setattr(uc, "submit_owned_executor", delay_first_result)
+    monkeypatch.setattr(PortDiscovery, "discover_unity_instance", lambda _: target)
+    first = asyncio.create_task(middleware._resolve_instance_value(target.id, ctx))
+    try:
+        await await_signal(observed, "completed metadata worker", producers=[first])
+        replacement = SimpleNamespace(**vars(target))
+        replacement.port += 1
+        monkeypatch.setattr(PortDiscovery, "discover_unity_instance", lambda _: replacement)
+        second = asyncio.create_task(middleware._resolve_instance_value(target.id, ctx))
+        await asyncio.sleep(0)
+        if reset:
+            pool.disconnect_all()
+    finally:
+        deliver.set()
+    results = await asyncio.gather(first, second, return_exceptions=True)
+    if reset:
+        assert all(
+            isinstance(error, ConnectionError) and "retired" in str(error) for error in results
+        )
+        assert pool._known_instances == {}
+        assert await middleware._resolve_instance_value(target.id, ctx) == target.id
+    else:
+        assert results == [target.id, target.id]
+    assert submitted == [target.id, target.id]
+    assert pool._known_instances[target.id] is replacement
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("selector", ["Main@deadbeef", "dead", "6400", None])
 async def test_local_selection_allows_other_requests_while_discovery_waits(
     local_discovery,

@@ -35,11 +35,8 @@ def target_server(monkeypatch):
         def discover_all_instances(self, force_refresh=False):
             return inventory
 
-        def resolve_instance(self, instance, force_refresh=False):
-            for target in inventory:
-                if target.id == instance:
-                    return target
-            raise ConnectionError("Selected project is unavailable")
+        async def discover_exact_instance(self, instance):
+            return [target for target in inventory if target.id == instance] or inventory
 
     monkeypatch.setattr("transport.legacy.unity_connection.get_unity_connection_pool", Pool)
     registry = [

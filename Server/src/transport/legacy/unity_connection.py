@@ -62,17 +62,23 @@ def run_with_connection_deadline(
     return result
 
 
-async def run_discovery(
-    function: Callable[..., _ConnectionResult], /, *args, **kwargs
-) -> _ConnectionResult:
-    """Cancel only this metadata worker and retain existing receipt/operation ownership."""
-    import asyncio
+def _discovery_deadline() -> float | None:
     from transport.command_timeout import stdio_request_deadline
 
     deadline = stdio_request_deadline.get()
     command_deadline = _command_deadline("discovery", {})
     if command_deadline is not None:
         deadline = min(deadline, command_deadline) if deadline is not None else command_deadline
+    return deadline
+
+
+async def run_discovery(
+    function: Callable[..., _ConnectionResult], /, *args, **kwargs
+) -> _ConnectionResult:
+    """Cancel only this metadata worker and retain existing receipt/operation ownership."""
+    import asyncio
+
+    deadline = _discovery_deadline()
     selection = _ConnectionSelection(deadline)
     try:
         async with asyncio.timeout_at(deadline):
@@ -177,6 +183,9 @@ class _ConnectionSelection:
     def check(self) -> float | None:
         if self.cancelled.is_set():
             raise ConnectionError("Unity connection selection was cancelled")
+        if self.pool_epoch is not None:
+            pool, epoch = self.pool_epoch
+            pool._check_selection_epoch(epoch)
         if self.deadline is not None and time.monotonic() >= self.deadline:
             raise TimeoutError("Unity command exceeded total deadline during connection selection")
         return self.deadline
@@ -1522,6 +1531,22 @@ class UnityConnectionPool:
         self, instance_identifier: str | None = None, force_refresh: bool = False
     ) -> UnityInstanceInfo:
         """Resolve metadata without connecting or mistaking a target for a full scan."""
+        instances = self._discover_instance_candidates(instance_identifier, force_refresh)
+        return self._resolve_instance_id(instance_identifier, instances)
+
+    async def discover_exact_instance(self, identifier: str) -> list[UnityInstanceInfo]:
+        """Share one fresh metadata observation among overlapping explicit selectors."""
+        return await _shared_selection(
+            self,
+            partial(self._discover_instance_candidates, force_refresh=True),
+            identifier,
+            _discovery_deadline(),
+            metadata=True,
+        )
+
+    def _discover_instance_candidates(
+        self, instance_identifier: str | None, force_refresh: bool
+    ) -> list[UnityInstanceInfo]:
         if config.http_remote_hosted:
             raise RuntimeError("Legacy Unity connections are disabled in remote-hosted mode")
         if self.is_exact_instance_id(instance_identifier):
@@ -1534,16 +1559,14 @@ class UnityConnectionPool:
                     and self._last_full_scan is not None
                     and now - self._last_full_scan < self._scan_interval
                 ):
-                    return self._resolve_instance_id(
-                        identifier, list(self._known_instances.values())
-                    )
+                    return list(self._known_instances.values())
                 refreshed = self._target_refreshes.get(identifier)
                 if (
                     not force_refresh
                     and refreshed is not None
                     and now - refreshed < self._scan_interval
                 ):
-                    return self._known_instances[identifier]
+                    return [self._known_instances[identifier]]
                 target = PortDiscovery.discover_unity_instance(identifier)
                 selection.check()
                 if target is not None:
@@ -1572,12 +1595,10 @@ class UnityConnectionPool:
                         self._missing_since.pop(target.id, None)
                         # A partial refresh cannot certify a global inventory.
                         self._last_full_scan = None
-                    return target
+                    return [target]
         # Ambiguous, noncanonical, missing and displaced selectors keep the
         # existing global discovery and helpful selection errors.
-        return self._resolve_instance_id(
-            instance_identifier, self.discover_all_instances(force_refresh=force_refresh)
-        )
+        return self.discover_all_instances(force_refresh=force_refresh)
 
     def _resolve_instance_id(
         self, instance_identifier: str | None, instances: list[UnityInstanceInfo]
@@ -2574,7 +2595,7 @@ class _AsyncSelectionGroup:
         import asyncio  # noqa: ANYIO_OK -- selection belongs to the existing transport loop.
 
         self.gate = asyncio.Semaphore(self.MAX_WORKERS)
-        self.owners: dict[tuple[int, str | None], _SharedConnectionSelection] = {}
+        self.owners: dict[tuple[int, str | None, bool], _SharedConnectionSelection] = {}
 
 
 class _SharedConnectionSelection:
@@ -2590,6 +2611,7 @@ class _SharedConnectionSelection:
         self.instance_id = instance_id
         self.waiters = 0
         self.worker = None
+        self.finished = False
         # Even calls without an explicit command budget have a finite physical
         # selection lifetime. Joining callers cannot extend this owner's ceiling.
         budget = max(0.05, config.command_total_timeout or config.connection_timeout)
@@ -2659,12 +2681,19 @@ class _SharedConnectionSelection:
             self.pool._check_selection_epoch(self.key[0])
             self.started_deadline = self.selection.deadline
             self.worker = submit_owned_executor(
-                asyncio.get_running_loop(), None, self.selection.run, getter, self.instance_id
+                asyncio.get_running_loop(), None, self.observe, getter, self.instance_id
             )
             self.pool._resync_workers.add(self.worker)
             self.worker.add_done_callback(self.pool._resync_workers.discard)
             self.worker.add_done_callback(_consume_async_exception)
             return await asyncio.shield(self.worker)
+
+    def observe(self, getter, instance_id):
+        try:
+            return self.selection.run(getter, instance_id)
+        finally:
+            # A new explicit request may arrive before the loop receives the executor result.
+            self.finished = True
 
     def completed(self, future):
         """Retire only this completed owner, preserving any replacement generation."""
@@ -2679,10 +2708,21 @@ async def _select_connection(
     instance_id: str | None, deadline: float | None, owner_pool: UnityConnectionPool | None
 ) -> UnityConnection:
     """Share physical target selection while each waiter keeps its own deadline."""
-    import asyncio  # noqa: ANYIO_OK -- preserve existing shielded executor ownership.
-
     pool = owner_pool if owner_pool is not None else get_unity_connection_pool()
     getter = owner_pool.get_connection if owner_pool is not None else get_unity_connection
+    return await _shared_selection(pool, getter, instance_id, deadline, metadata=False)
+
+
+async def _shared_selection(
+    pool: UnityConnectionPool,
+    getter: Callable[..., _ConnectionResult],
+    instance_id: str | None,
+    deadline: float | None,
+    *,
+    metadata: bool,
+) -> _ConnectionResult:
+    import asyncio  # noqa: ANYIO_OK -- preserve existing shielded executor ownership.
+
     loop = asyncio.get_running_loop()
     with pool._async_selection_lock:
         reference = pool._async_selection_groups.get(loop)
@@ -2691,14 +2731,18 @@ async def _select_connection(
             group = _AsyncSelectionGroup()
             pool._async_selection_groups[loop] = weakref.ref(group)
     async with asyncio.timeout_at(deadline):
+        epoch = pool._selection_epoch
+        # Resolution strips surrounding whitespace. Other aliases still need their own validation.
+        selector = instance_id.strip() if instance_id is not None else None
+        key = (epoch, selector, metadata)
         while True:
-            pool._check_selection_epoch(pool._selection_epoch)
-            # Resolution already strips surrounding whitespace. Share only that
-            # guaranteed equivalence; cached aliases cannot prove uniqueness or
-            # share the fresh validation of a different submitted selector.
-            selector = instance_id.strip() if instance_id is not None else None
-            key = (pool._selection_epoch, selector)
+            pool._check_selection_epoch(epoch)
             owner = group.owners.get(key)
+            if metadata and owner is not None and owner.finished:
+                # Drain delivery before reusing the bounded slot for a fresh observation.
+                await asyncio.wait((owner.task,))
+                owner.completed(owner.task)
+                continue
             if owner is not None and owner.selection.cancelled.is_set():
                 # A running abandoned owner retains its slot until actual exit;
                 # a fresh caller must not accumulate replacement executor jobs.
@@ -2720,7 +2764,9 @@ async def _select_connection(
                 group.owners[key] = owner
             owner.join(deadline)
             try:
-                return await asyncio.shield(owner.task)
+                result = await asyncio.shield(owner.task)
+                pool._check_selection_epoch(epoch)
+                return result
             except (ConnectionError, TimeoutError):
                 # A connect already in progress may have captured an earlier
                 # waiter's deadline before this caller joined. Retry selection

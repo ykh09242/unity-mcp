@@ -384,14 +384,7 @@ class UnityInstanceMiddleware(Middleware):
 
             if UnityConnectionPool.is_exact_instance_id(value):
                 pool = get_unity_connection_pool()
-                try:
-                    target = await run_discovery(pool.resolve_instance, value, force_refresh=True)
-                    if target.id == value:
-                        return value
-                except ConnectionError:
-                    pass  # Preserve the middleware's full inventory error below.
-                # A missing exact ID already triggered full fallback discovery.
-                instances = await run_discovery(pool.discover_all_instances)
+                instances = await pool.discover_exact_instance(value)
 
         if instances is None:
             instances = await self._discover_instances(ctx)
