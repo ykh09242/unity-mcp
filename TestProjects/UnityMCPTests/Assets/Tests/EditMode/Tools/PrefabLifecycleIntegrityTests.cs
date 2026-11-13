@@ -8,6 +8,7 @@ using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Tools.Prefabs;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
+using MCPForUnityTests.Editor.Tools.Fixtures;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -180,6 +181,83 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AddedComponentProperties_PersistOnExactInstances(bool createChild)
+        {
+            string path = PathFor("AddedProperties");
+            Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(Source(), path));
+            string referencedPath = PathFor("Reference");
+            GameObject referenced = PrefabUtility.SaveAsPrefabAsset(Source(), referencedPath);
+            Assert.IsNotNull(referenced);
+            string probeType = typeof(PrefabPreviewLifecycleProbe).FullName;
+            var additions = new JArray(
+                new JObject
+                {
+                    ["typeName"] = "Light",
+                    ["properties"] = new JObject { ["intensity"] = 3.25f },
+                },
+                probeType,
+                new JObject
+                {
+                    ["typeName"] = probeType,
+                    ["properties"] = new JObject
+                    {
+                        ["Reference"] = new JObject { ["guid"] = AssetDatabase.AssetPathToGUID(referencedPath), ["component"] = "Transform" },
+                    },
+                }
+            );
+            Success(Send("modify_contents", AdditionRequest(path, additions, createChild)));
+
+            GameObject contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                GameObject target = createChild ? contents.transform.Find("Child").gameObject : contents;
+                Assert.AreEqual(3.25f, target.GetComponent<Light>().intensity, 0.001f);
+                var probes = target.GetComponents<PrefabPreviewLifecycleProbe>();
+                Assert.AreEqual(2, probes.Length);
+                Assert.IsNull(probes[0].Reference);
+                Assert.AreEqual(referenced.transform, probes[1].Reference);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AddedComponentSetterFailure_DiscardsDraft(bool createChild)
+        {
+            string path = PathFor("SetterFailure");
+            Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(Source(), path));
+            byte[] before = Bytes(path);
+            int previews = EditorSceneManager.previewSceneCount;
+            var additions = new JArray(
+                "Light",
+                new JObject
+                {
+                    ["typeName"] = typeof(VerificationProbe).FullName,
+                    ["properties"] = new JObject { ["Throwing"] = 1 },
+                }
+            );
+            JObject response = Send("modify_contents", AdditionRequest(path, additions, createChild));
+            Failure(response);
+            StringAssert.Contains("Throwing", response.Value<string>("error"));
+            CollectionAssert.AreEqual(before, Bytes(path));
+            Assert.AreEqual(previews, EditorSceneManager.previewSceneCount);
+        }
+
+        private static JObject AdditionRequest(string path, JArray additions, bool createChild)
+        {
+            var request = new JObject { ["prefabPath"] = path, ["position"] = new JArray(1, 2, 3) };
+            if (createChild)
+                request["create_child"] = new JObject { ["name"] = "Child", ["components_to_add"] = additions };
+            else
+                request["componentsToAdd"] = additions;
+            return request;
         }
 
         private string PathFor(string name)

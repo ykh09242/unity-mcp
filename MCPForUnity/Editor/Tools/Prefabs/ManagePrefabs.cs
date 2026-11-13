@@ -1220,18 +1220,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             {
                 foreach (var compToken in componentsToAdd)
                 {
-                    string typeName = compToken.Type == JTokenType.String ? compToken.ToString() : (compToken as JObject)?["typeName"]?.ToString();
-
-                    if (!string.IsNullOrEmpty(typeName))
-                    {
-                        if (!ComponentResolver.TryResolve(typeName, out Type componentType, out string error))
-                        {
-                            return (false, new ErrorResponse($"Component type '{typeName}' not found: {error}"));
-                        }
-                        if (targetGo.AddComponent(componentType) == null)
-                            return (false, new ErrorResponse($"Unity did not add component '{typeName}' to '{targetGo.name}'. No changes saved."));
-                        modified = true;
-                    }
+                    ErrorResponse error = AddPrefabComponent(targetGo, compToken);
+                    if (error != null)
+                        return (false, error);
+                    modified = true;
                 }
             }
 
@@ -1382,6 +1374,23 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 foreach (string canonical in new[] { "sourcePrefabPath", "primitiveType", "componentsToAdd", "setActive" })
                     ManageGameObject.ResolveParameterAlias(child, canonical, StringCaseUtility.ToSnakeCase(canonical));
             return result;
+        }
+
+        private static ErrorResponse AddPrefabComponent(GameObject target, JToken definition)
+        {
+            string typeName = definition is JObject obj ? obj.Value<string>("typeName") : definition.Value<string>();
+            if (!ComponentResolver.TryResolve(typeName, out Type type, out string error))
+                return new ErrorResponse($"Component type '{typeName}' not found: {error}");
+
+            Component added = target.AddComponent(type);
+            if (added == null)
+                return new ErrorResponse($"Unity did not add component '{typeName}' to '{target.name}'. No changes saved.");
+
+            if ((definition as JObject)?["properties"] is JObject properties)
+                foreach (JProperty property in properties.Properties())
+                    if (!ComponentOps.SetProperty(added, property.Name, property.Value, out error))
+                        return new ErrorResponse($"Failed to set '{typeName}.{property.Name}' on '{target.name}': {error}. No changes saved.");
+            return null;
         }
 
         private static string ValidatePrefabComponentPlan(GameObject target, JObject parameters, bool removals)
@@ -1664,31 +1673,13 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
             if (componentsToAdd != null)
             {
-                for (int i = 0; i < componentsToAdd.Count; i++)
+                foreach (JToken definition in componentsToAdd)
                 {
-                    var compToken = componentsToAdd[i];
-                    string typeName = compToken.Type == JTokenType.String ? compToken.ToString() : (compToken as JObject)?["typeName"]?.ToString();
-
-                    if (string.IsNullOrEmpty(typeName))
-                    {
-                        // Clean up partially created child
-                        UnityEngine.Object.DestroyImmediate(newChild);
-                        return (
-                            false,
-                            new ErrorResponse($"create_child.components_to_add[{i}] must be a string or object with 'typeName' field, got {compToken.Type}")
-                        );
-                    }
-
-                    if (!ComponentResolver.TryResolve(typeName, out Type componentType, out string error))
-                    {
-                        // Clean up partially created child
-                        UnityEngine.Object.DestroyImmediate(newChild);
-                        return (false, new ErrorResponse($"Component type '{typeName}' not found for create_child: {error}"));
-                    }
-                    if (newChild.AddComponent(componentType) == null)
+                    ErrorResponse error = AddPrefabComponent(newChild, definition);
+                    if (error != null)
                     {
                         UnityEngine.Object.DestroyImmediate(newChild);
-                        return (false, new ErrorResponse($"Unity did not add component '{typeName}' to child '{childName}'. No changes saved."));
+                        return (false, error);
                     }
                 }
             }
