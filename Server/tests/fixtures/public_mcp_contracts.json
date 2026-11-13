@@ -17157,6 +17157,32 @@
                 ],
                 "default": null
               },
+              "snapshot_cursor": {
+                "anyOf": [
+                  {
+                    "maxLength": 32,
+                    "minLength": 32,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "snapshot_limit": {
+                "anyOf": [
+                  {
+                    "maximum": 128,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "snapshot_path": {
                 "anyOf": [
                   {
@@ -43548,6 +43574,32 @@
                 "anyOf": [
                   {
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "snapshot_cursor": {
+                "anyOf": [
+                  {
+                    "maxLength": 32,
+                    "minLength": 32,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "snapshot_limit": {
+                "anyOf": [
+                  {
+                    "maximum": 128,
+                    "minimum": 1,
+                    "type": "integer"
                   },
                   {
                     "type": "null"
