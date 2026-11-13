@@ -793,7 +793,12 @@ def authorize_resource(authority: OperationGrants, uri: str | None = None) -> No
 
 
 async def authorize_remote_operation(
-    name: str, params: Mapping[str, JsonValue], *, custom: bool = False, ctx=None
+    name: str,
+    params: Mapping[str, JsonValue],
+    *,
+    custom: bool = False,
+    ctx=None,
+    session_id: str | None = None,
 ) -> None:
     """Admit requester and any already selected authenticated plugin before optional work."""
     from core.config import config
@@ -807,11 +812,12 @@ async def authorize_remote_operation(
         # in its handler, before and after I/O. It is not an unconditional read.
         return
     authorize_operation(lease.permissions, name, params, custom=custom)
-    if ctx is not None and callable(getattr(ctx, "get_state", None)):
+    if session_id is None and ctx is not None and callable(getattr(ctx, "get_state", None)):
+        session_id = await ctx.get_state("unity_session_id")
+    if isinstance(session_id, str):
         from transport.plugin_hub import PluginHub
 
-        session_id = await ctx.get_state("unity_session_id")
-        websocket = PluginHub._connections.get(session_id) if isinstance(session_id, str) else None
+        websocket = PluginHub._connections.get(session_id)
         if websocket is not None:
             plugin = PluginHub._socket_lease(websocket)
             if plugin is None or plugin.user_id != lease.user_id:

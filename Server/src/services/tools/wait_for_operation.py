@@ -87,8 +87,21 @@ async def capture_target(ctx: Context) -> ObservationTarget | None:
         return None
     user_id = await ctx.get_state("user_id") if config.http_remote_hosted else None
     expected = await ctx.get_state("operation_wait_generation")
+    session = (
+        await ctx.get_state("unity_session_id") if config.transport_mode.lower() == "http" else None
+    )
+    target = await capture_observation_target(instance, session, user_id)
+    if target is None or expected is not None and expected != target.generation:
+        return None
+    captured = operation_wait_target.get()
+    return target if captured is None or captured == target else None
+
+
+async def capture_observation_target(
+    instance: str, session: str | None, user_id: str | None
+) -> ObservationTarget | None:
+    """Pin the authenticated generation for an already resolved instance and route."""
     if config.transport_mode.lower() == "http":
-        session = await ctx.get_state("unity_session_id")
         identity = await PluginHub._read_identity(session) if isinstance(session, str) else None
         registry = PluginHub._registry
         registered = await registry.get_session(session) if identity and registry else None
@@ -103,16 +116,9 @@ async def capture_target(ctx: Context) -> ObservationTarget | None:
     else:
         session = None
         generation = await get_authenticated_stdio_generation(instance)
-    if (
-        not isinstance(generation, str)
-        or not generation
-        or expected is not None
-        and expected != generation
-    ):
+    if not isinstance(generation, str) or not generation:
         return None
-    target = ObservationTarget(instance, session, generation, user_id)
-    captured = operation_wait_target.get()
-    return target if captured is None or captured == target else None
+    return ObservationTarget(instance, session, generation, user_id)
 
 
 async def fetch_status(target: ObservationTarget, kind: JobKind, job_id: str):

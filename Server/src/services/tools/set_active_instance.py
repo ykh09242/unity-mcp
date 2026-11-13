@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated, Any
 from types import SimpleNamespace
 
@@ -53,6 +54,8 @@ async def set_active_instance(
             "Pass unity_instance on each tool call, or use a client with a stateful MCP handshake.",
         }
     transport = (config.transport_mode or "stdio").lower()
+    user_id = None
+    sessions_by_instance = {}
 
     # Discover running instances based on transport
     if transport == "http":
@@ -61,12 +64,13 @@ async def set_active_instance(
         sessions_data = await PluginHub.get_sessions(user_id=user_id)
         sessions = sessions_data.sessions
         instances = []
-        for session in sessions.values():
+        for session_id, session in sessions.items():
             project = session.project or "Unknown"
             hash_value = session.hash
             if not hash_value:
                 continue
             inst_id = f"{project}@{hash_value}"
+            sessions_by_instance[inst_id] = session_id
             instances.append(
                 SimpleNamespace(
                     id=inst_id,
@@ -88,6 +92,20 @@ async def set_active_instance(
     except ValueError as error:
         return {"success": False, "error": str(error)}
 
+    target = None
+    if include_context:
+        from services.tools.wait_for_operation import capture_observation_target
+
+        deadline = asyncio.get_running_loop().time() + 3
+        # Pin the chosen route before the session write yields to a possible reconnect.
+        try:
+            async with asyncio.timeout_at(deadline):
+                target = await capture_observation_target(
+                    resolved, sessions_by_instance.get(resolved), user_id
+                )
+        except Exception:
+            pass  # Unavailable optional observation must not prevent selection.
+
     # Store selection in middleware (session-scoped via FastMCP context state).
     middleware = get_unity_instance_middleware()
     await middleware.set_active_instance(ctx, resolved)
@@ -101,23 +119,21 @@ async def set_active_instance(
         },
     }
     if include_context:
-        result["data"]["context"] = await selected_context(ctx, resolved)
+        result["data"]["context"] = await selected_context(target, deadline)
     return result
 
 
-async def selected_context(ctx, instance):
+async def selected_context(target, deadline):
     from services.operation_permissions import authorize_remote_operation
     from models.response_lifetime import ResponsePollLifetime
-    from services.tools.wait_for_operation import capture_target, fetch_observation
+    from services.tools.wait_for_operation import fetch_observation
     from models.unity_response import normalize_unity_response
-    import asyncio
 
+    if target is None:
+        return {"status": "unavailable", "reason": "selected_editor_identity_unavailable"}
     try:
-        async with asyncio.timeout(3):
-            await authorize_remote_operation("get_editor_state", {}, ctx=ctx)
-            target = await capture_target(ctx)
-            if target is None or target.instance != instance:
-                return {"status": "unavailable", "reason": "selected_editor_identity_unavailable"}
+        async with asyncio.timeout_at(deadline):
+            await authorize_remote_operation("get_editor_state", {}, session_id=target.session_id)
             async with ResponsePollLifetime() as lifetime:
                 response = await lifetime.fetch(
                     fetch_observation(target, "get_editor_state", {}), 2
@@ -125,6 +141,11 @@ async def selected_context(ctx, instance):
             response = normalize_unity_response(response)
             data = response.get("data") if isinstance(response, dict) else None
             if not isinstance(data, dict) or response.get("success") is not True:
+                if (
+                    isinstance(data, dict)
+                    and data.get("reason") == "observation_generation_changed"
+                ):
+                    return {"status": "unavailable", "reason": "observation_generation_changed"}
                 return {"status": "unavailable", "reason": "editor_state_unavailable"}
             fields = {}
             for section, keys in (
@@ -143,7 +164,7 @@ async def selected_context(ctx, instance):
                     }
             return {
                 "status": "observed",
-                "instance": instance,
+                "instance": target.instance,
                 "generation": target.generation,
                 "editor_state": fields,
                 "readiness": "unobserved",
