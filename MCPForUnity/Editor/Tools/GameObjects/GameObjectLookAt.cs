@@ -44,9 +44,12 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     && lookAtToken.Type != JTokenType.Date
                 )
                     return new ErrorResponse("'look_at_target' must be a position [x,y,z] or a GameObject name/path/ID.");
-                // Preserve an explicit selector match, then resolve an independent GO reference.
-                GameObject lookAtGo = ManageGameObjectCommon.FindObjectInternal(lookAtToken, searchMethod)
-                    ?? ManageGameObjectCommon.FindObjectInternal(lookAtToken, "by_id_or_name_or_path");
+                // A numeric string explicitly selected by name retains its legacy name precedence.
+                GameObject lookAtGo =
+                    searchMethod == "by_name" && lookAtToken.Type == JTokenType.String && int.TryParse(lookAtToken.ToString(), out _)
+                        ? ManageGameObjectCommon.FindObjectInternal(lookAtToken, "by_name")
+                        : null;
+                lookAtGo = lookAtGo ?? ManageGameObjectCommon.FindObjectInternal(lookAtToken, "by_id_or_name_or_path");
                 if (lookAtGo == null)
                 {
                     return new ErrorResponse($"look_at_target '{lookAtToken}' could not be resolved as a position [x,y,z] or found as a GameObject.");

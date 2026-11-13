@@ -666,6 +666,29 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void LookAtSecondaryNameDoesNotInheritPrimaryTagSelector()
+        {
+            target.tag = "Player";
+            var named = Owned("NamedPlayer", targetScene);
+            named.name = "Player";
+            named.transform.position = target.transform.position + Vector3.right * 10;
+            var response = JObject.FromObject(
+                ManageGameObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "look_at",
+                        ["target"] = "Player",
+                        ["searchMethod"] = "by_tag",
+                        ["look_at_target"] = "Player",
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new float[] { 10, 0, 0 }, response["data"]["lookAtPosition"].ToObject<float[]>());
+            Assert.That(Vector3.Dot(target.transform.forward, Vector3.right), Is.GreaterThan(0.999f));
+        }
+
+        [Test]
         public void LookAtJsonLookingStringStillSelectsSceneName()
         {
             var named = Owned("JsonName", targetScene);
