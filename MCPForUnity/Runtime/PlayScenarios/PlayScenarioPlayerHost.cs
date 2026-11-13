@@ -29,6 +29,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         private readonly HashSet<string> scenes;
         private readonly bool sceneSemantics;
+        private readonly PlayScenarioLogPolicy logPolicy;
         private readonly PlayScenarioSceneOperation sceneOperation;
         private readonly PlayScenarioSceneScope sceneScope = new PlayScenarioSceneScope();
         private PlayScenarioQueryCounts counts;
@@ -40,11 +41,19 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private Type componentType;
         private Func<int> subscriptionCount;
 
-        public PlayScenarioPlayerHost(IEnumerable<string> scenePaths, Func<int> subscriptionCount = null, bool sceneSemantics = false)
+        public PlayScenarioPlayerHost(
+            IEnumerable<string> scenePaths,
+            Func<int> subscriptionCount = null,
+            bool sceneSemantics = false,
+            PlayScenarioLogPolicy logPolicy = null
+        )
         {
             scenes = new HashSet<string>(scenePaths, StringComparer.Ordinal);
             this.subscriptionCount = subscriptionCount;
             this.sceneSemantics = sceneSemantics;
+            this.logPolicy = new PlayScenarioLogPolicy { Mode = logPolicy?.Mode ?? "strict" };
+            if (logPolicy != null)
+                this.logPolicy.AllowedMessages.AddRange(logPolicy.AllowedMessages);
             sceneOperation = new PlayScenarioSceneOperation(sceneSemantics, (path, mode) => SceneManager.LoadSceneAsync(path, mode));
         }
 
@@ -223,7 +232,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             if (step.Action == "wait_object")
                 return new PlayScenarioObservation(true, detail);
             if (toolkit)
-                return UIToolkitScenarioInputAdapter.EvaluateForScenario(target, step.ElementName, step.ElementPath, step.ClickMode, null, ref counts);
+                return UIToolkitScenarioInputAdapter.EvaluateForScenario(target, step.ElementName, step.ElementPath, step.ClickMode, logPolicy, ref counts);
             if (step.ClickMode == "raycast")
             {
                 if (!(PlayScenarioPlayerInput.Backend is IUguiScenarioRaycastClickBackend raycast))

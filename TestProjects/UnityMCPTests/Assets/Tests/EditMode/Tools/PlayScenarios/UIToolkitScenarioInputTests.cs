@@ -251,6 +251,43 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.AreEqual(0, clicks);
         }
 
+        [TestCase("log_only", false, false)]
+        [TestCase("strict", true, false)]
+        [TestCase("strict", false, true)]
+        public void PlayerActivationUsesFrozenLogPolicy(string mode, bool allowMessage, bool fails)
+        {
+            const string message = "Button listener error";
+            var policy = new PlayScenarioLogPolicy { Mode = mode };
+            if (allowMessage)
+                policy.AllowedMessages.Add(message);
+            var player = new PlayScenarioPlayerHost(Array.Empty<string>(), logPolicy: policy);
+            // Mutating the caller's policy after construction must not change the active run.
+            policy.Mode = mode == "strict" ? "log_only" : "strict";
+            policy.AllowedMessages.Clear();
+            button.clicked += () => Debug.LogError(message);
+            var step = new PlayScenarioStep
+            {
+                Action = "click_ui",
+                Target = owner.name,
+                ClickMode = "direct",
+                UiBackend = "uitoolkit",
+                ElementName = "Activate",
+            };
+            try
+            {
+                LogAssert.Expect(LogType.Error, message);
+                if (fails)
+                    Assert.Throws<InvalidOperationException>(() => player.Evaluate(step, true));
+                else
+                    Assert.IsTrue(player.Evaluate(step, true).Ready);
+                Assert.AreEqual(1, clicks, "The listener must be activated exactly once even when it logs an error.");
+            }
+            finally
+            {
+                player.Release();
+            }
+        }
+
         [Test]
         public void EditorAndPlayerHostsUseTheToolkitAdapterWithoutAnUguiBackend()
         {

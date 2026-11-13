@@ -157,7 +157,12 @@ namespace MCPForUnity.Runtime.PlayScenarios
         {
             engine = new PlayScenarioEngine(
                 run,
-                new PlayScenarioPlayerHost(bundle.ScenePaths, () => subscribed ? 1 : 0, bundle.Definition.UsesExplicitSceneSemantics),
+                new PlayScenarioPlayerHost(
+                    bundle.ScenePaths,
+                    () => subscribed ? 1 : 0,
+                    bundle.Definition.UsesExplicitSceneSemantics,
+                    bundle.Definition.LogPolicy
+                ),
                 onEvaluationCompleted: Drain,
                 stepObserver: new PlayScenarioStepObserver(SaveCheckpoint)
             );
