@@ -126,6 +126,7 @@ namespace MCPForUnity.Editor.Services
         {
             retainUnavailableTarget = false;
             string stage = "detection";
+            bool requiresStdio;
             try
             {
                 if (!configurator.SupportsAutoConfigure)
@@ -142,7 +143,7 @@ namespace MCPForUnity.Editor.Services
                 stage = "status";
                 configurator.CheckStatus(attemptAutoRewrite: false);
                 stage = "configure";
-                ConfigureWithTransportCoercion(configurator);
+                requiresStdio = ConfigureWithTransportCoercion(configurator);
                 stage = "validation";
                 var status = configurator.Status;
                 if (!IsConfigurationComplete(status))
@@ -162,7 +163,11 @@ namespace MCPForUnity.Editor.Services
             }
             // Presentation metadata cannot turn a completed configuration into a failed retry target.
             summary.SuccessCount++;
-            summary.Messages.Add($"✓ {SafeDisplay(configurator)}: Configured successfully");
+            summary.Messages.Add(
+                requiresStdio
+                    ? $"✓ {SafeDisplay(configurator)}: Configured for stdio. Select this client and choose “Switch to stdio and connect” to use its bridge."
+                    : $"✓ {SafeDisplay(configurator)}: Configured successfully"
+            );
             return null;
         }
 
@@ -241,19 +246,31 @@ namespace MCPForUnity.Editor.Services
             return currentAttempt;
         }
 
-        private void ConfigureWithTransportCoercion(IMcpClientConfigurator configurator)
+        private bool ConfigureWithTransportCoercion(IMcpClientConfigurator configurator)
         {
             bool originalHttp = getUseHttpTransport();
+            bool requiresStdio = originalHttp && RequiresStdioBridge(configurator.SupportedTransports);
+            if (requiresStdio && configurator is JsonFileMcpConfigurator json && !json.Client.SupportsHttpTransport)
+            {
+                // The JSON writer already selects stdio from the descriptor. Changing the Editor
+                // preference, even temporarily, explicitly retires the user's live HTTP bridge.
+                configurator.Configure();
+                return true;
+            }
             try
             {
                 CoerceTransportFor(configurator);
                 configurator.Configure();
+                return requiresStdio;
             }
             finally
             {
                 setUseHttpTransport(originalHttp);
             }
         }
+
+        internal static bool RequiresStdioBridge(IReadOnlyList<ConfiguredTransport> supported) =>
+            supported != null && supported.Contains(ConfiguredTransport.Stdio) && !SupportsRequested(supported, ConfiguredTransport.Http);
 
         public bool CheckClientStatus(IMcpClientConfigurator configurator, bool attemptAutoRewrite = true)
         {

@@ -32,6 +32,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private EnumField transportDropdown;
         private VisualElement transportMismatchWarning;
         private Label transportMismatchText;
+        private Button switchStdioBridgeButton;
         private VisualElement versionMismatchWarning;
         private Label versionMismatchText;
         private VisualElement httpUrlRow;
@@ -116,6 +117,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             transportDropdown = Root.Q<EnumField>("transport-dropdown");
             transportMismatchWarning = Root.Q<VisualElement>("transport-mismatch-warning");
             transportMismatchText = Root.Q<Label>("transport-mismatch-text");
+            switchStdioBridgeButton = Root.Q<Button>("switch-stdio-bridge");
             versionMismatchWarning = Root.Q<VisualElement>("version-mismatch-warning");
             versionMismatchText = Root.Q<Label>("version-mismatch-text");
             httpUrlRow = Root.Q<VisualElement>("http-url-row");
@@ -217,6 +219,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private void RegisterCallbacks()
         {
+            if (switchStdioBridgeButton != null)
+                switchStdioBridgeButton.clicked += SwitchToStdioAndConnect;
             if (diagnosticsButton != null)
                 diagnosticsButton.clicked += () => OnDiagnosticsRequested?.Invoke();
 
@@ -409,6 +413,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             }
 
             SetConnectionBlocker(null, null);
+            switchStdioBridgeButton?.SetEnabled(!connectionToggleInProgress);
             if (isRunning)
             {
                 // Show instance name (project folder name) for better identification in multi-instance scenarios.
@@ -1442,22 +1447,27 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         /// <param name="clientTransport">The transport the client is configured to use.</param>
         public void UpdateTransportMismatchWarning(string clientName, ConfiguredTransport clientTransport)
         {
+            ShowTransportMismatch(clientName, clientTransport, false, ClaudeCliMcpConfigurator.HasClientProjectDirOverride);
+        }
+
+        internal void UpdateSelectedClientTransportWarning(IMcpClientConfigurator client, ConfiguredTransport clientTransport)
+        {
+            ShowTransportMismatch(
+                client.DisplayName,
+                clientTransport,
+                ClientConfigurationService.RequiresStdioBridge(client.SupportedTransports),
+                client is ClaudeCliMcpConfigurator && ClaudeCliMcpConfigurator.HasClientProjectDirOverride
+            );
+        }
+
+        private void ShowTransportMismatch(string clientName, ConfiguredTransport clientTransport, bool stdioOnly, bool usesOtherProject)
+        {
             if (transportMismatchWarning == null || transportMismatchText == null)
                 return;
 
-            // If client transport is unknown, hide the warning (we can't determine mismatch)
-            if (clientTransport == ConfiguredTransport.Unknown)
+            ClearTransportMismatchWarning();
+            if (clientTransport == ConfiguredTransport.Unknown || usesOtherProject)
             {
-                transportMismatchWarning.RemoveFromClassList("visible");
-                return;
-            }
-
-            // When a project dir override is active the registered transport belongs
-            // to a different project and may legitimately differ from the local server
-            // transport, so skip the mismatch check.
-            if (ClaudeCliMcpConfigurator.HasClientProjectDirOverride)
-            {
-                transportMismatchWarning.RemoveFromClassList("visible");
                 return;
             }
 
@@ -1472,15 +1482,23 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 string clientTransportName = TransportDisplayName(clientTransport);
                 string serverTransportName = TransportDisplayName(serverTransport);
 
-                transportMismatchText.text =
-                    $"⚠ {clientName} is configured for \"{clientTransportName}\" but server is set to \"{serverTransportName}\". "
-                    + "Click \"Configure\" in Client Configuration to update.";
+                bool switchToStdio = stdioOnly && clientTransport == ConfiguredTransport.Stdio;
+                switchStdioBridgeButton?.EnableInClassList("hidden", !switchToStdio);
+                transportMismatchText.text = switchToStdio
+                    ? $"{clientName} requires the stdio bridge. Switching ends the current {serverTransportName} session."
+                    : $"⚠ {clientName} is configured for \"{clientTransportName}\" but server is set to \"{serverTransportName}\". "
+                        + "Click \"Configure\" in Client Configuration to update.";
                 transportMismatchWarning.AddToClassList("visible");
             }
-            else
-            {
-                transportMismatchWarning.RemoveFromClassList("visible");
-            }
+        }
+
+        private void SwitchToStdioAndConnect()
+        {
+            if (connectionToggleInProgress || !EditorConfigurationCache.Instance.UseHttpTransport || switchStdioBridgeButton.ClassListContains("hidden"))
+                return;
+            transportDropdown.value = TransportProtocol.Stdio;
+            if (!EditorConfigurationCache.Instance.UseHttpTransport && !MCPServiceLocator.Bridge.IsRunning)
+                OnConnectionToggleClicked();
         }
 
         /// <summary>
@@ -1489,6 +1507,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         public void ClearTransportMismatchWarning()
         {
             transportMismatchWarning?.RemoveFromClassList("visible");
+            switchStdioBridgeButton?.AddToClassList("hidden");
         }
 
         /// <summary>

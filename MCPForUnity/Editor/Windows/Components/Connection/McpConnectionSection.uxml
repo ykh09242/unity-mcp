@@ -21,6 +21,7 @@
             </ui:VisualElement>
             <ui:VisualElement name="transport-mismatch-warning" class="warning-banner">
                 <ui:Label name="transport-mismatch-text" class="warning-banner-text" />
+                <ui:Button name="switch-stdio-bridge" text="Switch to stdio and connect" class="action-button hidden" />
             </ui:VisualElement>
             <ui:VisualElement name="version-mismatch-warning" class="warning-banner">
                 <ui:Label name="version-mismatch-text" class="warning-banner-text" />

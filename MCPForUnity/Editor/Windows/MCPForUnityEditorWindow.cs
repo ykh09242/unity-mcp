@@ -303,13 +303,14 @@ namespace MCPForUnity.Editor.Windows
 
                 // Wire up transport mismatch detection: when client status is checked,
                 // update the connection section's warning banner if there's a mismatch
-                clientConfigSection.OnClientTransportDetected += (clientName, transport) =>
-                    connectionSection?.UpdateTransportMismatchWarning(clientName, transport);
+                clientConfigSection.OnSelectedClientTransportDetected += (client, transport) =>
+                    connectionSection?.UpdateSelectedClientTransportWarning(client, transport);
 
                 // Wire up version mismatch detection: when client status is checked,
                 // update the connection section's warning banner if there's a version mismatch
                 clientConfigSection.OnClientConfigMismatch += (clientName, mismatchMessage) =>
                     connectionSection?.UpdateVersionMismatchWarning(clientName, mismatchMessage);
+                clientConfigSection.RefreshSelectedClient();
             }
 
             // Build Dependencies section (replaces old Roslyn + Validation in Deps tab)

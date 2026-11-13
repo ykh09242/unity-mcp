@@ -5,8 +5,10 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Windows.Components.Connection;
@@ -501,6 +503,86 @@ namespace MCPForUnityTests.Editor.Windows
                 }
             }
             Assert.AreEqual(1, bridge.StopCalls);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void StdioOnlyConfiguration_PreservesHttpUntilExplicitBridgeSwitch(bool bulk)
+        {
+            var section = CreateSection();
+            UseHttp("local");
+            var protocol = typeof(McpConnectionSection).GetNestedType("TransportProtocol", BindingFlags.NonPublic);
+            var dropdown = Get<EnumField>(section, "transportDropdown");
+            dropdown.SetValueWithoutNotify((Enum)Enum.Parse(protocol, "HTTPLocal"));
+            var http = new RetiringHttpClient();
+            var stdio = new RetiringHttpClient();
+            http.StopGate.SetResult(true);
+            stdio.StopGate.SetResult(true);
+            var manager = MCPServiceLocator.TransportManager;
+            manager.Configure(() => http, () => stdio);
+            MCPServiceLocator.Register<IBridgeControlService>(new BridgeControlService());
+            Assert.IsTrue(manager.StartAsync(TransportMode.Http).Result);
+            var client = new MemoryClaudeDesktop();
+            var service = new ClientConfigurationService(
+                new[] { client },
+                () => EditorConfigurationCache.Instance.UseHttpTransport,
+                value => EditorConfigurationCache.Instance.SetUseHttpTransport(value),
+                () => { },
+                _ => { }
+            );
+            if (bulk)
+            {
+                var summary = service.ConfigureAllDetectedClients();
+                Assert.AreEqual(1, summary.SuccessCount);
+                StringAssert.Contains("Switch to stdio and connect", summary.Messages[0]);
+            }
+            else
+                service.ConfigureClient(client);
+            Assert.IsTrue(manager.IsRunning(TransportMode.Http));
+            Assert.AreEqual(0, http.StopCalls);
+            Assert.AreEqual(0, stdio.StartCalls);
+
+            var banner = new VisualElement();
+            var switchButton = new Button();
+            Set(section, "transportMismatchWarning", banner);
+            Set(section, "transportMismatchText", new Label());
+            Set(section, "switchStdioBridgeButton", switchButton);
+            section.UpdateSelectedClientTransportWarning(client, client.ConfiguredTransport);
+            Assert.IsTrue(banner.ClassListContains("visible"));
+            Assert.IsFalse(switchButton.ClassListContains("hidden"));
+            Assert.IsTrue(EditorConfigurationCache.Instance.UseHttpTransport);
+            var window = ScriptableObject.CreateInstance<InputWindow>();
+            try
+            {
+                window.ShowUtility();
+                window.rootVisualElement.Add(dropdown);
+                Invoke(section, "SwitchToStdioAndConnect");
+                Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
+                Assert.IsFalse(EditorConfigurationCache.Instance.UseHttpTransport);
+                Assert.IsTrue(manager.IsRunning(TransportMode.Stdio));
+                Assert.AreEqual(1, stdio.StartCalls);
+            }
+            finally
+            {
+                dropdown.RemoveFromHierarchy();
+                window.Close();
+            }
+        }
+
+        private sealed class MemoryClaudeDesktop : ClaudeDesktopConfigurator
+        {
+            public override bool IsInstalled => true;
+
+            public override McpStatus CheckStatus(bool attemptAutoRewrite = true) => Status;
+
+            public override void Configure()
+            {
+                // Drive the same descriptor-aware JSON builder as the on-disk writer without touching client settings.
+                string json = ConfigJsonBuilder.BuildManualConfigJson("uvx", Client);
+                StringAssert.Contains("\"command\"", json);
+                client.configuredTransport = ConfiguredTransport.Stdio;
+                client.SetStatus(McpStatus.Configured);
+            }
         }
 
         [TestCase("local", "HTTPLocal")]

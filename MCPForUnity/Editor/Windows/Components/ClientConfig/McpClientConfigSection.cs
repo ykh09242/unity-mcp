@@ -217,6 +217,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         /// The parameter contains the client name and its configured transport.
         /// </summary>
         public event Action<string, ConfiguredTransport> OnClientTransportDetected;
+        internal event Action<IMcpClientConfigurator, ConfiguredTransport> OnSelectedClientTransportDetected;
 
         /// <summary>
         /// Fired when a config mismatch is detected (e.g., version mismatch).
@@ -1271,6 +1272,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
             if (showChecking)
             {
+                OnSelectedClientTransportDetected?.Invoke(client, ConfiguredTransport.Unknown);
                 clientStatusLabel.text = customMessage ?? "Checking...";
                 clientStatusLabel.style.color = StyleKeyword.Null;
                 clientStatusIndicator.AddToClassList("warning");
@@ -1282,7 +1284,10 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             // Skip when a project dir override is active — the registered transport
             // in the overridden project may legitimately differ from the local server.
             bool hasTransportMismatch = false;
-            if (client.ConfiguredTransport != ConfiguredTransport.Unknown && !ClaudeCliMcpConfigurator.HasClientProjectDirOverride)
+            if (
+                client.ConfiguredTransport != ConfiguredTransport.Unknown
+                && !(client is ClaudeCliMcpConfigurator && ClaudeCliMcpConfigurator.HasClientProjectDirOverride)
+            )
             {
                 ConfiguredTransport serverTransport = HttpEndpointUtility.GetCurrentServerTransport();
                 hasTransportMismatch = client.ConfiguredTransport != serverTransport;
@@ -1324,6 +1329,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
             // Notify listeners about the client's configured transport
             OnClientTransportDetected?.Invoke(client.DisplayName, client.ConfiguredTransport);
+            OnSelectedClientTransportDetected?.Invoke(client, client.ConfiguredTransport);
 
             // Notify listeners about version mismatch if applicable
             if (client.Status == McpStatus.VersionMismatch && client is McpClientConfiguratorBase baseConfigurator)
