@@ -1,9 +1,14 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
+using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -36,6 +41,82 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         #region Basic Delete Tests
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Delete_SecondNativeFailure_ReportsActualIdsAndClosesUndoGroup(bool throws)
+        {
+            string name = "DeletePartial_" + Guid.NewGuid().ToString("N");
+            var first = CreateTestObject(name);
+            var second = CreateTestObject(name);
+            var third = CreateTestObject(name);
+            var ids = new[] { first, second, third }.Select(go => go.GetInstanceIDCompat()).ToArray();
+            Type handler = typeof(ManageGameObject).Assembly.GetType("MCPForUnity.Editor.Tools.GameObjects.GameObjectDelete");
+            FieldInfo hook = handler.GetField("DestroyForTests", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(hook);
+            int calls = 0;
+            int appliedId = 0;
+            int failedId = 0;
+            int before = Undo.GetCurrentGroup();
+            hook.SetValue(
+                null,
+                (Action<GameObject>)(
+                    go =>
+                    {
+                        if (++calls == 2)
+                        {
+                            failedId = go.GetInstanceIDCompat();
+                            if (throws)
+                                throw new InvalidOperationException("Injected delete failure");
+                            return;
+                        }
+                        appliedId = go.GetInstanceIDCompat();
+                        Undo.DestroyObjectImmediate(go);
+                    }
+                )
+            );
+            try
+            {
+                var request = new JObject
+                {
+                    ["action"] = "delete",
+                    ["target"] = name,
+                    ["searchMethod"] = "by_name",
+                };
+                JObject response = JObject.FromObject(ManageGameObject.HandleCommand(request));
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                CollectionAssert.AreEqual(new[] { appliedId }, response.SelectToken("data.applied").Values<int>());
+                CollectionAssert.AreEqual(new[] { failedId }, response.SelectToken("data.failed").Values<int>());
+                CollectionAssert.AreEquivalent(ids.Except(new[] { appliedId, failedId }), response.SelectToken("data.skipped").Values<int>());
+                Assert.IsNull(UnityObjectIdCompat.InstanceIDToObjectCompat(appliedId));
+                Assert.IsNotNull(UnityObjectIdCompat.InstanceIDToObjectCompat(failedId));
+                Assert.Greater(Undo.GetCurrentGroup(), before + 1);
+
+                var next = CreateTestObject("DeletePartialNext");
+                Undo.RegisterCreatedObjectUndo(next, "Independent next operation");
+                Undo.PerformUndo();
+                Assert.IsTrue(next == null);
+                Assert.IsNull(UnityObjectIdCompat.InstanceIDToObjectCompat(appliedId), "The next Undo must not also undo deletion.");
+                Undo.PerformUndo();
+                foreach (int id in ids)
+                {
+                    var restored = UnityObjectIdCompat.InstanceIDToObjectCompat(id) as GameObject;
+                    Assert.IsNotNull(restored, "One Undo must restore the partial deletion.");
+                    if (!testObjects.Contains(restored))
+                        testObjects.Add(restored);
+                }
+            }
+            finally
+            {
+                hook.SetValue(null, null);
+                foreach (int id in ids)
+                {
+                    var survivor = UnityObjectIdCompat.InstanceIDToObjectCompat(id) as GameObject;
+                    if (survivor != null && !testObjects.Contains(survivor))
+                        testObjects.Add(survivor);
+                }
+            }
+        }
 
         [Test]
         public void Delete_ByName_DeletesObject()
