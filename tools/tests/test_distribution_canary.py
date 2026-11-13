@@ -131,3 +131,58 @@ def test_canary_rejects_another_checkout_before_install_or_evidence(history, tmp
     assert "exact requested SHA" in result.stderr
     assert not (tmp_path / "output").exists()
     assert not (repo / ".tmp/distribution-canary/source.json").exists()
+
+
+@pytest.mark.parametrize(
+    "reusable,event,ref,licensed,expected",
+    [
+        (False, "push", "refs/heads/beta", "false", True),
+        (False, "push", "refs/heads/beta", "", True),
+        (False, "push", "refs/heads/beta", "true", False),
+        (True, "push", "refs/heads/beta", "true", True),
+        (True, "push", "refs/heads/beta", "false", True),
+        (True, "workflow_dispatch", "refs/heads/beta", "true", True),
+        (False, "pull_request", "refs/pull/1/merge", "true", True),
+        (False, "workflow_dispatch", "refs/heads/beta", "true", True),
+        (False, "schedule", "refs/heads/beta", "true", True),
+        (False, "push", "refs/heads/other", "true", True),
+    ],
+)
+def test_canary_deduplicates_only_direct_licensed_beta_pushes(
+    reusable, event, ref, licensed, expected
+):
+    from tests.test_ci_trigger_policy import workflow
+
+    config = workflow("distribution-canary.yml")
+    triggers = config.get("on", config.get(True))
+    marker = triggers["workflow_call"]["inputs"]["qualification_run"]
+    assert marker["type"] == "boolean" and marker["default"] is False
+    expression = config["jobs"]["canary"]["if"]
+    for key, value in {
+        "inputs.qualification_run": reusable,
+        "github.event_name": event,
+        "github.ref": ref,
+        "vars.UNITY_RUN_LICENSED_TESTS": licensed,
+    }.items():
+        expression = expression.replace(key, repr(value))
+    assert eval(expression.replace("||", " or "), {"__builtins__": {}}, {}) is expected
+    for event_name in ("pull_request", "workflow_dispatch", "schedule", "push"):
+        assert event_name in triggers
+    qualification = workflow("release-qualification.yml")["jobs"]["distribution"]
+    assert qualification["with"]["qualification_run"] is True
+    assert qualification["with"]["ref"] == "${{ github.sha }}"
+    assert qualification["uses"] == "./.github/workflows/distribution-canary.yml"
+    assert "vars.UNITY_RUN_LICENSED_TESTS == 'true'" in qualification["if"]
+    assert "github.event_name == 'workflow_dispatch'" in qualification["if"]
+
+
+def test_direct_canary_push_inputs_are_covered_by_qualification():
+    from tests.test_ci_trigger_policy import selected, workflow
+
+    config = workflow("distribution-canary.yml")
+    for path in config.get("on", config.get(True))["push"]["paths"]:
+        assert selected("release-qualification.yml", "push", "beta", path), path
+    for job in config["jobs"].values():
+        assert not job.get("continue-on-error")
+        assert not job["strategy"]["fail-fast"]
+        assert all(not step.get("continue-on-error") for step in job["steps"])

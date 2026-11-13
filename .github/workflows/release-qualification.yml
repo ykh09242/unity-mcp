@@ -113,6 +113,7 @@ jobs:
     uses: ./.github/workflows/distribution-canary.yml
     with:
       ref: ${{ github.sha }}
+      qualification_run: true
 
   player:
     # Wait for the Linux license owners and protected Windows VFX owner to settle.

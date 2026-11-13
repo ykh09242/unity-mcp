@@ -6,6 +6,10 @@ on:
       ref:
         type: string
         default: ""
+      qualification_run:
+        description: Run as the release qualification evidence owner, including on caller push events
+        type: boolean
+        default: false
   pull_request:
     branches: [main, beta]
     paths: &source-inputs
@@ -30,6 +34,9 @@ permissions:
 
 jobs:
   canary:
+    # Reusable workflows retain the caller event. Qualification explicitly owns
+    # licensed beta pushes; direct license-free, PR, manual and scheduled runs stay available.
+    if: inputs.qualification_run || github.event_name != 'push' || github.ref != 'refs/heads/beta' || vars.UNITY_RUN_LICENSED_TESTS != 'true'
     name: Pinned launcher archive (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
