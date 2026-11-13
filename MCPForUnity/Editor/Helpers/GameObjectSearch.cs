@@ -20,7 +20,7 @@ using SearchSceneHandle = System.Int32;
 namespace MCPForUnity.Editor.Helpers
 {
     /// <summary>
-    /// Opt-in, bounded scene search. Cursors retain only scalar observations and a traversal spine.
+    /// Opt-in, bounded scene search. Cursors share immutable root identities and retain a scalar traversal spine.
     /// Exact concatenation requires an unchanged source; Editor events are not a mutation lock.
     /// </summary>
     internal static class GameObjectSearch
@@ -33,9 +33,11 @@ namespace MCPForUnity.Editor.Helpers
         private const double Lifetime = 300;
         private static readonly Dictionary<string, State> States = new Dictionary<string, State>();
         private static int _epoch;
+        private static double _nextExpiry = double.PositiveInfinity;
 
         // Native tests observe real operations; these never replace traversal or Unity calls.
         private static Action BeforeRootEnumerationForTests = null;
+        private static Action RootSortedForTests = null;
         private static Action<int> TraversalStepForTests = null;
 
         static GameObjectSearch()
@@ -43,7 +45,7 @@ namespace MCPForUnity.Editor.Helpers
             EditorApplication.hierarchyChanged += Changed;
             ObjectChangeEvents.changesPublished += ObjectsChanged;
             EditorApplication.playModeStateChanged += _ => Changed();
-            AssemblyReloadEvents.beforeAssemblyReload += () => States.Clear();
+            AssemblyReloadEvents.beforeAssemblyReload += Changed;
         }
 
         private static void Changed()
@@ -52,6 +54,8 @@ namespace MCPForUnity.Editor.Helpers
             {
                 _epoch++;
             }
+            States.Clear();
+            StopExpiryTimer();
         }
 
         private static void ObjectsChanged(ref ObjectChangeEventStream stream) => Changed();
@@ -113,7 +117,7 @@ namespace MCPForUnity.Editor.Helpers
             internal int Epoch;
             internal int SceneIndex;
             internal int RootIndex;
-            internal ulong? RootIdentity;
+            internal RootOrder Roots;
             internal int[] Path = Array.Empty<int>();
             internal Observation[] Observations = Array.Empty<Observation>();
             internal long Matched;
@@ -128,13 +132,89 @@ namespace MCPForUnity.Editor.Helpers
                     Epoch = Epoch,
                     SceneIndex = SceneIndex,
                     RootIndex = RootIndex,
-                    RootIdentity = RootIdentity,
+                    Roots = Roots,
                     Path = (int[])Path.Clone(),
                     Observations = (Observation[])Observations.Clone(),
                     Matched = Matched,
                     DepthLimited = DepthLimited,
                     Expires = Expires,
                 };
+        }
+
+        private sealed class RootOrder
+        {
+            // No Unity objects survive the page. All descendants and replays of this cursor share these arrays.
+            private readonly ulong[] nativeIds;
+            private readonly int[] sortedIndices;
+
+            private RootOrder(ulong[] nativeIds, int[] sortedIndices)
+            {
+                this.nativeIds = nativeIds;
+                this.sortedIndices = sortedIndices;
+            }
+
+            internal Transform At(List<GameObject> roots, int rank) => roots[sortedIndices[rank]].transform;
+
+            internal static RootOrder Prepare(List<GameObject> roots, RootOrder previous, CancellationToken token)
+            {
+                if (previous != null && previous.nativeIds.Length != roots.Count)
+                    throw Stale();
+                ulong[] ids = previous == null ? new ulong[roots.Count] : null;
+                for (int i = 0; i < roots.Count; i++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    GameObject root = roots[i];
+                    if (root == null || EditorUtility.IsPersistent(root))
+                        throw Stale();
+#if UNITY_6000_5_OR_NEWER
+                    ulong id = EntityId.ToULong(root.GetEntityId());
+#else
+                    ulong id = unchecked((uint)root.GetInstanceIDCompat());
+#endif
+                    if (ids == null && id != previous.nativeIds[i])
+                    {
+                        ids = new ulong[roots.Count];
+                        Array.Copy(previous.nativeIds, ids, i);
+                    }
+                    if (ids != null)
+                        ids[i] = id;
+                }
+                if (ids == null)
+                    return previous;
+
+                var indices = new int[roots.Count];
+                if (previous == null)
+                {
+                    for (int i = 0; i < indices.Length; i++)
+                        indices[i] = i;
+                    token.ThrowIfCancellationRequested();
+                    Array.Sort(indices, (left, right) =>
+                    {
+                        int order = unchecked((int)ids[left]).CompareTo(unchecked((int)ids[right]));
+                        return order != 0 ? order : ids[left].CompareTo(ids[right]);
+                    });
+                    RootSortedForTests?.Invoke();
+                }
+                else
+                {
+                    // Unity can enumerate the same roots in a different sibling order. Remap the old
+                    // ranks and reject an actual membership change, even before an Editor notification.
+                    var positions = new Dictionary<ulong, int>(roots.Count);
+                    for (int i = 0; i < ids.Length; i++)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        positions.Add(ids[i], i);
+                    }
+                    for (int i = 0; i < indices.Length; i++)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (!positions.TryGetValue(previous.nativeIds[previous.sortedIndices[i]], out indices[i]))
+                            throw Stale();
+                    }
+                }
+                token.ThrowIfCancellationRequested();
+                return new RootOrder(ids, indices);
+            }
         }
 
         private sealed class Budget
@@ -187,28 +267,11 @@ namespace MCPForUnity.Editor.Helpers
                     enumerations++;
                     if (roots.Count != count || roots.Count > RootLimit)
                         throw Stale();
-                    var ordered = new List<KeyValuePair<int, GameObject>>(count);
-                    foreach (GameObject root in roots)
+                    state.Roots = RootOrder.Prepare(roots, state.Roots, token);
+                    prepared = roots.Count;
+                    if (state.RootIndex < roots.Count)
                     {
-                        token.ThrowIfCancellationRequested();
-                        if (root == null || EditorUtility.IsPersistent(root))
-                            throw Stale();
-                        ordered.Add(new KeyValuePair<int, GameObject>(root.GetInstanceIDCompat(), root));
-                        prepared++;
-                    }
-                    ordered.Sort((left, right) => left.Key.CompareTo(right.Key));
-                    ulong identity = 14695981039346656037UL;
-                    foreach (var root in ordered)
-                        unchecked
-                        {
-                            identity = (identity ^ (uint)root.Key) * 1099511628211UL;
-                        }
-                    if (state.RootIdentity.HasValue && state.RootIdentity.Value != identity)
-                        throw Stale();
-                    state.RootIdentity = identity;
-                    if (state.RootIndex < ordered.Count)
-                    {
-                        spine.Add(ordered[state.RootIndex].Value.transform);
+                        spine.Add(state.Roots.At(roots, state.RootIndex));
                         foreach (int child in path)
                         {
                             budget.Spend();
@@ -259,7 +322,7 @@ namespace MCPForUnity.Editor.Helpers
                             ids.Add(go.GetInstanceIDCompat());
                             state.Matched++;
                         }
-                        Advance(state, spine, path, ordered, query.Depth, eligible, budget);
+                        Advance(state, spine, path, roots, query.Depth, eligible, budget);
                     }
                     if (spine.Count != 0)
                     {
@@ -270,7 +333,7 @@ namespace MCPForUnity.Editor.Helpers
                     {
                         state.SceneIndex++;
                         state.RootIndex = 0;
-                        state.RootIdentity = null;
+                        state.Roots = null;
                         state.Path = Array.Empty<int>();
                         state.Observations = Array.Empty<Observation>();
                         if (state.SceneIndex < scenes.Length)
@@ -325,15 +388,7 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
-        private static void Advance(
-            State state,
-            List<Transform> spine,
-            List<int> path,
-            List<KeyValuePair<int, GameObject>> roots,
-            int depth,
-            bool eligible,
-            Budget budget
-        )
+        private static void Advance(State state, List<Transform> spine, List<int> path, List<GameObject> roots, int depth, bool eligible, Budget budget)
         {
             budget.Spend();
             Transform current = spine[spine.Count - 1];
@@ -367,7 +422,7 @@ namespace MCPForUnity.Editor.Helpers
             spine.Clear();
             state.RootIndex++;
             if (state.RootIndex < roots.Count)
-                spine.Add(roots[state.RootIndex].Value.transform);
+                spine.Add(state.Roots.At(roots, state.RootIndex));
         }
 
         private static Observation[] Observe(List<Transform> spine, List<int> path, Budget budget)
@@ -685,6 +740,7 @@ namespace MCPForUnity.Editor.Helpers
                 };
             if (
                 !States.TryGetValue(query.Cursor, out State state)
+                || state.Expires <= EditorApplication.timeSinceStartup
                 || state.Signature != query.Signature
                 || state.Epoch != _epoch
                 || !SameScenes(state.Scenes, scenes)
@@ -700,6 +756,11 @@ namespace MCPForUnity.Editor.Helpers
                 States.Remove(States.OrderBy(item => item.Value.Expires).First().Key);
             string key = Guid.NewGuid().ToString("N");
             state.Expires = EditorApplication.timeSinceStartup + Lifetime;
+            if (States.Count == 0)
+            {
+                _nextExpiry = state.Expires;
+                EditorApplication.update += Prune;
+            }
             States.Add(key, state);
             return key;
         }
@@ -707,8 +768,21 @@ namespace MCPForUnity.Editor.Helpers
         private static void Prune()
         {
             double now = EditorApplication.timeSinceStartup;
+            if (now < _nextExpiry)
+                return;
             foreach (string key in States.Where(item => item.Value.Expires <= now).Select(item => item.Key).ToArray())
                 States.Remove(key);
+            if (States.Count == 0)
+                StopExpiryTimer();
+            else
+                _nextExpiry = States.Values.Min(state => state.Expires);
+        }
+
+        private static void StopExpiryTimer()
+        {
+            if (_nextExpiry != double.PositiveInfinity)
+                EditorApplication.update -= Prune;
+            _nextExpiry = double.PositiveInfinity;
         }
 
         private static JToken Alias(JObject parameters, string snake, string camel)

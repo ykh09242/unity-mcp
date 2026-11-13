@@ -70,7 +70,7 @@ def _scoped_options(search_term, search_method, conditions, page_size, cursor, m
         "Scoped pages use opaque cursors and require identical options and unchanged scenes. "
         "Empty continuation pages are valid: hasMore means remaining scan work, not more matches. "
         "totalCount is unknown until complete and then exact only through max_depth (default64, max128). "
-        "Limits: 32 scene entries, 4096 roots/scene, one root enumeration/page, 4096 managed traversal "
+        "Limits: 256 scene entries, 250000 roots/scene, one root enumeration/page, 4096 managed traversal "
         "steps/page, 500 IDs and 16384 output bytes. Root preparation is accounted separately; "
         "native Unity calls are synchronous and not time-bounded. Restart after edits, expiry or reload. "
         "Use mcpforunity://scene/gameobject/{id} for details or gameobject_edit for edits."

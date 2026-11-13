@@ -241,6 +241,84 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void StableOneItemPagesReuseTheRootSort()
+        {
+            const int rootCount = 512;
+            const int pages = 100;
+            const string name = "StableRoots";
+            int[] expected = Enumerable.Range(0, rootCount).Select(_ => Create(name, _firstScene).GetInstanceIDCompat()).OrderBy(id => id).ToArray();
+            var query = Query("active", "by_name", name);
+            query["page_size"] = 1;
+            var observer = SearchHelper.GetField("RootSortedForTests", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            object previous = observer.GetValue(null);
+            int sorts = 0;
+            long resumedAllocations = 0;
+            long resumedTicks = 0;
+            try
+            {
+                observer.SetValue(null, new Action(() => sorts++));
+                object result = null;
+                long elapsed = 0;
+                Action measurePage = () =>
+                {
+                    long start = System.Diagnostics.Stopwatch.GetTimestamp();
+                    result = FindGameObjects.HandleCommand(query);
+                    elapsed = System.Diagnostics.Stopwatch.GetTimestamp() - start;
+                };
+                for (int index = 0; index < pages; index++)
+                {
+                    int allocations = ManagedAllocation.Count(measurePage);
+                    JObject response = JObject.FromObject(result);
+                    Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                    JToken page = response["data"];
+                    CollectionAssert.AreEqual(new[] { expected[index] }, page["instanceIDs"].Values<int>());
+                    Assert.AreEqual(1, page.Value<int>("rootEnumerationCalls"));
+                    Assert.AreEqual(rootCount, page.Value<int>("rootPreparationCount"));
+                    Assert.AreEqual(1, sorts, "A stable continuation must reuse the initial root sort.");
+                    if (index == 0)
+                        TestContext.WriteLine($"First page: {allocations} allocation events, {elapsed} stopwatch ticks.");
+                    else
+                    {
+                        resumedAllocations += allocations;
+                        resumedTicks += elapsed;
+                    }
+                    query["cursor"] = page["nextCursor"];
+                }
+                JObject next = Search(query);
+                JObject replay = Search(query);
+                CollectionAssert.AreEqual(new[] { expected[pages] }, next["instanceIDs"].Values<int>());
+                Assert.IsTrue(JToken.DeepEquals(next["instanceIDs"], replay["instanceIDs"]));
+                Assert.AreEqual(1, sorts);
+                TestContext.WriteLine(
+                    $"{pages - 1} continuation pages, {rootCount} roots: {resumedAllocations} allocation events, "
+                        + $"{resumedTicks} stopwatch ticks ({System.Diagnostics.Stopwatch.Frequency} ticks/second)."
+                );
+            }
+            finally
+            {
+                observer.SetValue(null, previous);
+            }
+        }
+
+        [Test]
+        public void SameCountRootReplacementInvalidatesUnvisitedMembershipImmediately()
+        {
+            GameObject[] roots = Enumerable.Range(0, 8).Select(_ => Create("Replace", _firstScene)).OrderBy(go => go.GetInstanceIDCompat()).ToArray();
+            var query = Query("active", "by_name", "Replace");
+            query["page_size"] = 1;
+            query["cursor"] = Search(query)["nextCursor"];
+            GameObject last = roots[roots.Length - 1];
+            last.transform.SetSiblingIndex(last.transform.GetSiblingIndex() == 0 ? roots.Length - 1 : 0);
+            CollectionAssert.AreEqual(new[] { roots[1].GetInstanceIDCompat() }, Search(query)["instanceIDs"].Values<int>());
+
+            // Replace a root past the frontier and retry synchronously, before a delayed hierarchyChanged callback.
+            UnityEngine.Object.DestroyImmediate(last);
+            Create("Replace", _firstScene);
+            Assert.AreEqual(roots.Length, _firstScene.rootCount);
+            AssertStale(query);
+        }
+
+        [Test]
         public void DeepTraversalResumesAndReportsDeclaredDepthExclusion()
         {
             GameObject root = Create("Deep", _firstScene);

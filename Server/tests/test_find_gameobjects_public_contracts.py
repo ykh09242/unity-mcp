@@ -50,6 +50,8 @@ def test_registered_scoped_gameobject_search_contract(mode, tmp_path):
             async with Client(server, mode=MODE) as client:
                 listed = await client.list_tools()
                 entry = next(item for item in listed if item.name == "find_gameobjects")
+                assert "256 scene entries, 250000 roots/scene" in entry.description
+                assert "4096 managed traversal steps/page" in entry.description
                 schema = entry.input_schema
                 assert {"scene_scope", "conditions", "max_depth", "cursor"} <= schema["properties"].keys()
                 assert "search_term" not in schema.get("required", [])
