@@ -200,12 +200,21 @@ async def test_failure_releases_buffer_before_close_can_suspend(
         assert state.cls._large_results.retained_bytes == 0
         assert state.cls._retained_results.total_bytes == 0
         assert all(reference() is None for reference in state.buffers)
-        # Invalid transfer settling still belongs to the disconnect/command path.
-        assert not state.future.done()
+        if kind == "invalid_utf8":
+            # The bounded decoder rejects the bytes before observing a valid command result.
+            rejection = state.future.result()
+            assert rejection["success"] is False
+            assert rejection["data"]["reason"] == "result_payload_limit"
+            assert state.cls._pending[CID]["rejected_result_observed"] is False
+        else:
+            assert not state.future.done()
         state.release.set()
         await task
         await state.hub.on_disconnect(state.socket, 4400)
-        assert state.future.done() and state.future.exception() is not None
+        if kind == "invalid_utf8":
+            assert state.future.result() is rejection
+        else:
+            assert state.future.done() and state.future.exception() is not None
     finally:
         state.release.set()
         await asyncio.gather(task, return_exceptions=True)
