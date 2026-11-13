@@ -464,6 +464,59 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [TestCase("add", -1)]
+        [TestCase("add", 0)]
+        [TestCase("add", 1)]
+        [TestCase("remove", -1)]
+        [TestCase("remove", 0)]
+        [TestCase("remove", 1)]
+        [TestCase("set_property", -1)]
+        [TestCase("set_property", 0)]
+        [TestCase("set_property", 1)]
+        public void AllComponentWritesRejectAssetAndPreviewIdsRegardlessOfStrictFlag(string action, int strict)
+        {
+            string path = _assetRoot + "/OrdinaryScope.prefab";
+            GameObject asset = PrefabUtility.SaveAsPrefabAsset(_target, path);
+            Assert.IsNotNull(asset);
+            string assetContents = System.IO.File.ReadAllText(path);
+            Assert.IsTrue(EditorSceneManager.SaveScene(_scene));
+            Scene preview = EditorSceneManager.NewPreviewScene();
+            try
+            {
+                GameObject previewObject = Create("OrdinaryPreviewOnly", preview);
+                previewObject.AddComponent<AudioSource>();
+                foreach (GameObject target in new[] { asset, previewObject })
+                foreach (bool numericString in new[] { false, true })
+                {
+                    AudioSource[] components = target.GetComponents<AudioSource>();
+                    float volume = components[0].volume;
+                    bool dirty = EditorUtility.IsDirty(target);
+                    bool componentDirty = EditorUtility.IsDirty(components[0]);
+                    bool sceneDirty = target.scene.IsValid() && target.scene.isDirty;
+                    int undo = Undo.GetCurrentGroup();
+                    JObject request = Write(action);
+                    request["target"] = numericString ? new JValue(target.GetInstanceIDCompat().ToString()) : new JValue(target.GetInstanceIDCompat());
+                    if (strict < 0)
+                        request.Remove("strict_selection");
+                    else
+                        request["strict_selection"] = strict == 1;
+                    Code(Json(ManageComponents.HandleCommand(request)), "invalid_target");
+                    CollectionAssert.AreEqual(components, target.GetComponents<AudioSource>());
+                    Assert.AreEqual(volume, components[0].volume);
+                    Assert.AreEqual(dirty, EditorUtility.IsDirty(target));
+                    Assert.AreEqual(componentDirty, EditorUtility.IsDirty(components[0]));
+                    Assert.AreEqual(sceneDirty, target.scene.IsValid() && target.scene.isDirty);
+                    Assert.AreEqual(undo, Undo.GetCurrentGroup());
+                    Assert.IsFalse(_scene.isDirty);
+                }
+                Assert.AreEqual(assetContents, System.IO.File.ReadAllText(path));
+            }
+            finally
+            {
+                EditorSceneManager.ClosePreviewScene(preview);
+            }
+        }
+
         [Test]
         public void DuplicatePathsRejectWhileUniquePathSelectsExactlyOneObject()
         {

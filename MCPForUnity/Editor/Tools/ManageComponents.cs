@@ -119,6 +119,10 @@ namespace MCPForUnity.Editor.Tools
                     _ => new ErrorResponse($"Unknown action: '{action}'. Supported actions: add, remove, set_property"),
                 };
             }
+            catch (ComponentSelection.Failure failure)
+            {
+                return failure.Response();
+            }
             catch (ArgumentException e)
             {
                 return new ErrorResponse(e.Message);
@@ -247,6 +251,8 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Target GameObject ('{targetToken}') not found using method '{searchMethod ?? "default"}'.");
             }
 
+            ComponentSelection.EnsureTarget(targetGo);
+
             string componentTypeName = ParamCoercion.CoerceString(@params["componentType"] ?? @params["component_type"], null);
             if (string.IsNullOrEmpty(componentTypeName))
             {
@@ -362,6 +368,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Target GameObject ('{targetToken}') not found using method '{searchMethod ?? "default"}'.");
             }
+            ComponentSelection.EnsureTarget(targetGo);
             int targetId = targetGo.GetInstanceIDCompat();
             string targetName = targetGo.name;
 
@@ -446,6 +453,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Target GameObject ('{targetToken}') not found using method '{searchMethod ?? "default"}'.");
             }
+
+            ComponentSelection.EnsureTarget(targetGo);
 
             string componentType = ParamCoercion.CoerceString(@params["componentType"] ?? @params["component_type"], null);
             if (string.IsNullOrEmpty(componentType))
