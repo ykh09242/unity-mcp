@@ -326,6 +326,8 @@ async def manage_scene(
                     "success": False,
                     "message": "Unknown template; use empty, default, 3d_basic, or 2d_basic.",
                 }
+        if action == "save" and path is not None and not path.strip():
+            return {"success": False, "message": "A supplied save path must be nonempty."}
         if action == "load" and not name and not path and coerced_build_index is None:
             return {"success": False, "message": "load requires name, path, or build_index."}
         if (

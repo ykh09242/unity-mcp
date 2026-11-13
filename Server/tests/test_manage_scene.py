@@ -203,6 +203,14 @@ def test_save_keeps_loaded_source_path_separate_from_destination(mock_unity, des
     assert mock_unity["params"] == expected
 
 
+@pytest.mark.parametrize("path", ["", "   "])
+def test_blank_save_path_is_rejected_without_dispatch(mock_unity, path):
+    result = asyncio.run(manage_scene(SimpleNamespace(), action="save", path=path))
+    assert result["success"] is False
+    assert "path" in result["message"]
+    assert "params" not in mock_unity
+
+
 def test_save_omits_unset_overwrite(mock_unity):
     asyncio.run(manage_scene(SimpleNamespace(), action="save"))
     assert "allowOverwrite" not in mock_unity["params"]

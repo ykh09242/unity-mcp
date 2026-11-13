@@ -654,8 +654,28 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(first, SceneManager.GetActiveScene());
         }
 
-        [Test]
-        public void ExplicitName_KeepsPrecedenceOverPathFilename()
+        [TestCase("Backups")]
+        [TestCase(".unity")]
+        [TestCase("Backups.unity/")]
+        [TestCase("")]
+        public void SaveWithIncompleteDestination_PreservesDirtySceneAndFile(string suffix)
+        {
+            byte[] original = File.ReadAllBytes(SystemPath(firstPath));
+            var marker = new GameObject("UnsavedMarker");
+            Assert.AreEqual(first, marker.scene);
+            Assert.IsTrue(EditorSceneManager.MarkSceneDirty(first));
+            string destination = suffix.Length == 0 ? "" : assetRoot + "/" + suffix;
+            JObject response = Call(new JObject { ["action"] = "save", ["path"] = destination });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(first, SceneManager.GetActiveScene());
+            Assert.AreEqual(firstPath, first.path);
+            Assert.IsTrue(first.isDirty);
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(SystemPath(firstPath)));
+        }
+
+        [TestCase("")]
+        [TestCase("/Other.unity")]
+        public void ExplicitName_KeepsPrecedenceOverPathFilename(string suffix)
         {
             string destination = assetRoot + "/Named.unity";
             Success(
@@ -664,7 +684,7 @@ namespace MCPForUnityTests.Editor.Tools
                     {
                         ["action"] = "save",
                         ["name"] = "Named",
-                        ["path"] = assetRoot + "/Other.unity",
+                        ["path"] = assetRoot + suffix,
                     }
                 )
             );

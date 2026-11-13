@@ -298,6 +298,12 @@ namespace MCPForUnity.Editor.Tools
 
             if (action == "save")
             {
+                if (
+                    @params["path"] is JToken destination
+                    && destination.Type != JTokenType.Null
+                    && (destination.Type != JTokenType.String || string.IsNullOrWhiteSpace(path))
+                )
+                    return new ErrorResponse("A supplied save path must be a nonempty string.");
                 try
                 {
                     saveSource = SceneValidation.ResolveScene(@params, forSave: true);
@@ -364,9 +370,12 @@ namespace MCPForUnity.Editor.Tools
             }
 
             string sceneFileName = string.IsNullOrEmpty(name) ? null : $"{name}.unity";
-            if (action == "save" && string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(path) && path.EndsWith(".unity", StringComparison.OrdinalIgnoreCase))
+            if (action == "save" && path != null)
             {
-                sceneFileName = Path.GetFileName(AssetPathUtility.NormalizeSeparators(path));
+                if (name == null && cmd.path.EndsWith(".unity", StringComparison.OrdinalIgnoreCase))
+                    sceneFileName = Path.GetFileName(path);
+                if (string.IsNullOrWhiteSpace(Path.GetFileNameWithoutExtension(sceneFileName)))
+                    return new ErrorResponse("A save destination requires a .unity filename or a folder path with a scene name.");
             }
             // Construct full system path correctly: ProjectRoot/<rootFolder>/relativeDir/sceneFileName
             string fullPathDir =
