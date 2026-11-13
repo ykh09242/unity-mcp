@@ -222,18 +222,14 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     StartEngine();
                 }
                 Drain();
-                if (cancellation.Poll(elapsed.ElapsedMilliseconds, mainLoopSequence == 0))
-                {
-                    soakStopStatus = "cancelled";
-                    soakStopError = "Cancelled by caller.";
-                    engine.Cancel(Now);
-                }
-                if (soak != null && soak.DeadlineReached(Now) && soakStopStatus == null)
-                {
-                    soakStopStatus = "timed_out";
-                    soakStopError = "Player soak exceeded its whole-session wall-clock deadline.";
-                    engine.Cancel(Now);
-                }
+                PlayScenarioPlayerStop.Observe(
+                    cancellation.Poll(elapsed.ElapsedMilliseconds, mainLoopSequence == 0),
+                    soak != null && soak.DeadlineReached(Now),
+                    engine,
+                    Now,
+                    ref soakStopStatus,
+                    ref soakStopError
+                );
                 engine.Tick(Now, true);
                 Drain();
                 mainLoopSequence++;
@@ -514,3 +510,26 @@ namespace MCPForUnity.Runtime.PlayScenarios
     }
 }
 #endif
+
+namespace MCPForUnity.Runtime.PlayScenarios
+{
+    /// <summary>Preserve the first Player stop observation through independent cleanup.</summary>
+    internal static class PlayScenarioPlayerStop
+    {
+        internal static void Observe(
+            bool cancelled,
+            bool deadlineReached,
+            MCPForUnity.Editor.Services.PlayScenarios.PlayScenarioEngine engine,
+            long now,
+            ref string status,
+            ref string error
+        )
+        {
+            if (status != null || (!cancelled && !deadlineReached))
+                return;
+            status = cancelled ? "cancelled" : "timed_out";
+            error = cancelled ? "Cancelled by caller." : "Player soak exceeded its whole-session wall-clock deadline.";
+            engine.Cancel(now);
+        }
+    }
+}
