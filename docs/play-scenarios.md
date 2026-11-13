@@ -505,6 +505,10 @@ MCP uses actions `suite_save`, `suite_get`, `suite_list`, `suite_delete`, `suite
 `suite_cancel` and `suite_reports`. Save accepts `suite`, status/cancel accept `suite_id`, and run uses
 `name`, optional `suite_id`, `repeat_count`, `timeout_seconds` and `source_revision`. A suite ID is a
 32-character lowercase hexadecimal idempotency key. Reuse it after an uncertain dispatch.
+On normal Editor shutdown, the suite saves an interruption report to the same bounded history.
+Completed children retain their outcomes, unstarted children are marked `skipped`, and a reserved
+child whose final outcome could not be observed is marked `unknown`. Retrying the same request
+after restart returns this report while it remains in the history.
 
 Native suite_run returns immediately; CLI `suite-run` explicitly waits and requires `--instance` to
 keep requests pinned to the same Editor. `--timeout-seconds` is the whole suite's execution budget,

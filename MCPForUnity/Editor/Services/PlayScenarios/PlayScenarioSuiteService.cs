@@ -416,9 +416,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private static void Quit()
         {
-            _runner?.RequestStop("cancelled", "Editor shutdown interrupted suite execution.", Now);
-            Persist();
-            Detach();
+            if (_runner == null || _finalized)
+                return;
+            _runner.InterruptForShutdown(Now);
+            FinalizeReport();
         }
 
         private static void Attach()

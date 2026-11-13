@@ -9,6 +9,7 @@ using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 
 namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
 {
@@ -526,6 +527,76 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 Assert.That(report["scenarios"].Select(child => (string)child["job_id"]), Is.EqualTo(restored.Report.Scenarios.Select(child => child.JobId)));
                 Assert.That(harness.Starts, Is.EqualTo(completed ? 2 : 0));
             });
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void ShutdownReportSurvivesEditorSessionLossWithoutDispatchingAgain(bool started, bool finishedBeforePoll)
+        {
+            const string session = "MCPForUnity.PlayScenarioSuite.V1";
+            string[] keys = { session, session + ".definition.0", session + ".definition.1" };
+            var saved = keys.Select(key => SessionState.GetString(key, "")).ToArray();
+            string project = Path.GetDirectoryName(UnityEngine.Application.dataPath);
+            if (new PlayScenarioSuiteStore(project).ListReports().Count >= 20)
+                Assert.Ignore("Preserve the existing report history.");
+            var suite = Suite("continue");
+            suite.Scenarios.Add("last");
+            var harness = new Harness(suite, revision: "quit-test");
+            var runner = harness.Runner;
+            if (started)
+            {
+                runner.Tick(1001, true);
+                harness.Complete("succeeded", null);
+                runner.Tick(1002, true);
+                runner.Tick(1003, true);
+                if (finishedBeforePoll)
+                    harness.Complete("succeeded", null, 1004);
+            }
+            var request = PythonRunWire(runner.State.Report);
+            string path = Path.Combine(project, PlayScenarioSuiteStore.Reports, runner.State.Report.SuiteId + ".json");
+            Type service = typeof(PlayScenarioSuiteService);
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+            try
+            {
+                WithCurrentSuite(runner, false, () =>
+                {
+                    service.GetMethod("Quit", flags).Invoke(null, null);
+                    Assert.IsTrue(File.Exists(path));
+                    foreach (var key in keys)
+                        SessionState.EraseString(key);
+                    service.GetField("_runner", flags).SetValue(null, null);
+                    service.GetMethod("Restore", flags).Invoke(null, null);
+                    var response = (SuccessResponse)ManagePlayScenario.HandleCommand(request);
+                    var report = (JObject)response.Data;
+                    Assert.AreEqual("cancelled", (string)report["status"]);
+                    Assert.That(
+                        report["scenarios"].Select(child => (string)child["job_id"]),
+                        Is.EqualTo(runner.State.Report.Scenarios.Select(child => child.JobId))
+                    );
+                    if (started)
+                    {
+                        Assert.AreEqual("succeeded", (string)report["scenarios"][0]["status"]);
+                        Assert.AreEqual("succeeded", (string)report["scenarios"][0]["report"]["status"]);
+                        Assert.AreEqual(finishedBeforePoll ? "succeeded" : "unknown", (string)report["scenarios"][1]["status"]);
+                        if (!finishedBeforePoll)
+                            Assert.AreEqual(JTokenType.Null, report["scenarios"][1]["report"].Type);
+                    }
+                    Assert.IsTrue(report["scenarios"].Skip(started ? 2 : 0).All(child => (string)child["status"] == "skipped"));
+                    Assert.IsNull(service.GetField("_runner", flags).GetValue(null));
+                    Assert.AreEqual(started ? 2 : 0, harness.Starts);
+                    Assert.AreEqual(0, harness.Cancels);
+                    request["repeat_count"] = 2;
+                    Assert.That(((ErrorResponse)ManagePlayScenario.HandleCommand(request)).Error, Does.Contain("different run request"));
+                });
+            }
+            finally
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+                for (int i = 0; i < keys.Length; i++)
+                    SessionState.SetString(keys[i], saved[i]);
+            }
         }
 
         [TestCase("release\\candidate")]

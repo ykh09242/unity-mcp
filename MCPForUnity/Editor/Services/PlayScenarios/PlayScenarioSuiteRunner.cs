@@ -239,7 +239,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     State.Report.Error = State.Report.Error ?? State.Report.ReportError;
                     RequestStop("failed", State.Report.ReportError, now);
                 }
-                if (Encoding.UTF8.GetByteCount(JObject.FromObject(State.Report).ToString(Formatting.None)) > PlayScenarioSuiteStore.ReportLimit - 65536)
+                if (!FitsReportLimit())
                 {
                     child.Report = null;
                     State.Report.ReportError =
@@ -293,12 +293,68 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
         }
 
-        private void Finish(long now)
+        // Quit cannot wait for another editor update. Observe the exact reserved child once
+        // without issuing a cancellation or advancing the queue.
+        internal void InterruptForShutdown(long now)
+        {
+            if (!Running)
+                return;
+            const string reason = "Editor shutdown interrupted suite execution.";
+            State.Report.Error = Bounded(reason + (State.Report.Error == null ? "" : " " + State.Report.Error));
+            State.RequestedStatus ??= State.FirstFailureStatus == null ? "cancelled" : "failed";
+            PlayScenarioSuiteChild child = Current;
+            if (child?.Status == "running")
+            {
+                child.Status = "unknown";
+                child.SkipReason = "The child was reserved, but its final outcome was not observed before Editor shutdown.";
+                try
+                {
+                    ObserveShutdownOutcome(child);
+                }
+                catch (Exception error)
+                {
+                    child.SkipReason = Bounded("Child finalization could not be observed at Editor shutdown: " + error.Message);
+                }
+            }
+            // Write the disk report before doing any further SessionState I/O.
+            Finish(now, shuttingDown: true);
+        }
+
+        private void ObserveShutdownOutcome(PlayScenarioSuiteChild child)
+        {
+            JObject snapshot = observe(child.JobId);
+            string status = (string)snapshot?["status"];
+            if (status == null || status == "running")
+                return;
+            PlayScenarioStore.ValidateReport(snapshot);
+            if (
+                (string)snapshot["job_id"] != child.JobId
+                || (string)snapshot["scenario"]?["name"] != child.Name
+                || (string)snapshot["reproduction"]?["definition_hash"] != child.DefinitionHash
+            )
+                return;
+            child.Status = status;
+            child.SkipReason = null;
+            child.Report = snapshot;
+            if (status != "succeeded")
+                State.RequestedStatus = "failed";
+            if (snapshot.Value<bool?>("runner_resources_released") == false || !string.IsNullOrEmpty((string)snapshot["report_error"]))
+                State.Report.ReportError = Bounded((string)snapshot["report_error"] ?? "Child runner resources were not released.");
+            if (!FitsReportLimit())
+                child.Report = null; // The child remains identified by its job ID.
+        }
+
+        private bool FitsReportLimit() =>
+            Encoding.UTF8.GetByteCount(JObject.FromObject(State.Report).ToString(Formatting.None)) <= PlayScenarioSuiteStore.ReportLimit - 65536;
+
+        private void Finish(long now, bool shuttingDown = false)
         {
             foreach (PlayScenarioSuiteChild pending in State.Report.Scenarios.Where(child => child.Status == "pending"))
             {
                 pending.Status = "skipped";
-                pending.SkipReason = State.Report.Error ?? "Suite stopped before this child was admitted.";
+                pending.SkipReason = shuttingDown
+                    ? "Editor shutdown before child admission."
+                    : State.Report.Error ?? "Suite stopped before this child was admitted.";
             }
             State.Report.Status =
                 State.Report.ReportError != null
@@ -309,7 +365,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             foreach (PlayScenarioSuiteChild child in State.Report.Scenarios)
                 finished = Math.Max(finished, child.Report?.Value<long?>("finished_unix_ms") ?? now);
             State.Report.FinishedUnixMs = finished;
-            checkpoint();
+            if (!shuttingDown)
+                checkpoint();
         }
 
         private void AppendCancellationError(string error) =>

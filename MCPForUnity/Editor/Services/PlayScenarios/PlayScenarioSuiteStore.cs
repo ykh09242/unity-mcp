@@ -192,7 +192,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (!Regex.IsMatch(hash, @"\A[a-f0-9]{64}\z"))
                     throw new ArgumentException("Child definition_hash must be 64 lowercase hexadecimal characters.");
                 string status = RequiredText(child, "status", 16);
-                State(status, "pending", "running", "succeeded", "failed", "timed_out", "cancelled", "skipped");
+                State(status, "pending", "running", "succeeded", "failed", "timed_out", "cancelled", "skipped", "unknown");
+                if (status == "unknown" && (string)value["status"] == "running")
+                    throw new ArgumentException("An unknown child outcome requires a terminal suite.");
                 OptionalText(child, "skip_reason", 4096);
                 if (child["report"] is JObject report)
                 {
