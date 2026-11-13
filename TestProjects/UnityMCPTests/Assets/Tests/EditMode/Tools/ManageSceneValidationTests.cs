@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using MCPForUnity.Editor.Helpers;
@@ -91,6 +92,89 @@ namespace MCPForUnity.Tests.EditMode.Tools
                 Assert.AreEqual(scene, SceneManager.GetActiveScene());
                 Assert.IsFalse((bool)saved["data"]["scene_state"]["active"]);
                 Assert.AreEqual("passed", (string)saved["data"]["verification"]["status"]);
+            }
+            finally
+            {
+                EditorSceneManager.CloseScene(other, true);
+            }
+        }
+
+        [TestCase("path")]
+        [TestCase("listed_handle")]
+        [TestCase("save_as")]
+        [TestCase("active_default")]
+        [TestCase("conflict")]
+        [TestCase("missing")]
+        [TestCase("ambiguous_name")]
+        public void Save_SelectsOneLoadedSceneBeforeWriting(string selection)
+        {
+            assetFolder = "Assets/__McpSaveScene_" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", assetFolder.Substring(7));
+            AssetDatabase.CreateFolder(assetFolder, "Additive");
+            string activePath = assetFolder + "/" + scene.name + ".unity";
+            string otherPath = assetFolder + "/Additive/" + scene.name + ".unity";
+            string destination = assetFolder + "/SaveAs/Copy.unity";
+            Assert.IsTrue(EditorSceneManager.SaveScene(scene, activePath));
+            Scene other = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                Assert.IsTrue(EditorSceneManager.SaveScene(other, otherPath));
+                byte[] activeBytes = File.ReadAllBytes(activePath);
+                byte[] otherBytes = File.ReadAllBytes(otherPath);
+                SceneManager.SetActiveScene(other);
+                new GameObject("AdditiveOnly");
+                EditorSceneManager.MarkSceneDirty(other);
+                SceneManager.SetActiveScene(scene);
+                new GameObject("ActiveOnly");
+                EditorSceneManager.MarkSceneDirty(scene);
+
+                var list = JObject.FromObject(ManageScene.HandleCommand(new JObject { ["action"] = "get_loaded_scenes" }));
+                var otherRow = list["data"]["scenes"].Single(row => (string)row["path"] == otherPath);
+                Assert.IsTrue(JToken.DeepEquals(SceneValidation.SceneHandle(other), otherRow["scene_handle"]));
+                var request = new JObject { ["action"] = "save" };
+                switch (selection)
+                {
+                    case "path":
+                        request["scenePath"] = otherPath;
+                        break;
+                    case "listed_handle":
+                        request["scene_handle"] = otherRow["scene_handle"];
+                        break;
+                    case "save_as":
+                        request["scene_path"] = otherPath;
+                        request["scene_handle"] = otherRow["scene_handle"];
+                        request["name"] = "Copy";
+                        request["path"] = assetFolder + "/SaveAs";
+                        break;
+                    case "conflict":
+                        request["scenePath"] = activePath;
+                        request["scene_handle"] = otherRow["scene_handle"];
+                        break;
+                    case "missing":
+                        request["scenePath"] = assetFolder + "/Missing.unity";
+                        break;
+                    case "ambiguous_name":
+                        request["sceneName"] = scene.name;
+                        break;
+                }
+                bool reject = selection == "conflict" || selection == "missing" || selection == "ambiguous_name";
+                if (reject)
+                    request["path"] = destination;
+                var saved = JObject.FromObject(ManageScene.HandleCommand(request));
+                Assert.AreEqual(!reject, (bool)saved["success"], saved.ToString());
+                Assert.AreEqual(scene, SceneManager.GetActiveScene());
+                Assert.AreEqual(selection != "active_default", scene.isDirty);
+                Assert.AreEqual(reject || selection == "active_default", other.isDirty);
+                Assert.AreEqual(selection != "active_default", activeBytes.SequenceEqual(File.ReadAllBytes(activePath)));
+                Assert.AreEqual(selection != "path" && selection != "listed_handle", otherBytes.SequenceEqual(File.ReadAllBytes(otherPath)));
+                Assert.AreEqual(selection == "save_as", Directory.Exists(assetFolder + "/SaveAs"));
+                if (!reject)
+                {
+                    Scene expected = selection == "active_default" ? scene : other;
+                    Assert.IsTrue(JToken.DeepEquals(SceneValidation.SceneHandle(expected), saved["data"]["scene_state"]["scene_handle"]));
+                    Assert.AreEqual(selection == "save_as" ? destination : expected.path, (string)saved["data"]["path"]);
+                    Assert.IsTrue(File.Exists(expected.path));
+                }
             }
             finally
             {

@@ -293,7 +293,20 @@ namespace MCPForUnity.Editor.Tools
             string name = string.IsNullOrEmpty(cmd.name) ? null : cmd.name;
             string path = string.IsNullOrEmpty(cmd.path) ? null : cmd.path; // Relative to Assets/
             int? buildIndex = cmd.buildIndex;
+            Scene saveSource = default;
             // bool loadAdditive = @params["loadAdditive"]?.ToObject<bool>() ?? false; // Example for future extension
+
+            if (action == "save")
+            {
+                try
+                {
+                    saveSource = SceneValidation.ResolveScene(@params, forSave: true);
+                }
+                catch (ArgumentException e)
+                {
+                    return new ErrorResponse($"Invalid scene selector: {e.Message}");
+                }
+            }
 
             if (action == "create" || action == "save" || action == "load")
             {
@@ -436,8 +449,7 @@ namespace MCPForUnity.Editor.Tools
                     else
                         return new ErrorResponse("Either 'name'/'path' or 'buildIndex' must be provided for 'load' action.");
                 case ActionKind.Save:
-                    // Save current scene, optionally to a new path
-                    return SaveScene(fullPath, relativePath, cmd.allowOverwrite ?? false, @params);
+                    return SaveScene(saveSource, fullPath, relativePath, cmd.allowOverwrite ?? false, @params);
                 case ActionKind.GetHierarchy:
                     try
                     {
@@ -760,12 +772,11 @@ namespace MCPForUnity.Editor.Tools
             return null;
         }
 
-        private static object SaveScene(string fullPath, string relativePath, bool allowOverwrite, JObject observation = null)
+        private static object SaveScene(Scene currentScene, string fullPath, string relativePath, bool allowOverwrite, JObject observation)
         {
             try
             {
                 using var folders = new AssetFolderScope();
-                Scene currentScene = SceneValidation.ResolveScene(observation);
                 if (!currentScene.IsValid())
                 {
                     return new ErrorResponse("No valid scene is currently active to save.");
@@ -2300,6 +2311,7 @@ namespace MCPForUnity.Editor.Tools
                     {
                         name = s.name,
                         path = s.path,
+                        scene_handle = isLoaded ? SceneValidation.SceneHandle(s) : null,
                         buildIndex = s.buildIndex,
                         isLoaded = isLoaded,
                         isDirty = s.isDirty,

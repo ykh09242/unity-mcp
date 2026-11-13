@@ -52,10 +52,10 @@ async def manage_scene(
         ],
         "Perform CRUD operations on Unity scenes and control the Scene View camera.",
     ],
-    name: Annotated[str, "Scene name."] | None = None,
+    name: Annotated[str, "Scene name. For Save As, the destination name."] | None = None,
     path: Annotated[
         str,
-        "Scene path, under Assets/ or Packages/. A bare path is treated as relative to Assets/.",
+        "Scene path under Assets/ or Packages/. For Save As, the destination under Assets/. A bare path is relative to Assets/.",
     ]
     | None = None,
     build_index: Annotated[int | str, "Unity build index (quote as string, e.g., '0')."]
@@ -85,8 +85,12 @@ async def manage_scene(
     include_transform: Annotated[bool | str, "If true, include local transform in node summaries."]
     | None = None,
     # --- Multi-scene editing params ---
-    scene_name: Annotated[str, "Scene name for multi-scene operations."] | None = None,
-    scene_path: Annotated[str, "Full scene path (e.g. 'Assets/Scenes/Level2.unity')."]
+    scene_name: Annotated[str, "Loaded scene name. For save, selects the source scene."]
+    | None = None,
+    scene_path: Annotated[
+        str,
+        "Exact loaded scene path (e.g. 'Assets/Scenes/Level2.unity'). For save, selects the source scene.",
+    ]
     | None = None,
     target: Annotated[
         str | int, "GameObject reference (name, path, or instanceID) for move_to_scene."
@@ -157,7 +161,8 @@ async def manage_scene(
         "load/save only: observe the exact affected scene with one100-object/10ms validation slice",
     ] = None,
     scene_handle: Annotated[
-        int | None, "validate/save: exact loaded scene handle, including nonactive additive scenes"
+        int | None,
+        "validate/save: exact scene_handle from get_loaded_scenes. For save, all source selectors must match one loaded scene; omit them to save the active scene.",
     ] = None,
 ) -> dict[str, Any]:
     if verify is not None and (type(verify) is not bool or action not in {"load", "save"}):

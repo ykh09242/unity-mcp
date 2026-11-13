@@ -549,6 +549,33 @@ async def test_public_sdk_drives_the_input_round_over_authenticated_http(flow_se
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_focused_save_forwards_the_selected_source_scene(flow_server, mode):
+    from fastmcp import Client
+    from fastmcp.client.transports import StreamableHttpTransport
+    import httpx2
+
+    catalog = [{"name": "scene_lifecycle"}, {"name": "get_editor_state"}]
+    async with connected(flow_server, tools=catalog) as (_, _, peer, _):
+
+        def factory(**kwargs):
+            return httpx2.AsyncClient(transport=httpx2.ASGITransport(app=peer.actual_app), **kwargs)
+
+        transport = StreamableHttpTransport(
+            "http://fixture/mcp", headers={"x-api-key": "alice-key"}, httpx_client_factory=factory
+        )
+        source = "Assets/Scenes/B.unity"
+        async with Client(transport, mode=mode) as client:
+            result = await client.call_tool(
+                "scene_lifecycle", {"action": "save", "scene_path": source, "unity_instance": "A@a"}
+            )
+        assert not result.is_error
+        assert len(peer.loads) == 1
+        assert peer.loads[0]["name"] == "scene_lifecycle"
+        assert peer.loads[0]["params"] == {"action": "save", "scenePath": source}
+
+
+@pytest.mark.asyncio
 async def test_legacy_sdk_keeps_the_ordinary_missing_target_result(flow_server):
     # Given: an actual initialized legacy client that also declares elicitation support.
     from fastmcp import Client

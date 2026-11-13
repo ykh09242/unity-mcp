@@ -190,6 +190,19 @@ def test_save_forwards_explicit_overwrite(mock_unity, value, expected):
     assert mock_unity["params"]["allowOverwrite"] is expected
 
 
+@pytest.mark.parametrize("destination", [None, "Assets/Copies/B.unity"])
+def test_save_keeps_loaded_source_path_separate_from_destination(mock_unity, destination):
+    source = "Assets/Scenes/B.unity"
+    result = asyncio.run(
+        manage_scene(SimpleNamespace(), action="save", scene_path=source, path=destination)
+    )
+    assert result["success"] is True
+    expected = {"action": "save", "scenePath": source}
+    if destination:
+        expected["path"] = destination
+    assert mock_unity["params"] == expected
+
+
 def test_save_omits_unset_overwrite(mock_unity):
     asyncio.run(manage_scene(SimpleNamespace(), action="save"))
     assert "allowOverwrite" not in mock_unity["params"]

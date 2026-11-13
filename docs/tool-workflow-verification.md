@@ -42,7 +42,7 @@ Use `verification="off"` when collecting several edits for one final check. `scr
 | --- | --- |
 | Components, ScriptableObjects and GameObjects | Exact affected component identities, supported retained properties, partial patch receipts and bounded broken-reference findings |
 | Prefabs | Saved requested fields, selected override disposition, remaining property-override count and saved-stage state |
-| Scenes | Saved/loaded scene identity and optional one-slice validation through `verify=true`; `scene_handle` selects an exact loaded scene for save or validation |
+| Scenes | `get_loaded_scenes` returns each loaded scene's `scene_handle`. Select a save source with the handle, exact `scene_path`, or unique `scene_name`. With no selector, save uses the active scene. Supply `path` or `name` for Save As. `verify=true` observes the saved or loaded scene in one validation slice. |
 | Assets | Affected-path metadata; `await_graph_seconds` optionally advances an existing graph receipt and attaches its first diff |
 | Addressables | `include_preflight=true` adds scoped entry, group-profile or selected profile-variable findings to a metadata edit |
 | Localization | Retained table/key identity, string and smart-format checks, or saved locale fallback diagnostics |

@@ -120,20 +120,48 @@ namespace MCPForUnity.Editor.Helpers
 #endif
         }
 
-        internal static Scene ResolveScene(JObject parameters)
+        private static string SaveSelector(JObject parameters, string nativeName, string publicName)
         {
-            if (parameters?["scene_handle"] == null)
+            JToken native = parameters?[nativeName];
+            JToken alias = parameters?[publicName];
+            if (native != null && alias != null && !JToken.DeepEquals(native, alias))
+                throw new ArgumentException($"Conflicting values for {publicName}.");
+            JToken selector = native ?? alias;
+            if (selector == null)
+                return null;
+            if (selector.Type != JTokenType.String || string.IsNullOrWhiteSpace((string)selector))
+                throw new ArgumentException($"{publicName} must be a nonempty string.");
+            return (string)selector;
+        }
+
+        internal static Scene ResolveScene(JObject parameters, bool forSave = false)
+        {
+            JToken handle = parameters?["scene_handle"];
+            string path = forSave ? SaveSelector(parameters, "scenePath", "scene_path") : null;
+            string name = forSave ? SaveSelector(parameters, "sceneName", "scene_name") : null;
+            if (handle == null && path == null && name == null)
                 return SceneManager.GetActiveScene();
-            JToken requested = parameters["scene_handle"];
-            if (requested.Type != JTokenType.Integer || SceneManager.sceneCount > 256)
-                throw new ArgumentException("scene_handle requires an exact loaded scene identity; at most256 scenes are supported.");
+            if (handle != null && handle.Type != JTokenType.Integer)
+                throw new ArgumentException("scene_handle must be an integer.");
+            if (SceneManager.sceneCount > 256)
+                throw new ArgumentException("Scene selection supports at most 256 scenes.");
+            Scene? match = null;
             for (int index = 0; index < SceneManager.sceneCount; index++)
             {
                 Scene candidate = SceneManager.GetSceneAt(index);
-                if (candidate.IsValid() && candidate.isLoaded && SceneHandle(candidate).ToString() == requested.ToString())
-                    return candidate;
+                if (!candidate.IsValid() || !candidate.isLoaded)
+                    continue;
+                if (
+                    (handle != null && SceneHandle(candidate).ToString() != handle.ToString())
+                    || (path != null && path != candidate.path)
+                    || (name != null && name != candidate.name)
+                )
+                    continue;
+                if (match.HasValue)
+                    throw new ArgumentException("The scene selector is ambiguous. Use the scene_handle from get_loaded_scenes.");
+                match = candidate;
             }
-            throw new ArgumentException("scene_handle does not identify a loaded scene.");
+            return match ?? throw new ArgumentException("The supplied scene selectors do not identify the same loaded scene.");
         }
 
         private static int Integer(JToken token, int fallback, int maximum, string name)
