@@ -135,7 +135,9 @@ def resume_peer(
                     if command.get("type") == "command_progress_begin":
                         prelude, command = command, read_frame(peer)
                 except EOFError:
-                    assert mode == "cold" and attempt == 1
+                    assert (mode == "cold" and attempt == 1) or (
+                        mode == "preflight" and not attempt
+                    )
                     return
                 commands.append(command)
                 if progress_callback is not None:
@@ -170,6 +172,8 @@ def resume_peer(
                     if mode == "applied_then_offline":
                         commands.append(read_frame(peer))
                         started.set()  # The mutation is applied but its reply is lost.
+                elif mode == "executing" and attempt < reloads:
+                    send_frame(peer, result(command, "executing", {"status": "error"}))
                 elif attempt >= reloads:
                     value = (
                         business_result
@@ -565,6 +569,43 @@ async def test_tcp_reconnect_retains_invocation_and_never_creates_a_new_command(
             if len(commands) == 2:
                 assert commands[1]["resume"] == {**commands[0]["resume"], "action": "resume"}
                 assert commands[1]["params"] == commands[0]["params"]
+        finally:
+            connection.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["preflight", "completed", "executing"])
+async def test_mutation_reload_preflight_preserves_dispatched_invocation(monkeypatch, mode):
+    from services.tools import refresh_unity
+
+    with resume_peer(mode) as (port, commands, _, _):
+        connection = configure(monkeypatch, port)
+        reload_hint = {"reason": "reloading"}
+        observations = iter([reload_hint, None] if mode == "preflight" else [None, reload_hint])
+        monkeypatch.setattr(uc, "read_status_file", lambda *_: next(observations, None))
+        ready_at = []
+
+        async def ready(_ctx):
+            ready_at.append(len(commands))
+            assert len(commands) != 1 or mode == "preflight"
+            return True, 0
+
+        monkeypatch.setattr(refresh_unity, "wait_for_editor_ready", ready)
+        try:
+            response = await refresh_unity._send_mutation(
+                None, connection.instance_id, "manage_scene", {"action": "save"}
+            )
+            assert response["data"] == {"applied": 1, "receipt": "original"}
+            assert commands[0]["resume"]["action"] == "new"
+            if mode == "preflight":
+                assert ready_at == [0, 1]
+            else:
+                assert ready_at == [2]
+                assert commands[1]["params"] == commands[0]["params"]
+                assert commands[1]["resume"] == {
+                    **commands[0]["resume"],
+                    "action": "status" if mode == "executing" else "resume",
+                }
         finally:
             connection.disconnect()
 

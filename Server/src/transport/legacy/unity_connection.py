@@ -988,13 +988,14 @@ class UnityConnection:
             if maybe_hash:
                 target_hash = maybe_hash
 
-        # Preflight: if Unity reports reloading, return a structured hint so clients can retry politely
+        # Only a first attempt can prove that reload prevented dispatch. Continue an
+        # existing invocation on its negotiated wire even if the status file lags.
         try:
             status = read_status_file(target_hash)
             if (
                 status
                 and (status.get("reloading") or status.get("reason") == "reloading")
-                and not (_resume is not None and _resume.cancelled.is_set())
+                and not (_resume is not None and (_resume.dispatched or _resume.cancelled.is_set()))
             ):
                 # Reload invalidates the socket; drop it under the I/O lock so this
                 # close is serialized against the send/recv block, then reconnect next call.
