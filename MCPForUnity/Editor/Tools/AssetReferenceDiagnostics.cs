@@ -23,7 +23,7 @@ namespace MCPForUnity.Editor.Tools
         {
             try
             {
-                string guid = AssetDatabase.AssetPathToGUID(path);
+                string guid = AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets);
                 bool exists = !string.IsNullOrEmpty(guid);
                 return PostEditVerification.Summary(
                     "affected_asset_metadata_only; no_object_load_or_reference_graph_scan",

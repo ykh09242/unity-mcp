@@ -163,6 +163,22 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void DeleteReportsLiveAssetAbsenceInSameSession()
+        {
+            string path = _root + "/DeleteVerification.physicMaterial";
+            AssertPersistentResponse(Send("create", path, "PhysicsMaterial"), path);
+            var response = Send("delete", path);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var verification = response["data"]["verification"];
+            Assert.AreEqual("passed", (string)verification["status"]);
+            Assert.IsTrue((bool)verification["complete"]);
+            Assert.IsFalse((bool)verification["observed_values"]["exists"]);
+            Assert.IsEmpty((string)verification["observed_values"]["guid"]);
+            Assert.IsEmpty((JArray)verification["findings"]);
+            Assert.IsFalse((bool)verification["further_fixes_required"]);
+        }
+
+        [Test]
         public void DeletedDestinationCanBeRecreated()
         {
             string path = _root + "/One.physicMaterial";
