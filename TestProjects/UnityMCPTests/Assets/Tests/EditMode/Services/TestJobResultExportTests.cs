@@ -157,6 +157,7 @@ namespace MCPForUnityTests.Editor.Services
         [TestCase("clean")]
         [TestCase("contradictory")]
         [TestCase("malformed")]
+        [TestCase("persistence_retry")]
         public void PublicExportDigestSurvivesSessionStateRestoreAndRefusesReplacement(string attribution)
         {
             string root = Path.Combine(Path.GetTempPath(), "mcp-test-export-" + Guid.NewGuid().ToString("N"));
@@ -167,6 +168,8 @@ namespace MCPForUnityTests.Editor.Services
             var backup = new Dictionary<string, TestJob>(jobs);
             object oldStore = manager.GetField("ResultStoreOverride", flags).GetValue(null);
             object oldCurrent = manager.GetField("_currentJobId", flags).GetValue(null);
+            var persistTime = manager.GetField("_lastPersistUnixMs", flags);
+            object oldPersist = persistTime.GetValue(null);
             string oldJobs = SessionState.GetString("MCPForUnity.TestJobsV1", ""),
                 oldKey = SessionState.GetString("MCPForUnity.CurrentTestJobIdV1", "");
             try
@@ -184,7 +187,7 @@ namespace MCPForUnityTests.Editor.Services
                 );
                 manager.GetField("_currentJobId", flags).SetValue(null, TestJobResultStoreTests.JobId);
                 TestJobManager.FinalizeCurrentJobFromRunFinished(TestJobResultStoreTests.Result(10));
-                if (attribution != "clean")
+                if (attribution == "malformed" || attribution == "contradictory")
                 {
                     JObject saved = JObject.Parse(SessionState.GetString("MCPForUnity.TestJobsV1", ""));
                     JToken artifact = saved["jobs"][0]["artifact"];
@@ -196,6 +199,26 @@ namespace MCPForUnityTests.Editor.Services
                     manager.GetMethod("TryRestoreFromSessionState", flags).Invoke(null, null);
                 }
                 var parameters = new JObject { ["job_id"] = TestJobResultStoreTests.JobId, ["format"] = "json" };
+                if (attribution == "persistence_retry")
+                {
+                    var job = jobs[TestJobResultStoreTests.JobId];
+                    string availability = job.ResultAvailability;
+                    job.ResultAvailability = new string('x', 4097);
+                    try
+                    {
+                        for (int attempt = 0; attempt < 2; attempt++)
+                        {
+                            JObject result = JObject.FromObject(MCPForUnity.Editor.Tools.ExportTestJob.HandleCommand(parameters));
+                            Assert.IsFalse((bool)result["success"]);
+                            Assert.AreEqual("Test result export metadata could not be retained.", (string)result["error"]);
+                        }
+                        Assert.IsNull(JObject.Parse(SessionState.GetString("MCPForUnity.TestJobsV1", ""))["jobs"][0]["artifact"]["exports"]);
+                    }
+                    finally
+                    {
+                        job.ResultAvailability = availability;
+                    }
+                }
                 JObject first = JObject.FromObject(MCPForUnity.Editor.Tools.ExportTestJob.HandleCommand(parameters));
                 Assert.IsTrue((bool)first["success"]);
                 JObject exported = JObject.Parse((string)first["data"]["content"]);
@@ -203,6 +226,10 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.AreEqual(jobs[TestJobResultStoreTests.JobId].StartedUnixMs, (long)exported["started_unix_ms"]);
                 Assert.AreEqual(jobs[TestJobResultStoreTests.JobId].FinishedUnixMs, (long?)exported["finished_unix_ms"]);
                 Assert.AreEqual(1, (int)exported["summary"]["failed"]);
+                persistTime.SetValue(null, 0L);
+                JObject repeated = JObject.FromObject(MCPForUnity.Editor.Tools.ExportTestJob.HandleCommand(parameters));
+                Assert.IsTrue((bool)repeated["success"]);
+                Assert.AreEqual(0L, persistTime.GetValue(null), "An unchanged digest must not rewrite session history.");
                 jobs.Clear();
                 manager.GetField("ResultStoreOverride", flags).SetValue(null, TestJobResultStoreTests.NewStore(root));
                 manager.GetMethod("TryRestoreFromSessionState", flags).Invoke(null, null);
@@ -217,11 +244,89 @@ namespace MCPForUnityTests.Editor.Services
             {
                 manager.GetField("ResultStoreOverride", flags).SetValue(null, oldStore);
                 manager.GetField("_currentJobId", flags).SetValue(null, oldCurrent);
+                persistTime.SetValue(null, oldPersist);
                 jobs.Clear();
                 foreach (var entry in backup)
                     jobs.Add(entry.Key, entry.Value);
                 SessionState.SetString("MCPForUnity.TestJobsV1", oldJobs);
                 SessionState.SetString("MCPForUnity.CurrentTestJobIdV1", oldKey);
+                Directory.Delete(root, true);
+            }
+        }
+
+        [Test]
+        public void LegacyDigestAuthenticatesUtf8PagesAndRejectsUnrequestedBlockOnColdBind()
+        {
+            const int chunkBytes = 65536;
+            const string job = TestJobResultStoreTests.JobId;
+            string root = Path.Combine(Path.GetTempPath(), "mcp-test-export-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                var store = new TestJobResultStore(root, TestJobResultStoreTests.SessionId);
+                JObject descriptor = store.Save(job, "EditMode", TestJobResultStoreTests.Result(10), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                // A legacy SessionState descriptor contains only the original whole digest and byte length.
+                string source = new string('a', chunkBytes - 1) + "💠" + new string('b', 7 * chunkBytes);
+                byte[] original = Encoding.UTF8.GetBytes(source);
+                string digest = TestJobResultStore.Hash(original);
+                descriptor["exports"] = new JObject
+                {
+                    ["json"] = new JObject
+                    {
+                        ["sha256"] = digest,
+                        ["source_sha256"] = descriptor["sha256"],
+                        ["total_bytes"] = original.Length,
+                    },
+                };
+                string path = store.ExportPath(job, descriptor, "json");
+                File.WriteAllBytes(path, original);
+                JObject Read(string cursor) => TestJobResultExport.Read(store, job, descriptor, "json", cursor);
+                JObject first = Read(null);
+                string next = (string)first["next_cursor"];
+                Assert.AreEqual(new string('a', chunkBytes - 1), (string)first["content"]);
+                StringAssert.EndsWith(":" + (chunkBytes - 1), next);
+                Assert.AreEqual(2L * original.Length + chunkBytes, store.ExportHashBytes, "One binding pass feeds the whole and block digests.");
+
+                // Replace a same-length file, leaving its first block and timestamp unchanged.
+                byte[] changed = (byte[])original.Clone();
+                changed[chunkBytes + 10] ^= 1;
+                DateTime timestamp = File.GetLastWriteTimeUtc(path);
+                File.Delete(path);
+                File.WriteAllBytes(path, changed);
+                File.SetLastWriteTimeUtc(path, timestamp);
+                Assert.IsTrue(JToken.DeepEquals(first, Read(null)), "Warm reads authenticate only blocks overlapping their output.");
+                Assert.Throws<InvalidDataException>(() => Read(next), "No changed bytes may escape a warm chunk.");
+                store = new TestJobResultStore(root, TestJobResultStoreTests.SessionId);
+                descriptor = JObject.Parse(descriptor.ToString());
+                Assert.Throws<InvalidDataException>(() => Read(null), "A new binding rejects changes anywhere before serving the first chunk.");
+
+                File.WriteAllBytes(path, original);
+                Assert.IsTrue(JToken.DeepEquals(first, Read(null)));
+                JObject second = Read(next);
+                StringAssert.StartsWith("💠", (string)second["content"]);
+                Assert.IsTrue(JToken.DeepEquals(second, Read(next)), "Retrying a non-aligned byte cursor must be idempotent.");
+                long before = store.ExportHashBytes;
+                string cursor = null;
+                var content = new StringBuilder();
+                do
+                {
+                    long prior = store.ExportHashBytes;
+                    JObject chunk = Read(cursor);
+                    Assert.LessOrEqual(store.ExportHashBytes - prior, 81920, "Hash at most five 16 KiB blocks per warm request.");
+                    Assert.AreEqual(digest, (string)chunk["sha256"]);
+                    content.Append((string)chunk["content"]);
+                    cursor = (string)chunk["next_cursor"];
+                } while (cursor != null);
+                Assert.LessOrEqual(store.ExportHashBytes - before, 1.25 * original.Length + 16384);
+                Assert.AreEqual(source, content.ToString());
+                Assert.AreEqual(digest, TestJobResultStore.Hash(Encoding.UTF8.GetBytes(content.ToString())));
+                descriptor["exports"]["json"]["source_sha256"] = new string('0', 64);
+                Assert.Throws<InvalidDataException>(() => Read(next), "Warm reads must still authenticate the source descriptor.");
+                store = new TestJobResultStore(root, TestJobResultStoreTests.SessionId);
+                Assert.Throws<InvalidDataException>(() => Read(null), "A mismatched source digest must not authenticate a cold block index.");
+            }
+            finally
+            {
                 Directory.Delete(root, true);
             }
         }
@@ -340,6 +445,8 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.NotNull(exporter);
                 string cursor = null;
                 var text = new StringBuilder();
+                string digest = null;
+                long total = 0;
                 do
                 {
                     JObject chunk = (JObject)
@@ -347,9 +454,20 @@ namespace MCPForUnityTests.Editor.Services
                             .GetMethod("Read", BindingFlags.Public | BindingFlags.Static)
                             .Invoke(null, new object[] { store, TestJobResultStoreTests.JobId, descriptor, format, cursor });
                     Assert.LessOrEqual(Encoding.UTF8.GetByteCount((string)chunk["content"]), 65536);
+                    digest ??= (string)chunk["sha256"];
+                    Assert.AreEqual(digest, (string)chunk["sha256"]);
+                    total = (long)chunk["total_bytes"];
                     text.Append((string)chunk["content"]);
                     cursor = (string)chunk["next_cursor"];
                 } while (cursor != null);
+                byte[] reconstructed = Encoding.UTF8.GetBytes(text.ToString());
+                Assert.AreEqual(total, reconstructed.LongLength);
+                Assert.AreEqual(digest, TestJobResultStore.Hash(reconstructed));
+                Assert.LessOrEqual(
+                    ((TestJobResultStore)store).ExportHashBytes,
+                    3.25 * total + 16384,
+                    "Hash the whole result and its blocks once, then only requested blocks."
+                );
                 if (format == "json")
                 {
                     JObject value = JObject.Parse(text.ToString());

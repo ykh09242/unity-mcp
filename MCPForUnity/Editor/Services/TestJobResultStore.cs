@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -22,6 +23,8 @@ namespace MCPForUnity.Editor.Services
         private readonly string root;
         private readonly string session;
         private readonly object gate = new();
+        internal readonly ConditionalWeakTable<JObject, TestJobResultExport.BlockIndex> ExportIndexes = new();
+        internal long ExportHashBytes { get; set; }
         public long MaximumReadBytes { get; private set; }
         public long MaximumExportTemporaryBytes { get; private set; }
 

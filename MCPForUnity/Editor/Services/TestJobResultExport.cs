@@ -12,6 +12,26 @@ namespace MCPForUnity.Editor.Services
     internal static class TestJobResultExport
     {
         private static readonly UTF8Encoding Utf8 = new(false, true);
+        private const int ChunkBytes = 65536;
+        private const int BlockBytes = 16384;
+
+        // Only the whole digest is persisted. A new store authenticates the complete file before
+        // caching its block hashes. Warm reads always authenticate the bytes they will decode.
+        internal sealed class BlockIndex
+        {
+            internal readonly string Identity;
+            internal readonly string Sha256;
+            internal readonly byte[][] Blocks;
+            internal readonly long TotalBytes;
+
+            internal BlockIndex(string identity, string sha256, byte[][] blocks, long totalBytes)
+            {
+                Identity = identity;
+                Sha256 = sha256;
+                Blocks = blocks;
+                TotalBytes = totalBytes;
+            }
+        }
 
         public static JObject Read(TestJobResultStore store, string jobId, JObject descriptor, string format, string cursor)
         {
@@ -29,63 +49,77 @@ namespace MCPForUnity.Editor.Services
                     throw new ArgumentException("Invalid or stale export cursor.");
                 string path = store.ExportPath(jobId, descriptor, format);
                 JObject evidence = descriptor["exports"]?[format] as JObject;
+                string indexIdentity = identity + (string)descriptor["sha256"];
+                BlockIndex index;
                 if (evidence == null)
                 {
                     if (File.Exists(store.CheckPath(path)))
                         throw new InvalidDataException("Untrusted cached export.");
-                    Generate(store, jobId, descriptor, manifest, format, path);
-                }
-                store.CheckPath(path);
-                using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                if (file.Length > TestJobResultStore.JobLimit || offset > file.Length)
-                    throw new InvalidDataException("Invalid export size or cursor.");
-                string hash;
-                using (var sha = SHA256.Create())
-                    hash = string.Concat(sha.ComputeHash(file).Select(value => value.ToString("x2")));
-                if (evidence == null)
-                {
+                    index = Generate(store, jobId, descriptor, manifest, format, path, indexIdentity);
                     evidence = new JObject
                     {
-                        ["sha256"] = hash,
-                        ["total_bytes"] = file.Length,
+                        ["sha256"] = index.Sha256,
+                        ["total_bytes"] = index.TotalBytes,
                         ["source_sha256"] = descriptor["sha256"],
                     };
                     if (descriptor["exports"] == null)
                         descriptor["exports"] = new JObject();
                     descriptor["exports"][format] = evidence;
+                    store.ExportIndexes.Add(evidence, index);
                 }
-                else if (
-                    (string)evidence["sha256"] != hash
-                    || (long)evidence["total_bytes"] != file.Length
-                    || (string)evidence["source_sha256"] != (string)descriptor["sha256"]
-                )
+                using var file = new FileStream(store.CheckPath(path), FileMode.Open, FileAccess.Read, FileShare.Read);
+                long length = file.Length;
+                if ((long)evidence["total_bytes"] != length || offset > length)
+                    throw new InvalidDataException("Invalid export size or cursor.");
+                if (!store.ExportIndexes.TryGetValue(evidence, out index))
+                {
+                    index = BuildIndex(store, file, indexIdentity);
+                    if (index.Sha256 != (string)evidence["sha256"])
+                        throw new InvalidDataException("Cached export integrity mismatch.");
+                    store.ExportIndexes.Add(evidence, index);
+                }
+                if (index.Identity != indexIdentity || index.Sha256 != (string)evidence["sha256"] || index.TotalBytes != length)
                     throw new InvalidDataException("Cached export integrity mismatch.");
-                file.Position = offset;
-                byte[] buffer = new byte[65536];
-                int count = 0,
-                    read;
-                while (count < buffer.Length && (read = file.Read(buffer, count, buffer.Length - count)) > 0)
-                    count += read;
+                int count = (int)Math.Min(ChunkBytes, length - offset);
+                int withinBlock = (int)(offset % BlockBytes);
+                // Authenticate every overlapping block, including any UTF-8 suffix trimmed below.
+                // A change elsewhere in a warm file is detected when that block is requested.
+                long first = offset - withinBlock;
+                int alignedBytes = (int)Math.Min(length - first, ((withinBlock + count + BlockBytes - 1) / BlockBytes) * BlockBytes);
+                byte[] buffer = new byte[alignedBytes];
+                file.Position = first;
+                ReadExactly(file, buffer, alignedBytes);
+                using (var sha = SHA256.Create())
+                {
+                    for (int start = 0; start < alignedBytes; start += BlockBytes)
+                    {
+                        int size = Math.Min(BlockBytes, alignedBytes - start);
+                        byte[] actual = sha.ComputeHash(buffer, start, size);
+                        store.ExportHashBytes += size;
+                        if (!actual.SequenceEqual(index.Blocks[(first + start) / BlockBytes]))
+                            throw new InvalidDataException("Cached export integrity mismatch.");
+                    }
+                }
                 string text = null;
                 for (int trim = 0; trim <= 3 && count - trim >= 0; trim++)
                 {
                     try
                     {
-                        text = Utf8.GetString(buffer, 0, count - trim);
+                        text = Utf8.GetString(buffer, withinBlock, count - trim);
                         count -= trim;
                         break;
                     }
                     catch (DecoderFallbackException) { }
                 }
-                if (text == null || count == 0 && offset < file.Length)
+                if (text == null || count == 0 && offset < length)
                     throw new InvalidDataException("corrupt");
-                bool more = offset + count < file.Length;
+                bool more = offset + count < length;
                 return new JObject
                 {
                     ["content"] = text,
                     ["generation"] = descriptor["generation"],
-                    ["sha256"] = hash,
-                    ["total_bytes"] = file.Length,
+                    ["sha256"] = index.Sha256,
+                    ["total_bytes"] = length,
                     ["mime_type"] = format == "json" ? "application/json" : "application/xml",
                     ["has_more"] = more,
                     ["next_cursor"] = more ? identity + (offset + count) : null,
@@ -93,7 +127,48 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private static void Generate(TestJobResultStore store, string jobId, JObject descriptor, JObject manifest, string format, string path)
+        private static void ReadExactly(Stream stream, byte[] buffer, int count)
+        {
+            for (int offset = 0; offset < count; )
+            {
+                int read = stream.Read(buffer, offset, count - offset);
+                if (read == 0)
+                    throw new EndOfStreamException();
+                offset += read;
+            }
+        }
+
+        private static BlockIndex BuildIndex(TestJobResultStore store, FileStream file, string identity)
+        {
+            long length = file.Length;
+            if (length > TestJobResultStore.JobLimit)
+                throw new InvalidDataException("Invalid export size.");
+            file.Position = 0;
+            var blocks = new byte[(length + BlockBytes - 1) / BlockBytes][];
+            byte[] buffer = new byte[BlockBytes];
+            using var whole = SHA256.Create();
+            using var block = SHA256.Create();
+            for (int i = 0; i < blocks.Length; i++)
+            {
+                int count = (int)Math.Min(BlockBytes, length - (long)i * BlockBytes);
+                ReadExactly(file, buffer, count);
+                whole.TransformBlock(buffer, 0, count, null, 0);
+                blocks[i] = block.ComputeHash(buffer, 0, count);
+                store.ExportHashBytes += 2L * count;
+            }
+            whole.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+            return new BlockIndex(identity, string.Concat(whole.Hash.Select(value => value.ToString("x2"))), blocks, length);
+        }
+
+        private static BlockIndex Generate(
+            TestJobResultStore store,
+            string jobId,
+            JObject descriptor,
+            JObject manifest,
+            string format,
+            string path,
+            string indexIdentity
+        )
         {
             // Admit the complete owned generation before creating a new temporary export.
             long remaining = store.RemainingExportBudget(jobId, descriptor);
@@ -101,7 +176,8 @@ namespace MCPForUnity.Editor.Services
             store.CheckPath(temporary);
             try
             {
-                using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                BlockIndex index;
+                using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
                 using (var bounded = new BoundedWrite(file, remaining, store.ObserveExportTemporaryBytes))
                 using (var text = new StreamWriter(bounded, Utf8, 8192))
                 {
@@ -184,10 +260,13 @@ namespace MCPForUnity.Editor.Services
                         writer.WriteEndElement();
                         writer.WriteEndDocument();
                     }
+                    text.Flush();
+                    index = BuildIndex(store, file, indexIdentity);
                 }
                 store.ValidateExportBudget(jobId, descriptor, new FileInfo(store.CheckPath(temporary)).Length);
                 store.CheckPath(path);
                 File.Move(store.CheckPath(temporary), path);
+                return index;
             }
             finally
             {

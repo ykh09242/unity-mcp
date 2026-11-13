@@ -48,6 +48,7 @@ namespace MCPForUnity.Editor.Services
         public long InitTimeoutMs { get; set; }
         public TestRunSummary RetainedSummary { get; set; }
         public JObject ResultArtifact { get; set; }
+        internal bool ExportMetadataPending;
         public string CompletionKind { get; set; }
         public bool AwaitingReloadResume { get; set; }
         public int ReloadGeneration { get; set; }

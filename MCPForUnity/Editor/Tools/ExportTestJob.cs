@@ -22,19 +22,29 @@ namespace MCPForUnity.Editor.Tools
                 if (job == null)
                     return new ErrorResponse("Test result details are unavailable.");
                 // Lifecycle fields belong to the typed job, not optional persisted attribution.
-                job.ResultArtifact["status"] = job.Status.ToString().ToLowerInvariant();
-                job.ResultArtifact["started_unix_ms"] = job.StartedUnixMs;
-                job.ResultArtifact["finished_unix_ms"] = job.FinishedUnixMs;
-                JObject chunk = TestJobResultExport.Read(
-                    TestJobManager.ResultStore,
-                    job.JobId,
-                    job.ResultArtifact,
-                    (string)parameters["format"],
-                    (string)parameters["cursor"]
-                );
+                string format = (string)parameters["format"];
+                string status = job.Status.ToString().ToLowerInvariant();
+                if (
+                    !JToken.DeepEquals(job.ResultArtifact["status"], (JToken)status)
+                    || !JToken.DeepEquals(job.ResultArtifact["started_unix_ms"], (JToken)job.StartedUnixMs)
+                    || !JToken.DeepEquals(job.ResultArtifact["finished_unix_ms"], (JToken)job.FinishedUnixMs)
+                )
+                {
+                    job.ResultArtifact["status"] = status;
+                    job.ResultArtifact["started_unix_ms"] = job.StartedUnixMs;
+                    job.ResultArtifact["finished_unix_ms"] = job.FinishedUnixMs;
+                    job.ExportMetadataPending = true;
+                }
+                if (job.ResultArtifact["exports"]?[format] == null)
+                    job.ExportMetadataPending = true;
+                JObject chunk = TestJobResultExport.Read(TestJobManager.ResultStore, job.JobId, job.ResultArtifact, format, (string)parameters["cursor"]);
                 // No successful chunk may escape until its original digest is durable across reload.
-                if (!TestJobManager.PersistResultArtifactMetadata())
-                    return new ErrorResponse("Test result export metadata could not be retained.");
+                if (job.ExportMetadataPending)
+                {
+                    if (!TestJobManager.PersistResultArtifactMetadata())
+                        return new ErrorResponse("Test result export metadata could not be retained.");
+                    job.ExportMetadataPending = false;
+                }
                 return new SuccessResponse("Test result export chunk.", chunk);
             }
             catch (Exception)
