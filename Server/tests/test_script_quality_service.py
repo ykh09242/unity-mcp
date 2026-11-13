@@ -221,11 +221,27 @@ async def test_pages_with_changed_source_identity_are_never_published(quality):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("interruption", [None, "exception", "unknown", "deadline", "connection"])
+@pytest.mark.parametrize(
+    "interruption",
+    [
+        None,
+        "exception",
+        "unknown",
+        "deadline",
+        "connection",
+        "command_capacity",
+        "result_capacity",
+        "result_transfer_timeout",
+        "operation_capacity",
+        "reloading",
+        "operation_busy",
+    ],
+)
 async def test_completed_collection_recovers_without_restarting(quality, interruption):
     from models import MCPResponse
     from transport.command_budget import command_outcome_unknown
     from transport.legacy.unity_connection import _stdio_deadline_response
+    from transport.plugin_hub import PluginHub, _result_limit_response
 
     service, target, send = quality
     start = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})
@@ -238,6 +254,25 @@ async def test_completed_collection_recovers_without_restarting(quality, interru
         "unknown": command_outcome_unknown("manage_script_quality", "Connection lost"),
         "deadline": _stdio_deadline_response("manage_script_quality", None),
         "connection": MCPResponse(success=False, error="Connection reset by peer"),
+        "command_capacity": PluginHub._command_capacity_response(),
+        "result_capacity": _result_limit_response("result_capacity", phase="readiness"),
+        "result_transfer_timeout": _result_limit_response(
+            "result_transfer_timeout", phase="result_delivery", command_id="original-command"
+        ),
+        "operation_capacity": MCPResponse(
+            success=False,
+            error="operation_capacity",
+            data={"reason": "operation_capacity", "dispatch": "not_dispatched"},
+        ),
+        "reloading": MCPResponse(
+            success=False,
+            error="Unity is reloading; please retry",
+            hint="retry",
+            data={"reason": "reloading"},
+        ),
+        "operation_busy": MCPResponse(
+            success=False, error="Native operation is busy", code="operation_busy"
+        ),
     }
     send.side_effect = [first, errors[interruption], first, last] if interruption else [first, last]
     options = {"job_id": job_id}
@@ -259,6 +294,46 @@ async def test_completed_collection_recovers_without_restarting(quality, interru
         "analyze",
         *(["status"] * (4 if interruption else 2)),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure", ["unauthorized", "permission_ended", "integrity", "payload_limit", "invalid_cursor"]
+)
+async def test_authorization_and_permanent_page_failures_are_not_retried(quality, failure):
+    from models import MCPResponse
+    from transport.command_budget import command_outcome_unknown
+    from transport.plugin_hub import _result_limit_response
+
+    service, _, send = quality
+    options = {
+        "job_id": (await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]}))["data"][
+            "job_id"
+        ]
+    }
+    first = native_completion(options["job_id"], rows=[diagnostic_row()], cursor="next")
+    first["data"]["result"]["total_rows"] = 2
+    errors = {
+        "unauthorized": MCPResponse(success=False, error="auth_required"),
+        "permission_ended": command_outcome_unknown(
+            "manage_script_quality", "Permission ended", cause="permission_ended"
+        ),
+        "integrity": MCPResponse(success=False, error="invalid_native_arbitration_response"),
+        "payload_limit": _result_limit_response(
+            "result_payload_limit", phase="result_delivery", command_id="original-command"
+        ),
+        "invalid_cursor": MCPResponse(
+            success=False,
+            error="script_quality_unavailable",
+            data={"reason": "invalid_analysis_cursor"},
+        ),
+    }
+    send.side_effect = [first, errors[failure]]
+    assert (await service.execute(None, "status", options))[
+        "code"
+    ] == "analysis_result_inconsistent"
+    assert (await service.execute(None, "status", options))["code"] == "analysis_expired_or_evicted"
+    assert send.await_count == 3 and options["job_id"] not in service.results.active
 
 
 @pytest.mark.asyncio

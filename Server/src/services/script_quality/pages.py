@@ -14,6 +14,69 @@ class InconsistentResult(ValueError):
     """A page cannot be attributed to the same completed native observation."""
 
 
+def _interrupted_read(response):
+    if not isinstance(response, dict) or response.get("success") is not False:
+        return False
+    detail = response.get("data")
+    reason = detail.get("reason") if isinstance(detail, dict) else None
+    if reason == "outcome_unknown":
+        return detail.get("cause") not in ("permission_ended", "authentication_ended")
+    if reason is not None or response.get("code") is not None:
+        return (reason or response.get("code")) in (
+            "command_capacity",
+            "result_capacity",
+            "result_transfer_timeout",
+            "operation_capacity",
+            "command_deadline_exceeded",
+            "command_not_dispatched",
+            "stale_connection",
+            "read_invalidated",
+            "operation_target_changed",
+            "observation_generation_changed",
+            "no_unity_session",
+            "transport_unavailable",
+            "reloading",
+            "operation_busy",
+            "editor_compiling",
+            "editor_importing",
+            "native_job_active",
+        )
+    # Legacy stdio may serialize a socket exception as a bare error string.
+    # Unknown ErrorResponse payloads (including denied or malformed replies) stay fatal.
+    message = response.get("error")
+    return (
+        detail is None
+        and isinstance(message, str)
+        and (
+            response.get("hint") == "retry"
+            or message
+            in ("peer closed", "Could not connect to Unity", "Timeout receiving Unity response")
+            or message.startswith(
+                (
+                    "Connection closed",
+                    "Connection reset",
+                    "Connection refused",
+                    "Broken pipe",
+                    "Unity connection was retired",
+                    "Unity connection pool generation was retired",
+                    "Unity connection selection",
+                    "No Unity Editor instances found.",
+                    "[WinError 10053]",
+                    "[WinError 10054]",
+                    "[WinError 10060]",
+                    "[WinError 10061]",
+                    "[Errno 32]",
+                    "[Errno 54]",
+                    "[Errno 61]",
+                    "[Errno 104]",
+                    "[Errno 110]",
+                    "[Errno 111]",
+                )
+            )
+        )
+    )
+
+
 def encoded_size(value):
     return len(
         json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
@@ -137,20 +200,8 @@ async def collect_result(first, job_id, fetch, bind_observation):
             raise InconsistentResult()
         seen.add(cursor)
         response = await fetch(cursor)
-        if isinstance(response, dict) and response.get("success") is False:
-            detail = response.get("data")
-            reason = detail.get("reason") if isinstance(detail, dict) else None
-            if reason in (
-                "outcome_unknown",
-                "command_deadline_exceeded",
-                "command_not_dispatched",
-                "stale_connection",
-                "read_invalidated",
-                "operation_target_changed",
-                "no_unity_session",
-            ) or (detail is None and isinstance(response.get("error"), str)):
-                # Legacy stdio can return a connection exception as a reasonless MCP error.
-                raise ConnectionError()
+        if _interrupted_read(response):
+            raise ConnectionError()
     raise InconsistentResult()
 
 
