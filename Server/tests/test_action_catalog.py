@@ -189,6 +189,121 @@ def test_read_actions_and_callback_risks_are_distinct(entries):
     assert action_card(ugui, "diagnose_raycast")["effects"]["readOnlyHint"] is False
 
 
+def test_build_plan_observation_is_distinct_from_guarded_and_unguarded_execution(entries):
+    from services.registry.action_catalog import action_card
+
+    entry = next(entry for entry in entries if entry["name"] == "manage_build")
+    plan = action_card(entry, "plan")
+    guarded = action_card(entry, "build_from_plan")
+    ordinary = action_card(entry, "build")
+    assert plan["effects"]["readOnlyHint"] is True
+    assert plan["effects_scope"] == "action"
+    assert "without saving" in plan["purpose"]
+    assert "non-profile" in plan["purpose"]
+    assert "not every project input" in plan["purpose"]
+    assert "expected_plan_sha256" in guarded["required_parameters"]
+    assert "Repeat the plan" in guarded["purpose"]
+    assert "reject a mismatched hash before scheduling" in guarded["purpose"]
+    assert "job_id" in guarded["purpose"]
+    assert "expected_plan_sha256" not in ordinary["required_parameters"]
+    assert "without a plan hash guard" in ordinary["purpose"]
+    for card in (guarded, ordinary):
+        assert card["purpose_source"] == "declared"
+        assert card["effects"]["readOnlyHint"] is False
+        assert "save assets/scenes" in card["purpose"] or "saves assets/scenes" in card["purpose"]
+        assert "callbacks" in card["purpose"]
+
+
+@pytest.mark.parametrize(
+    ("action", "read_selector", "write_selector", "required"),
+    [
+        ("settings", "value is omitted", "providing value writes", ["property"]),
+        ("scenes", "scenes is omitted", "empty array clears", []),
+        ("profiles", "profile is omitted", "activate=true", []),
+        ("clean_output", "by default", "dry_run=false deletes", ["output_path"]),
+    ],
+)
+def test_mixed_build_actions_retain_conditional_writes_and_conservative_effects(
+    entries, action, read_selector, write_selector, required
+):
+    from services.registry.action_catalog import action_card
+
+    entry = next(entry for entry in entries if entry["name"] == "manage_build")
+    card = action_card(entry, action)
+    assert read_selector in card["purpose"]
+    assert write_selector in card["purpose"]
+    assert card["required_parameters"] == required
+    assert card["effects"]["readOnlyHint"] is False
+    assert card["effects_scope"] == "tool"
+
+
+@pytest.mark.parametrize("tool", ["prefab_contents", "manage_prefabs"])
+def test_prefab_cards_distinguish_callback_preview_from_token_preview_and_save(entries, tool):
+    from services.registry.action_catalog import action_card
+
+    entry = next(entry for entry in entries if entry["name"] == tool)
+    edit = action_card(entry, "modify_contents")
+    preview = action_card(entry, "preview_modify_contents")
+    apply = action_card(entry, "apply_preview")
+    assert "preview_only=true" in edit["purpose"]
+    assert "returns no apply token" in edit["purpose"]
+    assert "root position, rotation, scale and set_active" in preview["purpose"]
+    assert "without saving" in preview["purpose"]
+    assert "10 minutes" in preview["purpose"]
+    assert apply["required_parameters"] == ["preview_id"]
+    assert "save" in apply["purpose"]
+    assert "reject drift" in apply["purpose"]
+    for card in (edit, preview, apply):
+        assert card["purpose_source"] == "declared"
+        assert "callbacks" in card["purpose"]
+        assert card["effects"]["readOnlyHint"] is False
+
+
+def test_scene_cards_distinguish_property_edits_from_hierarchy_and_direct_apply(entries):
+    from services.registry.action_catalog import action_card
+
+    entry = next(entry for entry in entries if entry["name"] == "manage_scene_edits")
+    preview = action_card(entry, "preview")
+    apply = action_card(entry, "apply")
+    structure = action_card(entry, "preview_structure")
+    apply_structure = action_card(entry, "apply_structure")
+    assert preview["required_parameters"] == ["edits"]
+    assert "serialized fields" in preview["purpose"]
+    assert "expected_old for every field" in apply["purpose"]
+    assert apply["required_parameters"] == []  # Token and direct edits are alternatives.
+    assert structure["required_parameters"] == ["target", "operations"]
+    assert "Transform-only subtrees" in structure["purpose"]
+    assert "create/delete/reparent" in structure["purpose"]
+    assert apply_structure["required_parameters"] == ["preview_id"]
+    assert "hierarchy/state drift" in apply_structure["purpose"]
+    assert apply_structure["effects"]["readOnlyHint"] is False
+
+
+@pytest.mark.parametrize("operation", ["move", "delete"])
+def test_asset_preview_and_optional_guarded_mutation_are_explained_on_both_routes(
+    entries, operation
+):
+    from services.registry.action_catalog import action_card
+
+    by_name = {entry["name"]: entry for entry in entries}
+    preview = action_card(by_name["asset_reference_diagnostics"], "preview_" + operation)
+    mutation = action_card(by_name["asset_edit"], operation)
+    for card in (preview, mutation):
+        assert "reference_revision" in card["purpose"]
+        assert card["purpose_source"] == "declared"
+    assert "without " in preview["purpose"]
+    assert "scan coverage" in preview["purpose"]
+    assert "omitting it performs an unguarded" in mutation["purpose"]
+    assert mutation["effects"]["readOnlyHint"] is False
+    assert "reference_revision" not in mutation["required_parameters"]
+    legacy_preview = action_card(by_name["manage_asset"], "preview_" + operation)
+    legacy_mutation = action_card(by_name["manage_asset"], operation)
+    assert legacy_preview["purpose"] == preview["purpose"]
+    assert legacy_mutation["purpose"] == mutation["purpose"]
+    assert legacy_preview["required_parameters"] == preview["required_parameters"]
+    assert legacy_mutation["required_parameters"] == mutation["required_parameters"]
+
+
 def test_search_projects_the_same_metadata_as_catalog(entries):
     from services.registry.action_catalog import tool_capability
     from services.registry.task_search import SearchRequest, search_catalog

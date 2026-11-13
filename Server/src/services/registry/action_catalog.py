@@ -82,6 +82,51 @@ _PHYSICS: Final = ToolGuidance(
     ("create-2d-physics", "physics-3d-collision"),
 )
 _UITK: Final = ToolGuidance("ui toolkit uxml uss layout text 레이아웃", ("ui-uitk",))
+_PREFAB_CONTENTS: Final = ToolGuidance(
+    actions={
+        "modify_contents": ActionGuidance(
+            "Edit objects and components in prefab_path and save the asset. With preview_only=true, load and edit isolated contents to inspect changes without saving; this may run load/edit callbacks and returns no apply token. preview_scope=components restricts observation to the named component_properties.",
+            ("prefab_path",),
+        ),
+        "preview_modify_contents": ActionGuidance(
+            "Preview only prefab root position, rotation, scale and set_active changes for prefab_path without saving. Return a one-attempt preview_id valid for 10 minutes; loading prefab contents may run callbacks.",
+            ("prefab_path",),
+        ),
+        "apply_preview": ActionGuidance(
+            "Recheck and save the retained prefab root changes using only preview_id from preview_modify_contents. Consume the one-attempt token and reject drift before applying; prefab load/save callbacks may run.",
+            ("preview_id",),
+        ),
+    }
+)
+_ASSET_REFERENCES: Final = ToolGuidance(
+    actions={
+        "get_dependencies": ActionGuidance(
+            "Find assets referenced by the selected asset.", ("path",)
+        ),
+        "get_reverse_references": ActionGuidance(
+            "Find project assets that refer to the selected asset, including usages of a prefab.",
+            ("path",),
+        ),
+        "preview_move": ActionGuidance(
+            "Observe bounded reference impact of moving path to destination without moving it. Return referenceRevision for an optional move with reference_revision; inspect scan coverage before relying on the result.",
+            ("path", "destination"),
+        ),
+        "preview_delete": ActionGuidance(
+            "Observe bounded references and deletion impact for path without deleting it. Return referenceRevision for an optional delete with reference_revision; inspect scan coverage before relying on the result.",
+            ("path",),
+        ),
+    }
+)
+_ASSET_MUTATIONS: Final = {
+    "move": ActionGuidance(
+        "Move path to destination through the AssetDatabase. Supply reference_revision from preview_move to recheck the same scan options, require complete scan coverage and reject reference drift before mutation; omitting it performs an unguarded move.",
+        ("path", "destination"),
+    ),
+    "delete": ActionGuidance(
+        "Delete the asset at path through the AssetDatabase. Supply reference_revision from preview_delete to recheck the same scan options, require complete scan coverage and reject reference drift before mutation; omitting it performs an unguarded delete.",
+        ("path",),
+    ),
+}
 # Retain existing aliases for query-only callers. Language-independent discovery
 # uses complete catalog traversal and the calling agent's interpretation.
 TOOL_GUIDANCE: Final = {
@@ -143,34 +188,56 @@ TOOL_GUIDANCE: Final = {
             )
         },
     ),
-    "asset_reference_diagnostics": ToolGuidance(
+    "asset_reference_diagnostics": _ASSET_REFERENCES,
+    "asset_edit": ToolGuidance(actions=_ASSET_MUTATIONS),
+    "manage_asset": ToolGuidance(actions={**_ASSET_REFERENCES.actions, **_ASSET_MUTATIONS}),
+    "prefab_contents": _PREFAB_CONTENTS,
+    "manage_prefabs": _PREFAB_CONTENTS,
+    "manage_build": ToolGuidance(
         actions={
-            "get_dependencies": ActionGuidance(
-                "Find assets referenced by the selected asset.", ("path",)
+            "plan": ActionGuidance(
+                "Observe one ordinary non-profile build using target, output_path, scenes, development, options, subtarget and scripting_backend; omitted inputs use current defaults. Return plan_sha256 without saving, switching targets, changing settings or starting a build. The hash covers declared observations, not every project input or toolchain readiness.",
+                effects=READ_ONLY_EFFECTS,
             ),
-            "get_reverse_references": ActionGuidance(
-                "Find project assets that refer to the selected asset, including usages of a prefab.",
-                ("path",),
+            "build_from_plan": ActionGuidance(
+                "Repeat the plan's ordinary build inputs with expected_plan_sha256 from a fresh plan. Reobserve and reject a mismatched hash before scheduling an asynchronous build; admitted builds save assets/scenes, may persist scripting_backend changes and run build callbacks. Observe the returned job_id with status.",
+                ("expected_plan_sha256",),
             ),
-            "preview_move": ActionGuidance(
-                "Preview the effects of moving an asset and inspect reference impact.",
-                ("path", "destination"),
+            "build": ActionGuidance(
+                "Schedule an asynchronous ordinary or profile build without a plan hash guard. Build preparation saves assets/scenes, may persist scripting_backend changes and runs build callbacks; target/output_path/scenes/options or profile select the build. Observe the returned job_id with status."
             ),
-            "preview_delete": ActionGuidance(
-                "Preview deletion impact and references to an asset.", ("path",)
+            "settings": ActionGuidance(
+                "Read the selected build property when value is omitted; providing value writes the persistent setting for the selected target, including an explicit empty string where supported.",
+                ("property",),
+            ),
+            "scenes": ActionGuidance(
+                "Read the current build scene list when scenes is omitted. Providing scenes replaces the list; a JSON empty array clears it."
+            ),
+            "profiles": ActionGuidance(
+                "List Unity 6 Build Profiles when profile is omitted, or load the selected profile's scene details. With profile and activate=true, change the active Build Profile."
+            ),
+            "clean_output": ActionGuidance(
+                "Preview removal of the explicit output_path under Builds/ by default. Only dry_run=false deletes that selected descendant; links and active builds are refused.",
+                ("output_path",),
             ),
         },
     ),
-    "prefab_contents": ToolGuidance(
+    "manage_scene_edits": ToolGuidance(
         actions={
-            "modify_contents": ActionGuidance(
-                "Edit objects and components in a prefab asset's contents."
+            "preview": ActionGuidance(
+                "Observe before/after values for 1-1000 edits to allowlisted native Transform, BoxCollider, SphereCollider, CapsuleCollider or Rigidbody serialized fields in stable Edit Mode. Retain a one-attempt preview_id valid for 10 minutes without applying the edits.",
+                ("edits",),
             ),
-            "preview_modify_contents": ActionGuidance(
-                "Preview supported prefab transform changes and retain a preview token."
+            "apply": ActionGuidance(
+                "Apply native serialized scene field changes from preview_id, or direct edits containing expected_old for every field. Reject drift before mutation and record one named Undo group; no general transaction or dirty-flag rollback is promised."
             ),
-            "apply_preview": ActionGuidance(
-                "Apply a retained prefab preview using its observed preview_id."
+            "preview_structure": ActionGuidance(
+                "Preview 1-256 ordered create/delete/reparent operations within an integer scene-root target scope. Only ordinary Transform-only subtrees are supported; reparent preserves local transforms. Retain preview_id without applying hierarchy changes.",
+                ("target", "operations"),
+            ),
+            "apply_structure": ActionGuidance(
+                "Apply the retained scene hierarchy changes using only preview_id from preview_structure. Reject hierarchy/state drift before mutation and record one Undo group; consume the one-attempt token.",
+                ("preview_id",),
             ),
         },
     ),

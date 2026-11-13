@@ -24,6 +24,19 @@ its name as a short label and the enclosing tool description for context.
 `effects_scope="tool"` indicates conservative tool-wide effects. Known required
 parameters on cards supplement conditional requirements in the full live schema.
 
+Intent guidance is targeted at routes where the action name obscures different
+outcomes. Build cards distinguish observing a non-profile `plan`, repeating its
+inputs with `expected_plan_sha256` for `build_from_plan`, and an unguarded `build`.
+Mixed actions describe their input-dependent effects: build settings and scene
+lists can read or write; output cleanup previews unless `dry_run=false`.
+Prefab cards distinguish callback-bearing `preview_only` inspection from a
+retained root-edit preview and its one-attempt apply token. Scene field and
+hierarchy previews identify their supported targets and apply alternatives.
+Asset reference previews identify bounded scan coverage and the optional
+`reference_revision` guard on move/delete. Shared focused and legacy routes use
+the same intent guidance. These cards do not grant permission or replace the
+exact schema, and preview wording alone does not imply a read-only effects hint.
+
 ## Browsing and execution
 
 - The root catalog returns every registered built-in tool name in a complete group
