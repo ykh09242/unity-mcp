@@ -2337,9 +2337,11 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(cmd.target))
                 return new ErrorResponse("'target' (GameObject name/path/instanceID) is required for move_to_scene.");
 
-            var go = ResolveGameObject(new JValue(cmd.target), SceneManager.GetActiveScene());
+            var go = ResolveMoveSource(cmd.target, out bool ambiguous);
+            if (ambiguous)
+                return new ErrorResponse("Target matches multiple GameObjects in loaded scenes. Use an instance ID.");
             if (go == null)
-                return new ErrorResponse($"GameObject not found: '{cmd.target}'");
+                return new ErrorResponse("GameObject not found in a loaded scene.");
             if (go.transform.parent != null)
                 return new ErrorResponse($"'{go.name}' is not a root GameObject. Only root objects can be moved between scenes.");
 
@@ -2349,14 +2351,65 @@ namespace MCPForUnity.Editor.Tools
             if (!targetScene.Value.isLoaded)
                 return new ErrorResponse($"Target scene '{targetScene.Value.name}' is not loaded.");
 
+            var sourceScene = go.scene;
+            int instanceId = go.GetInstanceIDCompat();
             if (Application.isPlaying)
                 SceneManager.MoveGameObjectToScene(go, targetScene.Value);
             else
                 Undo.MoveGameObjectToScene(go, targetScene.Value, $"Move '{go.name}' to scene '{targetScene.Value.name}'");
             return new SuccessResponse(
                 $"Moved '{go.name}' to scene '{targetScene.Value.name}'.",
-                new { sceneName = targetScene.Value.name, scenePath = targetScene.Value.path }
+                new
+                {
+                    sceneName = targetScene.Value.name,
+                    scenePath = targetScene.Value.path,
+                    instanceID = instanceId,
+                    sourceSceneName = sourceScene.name,
+                    sourceScenePath = sourceScene.path,
+                    sourceSceneHandle = sourceScene.handle,
+                }
             );
+        }
+
+        private static GameObject ResolveMoveSource(string target, out bool ambiguous)
+        {
+            ambiguous = false;
+            if (int.TryParse(target, out int id))
+            {
+                var obj = GameObjectLookup.ResolveInstanceID(id);
+                var byId = obj as GameObject ?? (obj as Component)?.gameObject;
+                if (byId != null)
+                    return byId.scene.IsValid() && byId.scene.isLoaded ? byId : null;
+            }
+
+            GameObject match = null;
+            bool isPath = target.Contains("/");
+            var pending = new Stack<Transform>();
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (!scene.isLoaded)
+                    continue;
+                foreach (var root in scene.GetRootGameObjects())
+                    pending.Push(root.transform);
+                while (pending.Count > 0)
+                {
+                    var current = pending.Pop();
+                    var candidate = current.gameObject;
+                    if (isPath ? GameObjectLookup.MatchesPath(candidate, target) : candidate.name == target)
+                    {
+                        if (match != null)
+                        {
+                            ambiguous = true;
+                            return null;
+                        }
+                        match = candidate;
+                    }
+                    foreach (Transform child in current)
+                        pending.Push(child);
+                }
+            }
+            return match;
         }
 
         // ModifyBuildSettings removed — use manage_build(action="scenes") instead.

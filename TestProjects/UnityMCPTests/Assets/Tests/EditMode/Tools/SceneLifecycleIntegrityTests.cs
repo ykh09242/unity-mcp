@@ -456,6 +456,112 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void MoveToScene_DuplicateRootsRequireIdAndUndoRestoresSelectedRoot()
+        {
+            var selected = new GameObject("DuplicateMoveRoot");
+            var other = new GameObject("DuplicateMoveRoot");
+            other.SetActive(false);
+            JObject request = Select("move_to_scene");
+            request["target"] = selected.name;
+            var ambiguous = Call(request);
+            Assert.IsFalse(ambiguous.Value<bool>("success"), ambiguous.ToString());
+            StringAssert.Contains("multiple", ambiguous.Value<string>("error"));
+            Assert.AreEqual(first, selected.scene);
+            Assert.AreEqual(first, other.scene);
+
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            request["target"] = selected.GetInstanceIDCompat();
+            var response = Call(request);
+            Success(response);
+            Assert.AreEqual(selected.GetInstanceIDCompat(), response["data"].Value<int>("instanceID"));
+            Assert.AreEqual(firstPath, response["data"].Value<string>("sourceScenePath"));
+            Assert.AreEqual(first.handle, response["data"].Value<int>("sourceSceneHandle"));
+            Assert.AreEqual(second, selected.scene);
+            Assert.AreEqual(first, other.scene);
+            Undo.FlushUndoRecordObjects();
+            Undo.CollapseUndoOperations(group);
+            Undo.PerformUndo();
+            Assert.AreEqual(first, selected.scene);
+            Assert.AreEqual(first, other.scene);
+        }
+
+        [Test]
+        public void MoveToScene_DuplicatePathsAcrossLoadedScenesDoNotMove()
+        {
+            var firstRoot = new GameObject("DuplicatePathRoot");
+            var secondRoot = new GameObject("DuplicatePathRoot");
+            SceneManager.MoveGameObjectToScene(secondRoot, second);
+            secondRoot.SetActive(false);
+            JObject request = Select("move_to_scene");
+            request["target"] = "/DuplicatePathRoot";
+            var response = Call(request);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("multiple", response.Value<string>("error"));
+            Assert.AreEqual(first, firstRoot.scene);
+            Assert.AreEqual(second, secondRoot.scene);
+        }
+
+        [Test]
+        public void MoveToScene_RootAndChildWithSameNameAreAmbiguous()
+        {
+            var root = new GameObject("MoveNameCollision");
+            var parent = new GameObject("Parent");
+            var child = new GameObject(root.name);
+            child.transform.SetParent(parent.transform);
+            JObject request = Select("move_to_scene");
+            request["target"] = root.name;
+            var response = Call(request);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("multiple", response.Value<string>("error"));
+            Assert.AreEqual(first, root.scene);
+            Assert.AreEqual(first, child.scene);
+        }
+
+        [Test]
+        public void MoveToScene_NumericNameAndLongNameRemainSupported()
+        {
+            var numeric = new GameObject("2147483647");
+            JObject request = Select("move_to_scene");
+            request["target"] = numeric.name;
+            Success(Call(request));
+            Assert.AreEqual(second, numeric.scene);
+
+            var longNamed = new GameObject(new string('x', 1025));
+            request["target"] = longNamed.GetInstanceIDCompat();
+            var response = Call(request);
+            Success(response);
+            Assert.AreEqual(longNamed.GetInstanceIDCompat(), response["data"].Value<int>("instanceID"));
+            Assert.AreEqual(second, longNamed.scene);
+        }
+
+        [Test]
+        public void MoveToScene_UniqueInactiveSourceInAdditiveSceneAndChildRestriction()
+        {
+            var root = new GameObject("UniqueInactiveMoveRoot");
+            var child = new GameObject("UniqueMoveChild");
+            child.transform.SetParent(root.transform);
+            SceneManager.MoveGameObjectToScene(root, second);
+            root.SetActive(false);
+            JObject request = new JObject
+            {
+                ["action"] = "move_to_scene",
+                ["scenePath"] = firstPath,
+                ["target"] = child.name,
+            };
+            var rejected = Call(request);
+            Assert.IsFalse(rejected.Value<bool>("success"), rejected.ToString());
+            StringAssert.Contains("not a root", rejected.Value<string>("error"));
+            Assert.AreEqual(second, root.scene);
+            request["target"] = root.name;
+            var response = Call(request);
+            Success(response);
+            Assert.AreEqual(secondPath, response["data"].Value<string>("sourceScenePath"));
+            Assert.AreEqual(first, root.scene);
+            Assert.AreEqual(first, child.scene);
+        }
+
+        [Test]
         public void CombinedSelector_MovesOwnedRootToExactLaterPath()
         {
             var go = new GameObject("Owned_" + Guid.NewGuid().ToString("N"));
