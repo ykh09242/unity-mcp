@@ -103,6 +103,11 @@ def test_real_cli_processes_verify_all_three_budget_outcomes(completed: Path) ->
     assert exits == [0, 1, 2]
 
 
+def test_verifier_accepts_relative_evidence_root(completed: Path, monkeypatch) -> None:
+    monkeypatch.chdir(completed.parent)
+    check_budget_checks(Path(completed.name), "a" * 32)
+
+
 @pytest.mark.parametrize(
     "damage",
     [

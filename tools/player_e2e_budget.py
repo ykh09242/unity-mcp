@@ -209,9 +209,9 @@ def _command(inputs: _Inputs, policy: Path) -> list[str]:
         "json",
         "play-scenario",
         "check-soak-budget",
-        *(str(path) for path in inputs.directories),
+        *(str(path.absolute()) for path in inputs.directories),
         "--policy",
-        str(policy),
+        str(policy.absolute()),
     ]
 
 
