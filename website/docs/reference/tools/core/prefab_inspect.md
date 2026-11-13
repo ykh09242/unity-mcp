@@ -21,7 +21,7 @@ Inspect prefab metadata or a bounded hierarchy page. Inspection may load assets 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `action` | `Literal['get_info', 'get_hierarchy']` | yes | Feature action to perform. |
-| `prefab_path` | `str \| None` | — | Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab). |
+| `prefab_path` | `str \| None` | — | Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab). For save/close, when supplied it must match the current Prefab Stage. |
 | `page_size` | `int \| None` | — | Page size 1-500. get_hierarchy defaults to 50; list_overrides defaults to 100. |
 | `cursor` | `str \| None` | — | get_hierarchy opaque cursor; keep identical page_size/max_depth. |
 | `max_depth` | `int` | — | get_hierarchy inclusive depth scope, root=0; default 64, maximum 128. |

@@ -332,6 +332,9 @@ for action in ('open_prefab_stage', 'get_info', 'get_hierarchy'):
                          expected))
 for action in ('save_prefab_stage', 'close_prefab_stage'):
     prefab_cases.append(({'action': action}, {'action': action}))
+    for path in ('Assets/Fixture.prefab', ''):
+        prefab_cases.append(({'action': action, 'prefab_path': path},
+                             {'action': action, 'prefabPath': path}))
 for target in (-19340, '-19340', 'McpProbeCube', 'Parent/McpProbeCube', '/Parent/McpProbeCube', 0):
     prefab_cases.append((
         {'action': 'create_from_gameobject', 'target': target, 'prefab_path': 'Assets/ProbeCube.prefab'},

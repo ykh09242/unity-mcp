@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers; // For Response class
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.Prefabs;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -551,6 +552,10 @@ namespace MCPForUnity.Editor.Tools
 
                 if (asset is GameObject gameObject)
                 {
+                    if (ManagePrefabs.IsDirtyStageForAsset(fullPath))
+                        return new ErrorResponse(
+                            "The same prefab asset is open in a dirty Prefab Stage. Save or discard its pending edits before modifying the asset."
+                        );
                     var assignments = new List<(string name, Func<object> get, Action<object> set, object previous, object next)>();
                     foreach (var entry in properties.Properties())
                     {

@@ -21,7 +21,7 @@ Create a prefab asset from an existing GameObject.
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `action` | `Literal['create_from_gameobject']` | yes | Feature action to perform. |
-| `prefab_path` | `str \| None` | — | Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab). |
+| `prefab_path` | `str \| None` | — | Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab). For save/close, when supplied it must match the current Prefab Stage. |
 | `target` | `str \| int \| None` | — | For create_from_gameobject: instance ID (integer or numeric string), unique name, or full hierarchy path (e.g. 'Parent/Child' or '/Parent/Child') in the active scene/current prefab stage. Stage names/paths take precedence. Numeric targets are IDs; ambiguous names/paths fail. For modify_contents: saved prefab object name or child path; omit to target the root. Use returned rootObjectName/rootObjectPath, which may differ from the source instance name. IDs do not apply to isolated prefab contents. |
 | `allow_overwrite` | `bool \| None` | — | Allow replacing existing prefab. |
 | `search_inactive` | `bool \| None` | — | Include inactive GameObjects in search. |

@@ -96,7 +96,11 @@ async def manage_prefabs(
         ],
         "Prefab operation to perform.",
     ],
-    prefab_path: Annotated[str, "Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab)."]
+    prefab_path: Annotated[
+        str,
+        "Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab). For save/close, "
+        "when supplied it must match the current Prefab Stage.",
+    ]
     | None = None,
     target: Annotated[
         str | int,
@@ -384,7 +388,7 @@ async def manage_prefabs(
                 params["cursor"] = cursor
 
         # Handle prefab path parameter
-        if prefab_path:
+        if prefab_path is not None:
             params["prefabPath"] = prefab_path
 
         if target is not None:

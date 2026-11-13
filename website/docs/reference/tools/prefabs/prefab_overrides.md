@@ -21,7 +21,7 @@ List, apply or revert explicitly selected prefab overrides.
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `action` | `Literal['list_overrides', 'revert_overrides', 'apply_overrides']` | yes | Feature action to perform. |
-| `prefab_path` | `str \| None` | — | Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab). |
+| `prefab_path` | `str \| None` | — | Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab). For save/close, when supplied it must match the current Prefab Stage. |
 | `target` | `str \| int \| None` | — | For create_from_gameobject: instance ID (integer or numeric string), unique name, or full hierarchy path (e.g. 'Parent/Child' or '/Parent/Child') in the active scene/current prefab stage. Stage names/paths take precedence. Numeric targets are IDs; ambiguous names/paths fail. For modify_contents: saved prefab object name or child path; omit to target the root. Use returned rootObjectName/rootObjectPath, which may differ from the source instance name. IDs do not apply to isolated prefab contents. |
 | `override_ids` | `list[str] \| None` | — | Explicit overrideId values from list_overrides; 1-100 unique values. Required for revert_overrides/apply_overrides. Select object/component/property entries via their IDs; no implicit apply-all. |
 | `object_id` | `int \| None` | — | list_overrides: filter by scene GameObject or component instance ID. |

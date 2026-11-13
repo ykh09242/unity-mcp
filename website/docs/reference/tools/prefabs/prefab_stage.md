@@ -21,7 +21,7 @@ Open, save or close the Prefab Stage.
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `action` | `Literal['open_prefab_stage', 'save_prefab_stage', 'close_prefab_stage']` | yes | Feature action to perform. |
-| `prefab_path` | `str \| None` | — | Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab). |
+| `prefab_path` | `str \| None` | — | Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab). For save/close, when supplied it must match the current Prefab Stage. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

@@ -129,11 +129,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         return OpenPrefabStage(prefabPath);
                     }
                     case ACTION_SAVE_PREFAB_STAGE:
-                        return SavePrefabStage();
+                        return SavePrefabStage(@params);
                     case ACTION_CLOSE_PREFAB_STAGE:
                     {
                         bool saveBeforeClose = @params["saveBeforeClose"]?.ReadScalar<bool?>() ?? false;
-                        return ClosePrefabStage(saveBeforeClose);
+                        return ClosePrefabStage(@params, saveBeforeClose);
                     }
                     default:
                         return new ErrorResponse($"Unknown action: '{action}'. Valid actions are: {SupportedActions}.");
@@ -890,8 +890,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             if (stringError != null)
                 return new ErrorResponse(stringError);
 
-            var openStage = PrefabStageUtility.GetCurrentPrefabStage();
-            if (openStage != null && openStage.scene.isDirty && string.Equals(openStage.assetPath, sanitizedPath, StringComparison.OrdinalIgnoreCase))
+            if (IsDirtyStageForAsset(sanitizedPath))
                 return new ErrorResponse(
                     "The same prefab asset is open in a dirty Prefab Stage. Save or discard its pending edits before modifying isolated contents."
                 );
@@ -2117,11 +2116,43 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
         }
 
-        private static object SavePrefabStage()
+        internal static bool IsDirtyStageForAsset(string canonicalPath)
+        {
+            var stage = PrefabStageUtility.GetCurrentPrefabStage();
+            return stage != null && stage.scene.isDirty && string.Equals(stage.assetPath, canonicalPath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string ValidateExpectedStagePath(JObject parameters, PrefabStage stage)
+        {
+            JToken token = parameters["prefabPath"] ?? parameters["path"];
+            if (token == null)
+                return null;
+            if (token.Type != JTokenType.String || string.IsNullOrWhiteSpace(token.Value<string>()))
+                return "Expected prefab path must be a nonempty string.";
+            string path;
+            try
+            {
+                path = AssetPathUtility.GetContainedAssetPath(token.Value<string>());
+            }
+            catch (Exception e) when (e is ArgumentException || e is IOException || e is UnauthorizedAccessException)
+            {
+                return $"Invalid expected prefab path: {e.Message}";
+            }
+            if (!path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                return "Expected prefab path must end with '.prefab'.";
+            if (stage == null || !string.Equals(stage.assetPath, path, StringComparison.OrdinalIgnoreCase))
+                return $"Expected prefab stage '{path}' is not the current prefab stage.";
+            return null;
+        }
+
+        private static object SavePrefabStage(JObject parameters)
         {
             try
             {
                 var prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
+                string pathError = ValidateExpectedStagePath(parameters, prefabStage);
+                if (pathError != null)
+                    return new ErrorResponse(pathError);
                 if (prefabStage == null)
                 {
                     return new ErrorResponse("Not currently in prefab editing mode. Open a prefab stage first with open_prefab_stage.");
@@ -2149,11 +2180,14 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
         }
 
-        private static object ClosePrefabStage(bool saveBeforeClose = false)
+        private static object ClosePrefabStage(JObject parameters, bool saveBeforeClose = false)
         {
             try
             {
                 var prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
+                string pathError = ValidateExpectedStagePath(parameters, prefabStage);
+                if (pathError != null)
+                    return new ErrorResponse(pathError);
                 if (prefabStage == null)
                 {
                     return new SuccessResponse("Not currently in prefab editing mode.");
