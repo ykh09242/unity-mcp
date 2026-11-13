@@ -222,11 +222,26 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var target = new GameObject("__McpParticleComponentTarget");
             target.transform.SetParent(root.transform, false);
-            sceneFixture.ClearDirtiness();
+            // Batch Edit Mode requires the first owned scene to be saved before additive creation.
+            string folderGuid = AssetDatabase.CreateFolder("Assets", assetRoot.Substring("Assets/".Length));
+            Assert.IsFalse(string.IsNullOrEmpty(folderGuid));
+            ownsAssetFolder = true;
+            Assert.IsTrue(
+                EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"),
+                "Save the named fixture scene before opening the second scene."
+            );
+            Assert.IsFalse(ownedScene.isDirty);
             Scene unrelated = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
             try
             {
-                Assert.IsTrue(SceneManager.SetActiveScene(unrelated));
+                Assert.IsTrue(
+                    EditorSceneManager.SaveScene(unrelated, assetRoot + "/Unrelated.unity"),
+                    "Save the unrelated scene inside the owned fixture folder."
+                );
+                if (SceneManager.GetActiveScene() != unrelated)
+                    Assert.IsTrue(SceneManager.SetActiveScene(unrelated), "The unrelated scene must become active.");
+                Assert.AreEqual(unrelated, SceneManager.GetActiveScene());
+                Assert.AreEqual(ownedScene, target.scene);
                 Assert.IsFalse(unrelated.isDirty);
                 JObject response = JObject.FromObject(
                     ManageVFX.HandleCommand(
@@ -246,10 +261,10 @@ namespace MCPForUnityTests.Editor.Tools
                 );
                 Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                 Assert.IsFalse(response.Value<bool>("createdGameObject"));
-                Assert.IsTrue(response.Value<bool>("addedParticleSystem"));
+                Assert.IsTrue(response.Value<bool>("addedParticleSystem"), response.ToString());
                 Assert.IsNotNull(target.GetComponent<ParticleSystem>());
                 Assert.IsNotNull(target.GetComponent<ParticleSystemRenderer>());
-                Assert.IsTrue(ownedScene.isDirty);
+                Assert.IsTrue(ownedScene.isDirty, "Creating the system must dirty its owning scene.");
                 Assert.IsFalse(unrelated.isDirty);
                 Assert.AreEqual(unrelated, SceneManager.GetActiveScene());
 
