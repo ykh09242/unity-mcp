@@ -26,11 +26,7 @@ namespace MCPForUnity.Editor.Tools
                 : base(message) { }
         }
 
-        private static string[] inventory;
-        private static string inventoryToken;
-        private static string inventoryEpoch;
-        private static long inventoryRevision;
-        private static double inventoryUsed;
+        private static ReferenceGraphInventories inventories = new();
         private static string dependencyGuid;
         private static string dependencyToken;
         private static string[] dependencies;
@@ -181,7 +177,8 @@ namespace MCPForUnity.Editor.Tools
                     return action == "ignore_rules" ? await ReadIgnoreRules() : Handle(request);
                 if (action == "ignore_rules" && ignoreCandidates != null && ignoreCandidateEpoch == epoch)
                     return await ReadIgnoreRules();
-                if (inventory == null || inventoryEpoch != epoch || inventoryRevision != revision)
+                inventories.ReleaseExpired(epoch, EditorApplication.timeSinceStartup);
+                if (inventories.Current == null || inventories.Current.Revision != revision)
                 {
                     ReferenceGraphPreparation.Snapshot snapshot = await ReferenceGraphPreparation.Acquire(
                         "inventory:" + epoch + ":" + revision,
@@ -191,16 +188,13 @@ namespace MCPForUnity.Editor.Tools
                     token.ThrowIfCancellationRequested();
                     if (!Current())
                         throw new InvalidInventorySnapshotException("Inventory source changed during preparation; restart the census.");
-                    inventory = snapshot.Items;
-                    inventoryToken = snapshot.Token;
-                    inventoryEpoch = epoch;
-                    inventoryRevision = revision;
+                    inventories.Publish(snapshot.Items, snapshot.Token, epoch, revision, EditorApplication.timeSinceStartup);
                 }
-                inventoryUsed = EditorApplication.timeSinceStartup;
+                inventories.Current.LastUsed = EditorApplication.timeSinceStartup;
                 if (action == "ignore_rules")
                 {
                     ReferenceGraphIgnoreRules rules = IgnoreRules();
-                    string[] source = inventory;
+                    string[] source = inventories.Current.Items;
                     bool IgnoreCurrent() => Current() && ReferenceEquals(ignoreRules, rules) && ignoreCandidateEpoch == epoch;
                     await ReferenceGraphPreparation.Acquire(
                         "ignore_rules:" + epoch + ":" + revision,
@@ -229,7 +223,7 @@ namespace MCPForUnity.Editor.Tools
                     return await ReadIgnoreRules();
                 }
                 var page = (JObject)request.DeepClone();
-                page["snapshot"] = inventoryToken;
+                page["snapshot"] = inventories.Current.Token;
                 return Handle(page);
             }
             string guid = ValidateGuid(request);
@@ -555,10 +549,11 @@ namespace MCPForUnity.Editor.Tools
             {
                 // Use the same GUID census as inventory; never walk the filesystem
                 // or perform another whole-project query on ordinary status/imports.
-                if (inventory == null || inventoryEpoch != ReferenceGraphJournal.Epoch)
+                inventories.ReleaseExpired(ReferenceGraphJournal.Epoch, EditorApplication.timeSinceStartup);
+                if (inventories.Current == null)
                     Inventory(new JObject(), 1);
                 Dictionary<string, string> discovered = BaseIgnoreCandidates();
-                foreach (string guid in inventory)
+                foreach (string guid in inventories.Current.Items)
                     AddIgnoreParents(discovered, AssetDatabase.GUIDToAssetPath(guid));
                 ignoreCandidates = discovered;
             }
@@ -645,40 +640,49 @@ namespace MCPForUnity.Editor.Tools
         {
             int offset = Integer(request, "offset", 0, 0, int.MaxValue);
             string token = request.Value<string>("snapshot");
+            string epoch = ReferenceGraphJournal.Epoch;
+            long revision = ReferenceGraphJournal.Revision;
+            double now = EditorApplication.timeSinceStartup;
+            ReferenceGraphInventories.Version inventory;
             if (token == null)
             {
                 if (offset != 0)
                     throw new InvalidInventorySnapshotException("Inventory continuation requires its snapshot.");
-                if (inventory == null || inventoryEpoch != ReferenceGraphJournal.Epoch || (refresh && inventoryRevision != ReferenceGraphJournal.Revision))
+                inventories.ReleaseExpired(epoch, now);
+                inventory = inventories.Current;
+                if (inventory == null || (refresh && inventory.Revision != revision))
                 {
-                    inventoryEpoch = ReferenceGraphJournal.Epoch;
-                    inventoryRevision = ReferenceGraphJournal.Revision;
-                    inventory = AssetDatabase.FindAssets("");
-                    Array.Sort(inventory, StringComparer.Ordinal);
-                    inventoryToken = Guid.NewGuid().ToString("N");
+                    string[] items = AssetDatabase.FindAssets("");
+                    Array.Sort(items, StringComparer.Ordinal);
+                    inventories.Publish(items, Guid.NewGuid().ToString("N"), epoch, revision, now);
+                    inventory = inventories.Current;
                 }
             }
-            else if (inventory == null || token != inventoryToken || inventoryEpoch != ReferenceGraphJournal.Epoch)
-                throw new InvalidInventorySnapshotException("Inventory snapshot expired; restart the census.");
-            if (offset > inventory.Length)
+            else
+            {
+                inventory = inventories.Find(token, epoch, now);
+                if (inventory == null)
+                    throw new InvalidInventorySnapshotException("Inventory snapshot expired; restart the census.");
+            }
+            if (offset > inventory.Items.Length)
                 throw new InvalidInventorySnapshotException("Inventory offset is past the snapshot.");
             var rows = new JArray();
-            int end = offset + Math.Min(count, inventory.Length - offset);
+            int end = offset + Math.Min(count, inventory.Items.Length - offset);
             for (int i = offset; i < end; i++)
             {
-                JObject row = Describe(inventory[i]);
+                JObject row = Describe(inventory.Items[i]);
                 if (row.Value<bool>("present"))
                     rows.Add(row);
             }
-            inventoryUsed = EditorApplication.timeSinceStartup;
+            inventory.LastUsed = EditorApplication.timeSinceStartup;
             ScheduleCleanup();
             return new JObject
             {
-                ["snapshot"] = inventoryToken,
-                ["epoch"] = inventoryEpoch,
-                ["revision"] = inventoryRevision,
+                ["snapshot"] = inventory.Token,
+                ["epoch"] = inventory.Epoch,
+                ["revision"] = inventory.Revision,
                 ["assets"] = rows,
-                ["next_offset"] = end < inventory.Length ? (JToken)end : JValue.CreateNull(),
+                ["next_offset"] = end < inventory.Items.Length ? (JToken)end : JValue.CreateNull(),
             };
         }
 
@@ -1111,8 +1115,7 @@ namespace MCPForUnity.Editor.Tools
                 return;
             nextSweep = now + 60;
             ReferenceGraphCompilation.ReleaseExpired(now);
-            if (inventory != null && now - inventoryUsed > 600)
-                inventory = null;
+            inventories.ReleaseExpired(ReferenceGraphJournal.Epoch, now);
             if (dependencies != null && now - dependencyUsed > 600)
                 dependencies = null;
             if (now - addressableUsed > 600)
@@ -1120,7 +1123,14 @@ namespace MCPForUnity.Editor.Tools
                 addressableSettings = null;
                 addressableRevision = -1;
             }
-            if (inventory == null && dependencies == null && addressableSettings == null && !ReferenceGraphCompilation.Retained && cleanupScheduled)
+            if (
+                inventories.Current == null
+                && inventories.Previous == null
+                && dependencies == null
+                && addressableSettings == null
+                && !ReferenceGraphCompilation.Retained
+                && cleanupScheduled
+            )
             {
                 EditorApplication.update -= ReleaseExpired;
                 cleanupScheduled = false;

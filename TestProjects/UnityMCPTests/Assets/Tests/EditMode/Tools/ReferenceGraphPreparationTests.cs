@@ -169,16 +169,16 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             ResetColdCollector();
             var status = await ReferenceGraphCollector.HandleAsync(new Newtonsoft.Json.Linq.JObject { ["action"] = "status" }, CancellationToken.None);
-            Assert.IsNull(CollectorField("inventory"), "Status must leave the census cold.");
+            Assert.IsNull(ReferenceGraphCollectorTests.Inventories.Current, "Status must leave the census cold.");
             var request = new Newtonsoft.Json.Linq.JObject { ["action"] = "ignore_rules", ["page_size"] = 1 };
             Task<Newtonsoft.Json.Linq.JObject> pending = ReferenceGraphCollector.HandleAsync(request, CancellationToken.None);
             Assert.IsFalse(pending.IsCompleted, "Cold ignore discovery must yield before its native census.");
-            Assert.IsNull(CollectorField("inventory"), "Command admission must not run the native census.");
+            Assert.IsNull(ReferenceGraphCollectorTests.Inventories.Current, "Command admission must not run the native census.");
             Newtonsoft.Json.Linq.JObject rules = await pending;
             Assert.AreEqual(status.Value<string>("epoch"), rules.Value<string>("epoch"));
             Assert.AreEqual(status.Value<long>("revision"), rules.Value<long>("revision"));
-            string inventorySnapshot = (string)CollectorField("inventoryToken");
-            string[] census = (string[])CollectorField("inventory");
+            string inventorySnapshot = ReferenceGraphCollectorTests.Inventories.Current.Token;
+            string[] census = ReferenceGraphCollectorTests.Inventories.Current.Items;
             CollectionAssert.AreEqual(census.OrderBy(value => value, StringComparer.Ordinal), census);
             Task<Newtonsoft.Json.Linq.JObject> inventory = ReferenceGraphCollector.HandleAsync(
                 new Newtonsoft.Json.Linq.JObject { ["action"] = "inventory", ["page_size"] = 1 },
@@ -213,7 +213,7 @@ namespace MCPForUnityTests.EditMode.Tools
                 Assert.Fail("Canceled ignore discovery published a snapshot.");
             }
             catch (OperationCanceledException) { }
-            Assert.IsNull(CollectorField("inventory"));
+            Assert.IsNull(ReferenceGraphCollectorTests.Inventories.Current);
             Assert.IsNull(CollectorField("ignoreCandidates"));
         }
 
@@ -291,7 +291,7 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             catch (OperationCanceledException) { }
             Assert.IsNull(CollectorField("ignoreCandidates"));
-            Assert.AreEqual(inventory.Value<string>("snapshot"), CollectorField("inventoryToken"));
+            Assert.AreEqual(inventory.Value<string>("snapshot"), ReferenceGraphCollectorTests.Inventories.Current.Token);
         }
 
         private static object CollectorField(string name) =>
@@ -302,16 +302,13 @@ namespace MCPForUnityTests.EditMode.Tools
             typeof(ReferenceGraphCollector)
                 .GetMethod("ReleaseIgnoreRules", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
                 .Invoke(null, null);
-            typeof(ReferenceGraphCollector)
-                .GetField("inventory", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
-                .SetValue(null, null);
+            ReferenceGraphCollectorTests.Inventories = new ReferenceGraphInventories();
         }
 
         [Test]
         public async Task ColdInventorySharesSnapshotAndContinuationPreservesOrdinalCensus()
         {
-            var field = typeof(ReferenceGraphCollector).GetField("inventory", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-            field.SetValue(null, null);
+            ReferenceGraphCollectorTests.Inventories = new ReferenceGraphInventories();
             var request = new Newtonsoft.Json.Linq.JObject { ["action"] = "inventory", ["page_size"] = 1 };
             Task<Newtonsoft.Json.Linq.JObject> first = ReferenceGraphCollector.HandleAsync(request, CancellationToken.None);
             Task<Newtonsoft.Json.Linq.JObject> second = ReferenceGraphCollector.HandleAsync(request, CancellationToken.None);
@@ -319,7 +316,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Newtonsoft.Json.Linq.JObject[] pages = await Task.WhenAll(first, second);
             Assert.AreEqual(pages[0].Value<string>("snapshot"), pages[1].Value<string>("snapshot"));
             Assert.AreEqual(pages[0].Value<long>("revision"), pages[1].Value<long>("revision"));
-            string[] census = (string[])field.GetValue(null);
+            string[] census = ReferenceGraphCollectorTests.Inventories.Current.Items;
             CollectionAssert.AreEqual(census.OrderBy(value => value, StringComparer.Ordinal), census);
             var continuation = (Newtonsoft.Json.Linq.JObject)request.DeepClone();
             continuation["snapshot"] = pages[0]["snapshot"];

@@ -5,6 +5,8 @@ using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -19,7 +21,6 @@ namespace MCPForUnityTests.EditMode.Tools
     {
         private const BindingFlags Hidden = BindingFlags.NonPublic | BindingFlags.Static;
         private const string StateKey = "MCP.ReferenceGraph.Journal.v1";
-        private static Type Collector => typeof(ManageReferenceGraph).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphCollector");
         private static Type Journal => typeof(ManageReferenceGraph).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphJournal");
 
         private static void Owned()
@@ -60,6 +61,93 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         private static void Report(JObject result) => TestContext.Out.WriteLine("REFERENCE_NATIVE_MEASUREMENT " + result.ToString(Formatting.None));
+
+        [Test, Explicit("Controller-owned interleaved native inventory measurements."), Timeout(300000)]
+        public async Task InterleavedInventoryVersionsMeasureRestartsLatencyAndRetention()
+        {
+            Owned();
+            const string path = "Assets/__McpInventoryReadersMeasurement.txt";
+            Assert.IsFalse(File.Exists(path) || File.Exists(path + ".meta"));
+            var original = ReferenceGraphCollectorTests.Inventories;
+            var start = new JObject { ["action"] = "inventory", ["page_size"] = 1 };
+            try
+            {
+                File.WriteAllText(path, "initial");
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+                await ReferenceGraphCollector.HandleAsync(new JObject { ["action"] = "status" }, CancellationToken.None);
+                int[] capacities = { 0, ReferenceGraphInventories.MaximumPreviousGuids };
+                int[] order = { 0, 1, 1, 0, 1, 0, 0, 1 };
+                for (int round = 0; round < order.Length; round++)
+                {
+                    int variant = order[round];
+                    var cache = new ReferenceGraphInventories(capacities[variant]);
+                    ReferenceGraphCollectorTests.Inventories = cache;
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+                    var watch = Stopwatch.StartNew();
+                    JObject first = await ReferenceGraphCollector.HandleAsync(start, CancellationToken.None);
+                    double firstMs = watch.Elapsed.TotalMilliseconds;
+                    Assert.LessOrEqual(cache.Current.Items.Length, ReferenceGraphInventories.MaximumPreviousGuids, "Use a fixture within the history budget.");
+                    File.WriteAllText(path, "change-" + round);
+                    AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+                    watch.Restart();
+                    JObject second = await ReferenceGraphCollector.HandleAsync(start, CancellationToken.None);
+                    double secondMs = watch.Elapsed.TotalMilliseconds;
+                    Assert.Greater(second.Value<long>("revision"), first.Value<long>("revision"));
+                    Assert.AreNotEqual(first["snapshot"], second["snapshot"]);
+                    int guids = cache.Current.Items.Length;
+                    int peakSlots = guids + (cache.Previous?.Items.Length ?? 0);
+                    var next = new JObject
+                    {
+                        ["action"] = "inventory",
+                        ["page_size"] = 1,
+                        ["offset"] = first["next_offset"],
+                        ["snapshot"] = first["snapshot"],
+                    };
+                    int restarts = 0;
+                    JObject resumed;
+                    watch.Restart();
+                    try
+                    {
+                        resumed = await ReferenceGraphCollector.HandleAsync(next, CancellationToken.None);
+                        Assert.AreEqual(first["snapshot"], resumed["snapshot"]);
+                        Assert.AreEqual(first["revision"], resumed["revision"]);
+                    }
+                    catch (ReferenceGraphCollector.InvalidInventorySnapshotException)
+                    {
+                        restarts++;
+                        JObject restarted = await ReferenceGraphCollector.HandleAsync(start, CancellationToken.None);
+                        next["snapshot"] = restarted["snapshot"];
+                        next["offset"] = restarted["next_offset"];
+                        resumed = await ReferenceGraphCollector.HandleAsync(next, CancellationToken.None);
+                        Assert.AreEqual(second["snapshot"], resumed["snapshot"]);
+                    }
+                    double resumeMs = watch.Elapsed.TotalMilliseconds;
+                    Assert.AreEqual(variant == 0 ? 1 : 0, restarts);
+                    Report(
+                        new JObject
+                        {
+                            ["scenario"] = "interleaved_inventory",
+                            ["round"] = round,
+                            ["maximum_previous_guids"] = capacities[variant],
+                            ["inventory_guids"] = guids,
+                            ["restarts"] = restarts,
+                            ["a_first_page_ms"] = firstMs,
+                            ["b_first_page_ms"] = secondMs,
+                            ["a_resume_including_restart_ms"] = resumeMs,
+                            ["peak_retained_guid_slots"] = peakSlots,
+                            ["peak_array_reference_bytes"] = (long)peakSlots * IntPtr.Size,
+                        }
+                    );
+                }
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+                ReferenceGraphCollectorTests.Inventories = original;
+            }
+        }
 
         [Test, Explicit("Controller-owned large native source measurements."), Timeout(300000)]
         public void CompleteLargeSourcePagesPreserveBytesAndFences()
@@ -139,6 +227,7 @@ namespace MCPForUnityTests.EditMode.Tools
             var original = (JArray)Journal.GetField("changes", Hidden).GetValue(null);
             string epoch = (string)Journal.GetProperty("Epoch", Hidden).GetValue(null);
             long revision = (long)Journal.GetProperty("Revision", Hidden).GetValue(null);
+            var originalInventory = ReferenceGraphCollectorTests.Inventories;
             try
             {
                 var rows = new JArray();
@@ -173,19 +262,19 @@ namespace MCPForUnityTests.EditMode.Tools
                     Report(restore);
                 }
 
-                Collector.GetField("inventory", Hidden).SetValue(null, null);
+                ReferenceGraphCollectorTests.Inventories = new ReferenceGraphInventories(0);
+                Journal.GetProperty("Revision", Hidden).SetValue(null, 15000L);
                 JObject census = ReferenceGraphCollectorTests.Call("inventory", "page_size", 1);
                 string token = census.Value<string>("snapshot");
                 // Simulate 50,000 later import/catalog records without touching any file.
-                Collector.GetField("inventoryRevision", Hidden).SetValue(null, 15000L);
+                Journal.GetProperty("Revision", Hidden).SetValue(null, 65000L);
                 for (int round = 0; round < 4; round++)
                 {
                     int replayed = 0,
                         pages = 0;
                     JObject result = Measure("cached_census_plus_50000_history", round, () =>
                     {
-                        // Resume consumer A's immutable inventory. A new tokenless
-                        // census after imports intentionally refreshes and expires A.
+                        // Resume consumer A's original checkpoint.
                         JObject start = ReferenceGraphCollectorTests.Call("inventory", "snapshot", token, "offset", 0, "page_size", 1);
                         Assert.AreEqual(token, start.Value<string>("snapshot"));
                         long after = start.Value<long>("revision");
@@ -201,7 +290,7 @@ namespace MCPForUnityTests.EditMode.Tools
                     });
                     result["replayed_rows"] = replayed;
                     result["history_pages"] = pages;
-                    result["native_inventory_size"] = ((string[])Collector.GetField("inventory", Hidden).GetValue(null)).Length;
+                    result["native_inventory_size"] = ReferenceGraphCollectorTests.Inventories.Current.Items.Length;
                     Assert.AreEqual(50000, replayed);
                     Report(result);
                     string[] candidate = null;
@@ -210,11 +299,19 @@ namespace MCPForUnityTests.EditMode.Tools
                         candidate = AssetDatabase.FindAssets("");
                         Array.Sort(candidate, StringComparer.Ordinal);
                     });
-                    CollectionAssert.AreEqual((string[])Collector.GetField("inventory", Hidden).GetValue(null), candidate);
+                    CollectionAssert.AreEqual(ReferenceGraphCollectorTests.Inventories.Current.Items, candidate);
                     fresh["native_inventory_size"] = candidate.Length;
                     // Publishing a fresh token into the single-snapshot cache is
                     // not equivalent: another census may still own this token.
-                    Collector.GetField("inventoryToken", Hidden).SetValue(null, Guid.NewGuid().ToString("N"));
+                    var checkpoint = ReferenceGraphCollectorTests.Inventories;
+                    ReferenceGraphCollectorTests.Inventories = new ReferenceGraphInventories(0);
+                    ReferenceGraphCollectorTests.Inventories.Publish(
+                        candidate,
+                        Guid.NewGuid().ToString("N"),
+                        epoch,
+                        65000L,
+                        EditorApplication.timeSinceStartup
+                    );
                     try
                     {
                         var invalidated = Assert.Throws<TargetInvocationException>(() =>
@@ -225,7 +322,7 @@ namespace MCPForUnityTests.EditMode.Tools
                     }
                     finally
                     {
-                        Collector.GetField("inventoryToken", Hidden).SetValue(null, token);
+                        ReferenceGraphCollectorTests.Inventories = checkpoint;
                     }
                     Report(fresh);
                     Assert.AreEqual(
@@ -240,7 +337,7 @@ namespace MCPForUnityTests.EditMode.Tools
                 Journal.GetProperty("Epoch", Hidden).SetValue(null, epoch);
                 Journal.GetProperty("Revision", Hidden).SetValue(null, revision);
                 SessionState.SetString(StateKey, stored);
-                Collector.GetField("inventory", Hidden).SetValue(null, null);
+                ReferenceGraphCollectorTests.Inventories = originalInventory;
             }
         }
     }

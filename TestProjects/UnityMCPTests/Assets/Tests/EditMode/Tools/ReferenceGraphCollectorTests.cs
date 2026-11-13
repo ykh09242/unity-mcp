@@ -767,6 +767,16 @@ namespace MCPForUnityTests.EditMode.Tools
     public sealed class ReferenceGraphCollectorTests
     {
         private string root;
+        private static readonly FieldInfo InventoryCache = typeof(ReferenceGraphCollector).GetField(
+            "inventories",
+            BindingFlags.NonPublic | BindingFlags.Static
+        );
+
+        internal static ReferenceGraphInventories Inventories
+        {
+            get => (ReferenceGraphInventories)InventoryCache.GetValue(null);
+            set => InventoryCache.SetValue(null, value);
+        }
 
         internal static JObject Call(string action, params object[] pairs)
         {
@@ -808,20 +818,18 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             CreateText("initial.txt", "initial");
             Call("ignore_rules", "validate", true);
-            var type = typeof(ManageAsset).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphCollector");
-            FieldInfo token = type.GetField("inventoryToken", BindingFlags.NonPublic | BindingFlags.Static);
-            string beforeToken = (string)token.GetValue(null);
+            string beforeToken = Inventories.Current.Token;
             long before = Call("status").Value<long>("ignore_revision");
             CreateText("same-parent.txt", "same parent");
             Assert.AreEqual(before, Call("status").Value<long>("ignore_revision"));
-            Assert.AreEqual(beforeToken, token.GetValue(null), "Known-parent imports must reuse the cached GUID census.");
+            Assert.AreEqual(beforeToken, Inventories.Current.Token, "Known-parent imports must reuse the cached GUID census.");
             AssetDatabase.CreateFolder(root, "NewParent");
             CreateText("NewParent/new.txt", "new parent");
             Assert.Greater(Call("status").Value<long>("ignore_revision"), before);
             File.WriteAllText(root + "/NewParent/.gitignore", "new.txt\n");
             JObject page = Call("ignore_rules", "validate", true, "page_size", 1000);
             Assert.IsTrue(((JArray)page["files"]).Any(row => row.Value<string>("path") == root + "/NewParent/.gitignore"));
-            Assert.AreEqual(beforeToken, token.GetValue(null), "New-parent discovery must extend the existing census candidates.");
+            Assert.AreEqual(beforeToken, Inventories.Current.Token, "New-parent discovery must extend the existing census candidates.");
         }
 
         [Test]
@@ -830,32 +838,59 @@ namespace MCPForUnityTests.EditMode.Tools
             CreateText("census-before.txt", "before");
             JObject before = Call("inventory", "page_size", 1);
             string snapshot = before.Value<string>("snapshot");
-            var type = typeof(ManageAsset).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphCollector");
-            const BindingFlags hidden = BindingFlags.NonPublic | BindingFlags.Static;
-            FieldInfo token = type.GetField("inventoryToken", hidden);
-            FieldInfo census = type.GetField("inventory", hidden);
+            string[] original = Inventories.Current.Items;
             Assert.AreEqual(snapshot, Call("inventory", "page_size", 1).Value<string>("snapshot"), "An unchanged explicit census must reuse its snapshot.");
             AssetDatabase.CreateFolder(root, "CensusAdded");
             string path = CreateText("CensusAdded/census-after.txt", "after");
             string guid = AssetDatabase.AssetPathToGUID(path);
-            Assert.AreEqual(snapshot, token.GetValue(null), "Import notifications must not rebuild the shared census.");
+            Assert.AreEqual(snapshot, Inventories.Current.Token, "Import notifications must not rebuild the shared census.");
             Call("status");
             Call("ignore_rules", "validate", true);
-            Assert.AreEqual(snapshot, token.GetValue(null), "Status and implicit ignore discovery must not refresh the census.");
-            Assert.IsFalse(((string[])census.GetValue(null)).Contains(guid));
+            Assert.AreEqual(snapshot, Inventories.Current.Token, "Status and implicit ignore discovery must not refresh the census.");
+            Assert.IsFalse(original.Contains(guid));
             Assert.AreEqual(snapshot, Call("inventory", "snapshot", snapshot, "offset", 0, "page_size", 1).Value<string>("snapshot"));
             JObject fresh = Call("inventory", "page_size", 1);
             Assert.AreNotEqual(snapshot, fresh.Value<string>("snapshot"));
-            int index = Array.IndexOf((string[])census.GetValue(null), guid);
+            int index = Array.IndexOf(Inventories.Current.Items, guid);
             Assert.GreaterOrEqual(index, 0, "A new explicit census must discover the new imported GUID.");
             JObject row = Call("inventory", "snapshot", fresh.Value<string>("snapshot"), "offset", index, "page_size", 1);
             Assert.AreEqual(guid, row["assets"][0].Value<string>("guid"));
             Assert.AreEqual(path, row["assets"][0].Value<string>("path"));
             Assert.AreEqual(fresh["snapshot"], Call("inventory", "page_size", 1)["snapshot"]);
+            if (original.Length <= ReferenceGraphInventories.MaximumPreviousGuids)
+            {
+                JObject resumed = Call("inventory", "snapshot", snapshot, "offset", 1, "page_size", 1);
+                Assert.AreEqual(before["revision"], resumed["revision"]);
+                Assert.AreEqual(before["epoch"], resumed["epoch"]);
+                Assert.AreEqual(before["snapshot"], resumed["snapshot"]);
+                Assert.AreSame(original, Inventories.Previous.Items);
+            }
+            CreateText("census-third.txt", "third");
+            Call("inventory", "page_size", 1);
             var stale = Assert.Throws<TargetInvocationException>(() => Call("inventory", "snapshot", snapshot, "offset", 0, "page_size", 1));
             Assert.IsInstanceOf<InvalidOperationException>(stale.InnerException);
             Assert.AreEqual("InvalidInventorySnapshotException", stale.InnerException.GetType().Name);
             StringAssert.Contains("restart the census", stale.InnerException.Message);
+        }
+
+        [Test]
+        public void InventoryRetentionBoundsHistoryBySizeIdleTimeAndJournalEpoch()
+        {
+            var cache = new ReferenceGraphInventories(2);
+            cache.Publish(new[] { "a", "b", "c" }, "oversized", "epoch", 1, 0);
+            Assert.IsNotNull(cache.Find("oversized", "epoch", 0));
+            cache.Publish(new[] { "d", "e" }, "exact", "epoch", 2, 10);
+            Assert.IsNull(cache.Find("oversized", "epoch", 10));
+            cache.Publish(new[] { "f" }, "latest", "epoch", 3, 20);
+            cache.Publish(new[] { "f" }, "other-waiter", "epoch", 3, 20);
+            Assert.IsNotNull(cache.Find("exact", "epoch", 610));
+            Assert.IsNull(cache.Find("latest", "epoch", 621));
+            Assert.IsNotNull(cache.Find("exact", "epoch", 621));
+            Assert.IsNull(cache.Find("exact", "epoch", 1222));
+            cache.Publish(new[] { "g" }, "fourth", "epoch", 4, 1300);
+            cache.Publish(new[] { "h" }, "fifth", "epoch", 5, 1400);
+            Assert.IsNull(cache.Find("fourth", "different-epoch", 1401));
+            Assert.IsNull(cache.Find("fifth", "different-epoch", 1401));
         }
 
         [Test]
