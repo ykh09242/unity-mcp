@@ -131,19 +131,21 @@ namespace MCPForUnityTests.Editor.Tools
                 bool dirty = EditorUtility.IsDirty(_asset);
                 var request = new JObject
                 {
-                    ["commands"] = new JArray(new JObject
-                    {
-                        ["tool"] = "manage_scriptable_object",
-                        ["params"] = new JObject
+                    ["commands"] = new JArray(
+                        new JObject
                         {
-                            ["action"] = "create",
-                            ["typeName"] = typeof(ScriptableObjectContractDefinition).FullName,
-                            ["folderPath"] = _root,
-                            ["assetName"] = "Existing",
-                            ["overwrite"] = true,
-                            ["dry_run"] = true,
-                        },
-                    }),
+                            ["tool"] = "manage_scriptable_object",
+                            ["params"] = new JObject
+                            {
+                                ["action"] = "create",
+                                ["typeName"] = typeof(ScriptableObjectContractDefinition).FullName,
+                                ["folderPath"] = _root,
+                                ["assetName"] = "Existing",
+                                ["overwrite"] = true,
+                                ["dry_run"] = true,
+                            },
+                        }
+                    ),
                 };
                 var response = JObject.FromObject(BatchExecute.HandleCommand(request).GetAwaiter().GetResult());
                 Assert.IsFalse(response.SelectToken("data.results[0].result.success").Value<bool>(), response.ToString());
