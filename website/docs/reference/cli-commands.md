@@ -3903,12 +3903,13 @@ List all currently loaded scenes. Examples: unity-mcp scene loaded
 
 ## `unity-mcp scene move-to`
 
-Move a root GameObject to another loaded scene. Examples: unity-mcp scene move-to "Player" "Level2"
+Move a root GameObject to another loaded scene. Examples: unity-mcp scene move-to "Player" "Level2" unity-mcp scene move-to --by-id -- -123 "Level2"
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | target | text | required | nargs=1 | — | — |  |
 | scene_name | text | required | nargs=1 | — | — |  |
+| --by-id | boolean | optional | nargs=1, flag | — | — | Treat target as a signed 32-bit instance ID. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp scene open-additive`

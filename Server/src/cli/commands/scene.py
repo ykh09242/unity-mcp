@@ -1,5 +1,7 @@
 """Scene CLI commands."""
 
+import re
+
 import click
 from typing import Optional, Any
 
@@ -283,20 +285,32 @@ def set_active(scene_name: str):
 @scene.command("move-to")
 @click.argument("target")
 @click.argument("scene_name")
+@click.option("--by-id", is_flag=True, help="Treat target as a signed 32-bit instance ID.")
 @handle_unity_errors
-def move_to(target: str, scene_name: str):
+def move_to(target: str, scene_name: str, by_id: bool):
     """Move a root GameObject to another loaded scene.
 
     \b
     Examples:
         unity-mcp scene move-to "Player" "Level2"
+        unity-mcp scene move-to --by-id -- -123 "Level2"
     """
     config = get_config()
+    resolved_target: str | int = target
+    if by_id:
+        digits = target.lstrip("+-").lstrip("0")
+        valid = re.fullmatch(r"[+-]?[0-9]+", target) is not None and len(digits) <= 10
+        value = int(("-" if target.startswith("-") else "") + (digits or "0")) if valid else 0
+        if value == 0 or not -(2**31) <= value < 2**31:
+            raise CLIInputError(
+                "invalid_scene_target_id", "Target ID must be a nonzero signed 32-bit integer."
+            )
+        resolved_target = value
     result = run_command(
         "manage_scene",
         {
             "action": "move_to_scene",
-            "target": target,
+            "target": resolved_target,
             "sceneName": scene_name,
         },
         config,
