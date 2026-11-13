@@ -494,6 +494,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         [Test]
         public void ReportRetentionKeepsTwentyAndRejectsCrossChildIdentity()
         {
+            string firstId = null;
             for (int i = 0; i < 21; i++)
             {
                 var harness = new Harness(
@@ -506,8 +507,20 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 harness.Runner.Tick(1001, true);
                 harness.Complete("succeeded", null);
                 harness.Runner.Tick(1002 + i, true);
-                suites.SaveReport(harness.Runner.State.Report);
+                string relative = suites.SaveReport(harness.Runner.State.Report);
+                if (i == 0)
+                {
+                    firstId = harness.Runner.State.Report.SuiteId;
+                    File.SetLastWriteTimeUtc(Path.Combine(root, relative), DateTime.UtcNow.AddDays(-1));
+                }
             }
+            var reopened = new PlayScenarioSuiteStore(root);
+            Assert.Throws<FileNotFoundException>(() => reopened.GetReport(firstId));
+            Assert.That(
+                Assert.Throws<InvalidOperationException>(() => reopened.FindReportForStart(firstId)).Message,
+                Does.Contain("suite_id was already used")
+            );
+            Assert.IsNull(reopened.FindReportForStart(Guid.NewGuid().ToString("N")));
             Assert.That(suites.ListReports().Count, Is.EqualTo(20));
             PlayScenarioSuiteReport report = suites.ListReports()[0];
             report.Scenarios[0].Report["job_id"] = Guid.NewGuid().ToString("N");

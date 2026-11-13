@@ -244,6 +244,56 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.AreEqual(0, QueuedPlayRequests());
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RunActionsRefuseRetiredIdsBeforeNativeAdmission(bool suite)
+        {
+            string project = Path.GetDirectoryName(UnityEngine.Application.dataPath);
+            string folder = Path.Combine(project, "Library/MCPForUnity", suite ? "PlayScenarioSuiteRuns" : "PlayScenarioRuns");
+            string history = Path.Combine(folder, "retired.ids");
+            if (File.Exists(history))
+                Assert.Ignore("Preserve the existing retirement history.");
+            string id = Guid.NewGuid().ToString("N");
+            bool owned = false;
+            Directory.CreateDirectory(folder);
+            try
+            {
+                using (var stream = new FileStream(history, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    owned = true;
+                    byte[] bytes = System.Text.Encoding.ASCII.GetBytes(id);
+                    stream.Write(bytes, 0, bytes.Length);
+                }
+
+                var engine = Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic);
+                var runner = typeof(PlayScenarioSuiteService).GetField("_runner", BindingFlags.Static | BindingFlags.NonPublic);
+                object previousEngine = engine.GetValue(null);
+                object previousRunner = runner.GetValue(null);
+                int scheduled = QueuedPlayRequests();
+                string field = suite ? "suite_id" : "job_id";
+                var request = new JObject
+                {
+                    ["action"] = suite ? "suite_run" : "run",
+                    [field] = id,
+                    ["name"] = "retired-request",
+                };
+                for (int repeats = 1; repeats <= 2; repeats++)
+                {
+                    request["repeat_count"] = repeats;
+                    var refusal = ManagePlayScenario.HandleCommand(request) as ErrorResponse;
+                    Assert.That(refusal?.Error, Does.Contain(field + " was already used"));
+                    Assert.AreSame(previousEngine, engine.GetValue(null));
+                    Assert.AreSame(previousRunner, runner.GetValue(null));
+                    Assert.AreEqual(scheduled, QueuedPlayRequests());
+                }
+            }
+            finally
+            {
+                if (owned)
+                    File.Delete(history);
+            }
+        }
+
         [Test]
         public void FailedStartRestoresPreviousJobAndCheckpointAndCanBeRetried()
         {

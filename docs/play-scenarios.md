@@ -248,6 +248,13 @@ idempotency key. After an uncertain response, inspect that ID before retrying; d
 jobs under new IDs. Only one job runs at a time. Unity enters Play Mode if needed and leaves it unchanged
 on completion, failure or cancellation.
 
+The Editor retains 20 full reports per kind (jobs and suites). After evicting a full report,
+it remembers the ID among the last 256 evictions of that kind in the project's `Library`.
+A run request with a remembered ID returns an error that the ID was already used and its full report
+has expired, even if the request parameters have changed. Status and history only return full reports.
+Once the ID leaves that window or the local history is removed, the Editor can accept it again.
+Reports evicted before this ID history was introduced cannot be recovered.
+
 The outer `success` means the command was handled. Only report `status: succeeded` means the scenario
 passed. CLI run/status return a nonzero exit code for failed, timed-out or cancelled jobs, or report persistence errors;
 a processed cancel request and a successful history query return zero regardless of job outcome. JSON output retains the report. While evidence/report saving is pending, status stays `running` with phase `finalizing` and the terminal `pending_status`; keep observing until the final report is available.
@@ -508,7 +515,8 @@ MCP uses actions `suite_save`, `suite_get`, `suite_list`, `suite_delete`, `suite
 On normal Editor shutdown, the suite saves an interruption report to the same bounded history.
 Completed children retain their outcomes, unstarted children are marked `skipped`, and a reserved
 child whose final outcome could not be observed is marked `unknown`. Retrying the same request
-after restart returns this report while it remains in the history.
+after restart returns this report while it remains in the history. The same 256-ID eviction
+window applies to `suite_run` after its full report expires.
 
 Native suite_run returns immediately; CLI `suite-run` explicitly waits and requires `--instance` to
 keep requests pinned to the same Editor. `--timeout-seconds` is the whole suite's execution budget,

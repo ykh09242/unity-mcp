@@ -100,7 +100,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             PlayScenarioService.ValidateSourceRevision(revision);
             if (suiteId != null)
             {
-                PlayScenarioSuiteReport previous = _runner?.State.Report.SuiteId == suiteId ? _runner.State.Report : FindReport(suiteId);
+                PlayScenarioSuiteReport previous = _runner?.State.Report.SuiteId == suiteId ? _runner.State.Report : Store.FindReportForStart(suiteId);
                 if (previous != null)
                 {
                     if (

@@ -140,6 +140,60 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
         }
 
         [Test]
+        public void EvictedJobIdRefusesAdmissionAfterTwentyNewerReportsAndRestart()
+        {
+            string first = Guid.NewGuid().ToString("N");
+            string path = Path.Combine(root, store.SaveReport(Run(first)));
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddDays(-1));
+            for (int i = 0; i < 20; i++)
+                store.SaveReport(Run(Guid.NewGuid().ToString("N")));
+
+            Assert.IsFalse(File.Exists(path));
+            var reopened = new PlayScenarioStore(root);
+            Assert.That(Assert.Throws<InvalidOperationException>(() => reopened.FindReportForStart(first)).Message, Does.Contain("job_id was already used"));
+            Assert.IsNull(reopened.FindReportForStart(Guid.NewGuid().ToString("N")));
+            Assert.AreEqual(20, reopened.ListReports().Count);
+        }
+
+        [Test]
+        public void FailedRetirementPreservesFullReportAndNextSaveRepairsHistory()
+        {
+            string first = Guid.NewGuid().ToString("N");
+            string firstPath = Path.Combine(root, store.SaveReport(Run(first)));
+            File.SetLastWriteTimeUtc(firstPath, DateTime.UtcNow.AddDays(-1));
+            for (int i = 0; i < 19; i++)
+                store.SaveReport(Run(Guid.NewGuid().ToString("N")));
+            string retired = Path.Combine(Reports, "retired.ids");
+            File.WriteAllText(retired, "damaged");
+            Assert.Throws<InvalidDataException>(() => store.SaveReport(Run(Guid.NewGuid().ToString("N"))));
+            Assert.AreEqual(first, store.FindReportForStart(first).JobId);
+            Assert.Throws<InvalidDataException>(() => store.FindReportForStart(Guid.NewGuid().ToString("N")));
+
+            File.Delete(retired);
+            new PlayScenarioStore(root).SaveReport(Run(Guid.NewGuid().ToString("N")));
+            Assert.AreEqual(20, store.ListReports().Count);
+            Assert.Throws<InvalidOperationException>(() => store.FindReportForStart(first));
+        }
+
+        [Test]
+        public void RetiredJobHistoryForgetsOnlyTheOldestOf256RetiredIds()
+        {
+            string first = 0.ToString("x32");
+            string second = 1.ToString("x32");
+            for (int i = 0; i <= PlayScenarioReportHistory.RetiredLimit + 20; i++)
+            {
+                string id = i.ToString("x32");
+                string path = Path.Combine(root, store.SaveReport(Run(id)));
+                File.SetLastWriteTimeUtc(path, new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i));
+                if (i == PlayScenarioReportHistory.RetiredLimit + 19)
+                    Assert.Throws<InvalidOperationException>(() => store.FindReportForStart(first));
+            }
+            Assert.IsNull(store.FindReportForStart(first));
+            Assert.Throws<InvalidOperationException>(() => store.FindReportForStart(second));
+            Assert.AreEqual(256 * 32, new FileInfo(Path.Combine(Reports, "retired.ids")).Length);
+        }
+
+        [Test]
         public void StoredReportValidationRejectsCoercionUnknownFieldsAndMismatch()
         {
             var run = Run(Guid.NewGuid().ToString("N"));

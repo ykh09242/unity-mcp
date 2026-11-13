@@ -21,6 +21,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static readonly object Gate = new object();
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
         private readonly string root;
+        private readonly PlayScenarioReportHistory history;
 
         public PlayScenarioSuiteStore(string projectRoot)
         {
@@ -28,6 +29,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 throw new ArgumentException("Project root is required.");
             root = Path.GetFullPath(projectRoot);
             SafePathUtility.ResolveWithinRoot(Path.GetPathRoot(root), root);
+            history = new PlayScenarioReportHistory(root, Reports);
         }
 
         public void Save(PlayScenarioSuiteDefinition definition)
@@ -91,15 +93,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             byte[] bytes = Encode(value, ReportLimit);
             lock (Gate)
             {
+                history.Trim(Files(Reports, PlayScenarioReportHistory.ReportLimit + 1), report.SuiteId, DeleteReport);
                 Write(Checked(relative), bytes);
-                foreach (
-                    string file in Files(Reports, 21)
-                        .Where(file => Path.GetFileNameWithoutExtension(file) != report.SuiteId)
-                        .OrderByDescending(File.GetLastWriteTimeUtc)
-                        .ThenBy(file => file, StringComparer.Ordinal)
-                        .Skip(19)
-                )
-                    File.Delete(Checked(file));
+                history.Trim(Files(Reports, PlayScenarioReportHistory.ReportLimit + 1), report.SuiteId, DeleteReport);
             }
             return relative;
         }
@@ -115,6 +111,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     throw new InvalidDataException("Stored suite_id does not match its filename.");
                 return value.ToObject<PlayScenarioSuiteReport>(Serializer());
             }
+        }
+
+        private void DeleteReport(string file) => File.Delete(Checked(file));
+
+        internal PlayScenarioSuiteReport FindReportForStart(string suiteId)
+        {
+            lock (Gate)
+                return history.FindForStart(suiteId, GetReport, "suite_id");
         }
 
         public IReadOnlyList<PlayScenarioSuiteReport> ListReports(string name = null)

@@ -20,7 +20,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private const int DefinitionLimit = PlayScenarioDefinition.MaximumDefinitionBytes;
         private const int ReportLimit = PlayScenarioDefinition.MaximumReportBytes;
         private readonly string root;
-        private readonly object gate = new object();
+        private static readonly object gate = new object();
+        private readonly PlayScenarioReportHistory history;
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
         private static readonly Dictionary<Type, Dictionary<string, Type>> ReportFields = new Dictionary<Type, Dictionary<string, Type>>
         {
@@ -47,6 +48,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 throw new ArgumentException("Project root is required.");
             root = Path.GetFullPath(projectRoot);
             SafePathUtility.ResolveWithinRoot(Path.GetPathRoot(root), root);
+            history = new PlayScenarioReportHistory(root, Reports);
         }
 
         public void Save(PlayScenarioDefinition definition)
@@ -116,17 +118,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             byte[] bytes = Encode(value, ReportLimit);
             lock (gate)
             {
+                // Repair an interrupted eviction before adding another full report.
+                history.Trim(Files(Reports, PlayScenarioReportHistory.ReportLimit + 1), run.JobId, DeleteReport);
                 AtomicWrite(Checked(relative), bytes);
-                // The current report is always retained, including a replacement with an older timestamp.
-                string[] files = Files(Reports, 21);
-                foreach (
-                    string file in files
-                        .Where(file => Path.GetFileNameWithoutExtension(file) != run.JobId)
-                        .OrderByDescending(file => File.GetLastWriteTimeUtc(file))
-                        .ThenBy(file => file, StringComparer.Ordinal)
-                        .Skip(19)
-                )
-                    DeleteReport(file);
+                history.Trim(Files(Reports, PlayScenarioReportHistory.ReportLimit + 1), run.JobId, DeleteReport);
             }
             return relative;
         }
@@ -153,6 +148,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 ValidateReport(value);
                 return value.ToObject<PlayScenarioRun>(new JsonSerializer { TypeNameHandling = TypeNameHandling.None });
             }
+        }
+
+        internal PlayScenarioRun FindReportForStart(string jobId)
+        {
+            lock (gate)
+                return history.FindForStart(jobId, GetReport, "job_id");
         }
 
         public IReadOnlyList<PlayScenarioRun> ListReports(string name = null, int limit = 20)

@@ -136,7 +136,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             ValidateSourceRevision(sourceRevision);
             if (jobId != null)
             {
-                PlayScenarioRun previous = Find(jobId);
+                PlayScenarioRun previous;
+                try
+                {
+                    previous = _engine?.State.JobId == jobId ? _engine.State : Store.FindReportForStart(jobId);
+                }
+                catch (InvalidOperationException exception)
+                {
+                    return new ErrorResponse(exception.Message);
+                }
                 if (previous != null)
                 {
                     if (
