@@ -131,6 +131,50 @@ namespace MCPForUnityTests.EditMode.Windows
                 },
             };
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PostInstallProbeSupersedesEarlierCheck(bool earlierCompletesFirst)
+        {
+            WithReadySetup(
+                (window, probe) =>
+                {
+                    var earlier = new TaskCompletionSource<DependencyCheckResult>();
+                    var afterInstall = new TaskCompletionSource<DependencyCheckResult>();
+                    var forces = new List<bool>();
+                    probe.SetValue(
+                        null,
+                        (Func<bool, Task<DependencyCheckResult>>)(
+                            force =>
+                            {
+                                forces.Add(force);
+                                return forces.Count == 1 ? earlier.Task : afterInstall.Task;
+                            }
+                        )
+                    );
+                    Invoke(window, "BeginDependencyCheck", false);
+                    if (earlierCompletesFirst)
+                    {
+                        earlier.SetResult(ReadyDependencies());
+                        Invoke(window, "PollDependencies");
+                    }
+                    Invoke(window, "QueuePostInstallCheck");
+                    if (!earlierCompletesFirst)
+                    {
+                        Invoke(window, "QueuePostInstallCheck");
+                        Invoke(window, "OnDisable");
+                        Invoke(window, "OnEnable");
+                        earlier.SetResult(ReadyDependencies());
+                        Invoke(window, "PollDependencies");
+                    }
+                    CollectionAssert.AreEqual(new[] { false, true }, forces);
+                    Assert.AreEqual("Checking dependencies...", window.rootVisualElement.Q<Label>("status-message").text);
+                    afterInstall.SetResult(ReadyDependencies());
+                    Invoke(window, "PollDependencies");
+                    Assert.AreEqual("System requirements met", window.rootVisualElement.Q<Label>("status-message").text);
+                }
+            );
+        }
+
         private static void WithReadySetup(Action<MCPSetupWindow, FieldInfo> assertion)
         {
             var probe = typeof(MCPSetupWindow).GetField("dependencyCheck", Static);

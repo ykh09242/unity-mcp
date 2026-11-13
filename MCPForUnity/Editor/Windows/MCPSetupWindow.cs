@@ -79,6 +79,7 @@ namespace MCPForUnity.Editor.Windows
         private DependencyCheckResult _dependencyResult;
         private string _dependencyCheckError;
         private Task<DependencyCheckResult> _dependencyTask;
+        private bool _postInstallCheckPending;
         private static Func<bool, Task<DependencyCheckResult>> dependencyCheck = DependencyManager.CheckAllDependenciesAsync;
 
         public static void ShowWindow(DependencyCheckResult dependencyResult = null)
@@ -94,6 +95,8 @@ namespace MCPForUnity.Editor.Windows
 
         private void SetDependencyResult(DependencyCheckResult dependencyResult)
         {
+            if (_postInstallCheckPending || _dependencyTask != null)
+                return;
             _dependencyTask = null;
             EditorApplication.update -= PollDependencies;
             _dependencyCheckError = DependencyFailure(dependencyResult);
@@ -192,6 +195,11 @@ namespace MCPForUnity.Editor.Windows
                 EditorApplication.update -= PollUvInstall;
                 EditorApplication.update += PollUvInstall;
             }
+            if (_dependencyTask != null)
+            {
+                EditorApplication.update -= PollDependencies;
+                EditorApplication.update += PollDependencies;
+            }
         }
 
         private void BeginInitialDependencyCheck()
@@ -228,6 +236,14 @@ namespace MCPForUnity.Editor.Windows
             var task = _dependencyTask;
             _dependencyTask = null;
             EditorApplication.update -= PollDependencies;
+            if (_postInstallCheckPending)
+            {
+                _postInstallCheckPending = false;
+                if (task.IsFaulted)
+                    _ = task.Exception;
+                BeginDependencyCheck(true);
+                return;
+            }
             if (task.Status == TaskStatus.RanToCompletion)
             {
                 SetDependencyResult(task.Result);
@@ -684,7 +700,7 @@ namespace MCPForUnity.Editor.Windows
 
             if (result.Success)
             {
-                BeginDependencyCheck(true);
+                QueuePostInstallCheck();
             }
             else
             {
@@ -696,6 +712,14 @@ namespace MCPForUnity.Editor.Windows
                     "OK"
                 );
             }
+        }
+
+        private void QueuePostInstallCheck()
+        {
+            if (_dependencyTask != null)
+                _postInstallCheckPending = true;
+            else
+                BeginDependencyCheck(true);
         }
 
         private void OnDisable()
@@ -726,7 +750,6 @@ namespace MCPForUnity.Editor.Windows
             EditorApplication.update -= PollUvInstall;
             EditorApplication.update -= PollDependencies;
             EditorApplication.delayCall -= BeginInitialDependencyCheck;
-            _dependencyTask = null;
         }
 
         private void UpdateUI()
