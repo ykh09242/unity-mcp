@@ -110,6 +110,11 @@ async def manage_scriptable_object(
             flags[field] = coerce_bool(value)
         except ValueError as exc:
             return {"success": False, "message": f"manage_scriptable_object: '{field}': {exc}"}
+    if action == "create" and flags["dry_run"]:
+        return {
+            "success": False,
+            "message": "manage_scriptable_object: dry_run is supported only for modify.",
+        }
     # Tolerate JSON-string payloads (LLMs sometimes stringify complex objects)
     parsed_target = parse_json_payload(target)
     parsed_patches = parse_json_payload(patches)

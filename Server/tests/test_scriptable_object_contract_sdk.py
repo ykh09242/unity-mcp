@@ -27,6 +27,14 @@ def test_scriptable_object_boolean_controls_at_actual_sdk_boundary():
         async def main():
             for protocol in ("2026-07-28", "legacy"):
                 async with Client(server, mode=protocol) as client:
+                    for value in (True, "true"):
+                        for folder in ("Assets/Existing", "Assets/Missing/Nested"):
+                            before = len(calls)
+                            result = await client.call_tool("manage_scriptable_object", {
+                                "action": "create", "dry_run": value, "overwrite": True,
+                                "folder_path": folder, "asset_name": "Fixture"})
+                            assert result.structured_content["success"] is False
+                            assert len(calls) == before
                     for flag, wire in (("dry_run", "dryRun"), ("overwrite", "overwrite")):
                         for invalid in ("garbage", "tru", "", "yes", "0", "1"):
                             before = len(calls)

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Tools.Fixtures;
@@ -83,6 +84,79 @@ namespace MCPForUnityTests.Editor.Tools
                 ["folderPath"] = _root + "/RejectedScalar/Nested",
                 ["assetName"] = "Scalar_" + Guid.NewGuid().ToString("N"),
             };
+
+        [TestCase("create", "dryRun", false)]
+        [TestCase("create_so", "dry_run", false)]
+        [TestCase("CREATE-SO", "dryRun", true)]
+        [TestCase("create", "dry_run", true)]
+        public void CreateDryRun_RejectsWithoutChangingAssets(string action, string flag, bool missingFolder)
+        {
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            byte[] bytes = File.ReadAllBytes(_path);
+            bool dirty = EditorUtility.IsDirty(_asset);
+            string[] entries = Directory.GetFileSystemEntries(_root);
+            var request = new JObject
+            {
+                ["action"] = action,
+                ["typeName"] = typeof(ScriptableObjectContractDefinition).FullName,
+                ["folderPath"] = missingFolder ? _root + "/Missing/Nested" : _root,
+                ["assetName"] = missingFolder ? "New" : "Existing",
+                ["overwrite"] = true,
+                [flag] = true,
+            };
+            // A conflicting alias must not hide an affirmative dry-run request.
+            request[flag == "dryRun" ? "dry_run" : "dryRun"] = false;
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("invalid_params", response.Value<string>("error"));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(_path));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+            Assert.AreEqual(dirty, EditorUtility.IsDirty(_asset));
+            Assert.AreEqual(99, _asset.intValue);
+            CollectionAssert.AreEquivalent(entries, Directory.GetFileSystemEntries(_root));
+        }
+
+        [Test]
+        public void BatchCreateDryRun_DoesNotOverwriteExistingAsset()
+        {
+            using var consent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute", "manage_scriptable_object");
+            CommandRegistry.Initialize();
+            var discovery = MCPServiceLocator.ToolDiscovery;
+            bool enabled = discovery.IsToolEnabled("manage_scriptable_object");
+            discovery.SetToolEnabled("manage_scriptable_object", true);
+            try
+            {
+                byte[] bytes = File.ReadAllBytes(_path);
+                string guid = AssetDatabase.AssetPathToGUID(_path);
+                bool dirty = EditorUtility.IsDirty(_asset);
+                var request = new JObject
+                {
+                    ["commands"] = new JArray(new JObject
+                    {
+                        ["tool"] = "manage_scriptable_object",
+                        ["params"] = new JObject
+                        {
+                            ["action"] = "create",
+                            ["typeName"] = typeof(ScriptableObjectContractDefinition).FullName,
+                            ["folderPath"] = _root,
+                            ["assetName"] = "Existing",
+                            ["overwrite"] = true,
+                            ["dry_run"] = true,
+                        },
+                    }),
+                };
+                var response = JObject.FromObject(BatchExecute.HandleCommand(request).GetAwaiter().GetResult());
+                Assert.IsFalse(response.SelectToken("data.results[0].result.success").Value<bool>(), response.ToString());
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(_path));
+                Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+                Assert.AreEqual(dirty, EditorUtility.IsDirty(_asset));
+                Assert.AreEqual(99, _asset.intValue);
+            }
+            finally
+            {
+                discovery.SetToolEnabled("manage_scriptable_object", enabled);
+            }
+        }
 
         [TestCase("typeName", "type_name", false)]
         [TestCase("folderPath", "folder_path", false)]

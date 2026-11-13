@@ -78,6 +78,18 @@ namespace MCPForUnity.Editor.Tools
 
             if (IsCreateAction(action))
             {
+                try
+                {
+                    // Reject either positive alias, including a shadowed one, before any asset work.
+                    bool camelDryRun = ParamCoercion.CoerceBool(@params["dryRun"], false);
+                    bool snakeDryRun = ParamCoercion.CoerceBool(@params["dry_run"], false);
+                    if (camelDryRun || snakeDryRun)
+                        return new ErrorResponse(CodeInvalidParams, new { message = "dry_run is supported only for modify." });
+                }
+                catch (ArgumentException error)
+                {
+                    return new ErrorResponse(CodeInvalidParams, new { message = error.Message });
+                }
                 return HandleCreate(@params);
             }
 
