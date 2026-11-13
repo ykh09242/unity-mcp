@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
@@ -60,11 +59,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         // ms, longer on Windows/macOS), during which Start() defers binding to an editor-idle retry
         // or falls back to a new port once BusyPortFallbackWindowSeconds elapses.
         internal const double ReadyWaitTimeoutSeconds = 300.0;
-        private const int ReadyPollIntervalMs = 100;
-
-        // Pure predicate (unit-testable): keep polling while the bridge is not yet ready and the
-        // bounded window has not elapsed.
-        internal static bool ShouldKeepWaitingForReady(bool bridgeReady, double secondsWaited) => !bridgeReady && secondsWaited < ReadyWaitTimeoutSeconds;
 
         public async Task<bool> StartAsync()
         {
@@ -99,18 +93,31 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             cancellationToken.ThrowIfCancellationRequested();
             double budget = OperationTimeouts.EnvironmentSeconds("UNITY_MCP_STDIO_START_TIMEOUT", ReadyWaitTimeoutSeconds);
-            var elapsed = Stopwatch.StartNew();
-            StdioBridgeHost.StartAutoConnect();
-            while (!StdioBridgeHost.IsRunning)
+            return await WaitForStartupAsync(StdioBridgeHost.StartAutoConnectAndObserve(), budget, cancellationToken);
+        }
+
+        internal static async Task<bool> WaitForStartupAsync(Task<StdioBridgeHost.StartupResult> startup, double budget, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var delay = Task.Delay(TimeSpan.FromSeconds(budget), timeout.Token);
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                double remaining = budget - elapsed.Elapsed.TotalSeconds;
-                if (remaining <= 0)
+                if (await Task.WhenAny(startup, delay) != startup)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
                     return false;
-                await Task.Delay(TimeSpan.FromSeconds(Math.Min(ReadyPollIntervalMs / 1000.0, remaining)), cancellationToken);
+                }
+            }
+            finally
+            {
+                timeout.Cancel();
             }
             cancellationToken.ThrowIfCancellationRequested();
-            return true;
+            var result = await startup;
+            if (!result.Ready && !string.IsNullOrEmpty(result.Error))
+                throw new InvalidOperationException(result.Error);
+            return result.Ready;
         }
 
         private void RetirePendingStart()

@@ -86,6 +86,54 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private static bool isStarting = false;
         private static long startIntentEpoch;
         private static bool startRequested;
+        private static TaskCompletionSource<StartupResult> startupCompletion;
+        private static Func<int, TcpListener> listenerFactory = CreateConfiguredListener;
+        private static Func<bool> compilationCheck = IsCompiling;
+
+        internal sealed class StartupResult
+        {
+            internal readonly bool Ready;
+            internal readonly string Error;
+
+            internal StartupResult(bool ready, string error = null)
+            {
+                Ready = ready;
+                Error = error;
+            }
+        }
+
+        internal static Task<StartupResult> StartupCompletion
+        {
+            get
+            {
+                lock (startStopLock)
+                    return startupCompletion?.Task ?? Task.FromResult(new StartupResult(false, "Bridge startup has not been requested."));
+            }
+        }
+
+        private static void BeginStartup()
+        {
+            startupCompletion?.TrySetResult(new StartupResult(false, "Bridge startup was superseded."));
+            startupCompletion = new TaskCompletionSource<StartupResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            startRequested = true;
+            startIntentEpoch++;
+        }
+
+        private static void CompleteStartup(long intent, bool ready, string error = null)
+        {
+            lock (startStopLock)
+            {
+                if (!IsCurrentStart(intent))
+                    return;
+                startupCompletion?.TrySetResult(new StartupResult(ready, error));
+                if (!ready)
+                {
+                    startRequested = false;
+                    CancelStartupCallbacks();
+                }
+            }
+        }
+
         private const string ExplicitStopSessionKey = "MCPForUnity.StdioExplicitlyStopped";
         private static bool explicitlyStopped = SessionState.GetBool(ExplicitStopSessionKey, false);
         private static SynchronizationContext editorContext;
@@ -264,6 +312,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
+        internal static Task<StartupResult> StartAutoConnectAndObserve()
+        {
+            lock (startStopLock)
+            {
+                StartAutoConnect();
+                return StartupCompletion;
+            }
+        }
+
         public static bool FolderExists(string path)
         {
             if (string.IsNullOrEmpty(path))
@@ -353,6 +410,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private static void RetireStartup()
         {
+            startupCompletion?.TrySetResult(new StartupResult(false, "Bridge startup was stopped."));
             startRequested = false;
             startIntentEpoch++;
             requestedOwnedPort = null;
@@ -402,8 +460,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     return;
                 if (!startRequested)
                 {
-                    startRequested = true;
-                    startIntentEpoch++;
+                    BeginStartup();
                 }
                 ScheduleInitRetry(startIntentEpoch);
             }
@@ -573,11 +630,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             lock (startStopLock)
             {
                 CancelStartupCallbacks();
-                startRequested = true;
+                BeginStartup();
                 SetStopIntent(false);
                 requestedOwnedPort = ownedPort;
                 requestedOwnedToken = ownedToken;
-                StartBridge(ownedPort, ownedToken, ++startIntentEpoch);
+                StartBridge(ownedPort, ownedToken, startIntentEpoch);
             }
         }
 
@@ -589,6 +646,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     return;
                 if (isRunning && listener != null)
                 {
+                    CompleteStartup(intent, true);
                     if (!ownedPort.HasValue && IsDebugEnabled())
                     {
                         McpLog.Info($"StdioBridgeHost already running on port {currentUnityPort}");
@@ -599,7 +657,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 StopBridge(false);
                 lifecycleEpoch++;
                 ownedEndpoint = ownedPort.HasValue;
-                if (IsCompiling())
+                if (compilationCheck())
                 {
                     ScheduleInitRetry(intent);
                     return;
@@ -619,7 +677,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                     try
                     {
-                        listener = CreateConfiguredListener(currentUnityPort);
+                        listener = listenerFactory(currentUnityPort);
                         listener.Start();
                     }
                     catch (SocketException se) when (!ownedEndpoint && se.SocketErrorCode == SocketError.AddressAlreadyInUse)
@@ -644,24 +702,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                         if (!PortManager.ShouldAbandonBusyPort(now - _portBusySince))
                         {
-                            try
-                            {
-                                listener?.Stop();
-                            }
-                            catch { }
-                            try
-                            {
-                                listener?.Server?.Dispose();
-                            }
-                            catch { }
-                            listener = null;
-                            McpLog.Warn($"Port {currentUnityPort} not released yet after reload; retrying same port.");
-                            WriteHeartbeat(true, "port_busy");
-                            nextStartAt = now + 0.3; // throttle the editor-idle retry loop
-                            // Arm the editor-idle retry even when Start() was called directly
-                            // (e.g. StartAutoConnect), not only during reload resume — so a transient
-                            // AddressAlreadyInUse can never leave the bridge permanently stopped.
-                            EnsureStartUpdateHooked(intent);
+                            DeferBusyPortStartup(intent, now);
                             return;
                         }
 
@@ -679,7 +720,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             $"Port {oldPort} still occupied after {PortManager.BusyPortFallbackWindowSeconds:0.#}s; falling back to port {currentUnityPort} (clients follow via the status file)."
                         );
 
-                        listener = CreateConfiguredListener(currentUnityPort);
+                        listener = listenerFactory(currentUnityPort);
                         listener.Start();
                     }
 
@@ -721,9 +762,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     WriteHeartbeat(false, "ready");
                     nextHeartbeatAt = EditorApplication.timeSinceStartup + 0.5f;
                     CancelStartupCallbacks();
+                    CompleteStartup(intent, true);
                 }
                 catch (Exception ex)
                 {
+                    if (!IsCurrentStart(intent))
+                        return;
                     if (isRunning)
                         StopBridge(false);
                     else
@@ -734,10 +778,31 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         lock (clientsLock)
                             authentication = null;
                     }
+                    CompleteStartup(intent, false, $"Failed to start stdio bridge ({ex.GetType().Name}).");
                     McpLog.Error($"Failed to start TCP listener ({ex.GetType().Name})");
                     WriteHeartbeat(false, "start_failed");
                 }
             }
+        }
+
+        private static void DeferBusyPortStartup(long intent, double now)
+        {
+            try
+            {
+                listener?.Stop();
+            }
+            catch { }
+            try
+            {
+                listener?.Server?.Dispose();
+            }
+            catch { }
+            listener = null;
+            McpLog.Warn($"Port {currentUnityPort} not released yet after reload; retrying same port.");
+            WriteHeartbeat(true, "port_busy");
+            nextStartAt = now + 0.3;
+            // Direct starts need the same recovery pump as starts resumed after reload.
+            EnsureStartUpdateHooked(intent);
         }
 
         private static TcpListener CreateConfiguredListener(int port)

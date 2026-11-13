@@ -78,23 +78,28 @@ namespace MCPForUnityTests.Editor.Transport
         }
 
         [Test]
-        public void KeepsWaiting_WhenNotReady_AndWithinWindow()
+        public async System.Threading.Tasks.Task KeepsWaiting_WhenNotReady_AndWithinWindow()
         {
-            Assert.IsTrue(StdioTransportClient.ShouldKeepWaitingForReady(bridgeReady: false, secondsWaited: 0.0));
-            Assert.IsTrue(StdioTransportClient.ShouldKeepWaitingForReady(bridgeReady: false, secondsWaited: Timeout - 0.1));
+            var completion = new System.Threading.Tasks.TaskCompletionSource<StdioBridgeHost.StartupResult>();
+            var waiting = StdioTransportClient.WaitForStartupAsync(completion.Task, Timeout, default);
+            Assert.IsFalse(waiting.IsCompleted);
+            completion.SetResult(new StdioBridgeHost.StartupResult(true));
+            Assert.IsTrue(await waiting);
         }
 
         [Test]
-        public void StopsWaiting_AsSoonAsReady()
+        public async System.Threading.Tasks.Task StopsWaiting_AsSoonAsReady()
         {
-            Assert.IsFalse(StdioTransportClient.ShouldKeepWaitingForReady(bridgeReady: true, secondsWaited: 0.0));
+            var ready = System.Threading.Tasks.Task.FromResult(new StdioBridgeHost.StartupResult(true));
+            Assert.IsTrue(await StdioTransportClient.WaitForStartupAsync(ready, 0, default));
         }
 
         [Test]
-        public void StopsWaiting_WhenWindowElapses_EvenIfNotReady()
+        public async System.Threading.Tasks.Task StopsWaiting_WhenWindowElapses_EvenIfNotReady()
         {
-            Assert.IsFalse(StdioTransportClient.ShouldKeepWaitingForReady(bridgeReady: false, secondsWaited: Timeout));
-            Assert.IsFalse(StdioTransportClient.ShouldKeepWaitingForReady(bridgeReady: false, secondsWaited: Timeout + 1.0));
+            var pending = new System.Threading.Tasks.TaskCompletionSource<StdioBridgeHost.StartupResult>();
+            Assert.IsFalse(await StdioTransportClient.WaitForStartupAsync(pending.Task, 0, default));
+            Assert.IsFalse(pending.Task.IsCompleted, "A caller's budget must not complete or stop the host attempt.");
         }
 
         [Test]

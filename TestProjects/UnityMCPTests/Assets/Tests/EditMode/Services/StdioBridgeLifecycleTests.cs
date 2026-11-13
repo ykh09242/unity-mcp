@@ -105,6 +105,152 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public async Task TerminalListenerFailureCompletesStartupAndTransportImmediately()
+        {
+            AssertIdle();
+            var factory = typeof(StdioBridgeHost).GetField("listenerFactory", Static);
+            object previous = factory.GetValue(null);
+            try
+            {
+                factory.SetValue(null, new Func<int, TcpListener>(_ => throw new InvalidOperationException("injected terminal failure")));
+                LogAssert.Expect(
+                    UnityEngine.LogType.Error,
+                    new System.Text.RegularExpressions.Regex("Failed to start TCP listener \\(InvalidOperationException\\)")
+                );
+                StdioBridgeHost.StartOwned(0, new string('a', 64));
+                var startup = StdioBridgeHost.StartupCompletion;
+                Assert.IsTrue(startup.IsCompleted, "Terminal failure must complete this attempt without consuming the 300-second readiness budget.");
+                var client = new StdioTransportClient(token => StdioTransportClient.WaitForStartupAsync(startup, 300, token), () => { });
+                var start = client.StartAsync();
+                Assert.IsTrue(start.IsCompleted, "Transport must consume an already-terminal host outcome immediately.");
+                Assert.IsFalse(await start);
+                Assert.That(client.State.Error, Does.Contain("InvalidOperationException"));
+                Assert.IsFalse((bool)typeof(StdioBridgeHost).GetField("startRequested", Static).GetValue(null));
+                Assert.IsFalse((bool)typeof(StdioBridgeHost).GetField("ensureUpdateHooked", Static).GetValue(null));
+            }
+            finally
+            {
+                factory.SetValue(null, previous);
+                StdioBridgeHost.Stop();
+            }
+        }
+
+        [Test]
+        public async Task CompilationDeferralKeepsStartupPendingUntilReady()
+        {
+            AssertIdle();
+            var check = typeof(StdioBridgeHost).GetField("compilationCheck", Static);
+            object previous = check.GetValue(null);
+            string token = new string('d', 64);
+            try
+            {
+                check.SetValue(null, new Func<bool>(() => true));
+                StdioBridgeHost.StartOwned(0, token);
+                var startup = StdioBridgeHost.StartupCompletion;
+                Assert.IsFalse(startup.IsCompleted, "Compilation is recoverable, not terminal.");
+                check.SetValue(null, new Func<bool>(() => false));
+                ResumeOwnedStartup(token);
+                Assert.IsTrue((await startup).Ready);
+                Assert.IsTrue(StdioBridgeHost.IsRunning);
+            }
+            finally
+            {
+                check.SetValue(null, previous);
+                StdioBridgeHost.Stop();
+            }
+        }
+
+        [Test]
+        public async Task RecoverablePortConflictRetryKeepsSameStartupPendingAndRecovers()
+        {
+            AssertIdle();
+            var check = typeof(StdioBridgeHost).GetField("compilationCheck", Static);
+            object previous = check.GetValue(null);
+            string token = new string('e', 64);
+            try
+            {
+                check.SetValue(null, new Func<bool>(() => true));
+                StdioBridgeHost.StartOwned(0, token);
+                var startup = StdioBridgeHost.StartupCompletion;
+                long intent = (long)typeof(StdioBridgeHost).GetField("startIntentEpoch", Static).GetValue(null);
+                // Enter the same recovery branch as an ordinary listener's transient
+                // AddressAlreadyInUse, using an owned endpoint to avoid discovery writes.
+                typeof(StdioBridgeHost).GetMethod("DeferBusyPortStartup", Static).Invoke(null, new object[] { intent, EditorApplication.timeSinceStartup });
+                Assert.IsFalse(startup.IsCompleted, "A temporary port conflict must leave the same attempt pending.");
+                Assert.IsTrue((bool)typeof(StdioBridgeHost).GetField("ensureUpdateHooked", Static).GetValue(null));
+                check.SetValue(null, new Func<bool>(() => false));
+                ResumeOwnedStartup(token);
+                Assert.IsTrue((await startup).Ready);
+            }
+            finally
+            {
+                check.SetValue(null, previous);
+                StdioBridgeHost.Stop();
+            }
+        }
+
+        [Test]
+        public async Task OwnedPortConflictFailsWithoutRetryOrRetargeting()
+        {
+            AssertIdle();
+            var occupant = new TcpListener(System.Net.IPAddress.Loopback, 0);
+            occupant.Start();
+            int port = ((System.Net.IPEndPoint)occupant.LocalEndpoint).Port;
+            try
+            {
+                LogAssert.Expect(UnityEngine.LogType.Error, new System.Text.RegularExpressions.Regex("Failed to start TCP listener \\(SocketException\\)"));
+                StdioBridgeHost.StartOwned(port, new string('e', 64));
+                var result = await StdioBridgeHost.StartupCompletion;
+                Assert.IsFalse(result.Ready);
+                Assert.That(result.Error, Does.Contain("SocketException"));
+                Assert.AreEqual(port, StdioBridgeHost.GetCurrentPort());
+                Assert.IsFalse((bool)typeof(StdioBridgeHost).GetField("ensureUpdateHooked", Static).GetValue(null));
+            }
+            finally
+            {
+                occupant.Stop();
+                StdioBridgeHost.Stop();
+            }
+        }
+
+        [Test]
+        public async Task RetiredStartupFailureCannotFinishItsReplacement()
+        {
+            AssertIdle();
+            var check = typeof(StdioBridgeHost).GetField("compilationCheck", Static);
+            object previous = check.GetValue(null);
+            string token = new string('f', 64);
+            try
+            {
+                check.SetValue(null, new Func<bool>(() => true));
+                StdioBridgeHost.StartOwned(0, token);
+                var retired = StdioBridgeHost.StartupCompletion;
+                long oldIntent = (long)typeof(StdioBridgeHost).GetField("startIntentEpoch", Static).GetValue(null);
+                StdioBridgeHost.StartOwned(0, token);
+                var replacement = StdioBridgeHost.StartupCompletion;
+                Assert.IsFalse((await retired).Ready);
+                typeof(StdioBridgeHost).GetMethod("CompleteStartup", Static).Invoke(null, new object[] { oldIntent, false, "late terminal failure" });
+                typeof(StdioBridgeHost).GetMethod("StartBridge", Static).Invoke(null, new object[] { (int?)0, token, oldIntent });
+                Assert.IsFalse(replacement.IsCompleted, "A late old result or callback must not finish the replacement.");
+                check.SetValue(null, new Func<bool>(() => false));
+                ResumeOwnedStartup(token);
+                Assert.IsTrue((await replacement).Ready);
+                Assert.IsTrue(StdioBridgeHost.IsRunning);
+            }
+            finally
+            {
+                check.SetValue(null, previous);
+                StdioBridgeHost.Stop();
+            }
+        }
+
+        private static void ResumeOwnedStartup(string token, int port = 0)
+        {
+            long intent = (long)typeof(StdioBridgeHost).GetField("startIntentEpoch", Static).GetValue(null);
+            typeof(StdioBridgeHost).GetMethod("StartBridge", Static).Invoke(null, new object[] { (int?)port, token, intent });
+        }
+
+        [Test]
         public void Dispatcher_RejectsCanceledOwnerWhileExecutionTokenIsStillLive()
         {
             CommandRegistry.Initialize();
