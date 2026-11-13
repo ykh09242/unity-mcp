@@ -22,7 +22,7 @@ from collections.abc import Callable
 import anyio
 from pydantic import ValidationError
 from starlette.endpoints import WebSocketEndpoint
-from starlette.websockets import WebSocket, WebSocketState
+from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from services.execution_receipt_context import execution_owner, observe_native_result, own_future
 from services.execution_receipt_identity import ReceiptUnavailable
@@ -442,8 +442,8 @@ class PluginHub(WebSocketEndpoint):
     # session_id -> ping task
     _ping_tasks: ClassVar[dict[str, asyncio.Task]] = {}
     # Recovery callers may expire before eviction finishes. Keep one owned task
-    # per registry/session until completion, and drain it during shutdown.
-    _eviction_tasks: ClassVar[dict[tuple[int, str], asyncio.Task]] = {}
+    # per registry/session/socket until completion, and drain it during shutdown.
+    _eviction_tasks: ClassVar[dict[tuple[int, str, int], asyncio.Task]] = {}
     # Accepted results outlive socket/caller cancellation. Keep their actual
     # owners across configure(), with both task counts and byte reservations.
     _result_tasks: ClassVar[dict[asyncio.Task, _ResultWork]] = {}
@@ -2761,7 +2761,17 @@ class PluginHub(WebSocketEndpoint):
                     phase=budget.phase,
                     cause="authentication_ended",
                 )
-            except (PluginDisconnectedError, OSError) as exc:
+            except (PluginDisconnectedError, WebSocketDisconnect, OSError) as exc:
+                if not isinstance(exc, PluginDisconnectedError):
+                    # A failed write can precede ASGI disconnect delivery. Retire
+                    # this route before the resume loop looks up its replacement.
+                    future.cancel()
+                    await cls._evict_connection(
+                        session_id,
+                        "websocket_write_failed",
+                        detach_on_cancel=True,
+                        _expected=(registry, websocket),
+                    )
                 if _resume is not None and not _resume.cancelled.is_set():
                     raise CommandResumeInterrupted() from exc
                 if not budget.dispatched:
@@ -4305,15 +4315,12 @@ class PluginHub(WebSocketEndpoint):
         _expected: tuple[PluginRegistry | None, WebSocket | None] | None = None,
     ) -> None:
         if detach_on_cancel:
-            key = (id(cls._registry), session_id)
+            expected = _expected or (cls._registry, cls._connections.get(session_id))
+            key = (id(expected[0]), session_id, id(expected[1]))
             task = cls._eviction_tasks.get(key)
             if task is None:
                 task = asyncio.create_task(
-                    cls._evict_connection(
-                        session_id,
-                        reason,
-                        _expected=(cls._registry, cls._connections.get(session_id)),
-                    )
+                    cls._evict_connection(session_id, reason, _expected=expected)
                 )
                 cls._eviction_tasks[key] = task
 

@@ -1,12 +1,17 @@
 """Continuation across real WebSocket registration and disconnect boundaries."""
 
+import asyncio
+from concurrent.futures import FIRST_COMPLETED, wait
 from functools import partial
+import json
 import time
 
 import pytest
 
 from tests.http.test_plugin_hub_lifecycle import isolated_hub, wire_client  # noqa: F401
 from tests.timing import watchdog_timeout
+from transport.command_budget import _CommandBudget
+from transport.command_dispatch import CommandNotDispatchedError
 from transport.plugin_hub import PluginHub
 from tests.receipt_resume_support import prepared_receipt
 
@@ -136,6 +141,86 @@ def respond(socket, command, state, payload=None, *, refusal_reason=None):
             },
         }
     )
+
+
+@pytest.mark.parametrize("replacement_editor", [EDITOR, "f" * 32])
+def test_failed_asgi_write_can_only_recover_the_original_invocation(
+    wire_client, isolated_hub, replacement_editor, monkeypatch
+):
+    writes = []
+    # Fail the actual ASGI write after the dispatch guard, without delivering a
+    # separate disconnect to the receive loop.
+    endpoint_init = PluginHub.__init__
+
+    def install_endpoint_fault(endpoint, scope, receive, send):
+        async def fail_first_execute(frame):
+            if frame["type"] == "websocket.send":
+                command = json.loads(frame["text"])
+                if command["type"] == "execute":
+                    writes.append(command)
+                    if len(writes) == 1:
+                        raise OSError("connection lost while sending execute")
+            await send(frame)
+
+        endpoint_init(endpoint, scope, receive, fail_first_execute)
+
+    monkeypatch.setattr(PluginHub, "__init__", install_endpoint_fault)
+    with wire_client.websocket_connect("/hub/plugin") as first_socket:
+        session_id = register(first_socket)["session_id"]
+        changed = isolated_hub.change_event
+        future = wire_client.portal.start_task_soon(
+            partial(PluginHub.send_command, session_id, "manage_scene", {"action": "save"})
+        )
+        evicted = wire_client.portal.start_task_soon(changed.wait)
+        try:
+            done, _ = wait(
+                [evicted, future], timeout=watchdog_timeout(), return_when=FIRST_COMPLETED
+            )
+            assert evicted in done
+        finally:
+            evicted.cancel()
+        assert session_id not in PluginHub._connections
+        assert len(writes) == 1
+        original = writes[0]
+        assert original["resume"]["action"] == "new"
+
+        with wire_client.websocket_connect("/hub/plugin") as second_socket:
+            replacement = register(second_socket, replacement_editor)["session_id"]
+            if replacement_editor == EDITOR:
+                resumed = second_socket.receive_json()
+                assert writes == [original, resumed]
+                assert resumed["id"] != original["id"]
+                assert resumed["params"] == original["params"]
+                assert resumed["resume"] == {**original["resume"], "action": "resume"}
+                respond(second_socket, resumed, "completed")
+                assert future.result(watchdog_timeout())["data"]["applied"] == 1
+            else:
+                result = future.result(watchdog_timeout())
+                assert result["data"]["reason"] == "outcome_unknown"
+                assert result["data"]["command_id"] == original["id"]
+                assert writes == [original]
+            assert replacement in PluginHub._connections
+            assert not PluginHub._pending
+
+
+def test_already_closed_websocket_has_no_dispatch_evidence(wire_client):
+    with wire_client.websocket_connect("/hub/plugin") as socket:
+        session_id = register(socket)["session_id"]
+        old = PluginHub._connections[session_id]
+        wire_client.portal.call(old.close)
+
+        async def dispatch_while_close_is_pending():
+            budget = _CommandBudget(asyncio.get_running_loop().time() + watchdog_timeout())
+            with pytest.raises(CommandNotDispatchedError):
+                await PluginHub.send_command(
+                    session_id, "manage_scene", {"action": "save"}, _budget=budget
+                )
+            assert not budget.dispatched
+            assert budget.command_id is None
+
+        wire_client.portal.call(dispatch_while_close_is_pending)
+        assert session_id not in PluginHub._connections
+        assert not PluginHub._pending
 
 
 @pytest.mark.parametrize("first_state", [None, "queued"])

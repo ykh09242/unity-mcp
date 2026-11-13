@@ -12,7 +12,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from starlette.websockets import WebSocket, WebSocketState
+from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from core import phase_diagnostics
 from services.credential_lease import CredentialLease, CredentialLeaseError
@@ -97,6 +97,8 @@ class CommandDispatch:
             if getattr(self.websocket.state, "plugin_guarded_send", False):
                 # Carry final admission through both Hub and optional
                 # remote-auth send wrappers, immediately before I/O.
+                # Starlette rejects a closed socket before entering those wrappers.
+                self.check_connected()
                 await self.websocket.send_text(self.encoded)
             elif await writer.authorize():
                 writer.dispatch()
@@ -106,6 +108,13 @@ class CommandDispatch:
         for lease in (self.requester, self.plugin):
             if lease is not None:
                 await lease.check()
+
+    def check_connected(self) -> None:
+        if (
+            self.websocket.client_state != WebSocketState.CONNECTED
+            or self.websocket.application_state != WebSocketState.CONNECTED
+        ):
+            raise WebSocketDisconnect(code=1006)
 
     async def authorize_write(self) -> bool:
         # Scheduling, credential renewal and optional journal I/O
@@ -119,9 +128,9 @@ class CommandDispatch:
             )
             if self.future.done():
                 return False
+            self.check_connected()
             if (
                 not self.target_is_current()
-                or self.websocket.client_state != WebSocketState.CONNECTED
                 or getattr(self.websocket.state, "plugin_generation", None) != self.generation
                 or self.session is None
                 or current_session is None
