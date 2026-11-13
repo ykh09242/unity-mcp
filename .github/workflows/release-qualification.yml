@@ -104,6 +104,22 @@ jobs:
     with:
       ref: ${{ github.sha }}
 
+  player:
+    # Wait for the Linux license owners and protected Windows VFX owner to settle.
+    # The reusable Player job retains its shared Windows license concurrency gate.
+    needs: [identity, reload, windows_vfx]
+    if: vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/unity-player-tests.yml
+    with:
+      ref: ${{ github.sha }}
+      backend: mono
+      player_profile: standard
+      require_player_e2e: true
+    secrets:
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+
   license_free:
     name: Report unavailable native qualification
     needs: [identity]
@@ -114,12 +130,12 @@ jobs:
     steps:
       - run: |
           echo 'Native release qualification is SKIPPED: licensed execution is disabled.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Ordinary license-free checks are not release qualification. No real bridge, reload or Windows VFX success is claimed.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Ordinary license-free checks are not release qualification. No real bridge, reload, Windows VFX or standalone Player success is claimed.' >> "$GITHUB_STEP_SUMMARY"
           echo 'Dispatch this workflow on reviewed beta with licensed execution enabled to require all evidence at that exact SHA.' >> "$GITHUB_STEP_SUMMARY"
 
   qualification:
     name: Require complete release qualification
-    needs: [identity, bridge, reload, windows_vfx, distribution]
+    needs: [identity, bridge, reload, windows_vfx, player, distribution]
     if: always() && (vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-26.04
     timeout-minutes: 5
@@ -129,14 +145,23 @@ jobs:
         id: require
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
+          QUALIFICATION_SHA: ${{ github.sha }}
         shell: python
         run: |
           import json
           import os
 
           results = json.loads(os.environ['JOB_RESULTS'])
-          required = ('identity', 'bridge', 'reload', 'windows_vfx', 'distribution')
+          required = ('identity', 'bridge', 'reload', 'windows_vfx', 'player', 'distribution')
           missing = [name for name in required if results.get(name, {}).get('result') != 'success']
           if missing:
               raise SystemExit('Release is NOT qualified: required evidence failed, was skipped or is missing: ' + ', '.join(missing))
-          print('Exact receiving SHA passed selected-server bridge, both real reload probes, Windows VFX and full distribution canary. No publication was performed.')
+          message = (
+              'Exact receiving SHA `' + os.environ['QUALIFICATION_SHA'] + '` passed '
+              'selected-server bridge, both real reload probes, Windows VFX, '
+              'Windows standalone Player (Mono, standard) and full distribution canary. '
+              'No publication was performed.'
+          )
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+              summary.write(message + '\n')
+          print(message)

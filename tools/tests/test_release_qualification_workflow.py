@@ -50,6 +50,7 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
         "bridge": "e2e-bridge.yml",
         "reload": "assetgen-reload-tests.yml",
         "windows_vfx": "unity-windows-vfx.yml",
+        "player": "unity-player-tests.yml",
         "distribution": "distribution-canary.yml",
     }.items():
         job = jobs[name]
@@ -61,6 +62,17 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
     assert jobs["bridge"]["with"]["pair_mode"] == "selected"
     assert jobs["bridge"]["with"]["require_native"] is True
     assert jobs["reload"]["with"]["run_assetgen_reload"] is True
+    assert jobs["player"]["with"] == {
+        "ref": "${{ github.sha }}",
+        "backend": "mono",
+        "player_profile": "standard",
+        "require_player_e2e": True,
+    }
+    assert jobs["player"]["needs"] == ["identity", "reload", "windows_vfx"]
+    assert jobs["player"]["secrets"] == {
+        "UNITY_" + key: "${{ secrets.UNITY_" + key + " }}"
+        for key in ("EMAIL", "PASSWORD", "SERIAL")
+    }
     assert jobs["windows_vfx"]["secrets"] == {
         "WINDOWS_VFX_UNITY_" + key: "${{ secrets.WINDOWS_VFX_UNITY_" + key + " }}"
         for key in ("EMAIL", "PASSWORD", "SERIAL")
@@ -74,16 +86,25 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
             "UNITY_SERIAL",
         }
     gate = jobs["qualification"]
-    assert set(gate["needs"]) == {"identity", "bridge", "reload", "windows_vfx", "distribution"}
+    assert set(gate["needs"]) == {
+        "identity",
+        "bridge",
+        "reload",
+        "windows_vfx",
+        "player",
+        "distribution",
+    }
     assert "always()" in gate["if"]
     assert "vars.UNITY_RUN_LICENSED_TESTS == 'true'" in gate["if"]
     assert "github.event_name == 'workflow_dispatch'" in gate["if"]
     assert "not release qualification" in str(jobs["license_free"])
 
 
-@pytest.mark.parametrize("job", ["identity", "bridge", "reload", "windows_vfx", "distribution"])
+@pytest.mark.parametrize(
+    "job", ["identity", "bridge", "reload", "windows_vfx", "player", "distribution"]
+)
 @pytest.mark.parametrize("outcome", ["failure", "cancelled", "skipped", "missing", "", "success"])
-def test_qualification_gate_requires_every_actual_success(monkeypatch, job, outcome):
+def test_qualification_gate_requires_every_actual_success(monkeypatch, tmp_path, job, outcome):
     gate = workflow("release-qualification.yml")["jobs"]["qualification"]
     program = next(step["run"] for step in gate["steps"] if step.get("id") == "require")
     results = {name: {"result": "success"} for name in gate["needs"]}
@@ -92,11 +113,20 @@ def test_qualification_gate_requires_every_actual_success(monkeypatch, job, outc
     else:
         results[job]["result"] = outcome
     monkeypatch.setenv("JOB_RESULTS", json.dumps(results))
+    summary = tmp_path / "summary.md"
+    revision = "a" * 40
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setenv("QUALIFICATION_SHA", revision)
     if outcome == "success":
         exec(compile(program, "qualification-gate", "exec"), {})
+        text = summary.read_text(encoding="utf-8")
+        assert revision in text
+        assert "Windows standalone Player (Mono, standard)" in text
+        assert "No publication was performed" in text
     else:
         with pytest.raises(SystemExit):
             exec(compile(program, "qualification-gate", "exec"), {})
+        assert not summary.exists()
 
 
 def test_bridge_required_gate_cannot_inherit_success_from_a_skipped_matrix(monkeypatch):
@@ -172,6 +202,7 @@ def test_actual_bridge_command_makes_failed_playmode_block_qualification(
         "e2e-bridge.yml",
         "assetgen-reload-tests.yml",
         "unity-windows-vfx.yml",
+        "unity-player-tests.yml",
         "distribution-canary.yml",
     ],
 )
@@ -191,3 +222,28 @@ def test_reusable_qualification_contracts_declare_and_pin_the_ref(file):
         assert job["if"] == "github.ref == 'refs/heads/beta'"
         verify = next(step for step in job["steps"] if step.get("id") == "verify")
         assert "$env:EXPECTED_SHA -cne $env:GITHUB_SHA" in verify["run"]
+
+
+def test_qualified_player_keeps_existing_license_ownership_and_required_execution():
+    jobs = workflow("unity-player-tests.yml")["jobs"]
+    player = jobs["player"]
+    vfx = workflow("unity-windows-vfx.yml")["jobs"]["windowsVfx"]
+    assert (
+        player["concurrency"]
+        == vfx["concurrency"]
+        == {
+            "group": "unity-windows-player-license-${{ github.repository }}",
+            "cancel-in-progress": False,
+        }
+    )
+    required = jobs["requiredPlayerE2E"]
+    assert required["needs"] == ["license", "player"]
+    assert required["if"] == "always() && inputs.require_player_e2e"
+    assert player["if"] == "needs.license.outputs.unity_ok == 'true'"
+    prerequisites = jobs["license"]["steps"][-1]
+    assert prerequisites["if"] == "inputs.require_player_e2e"
+    assert all(not step.get("continue-on-error") for step in player["steps"])
+    evidence = next(step for step in player["steps"] if step.get("id") == "evidence")
+    assert evidence["if"] == "always()"
+    assert "check_play_scenario_player_evidence.py" in evidence["run"]
+    assert "if ($env:RUNNER_OUTCOME -ne 'success')" in evidence["run"]

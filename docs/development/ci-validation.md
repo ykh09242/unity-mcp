@@ -197,25 +197,37 @@ With `UNITY_RUN_LICENSED_TESTS=true`, qualification requires all of these existi
   results do not substitute for this selected pair.
 - Both AssetGen real domain reload probes, each in a fresh owned disposable project.
 - Windows VFX file-lock sentinels in the existing protected `windows-vfx` environment.
+- Actual Windows standalone Player builds and process execution using the existing
+  Mono `standard` profile at the same receiving SHA. The reusable Player workflow receives
+  `require_player_e2e=true`; unavailable policy or Windows serial credentials fail its
+  prerequisite gate, and its independent checker must accept fresh persisted evidence.
 - The complete five-row selected-server unlocked distribution canary described above.
 
 The final job runs even after dependency failure and requires every job to report actual
 success. The bridge's reusable required-evidence gate rejects a missing or skipped native
-matrix; the reload and VFX runners retain their required-case NUnit checks. A skipped,
+matrix; the reload and VFX runners retain their required-case NUnit checks. The Player's
+required gate checks both license admission and actual Player job success. A skipped,
 missing, cancelled or failed required job cannot qualify the commit. License seats are
 returned by the existing owners; qualification runs are not automatically cancelled on
-new pushes, and the Linux reload runs after the bridge has settled.
+new pushes, and the Linux reload runs after the bridge has settled. Player qualification
+waits for both reload and protected Windows VFX completion, then uses the existing shared
+Windows license concurrency gate. Only complete success writes the qualified evidence
+summary, identifying the receiving SHA and the required Windows Mono `standard` profile.
 
 An ordinary beta push with licensed execution disabled reports native qualification as
 **SKIPPED** and does not run the final qualification job. Its other license-free checks
 can still pass, but that is not release qualification. Explicit dispatch requests all
 evidence and fails when policy, credentials or native execution is unavailable. Linux
-callers forward only the four named Unity license secrets. The Windows caller explicitly
+callers forward only the four named Unity license secrets. The Player caller forwards only
+`UNITY_EMAIL`, `UNITY_PASSWORD` and `UNITY_SERIAL`; Linux ULF credentials do not satisfy its
+Windows prerequisites. The Windows VFX caller explicitly
 passes only `WINDOWS_VFX_UNITY_EMAIL`, `WINDOWS_VFX_UNITY_PASSWORD` and
 `WINDOWS_VFX_UNITY_SERIAL`; the reusable contract requires all three names, and activation
 remains inside the protected `windows-vfx` environment. Required secret declarations
 verify name forwarding, while the existing activation helper rejects empty values.
 The entry point has no PR or `pull_request_target` trigger.
+Changes to the reusable Player workflow, its execution/evidence scripts, profiles and
+pinned provisioning inputs select qualification on beta and offline workflow contracts on PRs.
 Fork PRs retain their ordinary secret-free validation and never enter this qualification
 path. A later receiving commit requires its own qualification; earlier PR evidence is
 not reused as proof for it. Run URLs and artifacts must be inspected before any separately

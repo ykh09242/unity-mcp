@@ -177,6 +177,33 @@ def test_shared_report_fixture_retains_beta_python_contract_validation() -> None
     assert jobs["python_tests"]["uses"] == "./.github/workflows/python-tests.yml"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/release-qualification.yml",
+        ".github/workflows/unity-player-tests.yml",
+        "tools/run_play_scenario_player_e2e.py",
+        "tools/check_play_scenario_player_evidence.py",
+        "tools/player_e2e_profiles.py",
+        "tools/unity-player-e2e.json",
+        "tools/unity_windows_ci.py",
+        "tools/tests/test_release_qualification_workflow.py",
+        "tools/tests/test_ci_trigger_policy.py",
+    ],
+)
+def test_player_qualification_dependencies_select_receiving_and_offline_validation(
+    path: str,
+) -> None:
+    assert selected("release-qualification.yml", "push", "beta", path)
+    assert selected("fork-beta-tools.yml", "push", "beta", path)
+    for target in ("main", "beta"):
+        assert selected("python-tests.yml", "pull_request", target, path, "synchronize")
+        assert not selected(
+            "release-qualification.yml", "pull_request", target, path, "synchronize"
+        )
+    assert not selected("release-qualification.yml", "push", "codex/player-work", path)
+
+
 @pytest.mark.parametrize("target", ["main", "beta"])
 def test_reference_only_pr_executes_resource_uri_contract(target: str) -> None:
     path = "website/docs/reference/tools/get_tests.md"
