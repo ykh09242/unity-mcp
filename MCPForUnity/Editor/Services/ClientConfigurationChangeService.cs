@@ -640,7 +640,7 @@ namespace MCPForUnity.Editor.Services
             {
                 var parts = AssetPathUtility.GetUvxCommandParts();
                 command = parts.Item1;
-                args = ConfigJsonBuilder.BuildUvxArgs(parts.Item2, parts.Item3).ToArray();
+                args = ConfigJsonBuilder.BuildUvxArgs(parts.Item1, parts.Item2, parts.Item3).ToArray();
             }
             bool remote = http && HttpEndpointUtility.IsRemoteScope();
             var headers = http && (format != "toml" || remote) ? HttpEndpointUtility.GetAuthHeaders() : new Dictionary<string, string>();

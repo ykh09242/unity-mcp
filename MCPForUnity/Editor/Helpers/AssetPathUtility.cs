@@ -408,6 +408,19 @@ namespace MCPForUnity.Editor.Helpers
             return $"--python \">=3.11\" --from {fromValue}" + (IsLocalServerSource(source) ? $" --with-editable {fromValue}" : "");
         }
 
+        // Custom executable names are treated as uvx-compatible wrappers.
+        internal static bool IsUvExecutable(string executable)
+        {
+            if (string.IsNullOrWhiteSpace(executable))
+                return false;
+            string name = executable.Replace('\\', '/');
+            name = name.Substring(name.LastIndexOf('/') + 1);
+            return string.Equals(name, "uv", StringComparison.OrdinalIgnoreCase) || string.Equals(name, "uv.exe", StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static List<string> UvxArgumentPrefix(string executable) =>
+            IsUvExecutable(executable) ? new List<string> { "tool", "run" } : new List<string>();
+
         /// <summary>
         /// Builds the uvx Python requirement and package source arguments as a list (for JSON config builders).
         /// Priority: explicit development override > pinned fork source.

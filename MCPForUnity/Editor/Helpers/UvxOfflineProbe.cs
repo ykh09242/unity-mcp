@@ -68,7 +68,8 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     try
                     {
-                        return run(executable, "--offline " + arguments + " mcp-for-unity --help");
+                        string prefix = AssetPathUtility.IsUvExecutable(executable) ? "tool run " : "";
+                        return run(executable, prefix + "--offline " + arguments + " mcp-for-unity --help");
                     }
                     catch
                     {

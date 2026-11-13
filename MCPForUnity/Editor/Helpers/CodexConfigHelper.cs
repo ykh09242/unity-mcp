@@ -60,7 +60,7 @@ namespace MCPForUnity.Editor.Helpers
                 unityMCP["command"] = uvxPath;
 
                 var args = new TomlArray();
-                foreach (var arg in ConfigJsonBuilder.BuildUvxArgs(null, packageName))
+                foreach (var arg in ConfigJsonBuilder.BuildUvxArgs(uvxPath, null, packageName))
                 {
                     args.Add(new TomlString { Value = arg });
                 }
@@ -548,7 +548,7 @@ namespace MCPForUnity.Editor.Helpers
                 unityMCP["command"] = new TomlString { Value = uvxPath };
 
                 var argsArray = new TomlArray();
-                foreach (var arg in ConfigJsonBuilder.BuildUvxArgs(null, packageName))
+                foreach (var arg in ConfigJsonBuilder.BuildUvxArgs(uvxPath, null, packageName))
                 {
                     argsArray.Add(new TomlString { Value = arg });
                 }

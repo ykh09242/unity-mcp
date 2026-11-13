@@ -278,7 +278,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 }
 
                 var args = new JArray();
-                foreach (string value in ConfigJsonBuilder.BuildUvxArgs(null, packageName))
+                foreach (string value in ConfigJsonBuilder.BuildUvxArgs(uvxPath, null, packageName))
                 {
                     args.Add(value);
                 }

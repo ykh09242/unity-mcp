@@ -171,7 +171,7 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     var parts = AssetPathUtility.GetUvxCommandParts();
                     uvxPath = parts.Item1;
-                    toolArgs = BuildUvxArgs(parts.Item2, parts.Item3);
+                    toolArgs = BuildUvxArgs(parts.Item1, parts.Item2, parts.Item3);
                 }
 
                 unity["command"] = uvxPath;
@@ -277,13 +277,13 @@ namespace MCPForUnity.Editor.Helpers
             return created;
         }
 
-        internal static IList<string> BuildUvxArgs(string fromUrl, string packageName)
+        internal static IList<string> BuildUvxArgs(string executable, string fromUrl, string packageName)
         {
             // Dev mode: force a fresh install/resolution (avoids stale cached builds while iterating).
             // `--no-cache` avoids reading from cache; `--refresh` ensures metadata is revalidated.
             // Note: --reinstall is not supported by uvx and will cause a warning.
             // Keep ordering consistent with other uvx builders: dev flags first, then --from <url>, then package name.
-            var args = new List<string>();
+            var args = AssetPathUtility.UvxArgumentPrefix(executable);
 
             foreach (var flag in AssetPathUtility.GetUvxDevFlagsList())
                 args.Add(flag);

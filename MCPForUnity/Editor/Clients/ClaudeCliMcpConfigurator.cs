@@ -727,9 +727,10 @@ namespace MCPForUnity.Editor.Clients
 
             string devFlags = AssetPathUtility.GetUvxDevFlags();
             string fromArgs = AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true);
+            string prefix = AssetPathUtility.IsUvExecutable(uvxPath) ? "tool run " : "";
 
             return "# Register the MCP server with Claude Code:\n"
-                + $"claude mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {devFlags}{fromArgs} mcp-for-unity{StartupToolProfile.CommandSuffix(StartupToolProfile.Selection)}\n\n"
+                + $"claude mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {prefix}{devFlags}{fromArgs} mcp-for-unity{StartupToolProfile.CommandSuffix(StartupToolProfile.Selection)}\n\n"
                 + "# Remove the local registration for the selected project:\n"
                 + "claude mcp remove --scope local UnityMCP\n\n"
                 + "# List registered servers:\n"
@@ -942,7 +943,7 @@ namespace MCPForUnity.Editor.Clients
             string profile
         )
         {
-            var arguments = new List<string>();
+            var arguments = AssetPathUtility.UvxArgumentPrefix(executable);
             // These flags are generated internally and contain no path data.
             arguments.AddRange((devFlags ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
             arguments.AddRange(fromArguments);

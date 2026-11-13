@@ -63,6 +63,28 @@ namespace MCPForUnityTests.Editor.Helpers
         }
 
         [UnityTest]
+        public IEnumerator ProbeUsesExecutableSpecificToolRunPrefix()
+        {
+            foreach (
+                var (executable, prefix) in new[] { ("uv", "tool run "), ("uvx", ""), (@"C:\Program Files\uv\uv.exe", "tool run "), ("custom-wrapper", "") }
+            )
+            {
+                string observed = null;
+                var probe = new UvxOfflineProbe(
+                    (_, args) =>
+                    {
+                        observed = args;
+                        return true;
+                    }
+                );
+                var task = owned.Track(probe.ProbeAsync(executable, "--from source", CancellationToken.None));
+                yield return TestUtilities.WaitUntil(() => task.IsCompleted, "offline probe to complete");
+                Assert.IsTrue(task.GetAwaiter().GetResult());
+                Assert.AreEqual(prefix + "--offline --from source mcp-for-unity --help", observed);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator SourceExecutableIdentityAndExpiryInvalidateCache()
         {
             string root = Path.Combine(Path.GetTempPath(), "uvx-probe-" + Guid.NewGuid().ToString("N"));

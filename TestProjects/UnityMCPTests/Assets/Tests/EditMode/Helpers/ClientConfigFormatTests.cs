@@ -107,6 +107,55 @@ namespace MCPForUnityTests.Editor.Helpers
             }
         }
 
+        [TestCase("uv", true)]
+        [TestCase(@"C:\Program Files\uv\uv.exe", true)]
+        [TestCase("uvx", false)]
+        [TestCase(@"C:\Program Files\uv\uvx.exe", false)]
+        [TestCase("custom-wrapper", false)]
+        public void ExecutableKind_IsUsedAcrossStdioAndHttpLaunches(string executable, bool isUv)
+        {
+            var previous = MCPServiceLocator.Paths;
+            MCPServiceLocator.Register<IPathResolverService>(new SyntheticClientPaths { UvxPath = executable });
+            try
+            {
+                EditorPrefs.SetBool(UseHttpTransportPrefKey, false);
+                EditorConfigCache.Instance.Refresh();
+                var json = JObject.Parse(ConfigJsonBuilder.BuildManualConfigJson(executable, new McpClient()));
+                var stdio = json["mcpServers"]["unityMCP"]["args"].ToObject<string[]>();
+                Assert.AreEqual(isUv, stdio.Length >= 2 && stdio[0] == "tool" && stdio[1] == "run");
+                foreach (
+                    string document in new[] { CodexConfigHelper.BuildCodexServerBlock(executable), CodexConfigHelper.UpsertCodexServerBlock("", executable) }
+                )
+                {
+                    using var reader = new StringReader(document);
+                    var args = TOML.Parse(reader)["mcp_servers"]["unityMCP"]["args"].AsArray.Children.Select(node => node.AsString.Value);
+                    CollectionAssert.AreEqual(stdio, args);
+                }
+                var openCode = JObject.Parse(new OpenCodeConfigurator().GetManualSnippet());
+                CollectionAssert.AreEqual(stdio, openCode["mcp"]["unityMCP"]["command"].ToObject<string[]>().Skip(1));
+                var openClaw = JObject.Parse(new OpenClawConfigurator().GetManualSnippet());
+                CollectionAssert.AreEqual(stdio, openClaw.SelectToken("plugins.entries.openclaw-mcp-bridge.config.servers.unityMCP.args").ToObject<string[]>());
+                var claudeArgs = MCPForUnity.Editor.Clients.ClaudeCliMcpConfigurator.BuildStdioRegistrationArguments(
+                    executable,
+                    new[] { "--from", "source" },
+                    "mcp-for-unity",
+                    "",
+                    ""
+                );
+                Assert.AreEqual(isUv, claudeArgs.Contains("\\\"args\\\":[\\\"tool\\\",\\\"run\\\""));
+                EditorPrefs.SetBool(UseHttpTransportPrefKey, true);
+                EditorConfigCache.Instance.Refresh();
+                Assert.IsTrue(new ServerCommandBuilder().TryBuildLaunchCommand(out var command, out var http, out var error), error);
+                Assert.AreEqual(executable, command);
+                Assert.AreEqual(isUv, http.Count >= 2 && http[0] == "tool" && http[1] == "run");
+                CollectionAssert.Contains(http, "http");
+            }
+            finally
+            {
+                MCPServiceLocator.Register<IPathResolverService>(previous);
+            }
+        }
+
         [TestCase("")]
         [TestCase("core")]
         [TestCase("full")]

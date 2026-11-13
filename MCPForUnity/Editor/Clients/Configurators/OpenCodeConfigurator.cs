@@ -288,7 +288,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 }
 
                 var command = new JArray { uvxPath };
-                foreach (string value in inputs?.Args ?? ConfigJsonBuilder.BuildUvxArgs(null, parts.Item3).ToArray())
+                foreach (string value in inputs?.Args ?? ConfigJsonBuilder.BuildUvxArgs(uvxPath, null, parts.Item3).ToArray())
                 {
                     command.Add(value);
                 }

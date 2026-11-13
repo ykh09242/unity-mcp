@@ -69,7 +69,8 @@ namespace MCPForUnity.Editor.Services.Server
                 return false;
             }
 
-            var args = new List<string>(AssetPathUtility.GetUvxDevFlagsList());
+            var args = AssetPathUtility.UvxArgumentPrefix(uvxPath);
+            args.AddRange(AssetPathUtility.GetUvxDevFlagsList());
             args.AddRange(AssetPathUtility.GetBetaServerFromArgsList());
             args.AddRange(new[] { packageName, "--transport", "http", "--http-url", httpUrl });
             bool projectScopedTools = EditorPrefs.GetBool(EditorPrefKeys.ProjectScopedToolsLocalHttp, true);
