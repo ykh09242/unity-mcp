@@ -17,6 +17,13 @@ namespace MCPForUnity.Editor.Clients
     /// <summary>JSON-file based configurator (Cursor, Windsurf, VS Code, etc.).</summary>
     public abstract class JsonFileMcpConfigurator : McpClientConfiguratorBase
     {
+        internal const string LocalServerRequiredReason = "Start the local server before validating its current authentication token.";
+
+        internal bool RequiresLocalServer => client.status == McpStatus.IncorrectPath && client.configStatus == LocalServerRequiredReason;
+
+        internal static string AuthenticationPrerequisite(bool remote, IDictionary<string, string> expectedHeaders) =>
+            !remote && !expectedHeaders.ContainsKey(AuthConstants.LocalTokenHeader) ? LocalServerRequiredReason : null;
+
         public JsonFileMcpConfigurator(McpClient client)
             : base(client) { }
 
@@ -195,9 +202,9 @@ namespace MCPForUnity.Editor.Clients
                         {
                             reason = "Custom HTTP authentication requires manual validation. The helper was not executed.";
                         }
-                        else if (!HttpEndpointUtility.IsRemoteScope() && !expectedHeaders.ContainsKey(AuthConstants.LocalTokenHeader))
+                        else if (AuthenticationPrerequisite(HttpEndpointUtility.IsRemoteScope(), expectedHeaders) is string prerequisite)
                         {
-                            reason = "Start the local server before validating its current authentication token.";
+                            reason = prerequisite;
                         }
                         else
                         {

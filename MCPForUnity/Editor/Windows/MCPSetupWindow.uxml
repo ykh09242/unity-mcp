@@ -74,6 +74,7 @@
                 <ui:Label text="Configure MCP Clients" class="section-title" />
                 <ui:VisualElement name="clients-list" class="setup-clients-list" />
                 <ui:Label name="clients-result" class="help-text" />
+                <ui:Button name="open-connection-controls-button" text="Open connection controls" class="secondary-button hidden" />
             </ui:VisualElement>
             <ui:VisualElement class="button-container">
                 <ui:Button name="back-button" text="Back" class="setup-button secondary-button" />

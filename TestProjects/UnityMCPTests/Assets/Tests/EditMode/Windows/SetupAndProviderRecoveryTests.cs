@@ -46,6 +46,26 @@ namespace MCPForUnityTests.EditMode.Windows
             public override bool IsInstalled => true;
         }
 
+        private sealed class SetupHttpClient : JsonFileMcpConfigurator
+        {
+            internal SetupHttpClient()
+                : base(new McpClient { name = "Synthetic HTTP" }) { }
+
+            public override bool IsInstalled => true;
+
+            public override string GetConfigPath() => "synthetic-http-config";
+
+            public override void Configure() => Assert.Fail("Real configuration is forbidden.");
+
+            internal void ValidateSyntheticHeaders(IDictionary<string, string> headers)
+            {
+                string prerequisite = AuthenticationPrerequisite(false, headers);
+                client.SetStatus(prerequisite == null ? McpStatus.Configured : McpStatus.IncorrectPath, prerequisite);
+            }
+
+            internal void PrivateFailure(string detail) => client.SetStatus(McpStatus.Error, detail);
+        }
+
         private static void Set(object target, string name, object value)
         {
             var field = target.GetType().GetField(name, Instance);
@@ -216,6 +236,95 @@ namespace MCPForUnityTests.EditMode.Windows
                     if (pythonMissing)
                         Assert.IsTrue(root.Q("install-uv-button").ClassListContains("hidden"));
                     StringAssert.DoesNotContain(pythonMissing ? "uv" : "Python", root.Q<Label>("installation-instructions").text);
+                }
+            );
+        }
+
+        [Test]
+        public void MissingLocalTokenShowsConnectionRecoveryAndRetryOnlyConfiguresOutstandingClients()
+        {
+            string directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "setup-http-" + Guid.NewGuid().ToString("N"));
+            string tokenFile = System.IO.Path.Combine(directory, "synthetic-token");
+            string previousToken = Environment.GetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN");
+            string previousFile = Environment.GetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE");
+            System.IO.Directory.CreateDirectory(directory);
+            try
+            {
+                Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN", null);
+                Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", tokenFile);
+                WithReadySetup(
+                    (window, _) =>
+                    {
+                        var successful = new Client { Id = "successful" };
+                        var http = new SetupHttpClient();
+                        var clients = new IMcpClientConfigurator[] { successful, http };
+                        var calls = new Dictionary<string, int>();
+                        int completed = 0,
+                            opened = 0;
+                        Set(window, "getClients", (Func<IReadOnlyList<IMcpClientConfigurator>>)(() => clients));
+                        Set(window, "finishSetup", (Action)(() => completed++));
+                        Set(window, "openConnectionControls", (Action)(() => opened++));
+                        Set(
+                            window,
+                            "configureClient",
+                            (Action<IMcpClientConfigurator>)(
+                                c =>
+                                {
+                                    calls[c.Id] = calls.TryGetValue(c.Id, out int count) ? count + 1 : 1;
+                                    if (c == http)
+                                        http.ValidateSyntheticHeaders(
+                                            new HttpEndpointUtility.ConnectionSettings("http://127.0.0.1:1", false, "").GetAuthHeaders()
+                                        );
+                                }
+                            )
+                        );
+                        Invoke(window, "ShowClientsStep");
+                        Invoke(window, "OnConfigureSelectedClicked");
+                        var labels = window.rootVisualElement.Q("clients-list").Query<Label>(className: "help-text").ToList();
+                        Assert.That(labels.Any(label => label.text.Contains(JsonFileMcpConfigurator.LocalServerRequiredReason)));
+                        Assert.That(labels.Any(label => label.text.Contains("Start Server")));
+                        Assert.That(labels.All(label => !label.enableRichText));
+                        Assert.IsFalse(window.rootVisualElement.Q("open-connection-controls-button").ClassListContains("hidden"));
+                        Assert.AreEqual(0, completed);
+                        Invoke(window, "OnOpenConnectionControlsClicked");
+                        Assert.AreEqual(1, opened);
+                        // Simulate server launch by publishing only a synthetic token in our isolated directory.
+                        System.IO.File.WriteAllText(tokenFile, "synthetic-private-launch-token");
+                        Invoke(window, "OnConfigureSelectedClicked");
+                        Assert.AreEqual(1, calls[successful.Id]);
+                        Assert.AreEqual(2, calls[http.Id]);
+                        Assert.AreEqual(1, completed);
+                        Assert.IsTrue(window.rootVisualElement.Q("open-connection-controls-button").ClassListContains("hidden"));
+                        Assert.That(window.rootVisualElement.Q("clients-list").Query<Label>().ToList().All(label => !label.text.Contains("synthetic-private")));
+                    }
+                );
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN", previousToken);
+                Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", previousFile);
+                System.IO.Directory.Delete(directory, true);
+            }
+        }
+
+        [Test]
+        public void SetupDoesNotPublishUnrecognizedValidationDetailsOrExceptions()
+        {
+            WithReadySetup(
+                (window, _) =>
+                {
+                    var http = new SetupHttpClient();
+                    const string secret = "<b>synthetic-private-path-and-token</b>";
+                    http.PrivateFailure(secret);
+                    Set(window, "getClients", (Func<IReadOnlyList<IMcpClientConfigurator>>)(() => new[] { http }));
+                    Set(window, "configureClient", (Action<IMcpClientConfigurator>)(_ => { }));
+                    Invoke(window, "ShowClientsStep");
+                    Invoke(window, "OnConfigureSelectedClicked");
+                    Assert.That(window.rootVisualElement.Q("clients-list").Query<Label>().ToList().All(label => !label.text.Contains(secret)));
+                    Assert.IsTrue(window.rootVisualElement.Q("open-connection-controls-button").ClassListContains("hidden"));
+                    Set(window, "configureClient", (Action<IMcpClientConfigurator>)(_ => throw new InvalidOperationException(secret)));
+                    Invoke(window, "OnConfigureSelectedClicked");
+                    Assert.That(window.rootVisualElement.Q("clients-list").Query<Label>().ToList().All(label => !label.text.Contains(secret)));
                 }
             );
         }

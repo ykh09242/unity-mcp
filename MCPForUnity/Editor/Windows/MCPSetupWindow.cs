@@ -51,10 +51,12 @@ namespace MCPForUnity.Editor.Windows
         private VisualElement clientsList;
         private Button skipClientsButton;
         private Button configureSelectedButton;
+        private Button openConnectionControlsButton;
         private readonly List<(IMcpClientConfigurator client, Toggle toggle)> clientToggles = new();
 
         private Label clientsResult;
         private readonly HashSet<string> configuredClients = new();
+        private readonly HashSet<string> localServerRequiredClients = new();
         private readonly Dictionary<string, bool> clientSelections = new();
         private readonly Dictionary<string, string> clientResults = new();
         private readonly Dictionary<string, Label> clientResultLabels = new();
@@ -71,6 +73,7 @@ namespace MCPForUnity.Editor.Windows
         private int configurationSuccess,
             configurationFailure;
         private Action finishSetup = null;
+        private Action openConnectionControls = MCPForUnityEditorWindow.ShowConnectionControls;
 
         private DependencyCheckResult _dependencyResult;
         private string _dependencyCheckError;
@@ -152,6 +155,7 @@ namespace MCPForUnity.Editor.Windows
             clientsResult = rootVisualElement.Q<Label>("clients-result");
             skipClientsButton = rootVisualElement.Q<Button>("skip-clients-button");
             configureSelectedButton = rootVisualElement.Q<Button>("configure-selected-button");
+            openConnectionControlsButton = rootVisualElement.Q<Button>("open-connection-controls-button");
 
             // Register callbacks
             refreshButton.clicked += OnRefreshClicked;
@@ -162,6 +166,7 @@ namespace MCPForUnity.Editor.Windows
                 installUvButton.clicked += OnInstallUvClicked;
             skipClientsButton.clicked += OnSkipClientsClicked;
             configureSelectedButton.clicked += OnConfigureSelectedClicked;
+            openConnectionControlsButton.clicked += OnOpenConnectionControlsClicked;
             rootVisualElement.Q<Button>("back-button").clicked += () =>
             {
                 stepClients.AddToClassList("hidden");
@@ -274,6 +279,8 @@ namespace MCPForUnity.Editor.Windows
 
         private void PopulateClientsList()
         {
+            openConnectionControlsButton.EnableInClassList("hidden", localServerRequiredClients.Count == 0);
+            openConnectionControlsButton.SetEnabled(!configurationInProgress);
             skipClientsButton.SetEnabled(!configurationInProgress);
             clientsList.Clear();
             clientToggles.Clear();
@@ -324,6 +331,12 @@ namespace MCPForUnity.Editor.Windows
 
         private void OnSkipClientsClicked() => CompleteSetup();
 
+        private void OnOpenConnectionControlsClicked()
+        {
+            if (!configurationInProgress && localServerRequiredClients.Count > 0)
+                openConnectionControls();
+        }
+
         private void CompleteSetup()
         {
             if (finishSetup != null)
@@ -348,6 +361,7 @@ namespace MCPForUnity.Editor.Windows
             }
             configurationInProgress = true;
             configureSelectedButton.SetEnabled(false);
+            openConnectionControlsButton.SetEnabled(false);
             skipClientsButton.SetEnabled(false);
             foreach (var (_, toggle) in clientToggles)
                 toggle.SetEnabled(false);
@@ -369,6 +383,7 @@ namespace MCPForUnity.Editor.Windows
                     if (!configurationTask.IsCompleted)
                         return;
                     string result;
+                    localServerRequiredClients.Remove(configuringClient.Id);
                     bool retry = true;
                     bool contextCurrent = configurationContextIsCurrent?.Invoke() ?? true;
                     if (
@@ -423,6 +438,18 @@ namespace MCPForUnity.Editor.Windows
                             retry = false;
                             result =
                                 "Configuration outcome is uncertain. Wait for any CLI process to stop, then inspect the selected local registration before retrying.";
+                        }
+                        else if (
+                            configurationTask.Status == TaskStatus.RanToCompletion
+                            && configurationTask.Result is JsonFileMcpConfigurator json
+                            && json.RequiresLocalServer
+                        )
+                        {
+                            // Only this recognized diagnosis is safe to display. File, process,
+                            // endpoint and arbitrary exception details stay out of Setup.
+                            localServerRequiredClients.Add(configuringClient.Id);
+                            result =
+                                JsonFileMcpConfigurator.LocalServerRequiredReason + " Open connection controls, click Start Server, then retry this client.";
                         }
                         else
                             result = "Configuration failed or validation is incomplete. Check client instructions, installation and permissions, then retry.";

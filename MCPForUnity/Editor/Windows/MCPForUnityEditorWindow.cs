@@ -144,6 +144,14 @@ namespace MCPForUnity.Editor.Windows
             window.Focus();
         }
 
+        internal static void ShowConnectionControls()
+        {
+            ShowWindow();
+            var window = GetWindow<MCPForUnityEditorWindow>();
+            window.CreateGUI();
+            window.navigation?.OpenSetting("transport-dropdown");
+        }
+
         // Helper to check and manage open windows from other classes
         public static bool HasAnyOpenWindow()
         {
