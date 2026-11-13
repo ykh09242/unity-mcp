@@ -26,6 +26,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             public Object Instance;
             public Object Asset;
             public string PropertyPath;
+            public JToken ExpectedValue;
             public GameObject Owner => Instance is Component c ? c.gameObject : (GameObject)Instance;
         }
 
@@ -136,6 +137,14 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     return new ErrorResponse("Select one structural override per call; property overrides may be batched.");
                 foreach (Entry entry in selected)
                     Validate(entry, assetPath, apply);
+                foreach (Entry entry in selected)
+                {
+                    if (entry.Kind != "property")
+                        continue;
+                    using var serialized = new SerializedObject(apply ? entry.Instance : entry.Asset);
+                    using var property = serialized.FindProperty(entry.PropertyPath);
+                    entry.ExpectedValue = Value(property);
+                }
                 Undo.IncrementCurrentGroup();
                 int group = Undo.GetCurrentGroup();
                 Undo.SetCurrentGroupName(apply ? "Apply selected prefab overrides" : "Revert selected prefab overrides");
@@ -251,10 +260,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     if (!retained.HasValue)
                         complete = false;
                     if (entry.Kind == "property" && (apply ? entry.Asset : entry.Instance) is Component component)
-                        fieldsToObserve.Capture(
-                            component,
-                            new JObject { [entry.PropertyPath] = entry.Data[apply ? "currentValue" : "prefabValue"]?.DeepClone() }
-                        );
+                        fieldsToObserve.Capture(component, new JObject { [entry.PropertyPath] = entry.ExpectedValue?.DeepClone() });
                 }
                 JObject fieldReport = fieldsToObserve.Observe();
                 complete &= (bool)fieldReport["complete"];

@@ -192,6 +192,11 @@ namespace MCPForUnity.Tests.EditMode.Tools
             var result = WithDetailedRowCount(0, () => Command(action, new JArray(id)));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsFalse(collider.isTrigger);
+            JToken verified = result["data"]
+                ["verification"]["observed_values"]["selected_field_verification"]["observed_values"][0]["observed_values"]
+                .Single(record => record.Value<string>("property_path") == "m_IsTrigger");
+            Assert.IsFalse(verified.Value<bool>("value"), result.ToString());
+            Assert.IsTrue(verified.Value<bool>("matches_requested"), result.ToString());
             Assert.AreEqual(new Vector3(2, 3, 4), collider.size);
             Assert.IsTrue(scene.isDirty);
             Undo.PerformUndo();
@@ -209,6 +214,11 @@ namespace MCPForUnity.Tests.EditMode.Tools
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var assetCollider = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath).GetComponentInChildren<BoxCollider>();
             Assert.IsTrue(assetCollider.isTrigger);
+            JToken verified = result["data"]
+                ["verification"]["observed_values"]["selected_field_verification"]["observed_values"][0]["observed_values"]
+                .Single(record => record.Value<string>("property_path") == "m_IsTrigger");
+            Assert.IsTrue(verified.Value<bool>("value"), result.ToString());
+            Assert.IsTrue(verified.Value<bool>("matches_requested"), result.ToString());
             Assert.AreEqual(Vector3.one, assetCollider.size);
             Assert.AreEqual(new Vector3(2, 3, 4), instance.GetComponentInChildren<BoxCollider>().size);
         }
