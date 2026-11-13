@@ -2,6 +2,7 @@
 
 import inspect
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -63,6 +64,66 @@ def test_group_pages_are_stable_and_keep_unadvertised_tools(entries):
     assert first["next_offset"] == 3
     assert all(tool["advertised"] is False for tool in first["tools"])
     assert first["scope"] == "mcp_context"
+
+
+@pytest.mark.parametrize("past_end", [False, True])
+def test_tool_pages_construct_only_selected_action_cards(entries, past_end):
+    from services.registry import action_catalog
+
+    entry = next(entry for entry in entries if entry["name"] == "manage_vfx")
+    actions = action_catalog.declared_actions(entry)
+    offset = len(actions) + 1 if past_end else 1
+    with patch.object(action_catalog, "action_card", wraps=action_catalog.action_card) as cards:
+        page = action_catalog.browse_catalog(
+            action_catalog.CatalogRequest(tool=entry["name"], offset=offset, limit=1), entries
+        )
+    assert cards.call_count == (0 if past_end else 1)
+    assert page["total"] == len(actions)
+    assert page["offset"] == offset
+    assert page["next_offset"] == (None if past_end else offset + 1)
+    assert [card["action"] for card in page["actions"]] == actions[offset : offset + 1]
+    assert page["tool"]["actions"] == actions
+    assert page["tool"]["description"] == action_catalog.tool_description(entry)
+
+
+@pytest.mark.parametrize("past_end", [False, True])
+def test_group_pages_construct_only_selected_tool_summaries(entries, past_end):
+    from services.registry import action_catalog
+
+    selected = sorted(
+        (entry for entry in entries if entry.get("group") == "core"),
+        key=lambda entry: entry["name"],
+    )
+    offset = len(selected) + 1 if past_end else 1
+    with patch.object(
+        action_catalog, "tool_capability", wraps=action_catalog.tool_capability
+    ) as summaries:
+        page = action_catalog.browse_catalog(
+            action_catalog.CatalogRequest(group="core", offset=offset, limit=1),
+            list(reversed(entries)),
+            visible_names=set(),
+        )
+    assert summaries.call_count == (0 if past_end else 1)
+    assert page["total"] == len(selected)
+    assert page["offset"] == offset
+    assert page["next_offset"] == (None if past_end else offset + 1)
+    assert [tool["name"] for tool in page["tools"]] == [
+        entry["name"] for entry in selected[offset : offset + 1]
+    ]
+    assert all(tool["advertised"] is False for tool in page["tools"])
+
+
+def test_empty_group_and_past_end_actionless_tool_remain_valid(entries):
+    from services.registry.action_catalog import CatalogRequest, browse_catalog
+
+    empty = browse_catalog(CatalogRequest(group="core", limit=1), [])
+    assert empty["total"] == 0
+    assert empty["tools"] == []
+    assert empty["next_offset"] is None
+    actionless = browse_catalog(CatalogRequest(tool="capture_prefab", offset=1, limit=1), entries)
+    assert actionless["total"] == 1
+    assert actionless["actions"] == []
+    assert actionless["next_offset"] is None
 
 
 @pytest.mark.parametrize(

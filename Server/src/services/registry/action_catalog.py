@@ -440,14 +440,23 @@ def browse_catalog(
         response["tool"] = tool_capability(entry, visible_names=visible_names)
         # Retain action-specific constraints anywhere in the declared description.
         response["tool"]["description"] = tool_description(entry)
-        rows = [action_card(entry, action) for action in (declared_actions(entry) or [None])]
+        actions = declared_actions(entry) or [None]
+        total = len(actions)
+        rows = [
+            action_card(entry, action)
+            for action in actions[request.offset : request.offset + request.limit]
+        ]
         key = "actions"
     elif request.group is not None:
         selected = [entry for entry in ordered if entry.get("group") == request.group]
         if not selected and request.group not in TOOL_GROUPS:
             raise ValueError(f"Unknown group {request.group!r}.")
         response.update(view="tools", group=request.group)
-        rows = [tool_capability(entry, visible_names=visible_names) for entry in selected]
+        total = len(selected)
+        rows = [
+            tool_capability(entry, visible_names=visible_names)
+            for entry in selected[request.offset : request.offset + request.limit]
+        ]
         key = "tools"
     else:
         response["view"] = "groups"
@@ -466,10 +475,8 @@ def browse_catalog(
         response["next_offset"] = None
         return response
     end = request.offset + request.limit
-    response.update(
-        total=len(rows), offset=request.offset, next_offset=end if end < len(rows) else None
-    )
-    response[key] = rows[request.offset : end]
+    response.update(total=total, offset=request.offset, next_offset=end if end < total else None)
+    response[key] = rows
     return response
 
 
