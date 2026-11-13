@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
 using UnityEditor;
 using UnityEngine;
 
@@ -23,6 +24,7 @@ namespace MCPForUnity.Editor.Setup
         private string _targetBranch;
         private string _cliType;
         private string _installDir;
+        private string _codexHome;
         private bool _latest;
         private SkillSyncSource _packageSource;
         private string _packageError;
@@ -48,6 +50,7 @@ namespace MCPForUnity.Editor.Setup
         private void OnEnable()
         {
             var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            _codexHome = CodexHome.Resolve();
             _repoUrl = EditorPrefs.GetString(RepoUrlKey, "https://github.com/ykh09242/unity-mcp");
             _targetBranch = EditorPrefs.GetString(BranchKey, "beta");
             if (!BranchOptions.Contains(_targetBranch))
@@ -59,7 +62,7 @@ namespace MCPForUnity.Editor.Setup
             {
                 _cliType = CodexCli;
             }
-            _installDir = EditorPrefs.GetString(InstallDirKey, GetDefaultInstallDir(userHome, _cliType));
+            _installDir = ResolveInitialInstallDir(EditorPrefs.GetString(InstallDirKey, ""), userHome, _cliType, _codexHome);
             _latest = false;
             RefreshPackageSource();
             EditorApplication.update += OnEditorUpdate;
@@ -331,8 +334,8 @@ namespace MCPForUnity.Editor.Setup
         private void TryApplyCliDefaultInstallPath(string previousCli, string currentCli)
         {
             var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var previousDefaultInstall = GetDefaultInstallDir(userHome, previousCli);
-            var currentDefaultInstall = GetDefaultInstallDir(userHome, currentCli);
+            var previousDefaultInstall = GetDefaultInstallDir(userHome, previousCli, _codexHome);
+            var currentDefaultInstall = GetDefaultInstallDir(userHome, currentCli, _codexHome);
 
             if (string.IsNullOrWhiteSpace(_installDir) || PathsEqual(_installDir, previousDefaultInstall))
             {
@@ -340,10 +343,18 @@ namespace MCPForUnity.Editor.Setup
             }
         }
 
-        private static string GetDefaultInstallDir(string userHome, string cliType)
+        internal static string GetDefaultInstallDir(string userHome, string cliType, string codexHome)
         {
-            var baseDir = IsClaudeCli(cliType) ? ".claude" : ".codex";
-            return Path.Combine(userHome, baseDir, "skills/unity-mcp-skill");
+            return IsClaudeCli(cliType) ? Path.Combine(userHome, ".claude", "skills", "unity-mcp-skill") : CodexHome.SkillInstallPath(codexHome);
+        }
+
+        internal static string ResolveInitialInstallDir(string saved, string userHome, string cliType, string codexHome)
+        {
+            string selectedDefault = GetDefaultInstallDir(userHome, cliType, codexHome);
+            // Follow the inherited home when the saved value was the legacy default;
+            // explicitly customized destinations remain available in the editable field.
+            string legacyDefault = CodexHome.SkillInstallPath(Path.Combine(userHome, ".codex"));
+            return string.IsNullOrWhiteSpace(saved) || !IsClaudeCli(cliType) && PathsEqual(saved, legacyDefault) ? selectedDefault : saved;
         }
 
         private static bool IsClaudeCli(string cliType)

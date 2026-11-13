@@ -301,6 +301,16 @@ namespace MCPForUnity.Editor.Windows
                 toggle.RegisterValueChangedCallback(evt => clientSelections[c.Id] = evt.newValue);
                 clientToggles.Add((c, toggle));
                 clientsList.Add(toggle);
+                if (c is Clients.Configurators.CodexConfigurator)
+                {
+                    var destination = new Label("Configuration destination: " + c.GetConfigPath())
+                    {
+                        name = "codex-config-destination",
+                        enableRichText = false,
+                    };
+                    destination.AddToClassList("help-text");
+                    clientsList.Add(destination);
+                }
                 string instructions = c.SupportsAutoConfigure
                     ? clientResults.TryGetValue(c.Id, out string message)
                         ? message

@@ -4,6 +4,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Editor.Clients.Configurators;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Setup;
 using NUnit.Framework;
 using UnityEditor;
@@ -24,6 +27,121 @@ namespace MCPForUnityTests.Editor.Setup
             private void OnDisable() { }
 
             private void OnGUI() => typeof(McpForUnitySkillInstaller).GetMethod("OnGUI", PrivateInstance).Invoke(this, null);
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void CodexHomeUsesOneRootForDetectionConfigurationAndSkills(bool alternate)
+        {
+            string directory = Path.Combine(Path.GetTempPath(), "codex-home-" + Guid.NewGuid().ToString("N"));
+            string profile = Path.Combine(directory, "synthetic-profile");
+            string defaultHome = Path.Combine(profile, ".codex");
+            string selected = alternate ? Path.Combine(directory, "alternate-home") : defaultHome;
+            Directory.CreateDirectory(defaultHome);
+            string defaultConfig = Path.Combine(defaultHome, "config.toml");
+            const string sentinel = "model = 'synthetic-preserved-model'\n";
+            File.WriteAllText(defaultConfig, sentinel);
+            try
+            {
+                string resolved = CodexHome.Resolve(alternate ? selected : null, profile);
+                var client = new CodexConfigurator(resolved);
+                Assert.AreEqual(!alternate, client.IsInstalled, "Detection must inspect the selected home even when a different profile exists.");
+                Directory.CreateDirectory(selected);
+                Assert.IsTrue(client.IsInstalled);
+                string config = Path.Combine(selected, "config.toml");
+                Assert.AreEqual(config, client.GetConfigPath());
+                Assert.AreEqual(config, client.Client.windowsConfigPath);
+                Assert.AreEqual(config, client.Client.macConfigPath);
+                Assert.AreEqual(config, client.Client.linuxConfigPath);
+                Assert.AreEqual(config, McpConfigurationHelper.GetClientConfigPath(client.Client), "Generic model-based paths must agree with discovery.");
+                var inputs = new ClientConfigurationInputs(false, null, "synthetic-uvx", new[] { "synthetic-server" }, null, null, false, null, null, false);
+                string existing = File.Exists(config) ? File.ReadAllText(config) : "";
+                byte[] snapshot = File.Exists(config) ? File.ReadAllBytes(config) : null;
+                string generated = CodexConfigHelper.UpsertCodexServerBlock(existing, null, inputs);
+                McpConfigurationHelper.WriteGuardedConfiguration(config, generated, snapshot, null);
+                Assert.IsTrue(CodexConfigHelper.TryParseCodexServer(File.ReadAllText(config), out string command, out _));
+                Assert.AreEqual("synthetic-uvx", command);
+                string skills = Path.Combine(selected, "skills", "unity-mcp-skill");
+                Assert.AreEqual(skills, client.GetSkillInstallPath());
+                Assert.AreEqual(skills, McpForUnitySkillInstaller.GetDefaultInstallDir(profile, "codex", resolved));
+                Assert.AreEqual(skills, McpForUnitySkillInstaller.ResolveInitialInstallDir("", profile, "codex", resolved));
+                Assert.AreEqual(
+                    skills,
+                    McpForUnitySkillInstaller.ResolveInitialInstallDir(CodexHome.SkillInstallPath(defaultHome), profile, "codex", resolved)
+                );
+                string customized = Path.Combine(directory, "custom-skills");
+                Assert.AreEqual(customized, McpForUnitySkillInstaller.ResolveInitialInstallDir(customized, profile, "codex", resolved));
+                Assert.AreEqual(
+                    Path.Combine(profile, ".claude", "skills", "unity-mcp-skill"),
+                    McpForUnitySkillInstaller.GetDefaultInstallDir(profile, "claude", resolved)
+                );
+                if (alternate)
+                    Assert.AreEqual(sentinel, File.ReadAllText(defaultConfig), "The other profile must remain byte-for-byte unchanged.");
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        [Test]
+        public void CodexConfiguratorCapturesInheritedHomeAndDoesNotRetargetExistingOperations()
+        {
+            string previous = Environment.GetEnvironmentVariable("CODEX_HOME");
+            string directory = Path.Combine(Path.GetTempPath(), "codex-capture-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                string first = Path.Combine(directory, "first");
+                string second = Path.Combine(directory, "second");
+                Environment.SetEnvironmentVariable("CODEX_HOME", first);
+                var client = new CodexConfigurator();
+                Environment.SetEnvironmentVariable("CODEX_HOME", second);
+                Assert.AreEqual(Path.Combine(first, "config.toml"), client.GetConfigPath());
+                Assert.AreEqual(CodexHome.SkillInstallPath(first), client.GetSkillInstallPath());
+                Assert.AreEqual(Path.Combine(second, "config.toml"), new CodexConfigurator().GetConfigPath());
+                Assert.IsFalse(Directory.Exists(directory), "Resolving homes must not create or read configuration files.");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("CODEX_HOME", previous);
+            }
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase(" ")]
+        public void CodexHomeFallbackAndHomeRelativePathsUseTheSyntheticProfile(string inherited)
+        {
+            string profile = Path.Combine(Path.GetTempPath(), "synthetic-profile");
+            Assert.AreEqual(Path.Combine(profile, ".codex"), CodexHome.Resolve(inherited, profile));
+            Assert.AreEqual(Path.Combine(profile, "alternate"), CodexHome.Resolve("~/alternate", profile));
+            Assert.AreEqual(profile, CodexHome.Resolve("~", profile));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void ExplicitCodexHomeCanBeNonexistentOrRelativeWithoutProfileFallback(bool relative)
+        {
+            string name = "synthetic-codex-absent-" + Guid.NewGuid().ToString("N");
+            string inherited = relative ? name : Path.Combine(Path.GetTempPath(), name);
+            string profile = Path.Combine(Path.GetTempPath(), "unrelated-synthetic-profile");
+            string selected = Path.GetFullPath(inherited);
+            string resolved = CodexHome.Resolve(inherited, profile);
+            var client = new CodexConfigurator(resolved);
+            Assert.AreEqual(selected, resolved);
+            Assert.AreEqual(Path.Combine(selected, "config.toml"), client.GetConfigPath());
+            Assert.AreEqual(CodexHome.SkillInstallPath(selected), client.GetSkillInstallPath());
+            Assert.IsFalse(client.IsInstalled);
+            Assert.IsFalse(Directory.Exists(selected));
+            Assert.IsFalse(Directory.Exists(Path.Combine(profile, ".codex")));
+        }
+
+        [Test]
+        public void InvalidExplicitCodexHomeIsRejectedWithoutFallingBack()
+        {
+            string profile = Path.Combine(Path.GetTempPath(), "synthetic-codex-invalid-" + Guid.NewGuid().ToString("N"));
+            Assert.Throws<ArgumentException>(() => CodexHome.Resolve("invalid\0home", profile));
+            Assert.IsFalse(Directory.Exists(profile));
         }
 
         [UnityTest, Explicit("Owned, synthetic installer UI evidence without preference or installation writes.")]

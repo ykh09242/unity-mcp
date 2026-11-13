@@ -80,6 +80,13 @@ see the release notes for exact startup, compile and runtime-evidence limits.
 
 Use the Editor window's client configuration section for the selected client, or configure the detected clients together. Review the result, then reconnect or restart the client if it has not reloaded its configuration.
 
+For Codex, Unity uses the `CODEX_HOME` inherited by the Editor, falling back to
+`~/.codex` when it is unset or empty. Detection and configuration use that root's
+`config.toml`; skill setup defaults to `skills/unity-mcp-skill` under the same root.
+Setup shows the resolved configuration destination, and the skill installer shows
+its editable destination. Existing custom skill destinations are preserved.
+Launch Unity with the intended environment before opening Setup.
+
 Local HTTP rotates `X-Unity-MCP-Token` each server launch. Since **1.2.1**, verified Codex and Claude Code clients use generated token-file helpers: configure once after upgrading, then reconnect when necessary without copying a new token. Older or unverified CLIs should use stdio. Other clients still use static headers and need **Configure** plus reconnection after a server restart. Native CLI and Unity connections look up the current token automatically. Never commit token files or token-bearing client configurations.
 
 For unsupported clients, use [Manual Client Configuration](./clients.md#manual-client-configuration). For a manually launched Python server, see [Server README](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md). Hosted HTTPS/API-key deployment is a different mode: [Remote Server Auth](../guides/remote-server-auth.md).

@@ -10,6 +10,25 @@ using UnityEngine;
 
 namespace MCPForUnity.Editor.Helpers
 {
+    internal static class CodexHome
+    {
+        internal static string Resolve() =>
+            Resolve(Environment.GetEnvironmentVariable("CODEX_HOME"), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+
+        internal static string Resolve(string inheritedHome, string userHome)
+        {
+            string root = string.IsNullOrWhiteSpace(inheritedHome) ? Path.Combine(userHome, ".codex") : inheritedHome;
+            if (root == "~")
+                root = userHome;
+            else if (root.StartsWith("~/", StringComparison.Ordinal) || root.StartsWith("~\\", StringComparison.Ordinal))
+                root = Path.Combine(userHome, root.Substring(2));
+            // An explicit home must never silently fall back to another profile.
+            return Path.GetFullPath(root);
+        }
+
+        internal static string SkillInstallPath(string root) => Path.Combine(root, "skills", "unity-mcp-skill");
+    }
+
     /// <summary>
     /// Codex CLI specific configuration helpers. Handles TOML snippet
     /// generation and lightweight parsing so Codex can join the auto-setup
