@@ -32,11 +32,14 @@ def _asset_path(value: str) -> bool:
     description=(
         "Inspect optional Unity Localization locale/table identities, shared keys, missing translations, "
         "static Smart String selectors and asset GUID references. No runtime formatting, loading or locale activation. "
-        "inspect requires 1..256 explicit table_paths; argument_names is the caller's available root-selector inventory, "
+        "inspect requires 1..256 explicit table_paths. For one large table, supply limit (1..4096) or offset. "
+        "Each page covers shared keys in serialized order and then orphan entries by ID, with findings for those positions. "
+        "Pages fit 1 MiB. Continue with data.next_offset and expected_revision=data.revision until next_offset is null. "
+        "argument_names is the caller's available root-selector inventory, "
         "not proof of custom formatter or runtime variable behavior. list_locales/list_tables use optional exact paths "
         "or bounded Assets discovery. set_string_entry corrects an existing shared key ID in one table and preserves "
         "is_smart when omitted. set_fallbacks replaces only explicit locale fallback metadata, refusing cycles. "
-        "Writes require expected_revision from inspection and save the exact asset with native Undo. Revision includes "
+        "Writes require the asset revision (tables[0].revision for a table) and save the exact asset with native Undo. Revision includes "
         "loaded serialization and source bytes; external process races are not excluded. set_asset_entry explicitly "
         "refuses: supported package authoring also changes Addressables groups/labels/shared metadata. "
         "No asset/table/locale creation, key deletion or implicit Addressables changes."
@@ -86,11 +89,13 @@ async def manage_localization(
     expected_revision: Annotated[
         StrictStr | None,
         Field(pattern="^[0-9a-f]{64}$"),
-        "Exact current asset revision from inspection.",
+        "Asset revision for correction, or data.revision for an inspection page.",
     ] = None,
-    offset: Annotated[int | None, Field(strict=True, ge=0, le=100000), "Page offset."] = None,
+    offset: Annotated[int | None, Field(strict=True, ge=0, le=200000), "Page offset."] = None,
     limit: Annotated[
-        int | None, Field(strict=True, ge=1, le=100), "Discovery page size, default 50."
+        int | None,
+        Field(strict=True, ge=1, le=4096),
+        "Page size, 1..100 for discovery or 1..4096 for one-table inspection. Default 50 in paged mode.",
     ] = None,
 ) -> dict[str, JsonValue]:
     """Validate corrections before dispatching to the selected Editor."""
@@ -113,7 +118,7 @@ async def manage_localization(
         "capabilities": set(),
         "list_locales": {"paths", "offset", "limit"},
         "list_tables": {"paths", "offset", "limit"},
-        "inspect": {"table_paths", "argument_names"},
+        "inspect": {"table_paths", "argument_names", "offset", "limit", "expected_revision"},
         "set_string_entry": {"table_path", "key_id", "value", "is_smart", "expected_revision"},
         "set_asset_entry": {"table_path", "key_id", "asset_path", "expected_revision"},
         "set_fallbacks": {"locale_path", "fallback_locale_paths", "expected_revision"},
@@ -137,6 +142,13 @@ async def manage_localization(
             return failure("Asset paths must be canonical paths under Assets/.")
     if action == "inspect" and not table_paths:
         return failure("inspect requires explicit table_paths.")
+    if action == "inspect" and any(v is not None for v in (offset, limit, expected_revision)):
+        if len(table_paths) != 1:
+            return failure("Paged inspect requires exactly one table path.")
+        if offset and expected_revision is None:
+            return failure("Continuation requires expected_revision from the first page.")
+    if action in ("list_locales", "list_tables") and ((limit or 0) > 100 or (offset or 0) > 100000):
+        return failure("Discovery requires limit <= 100 and offset <= 100000.")
     if action.startswith("set_") and not expected_revision:
         return failure("Corrections require expected_revision from inspection.")
     if action in ("set_string_entry", "set_asset_entry"):

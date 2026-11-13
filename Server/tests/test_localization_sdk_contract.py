@@ -18,6 +18,11 @@ def test_localization_sdk_read_and_explicit_mutation_contract(tmp_path):
         async def instance(ctx): return "Loc@owned"
         async def read(fn, selected, command, params):
             sent.append(("read", selected, command, params))
+            if params.get("action") == "inspect" and "limit" in params:
+                offset = params.get("offset", 0)
+                return {"success": True, "data": {"tables": [{"keys": [{"key_id": str(offset + 1)}], "revision": "a"*64}],
+                    "findings": [{"code": "missing_translation", "key_id": str(offset + 1)}],
+                    "offset": offset, "next_offset": 1 if offset == 0 else None, "revision": "b"*64}}
             return {"success": True, "data": {"revision": "a" * 64}}
         async def write(ctx, selected, command, params):
             sent.append(("write", selected, command, params))
@@ -49,6 +54,17 @@ def test_localization_sdk_read_and_explicit_mutation_contract(tmp_path):
                     result = await client.call_tool("manage_localization", args)
                     assert result.structured_content["success"], result
                     assert sent[-1] == (route, "Loc@owned", "manage_localization", args), sent[-1]
+                args = {"action": "inspect", "table_paths": ["Assets/fr.asset"], "limit": 4096, "argument_names": ["player"]}
+                for index in (0, 1):
+                    result = (await client.call_tool("manage_localization", args)).structured_content
+                    assert result["success"] and sent[-1] == ("read", "Loc@owned", "manage_localization", args)
+                    data = result["data"]
+                    assert data["offset"] == index
+                    assert data["tables"][0]["revision"] == "a"*64 and data["revision"] == "b"*64
+                    assert data["tables"][0]["keys"] == [{"key_id": str(index + 1)}]
+                    assert data["findings"] == [{"code": "missing_translation", "key_id": str(index + 1)}]
+                    assert data["next_offset"] == (1 if index == 0 else None)
+                    args = {**args, "offset": data["next_offset"], "expected_revision": data["revision"]}
                 for args in (
                     {"action": "inspect", "table_paths": []},
                     {"action": "inspect", "table_paths": ["Assets/../bad.asset"]},
@@ -56,6 +72,14 @@ def test_localization_sdk_read_and_explicit_mutation_contract(tmp_path):
                     {"action": "set_string_entry", "table_path": "Assets/fr.asset", "key_id": "101", "value": "Changed", "expected_revision": "a"*64, "is_smart": "true"},
                     {"action": "set_fallbacks", "locale_path": "Assets/fr.asset", "expected_revision": "a"*64},
                     {"action": "list_tables", "limit": True},
+                    {"action": "list_tables", "limit": 101},
+                    {"action": "list_locales", "offset": 100001},
+                    {"action": "inspect", "table_paths": ["Assets/a.asset", "Assets/b.asset"], "limit": 1},
+                    {"action": "inspect", "table_paths": ["Assets/a.asset"], "offset": 1},
+                    {"action": "inspect", "table_paths": ["Assets/a.asset"], "offset": 1, "expected_revision": "not-a-revision"},
+                    {"action": "inspect", "table_paths": ["Assets/a.asset"], "offset": 200001, "expected_revision": "a"*64},
+                    {"action": "inspect", "table_paths": ["Assets/a.asset"], "limit": True},
+                    {"action": "inspect", "table_paths": ["Assets/a.asset"], "limit": 4097},
                 ):
                     before = len(sent)
                     try: result = await client.call_tool("manage_localization", args)

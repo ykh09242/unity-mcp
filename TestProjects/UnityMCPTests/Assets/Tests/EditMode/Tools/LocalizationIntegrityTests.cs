@@ -360,6 +360,186 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreNotEqual(first, Revision(enTable), "Late-entry edits must invalidate the complete revision.");
         }
 
+        private JObject Page(Object table, int limit, int offset = 0, string revision = null, JArray arguments = null)
+        {
+            var request = new JObject
+            {
+                ["table_paths"] = new JArray(PathOf(table)),
+                ["offset"] = offset,
+                ["limit"] = limit,
+            };
+            if (revision != null)
+                request["expected_revision"] = revision;
+            if (arguments != null)
+                request["argument_names"] = arguments;
+            return Send("inspect", request);
+        }
+
+        [Test]
+        public void PagedInspectionReturnsAll50001MissingKeysAndFindingsExactlyOnce()
+        {
+            Call(frTable, "RemoveEntry", new[] { typeof(long) }, 101L);
+            var expected = new List<string> { "101", "102", "103" };
+            var addKey = shared.GetType().GetMethod("AddKey", new[] { typeof(string), typeof(long) });
+            for (long id = 1000; expected.Count < 50001; id++)
+            {
+                string text = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                addKey.Invoke(shared, new object[] { "key" + text, id });
+                expected.Add(text);
+            }
+            EditorUtility.SetDirty(shared);
+            AssetDatabase.SaveAssetIfDirty(shared);
+            var keys = new List<string>();
+            var findings = new List<string>();
+            int? offset = 0;
+            string revision = null;
+            do
+            {
+                JObject page = Page(frTable, 4096, offset.Value, revision);
+                Assert.IsTrue(page.Value<bool>("success"), page.Value<string>("error"));
+                var data = (JObject)page["data"];
+                revision ??= data.Value<string>("revision");
+                Assert.AreEqual(revision, data.Value<string>("revision"));
+                Assert.AreEqual(expected.Count, data.Value<int>("total"));
+                var rows = (JArray)data["tables"][0]["keys"];
+                Assert.That(rows.Count, Is.InRange(1, 4096));
+                keys.AddRange(rows.Select(r => r.Value<string>("key_id")));
+                foreach (JToken finding in data["findings"])
+                {
+                    Assert.AreEqual("missing_translation", finding.Value<string>("code"));
+                    findings.Add(finding.Value<string>("key_id"));
+                }
+                offset = data.Value<int?>("next_offset");
+                if (offset.HasValue)
+                    Assert.AreEqual(keys.Count, offset.Value);
+            } while (offset.HasValue);
+            CollectionAssert.AreEqual(expected, keys);
+            CollectionAssert.AreEqual(expected, findings);
+        }
+
+        [Test]
+        public void DuplicateAndOrphanFindingsArePagedOnceAcrossKeyBoundaries()
+        {
+            Call(shared, "AddKey", new[] { typeof(string), typeof(long) }, "Greeting", 104L);
+            IList entries = (IList)Get(shared, "Entries");
+            entries.Add(entries[0]); // Deliberately malformed duplicate ID spanning pages.
+            Add(frTable, 900, "orphan");
+            Add(frTable, 700, "orphan");
+            JObject full = Inspect(frTable);
+            var keys = new JArray();
+            var findings = new List<string>();
+            int? offset = 0;
+            string revision = null;
+            do
+            {
+                JObject page = Page(frTable, 1, offset.Value, revision, new JArray("player"));
+                Assert.IsTrue(page.Value<bool>("success"), page.ToString());
+                var data = (JObject)page["data"];
+                revision ??= data.Value<string>("revision");
+                foreach (var key in data["tables"][0]["keys"])
+                    keys.Add(key);
+                findings.AddRange(data["findings"].Select(f => f.Value<string>("code") + "/" + f.Value<string>("key_id")));
+                int? next = data.Value<int?>("next_offset");
+                if (next.HasValue)
+                    Assert.AreEqual(offset.Value + 1, next.Value);
+                offset = next;
+            } while (offset.HasValue);
+            Assert.IsTrue(JToken.DeepEquals(full["tables"][0]["keys"], keys));
+            CollectionAssert.AreEquivalent(full["findings"].Select(f => f.Value<string>("code") + "/" + f.Value<string>("key_id")), findings);
+            CollectionAssert.AreEqual(new[] { "orphan_entry/700", "orphan_entry/900" }, findings.Where(f => f.StartsWith("orphan_entry/")));
+        }
+
+        [TestCase("table")]
+        [TestCase("shared")]
+        [TestCase("source")]
+        [TestCase("arguments")]
+        [TestCase("asset_target")]
+        public void ContinuationRejectsChangedInspectionInputs(string change)
+        {
+            Object table = change == "asset_target" ? assetTable : enTable;
+            var arguments = new JArray("player");
+            JObject first = Page(table, 1, arguments: arguments);
+            Assert.IsTrue(first.Value<bool>("success"), first.ToString());
+            Assert.AreEqual(Revision(table), first["data"]["tables"][0].Value<string>("revision"));
+            string revision = first["data"].Value<string>("revision");
+            switch (change)
+            {
+                case "table":
+                    Set(Entry(enTable, 103), "Value", "Unmarked edit outside page");
+                    break;
+                case "shared":
+                    Call(shared, "AddKey", new[] { typeof(string), typeof(long) }, "Later", 999L);
+                    break;
+                case "source":
+                    System.IO.File.AppendAllText(PathOf(table), "\n# external edit\n");
+                    break;
+                case "arguments":
+                    arguments.Add("missing");
+                    break;
+                case "asset_target":
+                    Assert.IsEmpty(AssetDatabase.MoveAsset(PathOf(icon), folder + "/MovedIcon.asset"));
+                    break;
+            }
+            JObject later = Page(table, 1, 1, revision, arguments);
+            Assert.IsFalse(later.Value<bool>("success"), later.ToString());
+            StringAssert.Contains("stale_revision", later.Value<string>("error"));
+        }
+
+        [Test]
+        public void EscapedAndMultibyteValuesFitInspectionPageBudgetWithoutTruncation()
+        {
+            string value = string.Concat(Enumerable.Repeat("界\u0001", 32768));
+            for (long id = 201; id <= 208; id++)
+            {
+                Call(shared, "AddKey", new[] { typeof(string), typeof(long) }, "large" + id, id);
+                Add(frTable, id, value);
+            }
+            var ids = new List<long>();
+            string revision = null;
+            int? offset = 0;
+            do
+            {
+                JObject page = Page(frTable, 4096, offset.Value, revision);
+                Assert.IsTrue(page.Value<bool>("success"), page.Value<string>("error"));
+                Assert.LessOrEqual(System.Text.Encoding.UTF8.GetByteCount(page.ToString(Newtonsoft.Json.Formatting.None)), 1024 * 1024);
+                foreach (var key in page["data"]["tables"][0]["keys"])
+                {
+                    long id = key.Value<long>("key_id");
+                    if (id >= 201)
+                    {
+                        Assert.AreEqual(value, key.Value<string>("value"));
+                        ids.Add(id);
+                    }
+                }
+                int? next = page["data"].Value<int?>("next_offset");
+                if (revision == null)
+                    Assert.IsTrue(next.HasValue, "Encoded byte budget must cut the first page before its item limit.");
+                if (next.HasValue)
+                    Assert.Greater(next.Value, offset.Value);
+                offset = next;
+                revision = page["data"].Value<string>("revision");
+            } while (offset.HasValue);
+            CollectionAssert.AreEqual(Enumerable.Range(201, 8).Select(i => (long)i), ids);
+        }
+
+        [Test]
+        public void PagedInspectionRejectsUnboundAndInvalidRanges()
+        {
+            foreach (
+                JObject invalid in new[]
+                {
+                    Page(frTable, 0),
+                    Page(frTable, 4097),
+                    Page(frTable, 1, -1),
+                    Page(frTable, 1, 200001),
+                    Page(frTable, 1, 1),
+                    Page(frTable, 1, 1, "invalid"),
+                    Send("inspect", new JObject { ["table_paths"] = new JArray(PathOf(enTable), PathOf(frTable)), ["limit"] = 1 }),
+                }
+            )
+                Assert.IsFalse(invalid.Value<bool>("success"), invalid.ToString());
+        }
+
         [SetUp]
         public void Setup()
         {

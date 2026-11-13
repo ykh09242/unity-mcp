@@ -9,6 +9,7 @@ using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -23,6 +24,7 @@ namespace MCPForUnity.Editor.Tools.Localization
     {
         private const int MaxKeys = 100000;
         private const int MaxBytes = 16 * 1024 * 1024;
+        private const int MaxPageBytes = 1024 * 1024;
 
         private static Type Kind(string name) =>
             AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("UnityEngine.Localization." + name)).FirstOrDefault(t => t != null);
@@ -108,13 +110,13 @@ namespace MCPForUnity.Editor.Tools.Localization
             return obj;
         }
 
-        private static object[] SharedEntries(Object table)
+        private static IList SharedEntries(Object table)
         {
             Object shared = (Object)Get(table, "SharedData");
             if (!EditorUtility.IsPersistent(shared))
                 throw new ArgumentException("SharedTableData must be a persistent asset.");
-            object[] entries = ((IEnumerable)Get(shared, "Entries")).Cast<object>().Take(MaxKeys + 1).ToArray();
-            if (entries.Length > MaxKeys)
+            var entries = (IList)Get(shared, "Entries");
+            if (entries.Count > MaxKeys)
                 throw new ArgumentException("table_limit: shared data exceeds 100000 keys.");
             return entries;
         }
@@ -171,13 +173,18 @@ namespace MCPForUnity.Editor.Tools.Localization
             }
         }
 
-        private static void Expected(JObject p, Object obj, Object shared = null)
+        private static void CheckRevision(JObject p, string actual)
         {
             string expected = Text(p, "expected_revision", 64);
             if (expected.Length != 64 || expected.Any(c => !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f')))
                 throw new ArgumentException("expected_revision must be a lowercase SHA256 revision from inspection.");
-            if (!string.Equals(expected, Revision(obj, shared), StringComparison.Ordinal))
-                throw new InvalidOperationException("stale_revision: asset or shared data changed; inspect again.");
+            if (!string.Equals(expected, actual, StringComparison.Ordinal))
+                throw new InvalidOperationException("stale_revision: inspection inputs changed; inspect again.");
+        }
+
+        private static void Expected(JObject p, Object obj, Object shared = null)
+        {
+            CheckRevision(p, Revision(obj, shared));
             if (EditorUtility.IsDirty(obj) || (shared != null && EditorUtility.IsDirty(shared)))
                 throw new InvalidOperationException("dirty_asset: save or discard existing Inspector edits before a correction.");
         }
@@ -204,7 +211,7 @@ namespace MCPForUnity.Editor.Tools.Localization
                     names = "paths offset limit";
                     break;
                 case "inspect":
-                    names = "table_paths argument_names";
+                    names = "table_paths argument_names offset limit expected_revision";
                     break;
                 case "set_string_entry":
                     names = "table_path key_id value is_smart expected_revision";
@@ -372,105 +379,253 @@ namespace MCPForUnity.Editor.Tools.Localization
                     throw new ArgumentException("argument_names must contain at most 128 nonempty strings of at most 128 characters.");
                 arguments = args.Values<string>().ToArray();
             }
+            bool paged = p["offset"] != null || p["limit"] != null || p["expected_revision"] != null;
+            if (paged)
+            {
+                if (paths.Length != 1)
+                    throw new ArgumentException("Paged inspect requires exactly one table path.");
+                int offset = Page(p, "offset", 0, 0, 2 * MaxKeys);
+                int limit = Page(p, "limit", 50, 1, 4096);
+                if (offset > 0 && p["expected_revision"] == null)
+                    throw new ArgumentException("Continuation requires expected_revision from the first page.");
+                return InspectPage(p, paths[0], arguments, offset, limit);
+            }
             var tables = new JArray();
             var findings = new JArray();
             var localeIdentities = new HashSet<string>(StringComparer.Ordinal);
             int outputCount = 0;
-            Action<string, string, string> finding = (code, path, key) =>
+            void CountItem()
             {
                 if (++outputCount > MaxKeys)
-                    throw new ArgumentException("output_limit: more than 100000 findings; inspect fewer tables.");
-                findings.Add(
-                    new JObject
-                    {
-                        ["code"] = code,
-                        ["path"] = path,
-                        ["key_id"] = key,
-                    }
-                );
-            };
+                    throw new ArgumentException("output_limit: inspect one table with offset and limit for bounded pages.");
+            }
             foreach (string path in paths)
             {
                 Object table = Table(path);
                 JObject row = TableRow(table);
+                void Finding(string code, string key)
+                {
+                    CountItem();
+                    findings.Add(FindingRow(code, path, key));
+                }
                 string identity = row.Value<string>("shared_data_guid") + "/" + row.Value<string>("locale") + "/" + row.Value<string>("kind");
                 if (!localeIdentities.Add(identity))
-                    finding("duplicate_locale_table", path, null);
-                object[] keys = SharedEntries(table);
+                    Finding("duplicate_locale_table", null);
+                var keys = SharedEntries(table).Cast<object>();
                 foreach (var group in keys.GroupBy(k => Get(k, "Id").ToString()).Where(g => g.Count() > 1))
-                    finding("duplicate_key_id", path, group.Key);
+                    Finding("duplicate_key_id", group.Key);
                 foreach (var group in keys.GroupBy(k => (string)Get(k, "Key"), StringComparer.Ordinal).Where(g => g.Count() > 1))
-                    finding("duplicate_key_name", path, Get(group.First(), "Id").ToString());
+                    Finding("duplicate_key_name", Get(group.First(), "Id").ToString());
                 var keyRows = new JArray();
                 foreach (object key in keys)
                 {
+                    CountItem();
                     long id = (long)Get(key, "Id");
-                    object entry = Call(table, "GetEntry", new[] { typeof(long) }, id);
-                    string value = entry == null ? null : (string)GetNullable(entry, "LocalizedValue");
-                    if (value != null && value.Length > 65536)
-                        throw new ArgumentException("entry_limit: string value exceeds 65536 characters.");
-                    if (++outputCount > MaxKeys)
-                        throw new ArgumentException("output_limit: more than 100000 rows/findings; inspect fewer tables.");
-                    var keyRow = new JObject
-                    {
-                        ["key_id"] = id.ToString(CultureInfo.InvariantCulture),
-                        ["key"] = (string)Get(key, "Key"),
-                        ["value"] = value == null ? JValue.CreateNull() : new JValue(value),
-                    };
-                    if (entry == null || string.IsNullOrEmpty(value))
-                        finding("missing_translation", path, keyRow.Value<string>("key_id"));
-                    else if (row.Value<string>("kind") == "string")
-                    {
-                        bool smart = (bool)Get(entry, "IsSmart");
-                        keyRow["is_smart"] = smart;
-                        if (smart)
-                        {
-                            try
-                            {
-                                string[] selectors = Selectors(value);
-                                keyRow["root_selectors"] = new JArray(selectors);
-                                keyRow["argument_validation"] = arguments == null ? "runtime_arguments_unverified" : "caller_inventory_only";
-                                if (arguments != null && selectors.Any(s => !arguments.Contains(s, StringComparer.Ordinal)))
-                                    finding("unresolved_argument", path, keyRow.Value<string>("key_id"));
-                            }
-                            catch (TargetInvocationException)
-                            {
-                                finding("smart_parse_error", path, keyRow.Value<string>("key_id"));
-                            }
-                        }
-                    }
-                    else
-                    {
-                        string guid = (string)Get(entry, "Guid");
-                        string target = AssetDatabase.GUIDToAssetPath(guid);
-                        keyRow["asset_guid"] = guid;
-                        keyRow["asset_path"] = target;
-                        keyRow["runtime_load_verified"] = false;
-                        if (string.IsNullOrEmpty(target))
-                            finding("missing_asset_reference", path, keyRow.Value<string>("key_id"));
-                        if ((bool)Get(entry, "IsSubAsset"))
-                            keyRow["subasset_validation"] = "not_evaluated";
-                    }
-                    keyRows.Add(keyRow);
+                    keyRows.Add(
+                        InspectKey(table, id, (string)Get(key, "Key"), row.Value<string>("kind") == "string", arguments, code =>
+                            Finding(code, id.ToString(CultureInfo.InvariantCulture))
+                        )
+                    );
                 }
                 var ids = new HashSet<long>(keys.Select(k => (long)Get(k, "Id")));
                 foreach (object entry in (IEnumerable)Get(table, "Values"))
                     if (!ids.Contains((long)Get(entry, "KeyId")))
-                        finding("orphan_entry", path, Get(entry, "KeyId").ToString());
+                        Finding("orphan_entry", Get(entry, "KeyId").ToString());
                 row["keys"] = keyRows;
                 tables.Add(row);
             }
-            return new SuccessResponse(
-                "Localization table inspection.",
-                new JObject
+            return new SuccessResponse("Localization table inspection.", InspectionData(tables, findings));
+        }
+
+        private static JObject InspectionData(JArray tables, JArray findings) =>
+            new JObject
+            {
+                ["tables"] = tables,
+                ["findings"] = findings,
+                ["smart_validation"] =
+                    "Default package parser only. Root selectors are caller-supplied argument requirements; custom/global variables and formatter behavior remain unverified.",
+                ["asset_validation"] = "Local GUID existence only; Addressables labels, build inclusion, subassets and runtime load are not proven.",
+            };
+
+        private static JObject FindingRow(string code, string path, string id) =>
+            new JObject
+            {
+                ["code"] = code,
+                ["path"] = path,
+                ["key_id"] = id,
+            };
+
+        // One bounded index for the most recently inspected table. It can always be rebuilt
+        // from its content revision, so other callers or a domain reload cannot invalidate a cursor.
+        private static InspectionIndex lastIndex;
+
+        private sealed class InspectionIndex
+        {
+            public readonly string TableRevision;
+            public readonly (long Id, string Name)[] Keys;
+            public readonly HashSet<int> DuplicateIds;
+            public readonly HashSet<int> DuplicateNames;
+            public readonly long[] Orphans;
+            public readonly string[] AssetGuids;
+
+            public InspectionIndex(Object table, string revision, bool isString)
+            {
+                TableRevision = revision;
+                // The shared asset's serialized order preserves multiple occurrences of the same ID or name.
+                Keys = SharedEntries(table).Cast<object>().Select(k => ((long)Get(k, "Id"), (string)Get(k, "Key"))).ToArray();
+                var positions = Enumerable.Range(0, Keys.Length);
+                DuplicateIds = new HashSet<int>(positions.GroupBy(i => Keys[i].Id).Where(g => g.Count() > 1).Select(g => g.First()));
+                DuplicateNames = new HashSet<int>(
+                    positions.GroupBy(i => Keys[i].Name, StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => g.First())
+                );
+                var ids = new HashSet<long>(Keys.Select(k => k.Id));
+                var entries = ((IEnumerable)Get(table, "Values")).Cast<object>();
+                Orphans = entries.Select(e => (long)Get(e, "KeyId")).Where(id => !ids.Contains(id)).OrderBy(id => id).ToArray();
+                AssetGuids = isString
+                    ? Array.Empty<string>()
+                    : entries
+                        .Where(e => !string.IsNullOrEmpty((string)GetNullable(e, "LocalizedValue")))
+                        .Select(e => (string)Get(e, "Guid"))
+                        .Distinct(StringComparer.Ordinal)
+                        .OrderBy(guid => guid, StringComparer.Ordinal)
+                        .ToArray();
+            }
+        }
+
+        private static string PageRevision(InspectionIndex index, JObject row, string[] arguments)
+        {
+            // The correction revision covers the two serialized assets. Page diagnostics also
+            // depend on paths, resolved asset references and the supplied Smart String inventory.
+            using var sha = SHA256.Create();
+            using var stream = new CryptoStream(Stream.Null, sha, CryptoStreamMode.Write);
+            using var writer = new BinaryWriter(stream, Encoding.UTF8, true);
+            writer.Write("mcp-localization-inspection-v1");
+            writer.Write(index.TableRevision);
+            writer.Write(row.Value<string>("path"));
+            writer.Write(row.Value<string>("shared_data_path"));
+            var names = arguments?.Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+            writer.Write(names?.Length ?? -1);
+            if (names != null)
+                foreach (string name in names)
+                    writer.Write(name);
+            foreach (string guid in index.AssetGuids)
+                writer.Write(AssetDatabase.GUIDToAssetPath(guid) ?? "");
+            writer.Flush();
+            stream.FlushFinalBlock();
+            return string.Concat(sha.Hash.Select(b => b.ToString("x2", CultureInfo.InvariantCulture)));
+        }
+
+        private static int JsonBytes(JToken token) => Encoding.UTF8.GetByteCount(token.ToString(Formatting.None));
+
+        private static object InspectPage(JObject p, string path, string[] arguments, int offset, int limit)
+        {
+            Object table = Table(path);
+            JObject row = TableRow(table);
+            bool isString = row.Value<string>("kind") == "string";
+            string tableRevision = row.Value<string>("revision");
+            if (lastIndex == null || lastIndex.TableRevision != tableRevision)
+                lastIndex = new InspectionIndex(table, tableRevision, isString);
+            var index = lastIndex;
+            string revision = PageRevision(index, row, arguments);
+            if (p["expected_revision"] != null)
+                CheckRevision(p, revision);
+
+            var keys = new JArray();
+            row["keys"] = keys;
+            var findings = new JArray();
+            var data = InspectionData(new JArray(row), findings);
+            int total = index.Keys.Length + index.Orphans.Length;
+            data["total"] = total;
+            data["offset"] = offset;
+            data["revision"] = revision;
+            data["next_offset"] = total; // Largest possible cursor; final null may cost up to three more bytes.
+            var response = new SuccessResponse("Localization table inspection page.", data);
+            int bytes = JsonBytes(JObject.FromObject(response)) + 4;
+            if (bytes > MaxPageBytes)
+                throw new ArgumentException("output_limit: table metadata exceeds the 1 MiB page budget.");
+            int next = offset;
+            for (; next < total && next - offset < limit; next++)
+            {
+                JObject keyRow = null;
+                var itemFindings = new List<JObject>();
+                if (next < index.Keys.Length)
                 {
-                    ["tables"] = tables,
-                    ["findings"] = findings,
-                    ["smart_validation"] =
-                        "Default package parser only. Root selectors are caller-supplied argument requirements; custom/global variables and formatter behavior remain unverified.",
-                    ["asset_validation"] = "Local GUID existence only; Addressables labels, build inclusion, subassets and runtime load are not proven.",
+                    var key = index.Keys[next];
+                    string id = key.Id.ToString(CultureInfo.InvariantCulture);
+                    void AddFinding(string code) => itemFindings.Add(FindingRow(code, path, id));
+                    if (index.DuplicateIds.Contains(next))
+                        AddFinding("duplicate_key_id");
+                    if (index.DuplicateNames.Contains(next))
+                        AddFinding("duplicate_key_name");
+                    keyRow = InspectKey(table, key.Id, key.Name, isString, arguments, AddFinding);
                 }
-            );
+                else
+                    itemFindings.Add(FindingRow("orphan_entry", path, index.Orphans[next - index.Keys.Length].ToString(CultureInfo.InvariantCulture)));
+
+                int itemBytes = (keyRow == null ? 0 : JsonBytes(keyRow) + 1) + itemFindings.Sum(f => JsonBytes(f) + 1);
+                if (bytes + itemBytes > MaxPageBytes)
+                {
+                    if (next == offset)
+                        throw new ArgumentException("output_limit: one key and its findings exceed the 1 MiB page budget.");
+                    break;
+                }
+                if (keyRow != null)
+                    keys.Add(keyRow);
+                foreach (JObject finding in itemFindings)
+                    findings.Add(finding);
+                bytes += itemBytes;
+            }
+            data["next_offset"] = next < total ? new JValue(next) : JValue.CreateNull();
+            return response;
+        }
+
+        private static JObject InspectKey(Object table, long id, string name, bool isString, string[] arguments, Action<string> finding)
+        {
+            object entry = Call(table, "GetEntry", new[] { typeof(long) }, id);
+            string value = entry == null ? null : (string)GetNullable(entry, "LocalizedValue");
+            if (value != null && value.Length > 65536)
+                throw new ArgumentException("entry_limit: string value exceeds 65536 characters.");
+            var keyRow = new JObject
+            {
+                ["key_id"] = id.ToString(CultureInfo.InvariantCulture),
+                ["key"] = name,
+                ["value"] = value == null ? JValue.CreateNull() : new JValue(value),
+            };
+            if (entry == null || string.IsNullOrEmpty(value))
+                finding("missing_translation");
+            else if (isString)
+            {
+                bool smart = (bool)Get(entry, "IsSmart");
+                keyRow["is_smart"] = smart;
+                if (smart)
+                {
+                    try
+                    {
+                        string[] selectors = Selectors(value);
+                        keyRow["root_selectors"] = new JArray(selectors);
+                        keyRow["argument_validation"] = arguments == null ? "runtime_arguments_unverified" : "caller_inventory_only";
+                        if (arguments != null && selectors.Any(s => !arguments.Contains(s, StringComparer.Ordinal)))
+                            finding("unresolved_argument");
+                    }
+                    catch (TargetInvocationException)
+                    {
+                        finding("smart_parse_error");
+                    }
+                }
+            }
+            else
+            {
+                string guid = (string)Get(entry, "Guid");
+                string target = AssetDatabase.GUIDToAssetPath(guid);
+                keyRow["asset_guid"] = guid;
+                keyRow["asset_path"] = target;
+                keyRow["runtime_load_verified"] = false;
+                if (string.IsNullOrEmpty(target))
+                    finding("missing_asset_reference");
+                if ((bool)Get(entry, "IsSubAsset"))
+                    keyRow["subasset_validation"] = "not_evaluated";
+            }
+            return keyRow;
         }
 
         private static string[] Selectors(string value)
@@ -526,7 +681,7 @@ namespace MCPForUnity.Editor.Tools.Localization
                 || id.ToString(CultureInfo.InvariantCulture) != idText
             )
                 throw new ArgumentException("key_id must be a positive Int64 decimal string.");
-            object[] keys = SharedEntries(table);
+            var keys = SharedEntries(table).Cast<object>();
             if (
                 keys.Count(k => (long)Get(k, "Id") == id) != 1
                 || keys.GroupBy(k => Get(k, "Id")).Any(g => g.Count() != 1)
