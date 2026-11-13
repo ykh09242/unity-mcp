@@ -9,7 +9,10 @@ import json
 from pathlib import PurePosixPath
 import re
 
-from release_execution import Json, JsonMap, PREFIX
+if __package__:
+    from .release_execution import Json, JsonMap, PREFIX
+else:
+    from release_execution import Json, JsonMap, PREFIX
 
 
 LEGACY_LIMIT = "Execution-to-output association was not recorded."

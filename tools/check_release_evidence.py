@@ -20,7 +20,10 @@ from typing import Final, Never, TypeAlias
 from urllib.parse import urlsplit
 import xml.etree.ElementTree as ET
 
-from release_association import ExecutionEvidence, LEGACY_LIMIT, verify_association
+if __package__:
+    from .release_association import ExecutionEvidence, LEGACY_LIMIT, verify_association
+else:
+    from release_association import ExecutionEvidence, LEGACY_LIMIT, verify_association
 
 
 Json: TypeAlias = str | int | float | bool | None | list["Json"] | dict[str, "Json"]
