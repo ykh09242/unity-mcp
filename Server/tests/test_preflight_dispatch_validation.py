@@ -56,7 +56,7 @@ def test_sdk_rejects_invalid_shapes_before_routing_state_or_editor_io(tmp_path, 
             PluginHub._registry = None
             events = []
             payloads = []
-            pool = Mock()
+            pool = Mock(default_instance_id=None)
             def discover(**kwargs):
                 events.append("discover")
                 return [SimpleNamespace(id="Project@hash", hash="hash", port=6401)]
