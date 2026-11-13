@@ -18,7 +18,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from services.execution_receipt_context import owned_to_thread
 from core.config import config
 from models.models import (
     MCPResponse,
@@ -41,6 +40,7 @@ from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import (
     async_send_command_with_retry,
     get_unity_connection_pool,
+    run_discovery,
 )
 from transport.plugin_hub import PluginHub, extend_http_request_deadline
 from services.tools import get_unity_instance_from_context
@@ -1453,9 +1453,7 @@ class CustomToolService:
                     message="No active Unity instance. Call set_active_instance with Name@hash from mcpforunity://instances.",
                 )
 
-            project_id = await owned_to_thread(
-                resolve_project_id_for_unity_instance, unity_instance
-            )
+            project_id = await run_discovery(resolve_project_id_for_unity_instance, unity_instance)
             if project_id is None:
                 return MCPResponse(
                     success=False,

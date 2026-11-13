@@ -4,6 +4,8 @@ from tests.timing import await_signal, watchdog_timeout
 
 import asyncio
 import threading
+from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -122,6 +124,78 @@ async def test_cancelled_autoselect_does_not_persist_late_discovery(
         if not request.done():
             await request
     assert ctx.state == {}, "Cancelled discovery persisted a session selection"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("abandon", ["cancel", "deadline"])
+async def test_abandoned_scan_releases_next_waiter_without_probing_more_ports(
+    local_discovery, public_selection, monkeypatch, abandon
+):
+    from transport.command_timeout import stdio_request_deadline
+
+    pool, _, _, ctx = local_discovery
+    loop = asyncio.get_running_loop()
+    started, waiting = asyncio.Event(), asyncio.Event()
+    release = threading.Event()
+    owners = []
+    probes = []
+    ports = [6401, 6402, 6403]
+
+    def entries():
+        owners.append(uc._connection_selection.get())
+        return [
+            (
+                Path(f"unity-mcp-status-{port:08x}.json"),
+                {"project_path": f"/Project{port}/Assets", "unity_port": port},
+                datetime.now(timezone.utc),
+            )
+            for port in ports
+        ]
+
+    def probe(port):
+        selection = uc._connection_selection.get()
+        probes.append((selection, port))
+        if len(probes) == 1:
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(watchdog_timeout())
+        return True
+
+    def waiting_discovery():
+        loop.call_soon_threadsafe(waiting.set)
+        return pool.discover_all_instances()
+
+    monkeypatch.setattr(PortDiscovery, "_read_status_entries", entries)
+    monkeypatch.setattr(PortDiscovery, "_try_probe_unity_mcp", probe)
+    # The next caller should perform a full scan if the first one is abandoned.
+    assert pool._last_full_scan is None
+    deadline = loop.time() + watchdog_timeout(0.25) if abandon == "deadline" else None
+    token = stdio_request_deadline.set(deadline)
+    try:
+        first = asyncio.create_task(public_selection(ctx, "6401"))
+    finally:
+        stdio_request_deadline.reset(token)
+    second = None
+    try:
+        await await_signal(started, "first probe")
+        second = asyncio.create_task(uc.run_discovery(waiting_discovery))
+        await await_signal(waiting, "second selection")
+        if abandon == "cancel":
+            first.cancel()
+        with pytest.raises(asyncio.CancelledError if abandon == "cancel" else TimeoutError):
+            await first
+        assert not second.done()
+        if deadline is not None:
+            assert owners[0].deadline == deadline
+    finally:
+        release.set()
+        await asyncio.gather(first, return_exceptions=True)
+        if second is not None:
+            result = await second
+    assert sorted(instance.port for instance in result) == ports
+    assert len(owners) == 2 and owners[0] is not owners[1]
+    assert [port for owner, port in probes if owner is owners[0]] == ports[:1]
+    assert [port for owner, port in probes if owner is owners[1]] == ports
+    assert ctx.state == {}
 
 
 @pytest.fixture

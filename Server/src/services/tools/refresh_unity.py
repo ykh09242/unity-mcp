@@ -7,7 +7,6 @@ import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from contextvars import ContextVar
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, Literal
 
@@ -21,7 +20,11 @@ from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 import transport.unity_transport as unity_transport
 from transport.plugin_hub import extend_http_request_deadline
-from transport.command_timeout import MAX_COMMAND_TIMEOUT, configured_wait_timeout
+from transport.command_timeout import (
+    MAX_COMMAND_TIMEOUT,
+    configured_wait_timeout,
+    stdio_request_deadline as refresh_request_deadline,
+)
 from transport.command_budget import command_outcome_unknown
 import transport.legacy.unity_connection as _legacy_conn
 from services.state.external_changes_scanner import external_changes_scanner
@@ -37,9 +40,6 @@ from services.tools.get_compile_job import (
 logger = logging.getLogger(__name__)
 
 REFRESH_READY_TIMEOUT_SECONDS = 300.0
-refresh_request_deadline: ContextVar[float | None] = ContextVar(
-    "refresh_request_deadline", default=None
-)
 
 
 def refresh_selection_timeout() -> MCPResponse:

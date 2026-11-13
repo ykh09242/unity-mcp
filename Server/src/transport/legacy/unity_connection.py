@@ -10,13 +10,14 @@ import contextlib
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import Context, ContextVar
 from dataclasses import dataclass, field, replace
+from functools import partial
 from hashlib import sha256
 import errno
 import json
 import logging
 import os
 from pathlib import Path
-from transport.legacy.port_discovery import PortDiscovery, discovery_deadline
+from transport.legacy.port_discovery import PortDiscovery, discovery_checks
 import random
 import re
 import socket
@@ -56,15 +57,33 @@ def run_with_connection_deadline(
 ) -> _ConnectionResult:
     """Carry a startup step's original budget into legacy selection and discovery."""
     selection = _ConnectionSelection(deadline)
-    token = _connection_selection.set(selection)
+    result = selection.run(function)
+    selection.check()
+    return result
+
+
+async def run_discovery(
+    function: Callable[..., _ConnectionResult], /, *args, **kwargs
+) -> _ConnectionResult:
+    """Cancel only this metadata worker and retain existing receipt/operation ownership."""
+    import asyncio
+    from transport.command_timeout import stdio_request_deadline
+
+    deadline = stdio_request_deadline.get()
+    command_deadline = _command_deadline("discovery", {})
+    if command_deadline is not None:
+        deadline = min(deadline, command_deadline) if deadline is not None else command_deadline
+    selection = _ConnectionSelection(deadline)
     try:
-        with discovery_deadline(deadline):
+        async with asyncio.timeout_at(deadline):
             selection.check()
-            result = function()
-            selection.check()
-            return result
+            worker = submit_owned_executor(
+                asyncio.get_running_loop(), None, selection.run, partial(function, *args, **kwargs)
+            )
+            worker.add_done_callback(_consume_async_exception)
+            return await asyncio.shield(worker)
     finally:
-        _connection_selection.reset(token)
+        selection.cancel()
 
 
 from models.models import MCPResponse, UnityInstanceInfo
@@ -155,11 +174,12 @@ class _ConnectionSelection:
             self.check()
             yield
 
-    def check(self) -> None:
+    def check(self) -> float | None:
         if self.cancelled.is_set():
             raise ConnectionError("Unity connection selection was cancelled")
         if self.deadline is not None and time.monotonic() >= self.deadline:
             raise TimeoutError("Unity command exceeded total deadline during connection selection")
+        return self.deadline
 
     def wait_timeout(self) -> float:
         self.check()
@@ -180,11 +200,14 @@ class _ConnectionSelection:
         finally:
             lock.release()
 
-    def run(self, getter: Callable[[str | None], "UnityConnection"], instance_id: str | None):
+    def run(
+        self, function: Callable[..., _ConnectionResult], /, *args, **kwargs
+    ) -> _ConnectionResult:
         token = _connection_selection.set(self)
         try:
-            self.check()
-            return getter(instance_id)
+            with discovery_checks(self.check):
+                self.check()
+                return function(*args, **kwargs)
         finally:
             _connection_selection.reset(token)
 

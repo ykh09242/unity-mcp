@@ -12,6 +12,7 @@ What changed and why:
 """
 
 import glob
+from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 import json
@@ -27,23 +28,24 @@ import time
 from models.models import UnityInstanceInfo
 
 logger = logging.getLogger("mcp-for-unity-server")
-_discovery_deadline: ContextVar[float | None] = ContextVar("discovery_deadline", default=None)
+_discovery_check: ContextVar[Callable[[], float | None] | None] = ContextVar(
+    "discovery_check", default=None
+)
 
 
 @contextmanager
-def discovery_deadline(deadline: float):
-    """Bound all probes in one startup step by its remaining original budget."""
-    token = _discovery_deadline.set(deadline)
+def discovery_checks(check: Callable[[], float | None]):
+    """Carry the owning selection's live deadline and cancellation into each probe."""
+    token = _discovery_check.set(check)
     try:
         yield
     finally:
-        _discovery_deadline.reset(token)
+        _discovery_check.reset(token)
 
 
-def _check_discovery_deadline() -> None:
-    deadline = _discovery_deadline.get()
-    if deadline is not None and time.monotonic() >= deadline:
-        raise TimeoutError("Startup Unity discovery deadline reached")
+def _check_discovery() -> float | None:
+    check = _discovery_check.get()
+    return check() if check is not None else None
 
 
 def _is_pong_reply(reply: object) -> bool:
@@ -102,9 +104,8 @@ class PortDiscovery:
         Current greetings identify candidates without authenticating a disposable peer.
         Only recognized legacy peers receive a ping.
         """
-        _check_discovery_deadline()
+        original = _check_discovery()
         deadline = time.monotonic() + PortDiscovery.CONNECT_TIMEOUT
-        original = _discovery_deadline.get()
         if original is not None:
             deadline = min(deadline, original)
         try:
@@ -236,6 +237,7 @@ class PortDiscovery:
         first_seen_port: int | None = None
 
         for path in candidates:
+            _check_discovery()
             try:
                 with open(path, "r") as f:
                     cfg = json.load(f)
@@ -317,7 +319,7 @@ class PortDiscovery:
         entries = []
         base = PortDiscovery.get_registry_dir()
         for filename in glob.glob(str(base / "unity-mcp-status-*.json")):
-            _check_discovery_deadline()
+            _check_discovery()
             try:
                 path = Path(filename)
                 modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
@@ -364,7 +366,7 @@ class PortDiscovery:
         probes_by_port: dict[int, str | bool] = {}
         conflicting_ports: set[int] = set()
         for status_path, data, file_mtime in entries:
-            _check_discovery_deadline()
+            _check_discovery()
             try:
                 # Extract hash from filename: unity-mcp-status-{hash}.json
                 filename = status_path.name

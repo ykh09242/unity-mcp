@@ -2,9 +2,13 @@
 
 import math
 import os
+from contextvars import ContextVar
 from typing import Any
 
 MAX_COMMAND_TIMEOUT = 24 * 60 * 60
+stdio_request_deadline: ContextVar[float | None] = ContextVar(
+    "stdio_request_deadline", default=None
+)
 
 
 def requested_command_timeout(params: dict[str, Any]) -> float | None:

@@ -1,4 +1,4 @@
-from services.execution_receipt_context import owned_to_thread
+from transport.legacy.unity_connection import run_discovery
 import asyncio
 from typing import Any
 
@@ -52,7 +52,7 @@ async def execute_custom_tool(
             ),
         )
 
-    project_id = await owned_to_thread(resolve_project_id_for_unity_instance, unity_instance)
+    project_id = await run_discovery(resolve_project_id_for_unity_instance, unity_instance)
     if project_id is None:
         return MCPResponse(
             success=False,

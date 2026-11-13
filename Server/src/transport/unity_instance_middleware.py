@@ -21,7 +21,7 @@ from pydantic import TypeAdapter
 from core.config import config
 from core.logging_decorator import log_execution
 from core.telemetry_decorator import telemetry_tool
-from services.execution_receipt_context import owned_to_thread
+from transport.legacy.unity_connection import run_discovery
 from services.command_progress import foreground_progress
 from transport.execution_receipts import (
     PreparedExecution,
@@ -338,7 +338,7 @@ class UnityInstanceMiddleware(Middleware):
 
                 pool = get_unity_connection_pool()
                 # Status files, probes and the discovery lock may all block.
-                results = await owned_to_thread(pool.discover_all_instances, force_refresh=True)
+                results = await run_discovery(pool.discover_all_instances, force_refresh=True)
             except Exception as exc:
                 if isinstance(exc, (SystemExit, KeyboardInterrupt)):
                     raise
@@ -385,13 +385,13 @@ class UnityInstanceMiddleware(Middleware):
             if UnityConnectionPool.is_exact_instance_id(value):
                 pool = get_unity_connection_pool()
                 try:
-                    target = await owned_to_thread(pool.resolve_instance, value, force_refresh=True)
+                    target = await run_discovery(pool.resolve_instance, value, force_refresh=True)
                     if target.id == value:
                         return value
                 except ConnectionError:
                     pass  # Preserve the middleware's full inventory error below.
                 # A missing exact ID already triggered full fallback discovery.
-                instances = await owned_to_thread(pool.discover_all_instances)
+                instances = await run_discovery(pool.discover_all_instances)
 
         if instances is None:
             instances = await self._discover_instances(ctx)
@@ -475,9 +475,7 @@ class UnityInstanceMiddleware(Middleware):
                     from transport.legacy.unity_connection import get_unity_connection_pool
 
                     pool = get_unity_connection_pool()
-                    instances = await owned_to_thread(
-                        pool.discover_all_instances, force_refresh=True
-                    )
+                    instances = await run_discovery(pool.discover_all_instances, force_refresh=True)
                     ids = [getattr(inst, "id", None) for inst in instances]
                     ids = [inst_id for inst_id in ids if inst_id]
                     if len(ids) == 1:

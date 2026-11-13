@@ -1,4 +1,4 @@
-import asyncio
+from transport.legacy.unity_connection import run_discovery
 
 from fastmcp import Context
 from pydantic import BaseModel
@@ -43,7 +43,7 @@ async def get_custom_tools(ctx: Context) -> CustomToolsResourceResponse | MCPRes
             ),
         )
 
-    project_id = await asyncio.to_thread(resolve_project_id_for_unity_instance, unity_instance)
+    project_id = await run_discovery(resolve_project_id_for_unity_instance, unity_instance)
     if project_id is None:
         return MCPResponse(
             success=False,

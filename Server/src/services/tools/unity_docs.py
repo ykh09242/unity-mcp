@@ -17,11 +17,10 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from services.execution_receipt_context import owned_to_thread
 from core.config import config
 from services.tools import get_unity_instance_from_context
 from services.registry import mcp_for_unity_tool
-from transport.legacy.unity_connection import get_unity_connection_pool
+from transport.legacy.unity_connection import get_unity_connection_pool, run_discovery
 from transport.plugin_hub import PluginHub
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -143,7 +142,7 @@ async def _resolve_version(ctx: Any, version: str | None, strict: bool) -> dict[
             matches = [s for s in catalog.sessions.values() if s.hash == target_hash]
             editor_version = matches[0].unity_version if len(matches) == 1 else None
         else:
-            instance = await owned_to_thread(
+            instance = await run_discovery(
                 get_unity_connection_pool().resolve_instance, selected, force_refresh=False
             )
             editor_version = instance.unity_version
