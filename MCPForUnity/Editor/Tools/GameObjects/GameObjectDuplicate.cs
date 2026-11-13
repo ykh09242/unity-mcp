@@ -11,6 +11,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 {
     internal static class GameObjectDuplicate
     {
+        internal static Action<string, GameObject> AfterMutationForTests;
+
         internal static object Handle(JObject @params, JToken targetToken, string searchMethod)
         {
             GameObject sourceGo = ManageGameObjectCommon.FindMutationTarget(targetToken, searchMethod);
@@ -49,62 +51,107 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             Transform duplicateParent = parentToken == null ? sourceGo.transform.parent : newParent?.transform;
+            string originalName = sourceGo.name;
+            int originalId = sourceGo.GetInstanceIDCompat();
+            bool placementRequested = position.HasValue || offset.HasValue;
+            Vector3 requestedPosition = position ?? (sourceGo.transform.position + (offset ?? Vector3.zero));
+            string requestedName = !string.IsNullOrEmpty(newName) ? newName : sourceGo.name.Replace("(Clone)", "").Trim() + "_Copy";
+            UnityEngine.Object[] previousSelection = Selection.objects;
+            UnityEngine.Object previousActive = Selection.activeObject;
+            Undo.FlushUndoRecordObjects();
             Undo.IncrementCurrentGroup();
             int undoGroup = Undo.GetCurrentGroup();
-            string undoName = $"Duplicate {sourceGo.name}";
+            string undoName = $"Duplicate {originalName}";
             Undo.SetCurrentGroupName(undoName);
-            // Editor duplication preserves the instance's prefab connections and overrides.
-            GameObject duplicatedGo = DuplicateInEditor(sourceGo);
-            if (duplicatedGo == null)
-                return new ErrorResponse($"Could not duplicate GameObject '{sourceGo.name}'.");
-            Undo.RegisterCreatedObjectUndo(duplicatedGo, undoName);
-            if (duplicatedGo.transform.parent != duplicateParent)
+            GameObject duplicatedGo = null;
+            int duplicateId = 0;
+            bool completed = false;
+            try
             {
-                Undo.SetTransformParent(duplicatedGo.transform, duplicateParent, undoName);
-            }
-            Undo.RecordObject(duplicatedGo, undoName);
-            Undo.RecordObject(duplicatedGo.transform, undoName);
-
-            if (!string.IsNullOrEmpty(newName))
-            {
-                duplicatedGo.name = newName;
-            }
-            else
-            {
-                duplicatedGo.name = sourceGo.name.Replace("(Clone)", "").Trim() + "_Copy";
-            }
-
-            if (position.HasValue)
-            {
-                duplicatedGo.transform.position = position.Value;
-            }
-            else if (offset.HasValue)
-            {
-                duplicatedGo.transform.position = sourceGo.transform.position + offset.Value;
-            }
-
-            if (PrefabUtility.IsPartOfPrefabInstance(duplicatedGo))
-            {
-                PrefabUtility.RecordPrefabInstancePropertyModifications(duplicatedGo);
-                PrefabUtility.RecordPrefabInstancePropertyModifications(duplicatedGo.transform);
-            }
-            Undo.FlushUndoRecordObjects();
-            Undo.CollapseUndoOperations(undoGroup);
-
-            EditorUtility.SetDirty(duplicatedGo);
-            EditorSceneManager.MarkSceneDirty(duplicatedGo.scene);
-
-            Selection.activeGameObject = duplicatedGo;
-
-            return new SuccessResponse(
-                $"Duplicated '{sourceGo.name}' as '{duplicatedGo.name}'.",
-                new
+                // Editor duplication preserves the instance's prefab connections and overrides.
+                duplicatedGo = DuplicateInEditor(sourceGo);
+                if (duplicatedGo == null)
+                    throw new InvalidOperationException($"Could not duplicate GameObject '{originalName}'.");
+                duplicateId = duplicatedGo.GetInstanceIDCompat();
+                Undo.RegisterCreatedObjectUndo(duplicatedGo, undoName);
+                AfterMutationForTests?.Invoke("after_create", duplicatedGo);
+                if (duplicatedGo.transform.parent != duplicateParent)
                 {
-                    originalName = sourceGo.name,
-                    originalId = sourceGo.GetInstanceIDCompat(),
-                    duplicatedObject = Helpers.GameObjectSerializer.GetGameObjectData(duplicatedGo),
+                    Undo.SetTransformParent(duplicatedGo.transform, duplicateParent, undoName);
                 }
-            );
+                AfterMutationForTests?.Invoke("after_parent", duplicatedGo);
+                Undo.RecordObject(duplicatedGo, undoName);
+                Undo.RecordObject(duplicatedGo.transform, undoName);
+                duplicatedGo.name = requestedName;
+                if (placementRequested)
+                    duplicatedGo.transform.position = requestedPosition;
+
+                if (PrefabUtility.IsPartOfPrefabInstance(duplicatedGo))
+                {
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(duplicatedGo);
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(duplicatedGo.transform);
+                }
+                if (
+                    duplicatedGo.transform.parent != duplicateParent
+                    || (placementRequested && Vector3.Distance(duplicatedGo.transform.position, requestedPosition) > 0.0001f)
+                )
+                    throw new InvalidOperationException("Unity did not retain the requested duplicate parent or position.");
+
+                EditorUtility.SetDirty(duplicatedGo);
+                EditorSceneManager.MarkSceneDirty(duplicatedGo.scene);
+                object response = new SuccessResponse(
+                    $"Duplicated '{originalName}' as '{duplicatedGo.name}'.",
+                    new
+                    {
+                        originalName,
+                        originalId,
+                        duplicatedObject = Helpers.GameObjectSerializer.GetGameObjectData(duplicatedGo),
+                    }
+                );
+                Undo.FlushUndoRecordObjects();
+                Undo.CollapseUndoOperations(undoGroup);
+                Selection.activeGameObject = duplicatedGo;
+                completed = true;
+                return response;
+            }
+            catch (Exception exception)
+            {
+                string recoveryError = null;
+                try
+                {
+                    Undo.RevertAllDownToGroup(undoGroup);
+                }
+                catch (Exception recovery)
+                {
+                    recoveryError = recovery.GetBaseException().Message;
+                }
+                bool survived = duplicatedGo != null;
+                return new ErrorResponse(
+                    $"Could not duplicate GameObject '{originalName}': {exception.GetBaseException().Message}",
+                    new
+                    {
+                        originalId,
+                        recovery = survived ? "incomplete" : "rolled_back",
+                        survivingInstanceID = survived ? (int?)duplicateId : null,
+                        recoveryError,
+                    }
+                );
+            }
+            finally
+            {
+                try
+                {
+                    if (!completed)
+                    {
+                        Selection.objects = previousSelection;
+                        Selection.activeObject = previousActive;
+                    }
+                }
+                finally
+                {
+                    Undo.IncrementCurrentGroup();
+                }
+            }
         }
 
         private static GameObject DuplicateInEditor(GameObject source)

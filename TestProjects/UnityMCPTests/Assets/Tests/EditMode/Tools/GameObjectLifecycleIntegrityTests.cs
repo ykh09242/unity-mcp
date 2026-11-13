@@ -116,6 +116,132 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static void Succeeded(JObject response) => Assert.IsTrue(response.Value<bool>("success"), response.ToString());
 
+        [Test]
+        public void DuplicateWithoutPlacementRetainsNativeRectTransformPlacement()
+        {
+            var parent = new GameObject(prefix + "DuplicateRectParent", typeof(RectTransform));
+            var source = new GameObject(prefix + "DuplicateRectSource", typeof(RectTransform));
+            source.transform.SetParent(parent.transform, false);
+            var rect = (RectTransform)source.transform;
+            rect.anchorMin = new Vector2(0.2f, 0.3f);
+            rect.anchorMax = new Vector2(0.7f, 0.8f);
+            rect.pivot = new Vector2(0.1f, 0.9f);
+            rect.sizeDelta = new Vector2(123f, 45f);
+            rect.anchoredPosition3D = new Vector3(7, 8, 9);
+            Vector3 nativePosition = new Vector3(31, 32, 33);
+            Type handler = typeof(ManageGameObject).Assembly.GetType("MCPForUnity.Editor.Tools.GameObjects.GameObjectDuplicate");
+            FieldInfo hook = handler.GetField("AfterMutationForTests", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(hook);
+            hook.SetValue(
+                null,
+                (Action<string, GameObject>)(
+                    (phase, clone) =>
+                    {
+                        // Native duplication/layout callbacks may establish a placement of their own.
+                        if (phase == "after_parent")
+                            ((RectTransform)clone.transform).anchoredPosition3D = nativePosition;
+                    }
+                )
+            );
+            try
+            {
+                JObject response = Call(
+                    new JObject
+                    {
+                        ["action"] = "duplicate",
+                        ["target"] = source.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                    }
+                );
+                Succeeded(response);
+                GameObject duplicate = Selection.activeGameObject;
+                Assert.AreNotSame(source, duplicate);
+                var actual = (RectTransform)duplicate.transform;
+                Assert.AreSame(parent.transform, actual.parent);
+                Assert.AreEqual(nativePosition, actual.anchoredPosition3D);
+                Assert.AreEqual(rect.anchorMin, actual.anchorMin);
+                Assert.AreEqual(rect.anchorMax, actual.anchorMax);
+                Assert.AreEqual(rect.pivot, actual.pivot);
+                Assert.AreEqual(rect.sizeDelta, actual.sizeDelta);
+                Assert.AreEqual(new Vector3(7, 8, 9), rect.anchoredPosition3D);
+            }
+            finally
+            {
+                hook.SetValue(null, null);
+            }
+        }
+
+        [TestCase("after_create")]
+        [TestCase("after_parent")]
+        [TestCase("refused_parent")]
+        public void DuplicatePostAllocationFailureRollsBackAndPreservesSelectionAndAdjacentUndo(string fault)
+        {
+            var source = Owned("DuplicateRecoverySource");
+            var parent = Owned("DuplicateRecoveryParent");
+            var selected = Owned("DuplicateRecoverySelection");
+            Selection.objects = new UnityEngine.Object[] { source, selected };
+            Selection.activeObject = selected;
+            var expectedSelection = Selection.objects;
+            var prior = Owned("DuplicateRecoveryPriorUndo");
+            Undo.IncrementCurrentGroup();
+            Undo.RegisterCreatedObjectUndo(prior, "Prior independent operation");
+            Undo.IncrementCurrentGroup();
+            int[] beforeIds = Objects().Select(go => go.GetInstanceIDCompat()).ToArray();
+            Type handler = typeof(ManageGameObject).Assembly.GetType("MCPForUnity.Editor.Tools.GameObjects.GameObjectDuplicate");
+            FieldInfo hook = handler.GetField("AfterMutationForTests", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(hook);
+            int duplicateId = 0;
+            hook.SetValue(
+                null,
+                (Action<string, GameObject>)(
+                    (phase, clone) =>
+                    {
+                        duplicateId = clone.GetInstanceIDCompat();
+                        if (fault == "refused_parent" && phase == "after_parent")
+                            clone.transform.SetParent(null);
+                        else if (phase == fault)
+                            throw new InvalidOperationException("Injected duplicate failure: " + phase);
+                    }
+                )
+            );
+            try
+            {
+                JObject response = Call(
+                    new JObject
+                    {
+                        ["action"] = "duplicate",
+                        ["target"] = source.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["parent"] = parent.GetInstanceIDCompat(),
+                        ["position"] = new JArray(4, 5, 6),
+                    }
+                );
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual("rolled_back", response.SelectToken("data.recovery").Value<string>());
+                Assert.IsNotNull(response.SelectToken("data.survivingInstanceID"));
+                Assert.AreEqual(JTokenType.Null, response.SelectToken("data.survivingInstanceID").Type);
+                Assert.AreNotEqual(0, duplicateId);
+                Assert.IsNull(UnityObjectIdCompat.InstanceIDToObjectCompat(duplicateId));
+                CollectionAssert.AreEquivalent(beforeIds, Objects().Select(go => go.GetInstanceIDCompat()));
+                CollectionAssert.AreEqual(expectedSelection, Selection.objects);
+                Assert.AreSame(selected, Selection.activeObject);
+
+                var next = Owned("DuplicateRecoveryNextUndo");
+                Undo.RegisterCreatedObjectUndo(next, "Next independent operation");
+                Undo.PerformUndo();
+                Assert.IsTrue(next == null);
+                Assert.IsTrue(prior != null, "The next operation must have its own Undo group.");
+                Undo.PerformUndo();
+                Assert.IsTrue(prior == null, "Rollback must preserve the earlier operation in Undo history.");
+                Assert.IsTrue(source != null);
+                Assert.IsTrue(parent != null);
+            }
+            finally
+            {
+                hook.SetValue(null, null);
+            }
+        }
+
         [TestCase("by_id", true)]
         [TestCase("by_name", true)]
         [TestCase("by_path", true)]
