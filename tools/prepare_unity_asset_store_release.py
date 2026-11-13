@@ -12,14 +12,71 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import ipaddress
 import json
 import re
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]  # adjust if you place elsewhere
+
+
+def validate_remote_url(value: str) -> str:
+    """Accept a safe subset of the Editor's default HTTPS remote policy."""
+    value = value.strip()
+    if not value or any(ord(char) < 33 or ord(char) == 127 for char in value):
+        raise ValueError("--remote-url must be a non-empty URL without whitespace or controls")
+    if any(char in value for char in '\\"<>'):
+        raise ValueError("--remote-url contains unsupported URL characters")
+    candidate = value if "://" in value else "https://" + value
+    try:
+        parsed = urlsplit(candidate)
+        host = parsed.hostname
+        port = parsed.port
+        if (
+            parsed.scheme.lower() != "https"
+            or not host
+            or parsed.username is not None
+            or parsed.password is not None
+            or "#" in candidate
+        ):
+            raise ValueError(
+                "--remote-url must be an HTTPS destination without credentials or fragment"
+            )
+        if port is not None and port == 0:
+            raise ValueError("--remote-url has an invalid port")
+        if parsed.netloc.startswith("["):
+            if not re.fullmatch(r"\[[^\]]+\](?::[0-9]+)?", parsed.netloc):
+                raise ValueError("--remote-url has an invalid authority")
+        elif parsed.netloc.count(":") > 1 or parsed.netloc.endswith(":"):
+            raise ValueError("--remote-url has an invalid authority")
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            # Reject alternate numeric IPv4 spellings that .NET may interpret as bind-all.
+            try:
+                ascii_host = host.encode("idna").decode("ascii")
+            except UnicodeError:
+                raise ValueError("--remote-url has an invalid internationalized host") from None
+            labels = ascii_host.rstrip(".").split(".")
+            if (
+                len(ascii_host) > 253
+                or any(
+                    not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                    for label in labels
+                )
+                or all(re.fullmatch(r"(?:[0-9]+|0[xX][0-9a-fA-F]+)", label) for label in labels)
+            ):
+                raise ValueError("--remote-url has an unsupported host") from None
+        else:
+            if address.is_unspecified:
+                raise ValueError("--remote-url must not use a bind-only host")
+    except ValueError as error:
+        raise ValueError(f"Invalid --remote-url: {error}") from error
+    return candidate
 
 
 def read_text(path: Path) -> str:
@@ -137,9 +194,7 @@ def main() -> int:
         if args.asset_project
         else (repo_root / "TestProjects" / "AssetStoreUploads")
     )
-    remote_url = args.remote_url.strip()
-    if not remote_url:
-        raise RuntimeError("--remote-url must be a non-empty URL")
+    remote_url = validate_remote_url(args.remote_url)
 
     source_mcp = repo_root / "MCPForUnity"
     if not source_mcp.is_dir():
