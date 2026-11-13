@@ -12,6 +12,7 @@ import anyio
 import pytest
 from starlette.applications import Starlette
 from starlette.routing import WebSocketRoute
+from starlette.websockets import WebSocketDisconnect
 
 from core.config import config
 from services.credential_lease import bind_credential_lease
@@ -152,7 +153,7 @@ async def test_plugin_lease_loss_after_send_preserves_unknown_outcome(command_hu
 
 
 @asynccontextmanager
-async def connected_plugin(app, key, project):
+async def connected_plugin(app, key, project, *, editor_generation=None):
     incoming = asyncio.Queue()
     outgoing = asyncio.Queue()
     await incoming.put({"type": "websocket.connect"})
@@ -187,11 +188,15 @@ async def connected_plugin(app, key, project):
                         "type": "register",
                         "project_hash": project,
                         "project_name": project,
+                        "resume_generation": editor_generation,
                     }
                 ),
             }
         )
-        registration = json.loads((await outgoing.get())["text"])
+        frame = await outgoing.get()
+        if frame["type"] == "websocket.close":
+            raise WebSocketDisconnect(frame["code"], frame.get("reason"))
+        registration = json.loads(frame["text"])
         assert registration["type"] == "registered"
         yield task, incoming, outgoing, registration
     finally:
@@ -199,6 +204,46 @@ async def connected_plugin(app, key, project):
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("first", "second"), [("a" * 32, "b" * 32), (None, None), (None, "b" * 32), ("a" * 32, None)]
+)
+async def test_hosted_same_path_conflict_preserves_owner_until_disconnect(
+    monkeypatch, first, second
+):
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    registry = PluginRegistry()
+    PluginHub.configure(registry)
+    app = RemoteControlAuthMiddleware(Starlette(routes=[WebSocketRoute("/hub/plugin", PluginHub)]))
+    project = "0123456789abcdef"
+    async with credential_service(monkeypatch):
+        try:
+            async with connected_plugin(app, "fixture", project, editor_generation=first) as owner:
+                original_id = owner[3]["session_id"]
+                with pytest.raises(WebSocketDisconnect) as rejected:
+                    async with connected_plugin(app, "fixture", project, editor_generation=second):
+                        pytest.fail("Conflicting Editor was registered")
+                assert rejected.value.code == 4409
+                assert "Project selector already in use" in rejected.value.reason
+                assert not owner[0].done()
+                assert set((await PluginHub.get_sessions(user_id="alice")).sessions) == {
+                    original_id
+                }
+                assert (
+                    await PluginHub._resolve_session_id(f"{project}@{project}", user_id="alice")
+                    == original_id
+                )
+            async with connected_plugin(
+                app, "fixture", project, editor_generation=second
+            ) as next_owner:
+                assert (
+                    await registry.get_session_id_by_hash(project, "alice")
+                    == next_owner[3]["session_id"]
+                )
+        finally:
+            await PluginHub.shutdown()
 
 
 @pytest.mark.asyncio
@@ -212,9 +257,13 @@ async def test_real_remote_socket_revocation_preserves_replacement_and_other_ten
     async with credential_service(monkeypatch) as fixture:
         fixture.verdicts["bob-key"] = "bob"
         try:
-            async with connected_plugin(app, "old-alice-key", "same") as old:
+            async with connected_plugin(
+                app, "old-alice-key", "same", editor_generation="a" * 32
+            ) as old:
                 async with connected_plugin(app, "bob-key", "same") as bob:
-                    async with connected_plugin(app, "new-alice-key", "same") as replacement:
+                    async with connected_plugin(
+                        app, "new-alice-key", "same", editor_generation="a" * 32
+                    ) as replacement:
                         current = dict(PluginHub._connections)
                         await fixture.service.invalidate_cache("old-alice-key")
                         await asyncio.gather(old[0], return_exceptions=True)

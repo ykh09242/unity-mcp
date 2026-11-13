@@ -50,7 +50,12 @@ from models.response_limits import (
     ResponseOwner,
     response_owner,
 )
-from transport.plugin_registry import PluginRegistry, PluginSession, ToolSettingsConflict
+from transport.plugin_registry import (
+    HostedEditorConflict,
+    PluginRegistry,
+    PluginSession,
+    ToolSettingsConflict,
+)
 from transport.local_project_context import (
     local_project_context,
     full_hash,
@@ -1345,6 +1350,11 @@ class PluginHub(WebSocketEndpoint):
                 await self._handle_editor_state(websocket, data)
             else:
                 logger.debug("Ignoring unrecognized plugin message")
+        except HostedEditorConflict:
+            await websocket.close(
+                code=4409,
+                reason="Project selector already in use. Disconnect its Editor or open the second project at a different path.",
+            )
         except Exception as e:
             logger.error("Error handling plugin message (%s)", type(e).__name__)
             if not getattr(websocket.state, "plugin_registered", False):
@@ -3038,6 +3048,7 @@ class PluginHub(WebSocketEndpoint):
                     unity_version,
                     project_path,
                     user_id=user_id,
+                    editor_generation=payload.resume_generation,
                     _publish=publish_registration,
                 )
             except ValueError:

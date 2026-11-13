@@ -15,6 +15,10 @@ class ToolSettingsConflict(ValueError):
     """A client revision cannot replace the current live session's intent."""
 
 
+class HostedEditorConflict(Exception):
+    """A hosted selector already has a live owner that cannot be matched to this Editor."""
+
+
 @dataclass(slots=True)
 class PluginSession:
     """Represents a single Unity plugin connection."""
@@ -34,6 +38,7 @@ class PluginSession:
     # Full path to project root (for focus nudging)
     project_path: str | None = None
     user_id: str | None = None  # Associated user id (None for local mode)
+    editor_generation: str | None = None  # Opaque process identity; survives domain reloads.
 
 
 class PluginRegistry:
@@ -89,13 +94,13 @@ class PluginRegistry:
         project_path: str | None = None,
         user_id: str | None = None,
         *,
+        editor_generation: str | None = None,
         _publish=None,
     ) -> tuple[PluginSession, str | None]:
         """Register (or replace) a plugin session.
 
-        If an existing session already claims the same ``project_hash`` (and ``user_id``
-        in remote-hosted mode) it will be replaced, ensuring that reconnect scenarios
-        always map to the latest WebSocket connection.
+        Local registration replaces the previous connection for the path hash. A hosted
+        connection may replace its user's live owner only for the same Editor generation.
 
         Returns:
             A tuple of (new_session, evicted_session_id). The evicted ID is None
@@ -110,6 +115,12 @@ class PluginRegistry:
                 if user_id
                 else self._hash_to_session.get(project_hash)
             )
+            if config.http_remote_hosted and previous is not None:
+                if (
+                    not editor_generation
+                    or self._sessions[previous].editor_generation != editor_generation
+                ):
+                    raise HostedEditorConflict()
             if previous is None:
                 if len(self._sessions) >= self.MAX_SESSIONS:
                     raise ValueError("Plugin session limit reached")
@@ -129,6 +140,7 @@ class PluginRegistry:
                 connected_at=now,
                 project_path=project_path,
                 user_id=user_id,
+                editor_generation=editor_generation if config.http_remote_hosted else None,
             )
             if _publish is not None:
                 prospective = {

@@ -125,13 +125,15 @@ async def test_registry_quota_allows_reconnect_but_rejects_new_instance(monkeypa
     monkeypatch.setattr(config, "http_remote_hosted", True)
     monkeypatch.setattr(PluginRegistry, "MAX_SESSIONS_PER_USER", 1)
     registry = PluginRegistry()
-    await registry.register("first", "A", "hash-a", "6000", user_id="user-a")
+    await registry.register(
+        "first", "A", "hash-a", "6000", user_id="user-a", editor_generation="a" * 32
+    )
 
     with pytest.raises(ValueError, match="limit"):
         await registry.register("second", "B", "hash-b", "6000", user_id="user-a")
 
     replacement, evicted = await registry.register(
-        "replacement", "A", "hash-a", "6000", user_id="user-a"
+        "replacement", "A", "hash-a", "6000", user_id="user-a", editor_generation="a" * 32
     )
     assert replacement.session_id == "replacement"
     assert evicted == "first"

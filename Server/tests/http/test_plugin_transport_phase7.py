@@ -156,12 +156,16 @@ def test_capability_off_cancellation_does_not_send_control(client):
 def test_old_generation_cleanup_and_late_result_cannot_affect_replacement(client):
     # Given a command owned by a generation that is replaced for the same principal/project.
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as old:
-        old_sid, _, ack = register(old, capabilities=[LARGE, GZIP, CANCEL])
+        old_sid, _, ack = register(
+            old, capabilities=[LARGE, GZIP, CANCEL], editor_generation="a" * 32
+        )
         assert set(ack["capabilities"]) == {LARGE, GZIP, CANCEL}
         old_task, old_id = start_command(client, old, old_sid)
         old_generation = PluginHub._connections[old_sid].state.plugin_generation
         with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as replacement:
-            sid, _, _ = register(replacement, capabilities=[LARGE, GZIP, CANCEL])
+            sid, _, _ = register(
+                replacement, capabilities=[LARGE, GZIP, CANCEL], editor_generation="a" * 32
+            )
             assert PluginHub._connections[sid].state.plugin_generation != old_generation
             assert old_task.result(timeout=watchdog_timeout())["success"] is False
             # When late old-result bytes arrive on the replacement and stale cancellation runs.

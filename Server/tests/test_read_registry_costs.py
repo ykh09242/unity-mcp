@@ -108,7 +108,12 @@ async def test_explicit_success_resolves_hash_without_listing(monkeypatch, remot
     for owner in ("owned-a", "owned-b", "owned-c") if remote else (None,):
         for index in range(16):
             await registry.register(
-                f"{owner}-{index}", "Synthetic", f"hash-{index}", "test", user_id=owner
+                f"{owner}-{index}",
+                "Synthetic",
+                f"hash-{index}",
+                "test",
+                user_id=owner,
+                editor_generation=f"{index:032x}",
             )
     monkeypatch.setattr(PluginHub, "_registry", registry)
     lookup = AsyncMock(wraps=registry.get_session_id_by_hash)
@@ -125,7 +130,14 @@ async def test_explicit_success_resolves_hash_without_listing(monkeypatch, remot
     assert replies == [f"{owner}-0"] * 20
     assert lookup.await_count == 20
     listing.assert_not_awaited()
-    await registry.register("owned-replacement", "Synthetic", "hash-0", "test", user_id=owner)
+    await registry.register(
+        "owned-replacement",
+        "Synthetic",
+        "hash-0",
+        "test",
+        user_id=owner,
+        editor_generation="0" * 32,
+    )
     assert (
         await PluginHub._resolve_session_id("hash-0", user_id=owner, retry_on_reload=False)
         == "owned-replacement"

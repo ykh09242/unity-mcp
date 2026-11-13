@@ -104,7 +104,14 @@ async def test_foreign_notifications_keep_absolute_deadline_and_never_resolve(
     async def wake(event, timeout):
         remaining.append(timeout)
         clock[0] += 0.4
-        await registry_hub.register("foreign", "Project", "hash", "test", user_id="bob")
+        await registry_hub.register(
+            f"foreign-{len(remaining)}",
+            "Project",
+            "hash",
+            "test",
+            user_id="bob",
+            editor_generation="b" * 32,
+        )
         return True
 
     monkeypatch.setattr(registry_hub, "wait_for_change", wake)

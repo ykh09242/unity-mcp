@@ -6,6 +6,19 @@ remain available through the existing state-push cache. Updating them does not
 rebuild the expensive Editor activity snapshot. Observation never releases an
 owner or replays a command.
 
+## Hosted Editors with the same project path
+
+`Name@hash` uses the project path, so two machines using the same absolute path can
+claim the same selector for one hosted account. The first connected Editor keeps
+that selector. A reconnect or domain reload from the same Editor process replaces
+its old socket; a different process gets WebSocket close code `4409`.
+
+To connect both Editors at once, open one project at a different absolute path
+and select it from `mcpforunity://instances`. To transfer the existing selector,
+disconnect the first Editor, then connect the second. Older Editors that do not
+report a process generation must also wait for their previous socket to disconnect
+before reconnecting. Local HTTP and stdio selectors are unchanged.
+
 ## Final WebSocket delivery
 
 A queued command has a two-second final delivery budget, starting when its final

@@ -89,11 +89,13 @@ def client(monkeypatch):
         yield wire
 
 
-def register(wire, project="owner", capabilities=None):
+def register(wire, project="owner", capabilities=None, *, editor_generation=None):
     welcome = wire.receive_json()
     payload = {"type": "register", "project_name": "Fixture", "project_hash": project}
     if capabilities is not None:
         payload["capabilities"] = capabilities
+    if editor_generation is not None:
+        payload["resume_generation"] = editor_generation
     wire.send_json(payload)
     registered = wire.receive_json()
     assert registered["type"] == "registered"
@@ -465,7 +467,7 @@ def test_old_peer_cannot_populate_state_cache_without_negotiation(client):
 
 def test_replacement_registration_invalidates_old_generation_raw_and_state(client):
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as old:
-        old_sid, _, _ = register(old, capabilities=FEATURES)
+        old_sid, _, _ = register(old, capabilities=FEATURES, editor_generation="a" * 32)
         old_generation = PluginHub._connections[old_sid].state.plugin_generation
         task, cid = start_command(client, old, old_sid)
         _, payload, chunks = payload_and_frames(cid)
@@ -475,7 +477,7 @@ def test_replacement_registration_invalidates_old_generation_raw_and_state(clien
         barrier(client, old, old_sid)
         assert cached(client)["sequence"] == 7
         with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as replacement:
-            new_sid, _, _ = register(replacement, capabilities=FEATURES)
+            new_sid, _, _ = register(replacement, capabilities=FEATURES, editor_generation="a" * 32)
             assert new_sid != old_sid
             assert PluginHub._connections[new_sid].state.plugin_generation != old_generation
             assert task.result(timeout=watchdog_timeout())["success"] is False
