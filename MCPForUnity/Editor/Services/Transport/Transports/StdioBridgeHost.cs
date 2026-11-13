@@ -292,32 +292,26 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         public static bool IsAutoConnectMode() => isAutoConnectMode;
 
-        public static void StartAutoConnect()
+        public static void StartAutoConnect() => StartAutoConnectAndObserve();
+
+        internal static Task<StartupResult> StartAutoConnectAndObserve()
         {
             Stop();
 
             try
             {
                 currentUnityPort = PortManager.GetPortWithFallback();
-                Start();
+                var startup = RequestStart(null, null);
                 isAutoConnectMode = true;
 
                 TelemetryHelper.RecordBridgeStartup();
+                return startup;
             }
             catch (Exception ex)
             {
                 McpLog.Error($"Auto-connect failed ({ex.GetType().Name})");
                 TelemetryHelper.RecordBridgeConnection(false, ex.Message);
                 throw;
-            }
-        }
-
-        internal static Task<StartupResult> StartAutoConnectAndObserve()
-        {
-            lock (startStopLock)
-            {
-                StartAutoConnect();
-                return StartupCompletion;
             }
         }
 
@@ -625,16 +619,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             RequestStart(port, token);
         }
 
-        private static void RequestStart(int? ownedPort, string ownedToken)
+        private static Task<StartupResult> RequestStart(int? ownedPort, string ownedToken)
         {
             lock (startStopLock)
             {
                 CancelStartupCallbacks();
                 BeginStartup();
+                var startup = startupCompletion.Task;
                 SetStopIntent(false);
                 requestedOwnedPort = ownedPort;
                 requestedOwnedToken = ownedToken;
                 StartBridge(ownedPort, ownedToken, startIntentEpoch);
+                return startup;
             }
         }
 

@@ -8,7 +8,7 @@ namespace MCPForUnityTests.Editor.Transport
     /// unconditionally and callers immediately verified StdioBridgeHost.IsRunning — which is still
     /// false while the previous port releases after a domain reload, producing a spurious
     /// "Bridge not running" until the user clicked Start Session several times. StartAsync now waits
-    /// (bounded) for the bridge to actually bind; this covers the wait predicate.
+    /// (bounded) for the bridge's startup result; this covers completion ownership and the readiness budget.
     /// </summary>
     public class StdioTransportClientReadinessTests
     {
