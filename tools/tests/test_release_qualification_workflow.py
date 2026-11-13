@@ -2,17 +2,20 @@
 
 import json
 import os
-from pathlib import Path
+import shlex
 import shutil
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 import yaml
 
+from tests.test_check_source_pin_drift import commit, put, set_pin
 from tests.test_ci_trigger_policy import selected
 
-
 ROOT = Path(__file__).resolve().parents[2]
+pytest_plugins = ("tests.test_check_source_pin_drift",)
 
 
 def workflow(name):
@@ -98,6 +101,49 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
     assert "vars.UNITY_RUN_LICENSED_TESTS == 'true'" in gate["if"]
     assert "github.event_name == 'workflow_dispatch'" in gate["if"]
     assert "not release qualification" in str(jobs["license_free"])
+
+
+def test_manual_qualification_requires_current_server_history(history):
+    repo, _, base = history
+    steps = workflow("release-qualification.yml")["jobs"]["identity"]["steps"]
+    prepare = next(step for step in steps if "prepare_source_pin_history.py" in step.get("run", ""))
+    strict = next(step for step in steps if "check_source_pin_drift.py" in step.get("run", ""))
+    assert steps.index(prepare) < steps.index(strict)
+    for step in (prepare, strict):
+        assert step["if"] == "github.event_name == 'workflow_dispatch'"
+        assert step["env"]["CHECK_REVISION"] == "${{ github.sha }}"
+        assert not step.get("continue-on-error")
+
+    put(repo, "Server/src/main.py", "# changed server input\n")
+    candidate = commit(repo)
+    args = shlex.split(strict["run"])
+    assert args[:2] == ["python3", "tools/check_source_pin_drift.py"]
+    args = [sys.executable, str(ROOT / args[1]), *args[2:]]
+    args = [candidate if arg == "$CHECK_REVISION" else arg for arg in args]
+    args.extend(["--repo", str(repo)])
+    advisory = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools/check_source_pin_drift.py"),
+            "--repo",
+            str(repo),
+            "--revision",
+            candidate,
+            "--baseline",
+            base,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert advisory.returncode == 0 and json.loads(advisory.stdout)["state"] == "stale"
+    failed = subprocess.run(args, capture_output=True, text=True, check=False)
+    assert failed.returncode == 1 and json.loads(failed.stdout)["state"] == "stale"
+    set_pin(repo, candidate)
+    refreshed = commit(repo)
+    args[args.index(candidate)] = refreshed
+    passed = subprocess.run(args, capture_output=True, text=True, check=False)
+    assert passed.returncode == 0 and json.loads(passed.stdout)["state"] == "current"
 
 
 def test_fork_selection_matches_qualification_trigger():

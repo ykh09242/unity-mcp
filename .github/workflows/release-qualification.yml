@@ -43,6 +43,16 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Prepare immutable pinned history for manual qualification
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CHECK_REVISION: ${{ github.sha }}
+        run: python3 tools/prepare_source_pin_history.py --revision "$CHECK_REVISION"
+      - name: Require current launcher source for manual qualification
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CHECK_REVISION: ${{ github.sha }}
+        run: python3 tools/check_source_pin_drift.py --revision "$CHECK_REVISION" --require-current
       - name: Verify receiving SHA and committed selected-server pair
         env:
           EXPECTED_SHA: ${{ github.sha }}
