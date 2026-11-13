@@ -157,8 +157,14 @@ def test_invalid_utf8_has_diagnostic_and_does_not_send(batch_transport, tmp_path
     result = CliRunner().invoke(cli, ["--format", format, "batch", "run", str(path)])
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
-    assert "UTF-8" in result.stderr
-    assert result.stdout == ""
+    if format == "json":
+        payload = json.loads(result.stdout)
+        assert payload["code"] == "invalid_json_input"
+        assert "UTF-8" in payload["error"]
+        assert result.stderr == ""
+    else:
+        assert "UTF-8" in result.stderr
+        assert result.stdout == ""
     assert requests == []
 
 
@@ -182,8 +188,11 @@ def test_batch_file_admission_is_consistent(batch_transport, tmp_path, entry, ca
         assert result.exit_code == 0, result.output
         assert requests == [{"type": "batch_execute", "params": {"commands": commands}}]
     else:
-        assert result.exit_code == 1 and result.stdout == ""
-        assert ("4 MiB" if case == "over_limit" else "Invalid JSON") in result.stderr
+        assert result.exit_code == 1
+        payload = json.loads(result.stdout)
+        assert payload["code"] == "invalid_json_input"
+        assert ("4 MiB" if case == "over_limit" else "Invalid JSON") in payload["error"]
+        assert result.stderr == ""
         assert requests == []
 
 

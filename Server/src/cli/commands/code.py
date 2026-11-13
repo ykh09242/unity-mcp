@@ -15,6 +15,7 @@ from cli.utils.connection import (
     UnityCommandError,
 )
 from cli.utils.script_read import echo_script_read, script_contents
+from cli.utils.source_input import read_source_input
 
 _SEARCH_RESULT_LIMIT = 1000
 _EXCERPT_CHARS = 500
@@ -39,7 +40,7 @@ def code():
     "--file",
     "-f",
     default=None,
-    type=click.Path(exists=True),
+    type=click.Path(readable=False),
     help="Read code from a file instead of argument.",
 )
 @click.option(
@@ -63,8 +64,7 @@ def execute(source: Optional[str], file: Optional[str], no_safety_checks: bool):
     config = get_config()
 
     if file:
-        with open(file, "r", encoding="utf-8") as f:
-            source = f.read()
+        source = read_source_input(file)
     elif not source:
         raise CLIInputError("missing_code", "Provide code as an argument or use --file.")
 

@@ -3,12 +3,11 @@
 import json
 import math
 import re
-import sys
 from typing import Any, BinaryIO, Final, NoReturn
 
 import click
 
-from cli.utils.output import print_error, print_info
+from cli.utils.input_errors import CLIInputError
 
 
 _JSON_COMPAT_TOKENS = re.compile(r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:True|False)\b""")
@@ -21,8 +20,7 @@ class _ExternalJsonText(str):
 
 
 def _json_input_error(message: str) -> NoReturn:
-    print_error(message)
-    sys.exit(1)
+    raise CLIInputError("invalid_json_input", message)
 
 
 def _source_marker(value: str | None) -> bool:
@@ -111,7 +109,9 @@ def admit_json_inputs(**values: str | None) -> dict[str, str | None]:
         try:
             with click.open_file("-" if stdin else value[1:], "rb") as stream:
                 encoded = _read_bounded_json(stream)
-        except OSError:
+        except CLIInputError:
+            raise
+        except (OSError, ValueError):
             _json_input_error(f"Cannot read JSON input for {name}.")
         try:
             text = encoded.decode("utf-8-sig")
@@ -212,8 +212,8 @@ def parse_json_or_exit(
     Returns:
         Parsed JSON object
 
-    Exits:
-        Calls sys.exit(1) if JSON is invalid after attempting fixes
+    Raises:
+        CLIInputError: JSON is invalid after attempting fixes.
     """
     try:
         return load_finite_json(value)
@@ -223,10 +223,14 @@ def parse_json_or_exit(
             fixed = _JSON_COMPAT_TOKENS.sub(_repair_json_token, value)
             return load_finite_json(fixed)
         except json.JSONDecodeError as e:
-            print_error(f"Invalid JSON for {context}: {e}")
-            print_info('Example: --params \'{"key":"value"}\'', err=True)
-            print_info("Tip: wrap JSON in single quotes to avoid shell escaping issues.", err=True)
-            sys.exit(1)
+            raise CLIInputError(
+                "invalid_json_input",
+                f"Invalid JSON for {context} at line {e.lineno}, column {e.colno}.",
+                hints=(
+                    'Example: --params \'{"key":"value"}\'',
+                    "Tip: wrap JSON in single quotes to avoid shell escaping issues.",
+                ),
+            ) from None
         except (ValueError, RecursionError) as error:
             if raise_nonfinite and isinstance(error, NonFiniteJsonError):
                 raise
@@ -251,13 +255,14 @@ def parse_json_dict_or_exit(value: str, context: str = "parameter") -> dict[str,
     Returns:
         Parsed JSON object as dictionary
 
-    Exits:
-        Calls sys.exit(1) if JSON is invalid or not an object
+    Raises:
+        CLIInputError: JSON is invalid or not an object.
     """
     result = parse_json_or_exit(value, context)
     if not isinstance(result, dict):
-        print_error(f"Invalid JSON for {context}: expected an object, got {type(result).__name__}")
-        sys.exit(1)
+        _json_input_error(
+            f"Invalid JSON for {context}: expected an object, got {type(result).__name__}"
+        )
     return result
 
 
@@ -273,11 +278,12 @@ def parse_json_list_or_exit(value: str, context: str = "parameter") -> list[Any]
     Returns:
         Parsed JSON array as list
 
-    Exits:
-        Calls sys.exit(1) if JSON is invalid or not an array
+    Raises:
+        CLIInputError: JSON is invalid or not an array.
     """
     result = parse_json_or_exit(value, context)
     if not isinstance(result, list):
-        print_error(f"Invalid JSON for {context}: expected an array, got {type(result).__name__}")
-        sys.exit(1)
+        _json_input_error(
+            f"Invalid JSON for {context}: expected an array, got {type(result).__name__}"
+        )
     return result

@@ -78,7 +78,7 @@ def handle_unity_errors(func: F) -> F:
     """
     import click
     from cli.utils.input_errors import CLIInputError
-    from cli.utils.output import format_output, print_error
+    from cli.utils.output import format_output, print_error, print_info
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -93,6 +93,8 @@ def handle_unity_errors(func: F) -> F:
                 )
             else:
                 print_error(str(e))
+                for hint in e.hints:
+                    print_info(hint, err=True)
             sys.exit(1)
         except UnityCommandError as e:
             click.echo(format_output(e.response, get_config().format))

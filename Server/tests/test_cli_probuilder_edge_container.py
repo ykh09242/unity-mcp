@@ -49,7 +49,10 @@ def test_nonarray_edges_render_contextual_error_without_dispatch(dispatch, comma
         cli, ["--format", "json", "probuilder", command, "Owned", "--edges", json.dumps(value)]
     )
     assert result.exit_code == 1, (result.exception, result.stdout, result.stderr, state)
-    assert result.stdout == "" and "edges" in result.stderr and "array" in result.stderr
+    error = json.loads(result.stdout)
+    assert error["code"] == "invalid_json_input"
+    assert "edges" in error["error"] and "array" in error["error"]
+    assert result.stderr == ""
     assert isinstance(result.exception, SystemExit)
     assert state["calls"] == [] and state["encoded"] == []
 
@@ -62,7 +65,10 @@ def test_malformed_edge_json_still_reports_before_dispatch(dispatch, command, ra
         cli, ["--format", "json", "probuilder", command, "Owned", "--edges", raw]
     )
     assert result.exit_code == 1, (result.exception, result.output)
-    assert result.stdout == "" and "Invalid JSON" in result.stderr and "edges" in result.stderr
+    error = json.loads(result.stdout)
+    assert error["code"] == "invalid_json_input"
+    assert "Invalid JSON" in error["error"] and "edges" in error["error"]
+    assert result.stderr == ""
     assert state["calls"] == [] and state["encoded"] == []
 
 

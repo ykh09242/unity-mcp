@@ -56,10 +56,15 @@ for value, syntax_error in [("{'missing':}", True), ('{"unterminated":"x}', True
     # When the complete public command parses the argument.
     result = CliRunner().invoke(cli, ["--instance", "Selected@owned", "--format", sys.argv[1],
         "component", "modify", "Owned", "Fixture", "--properties", value])
-    # Then every diagnostic is on stderr; no request is dispatched.
-    passed = result.exit_code == 1 and not requests and result.stdout == "" and "Invalid JSON for properties" in result.stderr
-    if syntax_error:
-        passed = passed and "ℹ️  Example: --params" in result.stderr and "ℹ️  Tip: wrap JSON in single quotes" in result.stderr
+    # Then JSON diagnostics use the typed document; human diagnostics remain on stderr.
+    passed = result.exit_code == 1 and not requests
+    if sys.argv[1] == "json":
+        error = json.loads(result.stdout)
+        passed = passed and error["code"] == "invalid_json_input" and "Invalid JSON for properties" in error["error"] and result.stderr == ""
+    else:
+        passed = passed and result.stdout == "" and "Invalid JSON for properties" in result.stderr
+        if syntax_error:
+            passed = passed and "ℹ️  Example: --params" in result.stderr and "ℹ️  Tip: wrap JSON in single quotes" in result.stderr
     if not passed:
         failures.append({"input": value, "exit": result.exit_code, "stdout": result.stdout, "stderr": result.stderr, "exception": repr(result.exception)})
 for value, expected in [("{'label':'True False', 'enabled':True}", {"label": "True False", "enabled": True}),

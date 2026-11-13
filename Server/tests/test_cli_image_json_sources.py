@@ -76,6 +76,7 @@ def test_invalid_image_sources_never_read_config_or_dispatch(
 
     monkeypatch.setattr("cli.commands.ui.get_config", forbidden)
     monkeypatch.setattr("cli.commands.ui.run_command", forbidden)
+    monkeypatch.setattr(connection, "get_config", lambda: CLIConfig(format="json"))
     path = tmp_path / "invalid.json"
     path.write_bytes(payload)
     argument = "@" + str(path) if source == "file" else source
@@ -83,5 +84,9 @@ def test_invalid_image_sources_never_read_config_or_dispatch(
         ui, ["set-image", "Canvas/Icon", "--properties", argument], input=payload
     )
     assert result.exit_code == exit_code, result.output
-    assert result.stdout == ""
-    assert "PRIVATE_MARKER" not in result.stderr
+    if exit_code == 1:
+        assert json.loads(result.stdout)["code"] == "invalid_json_input"
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+    assert "PRIVATE_MARKER" not in result.output

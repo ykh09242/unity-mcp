@@ -10,6 +10,7 @@ from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success, print_info
 from cli.utils.connection import run_command, handle_unity_errors
 from cli.utils.parsers import admit_json_inputs, parse_json_list_or_exit
+from cli.utils.input_errors import CLIInputError
 
 
 @click.group()
@@ -19,7 +20,7 @@ def batch():
 
 
 @batch.command("run")
-@click.argument("file", type=click.Path(exists=True, resolve_path=True))
+@click.argument("file", type=click.Path(resolve_path=True, readable=False))
 @click.option(
     "--parallel",
     is_flag=True,
@@ -52,10 +53,10 @@ def batch_run(file: str, parallel: bool, fail_fast: bool):
     commands = parse_json_list_or_exit(commands_json, "commands")
 
     if len(commands) > ABSOLUTE_MAX_COMMANDS_PER_BATCH:
-        print_error(
-            f"Maximum {ABSOLUTE_MAX_COMMANDS_PER_BATCH} commands per batch, got {len(commands)}"
+        raise CLIInputError(
+            "invalid_batch_size",
+            f"Maximum {ABSOLUTE_MAX_COMMANDS_PER_BATCH} commands per batch, got {len(commands)}",
         )
-        sys.exit(1)
 
     params: dict[str, Any] = {"commands": commands}
     if parallel:
@@ -111,10 +112,10 @@ def batch_inline(commands_json: str, parallel: bool, fail_fast: bool):
     commands = parse_json_list_or_exit(commands_json, "commands")
 
     if len(commands) > ABSOLUTE_MAX_COMMANDS_PER_BATCH:
-        print_error(
-            f"Maximum {ABSOLUTE_MAX_COMMANDS_PER_BATCH} commands per batch, got {len(commands)}"
+        raise CLIInputError(
+            "invalid_batch_size",
+            f"Maximum {ABSOLUTE_MAX_COMMANDS_PER_BATCH} commands per batch, got {len(commands)}",
         )
-        sys.exit(1)
 
     params: dict[str, Any] = {"commands": commands}
     if parallel:

@@ -162,3 +162,157 @@ def test_environment_json_input_error_has_bounded_diagnostic(requests, monkeypat
     assert len(payload["error"]) <= 1000
     assert result.stderr == ""
     assert requests == []
+
+
+@pytest.mark.parametrize("output_format", ["json", "text", "table"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["component", "modify", "Owned", "Fixture", "--properties", '{"PRIVATE_MARKER":}'],
+        ["asset", "create", "Assets/Owned.mat", "Material", "--properties", "[]"],
+        [
+            "asset",
+            "create",
+            "Assets/Owned.mat",
+            "Material",
+            "--properties",
+            "@PRIVATE_MARKER-missing.json",
+        ],
+        ["camera", "screenshot", "--view-target", "["],
+        ["component", "set", "Owned", "Fixture", "value", "NaN"],
+    ],
+)
+def test_shared_json_errors_use_the_boundary(requests, command, output_format):
+    result = CliRunner().invoke(cli, ["--format", output_format, *command])
+    assert result.exit_code == 1, (result.output, result.exception)
+    assert requests == []
+    assert "PRIVATE_MARKER" not in result.output
+    if output_format == "json":
+        payload = json.loads(result.stdout)
+        assert payload["code"] == "invalid_json_input"
+        assert payload["success"] is False
+        assert 0 < len(payload["error"]) <= 1000
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert "Invalid" in result.stderr or "Cannot read JSON input" in result.stderr
+
+
+@pytest.mark.parametrize("entry", ["inline", "run"])
+@pytest.mark.parametrize("output_format", ["json", "text", "table"])
+def test_batch_count_failure_is_structured(requests, tmp_path, entry, output_format):
+    from core.batch_limits import ABSOLUTE_MAX_COMMANDS_PER_BATCH
+
+    source = json.dumps([{}] * (ABSOLUTE_MAX_COMMANDS_PER_BATCH + 1))
+    if entry == "run":
+        path = tmp_path / "batch.json"
+        path.write_text(source, encoding="utf-8")
+        source = str(path)
+    result = CliRunner().invoke(cli, ["--format", output_format, "batch", entry, source])
+    assert result.exit_code == 1, result.output
+    assert requests == []
+    if output_format == "json":
+        payload = json.loads(result.stdout)
+        assert payload["code"] == "invalid_batch_size"
+        assert "Maximum" in payload["error"]
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert "Maximum" in result.stderr
+
+
+SOURCE_COMMANDS = [
+    ["code", "execute"],
+    ["shader", "create", "Owned"],
+    ["shader", "update", "Assets/Owned.shader"],
+]
+
+
+@pytest.mark.parametrize("command", SOURCE_COMMANDS)
+@pytest.mark.parametrize("output_format", ["json", "text", "table"])
+@pytest.mark.parametrize(
+    "failure", ["missing", "directory", "encoding", "unreadable", "invalid_path"]
+)
+def test_source_file_failures_are_local_and_private(
+    requests, tmp_path, monkeypatch, command, output_format, failure
+):
+    from cli.utils import source_input
+
+    path = tmp_path / "PRIVATE_MARKER.cs"
+    if failure == "directory":
+        path.mkdir()
+    elif failure == "encoding":
+        path.write_bytes(b"PRIVATE_MARKER\xff")
+    elif failure in ("unreadable", "invalid_path"):
+        error_type = PermissionError if failure == "unreadable" else ValueError
+        path.write_text("PRIVATE_MARKER", encoding="utf-8")
+        monkeypatch.setattr("click.types.os.access", lambda *_args, **_kwargs: False)
+
+        def fail_read(*_args, **_kwargs):
+            raise error_type("PRIVATE_MARKER")
+
+        monkeypatch.setattr(source_input.click, "open_file", fail_read)
+    result = CliRunner().invoke(cli, ["--format", output_format, *command, "--file", str(path)])
+    assert result.exit_code == 1, (result.output, result.exception)
+    assert requests == []
+    assert "PRIVATE_MARKER" not in result.output
+    if output_format == "json":
+        payload = json.loads(result.stdout)
+        assert payload["code"] == "invalid_source_input"
+        assert payload["success"] is False
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert "source input" in result.stderr.lower()
+
+
+@pytest.mark.parametrize("command", SOURCE_COMMANDS)
+@pytest.mark.parametrize("bom", [False, True])
+def test_valid_source_file_preserves_contents(requests, tmp_path, command, bom):
+    path = tmp_path / "source.cs"
+    source = '// 한글\nreturn "quoted";\n'
+    path.write_text(source, encoding="utf-8-sig" if bom else "utf-8")
+    result = CliRunner().invoke(cli, ["--format", "json", *command, "--file", str(path)])
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert result.stderr == ""
+    assert len(requests) == 1
+    params = requests[0]["params"]
+    assert params["code" if command[0] == "code" else "contents"] == source
+
+
+@pytest.mark.parametrize("command", SOURCE_COMMANDS[1:])
+def test_invalid_shader_stdin_uses_structured_error(requests, command):
+    result = CliRunner().invoke(cli, ["--format", "json", *command], input=b"PRIVATE_MARKER\xff")
+    assert result.exit_code == 1, (result.output, result.exception)
+    assert json.loads(result.stdout)["code"] == "invalid_source_input"
+    assert result.stderr == ""
+    assert "PRIVATE_MARKER" not in result.output
+    assert requests == []
+
+
+@pytest.mark.parametrize("command", SOURCE_COMMANDS[1:])
+@pytest.mark.parametrize("bom", [False, True])
+def test_shader_stdin_preserves_utf8_contents(requests, command, bom):
+    source = '// 한글\nShader "Custom/Owned" {}\n'
+    encoded = source.encode("utf-8-sig" if bom else "utf-8")
+    result = CliRunner().invoke(cli, ["--format", "json", *command], input=encoded)
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert result.stderr == ""
+    assert len(requests) == 1
+    assert requests[0]["params"]["contents"] == source
+
+
+def test_root_boundary_covers_undecorated_shared_parser_consumer(requests, monkeypatch):
+    import click
+    from cli.utils.parsers import parse_json_dict_or_exit
+
+    @click.command("fixture-input")
+    def fixture_input():
+        parse_json_dict_or_exit("[]", "fixture")
+
+    monkeypatch.setitem(cli.commands, "fixture-input", fixture_input)
+    result = CliRunner().invoke(cli, ["--format", "json", "fixture-input"])
+    assert result.exit_code == 1, (result.output, result.exception)
+    assert json.loads(result.stdout)["code"] == "invalid_json_input"
+    assert result.stderr == ""
+    assert requests == []

@@ -7,9 +7,11 @@ from typing import Optional
 import click
 
 from cli.utils.config import get_config
-from cli.utils.output import format_output, print_error, print_success
+from cli.utils.output import format_output, print_success
 from cli.utils.connection import run_command, handle_unity_errors
 from cli.utils.confirmation import confirm_destructive_action
+from cli.utils.source_input import read_source_input
+from cli.utils.input_errors import CLIInputError
 
 
 def _shader_file_parts(path: str) -> tuple[str, str]:
@@ -105,7 +107,7 @@ def read_shader(path: str, offset: int, limit: int, encoding: str):
     "-f",
     "file_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=click.Path(readable=False),
     help="Read shader code from file.",
 )
 @handle_unity_errors
@@ -122,8 +124,7 @@ def create_shader(name: str, path: str, contents: Optional[str], file_path: Opti
 
     # Get contents from file, option, or stdin
     if file_path:
-        with open(file_path, "r", encoding="utf-8-sig") as f:
-            shader_contents = f.read()
+        shader_contents = read_source_input(file_path)
     elif contents is not None:
         shader_contents = contents
     else:
@@ -131,7 +132,7 @@ def create_shader(name: str, path: str, contents: Optional[str], file_path: Opti
         import sys
 
         if not sys.stdin.isatty():
-            shader_contents = sys.stdin.read()
+            shader_contents = read_source_input("-")
         else:
             # Provide default shader template
             shader_contents = f"""Shader "Custom/{name}"
@@ -193,7 +194,7 @@ def create_shader(name: str, path: str, contents: Optional[str], file_path: Opti
     "-f",
     "file_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
+    type=click.Path(readable=False),
     help="Read shader code from file.",
 )
 @handle_unity_errors
@@ -211,18 +212,19 @@ def update_shader(path: str, contents: Optional[str], file_path: Optional[str]):
 
     # Get contents from file, option, or stdin
     if file_path:
-        with open(file_path, "r", encoding="utf-8-sig") as f:
-            shader_contents = f.read()
+        shader_contents = read_source_input(file_path)
     elif contents is not None:
         shader_contents = contents
     else:
         import sys
 
         if not sys.stdin.isatty():
-            shader_contents = sys.stdin.read()
+            shader_contents = read_source_input("-")
         else:
-            print_error("No shader contents provided. Use --contents, --file, or pipe via stdin.")
-            sys.exit(1)
+            raise CLIInputError(
+                "invalid_source_input",
+                "No shader contents provided. Use --contents, --file, or pipe via stdin.",
+            )
 
     result = run_command(
         "manage_shader",

@@ -114,7 +114,8 @@ def test_compatible_json_preserves_wire_values(command_requests, consumer, paylo
 def test_invalid_compatibility_input_never_dispatches(command_requests, consumer, payload):
     result = invoke_payload(consumer, payload)
     assert result.exit_code == 1, result.output
-    assert "Invalid JSON" in result.stderr
+    assert "Invalid JSON" in json.loads(result.stdout)["error"]
+    assert result.stderr == ""
     assert command_requests == []
 
 
@@ -196,15 +197,11 @@ def test_nonfinite_inline_input_is_an_input_error_before_network(
     result = CliRunner().invoke(cli, ["--format", "json", *command])
 
     assert result.exit_code == 1, result.output
-    if consumer == "raw":
-        error = json.loads(result.stdout)
-        assert error["success"] is False
-        assert error["code"] == "invalid_json_params"
-        assert "finite" in error["error"].lower()
-        assert result.stderr == ""
-    else:
-        assert result.stdout == ""
-        assert "finite" in result.stderr.lower()
+    error = json.loads(result.stdout)
+    assert error["success"] is False
+    assert error["code"] == ("invalid_json_params" if consumer == "raw" else "invalid_json_input")
+    assert "finite" in error["error"].lower()
+    assert result.stderr == ""
     assert "connection" not in result.output.lower()
     assert command_requests == []
 
@@ -216,8 +213,10 @@ def test_nonfinite_float_fallback_is_an_input_error(command_requests, payload):
         ["--format", "json", "component", "set", "Owned", "OwnedComponent", "value", payload],
     )
     assert result.exit_code == 1, result.output
-    assert result.stdout == ""
-    assert "finite" in result.stderr.lower()
+    error = json.loads(result.stdout)
+    assert error["code"] == "invalid_json_input"
+    assert "finite" in error["error"].lower()
+    assert result.stderr == ""
     assert command_requests == []
 
 

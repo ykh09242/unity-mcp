@@ -67,7 +67,15 @@ def _resolve_command_with_suggestions(self: click.Group, ctx: click.Context, arg
 click.Group.resolve_command = _resolve_command_with_suggestions  # type: ignore[assignment]
 
 
-@click.group()
+class CLIGroup(click.Group):
+    """Keep shared parser failures structured even for undecorated subcommands."""
+
+    @handle_unity_errors
+    def invoke(self, ctx: click.Context):
+        return super().invoke(ctx)
+
+
+@click.group(cls=CLIGroup)
 @click.version_option(version=__version__, prog_name="unity-mcp")
 @click.option(
     "--host", "-h", default="127.0.0.1", envvar="UNITY_MCP_HOST", help="MCP server host address."

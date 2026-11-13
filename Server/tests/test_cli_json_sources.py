@@ -200,8 +200,9 @@ def test_invalid_external_input_never_dispatches_or_echoes_payload(
         input=payload,
     )
     assert result.exit_code == 1
-    assert result.stdout == "" and result.stderr
-    assert "PRIVATE_MARKER" not in result.stderr
+    assert json.loads(result.stdout)["code"] == "invalid_json_input"
+    assert result.stderr == ""
+    assert "PRIVATE_MARKER" not in result.stdout
     assert calls == []
 
 
@@ -226,7 +227,9 @@ def test_all_stdin_conflicts_fail_before_any_input_read(admission, monkeypatch, 
             "-",
         ],
     )
-    assert result.exit_code == 1 and result.stderr
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["code"] == "invalid_json_input"
+    assert result.stderr == ""
     assert calls == []
     for sources in (("@-", "@file.json"), ("@file.json", "{}"), ("-", "@-")):
         result = CliRunner().invoke(cli, ["--format", "json", "raw", "owned_tool", *sources])
@@ -312,8 +315,10 @@ def test_source_failures_precede_script_sha_and_keep_diagnostics_private(
             else json.dumps(["한" * 11], ensure_ascii=False).encode()
         )
     result = invoke(cli, ("script", "edit", "Assets/Owned.cs"), "edits", "@" + str(path))
-    assert result.exit_code == 1 and result.stdout == ""
-    assert "PRIVATE_MARKER" not in result.stderr
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["code"] == "invalid_json_input"
+    assert result.stderr == ""
+    assert "PRIVATE_MARKER" not in result.stdout
     assert not calls
 
 

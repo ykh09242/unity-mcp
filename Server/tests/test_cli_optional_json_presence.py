@@ -2,6 +2,7 @@
 
 import copy
 import importlib
+import json
 import socket
 
 import httpx
@@ -69,8 +70,22 @@ def test_explicit_empty_json_rejects_without_dispatch(
     cli, calls = dispatch
     result = CliRunner().invoke(cli, ["--format", output_format, *command, f"--{flag}", ""])
     assert result.exit_code != 0, (result.stdout, result.stderr, calls)
-    assert result.stdout == ""
-    assert "Invalid" in result.stderr or "Error" in result.stderr
+    if output_format == "json" and flag in {
+        "properties",
+        "props",
+        "conditions",
+        "faces",
+        "grow-from",
+        "pivot",
+        "color",
+        "palette",
+        "import-settings",
+    }:
+        assert json.loads(result.stdout)["code"] == "invalid_json_input"
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert "Invalid" in result.stderr or "Error" in result.stderr
     assert calls == []
 
 
@@ -79,7 +94,21 @@ def test_whitespace_json_rejects_without_dispatch(dispatch, command, flag, _vali
     cli, calls = dispatch
     result = CliRunner().invoke(cli, ["--format", "json", *command, f"--{flag}", " "])
     assert result.exit_code != 0, (result.stdout, result.stderr, calls)
-    assert result.stdout == "" and result.stderr
+    if flag in {
+        "properties",
+        "props",
+        "conditions",
+        "faces",
+        "grow-from",
+        "pivot",
+        "color",
+        "palette",
+        "import-settings",
+    }:
+        assert json.loads(result.stdout)["code"] == "invalid_json_input"
+        assert result.stderr == ""
+    else:
+        assert result.stdout == "" and result.stderr
     assert calls == []
 
 
