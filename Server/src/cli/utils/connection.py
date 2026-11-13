@@ -3,6 +3,7 @@
 import asyncio
 import functools
 import json
+import math
 import sys
 from typing import Any, Callable, Dict, Final, Optional, TypeVar
 
@@ -169,6 +170,20 @@ def _raise_known_no_editor(response: httpx.Response) -> None:
         raise UnityCommandError(expected)
 
 
+def _validate_finite_numbers(value: object, path: str = "params") -> None:
+    """Reject non-JSON numeric values locally without restricting signed finite values."""
+    from cli.utils.input_errors import CLIInputError
+
+    if isinstance(value, float) and not math.isfinite(value):
+        raise CLIInputError("invalid_numeric_input", f"{path} must be a finite number.")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _validate_finite_numbers(item, f"{path}.{str(key)[:100]}")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _validate_finite_numbers(item, f"{path}[{index}]")
+
+
 async def send_command(
     command_type: str,
     params: Dict[str, Any],
@@ -191,6 +206,7 @@ async def send_command(
     Raises:
         UnityConnectionError: If connection fails
     """
+    _validate_finite_numbers(params)
     cfg = config or get_config()
     guarded = cfg.expected_project_root is not None
     url = _server_url(cfg, "/api/context-command" if guarded else "/api/command")

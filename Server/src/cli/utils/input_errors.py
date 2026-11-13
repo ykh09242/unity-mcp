@@ -8,7 +8,9 @@ class CLIInputError(ValueError):
 
     def __init__(
         self,
-        code: Literal["invalid_json_params", "missing_code", "invalid_scene_index"],
+        code: Literal[
+            "invalid_json_params", "missing_code", "invalid_scene_index", "invalid_numeric_input"
+        ],
         message: str,
     ) -> None:
         self.code = code
