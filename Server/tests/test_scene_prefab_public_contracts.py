@@ -250,7 +250,7 @@ scene_cases = [
      {'action': 'create', 'name': 'Fixture', 'path': 'Assets/Scenes', 'template': '2d_basic'}),
     ({'action': 'save', 'path': 'Assets/Scenes/NewScene.unity'},
      {'action': 'save', 'path': 'Assets/Scenes/NewScene.unity'}),
-    ({'action': 'save', 'name': '', 'path': ''}, {'action': 'save'}),
+    ({'action': 'save', 'name': ''}, {'action': 'save'}),
     ({'action': 'get_hierarchy', 'parent': 0, 'page_size': '0', 'cursor': 0, 'max_depth': 0,
       'max_nodes': 0, 'max_children_per_node': 0, 'include_transform': False},
      {'action': 'get_hierarchy', 'parent': 0, 'pageSize': 0, 'cursor': 0, 'maxDepth': 0,
@@ -384,6 +384,7 @@ async def main():
                     'requests': requests[before:],
                 }))
             for name, payload in (
+                ('manage_scene', {'action': 'save', 'name': '', 'path': ''}),
                 ('manage_scene', {'action': 'load'}),
                 ('manage_scene', {'action': 'load', 'build_index': -1}),
                 ('manage_scene', {'action': 'close_scene', 'scene_name': None, 'scene_path': ''}),
