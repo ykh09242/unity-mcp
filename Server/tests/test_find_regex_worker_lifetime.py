@@ -305,6 +305,163 @@ async def test_matches_keep_order_counts_excerpts_and_encoded_read(routing, enco
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reverse,encoded", [(False, False), (True, True)])
+async def test_search_continuation_returns_all_1200_matches_once(routing, reverse, encoded):
+    routing.source = "\n".join(f"needle_{index:04d}" for index in range(1200))
+    routing.encoded = encoded
+    pattern = ("(?r)" if reverse else "") + r"needle_\d+"
+    first = await search.find_in_file(None, "Assets/Test.cs", pattern, max_results=1200)
+    assert first["success"] is True
+    assert first["data"]["count"] == 1000
+    assert first["data"]["total_matches"] == 1200
+    cursor = first["data"]["next_cursor"]
+    second = await search.find_in_file(
+        None, "Assets/Test.cs", pattern, max_results=1000, cursor=cursor
+    )
+    assert second["success"] is True
+    assert second["data"]["count"] == 200
+    assert second["data"]["total_matches"] == 1200
+    assert second["data"]["next_cursor"] is None
+    matches = first["data"]["matches"] + second["data"]["matches"]
+    indices = range(1199, -1, -1) if reverse else range(1200)
+    assert [match["match"] for match in matches] == [f"needle_{index:04d}" for index in indices]
+    assert len({(match["start"], match["end"]) for match in matches}) == 1200
+    assert (
+        await search.find_in_file(None, "Assets/Test.cs", pattern, max_results=1000, cursor=cursor)
+        == second
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pattern", ["(?=a)|a", "(?r)(?=a)|a", "", "(?r)"])
+async def test_search_continuation_preserves_zero_width_engine_order(routing, pattern):
+    routing.source = "aa"
+    expected = [
+        (match.start(), match.end())
+        for match in bounded_regex.find_matches(pattern, routing.source, search.re.MULTILINE)
+    ]
+    actual, cursor = [], None
+    for _ in range(len(expected)):
+        result = await search.find_in_file(
+            None, "Assets/Test.cs", pattern, max_results=1, cursor=cursor
+        )
+        assert result["success"] is True
+        actual.extend((match["start"], match["end"]) for match in result["data"]["matches"])
+        cursor = result["data"]["next_cursor"]
+    assert actual == expected
+    assert cursor is None
+
+
+@pytest.mark.asyncio
+async def test_search_continuation_rejects_changed_source_and_effective_options(routing):
+    first = await search.find_in_file(
+        None, "Assets/Test.cs", "needle", max_results=1, ignore_case="yes"
+    )
+    cursor = first["data"]["next_cursor"]
+    for options in ({"ignore_case": False}, {"pattern": "NEEDLE"}, {"max_results": 2}):
+        parameters = {"pattern": "needle", "max_results": 1, "ignore_case": True, **options}
+        refused = await search.find_in_file(None, "Assets/Test.cs", cursor=cursor, **parameters)
+        assert refused["success"] is False
+        assert refused["code"] == "stale_search_cursor"
+    routing.source += "\nedit"
+    refused = await search.find_in_file(
+        None, "Assets/Test.cs", "needle", max_results=1, cursor=cursor
+    )
+    assert refused["success"] is False
+    assert refused["code"] == "stale_search_cursor"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["target", "path", "bytes_sha256"])
+async def test_search_continuation_binds_target_path_and_raw_identity(monkeypatch, change):
+    snapshot = {"target": "A", "bytes_sha256": "original"}
+
+    async def target(_ctx):
+        return snapshot["target"]
+
+    async def read(*_args):
+        return {
+            "success": True,
+            "data": {"contents": "needle needle", "bytes_sha256": snapshot["bytes_sha256"]},
+        }
+
+    monkeypatch.setattr(search, "get_unity_instance_from_context", target)
+    monkeypatch.setattr(search, "send_with_unity_instance", read)
+    first = await search.find_in_file(None, "Assets/Test.cs", "needle", max_results=1)
+    path = "Assets/Other.cs" if change == "path" else "Assets/Test.cs"
+    if change != "path":
+        snapshot[change] = "changed"
+    refused = await search.find_in_file(
+        None, path, "needle", max_results=1, cursor=first["data"]["next_cursor"]
+    )
+    assert refused["success"] is False
+    assert refused["code"] == "stale_search_cursor"
+
+
+@pytest.mark.asyncio
+async def test_search_continuation_rejects_out_of_range_ordinal(routing):
+    first = await search.find_in_file(None, "Assets/Test.cs", "needle", max_results=1)
+    cursor = first["data"]["next_cursor"].rsplit(":", 1)[0] + ":2"
+    refused = await search.find_in_file(
+        None, "Assets/Test.cs", "needle", max_results=1, cursor=cursor
+    )
+    assert refused["success"] is False
+    assert refused["code"] == "stale_search_cursor"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cursor", ["", "bad", "x" * 10000, "fif1:" + "a" * 64 + ":100001"])
+async def test_search_rejects_invalid_cursor_before_unity_read(routing, cursor):
+    refused = await search.find_in_file(None, "Assets/Test.cs", "needle", cursor=cursor)
+    assert refused["success"] is False
+    assert refused["code"] == "stale_search_cursor"
+    assert routing.reads == 0
+
+
+@pytest.mark.asyncio
+async def test_search_paging_does_not_bypass_total_match_limit(routing):
+    routing.source = "a" * (bounded_regex.MAX_MATCHES + 1)
+    refused = await search.find_in_file(None, "Assets/Test.cs", "a", max_results=1)
+    assert refused["success"] is False
+    assert "match limit" in refused["message"]
+
+
+@pytest.mark.asyncio
+async def test_search_checks_source_bound_before_cursor_hash_allocation(routing, monkeypatch):
+    routing.source = "a" * (bounded_regex.MAX_TEXT_CHARS + 1)
+
+    def unexpected_hash(*_args):
+        pytest.fail("Oversized source must be refused before encoding and hashing it")
+
+    monkeypatch.setattr(search.hashlib, "sha256", unexpected_hash)
+    refused = await search.find_in_file(None, "Assets/Test.cs", "a", max_results=1)
+    assert refused["success"] is False
+    assert "input exceeds" in refused["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+async def test_sdk_accepts_search_continuation(routing, mode):
+    app = FastMCP("paged-file-search")
+
+    @wraps(search.find_in_file)
+    async def sdk_search(*args, **kwargs):
+        return await search.find_in_file(*args, **kwargs)
+
+    app.tool(sdk_search)
+    parameters = {"uri": "Assets/Test.cs", "pattern": "needle", "max_results": 1}
+    async with Client(app, mode=mode) as client:
+        first = await client.call_tool("find_in_file", parameters)
+        first_page = json.loads(first.content[0].text)
+        parameters["cursor"] = first_page["data"]["next_cursor"]
+        second = await client.call_tool("find_in_file", parameters)
+        second_page = json.loads(second.content[0].text)
+    assert first_page["data"]["matches"][0]["match"] == "needle"
+    assert second_page["data"]["matches"][0]["match"] == "NEEDLE"
+    assert second_page["data"]["next_cursor"] is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
 async def test_sdk_reports_busy_and_recovers_with_the_same_search_result(routing, mode):
     entered = [Event(), Event()]

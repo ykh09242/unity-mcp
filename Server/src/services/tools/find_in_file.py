@@ -1,6 +1,8 @@
 import base64
 from contextvars import copy_context
 from functools import partial
+import hashlib
+import json
 import logging
 import re
 from typing import Annotated, Any
@@ -20,9 +22,21 @@ from utils.source_lines import source_line_locations
 logger = logging.getLogger("mcp-for-unity-server")
 
 
+def _cursor_position(cursor: str | None) -> tuple[str | None, int]:
+    """Parse only bounded match ordinals; positions are not character offsets."""
+    if cursor is None:
+        return None, 0
+    if not isinstance(cursor, str) or len(cursor) > 80:
+        raise ValueError("Invalid search cursor; restart the search.")
+    parsed = re.fullmatch(r"fif1:([0-9a-f]{64}):([1-9][0-9]{0,5})", cursor)
+    if parsed is None or int(parsed[2]) >= bounded_regex.MAX_MATCHES:
+        raise ValueError("Invalid search cursor; restart the search.")
+    return parsed[1], int(parsed[2])
+
+
 @mcp_for_unity_tool(
     unity_target="manage_script",
-    description="Searches a C# script with a regex pattern and returns line numbers, excerpts and identities of the searched snapshot. bytes_sha256 identifies raw file bytes when supplied by the Editor; sha256 identifies decoded UTF-8 content.",
+    description="Searches a C# script with a regex pattern and returns line numbers, excerpts and identities of the searched snapshot. bytes_sha256 identifies raw file bytes when supplied by the Editor; sha256 identifies decoded UTF-8 content. Continue with next_cursor and the same search options; source or option changes reject the cursor. Pages follow regex engine order, including reverse and zero-width searches. Existing source, total-match and execution limits apply to every page.",
     annotations=ToolAnnotations(
         title="Find in File",
         readOnlyHint=True,
@@ -38,8 +52,13 @@ async def find_in_file(
     project_root: Annotated[str | None, "Optional project root path"] = None,
     max_results: Annotated[int, "Cap results to avoid huge payloads"] = 200,
     ignore_case: Annotated[bool | str | None, "Case insensitive search"] = True,
+    cursor: Annotated[str | None, "Opaque next_cursor from the preceding page"] = None,
 ) -> dict[str, Any]:
     # project_root is currently unused but kept for interface consistency
+    try:
+        expected_fingerprint, offset = _cursor_position(cursor)
+    except ValueError as exc:
+        return {"success": False, "code": "stale_search_cursor", "message": str(exc)}
     try:
         name, directory = _split_uri(uri)
         name_error = _validate_script_name(name)
@@ -99,6 +118,34 @@ async def find_in_file(
     # 2. Perform regex search
     try:
         budget = bounded_regex.WorkBudget()
+        # Bound UTF-8 encoding before allocating it, including when validating a
+        # continuation. Hash the actual read even if an older Editor omits SHA metadata.
+        if len(contents) > bounded_regex.MAX_TEXT_CHARS:
+            raise ValueError(f"Regex input exceeds {bounded_regex.MAX_TEXT_CHARS} characters")
+        budget.consume(len(contents))
+        source_sha = hashlib.sha256(contents.encode("utf-8")).hexdigest()
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                [
+                    unity_instance,
+                    directory,
+                    name,
+                    source_sha,
+                    data.get("bytes_sha256"),
+                    pattern,
+                    int(flags),
+                    max_results,
+                ],
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        if expected_fingerprint is not None and expected_fingerprint != fingerprint:
+            return {
+                "success": False,
+                "code": "stale_search_cursor",
+                "message": "Source or search options changed; restart the search.",
+            }
         found = await bounded_regex.run_work(
             budget,
             partial(
@@ -113,7 +160,13 @@ async def find_in_file(
     except (ValueError, TimeoutError, bounded_regex.regex.error) as e:
         return {"success": False, "message": f"Regex search rejected: {e}"}
 
-    selected = found[:max_results]
+    if cursor is not None and offset >= len(found):
+        return {
+            "success": False,
+            "code": "stale_search_cursor",
+            "message": "Search cursor is outside the result set; restart the search.",
+        }
+    selected = found[offset : offset + max_results]
     locations = source_line_locations(contents, (match.start() for match in selected))
     excerpts = {
         line.start: contents[line.start : line.end].strip()[:2000]
@@ -140,6 +193,9 @@ async def find_in_file(
             "matches": results,
             "count": len(results),
             "total_matches": len(found),
+            "next_cursor": f"fif1:{fingerprint}:{offset + len(results)}"
+            if offset + len(results) < len(found)
+            else None,
             "sha256": data.get("sha256"),
             "bytes_sha256": data.get("bytes_sha256"),
         },
