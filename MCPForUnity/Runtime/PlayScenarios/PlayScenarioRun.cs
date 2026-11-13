@@ -12,6 +12,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("scenario")]
         public PlayScenarioDefinition Scenario;
 
+        [JsonProperty("requested_name", NullValueHandling = NullValueHandling.Ignore)]
+        public string RequestedName;
+
+        [JsonProperty("requested_dataset", NullValueHandling = NullValueHandling.Ignore)]
+        public string RequestedDataset;
+
         [JsonProperty("execution_environment")]
         public string ExecutionEnvironment = "editor";
 

@@ -106,15 +106,16 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         public static object Start(string name, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision = null, string dataset = null)
         {
             PlayScenarioDefinition.ValidateName(name);
-            PlayScenarioDefinition selected = dataset == null ? null : PlayScenarioParameters.Materialize(Store.Get(name), dataset);
-            return StartCore(selected?.Name ?? name, selected, repeatCount, timeoutSeconds, jobId, sourceRevision, null);
+            if (dataset != null)
+                PlayScenarioDefinition.ValidateName(dataset);
+            return StartCore(name, null, repeatCount, timeoutSeconds, jobId, sourceRevision, dataset);
         }
 
         internal static object Start(PlayScenarioDefinition definition, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision = null)
         {
             if (definition == null)
                 throw new ArgumentNullException(nameof(definition));
-            return StartCore(definition.Name, definition, repeatCount, timeoutSeconds, jobId, sourceRevision, jobId);
+            return StartCore(definition.Name, definition, repeatCount, timeoutSeconds, jobId, sourceRevision, null);
         }
 
         internal static void ValidateSourceRevision(string sourceRevision)
@@ -129,7 +130,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             int timeoutSeconds,
             string jobId,
             string sourceRevision,
-            string suiteChildId
+            string dataset
         )
         {
             ValidateSourceRevision(sourceRevision);
@@ -139,24 +140,26 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (previous != null)
                 {
                     if (
-                        previous.Scenario.Name != name
+                        !MatchesRequestedScenario(previous, name, dataset, frozen)
                         || previous.RepeatCount != repeatCount
                         || previous.DeadlineUnixMs - previous.StartedUnixMs != timeoutSeconds * 1000L
                         || previous.Reproduction?.SourceRevision != sourceRevision
-                        || (frozen != null && previous.Reproduction?.DefinitionHash != PlayScenarioReproduction.Hash(frozen))
                     )
                         return new ErrorResponse("job_id already belongs to a different run request.");
                     return new SuccessResponse("Existing scenario job.", Snapshot(previous));
                 }
             }
+            string suiteChildId = frozen == null ? null : jobId;
             if (PlayScenarioSuiteService.HasForeignNativeOwner(suiteChildId) || IsBusy)
                 return new ErrorResponse("play_scenario_busy", new { job_id = _engine?.State.JobId });
             if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode)
                 return new ErrorResponse("Wait for the editor to finish compiling, importing or changing Play Mode.");
             if (NativeOperationBarriers.TryGetScenarioBlocker(null, suiteChildId, out var blocker))
                 return new ErrorResponse(blocker.Reason, blocker.Recovery);
-            PlayScenarioDefinition definition = frozen ?? PlayScenarioParameters.Materialize(Store.Get(name));
+            PlayScenarioDefinition definition = frozen ?? PlayScenarioParameters.Materialize(Store.Get(name), dataset);
             var state = PlayScenarioEngine.Create(definition, jobId ?? Guid.NewGuid().ToString("N"), repeatCount, timeoutSeconds, Now);
+            state.RequestedName = name;
+            state.RequestedDataset = dataset;
             state.Reproduction.UnityVersion = Application.unityVersion;
             state.Reproduction.SourceRevision = sourceRevision;
             state.Reproduction.Environment = new PlayScenarioEnvironmentCapture().CaptureOnce();
@@ -223,6 +226,22 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 OperationActivity.Invalidate();
                 throw;
             }
+        }
+
+        private static bool MatchesRequestedScenario(PlayScenarioRun previous, string name, string dataset, PlayScenarioDefinition frozen)
+        {
+            if (previous.RequestedName != null)
+            {
+                if (previous.RequestedName != name || previous.RequestedDataset != dataset)
+                    return false;
+            }
+            else
+            {
+                // Older reports stored only the effective name. The separator can also occur in literal names and in either selector.
+                if (dataset != null || previous.Scenario.Name != name || (frozen == null && name.Contains("--")))
+                    return false;
+            }
+            return frozen == null || previous.Reproduction?.DefinitionHash == PlayScenarioReproduction.Hash(frozen);
         }
 
         private static PlayScenarioEngine CreateEngine(PlayScenarioRun state)

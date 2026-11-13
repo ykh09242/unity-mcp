@@ -167,6 +167,84 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }
 
         [Test]
+        public void DatasetJobRetrySurvivesTemplateEditsAndDeletionWithoutStartingAgain()
+        {
+            if (PlayScenarioSuiteService.IsBusy || EditorApplication.isPlayingOrWillChangePlaymode)
+                Assert.Ignore("An idle Edit Mode editor is required.");
+            string root = Path.GetDirectoryName(UnityEngine.Application.dataPath);
+            var store = new PlayScenarioStore(root);
+            if (store.ListReports().Count >= 20)
+                Assert.Ignore("Preserve the existing report history.");
+            string name = "retry-" + Guid.NewGuid().ToString("N");
+            const string dataset = "case--one";
+            string job = Guid.NewGuid().ToString("N");
+            string reportPath = Path.Combine(root, "Library/MCPForUnity/PlayScenarioRuns", job + ".json");
+            var template = JObject.FromObject(StartingRun().Scenario);
+            template["name"] = name;
+            template["parameters"] = JObject.Parse("{'limit':{'type':'integer','default':5}}");
+            template["parameter_bindings"] = JArray.Parse("[{'parameter':'limit','path':'/steps/0/timeout_seconds'}]");
+            template["datasets"] = JArray.Parse("[{'name':'case--one','values':{'limit':7}}]");
+            var engineField = Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic);
+            try
+            {
+                store.Save(PlayScenarioDefinition.Parse(template));
+                var admitted = (SuccessResponse)PlayScenarioService.Start(name, 2, 30, job, "build", dataset);
+                var initial = (JObject)admitted.Data;
+                Assert.AreEqual(7, (int)initial["scenario"]["steps"][0]["timeout_seconds"]);
+                string hash = (string)initial["reproduction"]["definition_hash"];
+                object runningEngine = engineField.GetValue(null);
+                object playRequest = Service.GetField("_playRequest", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+                template["datasets"][0]["values"]["limit"] = 11;
+                store.Save(PlayScenarioDefinition.Parse(template));
+                var running = (SuccessResponse)PlayScenarioService.Start(name, 2, 30, job, "build", dataset);
+                Assert.AreEqual(hash, (string)((JObject)running.Data)["reproduction"]["definition_hash"]);
+                Assert.AreSame(runningEngine, engineField.GetValue(null));
+                Assert.AreSame(playRequest, Service.GetField("_playRequest", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null));
+
+                store.Delete(name);
+                PlayScenarioService.Cancel(job);
+                PlayScenarioRun report = store.GetReport(job);
+                Assert.AreEqual("cancelled", report.Status);
+                Assert.AreEqual(name, report.RequestedName);
+                Assert.AreEqual(dataset, report.RequestedDataset);
+                engineField.SetValue(null, null);
+                var replay = (SuccessResponse)PlayScenarioService.Start(name, 2, 30, job, "build", dataset);
+                Assert.AreEqual("cancelled", (string)((JObject)replay.Data)["status"]);
+                Assert.AreEqual(hash, (string)((JObject)replay.Data)["reproduction"]["definition_hash"]);
+                Assert.IsInstanceOf<ErrorResponse>(PlayScenarioService.Start(name, 2, 30, job, "build", "other"));
+                Assert.IsInstanceOf<ErrorResponse>(PlayScenarioService.Start(name + "--case", 2, 30, job, "build", "one"));
+                Assert.IsInstanceOf<ErrorResponse>(PlayScenarioService.Start(name + "--" + dataset, 2, 30, job, "build"));
+                Assert.IsInstanceOf<ErrorResponse>(PlayScenarioService.Start(name, 1, 30, job, "build", dataset));
+                Assert.IsInstanceOf<ErrorResponse>(PlayScenarioService.Start(name, 2, 31, job, "build", dataset));
+                Assert.IsInstanceOf<ErrorResponse>(PlayScenarioService.Start(name, 2, 30, job, "other", dataset));
+                Assert.IsNull(engineField.GetValue(null));
+                Assert.AreEqual(0, QueuedPlayRequests());
+            }
+            finally
+            {
+                store.Delete(name);
+                if (File.Exists(reportPath))
+                    File.Delete(reportPath);
+            }
+        }
+
+        [Test]
+        public void LegacyReportsReplayUnambiguousNamesAndRejectUnprovableDatasetIdentity()
+        {
+            PlayScenarioRun legacy = StartingRun();
+            var engine = new PlayScenarioEngine(legacy, new UnityPlayScenarioHost());
+            Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, engine);
+            Assert.IsInstanceOf<SuccessResponse>(PlayScenarioService.Start(legacy.Scenario.Name, 1, 30, legacy.JobId));
+            legacy.Scenario.Name = "suite--case";
+            legacy.Reproduction.DefinitionHash = PlayScenarioReproduction.Hash(legacy.Scenario);
+            PlayScenarioStore.ValidateReport(JObject.FromObject(legacy));
+            Assert.IsInstanceOf<SuccessResponse>(PlayScenarioService.Status(legacy.JobId));
+            Assert.IsInstanceOf<ErrorResponse>(PlayScenarioService.Start("suite", 1, 30, legacy.JobId, dataset: "case"));
+            Assert.IsInstanceOf<ErrorResponse>(PlayScenarioService.Start("suite--case", 1, 30, legacy.JobId));
+            Assert.AreEqual(0, QueuedPlayRequests());
+        }
+
+        [Test]
         public void FailedStartRestoresPreviousJobAndCheckpointAndCanBeRetried()
         {
             if (EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode)

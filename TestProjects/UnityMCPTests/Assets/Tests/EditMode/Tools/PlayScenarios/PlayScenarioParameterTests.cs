@@ -178,6 +178,8 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                     var host = new Host();
                     string job = Guid.NewGuid().ToString("N");
                     var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(effective, job, 1, 30, 1000), host);
+                    engine.State.RequestedName = name;
+                    engine.State.RequestedDataset = dataset;
                     var provider = new Provider(++actualValue);
                     ExecuteWithOwnedProvider(engine, host, provider, stateId);
                     Assert.AreEqual(actualValue, provider.Observed);

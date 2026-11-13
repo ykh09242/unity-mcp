@@ -340,6 +340,16 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (!(value["scenario"] is JObject scenario))
                 throw new ArgumentException("Report scenario is required.");
             PlayScenarioDefinition definition = PlayScenarioDefinition.Parse(scenario);
+            string requestedName = (string)value["requested_name"];
+            string requestedDataset = (string)value["requested_dataset"];
+            if (requestedName != null || requestedDataset != null)
+            {
+                PlayScenarioDefinition.ValidateName(requestedName);
+                if (requestedDataset != null)
+                    PlayScenarioDefinition.ValidateName(requestedDataset);
+                if (definition.Name != (requestedDataset == null ? requestedName : requestedName + "--" + requestedDataset))
+                    throw new ArgumentException("Report scenario does not match its requested name and dataset.");
+            }
             int repeats = PlayScenarioDefinition.Integer(value, "repeat_count", 1, PlayScenarioDefinition.MaximumRepeats, 0);
             if (repeats == 0)
                 throw new ArgumentException("Report repeat_count is required.");
@@ -872,6 +882,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 JToken token = value[pair.Key];
                 if (token == null)
                 {
+                    if (type == typeof(PlayScenarioRun) && (pair.Key == "requested_name" || pair.Key == "requested_dataset"))
+                        continue;
                     // Newly optional observation evidence stays absent on legacy reports; required fields remain strict.
                     if (
                         (type == typeof(PlayScenarioStepResult) && (pair.Key == "performance" || pair.Key == "screenshot" || pair.Key == "event_evidence"))
