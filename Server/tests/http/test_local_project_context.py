@@ -123,7 +123,15 @@ async def test_guarded_same_name_projects_route_only_exact_expected_root(environ
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "target,root_source", [(B_HASH, "a"), ("c" * 16, "a"), ("Same", "a"), (A_HASH, "b")]
+    "target,root_source",
+    [
+        (B_HASH, "a"),
+        ("c" * 16, "a"),
+        ("Same", "a"),
+        (A_HASH, "b"),
+        ("Other@" + A_HASH, "a"),
+        ("@" + A_HASH, "a"),
+    ],
 )
 async def test_mismatch_has_no_native_frame_pending_reservation_or_epoch(
     environment, target, root_source

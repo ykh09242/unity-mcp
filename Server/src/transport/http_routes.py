@@ -56,7 +56,7 @@ def _select_local_session(
     sessions: SessionList,
     instance_token: str | None,
 ) -> tuple[str | None, SessionDetails | None]:
-    """Resolve one unique target, preferring exact hashes over project names."""
+    """Resolve one unique target; composite names must agree with the exact hash."""
     if instance_token is None:
         return (
             next(iter(sessions.sessions.items())) if len(sessions.sessions) == 1 else (None, None)
@@ -66,6 +66,10 @@ def _select_local_session(
     instance_name, instance_hash = _normalize_instance_token(instance_token)
     matches = [pair for pair in sessions.sessions.items() if pair[1].hash == instance_hash]
     if matches:
+        if "@" in instance_token and (
+            not instance_name or any(pair[1].project != instance_name for pair in matches)
+        ):
+            return None, None
         return matches[0] if len(matches) == 1 else (None, None)
     if "@" in instance_token:
         return None, None
@@ -94,11 +98,25 @@ def _local_target_refusal(sessions: SessionList, instance_token: str | None) -> 
         or ("@" not in instance_token and details.project == instance_token)
         for details in sessions.sessions.values()
     )
-    error = (
-        "Multiple Unity instances match or no target was selected; supply an exact --instance hash."
-        if exists
-        else f"Unity instance '{instance_token}' not found"
+    instance_name, _ = _normalize_instance_token(instance_token)
+    conflicting_name = bool(
+        instance_token
+        and "@" in instance_token
+        and any(
+            details.hash == target_hash and details.project != instance_name
+            for details in sessions.sessions.values()
+        )
     )
+    if conflicting_name:
+        error = (
+            "Unity instance name and hash do not match; copy the complete Name@hash from discovery."
+        )
+    else:
+        error = (
+            "Multiple Unity instances match or no target was selected; supply an exact --instance hash."
+            if exists
+            else f"Unity instance '{instance_token}' not found"
+        )
     return JSONResponse(
         {
             "success": False,
@@ -280,6 +298,10 @@ def install_http_routes(
                         return JSONResponse(
                             context.refuse(context.refusal or "project_context_unavailable")
                         )
+                    if "@" in body.unity_instance:
+                        instance_name, _ = _normalize_instance_token(body.unity_instance)
+                        if not instance_name or instance_name != selected[1].project:
+                            return JSONResponse(context.refuse("project_context_mismatch"))
                     result = await _execute_cli_command(
                         body.type, body.params, body.unity_instance, _selected=selected
                     )

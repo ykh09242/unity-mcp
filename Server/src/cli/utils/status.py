@@ -33,6 +33,12 @@ def _target_available(instances: list[dict[str, JsonValue]], selector: str | Non
     instance_hash = selector.rpartition("@")[2] if "@" in selector else selector
     matches = [instance for instance in instances if instance.get("hash") == instance_hash]
     if matches:
+        if "@" in selector:
+            instance_name = selector.rpartition("@")[0]
+            if not instance_name or any(
+                instance.get("project") != instance_name for instance in matches
+            ):
+                return False
         return len(matches) == 1
     if "@" in selector:
         return False

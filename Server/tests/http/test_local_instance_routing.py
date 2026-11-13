@@ -1,4 +1,4 @@
-"""Explicit Unity instance hashes are authoritative on local REST routes."""
+"""Local REST targets require a consistent composite name and exact hash."""
 
 from unittest.mock import AsyncMock
 
@@ -143,6 +143,49 @@ def test_missing_explicit_hash_does_not_fall_back_to_name(
     # Then it fails rather than silently selecting the same-name project.
     assert response.status_code == 404
     dispatch.assert_not_awaited()
+
+
+@pytest.mark.parametrize("route", ["command", "custom-tools", "custom-command"])
+@pytest.mark.parametrize("selector", ["Other@bbbb2222", "@bbbb2222", "SameName@"])
+def test_inconsistent_composite_never_dispatches(routing_client, monkeypatch, route, selector):
+    # Given: selectors with a conflicting name or an incomplete composite.
+    sessions = SessionList(
+        sessions={
+            sid: SessionDetails(
+                project=project, hash=project_hash, unity_version="6000", connected_at="now"
+            )
+            for sid, project, project_hash in (
+                ("first", "Other", "aaaa1111"),
+                ("second", "SameName", "bbbb2222"),
+            )
+        }
+    )
+    monkeypatch.setattr(PluginHub, "get_sessions", AsyncMock(return_value=sessions))
+    dispatch = AsyncMock()
+    listing = AsyncMock()
+    execute = AsyncMock()
+    monkeypatch.setattr(PluginHub, "send_command", dispatch)
+    service = CustomToolService.get_instance()
+    monkeypatch.setattr(service, "list_registered_tools", listing)
+    monkeypatch.setattr(service, "execute_tool", execute)
+    # When: each local route receives the selector.
+    if route == "custom-tools":
+        response = routing_client.get("/api/custom-tools", params={"instance": selector})
+    else:
+        response = routing_client.post(
+            "/api/command",
+            json={
+                "type": "execute_custom_tool" if route == "custom-command" else "manage_scene",
+                "params": {"tool_name": "OwnedMutation"},
+                "unity_instance": selector,
+            },
+        )
+    # Then: no native command, custom invocation or catalog lookup is attempted.
+    assert response.status_code in (404, 409)
+    assert response.json()["data"]["dispatch"] == "not_dispatched"
+    dispatch.assert_not_awaited()
+    listing.assert_not_awaited()
+    execute.assert_not_awaited()
 
 
 @pytest.mark.parametrize("route", ["command", "custom-tools"])

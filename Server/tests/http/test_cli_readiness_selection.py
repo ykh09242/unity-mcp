@@ -83,8 +83,8 @@ def test_authenticated_healthy_server_without_editor_retains_bounded_cli_diagnos
         ([("Sample", "abcdef1234567890")], "Sample", "session-1"),
         ([("Sample", "abcdef1234567890")], "abcdef1234567890", "session-1"),
         ([("Sample", "abcdef1234567890")], "Sample@abcdef1234567890", "session-1"),
-        ([("Sample", "abcdef1234567890")], "Other@abcdef1234567890", "session-1"),
-        ([("Sample", "abcdef1234567890")], "@abcdef1234567890", "session-1"),
+        ([("Sample", "abcdef1234567890")], "Other@abcdef1234567890", None),
+        ([("Sample", "abcdef1234567890")], "@abcdef1234567890", None),
         ([("Sample", "abcdef1234567890")], "abcd", None),
         ([("Sample", "abcdef1234567890")], "Sample@abcd", None),
         ([("Sample", "abcdef1234567890")], "session-1", None),
@@ -103,7 +103,7 @@ def test_authenticated_healthy_server_without_editor_retains_bounded_cli_diagnos
         ([("Sample", "aaaa"), ("Other", "aaaa")], "aaaa", None),
         ([("Sample", "aaaa"), ("Other", "aaaa")], "Other@aaaa", None),
         ([("Sample", "aaaa"), ("Other", "aaaa")], "Other", "session-2"),
-        ([("Other", "bbbb"), ("Other", "aaaa")], "Different@bbbb", "session-1"),
+        ([("Other", "bbbb"), ("Other", "aaaa")], "Different@bbbb", None),
     ],
 )
 def test_readiness_agrees_with_forwarded_local_command(

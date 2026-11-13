@@ -62,3 +62,23 @@ policy. This option applies to local MCP tool admission. Remote-hosted MCP retai
 its existing authenticated selection and permission behavior. Local REST/CLI
 requests retain their existing target controls, including `--expect-project`;
 this option does not extend that REST contract.
+
+## Local REST and CLI composite compatibility
+
+Local REST `/api/command` (including custom tool execution) and `/api/custom-tools`
+require both parts of `Name@hash` to identify the same Editor, consistently with MCP.
+The final `@` separates the name and hash, so `Game@2026@aaaa1111` selects the
+project named `Game@2026` with hash `aaaa1111`. Both parts must be nonempty.
+Conflicting names and hashes are refused before dispatch, with HTTP 409 when the
+hash exists; an absent hash returns HTTP 404. Refusals report
+`data.dispatch=not_dispatched` and the available composite selectors.
+
+Previously, local REST gave the hash precedence even when its accompanying name
+belonged to a different project. Clients relying on that behavior must copy a
+current complete selector from discovery or send the bare exact hash. Bare hashes
+still take precedence over colliding project names. Unique names, duplicate-name
+refusal, and implicit selection of a sole Editor remain available. Existing
+`--expect-project` checks continue to apply independently. The guarded
+`/api/context-command` route also requires a composite's name to match its captured
+Editor; it retains its structured `project_context_mismatch` refusal with HTTP 200
+and no dispatch. CLI `status --ready` applies the same composite rule.
