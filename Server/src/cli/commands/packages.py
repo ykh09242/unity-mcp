@@ -79,7 +79,7 @@ def list_packages():
     """
     config = get_config()
     result = run_command("manage_packages", {"action": "list_packages"}, config)
-    click.echo(format_output(result, config.format))
+    click.echo(format_output(result, config.format, detailed_lists=True))
 
 
 @packages.command("search")
@@ -112,7 +112,7 @@ def get_info(package: str):
     result = run_command(
         "manage_packages", {"action": "get_package_info", "package": package}, config
     )
-    click.echo(format_output(result, config.format))
+    click.echo(format_output(result, config.format, detailed_lists=True))
 
 
 @packages.command("status")

@@ -11,6 +11,51 @@ from cli.commands.packages import packages
 from cli.utils.config import CLIConfig
 
 
+@pytest.mark.parametrize("count", [2, 12])
+@pytest.mark.parametrize("format_type", ["text", "json"])
+@pytest.mark.parametrize("command", ["list", "info"])
+def test_package_reads_keep_versions_and_bounded_details(count, format_type, command):
+    rows = [{"name": f"com.example.fixture{i}", "version": f"1.0.{i}"} for i in range(count)]
+    if command == "list":
+        for row in rows:
+            row.update(display_name="Fixture", source="Registry")
+        data = {"packages": rows, "count": count}
+        args = ["list"]
+        expected = {"action": "list_packages"}
+    else:
+        data = {
+            "name": "com.example.parent",
+            "version": "2.0.0",
+            "display_name": "Parent",
+            "description": "Fixture parent",
+            "source": "Embedded",
+            "resolved_path": "Packages/com.example.parent",
+            "author": "Fixture",
+            "dependencies": rows,
+            "dependency_count": count,
+        }
+        args = ["info", "com.example.parent"]
+        expected = {"action": "get_package_info", "package": "com.example.parent"}
+    response = {"success": True, "message": "Package query complete.", "data": data}
+    with patch("cli.commands.packages.get_config", return_value=CLIConfig(format=format_type)):
+        with patch("cli.commands.packages.run_command", return_value=response) as send:
+            result = CliRunner().invoke(packages, args)
+    assert result.exit_code == 0, result.output
+    assert send.call_args.args[:2] == ("manage_packages", expected)
+    if format_type == "json":
+        assert json.loads(result.output) == response
+    else:
+        visible = range(count) if count <= 10 else [*range(5), *range(count - 5, count)]
+        for index in visible:
+            assert f"name: com.example.fixture{index}\n" in result.output
+            assert f"version: 1.0.{index}\n" in result.output
+        if command == "list":
+            assert result.output.count("source: Registry") == min(count, 10)
+        if count > 10:
+            assert "name: com.example.fixture5\n" not in result.output
+            assert f"... ({count - 10} more)" in result.output
+
+
 @pytest.mark.parametrize(
     "args",
     [
