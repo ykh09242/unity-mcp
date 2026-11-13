@@ -169,8 +169,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 case "by_id":
                     if (int.TryParse(searchTerm, out int instanceId))
                     {
-                        var allObjects = GetAllSceneObjects(searchInactive);
-                        GameObject obj = allObjects.FirstOrDefault(go => go.GetInstanceIDCompat() == instanceId);
+                        GameObject obj = FindEligibleId(instanceId, searchInactive);
                         if (obj != null)
                             results.Add(obj);
                     }
@@ -257,8 +256,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 case "by_id_or_name_or_path":
                     if (int.TryParse(searchTerm, out int id))
                     {
-                        var allObjectsId = GetAllSceneObjects(true);
-                        GameObject objById = allObjectsId.FirstOrDefault(go => go.GetInstanceIDCompat() == id);
+                        GameObject objById = FindEligibleId(id, true);
                         if (objById != null)
                         {
                             results.Add(objById);
@@ -298,6 +296,29 @@ namespace MCPForUnity.Editor.Tools.GameObjects
         internal static void AddMatches(List<GameObject> results, IEnumerable<GameObject> matches, bool findAll)
         {
             results.AddRange(findAll ? matches : matches.Take(1));
+        }
+
+        private static GameObject FindEligibleId(int instanceId, bool includeInactive)
+        {
+            var obj = GameObjectLookup.FindById(instanceId);
+            if (obj == null || (!includeInactive && !obj.activeInHierarchy))
+                return null;
+
+            var stage = PrefabStageUtility.GetCurrentPrefabStage();
+            if (stage != null && stage.prefabContentsRoot != null)
+            {
+                var root = stage.prefabContentsRoot.transform;
+                return obj.transform == root || obj.transform.IsChildOf(root) ? obj : null;
+            }
+
+            var scene = obj.scene;
+            if (!scene.IsValid() || !scene.isLoaded)
+                return null;
+            // Only ordinary loaded scenes are eligible; preview scenes and persistent assets are excluded.
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+                if (SceneManager.GetSceneAt(i) == scene)
+                    return obj;
+            return null;
         }
 
         private static IEnumerable<GameObject> GetAllSceneObjects(bool includeInactive)

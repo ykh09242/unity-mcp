@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -73,6 +74,66 @@ namespace MCPForUnityTests.Editor.Tools
             int[] actual = ReadAll(query);
 
             CollectionAssert.AreEquivalent(new[] { first.GetInstanceIDCompat(), second.GetInstanceIDCompat() }, actual);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DiscoveredId_ModifiesOnlyItsAdditiveSceneObject(bool inactive)
+        {
+            string name = "ScopedEdit_" + Guid.NewGuid().ToString("N");
+            GameObject first = Create(name, _firstScene);
+            GameObject second = Create(name, _secondScene);
+            second.SetActive(!inactive);
+            var query = Query("all_loaded", "by_name", name);
+            query["include_inactive"] = true;
+            int[] discovered = ReadAll(query);
+            CollectionAssert.Contains(discovered, second.GetInstanceIDCompat());
+
+            var response = JObject.FromObject(
+                ManageGameObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = second.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["position"] = new JArray(1, 2, 3),
+                    }
+                )
+            );
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(Vector3.zero, first.transform.position);
+            Assert.AreEqual(new Vector3(1, 2, 3), second.transform.position);
+            Assert.AreEqual(_firstScene, SceneManager.GetActiveScene());
+        }
+
+        [Test]
+        public void ExactId_ExcludesPersistentAssetsAndPreviewScenes()
+        {
+            GameObject source = Create("PrefabSource", _firstScene);
+            GameObject asset = PrefabUtility.SaveAsPrefabAsset(source, _assetRoot + "/Fixture.prefab");
+            Assert.IsNotNull(asset);
+            Scene preview = EditorSceneManager.NewPreviewScene();
+            try
+            {
+                GameObject previewObject = Create("Preview", preview);
+                Assert.IsNull(ManageGameObjectCommon.FindObjectInternal(asset.GetInstanceIDCompat(), "by_id"));
+                Assert.IsNull(ManageGameObjectCommon.FindObjectInternal(previewObject.GetInstanceIDCompat(), "by_id"));
+            }
+            finally
+            {
+                EditorSceneManager.ClosePreviewScene(preview);
+            }
+        }
+
+        [Test]
+        public void ExactId_SearchRespectsInactiveFlag()
+        {
+            GameObject target = Create("Inactive", _secondScene);
+            target.SetActive(false);
+            int id = target.GetInstanceIDCompat();
+            Assert.IsNull(ManageGameObjectCommon.FindObjectInternal(id, "by_id"));
+            Assert.AreSame(target, ManageGameObjectCommon.FindObjectInternal(id, "by_id", new JObject { ["searchInactive"] = true }));
         }
 
         [Test]
