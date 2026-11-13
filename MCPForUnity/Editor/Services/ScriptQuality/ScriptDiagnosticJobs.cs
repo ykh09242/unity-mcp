@@ -241,7 +241,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             result["rows"] = page;
             result["total_rows"] = total;
             result["offset"] = start;
-            result["next_cursor"] = offset < total ? offset + "." + CursorHash(job, offset) : null;
+            result["next_cursor"] = offset < total ? new JValue(offset + "." + CursorHash(job, offset)) : JValue.CreateNull();
             response["result"] = result;
             return response;
         }

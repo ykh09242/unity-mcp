@@ -262,6 +262,7 @@ namespace MCPForUnityTests.Editor.Tools
                 var last = ScriptDiagnosticJobs.Status(id, 1, (string)large["result"]["next_cursor"])["result"];
                 Assert.That((int)last["rows"][0]["diagnostic"]["line"], Is.EqualTo(4198));
                 Assert.That(last["next_cursor"].Type, Is.EqualTo(JTokenType.Null));
+                Assert.That(JObject.Parse(last.ToString(Formatting.None))["next_cursor"].Type, Is.EqualTo(JTokenType.Null));
                 jobType.GetField("Id", flags).SetValue(job, Guid.NewGuid().ToString("N"));
                 Assert.Throws<ArgumentException>(() => ScriptDiagnosticJobs.Status(id, 100, cursor));
                 jobType.GetField("Id", flags).SetValue(job, id);
@@ -269,7 +270,10 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.Throws<ArgumentException>(() => ScriptDiagnosticJobs.Status(id, 100, cursor));
                 ((JArray)result["diagnostics"]).Clear();
                 context.Clear();
-                Assert.That(((JArray)ScriptDiagnosticJobs.Status(id, 100, null)["result"]["rows"]).Count, Is.Zero);
+                var empty = ScriptDiagnosticJobs.Status(id, 100, null)["result"];
+                Assert.That(((JArray)empty["rows"]).Count, Is.Zero);
+                Assert.That(empty["next_cursor"].Type, Is.EqualTo(JTokenType.Null));
+                Assert.That(JObject.Parse(empty.ToString(Formatting.None))["next_cursor"].Type, Is.EqualTo(JTokenType.Null));
                 result["providers"]["compiler"] = new string('x', 512 * 1024);
                 Assert.Throws<InvalidOperationException>(() => ScriptDiagnosticJobs.Status(id, 100, null));
             }
