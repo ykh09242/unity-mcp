@@ -378,6 +378,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 legacyAnim.clip = clip;
                 legacyAnim.AddClip(clip, clip.name);
                 legacyAnim.playAutomatically = true;
+                if (PrefabUtility.IsPartOfPrefabInstance(legacyAnim))
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(legacyAnim);
                 EditorUtility.SetDirty(legacyAnim);
                 AssetDatabase.SaveAssetIfDirty(clip);
                 AssetDatabase.SaveAssetIfDirty(legacyAnim);
