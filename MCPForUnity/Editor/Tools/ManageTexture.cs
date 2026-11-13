@@ -601,17 +601,24 @@ namespace MCPForUnity.Editor.Tools
                     if (editableTexture.width != imageWidth || editableTexture.height != imageHeight)
                         return new ErrorResponse("Decoded image dimensions do not match its header.");
 
+                    int startX = Mathf.Max(0, x);
+                    int startY = Mathf.Max(0, y);
+                    int endX = (int)Math.Min((long)x + w, editableTexture.width);
+                    int endY = (int)Math.Min((long)y + h, editableTexture.height);
+                    // The complete payload and image have been validated. An empty clipped edit
+                    // must not re-encode a lossy source or discard its embedded metadata.
+                    if (startX >= endX || startY >= endY)
+                    {
+                        var report = hasImportSettings ? ApplyPreparedImportSettings(fullPath, applySettings) : null;
+                        return ImportSettingsResponse(fullPath, report, false);
+                    }
+
                     if (pixelsToken != null)
                     {
                         TextureOps.ApplyPreparedPixelDataToRegion(editableTexture, pixels, x, y, w, h);
                     }
                     else if (colorToken != null)
                     {
-                        int startX = Mathf.Max(0, x);
-                        int startY = Mathf.Max(0, y);
-                        int endX = (int)Math.Min((long)x + w, editableTexture.width);
-                        int endY = (int)Math.Min((long)y + h, editableTexture.height);
-
                         for (int py = startY; py < endY; py++)
                         {
                             for (int px = startX; px < endX; px++)
@@ -634,7 +641,7 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 var importReport = hasImportSettings ? ApplyPreparedImportSettings(fullPath, applySettings) : null;
-                return ImportSettingsResponse(fullPath, importReport, setPixelsToken != null);
+                return ImportSettingsResponse(fullPath, importReport, sourceSaved);
             }
             catch (Exception e)
             {

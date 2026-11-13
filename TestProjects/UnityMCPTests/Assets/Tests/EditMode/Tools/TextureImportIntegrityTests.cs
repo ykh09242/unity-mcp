@@ -78,6 +78,136 @@ namespace MCPForUnityTests.EditMode.Tools
             return JObject.FromObject(ManageTexture.HandleCommand(request));
         }
 
+        [TestCase("color", 16, 0, false)]
+        [TestCase("color", 16, 0, true)]
+        [TestCase("array", 0, 16, true)]
+        [TestCase("base64", -1, 0, true)]
+        [TestCase("color", 0, -1, true)]
+        [TestCase("array", int.MaxValue, 0, true)]
+        [TestCase("base64", int.MinValue, 0, true)]
+        public void FullyOutsideJpegEditPreservesSourceAndAppliesRequestedImporterSettings(string payload, int x, int y, bool applyImporterSettings)
+        {
+            string path = _root + "/Original.jpg";
+            WritePixelFixture(path, true);
+            byte[] before = File.ReadAllBytes(Absolute(path));
+            byte[] metaBefore = File.ReadAllBytes(Absolute(path) + ".meta");
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            var region = new JObject
+            {
+                ["x"] = x,
+                ["y"] = y,
+                ["width"] = 1,
+                ["height"] = 1,
+            };
+            if (payload == "color")
+                region["color"] = JArray.Parse("[251,1,17,255]");
+            else if (payload == "array")
+                region["pixels"] = JArray.Parse("[[251,1,17,255]]");
+            else
+                region["pixels"] = "base64:" + Convert.ToBase64String(new byte[] { 251, 1, 17, 255 });
+
+            var options = new JObject { ["setPixels"] = region };
+            if (applyImporterSettings)
+                options["importSettings"] = new JObject { ["filterMode"] = "Point" };
+            var response = Send("modify", options, path);
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(response["data"].Value<bool>("source_saved"), response.ToString());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(Absolute(path)));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            if (applyImporterSettings)
+                Assert.AreEqual(FilterMode.Point, ((TextureImporter)AssetImporter.GetAtPath(path)).filterMode);
+            else
+                CollectionAssert.AreEqual(metaBefore, File.ReadAllBytes(Absolute(path) + ".meta"));
+        }
+
+        [TestCase("{color:['invalid',2,3]}")]
+        [TestCase("{pixels:[[1,2,3],['invalid',2,3]]}")]
+        [TestCase("{pixels:'base64:!!!!!!!!!!!!'}")]
+        public void FullyOutsideEditStillValidatesCompletePayloadBeforeImporterChanges(string payload)
+        {
+            byte[] before = File.ReadAllBytes(Absolute(_path));
+            byte[] metaBefore = File.ReadAllBytes(Absolute(_path) + ".meta");
+            var region = JObject.Parse(payload);
+            region["x"] = int.MaxValue;
+            region["width"] = 2;
+            region["height"] = 1;
+
+            var response = Send(
+                "modify",
+                new JObject
+                {
+                    ["setPixels"] = region,
+                    ["importSettings"] = new JObject { ["filterMode"] = "Point" },
+                }
+            );
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(Absolute(_path)));
+            CollectionAssert.AreEqual(metaBefore, File.ReadAllBytes(Absolute(_path) + ".meta"));
+        }
+
+        [TestCase("color")]
+        [TestCase("array")]
+        [TestCase("base64")]
+        public void PartiallyIntersectingEditChangesOnlyInBoundsPixels(string payload)
+        {
+            WritePixelFixture(_path, false);
+            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            try
+            {
+                Assert.IsTrue(texture.LoadImage(File.ReadAllBytes(Absolute(_path))));
+                var before = texture.GetPixels32();
+                var region = new JObject
+                {
+                    ["x"] = -1,
+                    ["y"] = 15,
+                    ["width"] = 2,
+                    ["height"] = 1,
+                };
+                var changed = new Color32(251, 1, 17, 255);
+                if (payload == "color")
+                    region["color"] = new JArray(changed.r, changed.g, changed.b, changed.a);
+                else if (payload == "array")
+                    region["pixels"] = new JArray(new JArray(1, 2, 3, 255), new JArray(changed.r, changed.g, changed.b, changed.a));
+                else
+                    region["pixels"] = "base64:" + Convert.ToBase64String(new byte[] { 1, 2, 3, 255, changed.r, changed.g, changed.b, changed.a });
+
+                var response = Send("modify", new JObject { ["setPixels"] = region });
+
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.IsTrue(response["data"].Value<bool>("source_saved"), response.ToString());
+                Assert.IsTrue(texture.LoadImage(File.ReadAllBytes(Absolute(_path))));
+                var after = texture.GetPixels32();
+                for (int i = 0; i < before.Length; i++)
+                    Assert.AreEqual(i == 15 * 16 ? changed : before[i], after[i], $"pixel {i}");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(texture);
+            }
+        }
+
+        private void WritePixelFixture(string path, bool jpeg)
+        {
+            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+                Assert.Ignore("Texture source encoding requires a graphics device.");
+            var texture = new Texture2D(16, 16, TextureFormat.RGBA32, false);
+            try
+            {
+                for (int y = 0; y < 16; y++)
+                for (int x = 0; x < 16; x++)
+                    texture.SetPixel(x, y, new Color32((byte)(x * 17), (byte)(y * 17), (byte)((x + y) * 8), 255));
+                texture.Apply();
+                File.WriteAllBytes(Absolute(path), jpeg ? texture.EncodeToJPG(81) : texture.EncodeToPNG());
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(texture);
+            }
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+        }
+
         [Test]
         public void CreateSpriteMergesExplicitImporterSettingsAndReadsBackSprite()
         {
