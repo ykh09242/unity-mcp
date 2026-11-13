@@ -602,7 +602,11 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(resources.IsResourceEnabled("get_gameobject_component_selected"));
                 JObject request = read ? Read() : Write("set_property");
                 if (read)
+                {
                     request["componentName"] = typeof(ResourceReadCounter).FullName;
+                    // Getter evaluation is opt-in; the gate must prevent it even when requested.
+                    request["evaluate_getters"] = true;
+                }
                 else
                     request["component_index"] = 1;
                 JObject response = read ? SelectedRead(request) : SelectedWrite(request);
@@ -619,7 +623,10 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                 Assert.AreEqual(1, lookups);
                 if (read)
+                {
                     Assert.Greater(counter.GetterCalls, 0);
+                    Assert.AreEqual(7, response.SelectToken("data.component.properties.ProbeValue").Value<int>());
+                }
                 else
                     Assert.AreEqual(0.35f, _second.volume);
             }
@@ -659,7 +666,10 @@ namespace MCPForUnityTests.Editor.Tools
                 JObject request = read ? Read() : Write("set_property");
                 request["component_index"] = 1;
                 if (read)
+                {
                     request["componentName"] = typeof(ResourceReadCounter).FullName;
+                    request["evaluate_getters"] = true;
+                }
                 string command = read ? "get_gameobject_component_selected" : "manage_components_selected";
                 var pending = TransportCommandDispatcher.ExecuteCommandJsonAsync(
                     new JObject { ["type"] = command, ["params"] = request }.ToString(),
@@ -683,6 +693,8 @@ namespace MCPForUnityTests.Editor.Tools
                         Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                         int expected = read ? secondCounter.GetInstanceIDCompat() : _second.GetInstanceIDCompat();
                         Assert.AreEqual(expected, response.SelectToken("data.selection.componentInstanceID").Value<int>());
+                        if (read)
+                            Assert.AreEqual(7, response.SelectToken("data.component.properties.ProbeValue").Value<int>());
                     }
                 }
                 bool allowed = parentEnabled && aliasEnabled;

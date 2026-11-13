@@ -166,7 +166,7 @@ namespace MCPForUnityTests.Editor.Tools
             var empty = Read();
             Assert.IsTrue(empty.Value<bool>("success"));
             Assert.AreEqual(0, ((JArray)empty["data"]["objects"]).Count);
-            Assert.AreEqual(JTokenType.Null, empty["data"]["nextCursor"].Type);
+            Assert.IsNull(empty["data"].Value<string>("nextCursor"));
             Select(3);
             // When all collections are requested, each has an independent page bound.
             var page = Read(new JObject { ["fields"] = "all", ["page_size"] = 2 });
