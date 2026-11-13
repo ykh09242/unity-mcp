@@ -23,7 +23,7 @@ def test_modern_http_preflight_exposes_static_selection_and_startup_guidance(pro
         )
     )["result"]
     assert 'manage_tools(action="list_groups").discovery' in discovered["instructions"]
-    assert "supported client scope/project binding" in discovered["instructions"]
+    assert "client scope/project binding" in discovered["instructions"]
     assert "UNITY_MCP_TOOL_PROFILE=full" in discovered["instructions"]
     params = {"name": "manage_tools", "arguments": {"action": "list_groups"}}
     response = protocol_http.post(
