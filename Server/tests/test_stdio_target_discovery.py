@@ -46,13 +46,30 @@ def target_environment(monkeypatch, tmp_path):
     return uc.UnityConnectionPool(), write, probes, clock, available
 
 
-def test_exact_target_skips_unrelated_probe_and_retains_root_metadata(target_environment):
-    pool, _, probes, _, _ = target_environment
-    conn = pool.get_connection("Main@deadbeef")
-    assert conn.instance_id == "Main@deadbeef" and conn.port == 6400
+@pytest.mark.parametrize("name", ["Main", "Game@2026"])
+def test_exact_target_skips_unrelated_probe_and_retains_root_metadata(target_environment, name):
+    pool, write, probes, _, _ = target_environment
+    write(name, "deadbeef", 6400)
+    selector = f"{name}@deadbeef"
+    conn = pool.get_connection(selector)
+    assert conn.instance_id == selector and conn.port == 6400
     assert probes == [6400]
-    assert pool._known_instances[conn.instance_id].path == "/Owned/Main/Assets"
+    assert pool._known_instances[conn.instance_id].path == f"/Owned/{name}/Assets"
     assert pool._last_full_scan is None or pool._last_full_scan < 95
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        "@deadbeef",
+        "Game@2026@dead",
+        "Game@2026@deadbeeg",
+        "dir/Game@2026@deadbeef",
+        r"dir\Game@2026@deadbeef",
+    ],
+)
+def test_invalid_composite_is_not_an_exact_target(selector):
+    assert not uc.UnityConnectionPool.is_exact_instance_id(selector)
 
 
 def test_target_only_cache_does_not_hide_unbound_ambiguity_or_forced_listing(target_environment):

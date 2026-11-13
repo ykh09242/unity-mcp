@@ -1521,10 +1521,14 @@ class UnityConnectionPool:
     @staticmethod
     def is_exact_instance_id(identifier: str | None) -> bool:
         """Only canonical full IDs can avoid global selection discovery."""
-        return (
-            isinstance(identifier, str)
-            and re.fullmatch(r"[^@/\\]+@[0-9a-fA-F]{8}(?:[0-9a-fA-F]{8})?", identifier.strip())
-            is not None
+        if not isinstance(identifier, str):
+            return False
+        name, _, project_hash = identifier.strip().rpartition("@")
+        return bool(
+            name
+            and "/" not in name
+            and "\\" not in name
+            and re.fullmatch(r"[0-9a-fA-F]{8}(?:[0-9a-fA-F]{8})?", project_hash)
         )
 
     def resolve_instance(
