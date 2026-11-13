@@ -15,6 +15,22 @@ namespace MCPForUnity.Editor.Tools.GameObjects
         internal static Func<GameObject, string, GameObject> SavePrefabForCreation = (gameObject, path) =>
             PrefabUtility.SaveAsPrefabAssetAndConnect(gameObject, path, InteractionMode.UserAction);
 
+        private static ErrorResponse CheckPrefabDestination(string path)
+        {
+            string fullPath = AssetPathUtility.GetFullAssetPath(path);
+            if (
+                System.IO.File.Exists(fullPath)
+                || System.IO.Directory.Exists(fullPath)
+                || System.IO.File.Exists(fullPath + ".meta")
+                || System.IO.Directory.Exists(fullPath + ".meta")
+                || AssetDatabase.LoadMainAssetAtPath(path) != null
+            )
+                return new ErrorResponse(
+                    $"Prefab destination '{path}' already exists. Choose an unused path or use the dedicated prefab tool for replacement."
+                );
+            return null;
+        }
+
         internal static object Handle(JObject @params)
         {
             GameObject createdObject = null;
@@ -94,16 +110,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     if (!prefabPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
                         prefabPath += ".prefab";
                     prefabPath = AssetPathUtility.GetContainedAssetPath(prefabPath);
-                    string fullPath = AssetPathUtility.GetFullAssetPath(prefabPath);
-                    if (
-                        System.IO.File.Exists(fullPath)
-                        || System.IO.Directory.Exists(fullPath)
-                        || System.IO.File.Exists(fullPath + ".meta")
-                        || AssetDatabase.LoadMainAssetAtPath(prefabPath) != null
-                    )
-                        return new ErrorResponse(
-                            $"Prefab destination '{prefabPath}' already exists. Choose an unused path or use the dedicated prefab tool for replacement."
-                        );
+                    var collision = CheckPrefabDestination(prefabPath);
+                    if (collision != null)
+                        return collision;
                 }
                 catch (Exception e)
                 {
@@ -388,7 +397,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 {
                     folders.EnsureParentDirectory(finalPrefabPath);
 
-                    AssetPathUtility.GetFullAssetPath(finalPrefabPath);
+                    var collision = CheckPrefabDestination(finalPrefabPath);
+                    if (collision != null)
+                        return collision;
                     GameObject prefabAsset = SavePrefabForCreation(newGo, finalPrefabPath);
 
                     if (prefabAsset == null)

@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.GameObjects;
@@ -1568,6 +1569,43 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void CreatePrefab_RechecksDestinationAfterComponentCallback()
+        {
+            CreateAssetRoot();
+            string path = assetRoot + "/Collision.prefab";
+            var sentinel = Owned("Sentinel");
+            Selection.activeGameObject = sentinel;
+            byte[] sentinelBytes = null;
+            string sentinelGuid = null;
+            PrefabCollisionProbe.OnAdded = () =>
+            {
+                PrefabUtility.SaveAsPrefabAsset(sentinel, path);
+                sentinelBytes = File.ReadAllBytes(path);
+                sentinelGuid = AssetDatabase.AssetPathToGUID(path);
+            };
+            try
+            {
+                var request = Create();
+                request["saveAsPrefab"] = true;
+                request["prefabPath"] = path;
+                request["componentsToAdd"] = new JArray(typeof(PrefabCollisionProbe).FullName);
+                var response = Call(request);
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("already exists", response.Value<string>("error"));
+                Assert.IsNotNull(sentinelBytes);
+                Assert.IsNotEmpty(sentinelGuid);
+                CollectionAssert.AreEqual(sentinelBytes, File.ReadAllBytes(path));
+                Assert.AreEqual(sentinelGuid, AssetDatabase.AssetPathToGUID(path));
+                CollectionAssert.AreEqual(new[] { sentinel }, Objects());
+                Assert.AreSame(sentinel, Selection.activeGameObject);
+            }
+            finally
+            {
+                PrefabCollisionProbe.OnAdded = null;
+            }
+        }
+
+        [Test]
         public void SavedPrefab_ReturnsConnectedSceneInstanceAndAssetPath()
         {
             CreateAssetRoot();
@@ -2021,6 +2059,14 @@ namespace MCPForUnityTests.Editor.Tools
     }
 
     public abstract class LifecycleAbstractComponent : MonoBehaviour { }
+
+    [ExecuteAlways]
+    public class PrefabCollisionProbe : MonoBehaviour
+    {
+        internal static Action OnAdded;
+
+        private void OnEnable() => OnAdded?.Invoke();
+    }
 
     public class InactiveDeleteEnableProbe : MonoBehaviour
     {
