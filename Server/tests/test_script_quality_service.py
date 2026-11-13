@@ -298,6 +298,118 @@ async def test_completed_collection_recovers_without_restarting(quality, interru
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "failure", ["missing", "refused", "scheduler", "auth", "changed_generation"]
+)
+async def test_stdio_collection_keeps_exact_editor_through_selection_loss(monkeypatch, failure):
+    from unittest.mock import Mock
+
+    from models.models import UnityInstanceInfo
+    from services.registry import operation_invocation
+    from services.registry.operation_scheduler import OperationScheduler
+    import services.script_quality.service as module
+    from transport.legacy import unity_connection as legacy
+
+    a, b = [
+        UnityInstanceInfo(
+            id=f"{name}@{project}",
+            name=name,
+            path=f"/{name}",
+            hash=project,
+            port=port,
+            status="running",
+        )
+        for name, project, port in (("A", "abcd1234", 6400), ("B", "deadbeef", 6401))
+    ]
+    inventory = [a, b]
+    pool = legacy.UnityConnectionPool()
+    monkeypatch.setattr(legacy, "_unity_connection_pool", pool)
+    monkeypatch.setattr(pool, "_discover_instance_candidates", lambda *args: inventory)
+    monkeypatch.setattr(module.config, "transport_mode", "stdio")
+    monkeypatch.setattr(module.config, "http_remote_hosted", False)
+    selector = AsyncMock(return_value=a.id)
+    monkeypatch.setattr(module, "get_unity_instance_from_context", selector)
+    scheduler = OperationScheduler(max_control_participants=0)
+    monkeypatch.setattr(operation_invocation, "scheduler", lambda: scheduler)
+    monkeypatch.setattr(legacy.UnityConnection, "_ensure_live_connection", lambda self: None)
+    armed = False
+    recovered = False
+    attempts = []
+
+    def connect(connection, **kwargs):
+        if (
+            connection.instance_id == a.id
+            and armed
+            and not recovered
+            and failure in {"auth", "refused"}
+        ):
+            if failure == "auth":
+                connection._authentication_failure = legacy.StdioAuthenticationError(
+                    "Invalid listener authentication"
+                )
+            return False
+        connection.sock = Mock()
+        return True
+
+    def native(connection, command, params, **kwargs):
+        nonlocal armed
+        attempts.append((connection.instance_id, params["action"], params.get("cursor")))
+        if params["action"] == "analyze":
+            return {"success": True, "data": {"state": "queued"}}
+        continuation = bool(params.get("cursor"))
+        response = native_completion(
+            params["job_id"],
+            rows=[diagnostic_row("last" if continuation else "first")],
+            cursor=None if continuation else "next",
+            offset=int(continuation),
+        )
+        response["data"]["result"]["total_rows"] = 2
+        if failure == "changed_generation" and recovered:
+            response["data"]["editor_generation"] = "new-process"
+        if not armed:
+            armed = True
+            if failure in {"missing", "changed_generation"}:
+                inventory.remove(a)
+            elif failure == "scheduler":
+                scheduler._max_participants = 0
+            else:
+                connection.disconnect()
+        return response
+
+    monkeypatch.setattr(legacy.UnityConnection, "connect", connect)
+    monkeypatch.setattr(legacy.UnityConnection, "send_command", native)
+    service = ScriptQualityService()
+    try:
+        start = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})
+        job_id = start["data"]["job_id"]
+        options = {"job_id": job_id}
+        first = await service.execute(None, "status", options)
+        if failure == "auth":
+            assert first["code"] == "analysis_result_inconsistent"
+            assert job_id not in service.results.active
+            return
+        assert first["code"] == "analysis_collection_interrupted"
+        assert job_id in service.results.active
+        selector.return_value = b.id
+        assert (await service.execute(None, "status", options))["code"] == "analysis_not_found"
+        selector.return_value = a.id
+        inventory[:] = [a, b]
+        recovered = True
+        scheduler._max_participants = 128
+        retry = await service.execute(None, "status", options)
+        if failure == "changed_generation":
+            assert retry["code"] == "analysis_result_inconsistent"
+        else:
+            rows = retry["data"]["result"]["rows"]
+            assert [row["diagnostic"]["anchor"] for row in rows] == ["first", "last"]
+        assert job_id not in service.results.active
+        assert all(target == a.id for target, _, _ in attempts)
+        assert sum(action == "analyze" for _, action, _ in attempts) == 1
+    finally:
+        pool.disconnect_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "failure", ["unauthorized", "permission_ended", "integrity", "payload_limit", "invalid_cursor"]
 )
 async def test_authorization_and_permanent_page_failures_are_not_retried(quality, failure):

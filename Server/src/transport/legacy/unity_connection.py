@@ -217,6 +217,14 @@ class _UnityProtocolError(ValueError):
     """A Unity response cannot be safely decoded or reused."""
 
 
+class _StdioTargetUnavailable(ConnectionError):
+    """Selection failed before dispatch with a transport-owned reason."""
+
+    def __init__(self, message: str, reason: str = "no_unity_session"):
+        super().__init__(message)
+        self.reason = reason
+
+
 class _AsyncAdmissionGate:
     """Track holders and waiters, including the release-to-resume handoff."""
 
@@ -1610,7 +1618,7 @@ class UnityConnectionPool:
             ConnectionError: If instance cannot be resolved
         """
         if not instances:
-            raise ConnectionError(
+            raise _StdioTargetUnavailable(
                 "No Unity Editor instances found. Please ensure Unity is running with MCP for Unity bridge."
             )
 
@@ -1704,7 +1712,7 @@ class UnityConnectionPool:
 
         # Nothing matched
         available_ids = [inst.id for inst in instances]
-        raise ConnectionError(
+        raise _StdioTargetUnavailable(
             f"Unity instance '{identifier}' not found. "
             f"Available instances: {available_ids}. "
             f"Check mcpforunity://instances resource for all instances."
@@ -1754,9 +1762,10 @@ class UnityConnectionPool:
                     if created:
                         occupied = self._connections.keys() | self._selection_owners.keys()
                         if len(occupied) >= self.MAX_CONNECTIONS:
-                            raise ConnectionError(
+                            raise _StdioTargetUnavailable(
                                 "Unity connection pool capacity reached; close unused editors and "
-                                "retry after discovery's idle grace period"
+                                "retry after discovery's idle grace period",
+                                "operation_capacity",
                             )
                         conn = UnityConnection(
                             port=target.port, instance_id=target.id, selected_target=target
@@ -1807,10 +1816,15 @@ class UnityConnectionPool:
                             )
                         ):
                             selection.check()
-                            raise ConnectionError(
+                            message = (
                                 f"Failed to connect to Unity instance '{target.id}' "
                                 f"on port {target.port}. Ensure the Unity Editor is running."
                             )
+                            if conn._authentication_failure is not None:
+                                raise _StdioTargetUnavailable(
+                                    message, "auth_required"
+                                ) from conn._authentication_failure
+                            raise _StdioTargetUnavailable(message)
                     # Retain I/O ownership until a newly opened socket is
                     # published or disposed, including cancellation at this lock.
                     with selection.lock(self._pool_lock), selection.publication():
@@ -2752,7 +2766,9 @@ async def _shared_selection(
                 continue
             if owner is None:
                 if len(group.owners) >= pool.MAX_CONNECTIONS:
-                    raise ConnectionError("Unity connection selection capacity reached")
+                    raise _StdioTargetUnavailable(
+                        "Unity connection selection capacity reached", "operation_capacity"
+                    )
                 owner = _SharedConnectionSelection(group, pool, getter, key, deadline, instance_id)
                 group.owners[key] = owner
             owner.join(deadline)
@@ -2831,6 +2847,7 @@ async def _async_send_command_response(
     import asyncio  # noqa: ANYIO_OK -- existing connection admission uses asyncio.
     from services.control_capacity import reserved_control
     from services.operation_policy import resolve_operation_policy
+    from services.registry.operation_scheduler import OperationCapacityError, OperationScopeChanged
     from services.registry.operation_invocation import (
         admission_for,
         operation_session,
@@ -2945,6 +2962,10 @@ async def _async_send_command_response(
         raise
     except TimeoutError:
         return _stdio_deadline_response(command_type, resume_owner.invocation)
+    except _StdioTargetUnavailable as error:
+        return MCPResponse(success=False, error=str(error), data={"reason": error.reason})
+    except (OperationCapacityError, OperationScopeChanged) as error:
+        return MCPResponse(success=False, error=str(error), data={"reason": str(error)})
     except Exception as error:
         return MCPResponse(success=False, error=str(error))
 
