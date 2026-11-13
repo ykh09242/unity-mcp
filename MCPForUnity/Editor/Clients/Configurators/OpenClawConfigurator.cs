@@ -99,21 +99,24 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 return;
 
             string path = GetConfigPath();
-            McpConfigurationHelper.EnsureConfigDirectoryExists(path);
+            ClientConfigurationChangeService.Shared.MutateFile(
+                path,
+                document =>
+                {
+                    JObject root = document == null ? new JObject() : ParseConfig(document);
+                    JObject plugins = EnsureConfigObject(root, "plugins");
+                    JObject entries = EnsureConfigObject(plugins, "entries");
+                    JObject pluginEntry = EnsureConfigObject(entries, PluginName);
+                    pluginEntry["enabled"] = true;
 
-            JObject root = File.Exists(path) ? LoadConfig(path) : new JObject();
-
-            JObject plugins = EnsureConfigObject(root, "plugins");
-            JObject entries = EnsureConfigObject(plugins, "entries");
-            JObject pluginEntry = EnsureConfigObject(entries, PluginName);
-            pluginEntry["enabled"] = true;
-
-            JObject pluginConfig = EnsureConfigObject(pluginEntry, "config");
-            pluginConfig.Remove("timeout"); // removed in openclaw-mcp-bridge v2+
-            pluginConfig.Remove("retries"); // removed in openclaw-mcp-bridge v2+
-            pluginConfig["servers"] = UpsertUnityServer(pluginConfig["servers"]);
-
-            McpConfigurationHelper.WriteAtomicFile(path, root.ToString(Formatting.Indented));
+                    JObject pluginConfig = EnsureConfigObject(pluginEntry, "config");
+                    pluginConfig.Remove("timeout"); // removed in openclaw-mcp-bridge v2+
+                    pluginConfig.Remove("retries"); // removed in openclaw-mcp-bridge v2+
+                    pluginConfig["servers"] = UpsertUnityServer(pluginConfig["servers"]);
+                    return root.ToString(Formatting.Indented);
+                },
+                createIfMissing: true
+            );
             CheckStatus(attemptAutoRewrite: false);
         }
 
@@ -163,21 +166,17 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 "Restart OpenClaw if the plugin does not hot-reload the new config",
             };
 
-        private JObject LoadConfig(string path)
-        {
-            string text = File.ReadAllText(path);
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return new JObject();
-            }
+        private JObject LoadConfig(string path) => ParseConfig(File.ReadAllText(path));
 
+        private static JObject ParseConfig(string text)
+        {
             try
             {
-                return JsonConvert.DeserializeObject<JObject>(text) ?? new JObject();
+                return JObject.Parse(text, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
             }
             catch (JsonException ex)
             {
-                throw new InvalidOperationException($"OpenClaw config contains non-JSON content and cannot be safely auto-edited: {ex.Message}");
+                throw new InvalidOperationException("OpenClaw config must be a JSON object without duplicate properties. It was not changed.", ex);
             }
         }
 

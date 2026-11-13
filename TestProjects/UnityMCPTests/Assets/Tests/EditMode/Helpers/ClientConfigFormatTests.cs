@@ -575,6 +575,61 @@ namespace MCPForUnityTests.Editor.Helpers
             );
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void OpenClawConfigurePreservesConcurrentEditOrCreation(bool missing)
+        {
+            string path = _tokenPath + ".openclaw.json";
+            bool hadLock = EditorPrefs.HasKey(EditorPrefKeys.LockCursorConfig);
+            bool originalLock = EditorPrefs.GetBool(EditorPrefKeys.LockCursorConfig, false);
+            var service = ClientConfigurationChangeService.Shared;
+            var field = service.GetType().GetField("beforeCommitComparison", BindingFlags.Instance | BindingFlags.NonPublic);
+            var original = field.GetValue(service);
+            const string concurrent = "{\"theme\":\"concurrent\"}";
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, false);
+                if (!missing)
+                    File.WriteAllText(path, "{\"theme\":\"original\"}");
+                field.SetValue(service, new Action(() => File.WriteAllText(path, concurrent)));
+                Assert.Throws<McpConfigurationHelper.ConfigurationConflictException>(() => new OwnedOpenClaw(path).Configure());
+                Assert.AreEqual(concurrent, File.ReadAllText(path));
+            }
+            finally
+            {
+                field.SetValue(service, original);
+                File.Delete(path);
+                if (hadLock)
+                    EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, originalLock);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.LockCursorConfig);
+            }
+        }
+
+        [TestCase("null")]
+        [TestCase("{\"theme\":1,\"theme\":2}")]
+        public void OpenClawConfigureRejectsAmbiguousDocuments(string document)
+        {
+            string path = _tokenPath + ".openclaw.json";
+            bool hadLock = EditorPrefs.HasKey(EditorPrefKeys.LockCursorConfig);
+            bool originalLock = EditorPrefs.GetBool(EditorPrefKeys.LockCursorConfig, false);
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, false);
+                File.WriteAllText(path, document);
+                Assert.Throws<InvalidOperationException>(() => new OwnedOpenClaw(path).Configure());
+                Assert.AreEqual(document, File.ReadAllText(path));
+            }
+            finally
+            {
+                File.Delete(path);
+                if (hadLock)
+                    EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, originalLock);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.LockCursorConfig);
+            }
+        }
+
         private void WithOpenCode(Action<OwnedOpenCode, string> action)
         {
             string path = _tokenPath + ".opencode.json";
