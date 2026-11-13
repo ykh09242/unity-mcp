@@ -251,6 +251,12 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.AreEqual(0, clicks);
         }
 
+        [Test]
+        public void PlayerHostRetainsOriginalPublicConstructorSignature()
+        {
+            Assert.IsNotNull(typeof(PlayScenarioPlayerHost).GetConstructor(new[] { typeof(IEnumerable<string>), typeof(Func<int>), typeof(bool) }));
+        }
+
         [TestCase("log_only", false, false)]
         [TestCase("strict", true, false)]
         [TestCase("strict", false, true)]
@@ -260,7 +266,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             var policy = new PlayScenarioLogPolicy { Mode = mode };
             if (allowMessage)
                 policy.AllowedMessages.Add(message);
-            var player = new PlayScenarioPlayerHost(Array.Empty<string>(), logPolicy: policy);
+            var player = new PlayScenarioPlayerHost(Array.Empty<string>(), null, false, policy);
             // Mutating the caller's policy after construction must not change the active run.
             policy.Mode = mode == "strict" ? "log_only" : "strict";
             policy.AllowedMessages.Clear();

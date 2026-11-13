@@ -41,12 +41,10 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private Type componentType;
         private Func<int> subscriptionCount;
 
-        public PlayScenarioPlayerHost(
-            IEnumerable<string> scenePaths,
-            Func<int> subscriptionCount = null,
-            bool sceneSemantics = false,
-            PlayScenarioLogPolicy logPolicy = null
-        )
+        public PlayScenarioPlayerHost(IEnumerable<string> scenePaths, Func<int> subscriptionCount = null, bool sceneSemantics = false)
+            : this(scenePaths, subscriptionCount, sceneSemantics, null) { }
+
+        public PlayScenarioPlayerHost(IEnumerable<string> scenePaths, Func<int> subscriptionCount, bool sceneSemantics, PlayScenarioLogPolicy logPolicy)
         {
             scenes = new HashSet<string>(scenePaths, StringComparer.Ordinal);
             this.subscriptionCount = subscriptionCount;
