@@ -144,11 +144,11 @@ async def test_send_command_for_instance_fails_fast_on_stale_when_retry_disabled
     """Stale HTTP session should not send command when retry_on_reload is disabled."""
     from transport.plugin_hub import PluginHub
 
-    resolve_mock = AsyncMock(return_value="sess-stale")
+    resolve_mock = AsyncMock(return_value=SimpleNamespace(session_id="sess-stale"))
     ensure_mock = AsyncMock(return_value=False)
     send_mock = AsyncMock()
 
-    monkeypatch.setattr(PluginHub, "_resolve_session_id", resolve_mock)
+    monkeypatch.setattr(PluginHub, "_resolve_session", resolve_mock)
     monkeypatch.setattr(PluginHub, "_ensure_live_connection", ensure_mock)
     monkeypatch.setattr(PluginHub, "send_command", send_mock)
 

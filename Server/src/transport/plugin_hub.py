@@ -209,6 +209,14 @@ class NoUnitySessionError(RuntimeError):
     """Raised when no Unity plugins are available."""
 
 
+@dataclass(frozen=True, slots=True)
+class _SessionRoute:
+    registry: PluginRegistry
+    session_id: str
+    project_hash: str
+    user_id: str | None
+
+
 class _SyncWaitInterrupted(RuntimeError):
     def __init__(self, detail: str, *, started: bool) -> None:
         super().__init__(detail)
@@ -4389,6 +4397,18 @@ class PluginHub(WebSocketEndpoint):
         user_id: str | None = None,
         retry_on_reload: bool = True,
     ) -> str:
+        route = await cls._resolve_session(unity_instance, user_id, retry_on_reload)
+        return route.session_id
+
+    @classmethod
+    async def _resolve_session(
+        cls,
+        unity_instance: str | None,
+        user_id: str | None,
+        retry_on_reload: bool,
+        *,
+        pinned: _SessionRoute | None = None,
+    ) -> _SessionRoute:
         """Resolve a project hash (Unity instance id) to an active plugin session.
 
         During Unity domain reloads the plugin's WebSocket session is torn down
@@ -4401,10 +4421,9 @@ class PluginHub(WebSocketEndpoint):
             user_id: User ID from API key validation (for remote-hosted mode session isolation)
             retry_on_reload: If False, do not wait for reconnects when no session is present.
         """
-        if cls._registry is None:
+        registry = pinned.registry if pinned is not None else cls._registry
+        if registry is None:
             raise RuntimeError("Plugin registry not configured")
-
-        registry = cls._registry
 
         # Explicitly selected projects may be compiling/importing large workloads.
         # Unselected discovery retains its short window and ambiguity checks.
@@ -4418,7 +4437,9 @@ class PluginHub(WebSocketEndpoint):
 
         # Allow callers to provide either just the hash or Name@hash
         target_hash: str | None = None
-        if unity_instance:
+        if pinned is not None:
+            target_hash, user_id = pinned.project_hash, pinned.user_id
+        elif unity_instance:
             if "@" in unity_instance:
                 _, _, suffix = unity_instance.rpartition("@")
                 if not suffix.strip():
@@ -4427,15 +4448,16 @@ class PluginHub(WebSocketEndpoint):
             else:
                 target_hash = unity_instance
 
-        async def _try_once() -> tuple[str | None, int, bool]:
+        async def _try_once() -> tuple[_SessionRoute | None, int, bool]:
             if cls._registry is not registry:
                 raise NoUnitySessionError("Unity plugin server stopped or replaced")
             explicit_required = config.http_remote_hosted
             # Prefer a specific Unity instance if one was requested
             if target_hash:
                 # In remote-hosted mode with user_id, use user-scoped lookup
-                if config.http_remote_hosted and user_id:
-                    session_id = await registry.get_session_id_by_hash(target_hash, user_id)
+                owner = user_id if config.http_remote_hosted or pinned is not None else None
+                if owner:
+                    session_id = await registry.get_session_id_by_hash(target_hash, owner)
                 else:
                     session_id = await registry.get_session_id_by_hash(target_hash)
                 if cls._registry is not registry:
@@ -4443,11 +4465,15 @@ class PluginHub(WebSocketEndpoint):
                 # Explicit selection never uses the count. Keep the remote
                 # principal guard and miss paths in list_sessions below.
                 if session_id is not None and (not config.http_remote_hosted or user_id):
-                    return session_id, 0, explicit_required
+                    return (
+                        _SessionRoute(registry, session_id, target_hash, owner),
+                        0,
+                        explicit_required,
+                    )
                 sessions = await registry.list_sessions(user_id=user_id)
                 if cls._registry is not registry:
                     raise NoUnitySessionError("Unity plugin server stopped or replaced")
-                return session_id, len(sessions), explicit_required
+                return None, len(sessions), explicit_required
 
             # No target provided: determine if we can auto-select
             # In remote-hosted mode, filter sessions by user_id
@@ -4460,7 +4486,14 @@ class PluginHub(WebSocketEndpoint):
             if explicit_required:
                 return None, count, explicit_required
             if count == 1:
-                return next(iter(sessions.keys())), count, explicit_required
+                session = next(iter(sessions.values()))
+                return (
+                    _SessionRoute(
+                        registry, session.session_id, session.project_hash, session.user_id
+                    ),
+                    count,
+                    explicit_required,
+                )
             # Multiple sessions but no explicit target is ambiguous
             return None, count, explicit_required
 
@@ -4474,8 +4507,8 @@ class PluginHub(WebSocketEndpoint):
 
         deadline = time.monotonic() + max_wait_s
         changed = registry.change_event
-        session_id, session_count, explicit_required = await _try_once()
-        if session_id is None and explicit_required and not target_hash and session_count > 0:
+        route, session_count, explicit_required = await _try_once()
+        if route is None and explicit_required and not target_hash and session_count > 0:
             raise InstanceSelectionRequiredError(
                 available_instances=await _available_instance_ids()
             )
@@ -4483,13 +4516,13 @@ class PluginHub(WebSocketEndpoint):
 
         # If there is no active plugin yet (e.g., Unity starting up or reloading),
         # wait politely for a session to appear before surfacing an error.
-        while session_id is None and time.monotonic() < deadline:
+        while route is None and time.monotonic() < deadline:
             if not target_hash and session_count > 1:
                 raise InstanceSelectionRequiredError(
                     InstanceSelectionRequiredError._MULTIPLE_INSTANCES,
                     available_instances=await _available_instance_ids(),
                 )
-            if session_id is None and explicit_required and not target_hash and session_count > 0:
+            if explicit_required and not target_hash and session_count > 0:
                 raise InstanceSelectionRequiredError(
                     available_instances=await _available_instance_ids()
                 )
@@ -4505,21 +4538,21 @@ class PluginHub(WebSocketEndpoint):
             if time.monotonic() >= deadline:
                 break
             changed = registry.change_event
-            session_id, session_count, explicit_required = await _try_once()
+            route, session_count, explicit_required = await _try_once()
 
-        if session_id is not None and wait_started is not None:
+        if route is not None and wait_started is not None:
             logger.debug(
                 "Plugin session restored after %.3fs (instance=%s)",
                 time.monotonic() - wait_started,
                 unity_instance or "default",
             )
-        if session_id is None and not target_hash and session_count > 1:
+        if route is None and not target_hash and session_count > 1:
             raise InstanceSelectionRequiredError(InstanceSelectionRequiredError._MULTIPLE_INSTANCES)
 
-        if session_id is None and explicit_required and not target_hash and session_count > 0:
+        if route is None and explicit_required and not target_hash and session_count > 0:
             raise InstanceSelectionRequiredError()
 
-        if session_id is None:
+        if route is None:
             logger.warning(
                 "No Unity plugin reconnected within %.2fs (instance=%s)",
                 max_wait_s,
@@ -4529,7 +4562,7 @@ class PluginHub(WebSocketEndpoint):
             # a clear error so the client can prompt the user to open Unity.
             raise NoUnitySessionError("No Unity plugins are currently connected")
 
-        return session_id
+        return route
 
     @classmethod
     async def send_command_for_instance(
@@ -4653,7 +4686,7 @@ class PluginHub(WebSocketEndpoint):
         if _catalog_guard is not None:
             retry_on_reload = False
         try:
-            session_id = await cls._resolve_session_id(
+            route = await cls._resolve_session(
                 unity_instance,
                 user_id=user_id,
                 retry_on_reload=retry_on_reload,
@@ -4666,19 +4699,22 @@ class PluginHub(WebSocketEndpoint):
             )
             return cls._unavailable_retry_response("no_unity_session")
 
+        session_id = route.session_id
         budget.session_id = session_id
         budget.phase = "recovery"
         if not await cls._ensure_live_connection(session_id):
             if not retry_on_reload:
                 return cls._unavailable_retry_response("stale_connection")
             try:
-                session_id = await cls._resolve_session_id(
+                route = await cls._resolve_session(
                     unity_instance,
                     user_id=user_id,
                     retry_on_reload=True,
+                    pinned=route,
                 )
             except NoUnitySessionError:
                 return cls._unavailable_retry_response("no_unity_session")
+            session_id = route.session_id
             budget.session_id = session_id
             if not await cls._ensure_live_connection(session_id):
                 return cls._unavailable_retry_response("stale_connection")

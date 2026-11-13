@@ -1,6 +1,6 @@
 """Public plugin hub regressions using real WebSockets and inert ASGI I/O."""
 
-from tests.timing import await_signal
+from tests.timing import await_completion, await_signal, watchdog_timeout
 
 import asyncio
 import importlib
@@ -33,7 +33,7 @@ def hub_environment(monkeypatch, tmp_path):
     return hub_module.PluginHub, registry_module.PluginRegistry()
 
 
-async def _register(hub, block_close=False):
+async def _register(hub, block_close=False, project_hash="bbbbbbbb"):
     from starlette.websockets import WebSocket
 
     incoming = asyncio.Queue()
@@ -69,7 +69,7 @@ async def _register(hub, block_close=False):
         {
             "type": "register",
             "project_name": "Other",
-            "project_hash": "bbbbbbbb",
+            "project_hash": project_hash,
             "unity_version": "owned",
         },
     )
@@ -106,6 +106,49 @@ async def test_default_and_valid_selectors_keep_successful_routing(hub_environme
         assert result["status"] == "success"
         assert len(executes) == 1
     finally:
+        await hub.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("original_returns", [False, True])
+async def test_default_selection_recovers_only_the_original_project(
+    hub_environment, monkeypatch, original_returns
+):
+    from core.config import config
+    from transport.unity_transport import send_with_unity_instance
+
+    hub, registry = hub_environment
+    hub.configure(registry)
+    monkeypatch.setattr(config, "transport_mode", "http")
+    monkeypatch.setattr(hub, "CLOSE_TIMEOUT", watchdog_timeout())
+    monkeypatch.setenv("UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", "0")
+    # A registry hash is opaque, even when it contains selector punctuation.
+    original_hash = "original@bbbbbbbb"
+    stale, incoming, stale_executes, closing, release = await _register(
+        hub, block_close=True, project_hash=original_hash
+    )
+    incoming.put_nowait({"type": "websocket.disconnect", "code": 1001})
+    await stale.receive()
+    command = asyncio.create_task(
+        send_with_unity_instance(None, None, "manage_scene", {"action": "get_hierarchy"})
+    )
+    try:
+        await await_signal(closing, "original socket eviction", producers=(command,))
+        _, _, other_executes, _, _ = await _register(hub)
+        if original_returns:
+            _, _, restored_executes, _, _ = await _register(hub, project_hash=original_hash)
+        release.set()
+        result = await await_completion(command, "recovery result")
+        assert stale_executes == other_executes == []
+        if original_returns:
+            assert result["success"]
+            assert [p["name"] for p in restored_executes] == ["manage_scene"]
+        else:
+            assert result["success"] is False
+            assert result["data"]["reason"] == "no_unity_session"
+    finally:
+        release.set()
+        await asyncio.gather(command, return_exceptions=True)
         await hub.shutdown()
 
 

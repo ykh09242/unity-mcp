@@ -288,7 +288,7 @@ async def test_earlier_deadline_follower_uses_the_shared_flights_dispatch_eviden
     from services.tools.shared_tool_reads import SharedRead
 
     monkeypatch.setenv("UNITY_MCP_STATE_TIMEOUT", str(watchdog_timeout()))
-    resolve = PluginHub._resolve_session_id
+    resolve = PluginHub._resolve_session
     get_connection = PluginHub._get_connection
     early_waiting = asyncio.Event()
     release_early = asyncio.Event()
@@ -345,7 +345,7 @@ async def test_earlier_deadline_follower_uses_the_shared_flights_dispatch_eviden
             await release_owner.wait()
             await reply(command_hub, message)
 
-    monkeypatch.setattr(PluginHub, "_resolve_session_id", delayed_first_selection)
+    monkeypatch.setattr(PluginHub, "_resolve_session", delayed_first_selection)
     monkeypatch.setattr(PluginHub, "_get_connection", hold_owner_admission)
     if dispatched:
         command_hub.websocket.send_json = hold_owner_response

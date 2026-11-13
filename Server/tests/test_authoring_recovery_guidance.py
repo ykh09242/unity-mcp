@@ -65,7 +65,11 @@ async def test_console_probe_expiry_is_also_an_explicit_undispatched_wait(monkey
     monkeypatch.setattr(hub.config, "http_remote_hosted", False)
     monkeypatch.setattr(hub, "time", SimpleNamespace(monotonic=lambda: clock.now))
     monkeypatch.setenv("UNITY_MCP_SESSION_READY_WAIT_SECONDS", "1")
-    monkeypatch.setattr(hub.PluginHub, "_resolve_session_id", AsyncMock(return_value="owned"))
+    monkeypatch.setattr(
+        hub.PluginHub,
+        "_resolve_session",
+        AsyncMock(return_value=SimpleNamespace(session_id="owned")),
+    )
     monkeypatch.setattr(hub.PluginHub, "_ensure_live_connection", AsyncMock(return_value=True))
     monkeypatch.setattr(hub.PluginHub, "_read_identity", AsyncMock(return_value=None))
     monkeypatch.setattr(hub.PluginHub, "_readiness_probe", probe)

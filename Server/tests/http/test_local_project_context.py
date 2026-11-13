@@ -216,7 +216,7 @@ async def test_custom_guard_uses_pinned_branch_before_all_resolver_readiness_wor
         raise AssertionError("Guarded dispatch entered resolver/recovery/readiness")
 
     for name in (
-        "_resolve_session_id",
+        "_resolve_session",
         "_ensure_live_connection",
         "_read_identity",
         "_readiness_probe",
