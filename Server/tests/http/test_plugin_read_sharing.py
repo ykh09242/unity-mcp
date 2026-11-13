@@ -248,6 +248,45 @@ async def test_cancelled_first_readiness_waiter_preserves_other_waiter(peer):
 
 
 @pytest.mark.asyncio
+async def test_readiness_window_expires_while_another_caller_still_needs_the_probe(
+    peer, monkeypatch
+):
+    loop = asyncio.get_running_loop()
+    clock = loop.time
+    offset = 0
+    monkeypatch.setattr(loop, "time", lambda: clock() + offset)
+    monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", 60)
+    monkeypatch.setenv("UNITY_MCP_SESSION_READY_WAIT_SECONDS", "5")
+    short = asyncio.create_task(
+        peer.request(
+            PluginHub.send_command_for_instance,
+            "ownedhash",
+            "read_console",
+            {"action": "clear"},
+            user_id="owned-user",
+        )
+    )
+    ping = await peer.next_command()
+    monkeypatch.setenv("UNITY_MCP_SESSION_READY_WAIT_SECONDS", "30")
+    long = asyncio.create_task(read(peer))
+    await yield_callers()
+    offset = 6
+    await yield_callers()
+    assert short.done()
+    refusal = (await short)["data"]
+    assert refusal["reason"] == "editor_not_ready"
+    assert refusal["dispatch"] == "not_dispatched"
+    assert not long.done()
+    assert peer.counts() == {"ping": 1}
+    await peer.reply(ping)
+    command = await peer.next_command()
+    assert command["name"] == "read_console" and command["params"] == {}
+    await peer.reply(command)
+    assert (await long)["success"]
+    assert peer.counts() == {"ping": 1, "read_console": 1}
+
+
+@pytest.mark.asyncio
 async def test_last_readiness_waiter_cancels_orphan_without_retained_result(peer):
     # Given: one pending readiness probe.
     caller = asyncio.create_task(read(peer))

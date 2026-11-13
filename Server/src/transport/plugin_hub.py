@@ -4852,25 +4852,26 @@ class PluginHub(WebSocketEndpoint):
                 "UNITY_MCP_SESSION_READY_WAIT_SECONDS", default_s=6.0, max_s=MAX_COMMAND_TIMEOUT
             )
             if max_wait_s > 0:
-                deadline = time.monotonic() + max_wait_s
-                while time.monotonic() < deadline:
-                    try:
-                        outcome = await cls._readiness_probe(session_id, identity)
-                    except Exception:
-                        outcome = "retry"
+                loop = asyncio.get_running_loop()
+                deadline = min(budget.expires_at, loop.time() + max_wait_s)
+                outcome = "retry"
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        while loop.time() < deadline:
+                            try:
+                                outcome = await cls._readiness_probe(session_id, identity)
+                            except Exception:
+                                outcome = "retry"
+                            if outcome != "retry":
+                                break
+                            await asyncio.sleep(0.1)
+                except TimeoutError:
+                    outcome = "retry"
 
-                    # Capacity refusal must stay cheap for readiness-gated tools
-                    # too; repeated probes cannot make space for the caller.
-                    if outcome == "command_capacity":
-                        return cls._command_capacity_response()
-                    if outcome == "result_capacity":
-                        return _result_limit_response("result_capacity", phase="readiness")
-                    if outcome == "read_invalidated":
-                        return cls._unavailable_retry_response("read_invalidated")
-                    if outcome == "ready":
-                        break
-                    await asyncio.sleep(0.1)
-                else:
+                # A pong can complete before the event loop runs its timeout callback.
+                if outcome == "retry" or loop.time() >= deadline:
+                    if deadline == budget.expires_at:
+                        return budget.timeout_response(command_type)
                     # Not ready within the bounded window: return retry hint without sending.
                     if command_type in {"read_console", "tail_console"}:
                         return console_readiness_refusal(
@@ -4884,6 +4885,13 @@ class PluginHub(WebSocketEndpoint):
                         error=f"Unity session not ready for '{command_type}' (ping not answered); please retry",
                         hint="retry",
                     ).model_dump()
+                # Capacity refusal must stay cheap for readiness-gated tools too.
+                if outcome == "command_capacity":
+                    return cls._command_capacity_response()
+                if outcome == "result_capacity":
+                    return _result_limit_response("result_capacity", phase="readiness")
+                if outcome == "read_invalidated":
+                    return cls._unavailable_retry_response("read_invalidated")
 
         if share_state and identity is not None:
 

@@ -1,5 +1,6 @@
 """Recovery guidance must not turn a stale generation into a mutation replay."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -53,17 +54,26 @@ def test_console_dispatched_timeout_never_promises_safe_replay():
 
 
 @pytest.mark.asyncio
-async def test_console_probe_expiry_is_also_an_explicit_undispatched_wait(monkeypatch):
+@pytest.mark.parametrize("outcome", ["retry", "ready"])
+@pytest.mark.parametrize(
+    ("command_wait", "reason"), [(10, "editor_not_ready"), (0.5, "command_deadline_exceeded")]
+)
+async def test_console_probe_expiry_is_also_an_explicit_undispatched_wait(
+    monkeypatch, outcome, command_wait, reason
+):
     from transport import plugin_hub as hub
 
-    clock = SimpleNamespace(now=0.0)
+    loop = asyncio.get_running_loop()
+    clock = loop.time
+    offset = 0
 
     async def probe(*args):
-        clock.now = 2.0
-        return "retry"
+        nonlocal offset
+        offset = 2
+        return outcome
 
     monkeypatch.setattr(hub.config, "http_remote_hosted", False)
-    monkeypatch.setattr(hub, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr(loop, "time", lambda: clock() + offset)
     monkeypatch.setenv("UNITY_MCP_SESSION_READY_WAIT_SECONDS", "1")
     monkeypatch.setattr(
         hub.PluginHub,
@@ -75,10 +85,11 @@ async def test_console_probe_expiry_is_also_an_explicit_undispatched_wait(monkey
     monkeypatch.setattr(hub.PluginHub, "_readiness_probe", probe)
     dispatch = AsyncMock()
     monkeypatch.setattr(hub.PluginHub, "send_command", dispatch)
-    budget = _CommandBudget(123, command="read_console")
+    budget = _CommandBudget(clock() + command_wait, command="read_console")
     result = await hub.PluginHub._send_command_for_instance(
-        "Owned@hash", "read_console", {}, None, True, budget=budget
+        "Owned@hash", "read_console", {"action": "clear"}, None, True, budget=budget
     )
+    assert result["data"]["reason"] == reason
     assert result["data"]["dispatch"] == "not_dispatched"
     assert result["data"]["next_action"] == "wait_for_editor_ready"
     dispatch.assert_not_awaited()
