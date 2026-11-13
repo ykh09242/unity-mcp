@@ -107,21 +107,18 @@ class _WorkingMemory:
         self.entries: dict[str, int] = {}
 
     def reserve(self, size: int, owner: ResponseOwner) -> None:
+        if not self.try_reserve(size, owner):
+            raise ReceiptUnavailable("execution_receipt_working_capacity")
+
+    def try_reserve(self, size: int, owner: ResponseOwner) -> bool:
         with self.lock:
             if owner.released or sum(self.entries.values()) + size > MAX_RESPONSE_RETAINED_BYTES:
-                raise ReceiptUnavailable("execution_receipt_working_capacity")
+                return False
             key = uuid4().hex
             self.entries[key] = size
             owner.entries.append((self.entries, key))
-
-            def copy_reservation(copy_owner: ResponseOwner) -> bool:
-                try:
-                    self.reserve(size, copy_owner)
-                    return True
-                except ReceiptUnavailable:
-                    return False
-
-            owner.copy_reservations.append(copy_reservation)
+            owner.copy_reservations.append(lambda copy_owner: self.try_reserve(size, copy_owner))
+            return True
 
 
 _working = _WorkingMemory()
@@ -456,16 +453,19 @@ class PreparedExecution:
                 raise ReceiptUnavailable("execution_receipt_response_limit")
             raw = None
             reason = None
-            if self.options.retain_result:
-                if (
-                    response_size(wire, max_bytes=RESULT_BYTES, max_retained=RESULT_WORKING_BYTES)
-                    is None
-                ):
-                    reason = "result_too_large"
-                else:
-                    memory = ResponseOwner()
-                    _working.reserve(RESULT_WORKING_BYTES, memory)
-                    try:
+            memory = ResponseOwner() if self.options.retain_result else None
+            try:
+                if memory is not None:
+                    if (
+                        response_size(
+                            wire, max_bytes=RESULT_BYTES, max_retained=RESULT_WORKING_BYTES
+                        )
+                        is None
+                    ):
+                        reason = "result_too_large"
+                    elif not _working.try_reserve(RESULT_WORKING_BYTES, memory):
+                        reason = "observation_lost"
+                    else:
                         projection = BaseModel.model_dump(
                             wire,
                             by_alias=True,
@@ -478,18 +478,14 @@ class PreparedExecution:
                         ).encode("utf-8")
                         if len(raw) > RESULT_BYTES:
                             raw, reason = None, "result_too_large"
-                        view = await self._finish(
-                            "unknown" if _outcome_unknown(wire.structured_content) else "completed",
-                            raw,
-                            reason,
-                        )
-                    finally:
-                        memory.release()
-                    await self.authority.check()
-                    return _with_receipt(result, view)
-            view = await self._finish(
-                "unknown" if _outcome_unknown(wire.structured_content) else "completed", raw, reason
-            )
+                view = await self._finish(
+                    "unknown" if _outcome_unknown(wire.structured_content) else "completed",
+                    raw,
+                    reason,
+                )
+            finally:
+                if memory is not None:
+                    memory.release()
             await self.authority.check()
             return _with_receipt(result, view)
         except BaseException:

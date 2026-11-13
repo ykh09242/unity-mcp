@@ -262,6 +262,39 @@ async def test_metadata_only_duplicate_is_error_and_never_redispatches(tmp_path,
 
 
 @pytest.mark.asyncio
+async def test_optional_retention_contention_preserves_completed_result(tmp_path, monkeypatch):
+    import transport.execution_receipts as module
+
+    async with sdk_wire(tmp_path, monkeypatch) as (runtime, counts, call):
+        params = {
+            "name": "receipt_exercise",
+            "arguments": {"checked": 4},
+            "_meta": {META_KEY: options(runtime)},
+        }
+        # Leave room for the request and delivery, but not for the optional result copy.
+        filler = ResponseOwner()
+        module._working.reserve(
+            module.MAX_RESPONSE_RETAINED_BYTES - module.RESULT_WORKING_BYTES, filler
+        )
+        try:
+            first = (await call("tools/call", params, "first"))["result"]
+            duplicate = (await call("tools/call", params, "duplicate"))["result"]
+        finally:
+            filler.release()
+
+        assert first["isError"] is False
+        assert first["structuredContent"] == {"checked": 4, "count": 17}
+        receipt = first["_meta"][META_KEY]
+        assert receipt["status"] == "completed"
+        assert receipt["result_available"] is False
+        assert receipt["result_unavailable_reason"] == "observation_lost"
+        assert duplicate["isError"] is True
+        assert duplicate["structuredContent"]["error"] == "receipt_result_unavailable"
+        assert duplicate["_meta"][META_KEY] == {**receipt, "replayed": True}
+        assert counts == {"body": 1, "validator": 1, "default": 1}
+
+
+@pytest.mark.asyncio
 async def test_disabled_explicit_option_refuses_before_handler(tmp_path, monkeypatch):
     # Given an ordinary server with receipt storage disabled.
     async with sdk_wire(tmp_path, monkeypatch, enabled=False) as (_, counts, call):
