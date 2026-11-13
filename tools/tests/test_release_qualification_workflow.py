@@ -100,6 +100,86 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
     assert "not release qualification" in str(jobs["license_free"])
 
 
+def test_fork_selection_matches_qualification_trigger():
+    from tools import ci_scope
+
+    fork = workflow("fork-beta-tools.yml")
+    qualification = workflow("release-qualification.yml")
+    fork_trigger = fork.get("on", fork.get(True))["push"]
+    qualification_trigger = qualification.get("on", qualification.get(True))["push"]
+    assert fork_trigger["branches"] == qualification_trigger["branches"] == ["beta"]
+    assert set(qualification_trigger["paths"]) == {
+        *(prefix + "**" for prefix in ci_scope.QUALIFICATION_PREFIXES),
+        *ci_scope.QUALIFICATION_FILES,
+    }
+    call = fork["jobs"]["unity_tests"]
+    assert call["with"]["ref"] == "${{ github.sha }}"
+    assert (
+        call["with"]["qualification_owns_player"]
+        == "${{ vars.UNITY_RUN_LICENSED_TESTS == 'true' && needs.changes.outputs.qualification_selected == 'true' }}"
+    )
+
+
+@pytest.mark.parametrize(
+    "delegate,event,ref,repository,licensed,backend,profile,expected",
+    [
+        (True, "push", "refs/heads/beta", "fork/repo", "true", "mono", "standard", False),
+        (False, "push", "refs/heads/beta", "fork/repo", "true", "mono", "standard", True),
+        (True, "push", "refs/heads/beta", "fork/repo", "false", "mono", "standard", True),
+        (True, "push", "refs/heads/main", "fork/repo", "true", "mono", "standard", True),
+        (True, "push", "refs/heads/beta", "CoplayDev/unity-mcp", "true", "mono", "standard", True),
+        (True, "pull_request", "refs/heads/beta", "fork/repo", "true", "mono", "standard", True),
+        (
+            True,
+            "workflow_dispatch",
+            "refs/heads/beta",
+            "fork/repo",
+            "true",
+            "mono",
+            "standard",
+            True,
+        ),
+        (True, "push", "refs/heads/beta", "fork/repo", "true", "il2cpp", "standard", True),
+        (True, "push", "refs/heads/beta", "fork/repo", "true", "mono", "long", True),
+    ],
+)
+def test_player_route_only_delegates_licensed_fork_beta_push(
+    delegate, event, ref, repository, licensed, backend, profile, expected
+):
+    unity = workflow("unity-tests.yml")
+    trigger = unity.get("on", unity.get(True))
+    assert trigger["workflow_call"]["inputs"]["qualification_owns_player"]["default"] is False
+    expression = unity["jobs"]["playerAssurance"]["if"]
+    for name, value in {
+        "inputs.qualification_owns_player": delegate,
+        "github.event_name": event,
+        "github.ref": ref,
+        "github.repository": repository,
+        "vars.UNITY_RUN_LICENSED_TESTS": licensed,
+        "inputs.player_backend": backend,
+        "inputs.player_profile": profile,
+        "inputs.ref": "a" * 40,
+        "github.sha": "a" * 40,
+    }.items():
+        expression = expression.replace(name, repr(value))
+    expression = expression.replace("&&", " and ").replace("!", " not ").replace(" not =", " !=")
+    assert eval(expression, {"__builtins__": {}}, {}) is expected
+    player = unity["jobs"]["playerAssurance"]
+    assert (
+        "github.event_name == 'pull_request' && 'quick' || 'standard'"
+        in player["with"]["player_profile"]
+    )
+    assert player["with"]["require_player_e2e"] == "${{ inputs.require_player_e2e || false }}"
+
+
+def test_player_delegation_requires_the_qualification_commit():
+    expression = workflow("unity-tests.yml")["jobs"]["playerAssurance"]["if"]
+    assert "inputs.ref == github.sha" in expression
+    assert (
+        workflow("fork-beta-tools.yml")["jobs"]["unity_tests"]["with"]["ref"] == "${{ github.sha }}"
+    )
+
+
 @pytest.mark.parametrize(
     "job", ["identity", "bridge", "reload", "windows_vfx", "player", "distribution"]
 )

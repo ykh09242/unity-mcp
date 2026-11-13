@@ -43,6 +43,7 @@ jobs:
       actions: read
     outputs:
       profile: ${{ steps.scope.outputs.profile }}
+      qualification_selected: ${{ steps.scope.outputs.qualification_selected }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,6 +76,7 @@ jobs:
     uses: ./.github/workflows/unity-tests.yml
     with:
       ref: ${{ github.sha }}
+      qualification_owns_player: ${{ vars.UNITY_RUN_LICENSED_TESTS == 'true' && needs.changes.outputs.qualification_selected == 'true' }}
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}

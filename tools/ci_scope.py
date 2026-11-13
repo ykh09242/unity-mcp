@@ -21,6 +21,35 @@ TOOLS_ONLY = frozenset(
     }
 )
 
+# Keep in sync with release-qualification.yml's beta push paths. The tests
+# compare these prefixes and files to the actual workflow filter.
+QUALIFICATION_PREFIXES = (
+    "MCPForUnity/",
+    "Server/",
+    "TestProjects/UnityMCPTests/",
+    "CustomTools/",
+    "tools/",
+    ".github/workflows/",
+    ".github/actions/",
+)
+QUALIFICATION_FILES = frozenset({"manifest.json", "release-source-inputs.json"})
+
+
+def qualification_selected(changes: str) -> bool:
+    """Delegate only when the complete, bounded diff selects qualification."""
+    parts = changes.split("\0")
+    if not changes or parts[-1] != "" or len(parts) % 2 != 1:
+        return False
+    records = list(zip(parts[:-1:2], parts[1:-1:2]))
+    if len(records) > 300 or len({path for _, path in records}) != len(records):
+        return False
+    if not all(status in {"A", "M", "D", "T"} and path for status, path in records):
+        return False
+    return any(
+        path in QUALIFICATION_FILES or path.startswith(QUALIFICATION_PREFIXES)
+        for _, path in records
+    )
+
 
 def classify(changes: str) -> str:
     """Only known, modified files can omit product verification."""
@@ -61,9 +90,11 @@ def validated_base(repository: str, sha: str) -> bool:
     )
 
 
-def select(event: Path | None, repository: Path, github_repository: str = "") -> tuple[str, str]:
+def select_scope(
+    event: Path | None, repository: Path, github_repository: str = ""
+) -> tuple[str, str, bool]:
     if event is None:
-        return "full", "No push event available"
+        return "full", "No push event available", False
     try:
         payload = json.loads(event.read_text(encoding="utf-8"))
         before, after = payload["before"], payload["after"]
@@ -71,7 +102,7 @@ def select(event: Path | None, repository: Path, github_repository: str = "") ->
             not isinstance(sha, str) or not re.fullmatch(r"[a-f0-9]{40}", sha) or sha == "0" * 40
             for sha in (before, after)
         ):
-            return "full", "Missing or invalid push range"
+            return "full", "Missing or invalid push range", False
 
         def git(*args: str) -> str:
             return subprocess.run(
@@ -86,19 +117,27 @@ def select(event: Path | None, repository: Path, github_repository: str = "") ->
             ).stdout
 
         if git("rev-parse", "HEAD").strip() != after:
-            return "full", "Checkout does not match the push"
+            return "full", "Checkout does not match the push", False
         git("merge-base", "--is-ancestor", before, after)
-        profile = classify(git("diff", "--name-status", "-z", "--no-renames", before, after, "--"))
+        changes = git("diff", "--name-status", "-z", "--no-renames", before, after, "--")
+        profile = classify(changes)
+        qualification = qualification_selected(changes)
         if profile == "tools-only" and not validated_base(github_repository, before):
-            return "full", "Previous commit has no verified successful fork-beta run"
+            return "full", "Previous commit has no verified successful fork-beta run", qualification
         return (
             profile,
             "Only allowlisted tooling changed"
             if profile == "tools-only"
             else "Full validation required by changed paths",
+            qualification,
         )
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-        return "full", "Push range could not be verified"
+        return "full", "Push range could not be verified", False
+
+
+def select(event: Path | None, repository: Path, github_repository: str = "") -> tuple[str, str]:
+    profile, reason, _ = select_scope(event, repository, github_repository)
+    return profile, reason
 
 
 def gate(profile: str, classification: str, python: str, unity: str, codex: str) -> bool:
@@ -131,12 +170,15 @@ def main(argv: list[str] | None = None) -> int:
             else "Selected validation failed or was unexpectedly skipped"
         )
         return 0 if passed else 1
-    profile, reason = select(args.event, args.repository, os.environ.get("GITHUB_REPOSITORY", ""))
+    profile, reason, qualification = select_scope(
+        args.event, args.repository, os.environ.get("GITHUB_REPOSITORY", "")
+    )
     print(f"Validation profile: {profile}. {reason}.")
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with Path(output).open("a", encoding="utf-8") as stream:
             stream.write(f"profile={profile}\n")
+            stream.write(f"qualification_selected={str(qualification).lower()}\n")
     return 0
 
 

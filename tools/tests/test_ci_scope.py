@@ -118,9 +118,11 @@ def test_real_git_range_and_missing_base_fail_closed(tmp_path, monkeypatch, prio
     assert ci_scope.select(event, tmp_path, "owner/repo")[0] == (
         "tools-only" if prior == "success" else "full"
     )
+    assert ci_scope.select_scope(event, tmp_path, "owner/repo")[2] is True
     for base, head in [("0" * 40, after), ("1" * 40, after), (before, before), (after, after)]:
         event.write_text(json.dumps({"before": base, "after": head}), encoding="utf-8")
         assert ci_scope.select(event, tmp_path, "owner/repo")[0] == "full"
+        assert ci_scope.select_scope(event, tmp_path, "owner/repo")[2] is False
 
 
 @pytest.mark.parametrize(
@@ -151,8 +153,26 @@ def test_unavailable_event_selects_full_and_emits_output(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
     assert ci_scope.main(["select", "--event", str(tmp_path / "missing")]) == 0
-    assert output.read_text(encoding="utf-8") == "profile=full\n"
+    assert output.read_text(encoding="utf-8") == "profile=full\nqualification_selected=false\n"
     assert ci_scope.select(None, Path.cwd())[0] == "full"
+
+
+@pytest.mark.parametrize(
+    "changes,expected",
+    [
+        ("M\0Server/src/file.py\0", True),
+        ("D\0.github/workflows/example.yml\0", True),
+        ("M\0manifest.json\0", True),
+        ("M\0docker-compose.yml\0", False),
+        ("M\0website/docs/reference/tools/example.md\0", False),
+        ("M\0docker-compose.yml\0A\0Server/src/file.py\0", True),
+        ("M\0Server/src/file.py", False),
+        ("R100\0old\0Server/src/file.py\0", False),
+        ("".join(f"M\0Server/src/file{i}.py\0" for i in range(301)), False),
+    ],
+)
+def test_qualification_selection_fails_closed_for_uncovered_or_ambiguous_diff(changes, expected):
+    assert ci_scope.qualification_selected(changes) is expected
 
 
 def test_check_cli_failure_is_nonzero():

@@ -53,6 +53,11 @@ on:
         type: boolean
         required: false
         default: false
+      qualification_owns_player:
+        description: "Fork beta push delegates standard Player evidence to release qualification."
+        type: boolean
+        required: false
+        default: false
       ref:
         description: "Git ref to test (defaults to the triggering ref)."
         type: string
@@ -114,6 +119,11 @@ concurrency:
 jobs:
   playerAssurance:
     name: Windows Mono Player assurance
+    if: >-
+      !(inputs.qualification_owns_player && github.event_name == 'push' &&
+      github.ref == 'refs/heads/beta' && github.repository != 'CoplayDev/unity-mcp' &&
+      vars.UNITY_RUN_LICENSED_TESTS == 'true' && inputs.player_backend == 'mono' &&
+      inputs.player_profile == 'standard' && inputs.ref == github.sha)
     uses: ./.github/workflows/unity-player-tests.yml
     with:
       backend: ${{ inputs.player_backend || 'mono' }}
