@@ -171,6 +171,7 @@ namespace MCPForUnity.Editor.Windows
             {
                 stepClients.AddToClassList("hidden");
                 stepDeps.RemoveFromClassList("hidden");
+                rootVisualElement.Q<ScrollView>("root-container").scrollOffset = Vector2.zero;
             };
 
             // Initial update
@@ -275,6 +276,7 @@ namespace MCPForUnity.Editor.Windows
             stepDeps.AddToClassList("hidden");
             stepClients.RemoveFromClassList("hidden");
             PopulateClientsList();
+            rootVisualElement.Q<ScrollView>("root-container").scrollOffset = Vector2.zero;
         }
 
         private void PopulateClientsList()
