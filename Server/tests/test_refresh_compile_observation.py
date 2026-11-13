@@ -365,7 +365,7 @@ async def test_ready_transition_reobserves_finished_job_coordination(summary_pee
         "no_owned_reservation" if available else "finished"
     )
     if not available:
-        assert result.data["compilation_observation_error"] == "tracking_unsupported"
+        assert result.data["compilation_observation_error"] == "observation_unavailable"
         assert result.data["compilation_observation_age_seconds"] == 0.25
     assert summary_peer.now == 0.25
 

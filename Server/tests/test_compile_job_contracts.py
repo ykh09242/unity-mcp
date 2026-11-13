@@ -131,7 +131,7 @@ def test_terminal_compile_follow_up_has_no_retry(outcome, reason, action):
 
     job = unknown_compile_job("a" * 32, reason)
     job["outcome"] = outcome
-    follow_up = compile_follow_up(job, "Fixture@one")
+    follow_up = compile_follow_up(job, "Fixture@one", source_observed=True)
     assert follow_up["action"] == action
     assert "next_call" not in follow_up
 
@@ -255,7 +255,7 @@ def test_untrusted_native_evidence_fails_closed(change):
     result = parse_compile_job(job, "a" * 32)
     # Then no malformed response can certify success.
     assert result["outcome"] == "unknown"
-    assert result["reason"] == "tracking_unsupported"
+    assert result["reason"] == ("job_identity_mismatch" if change == "id" else "invalid_evidence")
 
 
 @pytest.mark.asyncio
@@ -308,7 +308,7 @@ def test_untrusted_absolute_paths_cannot_escape_native_response_boundary(field, 
     )
     item[field] = value
     job["diagnostics"] = [item]
-    assert parse_compile_job(job, "a" * 32)["reason"] == "tracking_unsupported"
+    assert parse_compile_job(job, "a" * 32)["reason"] == "invalid_evidence"
 
 
 def test_compilation_summary_is_preserved_by_editor_state_model():
@@ -385,7 +385,7 @@ def test_definitive_outcome_requires_exact_request_candidate_and_chronology(chan
         job["requested_at_unix_ms"] = None
     else:
         job["requested_at_unix_ms"] = 4
-    assert parse_compile_job(job, "a" * 32)["reason"] == "tracking_unsupported"
+    assert parse_compile_job(job, "a" * 32)["reason"] == "invalid_evidence"
 
 
 @pytest.mark.parametrize(

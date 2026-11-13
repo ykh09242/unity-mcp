@@ -16,6 +16,7 @@ from pydantic import Field
 
 from models import MCPResponse
 from models.response_lifetime import ResponsePollLifetime
+from models.source_freshness import parse_freshness
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 import transport.unity_transport as unity_transport
@@ -539,6 +540,9 @@ async def refresh_unity(
                 unity_instance or dirty_instance,
                 recovery_required="recovery_required"
                 in ((readiness or {}).get("blocking_reasons") or []),
+                source=parse_freshness(data["source_freshness"])
+                if data.get("source_freshness") is not None
+                else None,
             )
             data["source_revision_confirmed"] = False
             # The goal is an observed request-associated pipeline cycle, not a

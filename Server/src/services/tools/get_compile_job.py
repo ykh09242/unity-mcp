@@ -9,7 +9,9 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from models import MCPResponse
+from models.evidence_diagnostics import EvidenceDiagnostics
 from models.native_recovery import NativeRecovery, RecoveryAction, parse_recovery, recovery_action
+from models.source_freshness import SourceFreshness, parse_freshness
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 import transport.unity_transport as unity_transport
@@ -113,6 +115,9 @@ class CompileJob(BaseModel):
     native_coordination: CompileCoordination | None = None
     status: Literal["compiled", "already_up_to_date", "failed", "pending", "unknown"] = "unknown"
     last_successful_compilation: SuccessfulCompilation | None = None
+    evidence_diagnostics: EvidenceDiagnostics | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def truthful_outcome(self):
@@ -178,17 +183,36 @@ class CompileJob(BaseModel):
         return self
 
 
-def unknown_compile_job(compile_id: str, reason: str) -> dict:
+def unknown_compile_job(
+    compile_id: str, reason: str, diagnostics: EvidenceDiagnostics | None = None
+) -> dict:
     return CompileJob(
-        schema_version="unity-mcp/compile_job@1", compile_id=compile_id, reason=reason
+        schema_version="unity-mcp/compile_job@1",
+        compile_id=compile_id,
+        reason=reason,
+        evidence_diagnostics=diagnostics,
     ).model_dump()
 
 
 def parse_compile_job(value, compile_id: str, *, last_successful_compilation=None) -> dict:
+    if value is None:
+        return unknown_compile_job(compile_id, "tracking_unsupported")
+    if isinstance(value, dict) and value.get("schema_version") not in (
+        None,
+        "unity-mcp/compile_job@1",
+    ):
+        return unknown_compile_job(
+            compile_id, "unsupported_schema", EvidenceDiagnostics(code="unsupported_schema")
+        )
     try:
-        job = CompileJob.model_validate(value)
+        native = (
+            {key: item for key, item in value.items() if key != "evidence_diagnostics"}
+            if isinstance(value, dict)
+            else value
+        )
+        job = CompileJob.model_validate(native)
         if job.compile_id != compile_id:
-            raise ValueError("Mismatched compilation identity")
+            return unknown_compile_job(compile_id, "job_identity_mismatch")
         if last_successful_compilation is not None:
             try:
                 previous = SuccessfulCompilation.model_validate(last_successful_compilation)
@@ -197,8 +221,16 @@ def parse_compile_job(value, compile_id: str, *, last_successful_compilation=Non
             except ValidationError:
                 pass  # Optional history cannot invalidate current compiler evidence.
         return job.model_dump()
-    except (ValidationError, ValueError):
-        return unknown_compile_job(compile_id, "tracking_unsupported")
+    except ValidationError as error:
+        return unknown_compile_job(
+            compile_id,
+            "invalid_evidence",
+            EvidenceDiagnostics.from_validation(error, CompileJob.model_fields),
+        )
+    except (ValueError, TypeError, RecursionError):
+        return unknown_compile_job(
+            compile_id, "invalid_evidence", EvidenceDiagnostics(code="invalid_encoding")
+        )
 
 
 async def read_compile_job(
@@ -219,22 +251,37 @@ async def read_compile_job(
     except Exception:
         return unknown_compile_job(compile_id, "observation_unavailable")
     value = response.model_dump() if isinstance(response, MCPResponse) else response
-    if not isinstance(value, dict) or value.get("success") is not True:
+    if not isinstance(value, dict) or type(value.get("success")) is not bool:
+        return unknown_compile_job(
+            compile_id, "invalid_evidence", EvidenceDiagnostics(code="invalid_shape")
+        )
+    if not value["success"]:
+        message = value.get("error") or value.get("message") or ""
+        message = message.lower() if isinstance(message, str) else ""
+        data = value.get("data") if isinstance(value.get("data"), dict) else {}
+        if value.get("code") == "unknown_command" or message in (
+            "unknown command",
+            "unknown command: get_compile_job",
+        ):
+            return unknown_compile_job(compile_id, "tracking_unsupported")
         if (
-            isinstance(value, dict)
-            and isinstance(value.get("data"), dict)
-            and value["data"].get("next_action") == "poll_same_job"
+            data.get("next_action") == "poll_same_job"
+            or data.get("reason") == "outcome_unknown"
+            or message
+            in ("disconnected", "connection closed", "timeout", "temporarily unavailable")
         ):
             return unknown_compile_job(compile_id, "observation_unavailable")
-        return unknown_compile_job(compile_id, "tracking_unsupported")
+        return unknown_compile_job(compile_id, "observation_rejected")
+    if value.get("data") is None:
+        return unknown_compile_job(
+            compile_id, "invalid_evidence", EvidenceDiagnostics(code="invalid_shape")
+        )
     result = parse_compile_job(
         value.get("data"),
         compile_id,
         last_successful_compilation=value.get("last_successful_compilation"),
     )
     if evidence is not None and value.get("source_freshness") is not None:
-        from models.source_freshness import parse_freshness
-
         evidence["source_freshness"] = parse_freshness(value["source_freshness"])
     # New peers keep diagnostics outside the strict ledger contract so older
     # servers can still read compiler outcomes. Invalid optional diagnostics do
@@ -271,7 +318,14 @@ async def read_compile_job(
     return result
 
 
-def compile_follow_up(job: dict, instance: str | None, *, recovery_required: bool = False) -> dict:
+def compile_follow_up(
+    job: dict,
+    instance: str | None,
+    *,
+    recovery_required: bool = False,
+    source: SourceFreshness | None = None,
+    source_observed: bool = False,
+) -> dict:
     """Suggest observation of the same request without replaying compilation."""
     coordination = job.get("native_coordination") or {}
     if recovery_required or coordination.get("phase") == "recovery_required":
@@ -290,11 +344,25 @@ def compile_follow_up(job: dict, instance: str | None, *, recovery_required: boo
     }
     reason_actions = {
         "tracking_unsupported": "inspect_tracking_support",
+        "unsupported_schema": "inspect_protocol_compatibility",
+        "invalid_evidence": "inspect_evidence_diagnostics",
+        "job_identity_mismatch": "inspect_job_identity",
+        "observation_rejected": "inspect_observation_rejection",
         "not_found": "inspect_job_identity",
     }
-    return {
+    follow_up = {
         "action": actions.get(job["outcome"], reason_actions.get(job["reason"], "inspect_evidence"))
     }
+    if (
+        not source_observed
+        and (job["outcome"] == "success" or job["reason"] == "result_unavailable")
+        and (source is None or source.reason == "reload_requires_observation")
+    ):
+        arguments = {"compile_id": job["compile_id"], "observe_source": True}
+        if instance:
+            arguments["unity_instance"] = instance
+        follow_up["next_call"] = {"tool": "get_compile_job", "arguments": arguments}
+    return follow_up
 
 
 class CompileJobResponse(MCPResponse):
@@ -328,6 +396,6 @@ async def get_compile_job(
     return CompileJobResponse(
         success=True,
         data=job,
-        follow_up=compile_follow_up(job, instance),
+        follow_up=compile_follow_up(job, instance, source=source, source_observed=observe_source),
         source_freshness=source.model_dump(by_alias=True) if source else None,
     )

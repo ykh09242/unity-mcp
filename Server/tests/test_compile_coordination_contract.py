@@ -149,7 +149,7 @@ def test_malformed_coordination_is_not_accepted_as_evidence(field, value):
     job["native_coordination"][field] = value
     result = status.parse_compile_job(job, COMPILE_ID)
     assert result["outcome"] == "unknown"
-    assert result["reason"] == "tracking_unsupported"
+    assert result["reason"] == "invalid_evidence"
 
 
 def test_valid_coordination_does_not_weaken_ledger_evidence_validation():
@@ -158,7 +158,7 @@ def test_valid_coordination_does_not_weaken_ledger_evidence_validation():
     job["collection_complete"] = False
     result = status.parse_compile_job(job, COMPILE_ID)
     assert result["outcome"] == "unknown"
-    assert result["reason"] == "tracking_unsupported"
+    assert result["reason"] == "invalid_evidence"
 
 
 @pytest.mark.asyncio

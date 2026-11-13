@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from models.evidence_diagnostics import EvidenceDiagnostics
+
 
 class Coverage(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True)
@@ -48,6 +50,9 @@ class SourceFreshness(BaseModel):
     loaded_assemblies: list[AssemblyIdentity] = Field(default_factory=list, max_length=512)
     process_id: int | None = Field(default=None, ge=1)
     observation_in_progress: bool = False
+    evidence_diagnostics: EvidenceDiagnostics | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def consistent_current(self):
@@ -79,10 +84,33 @@ def parse_freshness(value) -> SourceFreshness:
     if value is None:
         return SourceFreshness()
     try:
-        if not isinstance(value, dict) or value.get("schema") != "unity-mcp/source_freshness@1":
-            raise ValueError("Unsupported evidence schema")
+        if not isinstance(value, dict):
+            return SourceFreshness(
+                reason="invalid_evidence",
+                evidence_diagnostics=EvidenceDiagnostics(code="invalid_shape"),
+            )
+        if value.get("schema") != "unity-mcp/source_freshness@1":
+            return SourceFreshness(
+                reason="invalid_evidence",
+                evidence_diagnostics=EvidenceDiagnostics(code="unsupported_schema"),
+            )
         if len(json.dumps(value, ensure_ascii=False).encode("utf-8")) > 256 * 1024:
-            raise ValueError("Evidence limit")
-        return SourceFreshness.model_validate(value)
-    except (ValidationError, ValueError, TypeError, RecursionError):
-        return SourceFreshness(reason="invalid_evidence")
+            return SourceFreshness(
+                reason="invalid_evidence",
+                evidence_diagnostics=EvidenceDiagnostics(code="payload_limit_exceeded"),
+            )
+        return SourceFreshness.model_validate(
+            {key: item for key, item in value.items() if key != "evidence_diagnostics"}
+        )
+    except ValidationError as error:
+        return SourceFreshness(
+            reason="invalid_evidence",
+            evidence_diagnostics=EvidenceDiagnostics.from_validation(
+                error, SourceFreshness.model_fields
+            ),
+        )
+    except (ValueError, TypeError, RecursionError):
+        return SourceFreshness(
+            reason="invalid_evidence",
+            evidence_diagnostics=EvidenceDiagnostics(code="invalid_encoding"),
+        )
