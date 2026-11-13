@@ -2142,8 +2142,14 @@ class PluginHub(WebSocketEndpoint):
                         _expected_generation = refusal.transport_generation
                         budget.phase = "native_admission"
                         await asyncio.sleep(min(0.1, budget.remaining()))
-                    except (CommandResumeInterrupted, CommandNotDispatchedError):
-                        if resume is None or original_session is None:
+                    except (CommandResumeInterrupted, CommandNotDispatchedError) as exc:
+                        if resume is None:
+                            raise
+                        if not resume.dispatched:
+                            raise CommandNotDispatchedError(
+                                "Plugin disconnected before dispatch"
+                            ) from exc
+                        if original_session is None:
                             raise
                         resume.interrupted()
                         budget.phase = "reload_wait"
@@ -2151,16 +2157,19 @@ class PluginHub(WebSocketEndpoint):
                             registry, original_session, resume, budget
                         )
                         if resumed is None:
+                            if not budget.dispatched:
+                                raise CommandNotDispatchedError(
+                                    "Original Editor continuation is unavailable before dispatch"
+                                )
                             return command_outcome_unknown(
                                 command_type,
                                 "Original Editor continuation is unavailable",
-                                session_id=session_id,
+                                session_id=budget.session_id,
                                 command_id=budget.command_id,
                                 phase=budget.phase,
                                 cause="resume_target_changed",
                             )
                         session_id = resumed
-                        budget.session_id = session_id
                         socket = cls._connections.get(session_id)
                         _expected_generation = getattr(socket.state, "plugin_generation", None)
         except OperationPermissionError:
@@ -2168,7 +2177,7 @@ class PluginHub(WebSocketEndpoint):
                 return command_outcome_unknown(
                     command_type,
                     "Remote operation permission ended",
-                    session_id=session_id,
+                    session_id=budget.session_id,
                     command_id=budget.command_id,
                     phase=budget.phase,
                     cause="permission_ended",
@@ -2179,7 +2188,7 @@ class PluginHub(WebSocketEndpoint):
                 return command_outcome_unknown(
                     command_type,
                     "Remote authorization ended",
-                    session_id=session_id,
+                    session_id=budget.session_id,
                     command_id=budget.command_id,
                     phase=budget.phase,
                     cause="authentication_ended",
@@ -2418,6 +2427,15 @@ class PluginHub(WebSocketEndpoint):
             )
             reserve = cls._pending_reservation(session_id, user_id, _payload_bytes, control=control)
             if reserve is None:
+                if budget.dispatched:
+                    return command_outcome_unknown(
+                        command_type,
+                        "Command capacity prevented recovery of the previous attempt",
+                        session_id=budget.session_id,
+                        command_id=budget.command_id,
+                        phase=budget.phase,
+                        cause="command_capacity",
+                    )
                 return cls._command_capacity_response()
             # Unknown/custom/batch commands may mutate. Advance before socket
             # I/O so later readers cannot join an earlier observation.
@@ -2599,7 +2617,6 @@ class PluginHub(WebSocketEndpoint):
             deadline = budget.expires_at
             phase_diagnostics.step(command_type, "send")
             budget.phase = "send"
-            budget.command_id = command_id
             try:
                 dispatch = CommandDispatch(
                     websocket=websocket,
@@ -2672,8 +2689,8 @@ class PluginHub(WebSocketEndpoint):
                 return command_outcome_unknown(
                     command_type,
                     "Remote operation permission ended",
-                    session_id=session_id,
-                    command_id=command_id,
+                    session_id=budget.session_id,
+                    command_id=budget.command_id,
                     phase=budget.phase,
                     cause="permission_ended",
                 )
@@ -2684,38 +2701,38 @@ class PluginHub(WebSocketEndpoint):
                 return command_outcome_unknown(
                     command_type,
                     "Remote authorization ended",
-                    session_id=session_id,
-                    command_id=command_id,
+                    session_id=budget.session_id,
+                    command_id=budget.command_id,
                     phase=budget.phase,
                     cause="authentication_ended",
                 )
             except (PluginDisconnectedError, OSError) as exc:
-                if (
-                    _resume is not None
-                    and not _resume.cancelled.is_set()
-                    and not isinstance(exc, TimeoutError)
-                ):
+                if _resume is not None and not _resume.cancelled.is_set():
                     raise CommandResumeInterrupted() from exc
+                if not budget.dispatched:
+                    raise CommandNotDispatchedError("Plugin disconnected before dispatch") from exc
                 canceled = True
                 return command_outcome_unknown(
                     command_type,
                     str(exc) or type(exc).__name__,
-                    session_id=session_id,
-                    command_id=command_id,
+                    session_id=budget.session_id,
+                    command_id=budget.command_id,
                     phase=budget.phase,
-                    cause="timeout" if isinstance(exc, TimeoutError) else "disconnected",
+                    cause="disconnected",
                 )
             except asyncio.CancelledError:
                 # Preserve cancellation of the caller. Cancellation of just the
                 # socket writer is instead an uncertain transport outcome.
                 if asyncio.current_task().cancelling():
                     raise
+                if not budget.dispatched:
+                    raise CommandNotDispatchedError("Socket writer was cancelled before dispatch")
                 canceled = True
                 return command_outcome_unknown(
                     command_type,
                     "socket write was cancelled",
-                    session_id=session_id,
-                    command_id=command_id,
+                    session_id=budget.session_id,
+                    command_id=budget.command_id,
                     phase=budget.phase,
                     cause="send_cancelled",
                 )
@@ -2731,8 +2748,8 @@ class PluginHub(WebSocketEndpoint):
                 return command_outcome_unknown(
                     command_type,
                     str(exc) or type(exc).__name__,
-                    session_id=session_id,
-                    command_id=command_id,
+                    session_id=budget.session_id,
+                    command_id=budget.command_id,
                     phase=budget.phase,
                     cause=cause,
                 )

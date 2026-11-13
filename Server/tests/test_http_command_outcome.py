@@ -14,6 +14,7 @@ from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
 from transport.unity_transport import send_with_unity_instance
 from tests.transport_socket import JsonSocket
+from tests.timing import await_completion, await_signal
 
 
 @pytest_asyncio.fixture
@@ -58,6 +59,99 @@ async def command_hub(monkeypatch):
 
 async def dispatch(command="manage_scene"):
     return await send_with_unity_instance(None, "Fixture@hash", command, {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("continuation", "first_written", "recovery"),
+    [
+        (False, False, None),
+        (False, True, None),
+        (True, False, None),
+        (True, False, "cold"),
+        (True, True, "cold"),
+        (True, True, "disconnect"),
+        (True, True, "capacity"),
+    ],
+)
+async def test_disconnect_at_write_boundary_uses_actual_dispatch_evidence(
+    command_hub, monkeypatch, continuation, first_written, recovery
+):
+    from copy import copy
+    from transport.command_dispatch import CommandDispatch
+    from transport.command_resume import CAPABILITY
+    from transport.native_arbitration import CAPABILITY as ARBITRATION
+
+    original = command_hub.websocket
+    if continuation:
+        original.state.plugin_features |= {ARBITRATION, CAPABILITY}
+        original.state.plugin_resume_generation = "e" * 32
+        original.state.plugin_arbitration_generation = "a" * 32
+    before_write, after_write = asyncio.Event(), asyncio.Event()
+    release = asyncio.Event()
+    authorize_write = CommandDispatch.authorize_write
+
+    async def authorize(writer):
+        if not first_written or writer.session_id == "restored":
+            before_write.set()
+            await release.wait()
+        return await authorize_write(writer)
+
+    async def observe(message):
+        command_hub.sent.append(message)
+        if message["type"] == "execute":
+            after_write.set()
+            await release.wait()
+
+    async def reconnect(session_id, editor_generation):
+        socket = copy(original)
+        socket.state = copy(original.state)
+        socket.state.plugin_session_id = socket.state.plugin_generation = session_id
+        socket.state.plugin_registered = True
+        socket.state.plugin_resume_generation = editor_generation
+        await command_hub.registry.register(session_id, "Fixture", "hash", "6000.3")
+        PluginHub._connections[session_id] = socket
+        return socket
+
+    monkeypatch.setattr(CommandDispatch, "authorize_write", authorize)
+    original.send_json = observe
+    command = asyncio.create_task(dispatch())
+    try:
+        await await_signal(
+            after_write if first_written else before_write,
+            "first write boundary",
+            producers=(command,),
+        )
+        await command_hub.endpoint.on_disconnect(original, 1006)
+        if recovery == "capacity":
+            monkeypatch.setattr(PluginHub, "MAX_PENDING_COMMANDS", 0)
+            await reconnect("restored", "e" * 32)
+        if recovery == "disconnect":
+            restored = await reconnect("restored", "e" * 32)
+            await await_signal(
+                before_write, "continuation admitted before write", producers=(command,)
+            )
+            await command_hub.endpoint.on_disconnect(restored, 1006)
+        if recovery in {"cold", "disconnect"}:
+            # End recovery promptly through the real cold-Editor generation fence.
+            await reconnect("cold", "f" * 32)
+        result = await await_completion(command, "disconnected command outcome")
+        executes = [message for message in command_hub.sent if message["type"] == "execute"]
+        assert len(executes) == int(first_written)
+        if first_written:
+            assert result["hint"] == "inspect_state_before_retry"
+            assert result["data"]["reason"] == "outcome_unknown"
+            assert result["data"]["session_id"] == "session"
+            assert result["data"]["command_id"] == executes[0]["id"]
+        else:
+            assert result["hint"] == "retry"
+            assert result["data"]["reason"] == "command_not_dispatched"
+            assert command_hub.sent == []
+        assert PluginHub._pending == {}
+    finally:
+        release.set()
+        command.cancel()
+        await asyncio.gather(command, return_exceptions=True)
 
 
 @pytest.mark.asyncio

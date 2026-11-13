@@ -178,6 +178,10 @@ class CommandDispatch:
                 session_id=self.session_id,
                 generation=self.generation,
             )
+        # Publish the wire identity only once this attempt can reach Unity. A
+        # reconnect that stops in admission must preserve the previous write.
+        self.budget.session_id = self.session_id
+        self.budget.command_id = self.command_id
         self.budget.dispatched = True
 
     async def observe(
