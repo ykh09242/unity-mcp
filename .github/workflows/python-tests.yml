@@ -332,7 +332,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path $evidence | Out-Null
           $revision = git rev-parse HEAD
           if ($LASTEXITCODE -ne 0) { throw 'Candidate identity failed' }
-          git archive --format=zip --output=$archive "${revision}:Server"
+          $timestamp = git show -s --format=%ct $revision
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate timestamp failed' }
+          git -c core.autocrlf=false archive --format=zip --mtime="@$timestamp" --output=$archive "${revision}:Server"
           if ($LASTEXITCODE -ne 0) { throw 'Candidate archive failed' }
           $environment = Join-Path $env:RUNNER_TEMP 'candidate-environment'
           uv venv --no-config --python $env:ARCHIVE_PYTHON_VERSION $environment

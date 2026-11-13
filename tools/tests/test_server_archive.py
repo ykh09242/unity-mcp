@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import sys
 import json
+import io
+import zipfile
 from importlib.util import module_from_spec, spec_from_file_location
 
 import pytest
@@ -260,7 +262,9 @@ def test_archive_workflow_installs_the_checked_candidate_without_lock_or_source_
         for step in steps
         if step.get("name") == "Install candidate archive without runtime lock"
     )
-    assert "git archive" in install["run"]
+    assert "git -c core.autocrlf=false archive" in install["run"]
+    assert "$timestamp = git show -s --format=%ct $revision" in install["run"]
+    assert '--mtime="@$timestamp"' in install["run"]
     assert '"${revision}:Server"' in install["run"]
     assert "$revision = git rev-parse HEAD" in install["run"]
     assert "ARCHIVE_CANDIDATE_SHA=$revision" in install["run"]
@@ -281,6 +285,51 @@ def test_archive_workflow_installs_the_checked_candidate_without_lock_or_source_
     assert "check_server_startup.py" in behavior["run"]
     assert "PYTHONPATH" not in job.get("env", {})
     assert "PYTHONPATH" not in behavior.get("env", {})
+
+
+def test_candidate_subtree_archive_repeats_commit_time_and_content(tmp_path):
+    # A fixed commit from 2000 cannot accidentally pass with today's archive timestamp.
+    def git(*args):
+        return subprocess.check_output(
+            ["git", *args],
+            cwd=tmp_path,
+            env={
+                **os.environ,
+                "GIT_AUTHOR_DATE": "@946684800 +0000",
+                "GIT_COMMITTER_DATE": "@946684800 +0000",
+                "TZ": "UTC",
+            },
+        )
+
+    git("init", "-q")
+    (tmp_path / "Server").mkdir()
+    (tmp_path / "Server/package.txt").write_bytes(b"candidate\n")
+    git("-c", "core.autocrlf=false", "add", "Server/package.txt")
+    git(
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-qm",
+        "fixture",
+    )
+    revision = git("rev-parse", "HEAD").decode().strip()
+    timestamp = git("show", "-s", "--format=%ct", revision).decode().strip()
+    args = (
+        "-c",
+        "core.autocrlf=false",
+        "archive",
+        "--format=zip",
+        f"--mtime=@{timestamp}",
+        f"{revision}:Server",
+    )
+    first = git(*args)
+    assert git(*args) == first
+    with zipfile.ZipFile(io.BytesIO(first)) as archive:
+        assert archive.namelist() == ["package.txt"]
+        assert archive.getinfo("package.txt").date_time == (2000, 1, 1, 0, 0, 0)
+        assert archive.read("package.txt") == b"candidate\n"
 
 
 def test_archive_workflow_adds_only_linux_315_and_retains_cross_os_311_behavior():
