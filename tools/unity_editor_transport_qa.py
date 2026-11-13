@@ -78,6 +78,7 @@ def snapshot_source(args, output):
         "TestProjects/UnityMCPTests/ProjectSettings",
         "tools/unity_ci_packages.py",
         "tools/unity-ci-packages.json",
+        "tools/unity-registry-pins.json",
     ]
     snapshot.mkdir()
     source = {"ref": ref, "snapshotPaths": paths, "workingTree": args.working_tree}

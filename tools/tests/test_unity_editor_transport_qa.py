@@ -122,6 +122,34 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         self.assertEqual(0, process.terminated)
         self.assertEqual(0, process.killed)
 
+    def test_working_snapshot_carries_registry_integrity_pins(self):
+        repository = self.output / "repository"
+        for relative in (
+            "MCPForUnity",
+            "TestProjects/UnityMCPTests/Assets/Tests",
+            "TestProjects/UnityMCPTests/Assets/Scripts",
+            "TestProjects/UnityMCPTests/ProjectSettings",
+            "tools",
+        ):
+            (repository / relative).mkdir(parents=True)
+        for name in ("unity_ci_packages.py", "unity-ci-packages.json"):
+            (repository / "tools" / name).write_text("{}")
+        pins = b'{"schema_version":1,"packages":{}}\n'
+        (repository / "tools/unity-registry-pins.json").write_bytes(pins)
+        exported = self.output / "exported"
+        with (
+            patch.object(qa, "ROOT", repository),
+            patch.object(qa.subprocess, "check_output", return_value="a" * 40),
+        ):
+            qa.snapshot_source(SimpleNamespace(ref="HEAD", working_tree=True), exported)
+        pin_path = exported / "snapshot/tools/unity-registry-pins.json"
+        self.assertTrue(
+            pin_path.is_file(), "Package resolution needs its integrity pins in the snapshot"
+        )
+        self.assertEqual(pins, pin_path.read_bytes())
+        receipt = json.loads((exported / "source.json").read_text())
+        self.assertIn("tools/unity-registry-pins.json", receipt["fileSha256"])
+
     def test_graphics_group_launch_omits_null_device_and_records_requirement(self):
         self.args.groups_manifest = qa.ROOT / "tools/unity-native-groups.json"
         self.args.group = ["validation-capabilities"]
