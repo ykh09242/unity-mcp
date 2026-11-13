@@ -121,7 +121,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             };
             foreach (PlayScenarioDefinition definition in selected)
             {
-                PlayScenarioDefinition frozen = PlayScenarioDefinition.Parse(JObject.FromObject(definition));
+                PlayScenarioDefinition frozen = PlayScenarioParameters.Materialize(definition);
                 if (state.Definitions.Any(item => item.Name == frozen.Name))
                     throw new ArgumentException("Resolved suite scenarios must be unique.");
                 state.Definitions.Add(frozen);

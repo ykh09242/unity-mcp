@@ -114,8 +114,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (definition == null)
                 throw new ArgumentNullException(nameof(definition));
-            PlayScenarioDefinition frozen = PlayScenarioParameters.Materialize(definition);
-            return StartCore(frozen.Name, frozen, repeatCount, timeoutSeconds, jobId, sourceRevision, jobId);
+            return StartCore(definition.Name, definition, repeatCount, timeoutSeconds, jobId, sourceRevision, jobId);
         }
 
         internal static void ValidateSourceRevision(string sourceRevision)

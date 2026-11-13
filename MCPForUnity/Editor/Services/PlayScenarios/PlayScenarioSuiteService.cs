@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -315,10 +316,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     "cancel_attempt_state",
                     "finalization_deadline_unix_ms"
                 );
+                List<PlayScenarioDefinition> definitions = ReadFrozenDefinitions(value);
                 PlayScenarioSuiteStore.ValidateReport(value["report"] as JObject);
-                if (!(value["definitions"] is JArray definitions) || definitions.Count < 1 || definitions.Count > PlayScenarioDefinition.MaximumSuiteScenarios)
-                    throw new InvalidDataException("Invalid frozen suite definitions.");
-                var normalized = definitions.Select(token => PlayScenarioDefinition.Parse(token as JObject)).ToList();
                 PlayScenarioDefinition.Integer(value, "repeat_count", 1, PlayScenarioDefinition.MaximumRepeats, 0);
                 PlayScenarioDefinition.Integer(value, "cursor", 0, definitions.Count, -1);
                 if (
@@ -352,7 +351,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 )
                     throw new InvalidDataException("Invalid suite finalization deadline.");
                 PlayScenarioSuiteState state = value.ToObject<PlayScenarioSuiteState>(PlayScenarioSuiteStore.Serializer());
-                state.Definitions = normalized;
+                state.Definitions = definitions;
                 if (
                     state.Definitions == null
                     || state.Definitions.Count != state.Report.Scenarios.Count
@@ -368,7 +367,6 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     throw new InvalidDataException("Invalid restored suite queue.");
                 for (int index = 0; index < state.Definitions.Count; index++)
                 {
-                    state.Definitions[index] = PlayScenarioDefinition.Parse(JObject.FromObject(state.Definitions[index]));
                     if (state.Definitions[index].Name != state.Report.Scenarios[index].Name)
                         throw new InvalidDataException("Restored suite queue does not match the frozen definitions.");
                     string status = state.Report.Scenarios[index].Status;
@@ -406,6 +404,33 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 SessionState.EraseString(SessionKey);
                 Debug.LogWarning("MCP play scenario suite restore failed: " + exception.Message);
             }
+        }
+
+        internal static List<PlayScenarioDefinition> ReadFrozenDefinitions(JObject checkpoint)
+        {
+            if (
+                !(checkpoint["definitions"] is JArray definitions)
+                || definitions.Count < 1
+                || definitions.Count > PlayScenarioDefinition.MaximumSuiteScenarios
+                || !(checkpoint["report"]?["scenarios"] is JArray children)
+                || children.Count != definitions.Count
+            )
+                throw new InvalidDataException("Invalid frozen suite definitions.");
+            var frozen = new List<PlayScenarioDefinition>(definitions.Count);
+            for (int index = 0; index < definitions.Count; index++)
+            {
+                var definition = PlayScenarioDefinition.Parse(definitions[index] as JObject);
+                if (definition.Parameters != null)
+                {
+                    // Older checkpoints froze the template but launched the default case. Verify its admission hash before migrating either value.
+                    if (PlayScenarioReproduction.Hash(definition) != (string)children[index]?["definition_hash"])
+                        throw new InvalidDataException("Frozen suite template does not match its admission hash.");
+                    definition = PlayScenarioParameters.Materialize(definition);
+                    children[index]["definition_hash"] = PlayScenarioReproduction.Hash(definition);
+                }
+                frozen.Add(definition);
+            }
+            return frozen;
         }
 
         private static void BeforeReload()

@@ -65,6 +65,79 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }
 
         [Test]
+        public void ParameterizedDefaultSuiteRunsItsFrozenValuesAndReopensSuccessfulChildAndSuiteReports()
+        {
+            var template = ParameterizedDefinition();
+            scenarios.Save(template);
+            var suite = PlayScenarioSuiteDefinition.Parse(new JObject { ["name"] = "suite", ["scenarios"] = new JArray(template.Name) });
+            var state = PlayScenarioSuiteRunner.Create(suite, suite.Resolve(scenarios), 1, 30, null, 1000);
+            string expectedHash = PlayScenarioReproduction.Hash(PlayScenarioParameters.Materialize(template));
+            template.Parameters["limit"]["default"] = 12;
+            scenarios.Save(template);
+            var host = new DefaultCaseHost();
+            var runner = new PlayScenarioSuiteRunner(
+                state,
+                (definition, repeats, timeout, id, revision) =>
+                {
+                    var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(definition, id, repeats, timeout, 1001), host);
+                    engine.EnteredPlayMode();
+                    for (long now = 1001; now < 2000 && engine.Running; now += 250)
+                        engine.Tick(now, true);
+                    engine.Release();
+                    scenarios.SaveReport(engine.State);
+                    return JObject.FromObject(engine.State);
+                },
+                id => JObject.FromObject(scenarios.GetReport(id)),
+                null,
+                () => { },
+                () => false
+            );
+            runner.Tick(1001, true);
+            runner.Tick(2000, true);
+            Assert.That(host.ObservedTimeout, Is.EqualTo(9));
+            suites.SaveReport(state.Report);
+            var reopened = suites.GetReport(state.Report.SuiteId);
+            var child = reopened.Scenarios.Single();
+            Assert.That(reopened.Status, Is.EqualTo("succeeded"));
+            Assert.That(child.DefinitionHash, Is.EqualTo(expectedHash));
+            Assert.That((string)child.Report["reproduction"]["definition_hash"], Is.EqualTo(expectedHash));
+            Assert.That(scenarios.GetReport(child.JobId).Scenario.Parameters, Is.Null);
+
+            // An older checkpoint may already have embedded the effective child while its queue still contains the admitted template.
+            var legacy = JObject.FromObject(state);
+            template.Parameters["limit"]["default"] = 9;
+            legacy["definitions"][0] = JObject.FromObject(template);
+            legacy["report"]["scenarios"][0]["definition_hash"] = PlayScenarioReproduction.Hash(template);
+            JObject corrupt = (JObject)legacy.DeepClone();
+            corrupt["definitions"][0]["parameters"]["limit"]["default"] = 11;
+            Assert.Throws<InvalidDataException>(() => PlayScenarioSuiteService.ReadFrozenDefinitions(corrupt));
+            var migrated = PlayScenarioSuiteService.ReadFrozenDefinitions(legacy);
+            Assert.That(PlayScenarioReproduction.Hash(migrated.Single()), Is.EqualTo(expectedHash));
+            PlayScenarioSuiteStore.ValidateReport((JObject)legacy["report"]);
+        }
+
+        private static PlayScenarioDefinition ParameterizedDefinition()
+        {
+            JObject definition = JObject.FromObject(Definition("default-case"));
+            definition["parameters"] = JObject.Parse("{'limit':{'type':'integer','default':9}}");
+            definition["parameter_bindings"] = JArray.Parse("[{'parameter':'limit','path':'/steps/0/timeout_seconds'}]");
+            return PlayScenarioDefinition.Parse(definition);
+        }
+
+        private sealed class DefaultCaseHost : IPlayScenarioHost
+        {
+            internal int ObservedTimeout;
+
+            public PlayScenarioObservation Evaluate(PlayScenarioStep step, bool first)
+            {
+                ObservedTimeout = step.TimeoutSeconds;
+                return new PlayScenarioObservation(true, "ready");
+            }
+
+            public void Release() { }
+        }
+
+        [Test]
         public void SubstantialSuiteKeepsEverySelectedChildThroughSavedAdmission()
         {
             var names = Enumerable.Range(0, 64).Select(i => "scenario-" + i.ToString("D2")).ToList();
