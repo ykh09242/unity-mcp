@@ -64,7 +64,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             string prefix,
             Action<Action> edit,
             Action<string, bool> setMessage,
-            int limit = 32
+            int limit = PlayScenarioDefinition.MaximumSteps
         )
         {
             stepList.Clear();
@@ -99,33 +99,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 action.RegisterValueChangedCallback(evt =>
                 {
                     StateValueDrafts.Remove(step);
-                    edit(() =>
-                    {
-                        step.Action = evt.newValue;
-                        step.Scene = IsSceneAction(step.Action) ? "" : null;
-                        step.Target =
-                            IsSceneAction(step.Action) || step.Action == "reset_state" || step.Action == "wait_state" || step.Action == "input" ? null : "";
-                        step.ResetIds = step.Action == "reset_state" ? new List<string>() : null;
-                        step.StateId = step.Action == "wait_state" ? "" : null;
-                        step.StateEquals = step.Action == "wait_state" ? new JValue("") : null;
-                        step.Input =
-                            step.Action == "input"
-                                ? new JObject
-                                {
-                                    ["action"] = "key",
-                                    ["key"] = "Space",
-                                    ["frames"] = 1,
-                                }
-                                : null;
-                        step.WaitFrames = null;
-                        step.TargetId = null;
-                        step.ClickMode = step.Action == "click_ui" ? "direct" : null;
-                        step.Count = null;
-                        step.Active = null;
-                        step.Component = null;
-                        step.Property = null;
-                        step.StableForMs = null;
-                    });
+                    edit(() => steps[position] = ConvertAction(step, evt.newValue));
                     Render(stepList, steps, prefix, edit, setMessage, limit);
                 });
                 card.Add(action);
@@ -164,6 +138,33 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 stepList.Add(card);
             }
         }
+
+        private static PlayScenarioStep ConvertAction(PlayScenarioStep step, string action) =>
+            // Only these fields are shared by every action. Rebuild the variant so hidden
+            // scene, selector, state and event fields cannot survive an action change.
+            new PlayScenarioStep
+            {
+                Name = step.Name,
+                Action = action,
+                TimeoutSeconds = step.TimeoutSeconds,
+                Performance = step.Performance,
+                Screenshot = step.Screenshot,
+                Scene = IsSceneAction(action) ? "" : null,
+                Target = action == "click_ui" || action == "wait_object" ? "" : null,
+                ResetIds = action == "reset_state" ? new List<string>() : null,
+                StateId = action == "wait_state" ? "" : null,
+                StateEquals = action == "wait_state" ? new JValue("") : null,
+                Input =
+                    action == "input"
+                        ? new JObject
+                        {
+                            ["action"] = "key",
+                            ["key"] = "Space",
+                            ["frames"] = 1,
+                        }
+                        : null,
+                ClickMode = action == "click_ui" ? "direct" : null,
+            };
 
         private static void BuildInputFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit, Action<string, bool> setMessage)
         {

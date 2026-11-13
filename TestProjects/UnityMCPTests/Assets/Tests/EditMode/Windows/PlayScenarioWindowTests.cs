@@ -426,6 +426,232 @@ namespace MCPForUnityTests.Editor.Windows
             StringAssert.Contains("must load_scene", Field<Label>("scenarioValidation").text.ToLowerInvariant());
         }
 
+        [TestCase("", false)]
+        [TestCase("", true)]
+        [TestCase("setup", false)]
+        [TestCase("setup", true)]
+        [TestCase("cleanup", false)]
+        [TestCase("cleanup", true)]
+        public void AddAndCopyRespectRuntimeStepLimitsAndPersistTheMaximum(string stage, bool copy)
+        {
+            var definition = Definition();
+            int limit = stage == "" ? PlayScenarioDefinition.MaximumSteps : PlayScenarioDefinition.MaximumAuxiliarySteps;
+            var steps =
+                stage == "setup" ? definition.SetupSteps
+                : stage == "cleanup" ? definition.CleanupSteps
+                : definition.Steps;
+            steps.Clear();
+            for (int index = 0; index < limit - 1; index++)
+                steps.Add(
+                    index == 0 && stage != "cleanup"
+                        ? new PlayScenarioStep
+                        {
+                            Name = "Anchor",
+                            Action = "load_scene",
+                            Scene = "Assets/ScenarioMenu.unity",
+                        }
+                        : new PlayScenarioStep
+                        {
+                            Name = "Marker",
+                            Action = "wait_object",
+                            Target = "Player",
+                        }
+                );
+            store.Save(definition);
+            Click("refreshScenarios");
+            Click("savedScenario_saved-flow");
+            string add =
+                stage == "setup" ? "addSetupStep"
+                : stage == "cleanup" ? "addCleanupStep"
+                : "addStep";
+            string duplicate = "duplicateStep" + stage + (limit - 2);
+            Assert.IsTrue(Field<Button>(duplicate).enabledSelf, "Copy must remain available immediately below the runtime limit.");
+            Click(copy ? duplicate : add);
+            steps =
+                stage == "setup" ? window.Draft.SetupSteps
+                : stage == "cleanup" ? window.Draft.CleanupSteps
+                : window.Draft.Steps;
+            Assert.AreEqual(limit, steps.Count);
+            if (!copy)
+                Field<TextField>("stepTarget" + stage + (limit - 1)).value = "Player";
+            Assert.IsFalse(Field<Button>(duplicate).enabledSelf);
+            // The callback also guards the limit, independently of the disabled control.
+            typeof(Clickable).GetMethod("Invoke", PrivateInstance).Invoke(Field<Button>(duplicate).clickable, new object[] { null });
+            Click(add);
+            Assert.AreEqual(limit, steps.Count);
+            StringAssert.Contains(limit.ToString(), Field<Label>("scenarioMessage").text);
+            Click("saveScenario");
+            var saved = store.Get("saved-flow");
+            Assert.AreEqual(
+                limit,
+                (
+                    stage == "setup" ? saved.SetupSteps
+                    : stage == "cleanup" ? saved.CleanupSteps
+                    : saved.Steps
+                ).Count
+            );
+            window.CreateGUI();
+            Assert.IsFalse(Field<Button>(duplicate).enabledSelf);
+        }
+
+        [Test]
+        public void AdditiveLoadConvertsToWaitSceneSavesReopensAndUndoesToTheOriginalVariant()
+        {
+            var definition = Definition();
+            definition.Steps[1] = new PlayScenarioStep
+            {
+                Name = "Additive world",
+                Action = "load_scene",
+                Scene = "Assets/ScenarioGame.unity",
+                LoadMode = "additive",
+                TimeoutSeconds = 17,
+                Performance = new PlayScenarioPerformanceOptions { MaxDurationMs = 500 },
+                Screenshot = new PlayScenarioScreenshotOptions
+                {
+                    Name = "checkpoint",
+                    Width = 320,
+                    Height = 200,
+                },
+            };
+            store.Save(definition);
+            Click("refreshScenarios");
+            Click("savedScenario_saved-flow");
+            var original = JObject.FromObject(window.Draft.Steps[1]);
+            Field<PopupField<string>>("stepAction1").value = "wait_scene";
+            Assert.IsNull(window.Draft.Steps[1].LoadMode);
+            Assert.AreEqual("", window.Draft.Steps[1].Scene);
+            Field<TextField>("stepScene1").value = "Assets/ScenarioGame.unity";
+            Click("saveScenario");
+            Assert.AreEqual("wait_scene", store.Get("saved-flow").Steps[1].Action);
+            Assert.IsNull(store.Get("saved-flow").Steps[1].LoadMode);
+            window.CreateGUI();
+            Assert.AreEqual("wait_scene", Field<PopupField<string>>("stepAction1").value);
+            Assert.AreEqual("Assets/ScenarioGame.unity", Field<TextField>("stepScene1").value);
+            Click("undoDraft");
+            Click("undoDraft");
+            Assert.IsTrue(
+                JToken.DeepEquals(original, JObject.FromObject(window.Draft.Steps[1])),
+                "Undo must restore the full additive variant and common evidence."
+            );
+            Click("redoDraft");
+            Click("redoDraft");
+            Assert.IsFalse(window.hasUnsavedChanges);
+            Click("newScenario");
+            window.ShowDialog = (_, __, ___, ____, _____) => 2;
+            Click("savedScenario_saved-flow");
+            Assert.AreEqual("wait_scene", window.Draft.Steps[1].Action);
+            Assert.IsNull(window.Draft.Steps[1].LoadMode);
+            Assert.AreEqual("Additive world", window.Draft.Steps[1].Name);
+            Assert.AreEqual(17, window.Draft.Steps[1].TimeoutSeconds);
+            Assert.AreEqual(500, window.Draft.Steps[1].Performance.MaxDurationMs);
+            Assert.AreEqual("checkpoint", window.Draft.Steps[1].Screenshot.Name);
+        }
+
+        [TestCase("load_scene", "wait_object")]
+        [TestCase("wait_scene", "click_ui")]
+        [TestCase("click_ui", "wait_state")]
+        [TestCase("wait_state", "reset_state")]
+        [TestCase("reset_state", "input")]
+        [TestCase("input", "wait_scene")]
+        [TestCase("wait_object", "load_scene")]
+        public void ActionConversionDropsPreviousVariantFieldsAndKeepsCommonEvidence(string source, string destination)
+        {
+            var value = new JObject
+            {
+                ["name"] = "Variant",
+                ["action"] = source,
+                ["timeout_seconds"] = 17,
+                ["performance"] = new JObject { ["max_duration_ms"] = 500 },
+                ["screenshot"] = new JObject
+                {
+                    ["name"] = "checkpoint",
+                    ["width"] = 320,
+                    ["height"] = 200,
+                },
+            };
+            if (source == "load_scene" || source == "wait_scene")
+            {
+                value["scene"] = "Assets/ScenarioGame.unity";
+                value[source == "load_scene" ? "load_mode" : "scene_state"] = source == "load_scene" ? "additive" : "loaded";
+            }
+            else if (source == "click_ui")
+            {
+                value["target_id"] = "document";
+                value["ui_backend"] = "uitoolkit";
+                value["element_name"] = "Start";
+                value["element_path"] = "/0";
+            }
+            else if (source == "wait_state")
+            {
+                value["state_id"] = "score";
+                value["state_compare"] = new JObject { ["operator"] = "gte", ["value"] = 1 };
+                value["stable_for_ms"] = 100;
+            }
+            else if (source == "reset_state")
+                value["reset_ids"] = new JArray("world");
+            else if (source == "input")
+            {
+                value["input"] = new JObject
+                {
+                    ["action"] = "key",
+                    ["key"] = "Space",
+                    ["frames"] = 2,
+                };
+                value["wait_frames"] = 2;
+            }
+            else
+            {
+                value["target_id"] = "player";
+                value["scene"] = "Assets/ScenarioGame.unity";
+                value["count"] = 1;
+                value["active"] = true;
+                value["component"] = "UnityEngine.Transform";
+                value["property"] = new JObject { ["path"] = "m_LocalPosition.x", ["equals"] = 0 };
+                value["stable_for_ms"] = 100;
+            }
+            var definition = Definition();
+            definition.Steps[1] = value.ToObject<PlayScenarioStep>();
+            store.Save(definition);
+            Click("refreshScenarios");
+            Click("savedScenario_saved-flow");
+            Field<PopupField<string>>("stepAction1").value = destination;
+            var expected = new JObject
+            {
+                ["name"] = "Variant",
+                ["action"] = destination,
+                ["timeout_seconds"] = 17,
+                ["performance"] = JObject.FromObject(window.Draft.Steps[1].Performance),
+                ["screenshot"] = value["screenshot"].DeepClone(),
+            };
+            Assert.AreEqual(500, window.Draft.Steps[1].Performance.MaxDurationMs);
+            if (destination == "load_scene" || destination == "wait_scene")
+                expected["scene"] = "";
+            else if (destination == "click_ui" || destination == "wait_object")
+            {
+                expected["target"] = "";
+                if (destination == "click_ui")
+                    expected["click_mode"] = "direct";
+            }
+            else if (destination == "wait_state")
+            {
+                expected["state_id"] = "";
+                expected["state_equals"] = "";
+            }
+            else if (destination == "reset_state")
+                expected["reset_ids"] = new JArray();
+            else
+                expected["input"] = new JObject
+                {
+                    ["action"] = "key",
+                    ["key"] = "Space",
+                    ["frames"] = 1,
+                };
+            Assert.IsTrue(
+                JToken.DeepEquals(expected, JObject.FromObject(window.Draft.Steps[1])),
+                "The new action must contain only its initialized variant and common fields."
+            );
+        }
+
         [Test]
         public void NavigationProtectsUnsavedEditsForCancelDiscardAndSave()
         {
@@ -744,7 +970,7 @@ namespace MCPForUnityTests.Editor.Windows
         }
 
         [Test]
-        public void DuplicateStepCreatesIndependentCopyAndSupportsUndoRedoAndLimit()
+        public void DuplicateStepCreatesIndependentCopyAndSupportsUndoRedo()
         {
             OpenSaved();
             Click("duplicateStep1");
@@ -758,9 +984,6 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.AreEqual(4, window.Draft.Steps.Count);
             Click("redoDraft");
             Assert.AreEqual(5, window.Draft.Steps.Count);
-            for (int index = 5; index < 32; index++)
-                Click("duplicateStep1");
-            Assert.IsFalse(Field<Button>("duplicateStep1").enabledSelf);
         }
 
         [Test]

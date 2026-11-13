@@ -573,9 +573,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             section.Add(ActionButton("Add " + title + " Step", "add" + title + "Step", () =>
                 {
                     var steps = stage == "setup" ? draft.SetupSteps : draft.CleanupSteps;
-                    if (steps.Count >= 16)
+                    if (steps.Count >= PlayScenarioDefinition.MaximumAuxiliarySteps)
                     {
-                        SetMessage("Each setup/cleanup stage supports at most 16 steps.", true);
+                        SetMessage($"Each setup/cleanup stage supports at most {PlayScenarioDefinition.MaximumAuxiliarySteps} steps.", true);
                         return;
                     }
                     Edit(() =>
@@ -795,8 +795,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private void RenderSteps()
         {
             PlayScenarioStepEditor.Render(stepList, draft, Edit, SetMessage);
-            PlayScenarioStepEditor.Render(setupList, draft.SetupSteps, "setup", Edit, SetMessage, 16);
-            PlayScenarioStepEditor.Render(cleanupList, draft.CleanupSteps, "cleanup", Edit, SetMessage, 16);
+            PlayScenarioStepEditor.Render(setupList, draft.SetupSteps, "setup", Edit, SetMessage, PlayScenarioDefinition.MaximumAuxiliarySteps);
+            PlayScenarioStepEditor.Render(cleanupList, draft.CleanupSteps, "cleanup", Edit, SetMessage, PlayScenarioDefinition.MaximumAuxiliarySteps);
         }
 
         private bool ValidateDraft(out PlayScenarioDefinition validated)
@@ -1150,9 +1150,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private void AddStep()
         {
-            if (draft.Steps.Count >= 32)
+            if (draft.Steps.Count >= PlayScenarioDefinition.MaximumSteps)
             {
-                SetMessage("A scenario supports at most 32 steps.", true);
+                SetMessage($"A scenario supports at most {PlayScenarioDefinition.MaximumSteps} steps.", true);
                 return;
             }
             Edit(() =>
