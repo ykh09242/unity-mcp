@@ -134,9 +134,29 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
             Assert.AreEqual(20, Directory.GetFiles(Reports, "*.json").Length);
             latest.Error = new string('a', 2 * 1024 * 1024);
             Assert.Throws<ArgumentException>(() => store.SaveReport(latest));
+            Assert.AreEqual(store.GetReport(latest.JobId).ReportPath, latest.ReportPath);
             Assert.IsNull(store.GetReport(latest.JobId).Error);
             Assert.AreEqual(0, Directory.GetFiles(Reports, "*.tmp").Length);
             Assert.Throws<ArgumentException>(() => store.GetReport("../x"));
+        }
+
+        [Test]
+        public void FirstJobReportPathRemainsNullUntilValidationAndPublicationSucceed()
+        {
+            var run = Run(Guid.NewGuid().ToString("N"));
+            run.RepeatCount = -1;
+            Assert.Throws<ArgumentException>(() => store.SaveReport(run));
+            Assert.IsNull(run.ReportPath);
+            run.RepeatCount = 1;
+            string target = Path.Combine(Reports, run.JobId + ".json");
+            Directory.CreateDirectory(target);
+            Assert.Catch(() => store.SaveReport(run));
+            Assert.IsNull(run.ReportPath);
+            Assert.IsFalse(File.Exists(target));
+            Directory.Delete(target);
+            string path = store.SaveReport(run);
+            Assert.AreEqual(path, run.ReportPath);
+            Assert.AreEqual(path, store.GetReport(run.JobId).ReportPath);
         }
 
         [Test]
@@ -165,7 +185,10 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
                 store.SaveReport(Run(Guid.NewGuid().ToString("N")));
             string retired = Path.Combine(Reports, "retired.ids");
             File.WriteAllText(retired, "damaged");
-            Assert.Throws<InvalidDataException>(() => store.SaveReport(Run(Guid.NewGuid().ToString("N"))));
+            var committed = Run(Guid.NewGuid().ToString("N"));
+            Assert.Throws<InvalidDataException>(() => store.SaveReport(committed));
+            Assert.IsNotNull(committed.ReportPath);
+            Assert.AreEqual(committed.ReportPath, store.GetReport(committed.JobId).ReportPath);
             Assert.AreEqual(first, store.FindReportForStart(first).JobId);
             Assert.Throws<InvalidDataException>(() => store.FindReportForStart(Guid.NewGuid().ToString("N")));
 

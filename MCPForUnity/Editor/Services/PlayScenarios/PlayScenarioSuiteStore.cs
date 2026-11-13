@@ -87,14 +87,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             ValidateId(report?.SuiteId);
             string relative = Reports + "/" + report.SuiteId + ".json";
-            report.ReportPath = relative;
             JObject value = JObject.FromObject(report);
+            value["report_path"] = relative;
             ValidateReport(value);
             byte[] bytes = Encode(value, ReportLimit);
             lock (Gate)
             {
                 history.Trim(Files(Reports, PlayScenarioReportHistory.ReportLimit + 1), report.SuiteId, DeleteReport);
                 Write(Checked(relative), bytes);
+                report.ReportPath = relative;
                 history.Trim(Files(Reports, PlayScenarioReportHistory.ReportLimit + 1), report.SuiteId, DeleteReport);
             }
             return relative;

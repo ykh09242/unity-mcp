@@ -571,7 +571,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 ObserveActivityChange();
                 try
                 {
-                    _engine.State.ReportPath = Store.SaveReport(_engine.State);
+                    Store.SaveReport(_engine.State);
                 }
                 catch (Exception exception)
                 {

@@ -268,11 +268,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             PlayScenarioSuiteReport report = _runner.State.Report;
             try
             {
-                report.ReportPath = Store.SaveReport(report);
+                Store.SaveReport(report);
             }
             catch (Exception exception)
             {
-                report.ReportPath = null;
                 report.ReportError = Bounded("Suite report persistence failed: " + exception.Message);
                 report.Error = report.Error ?? report.ReportError;
                 if (report.Status == "succeeded")

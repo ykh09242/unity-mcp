@@ -685,6 +685,60 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             }
         }
 
+        [Test]
+        public void SuiteStatusPreservesCommittedPathWhenReplacementFailsValidation()
+        {
+            var harness = new Harness(Suite("continue"));
+            var runner = harness.Runner;
+            runner.InterruptForShutdown(1001);
+            var report = runner.State.Report;
+            string project = Path.GetDirectoryName(UnityEngine.Application.dataPath);
+            var store = new PlayScenarioSuiteStore(project);
+            const string session = "MCPForUnity.PlayScenarioSuite.V1";
+            string[] keys = { session, session + ".definition.0", session + ".definition.1" };
+            var saved = keys.Select(key => SessionState.GetString(key, "")).ToArray();
+            WithCurrentSuite(runner, false, () =>
+            {
+                if (store.ListReports().Count >= 20)
+                    Assert.Ignore("Preserve the existing report history.");
+                string path = store.SaveReport(report);
+                try
+                {
+                    report.SourceRevision = new string('x', 129);
+                    typeof(PlayScenarioSuiteService).GetMethod("FinalizeReport", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+                    var request = new JObject { ["action"] = "suite_status", ["suite_id"] = report.SuiteId };
+                    var observed = (JObject)((SuccessResponse)ManagePlayScenario.HandleCommand(request)).Data;
+                    Assert.AreEqual(path, (string)observed["report_path"]);
+                    Assert.IsNotEmpty((string)observed["report_error"]);
+                    Assert.AreEqual(path, store.GetReport(report.SuiteId).ReportPath);
+                    Assert.IsNull(store.GetReport(report.SuiteId).SourceRevision);
+                }
+                finally
+                {
+                    File.Delete(Path.Combine(project, path));
+                    for (int i = 0; i < keys.Length; i++)
+                        SessionState.SetString(keys[i], saved[i]);
+                }
+            });
+        }
+
+        [Test]
+        public void FirstSuiteReportPathRemainsNullUntilPublicationSucceeds()
+        {
+            var harness = new Harness(Suite("continue"));
+            harness.Runner.InterruptForShutdown(1001);
+            var report = harness.Runner.State.Report;
+            string target = Path.Combine(root, PlayScenarioSuiteStore.Reports, report.SuiteId + ".json");
+            Directory.CreateDirectory(target);
+            Assert.Catch(() => suites.SaveReport(report));
+            Assert.IsNull(report.ReportPath);
+            Assert.IsFalse(File.Exists(target));
+            Directory.Delete(target);
+            string path = suites.SaveReport(report);
+            Assert.AreEqual(path, report.ReportPath);
+            Assert.AreEqual(path, suites.GetReport(report.SuiteId).ReportPath);
+        }
+
         [TestCase("release\\candidate")]
         [TestCase("release/candidate")]
         [TestCase("boundary")]

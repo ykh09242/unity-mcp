@@ -112,8 +112,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 throw new ArgumentNullException(nameof(run));
             ValidateJobId(run.JobId);
             string relative = Reports + "/" + run.JobId + ".json";
-            run.ReportPath = relative;
             JObject value = ToJson(run);
+            value["report_path"] = relative;
             ValidateReport(value);
             byte[] bytes = Encode(value, ReportLimit);
             lock (gate)
@@ -121,6 +121,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 // Repair an interrupted eviction before adding another full report.
                 history.Trim(Files(Reports, PlayScenarioReportHistory.ReportLimit + 1), run.JobId, DeleteReport);
                 AtomicWrite(Checked(relative), bytes);
+                run.ReportPath = relative;
                 history.Trim(Files(Reports, PlayScenarioReportHistory.ReportLimit + 1), run.JobId, DeleteReport);
             }
             return relative;

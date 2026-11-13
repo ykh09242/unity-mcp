@@ -529,6 +529,36 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }
 
         [Test]
+        public void JobStatusAfterFailedFirstReportWriteExposesErrorWithoutAPath()
+        {
+            PlayScenarioRun run = StartingRun();
+            var engine = new PlayScenarioEngine(run, new UnityPlayScenarioHost());
+            engine.Cancel(run.StartedUnixMs + 1);
+            Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, engine);
+            Service.GetField("_logs", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, null);
+            Service.GetField("_finalized", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, false);
+            string folder = Path.Combine(Path.GetDirectoryName(UnityEngine.Application.dataPath), "Library/MCPForUnity/PlayScenarioRuns");
+            if (Directory.Exists(folder) && Directory.GetFiles(folder, "*.json").Length > 20)
+                Assert.Ignore("Preserve existing report retention recovery.");
+            string blocked = Path.Combine(folder, run.JobId + ".json");
+            Directory.CreateDirectory(blocked);
+            try
+            {
+                Service.GetMethod("Synchronize", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { true });
+                var response = (SuccessResponse)ManagePlayScenario.HandleCommand(new JObject { ["action"] = "status", ["job_id"] = run.JobId });
+                var observed = (JObject)response.Data;
+                Assert.AreEqual("cancelled", (string)observed["status"]);
+                Assert.IsNull((string)observed["report_path"]);
+                Assert.IsNotEmpty((string)observed["report_error"]);
+                Assert.IsFalse(File.Exists(blocked));
+            }
+            finally
+            {
+                Directory.Delete(blocked);
+            }
+        }
+
+        [Test]
         public void SuiteCoordinationDoesNotProjectAnActiveReport()
         {
             PlayScenarioRun run = StartingRun();
