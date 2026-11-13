@@ -298,7 +298,17 @@ async def test_completed_collection_recovers_without_restarting(quality, interru
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "failure", ["missing", "refused", "scheduler", "auth", "changed_generation"]
+    "failure",
+    [
+        "missing",
+        "refused",
+        "scheduler",
+        "auth",
+        "changed_generation",
+        "unframed",
+        "invalid_encoding",
+        "interrupted_greeting",
+    ],
 )
 async def test_stdio_collection_keeps_exact_editor_through_selection_loss(monkeypatch, failure):
     from unittest.mock import Mock
@@ -326,6 +336,8 @@ async def test_stdio_collection_keeps_exact_editor_through_selection_loss(monkey
     monkeypatch.setattr(pool, "_discover_instance_candidates", lambda *args: inventory)
     monkeypatch.setattr(module.config, "transport_mode", "stdio")
     monkeypatch.setattr(module.config, "http_remote_hosted", False)
+    monkeypatch.setattr(module.config, "require_framing", True)
+    monkeypatch.setenv("UNITY_MCP_STDIO_ALLOW_LEGACY", "1")
     selector = AsyncMock(return_value=a.id)
     monkeypatch.setattr(module, "get_unity_instance_from_context", selector)
     scheduler = OperationScheduler(max_control_participants=0)
@@ -335,20 +347,22 @@ async def test_stdio_collection_keeps_exact_editor_through_selection_loss(monkey
     recovered = False
     attempts = []
 
-    def connect(connection, **kwargs):
-        if (
-            connection.instance_id == a.id
-            and armed
-            and not recovered
-            and failure in {"auth", "refused"}
-        ):
-            if failure == "auth":
-                connection._authentication_failure = legacy.StdioAuthenticationError(
-                    "Invalid listener authentication"
-                )
-            return False
-        connection.sock = Mock()
-        return True
+    def dial(address, timeout):
+        greeting = b"WELCOME UNITY-MCP 1 FRAMING=1\n"
+        if address[1] == a.port and armed and not recovered:
+            if failure == "refused":
+                raise ConnectionRefusedError()
+            greeting = {
+                "unframed": b"WELCOME UNITY-MCP 1\n",
+                "invalid_encoding": b"\xff\n",
+                "interrupted_greeting": b"WELCOME UNITY-MCP 1 FRAM",
+                "auth": b"WELCOME UNITY-MCP 2 FRAMING=1 AUTH=HMAC-SHA256\n",
+            }.get(failure, greeting)
+        chunks = iter(bytes([value]) for value in greeting)
+        sock = Mock()
+        sock.gettimeout.return_value = timeout
+        sock.recv.side_effect = lambda count: next(chunks, b"")
+        return sock
 
     def native(connection, command, params, **kwargs):
         nonlocal armed
@@ -375,17 +389,23 @@ async def test_stdio_collection_keeps_exact_editor_through_selection_loss(monkey
                 connection.disconnect()
         return response
 
-    monkeypatch.setattr(legacy.UnityConnection, "connect", connect)
+    monkeypatch.setattr(legacy.socket, "create_connection", dial)
     monkeypatch.setattr(legacy.UnityConnection, "send_command", native)
+    monkeypatch.setattr(pool, "schedule_tool_resync", lambda connection: False)
     service = ScriptQualityService()
     try:
         start = await service.execute(None, "analyze", {"paths": ["Assets/A.cs"]})
         job_id = start["data"]["job_id"]
         options = {"job_id": job_id}
         first = await service.execute(None, "status", options)
-        if failure == "auth":
+        if failure in {"auth", "unframed", "invalid_encoding"}:
             assert first["code"] == "analysis_result_inconsistent"
             assert job_id not in service.results.active
+            recovered = True
+            assert (await service.execute(None, "status", options))[
+                "code"
+            ] == "analysis_expired_or_evicted"
+            assert [action for _, action, _ in attempts] == ["analyze", "status"]
             return
         assert first["code"] == "analysis_collection_interrupted"
         assert job_id in service.results.active

@@ -263,3 +263,24 @@ def test_old_banner_requires_deliberate_legacy_opt_in(monkeypatch):
             assert connection.session_generation is None
         finally:
             connection.disconnect()
+
+
+@pytest.mark.parametrize(
+    "greeting",
+    [
+        b"WELCOME UNITY-MCP 1\n",
+        b"WELCOME UNITY-MCP 3 FRAMING=1\n",
+        b"WELCOME UNITY-MCP 1 \xff\n",
+        b"x" * 512,
+    ],
+)
+def test_incompatible_greeting_preserves_permanent_refusal(monkeypatch, greeting):
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(config, "require_framing", True)
+    monkeypatch.setattr(module, "read_status_file", lambda *_: None)
+    with greeting_peer(greeting) as port:
+        connection = module.UnityConnection(host="127.0.0.1", port=port, allow_legacy_auth=True)
+        with pytest.raises(ValueError):
+            connection.send_command("ping", {}, max_attempts=3)
+        assert connection.sock is None
+        assert connection.session_generation is None

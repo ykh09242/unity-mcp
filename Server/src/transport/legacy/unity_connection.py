@@ -214,7 +214,7 @@ class _ConnectionSelection:
 
 
 class _UnityProtocolError(ValueError):
-    """A Unity response cannot be safely decoded or reused."""
+    """A Unity greeting or response cannot be safely decoded or reused."""
 
 
 class _StdioTargetUnavailable(ConnectionError):
@@ -375,7 +375,7 @@ class UnityConnection:
         # asyncio.Lock. Active callers/completion callbacks retain their gate.
         self._async_admissions = weakref.WeakKeyDictionary()
         self._needs_tool_resync = False  # Set True after reconnection
-        self._authentication_failure: StdioAuthenticationError | None = None
+        self._handshake_failure: StdioAuthenticationError | _UnityProtocolError | None = None
         self._progress_owner: _StdioProgressAttempt | None = None
         if self.allow_legacy_auth is None:
             self.allow_legacy_auth = os.environ.get("UNITY_MCP_STDIO_ALLOW_LEGACY") == "1"
@@ -490,6 +490,7 @@ class UnityConnection:
                 min(deadline, selection.deadline) if deadline is not None else selection.deadline
             )
         with selection.lock(self._conn_lock):
+            self._handshake_failure = None
             if self._retired:
                 return False
             if self.sock:
@@ -497,7 +498,6 @@ class UnityConnection:
             self.session_generation = None
             self.authenticated_session = None
             self._detach_stdio_progress()
-            self._authentication_failure = None
             try:
                 # Only an explicitly supplied address with no project selector is a raw dial.
                 if self.instance_id is not None and self.selected_target is None:
@@ -539,24 +539,26 @@ class UnityConnection:
                     if deadline is not None:
                         handshake_deadline = min(handshake_deadline, deadline)
                     while time.monotonic() < handshake_deadline and len(buf) < 512:
-                        try:
-                            self._set_socket_deadline(self.sock, handshake_deadline)
-                            # TCP can coalesce the greeting with the next frame.
-                            # Consume only through LF, leaving framed bytes for
-                            # their existing reader (including v2 authentication).
-                            chunk = self.sock.recv(1)
-                            self._check_deadline(handshake_deadline)
-                            if not chunk:
-                                break
-                            buf.extend(chunk)
-                            if b"\n" in buf:
-                                break
-                        except socket.timeout:
+                        self._set_socket_deadline(self.sock, handshake_deadline)
+                        # TCP can coalesce the greeting with the next frame.
+                        # Consume only through LF, leaving framed bytes for
+                        # their existing reader (including v2 authentication).
+                        chunk = self.sock.recv(1)
+                        self._check_deadline(handshake_deadline)
+                        if not chunk:
+                            raise ConnectionError(
+                                "Connection closed before the stdio greeting was complete"
+                            )
+                        buf.extend(chunk)
+                        if b"\n" in buf:
                             break
                     self._check_deadline(handshake_deadline)
                     if b"\n" not in buf:
-                        raise StdioAuthenticationError("Incomplete stdio greeting")
-                    text = bytes(buf).decode("ascii").strip()
+                        raise _UnityProtocolError("Incomplete stdio greeting")
+                    try:
+                        text = bytes(buf).decode("ascii").strip()
+                    except UnicodeDecodeError as error:
+                        raise _UnityProtocolError("Stdio greeting must be ASCII") from error
 
                     expected = (
                         self.selected_target.listener_generation if self.selected_target else None
@@ -594,7 +596,7 @@ class UnityConnection:
                                 "Unauthenticated legacy stdio requires explicit UNITY_MCP_STDIO_ALLOW_LEGACY=1"
                             )
                         if not re.fullmatch(r"WELCOME UNITY-MCP 1(?: FRAMING=1)?", text):
-                            raise StdioAuthenticationError("Unsupported stdio greeting")
+                            raise _UnityProtocolError("Unsupported stdio greeting")
                         if "FRAMING=1" in text:
                             self.use_framing = True
                             logger.warning(
@@ -606,7 +608,7 @@ class UnityConnection:
                                 self._set_socket_deadline(self.sock, deadline)
                                 self.sock.sendall(b"MCP for Unity requires FRAMING=1\n")
                                 self._check_deadline(deadline)
-                            raise ConnectionError(
+                            raise _UnityProtocolError(
                                 f"MCP for Unity requires FRAMING=1, got: {text!r}"
                             )
                         else:
@@ -620,8 +622,8 @@ class UnityConnection:
                 self._check_deadline(deadline)
                 return True
             except Exception as e:
-                if isinstance(e, StdioAuthenticationError):
-                    self._authentication_failure = e
+                if isinstance(e, (StdioAuthenticationError, _UnityProtocolError)):
+                    self._handshake_failure = e
                 logger.error(f"Failed to connect to Unity: {str(e)}")
                 try:
                     if self.sock:
@@ -1057,8 +1059,8 @@ class UnityConnection:
                         self._cap_to_deadline(config.connection_timeout, deadline),
                         deadline=deadline,
                     ):
-                        if self._authentication_failure is not None:
-                            raise self._authentication_failure
+                        if self._handshake_failure is not None:
+                            raise self._handshake_failure
                         raise ConnectionError("Could not connect to Unity")
                     logger.info(
                         "[TIMING-STDIO] connect took %.3fs command=%s",
@@ -1820,10 +1822,14 @@ class UnityConnectionPool:
                                 f"Failed to connect to Unity instance '{target.id}' "
                                 f"on port {target.port}. Ensure the Unity Editor is running."
                             )
-                            if conn._authentication_failure is not None:
+                            failure = conn._handshake_failure
+                            if failure is not None:
                                 raise _StdioTargetUnavailable(
-                                    message, "auth_required"
-                                ) from conn._authentication_failure
+                                    message,
+                                    "auth_required"
+                                    if isinstance(failure, StdioAuthenticationError)
+                                    else "stdio_protocol_error",
+                                ) from failure
                             raise _StdioTargetUnavailable(message)
                     # Retain I/O ownership until a newly opened socket is
                     # published or disposed, including cancellation at this lock.

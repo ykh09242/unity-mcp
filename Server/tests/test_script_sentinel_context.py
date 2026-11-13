@@ -211,9 +211,7 @@ async def test_sentinel_preserves_legacy_authentication_failure(sentinel_wire, m
     )
 
     def rejected_connect(*args, **kwargs):
-        wire.connection._authentication_failure = legacy.StdioAuthenticationError(
-            "inert rejected proof"
-        )
+        wire.connection._handshake_failure = legacy.StdioAuthenticationError("inert rejected proof")
         return False
 
     monkeypatch.setattr(wire.connection, "connect", rejected_connect)
