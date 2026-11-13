@@ -98,6 +98,19 @@ def test_new_required_constraint_is_a_breaking_candidate_when_previously_absent(
     assert [(item.kind, item.path) for item in changes] == [("potentially_breaking", "/required")]
 
 
+def test_boolean_and_numeric_literals_remain_distinct_inside_objects_and_arrays():
+    from public_contracts import contract_changes
+
+    before = {"properties": {"option": {"const": True, "enum": [{"nested": [False]}]}}}
+    after = {"properties": {"option": {"const": 1, "enum": [{"nested": [0]}]}}}
+    for old, new in ((before, after), (after, before)):
+        assert [(item.kind, item.path) for item in contract_changes(old, new)] == [
+            ("potentially_breaking", "/properties/option/const"),
+            ("potentially_breaking", "/properties/option/enum"),
+        ]
+    assert contract_changes({"enum": [True, 1]}, {"enum": [True, 1.0]}) == []
+
+
 def test_snapshot_observes_real_modern_and_legacy_tools_list_in_isolated_process():
     # Given: a deterministic fixed-profile exporter that does not contact Unity.
     from public_contracts import capture_public_contracts

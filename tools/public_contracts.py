@@ -54,8 +54,6 @@ class ContractChange:
 
 def contract_changes(before: JsonValue, after: JsonValue, path: str = "") -> list[ContractChange]:
     """Report conservative breaking candidates and additive fields at exact JSON paths."""
-    if before == after:
-        return []
     match before, after:
         case dict(), dict():
             changes = []
@@ -79,8 +77,16 @@ def contract_changes(before: JsonValue, after: JsonValue, path: str = "") -> lis
                 else:
                     changes.extend(contract_changes(before[key], after[key], child_path))
             return changes
+        case list(), list():
+            if len(before) == len(after) and all(
+                not contract_changes(old, new) for old, new in zip(before, after)
+            ):
+                return []
         case _:
-            return [ContractChange("potentially_breaking", path or "/")]
+            # JSON numbers compare by value, but booleans are a distinct JSON type.
+            if before == after and isinstance(before, bool) == isinstance(after, bool):
+                return []
+    return [ContractChange("potentially_breaking", path or "/")]
 
 
 async def _observe() -> dict[str, JsonValue]:
