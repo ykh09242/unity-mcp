@@ -100,6 +100,52 @@ namespace MCPForUnityTests.Editor.Clients
             Assert.IsFalse(File.Exists(client.GetConfigPath()));
         }
 
+        [TestCase("manual")]
+        [TestCase("pinned")]
+        [TestCase("disabled")]
+        [TestCase("absent")]
+        [TestCase("missing")]
+        [TestCase("owned")]
+        [TestCase("owned-disabled")]
+        [TestCase("automatic-disabled")]
+        public void LegacyPreferenceInitializerRefreshesOnlyOwnedEntries(string fixture)
+        {
+            var client = Create("opencode");
+            string path = client.GetConfigPath();
+            if (fixture == "owned" || fixture == "owned-disabled" || fixture == "automatic-disabled")
+            {
+                client.Configure();
+                if (fixture == "owned-disabled")
+                {
+                    var document = JObject.Parse(File.ReadAllText(path));
+                    document["mcp"]["unityMCP"]["enabled"] = false;
+                    File.WriteAllText(path, document.ToString());
+                }
+                if (fixture == "automatic-disabled")
+                    EditorPrefs.SetBool(EditorPrefKeys.AutoRegisterEnabled, false);
+            }
+            else if (fixture != "missing")
+                File.WriteAllText(path, UnownedDocument("opencode", fixture));
+            byte[] before = File.Exists(path) ? File.ReadAllBytes(path) : null;
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, NextSource);
+            SetString(EditorPrefKeys.ServerSrc, "legacy-fixture");
+            SetBool(EditorPrefKeys.UseEmbeddedServer, true);
+            typeof(McpClientRegistry)
+                .GetField("cached", BindingFlags.Static | BindingFlags.NonPublic)
+                .SetValue(null, new List<IMcpClientConfigurator> { client });
+
+            typeof(LegacyServerSrcMigration).GetMethod("RunMigrationIfNeeded", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+
+            Assert.IsFalse(EditorPrefs.HasKey(EditorPrefKeys.ServerSrc));
+            Assert.IsFalse(EditorPrefs.HasKey(EditorPrefKeys.UseEmbeddedServer));
+            if (fixture == "missing")
+                Assert.IsFalse(File.Exists(path));
+            else if (fixture == "owned")
+                StringAssert.Contains(NextSource, File.ReadAllText(path));
+            else
+                CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+        }
+
         [TestCase(null, false, true)]
         [TestCase(null, true, true)]
         [TestCase("true", false, true)]

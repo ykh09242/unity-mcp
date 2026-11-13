@@ -1,4 +1,6 @@
 using System;
+using System.Linq;
+using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
@@ -38,25 +40,14 @@ namespace MCPForUnity.Editor.Migrations
 
             try
             {
-                McpLog.Info("Detected legacy embedded MCP server configuration. Updating all client configs...");
-
-                var summary = MCPServiceLocator.Client.ConfigureAllDetectedClients();
-
-                if (summary.FailureCount > 0)
+                // Client updates use the same receipt-scoped path as the stdio upgrade.
+                if (!EditorConfigurationCache.Instance.UseHttpTransport)
                 {
-                    McpLog.Warn($"Legacy configuration migration finished with errors ({summary.GetSummaryMessage()}). details:");
-                    if (summary.Messages != null)
+                    foreach (var configurator in McpClientRegistry.All.OfType<McpClientConfiguratorBase>())
                     {
-                        foreach (var message in summary.Messages)
-                        {
-                            McpLog.Warn($"  {message}");
-                        }
+                        if (configurator.SupportsAutoConfigure)
+                            configurator.RefreshForStdioMigration();
                     }
-                    McpLog.Warn("Legacy keys will be removed to prevent migration loop. Please configure failing clients manually.");
-                }
-                else
-                {
-                    McpLog.Info($"Legacy configuration migration complete ({summary.GetSummaryMessage()})");
                 }
 
                 if (hasServerSrc)
