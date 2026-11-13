@@ -21,7 +21,7 @@ Inspect scene references within explicit work and result budgets. Inspection may
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `action` | `Literal['validate_references']` | yes | Feature action to perform. |
-| `path` | `str \| None` | — | Scene path, under Assets/ or Packages/. A bare path is treated as relative to Assets/. |
+| `path` | `str \| None` | — | Scene path under Assets/ or Packages/. For Save As, the destination under Assets/. A bare path is relative to Assets/. |
 | `page_size` | `int \| str \| None` | — | Page size for get_hierarchy paging. |
 | `reference_scope` | `Literal['active_scene', 'loaded_scenes', 'prefab', 'scriptable_object'] \| None` | — | validate_references only; loaded scopes never open scenes. |
 | `max_objects` | `int \| str \| None` | — | validate: 1-10000 objects per slice, default 1000; validate_references: 1-250000, default 1024. |

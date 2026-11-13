@@ -14,7 +14,7 @@ description: "Inspect optional Unity Localization locale/table identities, share
 
 ## Description
 
-Inspect optional Unity Localization locale/table identities, shared keys, missing translations, static Smart String selectors and asset GUID references. No runtime formatting, loading or locale activation. inspect requires 1..256 explicit table_paths; argument_names is the caller's available root-selector inventory, not proof of custom formatter or runtime variable behavior. list_locales/list_tables use optional exact paths or bounded Assets discovery. set_string_entry corrects an existing shared key ID in one table and preserves is_smart when omitted. set_fallbacks replaces only explicit locale fallback metadata, refusing cycles. Writes require expected_revision from inspection and save the exact asset with native Undo. Revision includes loaded serialization and source bytes; external process races are not excluded. set_asset_entry explicitly refuses: supported package authoring also changes Addressables groups/labels/shared metadata. No asset/table/locale creation, key deletion or implicit Addressables changes.
+Inspect optional Unity Localization locale/table identities, shared keys, missing translations, static Smart String selectors and asset GUID references. No runtime formatting, loading or locale activation. inspect requires 1..256 explicit table_paths. For one large table, supply limit (1..4096) or offset. Each page covers shared keys in serialized order and then orphan entries by ID, with findings for those positions. Pages fit 1 MiB. Continue with data.next_offset and expected_revision=data.revision until next_offset is null. argument_names is the caller's available root-selector inventory, not proof of custom formatter or runtime variable behavior. list_locales/list_tables use optional exact paths or bounded Assets discovery. set_string_entry corrects an existing shared key ID in one table and preserves is_smart when omitted. set_fallbacks replaces only explicit locale fallback metadata, refusing cycles. Writes require the asset revision (tables[0].revision for a table) and save the exact asset with native Undo. Revision includes loaded serialization and source bytes; external process races are not excluded. set_asset_entry explicitly refuses: supported package authoring also changes Addressables groups/labels/shared metadata. No asset/table/locale creation, key deletion or implicit Addressables changes.
 
 ## Parameters
 
@@ -31,9 +31,9 @@ Inspect optional Unity Localization locale/table identities, shared keys, missin
 | `asset_path` | `str \| None` | — | Asset correction is refused because it requires Addressables authoring. |
 | `argument_names` | `list[str] \| None` | — | Available root selectors for static smart diagnostics. |
 | `fallback_locale_paths` | `list[str] \| None` | — | Ordered fallbacks; explicit empty list clears fallback metadata only. |
-| `expected_revision` | `str \| None` | — | Exact current asset revision from inspection. |
+| `expected_revision` | `str \| None` | — | Asset revision for correction, or data.revision for an inspection page. |
 | `offset` | `int \| None` | — | Page offset. |
-| `limit` | `int \| None` | — | Discovery page size, default 50. |
+| `limit` | `int \| None` | — | Page size, 1..100 for discovery or 1..4096 for one-table inspection. Default 50 in paged mode. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
