@@ -103,6 +103,44 @@ namespace MCPForUnityTests.EditMode.Tools
 
 #if UNITY_6000_0_OR_NEWER
         [Test]
+        public void Batch_EqualProfileNamesRejectBeforeQueueOrStoreChanges()
+        {
+            string folder = "MCPBatchProfiles-" + Guid.NewGuid().ToString("N");
+            string root = "Assets/" + folder;
+            AssetDatabase.CreateFolder("Assets", folder);
+            try
+            {
+                AssetDatabase.CreateFolder(root, "QA");
+                AssetDatabase.CreateFolder(root, "Prod");
+                foreach (string directory in new[] { "QA", "Prod" })
+                {
+                    var profile = UnityEngine.ScriptableObject.CreateInstance<UnityEditor.Build.Profile.BuildProfile>();
+                    var serialized = new SerializedObject(profile);
+                    serialized.FindProperty("m_BuildTarget").intValue = (int)EditorUserBuildSettings.activeBuildTarget;
+                    serialized.ApplyModifiedPropertiesWithoutUndo();
+                    AssetDatabase.CreateAsset(profile, $"{root}/{directory}/Release.asset");
+                }
+                AssetDatabase.SaveAssets();
+                string checkpoint = SessionState.GetString("MCPForUnity.Build.QueuedV1", "");
+                var store = (IDictionary)typeof(BuildJobStore).GetField("_batchJobs", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+                int count = store.Count;
+                var response = JObject.FromObject(
+                    ManageBuild.HandleCommand(
+                        new JObject { ["action"] = "batch", ["profiles"] = new JArray($"{root}/QA/Release.asset", $"{root}/Prod/Release.asset") }
+                    )
+                );
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("conflicting output locations", response.Value<string>("error"));
+                Assert.AreEqual(count, store.Count);
+                Assert.AreEqual(checkpoint, SessionState.GetString("MCPForUnity.Build.QueuedV1", ""));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(root);
+            }
+        }
+
+        [Test]
         public void MissingProfile_RejectsBeforeChangingScriptingBackend()
         {
             var target = NamedBuildTarget.FromBuildTargetGroup(BuildPipeline.GetBuildTargetGroup(EditorUserBuildSettings.activeBuildTarget));
@@ -130,6 +168,34 @@ namespace MCPForUnityTests.EditMode.Tools
             }
         }
 #endif
+
+        [Test]
+        public void Batch_RepeatedTargetAliasesRejectsBeforeQueueOrStoreChanges()
+        {
+            string name = EditorUserBuildSettings.activeBuildTarget.ToString();
+            string checkpoint = SessionState.GetString("MCPForUnity.Build.QueuedV1", "");
+            var store = (IDictionary)typeof(BuildJobStore).GetField("_batchJobs", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            int count = store.Count;
+            var response = JObject.FromObject(
+                ManageBuild.HandleCommand(new JObject { ["action"] = "batch", ["targets"] = new JArray(name, name.ToLowerInvariant()) })
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("conflicting output locations", response.Value<string>("error"));
+            Assert.AreEqual(count, store.Count);
+            Assert.AreEqual(checkpoint, SessionState.GetString("MCPForUnity.Build.QueuedV1", ""));
+        }
+
+        [Test]
+        public void BatchOutputCollision_NormalizesProfileDestinationsAndAllowsDistinctPaths()
+        {
+            var find = typeof(ManageBuild).GetMethod("FindBatchOutputCollision", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(find);
+            string first = System.IO.Path.Combine("Builds", "Release", "Game");
+            string equivalent = System.IO.Path.Combine("Builds", "Other", "..", "Release", "Game");
+            string distinct = System.IO.Path.Combine("Builds", "Debug", "Game");
+            Assert.IsNotNull(find.Invoke(null, new object[] { new[] { first, equivalent } }));
+            Assert.IsNull(find.Invoke(null, new object[] { new[] { first, distinct } }));
+        }
 
         [TestCase(BuildJobState.Pending)]
         [TestCase(BuildJobState.Building)]

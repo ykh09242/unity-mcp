@@ -656,6 +656,10 @@ namespace MCPForUnity.Editor.Tools
                     resolvedTargets.Add((bt, path));
                 }
 
+                string collision = FindBatchOutputCollision(resolvedTargets.Select(item => item.path));
+                if (collision != null)
+                    return new ErrorResponse($"Batch builds have conflicting output locations: {collision}");
+
                 string batchId = BuildJobStore.CreateBatchId();
                 var batch = new BatchJob(batchId);
                 batch.State = BuildJobState.Building;
@@ -690,6 +694,7 @@ namespace MCPForUnity.Editor.Tools
                 // Validate all profiles exist before creating any store entries
                 var loadedProfiles = new List<UnityEditor.Build.Profile.BuildProfile>();
                 var profileTargets = new List<BuildTarget>();
+                var profilePaths = new List<string>();
                 foreach (var profilePath in profiles)
                 {
                     AssetPathUtility.GetContainedAssetPath(profilePath);
@@ -701,10 +706,16 @@ namespace MCPForUnity.Editor.Tools
                     if (!BuildPipeline.IsBuildTargetSupported(BuildPipeline.GetBuildTargetGroup(target), target))
                         return new ErrorResponse($"Platform '{target}' is not installed. Install it via Unity Hub.");
                     string name = System.IO.Path.GetFileNameWithoutExtension(profilePath);
-                    BuildRunner.ValidateOutputPath($"{outputDir}/{name}/{PlayerSettings.productName}");
+                    string path = $"{outputDir}/{name}/{PlayerSettings.productName}";
+                    BuildRunner.ValidateOutputPath(path);
+                    profilePaths.Add(path);
                     loadedProfiles.Add(profile);
                     profileTargets.Add(target);
                 }
+
+                string collision = FindBatchOutputCollision(profilePaths);
+                if (collision != null)
+                    return new ErrorResponse($"Batch builds have conflicting output locations: {collision}");
 
                 string batchId = BuildJobStore.CreateBatchId();
                 var batch = new BatchJob(batchId);
@@ -719,8 +730,7 @@ namespace MCPForUnity.Editor.Tools
                 for (int i = 0; i < profiles.Length; i++)
                 {
                     var target = profileTargets[i];
-                    string name = System.IO.Path.GetFileNameWithoutExtension(profiles[i]);
-                    string path = $"{outputDir}/{name}/{PlayerSettings.productName}";
+                    string path = profilePaths[i];
                     var child = new BuildJob(BuildJobStore.CreateJobId(), target, path);
                     batch.Children.Add(child);
                     var options = new BuildPlayerWithProfileOptions
@@ -758,6 +768,19 @@ namespace MCPForUnity.Editor.Tools
 #endif
 
             return new ErrorResponse("'targets' or 'profiles' is required for batch builds.");
+        }
+
+        private static string FindBatchOutputCollision(IEnumerable<string> paths)
+        {
+            // Use a conservative case-insensitive comparison for portable build outputs.
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string path in paths)
+            {
+                string normalized = System.IO.Path.GetFullPath(path).TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+                if (!seen.Add(normalized))
+                    return normalized;
+            }
+            return null;
         }
 
         // ── cancel ─────────────────────────────────────────────────────
