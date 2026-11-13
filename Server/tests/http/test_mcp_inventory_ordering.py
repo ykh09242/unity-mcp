@@ -350,7 +350,9 @@ async def test_committed_catalog_order_and_scope_remain_current_between_credenti
                 assert denied.frames[0]["status"] == 400
                 assert not denied.acknowledged.is_set()
 
-                replacement = PluginStream(app, "alice-key", "a", "A")
+                replacement = PluginStream(
+                    app, "alice-key", "a", "A", editor_generation=alice.editor_generation
+                )
                 await replacement.connect(group)
                 await wait(alice.done)
                 assert replacement.session_id != alice.session_id
