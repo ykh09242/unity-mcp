@@ -5,6 +5,7 @@
       "cases": [
         "success",
         "listener-error",
+        "startup-log",
         "cancel",
         "wrong-build",
         "startup-progress-write-failure",
@@ -23,6 +24,7 @@
         "success",
         "error",
         "listener-error",
+        "startup-log",
         "timeout",
         "blocked",
         "cancel",
@@ -72,6 +74,7 @@
         "success",
         "error",
         "listener-error",
+        "startup-log",
         "timeout",
         "blocked",
         "cancel",

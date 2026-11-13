@@ -72,6 +72,65 @@ def test_valid_negative_native_outcome_is_truthful(native):
     assert check_report(directory, bundle, process)["status"] == "timed_out"
 
 
+@pytest.mark.parametrize(
+    "count,message,step_status,expected_error",
+    [
+        (1, "PLAYER_FIXTURE_BEFORE_FIRST_UPDATE_ERROR", "skipped", None),
+        (0, "", "skipped", "Bootstrap Start error"),
+        (1, "unrelated error", "skipped", "Bootstrap Start error"),
+        (2, "PLAYER_FIXTURE_BEFORE_FIRST_UPDATE_ERROR", "skipped", "Bootstrap Start error"),
+        (1, "PLAYER_FIXTURE_BEFORE_FIRST_UPDATE_ERROR", "passed", "dispatched scenario steps"),
+    ],
+)
+def test_startup_log_case_requires_single_error_before_any_step(
+    native, count, message, step_status, expected_error
+):
+    root, bundle, request, process, report = native
+    directory = root / "cases" / "startup-log"
+    directory.mkdir(parents=True)
+    bundle["definition"]["steps"] = [{"action": "wait_state"}]
+    skipped = {
+        "status": "skipped",
+        "started_unix_ms": None,
+        "finished_unix_ms": report["finished_unix_ms"],
+    }
+    report.update(
+        status="failed",
+        failure={"code": "unexpected_log"},
+        unexpected_log_count=count,
+        unexpected_log_error=message,
+        iteration_results_version=1,
+        iteration_results=[{**skipped, "iteration": 1}],
+        steps=[{**skipped, "stage": "main", "status": step_status}],
+    )
+    process["progress_observations"] = [
+        {
+            **request,
+            "schema_version": 1,
+            "process_id": process["process_id"],
+            "sequence": 1,
+            "main_loop_sequence": 1,
+            "heartbeat_unix_ms": report["finished_unix_ms"],
+            "elapsed_ms": 1,
+        }
+    ]
+    for filename, value in (
+        ("request.json", request),
+        ("run.json", report),
+        ("launch.json", process),
+    ):
+        write_json(directory / filename, value)
+    receipt = {
+        "completed_unix_ms": process["finished_unix_ms"],
+        "artifact_hashes": {row["path"]: row["sha256"] for row in inventory(directory)},
+    }
+    if expected_error:
+        with pytest.raises(ValueError, match=expected_error):
+            checker.check_case(root, "startup-log", bundle, receipt)
+    else:
+        checker.check_case(root, "startup-log", bundle, receipt)
+
+
 @pytest.fixture
 def startup_failure(native):
     """Synthetic checker inputs mirror the independently executed native startup case."""

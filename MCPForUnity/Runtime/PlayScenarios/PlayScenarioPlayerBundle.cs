@@ -406,9 +406,16 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         public static void Apply(PlayScenarioLogBuffer logs, PlayScenarioEngine engine, ref int processed, long now)
         {
-            if (logs == null || engine == null)
+            Apply(logs, engine?.State, engine, ref processed, now);
+        }
+
+        public static void Apply(PlayScenarioLogBuffer logs, PlayScenarioRun run, PlayScenarioEngine engine, ref int processed, long now)
+        {
+            if (logs == null || run == null)
                 return;
-            logs.DrainTo(engine.State);
+            logs.DrainTo(run);
+            if (engine == null)
+                return;
             if (engine.State.UnexpectedLogCount <= processed)
                 return;
             processed = engine.State.UnexpectedLogCount;

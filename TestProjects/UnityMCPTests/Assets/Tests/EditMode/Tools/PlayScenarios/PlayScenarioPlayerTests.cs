@@ -409,6 +409,34 @@ namespace MCPForUnityTests
         }
 
         [Test]
+        public void StartupLogsAreAppliedBeforeFirstTickAndBeforeEngineCancellation()
+        {
+            PlayScenarioDefinition definition = Definition();
+            var logs = new PlayScenarioLogBuffer(definition.LogPolicy);
+            Application.LogCallback callback = PlayScenarioPlayerLogDrain.Capture(logs);
+            callback("startup failure", "", LogType.Error);
+            var run = PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000);
+            var engine = new PlayScenarioEngine(run, new ReadyHost());
+            engine.EnteredPlayMode();
+            int processed = 0;
+            PlayScenarioPlayerLogDrain.Apply(logs, run, engine, ref processed, 1000);
+            Assert.That(run.UnexpectedLogCount, Is.EqualTo(1));
+            Assert.That(run.Failure.Code, Is.EqualTo("unexpected_log"));
+            PlayScenarioPlayerLogDrain.Apply(logs, run, engine, ref processed, 1001);
+            Assert.That(run.UnexpectedLogCount, Is.EqualTo(1));
+
+            var cancelledLogs = new PlayScenarioLogBuffer(definition.LogPolicy);
+            PlayScenarioPlayerLogDrain.Capture(cancelledLogs)("before cancel", "", LogType.Error);
+            var cancelled = PlayScenarioEngine.Create(definition, new string('b', 32), 1, 30, 1000);
+            PlayScenarioPlayerCancellation.FinishBeforeStart(cancelled, 1001);
+            cancelledLogs.Close();
+            processed = 0;
+            PlayScenarioPlayerLogDrain.Apply(cancelledLogs, cancelled, null, ref processed, 1002);
+            Assert.That(cancelled.Status, Is.EqualTo("cancelled"));
+            Assert.That(cancelled.UnexpectedLogCount, Is.EqualTo(1));
+        }
+
+        [Test]
         public void LateUnexpectedLogChangesNativeSuccessAndExitCodeBeforePublication()
         {
             PlayScenarioDefinition definition = Definition();

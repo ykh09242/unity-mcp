@@ -81,4 +81,23 @@ namespace MCPForUnityTests.PlayScenarios.Player
             }
         }
     }
+
+#if !UNITY_EDITOR
+    [DefaultExecutionOrder(1000)]
+    public sealed class ScenarioPlayerStartupLogProbe : MonoBehaviour
+    {
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void Install()
+        {
+            if (ScenarioPlayerFixture.Mode == "startup-log")
+                new GameObject("Scenario Player Startup Log Probe").AddComponent<ScenarioPlayerStartupLogProbe>();
+        }
+
+        private void Start()
+        {
+            // The runner's Start has the default execution order; no Update has run yet.
+            Debug.LogError("PLAYER_FIXTURE_BEFORE_FIRST_UPDATE_ERROR");
+        }
+    }
+#endif
 }

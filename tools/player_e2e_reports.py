@@ -64,8 +64,44 @@ def check_progress(observations: list, request: dict, pid: int) -> None:
     require(alive, "Initial snapshot is not actual main-loop liveness")
 
 
+def check_unstarted_body(report: dict, definition: dict, repeat_count: int) -> None:
+    """A failure before the first step must finalize every planned iteration and step as skipped."""
+    finished = report["finished_unix_ms"]
+    ledger = report.get("iteration_results")
+    steps = report.get("steps")
+    expected_steps = repeat_count * sum(
+        len(definition.get(field, [])) for field in ("setup_steps", "steps", "cleanup_steps")
+    )
+
+    def skipped(row: dict) -> bool:
+        return (
+            row.get("status") == "skipped"
+            and row.get("started_unix_ms") is None
+            and row.get("finished_unix_ms") == finished
+        )
+
+    require(
+        report.get("iteration_results_version") == 1
+        and isinstance(ledger, list)
+        and [row.get("iteration") for row in ledger] == list(range(1, repeat_count + 1))
+        and all(skipped(row) for row in ledger),
+        "Startup failure contains unfinished or fabricated attempted iterations",
+    )
+    require(
+        isinstance(steps, list)
+        and len(steps) == expected_steps
+        and all(skipped(step) for step in steps),
+        "Startup failure dispatched scenario steps",
+    )
+
+
 def check_report(
-    directory: Path, bundle: dict, process: dict, *, cleanup_failure: bool = False
+    directory: Path,
+    bundle: dict,
+    process: dict,
+    *,
+    cleanup_failure: bool = False,
+    before_first_step: bool = False,
 ) -> dict:
     """Require identity, terminal state, cleanup and actual native exit agreement."""
     request = read_json(directory / "request.json", 16384)
@@ -130,6 +166,9 @@ def check_report(
         and process["started_unix_ms"] <= started <= finished <= process["finished_unix_ms"],
         "Report lifetime is stale or unfinished",
     )
+    if before_first_step:
+        check_unstarted_body(report, bundle["definition"], request["repeat_count"])
+        return report
     steps = report.get("steps", [])
     cleanup = [step for step in steps if step.get("stage") == "cleanup"]
     require(
@@ -305,36 +344,7 @@ def check_startup_progress_failure(directory: Path, bundle: dict, process: dict)
         <= native["finished_unix_ms"],
         "Startup failure report lifetime is stale",
     )
-    ledger = report.get("iteration_results")
-    require(
-        report.get("iteration_results_version") == 1
-        and isinstance(ledger, list)
-        and len(ledger) == 3
-        and [row.get("iteration") for row in ledger] == [1, 2, 3]
-        and all(
-            row.get("status") == "skipped"
-            and row.get("started_unix_ms") is None
-            and row.get("finished_unix_ms") == report["finished_unix_ms"]
-            for row in ledger
-        ),
-        "Startup failure contains unfinished or fabricated attempted iterations",
-    )
-    expected_steps = 3 * sum(
-        len(bundle["definition"].get(field, []))
-        for field in ("setup_steps", "steps", "cleanup_steps")
-    )
-    steps = report.get("steps")
-    require(
-        isinstance(steps, list)
-        and len(steps) == expected_steps
-        and all(
-            step.get("status") == "skipped"
-            and step.get("started_unix_ms") is None
-            and step.get("finished_unix_ms") == report["finished_unix_ms"]
-            for step in steps
-        ),
-        "Startup failure dispatched scenario steps",
-    )
+    check_unstarted_body(report, bundle["definition"], request["repeat_count"])
     error, progress_error = report.get("error"), report.get("progress_error")
     require(
         isinstance(error, str)

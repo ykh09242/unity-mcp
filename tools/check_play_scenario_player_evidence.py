@@ -70,13 +70,22 @@ def check_case(root: Path, case: str, bundle: dict, receipt: dict) -> None:
         case "startup-progress-failed":
             check_startup_progress_failure(directory, bundle, process)
         case "succeeded" | "failed" | "timed_out" | "cancelled":
-            report = check_report(directory, bundle, process)
+            report = check_report(
+                directory, bundle, process, before_first_step=case == "startup-log"
+            )
             require(report["status"] == expected, "Unexpected native outcome")
             failure_code = read_json(MANIFEST).get("failure_codes", {}).get(case)
             if failure_code:
                 require(
                     report.get("failure", {}).get("code") == failure_code,
-                    "Readonly provider failure evidence differs",
+                    f"Player failure code differs for {case}",
+                )
+            if case == "startup-log":
+                require(
+                    report.get("unexpected_log_count") == 1
+                    and "PLAYER_FIXTURE_BEFORE_FIRST_UPDATE_ERROR"
+                    in (report.get("unexpected_log_error") or ""),
+                    "Bootstrap Start error was not captured exactly once",
                 )
             check_progress(
                 process["progress_observations"],

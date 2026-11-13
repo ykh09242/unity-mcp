@@ -9,6 +9,7 @@
   "cases": {
     "success": "succeeded",
     "error": "failed",
+    "startup-log": "failed",
     "listener-error": "failed",
     "timeout": "timed_out",
     "blocked": "timed_out",
@@ -53,6 +54,7 @@
     "soak-resources": "soak-resources"
   },
   "failure_codes": {
+    "startup-log": "unexpected_log",
     "state-wrong": "condition_unmet",
     "state-missing": "condition_unmet",
     "state-destroyed": "state_provider_unavailable"

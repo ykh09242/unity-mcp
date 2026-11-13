@@ -96,6 +96,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     Resources.UnloadAsset(asset);
                 }
                 bundle.SelectChild(request.ScenarioName, request.DefinitionHash);
+                BeginLogCapture();
                 run = PlayScenarioEngine.Create(bundle.Definition, request.JobId, request.RepeatCount, request.TimeoutSeconds, Now);
                 run.ExecutionEnvironment = "player";
                 run.Reproduction.UnityVersion = Application.unityVersion;
@@ -142,7 +143,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             }
         }
 
-        private void StartEngine()
+        private void BeginLogCapture()
         {
             iterationRecorded = false;
             processedUnexpectedLogs = 0;
@@ -150,6 +151,10 @@ namespace MCPForUnity.Runtime.PlayScenarios
             logCallback = PlayScenarioPlayerLogDrain.Capture(logs);
             Application.logMessageReceivedThreaded += logCallback;
             subscribed = true;
+        }
+
+        private void StartEngine()
+        {
             engine = new PlayScenarioEngine(
                 run,
                 new PlayScenarioPlayerHost(bundle.ScenePaths, () => subscribed ? 1 : 0, bundle.Definition.UsesExplicitSceneSemantics),
@@ -191,7 +196,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             return filename;
         }
 
-        private void Drain() => PlayScenarioPlayerLogDrain.Apply(logs, engine, ref processedUnexpectedLogs, Now);
+        private void Drain() => PlayScenarioPlayerLogDrain.Apply(logs, run, engine, ref processedUnexpectedLogs, Now);
 
         private void Update()
         {
@@ -372,6 +377,9 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 Complete(PlayScenarioPlayerLogDrain.ExitCode(run));
                 return;
             }
+            engine = null;
+            run = null;
+            BeginLogCapture();
             run = PlayScenarioEngine.Create(bundle.Definition, request.JobId, 1, request.TimeoutSeconds, Now);
             run.ExecutionEnvironment = "player";
             run.Reproduction.UnityVersion = Application.unityVersion;
