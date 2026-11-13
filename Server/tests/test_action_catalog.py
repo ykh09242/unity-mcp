@@ -237,6 +237,23 @@ def test_mixed_build_actions_retain_conditional_writes_and_conservative_effects(
     assert card["effects_scope"] == "tool"
 
 
+def test_build_settings_card_distinguishes_project_and_named_target_properties(entries):
+    from services.registry.action_catalog import action_card
+
+    entry = next(entry for entry in entries if entry["name"] == "manage_build")
+    settings = action_card(entry, "settings")
+    assert (
+        "product_name, company_name and version are project-wide PlayerSettings"
+        in settings["purpose"]
+    )
+    assert (
+        "bundle_id, scripting_backend, defines and architecture use the selected named build target"
+        in settings["purpose"]
+    )
+    assert settings["required_parameters"] == ["property"]
+    assert settings["effects"]["readOnlyHint"] is False
+
+
 @pytest.mark.parametrize("tool", ["prefab_contents", "manage_prefabs"])
 def test_prefab_cards_distinguish_callback_preview_from_token_preview_and_save(entries, tool):
     from services.registry.action_catalog import action_card

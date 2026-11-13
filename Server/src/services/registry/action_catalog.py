@@ -207,7 +207,7 @@ TOOL_GUIDANCE: Final = {
                 "Schedule an asynchronous ordinary or profile build without a plan hash guard. Build preparation saves assets/scenes, may persist scripting_backend changes and runs build callbacks; target/output_path/scenes/options or profile select the build. Observe the returned job_id with status."
             ),
             "settings": ActionGuidance(
-                "Read the selected build property when value is omitted; providing value writes the persistent setting for the selected target, including an explicit empty string where supported.",
+                "Read the selected build property when value is omitted; providing value writes the persistent setting, including an explicit empty string where supported. product_name, company_name and version are project-wide PlayerSettings; bundle_id, scripting_backend, defines and architecture use the selected named build target.",
                 ("property",),
             ),
             "scenes": ActionGuidance(
