@@ -15,6 +15,22 @@ remains nonterminal. Package resolve completion may be unobservable; `unknown`
 returns promptly and never becomes guessed success. Query-only package list/search
 jobs and scenario suites are outside this initial adapter.
 
+A cancelled build batch remains `finalizing` and nonterminal while its native
+`current_build` is still running. Later status reads return the cancelled terminal
+outcome once that child settles. The cancellation result alone does not establish
+that the batch has released its active native child.
+
+A scenario with native `phase=finished` and a terminal status has a final outcome
+even if `runner_resources_released=false`. The wait returns promptly as `terminal`
+and preserves that status, cleanup errors and report errors. Its summary retains
+`settled=false` and includes `recovery` with the original `job_id`,
+`phase=cleanup_failed`, `reason=scenario_resources_unreleased`, and
+`mode=restart_required`: inspect the job's cleanup and report errors, then restart
+the Editor before starting native work. A terminal job does not establish Editor
+readiness. An in-flight `phase=finalizing` remains nonterminal and continues to be
+observed. These projections also apply to bounded-wait Task results and initial
+completion summaries; they never start or replay a job.
+
 If a domain reload loses an add, embed, or remove request, its status becomes
 `unknown` until registered package metadata establishes the requested state.
 Elapsed time does not turn missing evidence into a native failure. Later status

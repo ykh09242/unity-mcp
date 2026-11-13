@@ -73,6 +73,62 @@ async def test_real_sdk_task_matches_ordinary_existing_job_observation(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enveloped", [False, True])
+@pytest.mark.parametrize("kind", ["build", "scenario"])
+async def test_cleanup_settlement_matches_ordinary_and_task_observations(
+    command_hub, tmp_path, monkeypatch, kind, enveloped
+):
+    monkeypatch.setattr(module, "POLL_INTERVAL", 0)
+    job_id = "a" * 32
+
+    async def answer(message):
+        command_hub.sent.append(message)
+        assert message["name"] == module._COMMANDS[kind]
+        assert message["params"] == {"action": "status", "job_id": job_id}
+        active = len(command_hub.sent) % 2 == 1
+        data = (
+            {"job_id": job_id, "result": "cancelled", "current_build": "child" if active else None}
+            if kind == "build"
+            else {
+                "job_id": job_id,
+                "status": "running" if active else "failed",
+                "phase": "finalizing" if active else "finished",
+                "runner_resources_released": False,
+                "cleanup_error": "Runner release failed.",
+            }
+        )
+        native = {"success": True, "data": data}
+        if enveloped:
+            native = {"status": "success", "result": native}
+        await command_hub.endpoint._handle_command_result(
+            command_hub.websocket, CommandResultMessage(id=message["id"], result=native)
+        )
+
+    command_hub.websocket.send_json = answer
+    async with bound_http(tmp_path, monkeypatch, operation_wait=True) as (client, runtime):
+        params = {
+            "name": "wait_for_operation",
+            "arguments": {"kind": kind, "job_id": job_id, "wait_timeout": 1},
+        }
+        ordinary = await bound_call(client, "tools/call", params)
+        task = await completed_wait(client, runtime, params)
+        assert ordinary["result"] == task["result"]
+        payload = task["result"]["structuredContent"]["data"]
+        assert payload["terminal"] is True
+        assert payload["job_id"] == job_id
+        if kind == "scenario":
+            assert payload["job_status"] == "failed"
+            assert payload["job"]["runner_resources_released"] is False
+            assert payload["summary"]["settled"] is False
+            assert payload["summary"]["recovery"]["mode"] == "restart_required"
+            assert payload["summary"]["recovery"]["job_id"] == job_id
+        else:
+            assert payload["job_status"] == "cancelled"
+            assert payload["job"]["current_build"] is None
+    assert len(command_hub.sent) == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enveloped", [False, True])
 async def test_finalizing_is_polled_until_owner_publishes_terminal(
     command_hub, tmp_path, monkeypatch, enveloped
 ):

@@ -201,11 +201,22 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
         from services.tools.run_tests import native_test_cleanup_pending
 
         test_cleanup_pending = native_test_cleanup_pending(data)
+    scenario_cleanup_failed = (
+        kind == "scenario"
+        and data.get("phase") == "finished"
+        and state in _TERMINAL
+        and data.get("runner_resources_released") is False
+    )
+    batch_child_running = (
+        kind == "build" and state == "cancelled" and bool(data.get("current_build"))
+    )
     if (
         test_cleanup_pending
+        or batch_child_running
         or data.get("phase") == "finalizing"
         or data.get("runner_resources_released") is False
         and state in _TERMINAL
+        and not scenario_cleanup_failed
         or kind == "auditor"
         and data.get("native_owner_retained") is True
         and state in _TERMINAL
@@ -228,6 +239,22 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
         phase, terminal = "unknown", False
     else:
         return unavailable("unsupported_job_observation")
+    summary = terminal_summary(data, kind) if terminal else None
+    if scenario_cleanup_failed:
+        # The native owner has finished finalization. Polling cannot release its
+        # retained resources; preserve its outcome and existing recovery semantics.
+        summary["recovery"] = {
+            "source": "play_scenario",
+            "phase": "cleanup_failed",
+            "reason": "scenario_resources_unreleased",
+            "mode": "restart_required",
+            "job_id": job_id,
+            "message": (
+                "The scenario finished without confirming release of its runner resources. "
+                "Inspect the job's cleanup and report errors, then restart the Editor before "
+                "starting native work."
+            ),
+        }
     return {
         "success": True,
         "data": {
@@ -238,7 +265,7 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
             "job_status": state,
             "wait_status": "observed",
             "job": data,
-            **({"summary": terminal_summary(data, kind)} if terminal else {}),
+            **({"summary": summary} if terminal else {}),
         },
     }
 
