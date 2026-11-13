@@ -8,7 +8,7 @@ import time
 
 from core.config import config
 from models.models import UnityInstanceInfo
-from transport.legacy.port_discovery import PortDiscovery
+from transport.legacy.port_discovery import PortDiscovery, check_discovery, checked_lock
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -23,13 +23,14 @@ class StdioPortRegistry:
 
     def _refresh_locked(self) -> None:
         instances = PortDiscovery.discover_all_unity_instances()
+        check_discovery()
         self._instances = {inst.id: inst for inst in instances}
         self._last_refresh = time.time()
         logger.debug(f"STDIO port registry refreshed with {len(instances)} instance(s)")
 
     def get_instances(self, *, force_refresh: bool = False) -> list[UnityInstanceInfo]:
         ttl = getattr(config, "port_registry_ttl", 5.0)
-        with self._lock:
+        with checked_lock(self._lock):
             now = time.time()
             if (
                 not force_refresh

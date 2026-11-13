@@ -302,9 +302,9 @@ async def test_cancelled_before_business_payload_cannot_escape_worker_preflight(
         return None
 
     @contextmanager
-    def command_lock(deadline):
+    def command_lock(deadline, cancelled):
         entered.set()
-        with original_lock(deadline):
+        with original_lock(deadline, cancelled):
             yield
 
     def write(payload):

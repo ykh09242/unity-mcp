@@ -43,9 +43,29 @@ def discovery_checks(check: Callable[[], float | None]):
         _discovery_check.reset(token)
 
 
-def _check_discovery() -> float | None:
+def check_discovery() -> float | None:
     check = _discovery_check.get()
     return check() if check is not None else None
+
+
+@contextmanager
+def checked_lock(lock, check: Callable[[], float | None] | None = None):
+    """Wait within the caller's budget and release only an acquired lock."""
+    check = check or _discovery_check.get()
+    if check is None:
+        with lock:
+            yield
+        return
+    while True:
+        deadline = check()
+        wait = 0.05 if deadline is None else min(0.05, max(0.0, deadline - time.monotonic()))
+        if lock.acquire(timeout=wait):
+            break
+    try:
+        check()
+        yield
+    finally:
+        lock.release()
 
 
 def _is_pong_reply(reply: object) -> bool:
@@ -104,24 +124,36 @@ class PortDiscovery:
         Current greetings identify candidates without authenticating a disposable peer.
         Only recognized legacy peers receive a ping.
         """
-        original = _check_discovery()
+        original = check_discovery()
         deadline = time.monotonic() + PortDiscovery.CONNECT_TIMEOUT
         if original is not None:
             deadline = min(deadline, original)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        guarded = _discovery_check.get() is not None
         try:
-            with socket.create_connection(
-                ("127.0.0.1", port), max(0.001, deadline - time.monotonic())
-            ) as s:
+            with socket.create_connection(("127.0.0.1", port), remaining) as s:
 
-                def receive(count: int) -> bytes:
+                def remaining_time() -> float:
+                    check_discovery()
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise TimeoutError("Discovery probe deadline expired")
-                    s.settimeout(remaining)
-                    chunk = s.recv(count)
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError("Discovery probe deadline expired")
-                    return chunk
+                    return remaining
+
+                def receive(count: int) -> bytes:
+                    while True:
+                        remaining = remaining_time()
+                        s.settimeout(min(0.05, remaining) if guarded else remaining)
+                        try:
+                            chunk = s.recv(count)
+                        except socket.timeout:
+                            if guarded:
+                                continue
+                            raise
+                        remaining_time()
+                        return chunk
 
                 try:
                     # Read one bounded complete line, including fragmented TCP greetings.
@@ -145,6 +177,7 @@ class PortDiscovery:
                         # Authentication would replace the active authenticated client.
                         return current[1]
                     if banner in ("WELCOME UNITY-MCP 1", "MCP/0.1"):
+                        s.settimeout(remaining_time())
                         s.sendall(b"ping")
                         response = bytearray()
                         while len(response) < 512:
@@ -166,6 +199,7 @@ class PortDiscovery:
                     # Frame format: 8-byte length header (big-endian uint64) + payload
                     payload = b"ping"
                     header = struct.pack(">Q", len(payload))
+                    s.settimeout(remaining_time())
                     s.sendall(header + payload)
 
                     # 3. Receive framed response
@@ -237,7 +271,7 @@ class PortDiscovery:
         first_seen_port: int | None = None
 
         for path in candidates:
-            _check_discovery()
+            check_discovery()
             try:
                 with open(path, "r") as f:
                     cfg = json.load(f)
@@ -319,7 +353,7 @@ class PortDiscovery:
         entries = []
         base = PortDiscovery.get_registry_dir()
         for filename in glob.glob(str(base / "unity-mcp-status-*.json")):
-            _check_discovery()
+            check_discovery()
             try:
                 path = Path(filename)
                 modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
@@ -366,7 +400,7 @@ class PortDiscovery:
         probes_by_port: dict[int, str | bool] = {}
         conflicting_ports: set[int] = set()
         for status_path, data, file_mtime in entries:
-            _check_discovery()
+            check_discovery()
             try:
                 # Extract hash from filename: unity-mcp-status-{hash}.json
                 filename = status_path.name

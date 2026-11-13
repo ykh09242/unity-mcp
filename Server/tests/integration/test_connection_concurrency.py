@@ -258,7 +258,7 @@ def test_rediscovered_port_update_expires_while_lifecycle_holds_lock(
     with ThreadPoolExecutor(max_workers=2) as executor:
         holder = executor.submit(hold_lifecycle_lock)
         start = time.monotonic()
-        command = executor.submit(conn.send_command, "get_editor_state", {}, 0, start + 0.1)
+        command = executor.submit(conn.send_command, "get_editor_state", {}, 1, start + 0.1)
         try:
             with pytest.raises(TimeoutError, match="deadline waiting"):
                 command.result(timeout=0.36)

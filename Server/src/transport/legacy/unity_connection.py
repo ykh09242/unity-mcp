@@ -17,7 +17,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from transport.legacy.port_discovery import PortDiscovery, discovery_checks
+from transport.legacy.port_discovery import PortDiscovery, checked_lock, discovery_checks
 import random
 import re
 import socket
@@ -198,16 +198,8 @@ class _ConnectionSelection:
             else 0.05
         )
 
-    @contextlib.contextmanager
     def lock(self, lock):
-        """Bound lock waits and notice abandonment without releasing another owner."""
-        while not lock.acquire(timeout=self.wait_timeout()):
-            pass
-        try:
-            self.check()
-            yield
-        finally:
-            lock.release()
+        return checked_lock(lock, self.check)
 
     def run(
         self, function: Callable[..., _ConnectionResult], /, *args, **kwargs
@@ -895,28 +887,24 @@ class UnityConnection:
         return max(floor, min(timeout, deadline - time.monotonic()))
 
     @contextlib.contextmanager
-    def _command_lock(self, deadline: float | None):
+    def _command_lock(self, deadline: float | None, cancelled: threading.Event | None = None):
         """Include time queued behind another command in the total budget."""
-        self._check_deadline(deadline)
-        acquired = (
-            self._io_lock.acquire()
-            if deadline is None
-            else self._io_lock.acquire(timeout=max(0.0, deadline - time.monotonic()))
-        )
-        if not acquired:
-            raise TimeoutError("Unity command exceeded total deadline waiting for connection")
-        entered = False
-        try:
-            self._check_deadline(deadline)
+
+        def check():
+            if cancelled is not None and cancelled.is_set():
+                raise CommandResumeAbandoned()
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("Unity command exceeded total deadline waiting for connection")
+            return deadline
+
+        with checked_lock(self._io_lock, check):
             if self._retired:
                 raise ConnectionError("Unity connection was retired; select the instance again")
             self._active_commands += 1
-            entered = True
-            yield
-        finally:
-            if entered:
+            try:
+                yield
+            finally:
                 self._active_commands -= 1
-            self._io_lock.release()
 
     def send_command(
         self,
@@ -978,6 +966,11 @@ class UnityConnection:
         if deadline is None and total_timeout > 0:
             deadline = time.monotonic() + total_timeout
 
+        def check_retry() -> float | None:
+            check_cancelled()
+            self._check_deadline(deadline)
+            return deadline
+
         # Canonical IDs end in the hash; older IDs may be just the hash.
         target_hash: str | None = None
         if self.instance_id:
@@ -995,7 +988,7 @@ class UnityConnection:
             ):
                 # Reload invalidates the socket; drop it under the I/O lock so this
                 # close is serialized against the send/recv block, then reconnect next call.
-                with self._command_lock(deadline):
+                with self._command_lock(deadline, _cancelled):
                     self.disconnect()
                 return MCPResponse(
                     success=False,
@@ -1003,6 +996,8 @@ class UnityConnection:
                     hint="retry",
                     data={"reason": "reloading"},
                 )
+        except (CommandResumeAbandoned, TimeoutError):
+            raise
         except Exception as exc:
             logger.debug(f"Preflight status check failed: {exc}")
 
@@ -1021,7 +1016,7 @@ class UnityConnection:
                 )
             response_received = False
             frame_started = False
-            with self._command_lock(deadline):
+            with self._command_lock(deadline, _cancelled):
                 try:
                     check_cancelled()
                     # Discard stale sockets left over from a previous domain reload
@@ -1340,14 +1335,18 @@ class UnityConnection:
                         )
                     last_error = e
 
+            check_retry()
+            if attempt == attempts:
+                raise last_error
+
             # Refresh a selected project's complete endpoint. A raw dial stays at its address.
-            self._check_deadline(deadline)
             try:
                 if self.instance_id is not None:
-                    instances = stdio_port_registry.get_instances(force_refresh=True)
+                    with discovery_checks(check_retry):
+                        instances = stdio_port_registry.get_instances(force_refresh=True)
                     target = next((inst for inst in instances if inst.id == self.instance_id), None)
                     if target is not None:
-                        with self._command_lock(deadline):
+                        with self._command_lock(deadline, _cancelled):
                             previous = getattr(self.selected_target, "listener_generation", None)
                             if previous and target.listener_generation is None:
                                 raise StdioAuthenticationError(
@@ -1357,50 +1356,35 @@ class UnityConnection:
                                 self.disconnect()
                             self.port = target.port
                             self.selected_target = target
-            except StdioAuthenticationError:
-                raise
-            except TimeoutError:
+            except (CommandResumeAbandoned, StdioAuthenticationError, TimeoutError):
                 raise
             except Exception as de:
                 logger.debug(f"Port discovery failed: {de}")
 
-            if attempt < attempts:
-                # Heartbeat-aware, jittered backoff
-                status = read_status_file(target_hash)
-                # Base exponential backoff
-                backoff = base_backoff * (2**attempt)
-                # Decorrelated jitter multiplier
-                jitter = random.uniform(0.1, 0.3)
+            # Heartbeat-aware, jittered backoff
+            check_retry()
+            status = read_status_file(target_hash)
+            fast_error = isinstance(
+                last_error, (ConnectionRefusedError, ConnectionResetError, TimeoutError)
+            ) or getattr(last_error, "errno", None) in (
+                errno.ECONNREFUSED,
+                errno.ECONNRESET,
+                errno.ETIMEDOUT,
+            )
+            if status and status.get("reloading"):
+                # Domain reload can take 10-20s; use longer waits
+                cap = 5.0
+            elif fast_error:
+                cap = 0.25
+            else:
+                cap = 3.0
 
-                # Fast‑retry for transient socket failures
-                fast_error = isinstance(
-                    last_error, (ConnectionRefusedError, ConnectionResetError, TimeoutError)
-                )
-                if not fast_error:
-                    try:
-                        err_no = getattr(last_error, "errno", None)
-                        fast_error = err_no in (
-                            errno.ECONNREFUSED,
-                            errno.ECONNRESET,
-                            errno.ETIMEDOUT,
-                        )
-                    except Exception:
-                        pass
-
-                # Cap backoff depending on state
-                if status and status.get("reloading"):
-                    # Domain reload can take 10-20s; use longer waits
-                    cap = 5.0
-                elif fast_error:
-                    cap = 0.25
-                else:
-                    cap = 3.0
-
-                sleep_s = min(cap, jitter * backoff)
-                sleep_s = self._cap_to_deadline(sleep_s, deadline, floor=0.0)
+            sleep_s = min(cap, random.uniform(0.1, 0.3) * base_backoff * (2**attempt))
+            sleep_s = self._cap_to_deadline(sleep_s, deadline)
+            if _cancelled is None:
                 time.sleep(sleep_s)
-                continue
-            raise last_error
+            elif _cancelled.wait(sleep_s):
+                raise CommandResumeAbandoned()
 
 
 # -----------------------------
