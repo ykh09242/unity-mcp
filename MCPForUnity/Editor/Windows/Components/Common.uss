@@ -730,6 +730,8 @@
 }
 .summary-caption { margin-right: 12px; -unity-font-style: bold; }
 .connection-summary .primary-button { margin: 2px 0 2px 8px; }
+.connection-summary .status-container { min-width: 180px; }
+#advanced-section .status-container { min-width: 100px; }
 .form-actions { flex-direction: row; flex-wrap: wrap; align-items: center; margin-top: 6px; }
 .form-actions > Button, .client-configuration-review-actions > Button { margin: 4px 8px 4px 0; }
 .client-configuration-review > .help-text { margin-bottom: 8px; }
