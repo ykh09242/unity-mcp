@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using MCPForUnity.Editor.Tools.Animation;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -185,6 +186,105 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(1, animation.GetClipCount());
             Assert.IsFalse(animation.playAutomatically);
             AssertPrefabSourceUnchanged(prefabPath, prefabBefore, metaBefore, original);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LegacyPrefabAssignmentUndoRedoPreservesAliasesDuplicatesAndOtherComponents(bool collapsedGroup)
+        {
+            var animation = CreateLegacyPrefabInstance(out var original, out var replacement, out string prefabPath);
+            var third = new AnimationClip { name = "Third", legacy = true };
+            AssetDatabase.CreateAsset(third, Root + "/Third.anim");
+            AnimationUtility.SetAnimationClips(animation, new[] { original, original });
+            animation.AddClip(original, "PreservedAlias");
+            var aliasState = animation["PreservedAlias"];
+            var aliasClip = animation.GetClip("PreservedAlias");
+            // AddClip creates a renamed clip for a custom alias. Make that preexisting
+            // reference persistent and register the customized prefab baseline before Undo.
+            AssetDatabase.CreateAsset(aliasClip, Root + "/PreservedAlias.anim");
+            Assert.IsTrue(EditorUtility.IsPersistent(aliasClip));
+            aliasState.speed = 2.25f;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(animation);
+            EditorUtility.SetDirty(animation);
+            Assert.AreEqual(3, animation.GetClipCount());
+            using (var serialized = new SerializedObject(animation))
+            using (var clips = serialized.FindProperty("m_Animations"))
+            {
+                Assert.AreEqual(3, clips.arraySize);
+                using var first = clips.GetArrayElementAtIndex(0);
+                using var second = clips.GetArrayElementAtIndex(1);
+                using var thirdSlot = clips.GetArrayElementAtIndex(2);
+                Assert.AreSame(original, first.objectReferenceValue);
+                Assert.AreSame(original, second.objectReferenceValue);
+                Assert.AreSame(aliasClip, thirdSlot.objectReferenceValue);
+            }
+            string before = EditorJsonUtility.ToJson(animation);
+            var other = new GameObject("UnrelatedAnimation").AddComponent<Animation>();
+            other.AddClip(original, "UnrelatedAlias");
+            var otherState = other["UnrelatedAlias"];
+            var otherClip = other.GetClip("UnrelatedAlias");
+            string otherBefore = EditorJsonUtility.ToJson(other);
+            byte[] prefabBefore = File.ReadAllBytes(prefabPath);
+            byte[] metaBefore = File.ReadAllBytes(prefabPath + ".meta");
+
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            Assert.IsTrue(AssignReplacement(replacement).Value<bool>("success"));
+            Undo.FlushUndoRecordObjects();
+            string afterReplacement = EditorJsonUtility.ToJson(animation);
+            if (!collapsedGroup)
+                Undo.IncrementCurrentGroup();
+            Assert.IsTrue(AssignReplacement(third).Value<bool>("success"));
+            Undo.FlushUndoRecordObjects();
+            string afterThird = EditorJsonUtility.ToJson(animation);
+            if (collapsedGroup)
+                Undo.CollapseUndoOperations(group);
+
+            if (!collapsedGroup)
+            {
+                Undo.PerformUndo();
+                Assert.AreEqual(afterReplacement, EditorJsonUtility.ToJson(animation));
+                Assert.IsNull(animation.GetClip(third.name));
+                Assert.AreSame(replacement, animation.GetClip(replacement.name));
+            }
+            Undo.PerformUndo();
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(animation));
+            Assert.IsNull(animation.GetClip(replacement.name));
+            Assert.IsNull(animation.GetClip(third.name));
+            Assert.AreSame(original, animation.clip);
+            Assert.IsFalse(animation.playAutomatically);
+            if (!collapsedGroup)
+            {
+                Undo.PerformRedo();
+                Assert.AreEqual(afterReplacement, EditorJsonUtility.ToJson(animation));
+                Assert.AreSame(replacement, animation.GetClip(replacement.name));
+                Assert.IsNull(animation.GetClip(third.name));
+            }
+            Undo.PerformRedo();
+            Assert.AreEqual(afterThird, EditorJsonUtility.ToJson(animation));
+            Assert.AreSame(third, animation.GetClip(third.name));
+            Assert.AreSame(replacement, animation.GetClip(replacement.name));
+            Assert.AreSame(aliasState, animation["PreservedAlias"]);
+            Assert.AreSame(aliasClip, animation.GetClip("PreservedAlias"));
+            Assert.AreEqual(2.25f, aliasState.speed);
+            Assert.AreEqual(otherBefore, EditorJsonUtility.ToJson(other));
+            Assert.AreSame(otherState, other["UnrelatedAlias"]);
+            Assert.AreSame(otherClip, other.GetClip("UnrelatedAlias"));
+            AssertPrefabSourceUnchanged(prefabPath, prefabBefore, metaBefore, original);
+        }
+
+        [Test]
+        public void LegacyAssignmentTrackingReleasesDestroyedComponents()
+        {
+            CreateLegacyPrefabInstance(out _, out var replacement, out _);
+            Assert.IsTrue(AssignReplacement(replacement).Value<bool>("success"));
+            var tracker = typeof(ManageAnimation).Assembly.GetType("MCPForUnity.Editor.Tools.Animation.ClipCreate+LegacyAssignmentUndo");
+            Assert.IsNotNull(tracker);
+            Object.DestroyImmediate(target);
+            target = null;
+            tracker.GetMethod("Prune", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+            var changes = (System.Collections.ICollection)tracker.GetField("Changes", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            Assert.AreEqual(0, changes.Count, "Destroyed targets must release tracked clip references and all tracker event subscriptions.");
         }
 
         private Animation CreateLegacyPrefabInstance(out AnimationClip original, out AnimationClip replacement, out string prefabPath)

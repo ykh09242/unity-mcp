@@ -374,12 +374,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 var wasLegacy = clip.legacy;
                 AssetPathUtility.GetFullAssetPath(clipPath);
                 SetupLegacyClip(clip);
-                Undo.RecordObject(legacyAnim, "Assign Animation Clip");
-                legacyAnim.clip = clip;
-                legacyAnim.AddClip(clip, clip.name);
-                legacyAnim.playAutomatically = true;
-                if (PrefabUtility.IsPartOfPrefabInstance(legacyAnim))
-                    PrefabUtility.RecordPrefabInstancePropertyModifications(legacyAnim);
+                LegacyAssignmentUndo.Apply(legacyAnim, clip);
                 EditorUtility.SetDirty(legacyAnim);
                 AssetDatabase.SaveAssetIfDirty(clip);
                 AssetDatabase.SaveAssetIfDirty(legacyAnim);
@@ -441,6 +436,159 @@ namespace MCPForUnity.Editor.Tools.Animation
                     + $"The clip is available at '{clipPath}'. "
                     + "Assign it to an Animator Controller state via the Animator window or create an AnimatorOverrideController.",
             };
+        }
+
+        private static class LegacyAssignmentUndo
+        {
+            private sealed class Configuration
+            {
+                private readonly ulong defaultClipId;
+                private readonly ulong[] clipIds;
+                private readonly bool playAutomatically;
+
+                private Configuration(ulong defaultId, ulong[] ids, bool autoplay)
+                {
+                    defaultClipId = defaultId;
+                    clipIds = ids;
+                    playAutomatically = autoplay;
+                }
+
+                internal static Configuration Read(UnityEngine.Animation target, out AnimationClip[] clips)
+                {
+                    using var serialized = new SerializedObject(target);
+                    using var defaultClip = serialized.FindProperty("m_Animation");
+                    using var slots = serialized.FindProperty("m_Animations");
+                    var ids = new ulong[slots.arraySize];
+                    clips = new AnimationClip[slots.arraySize];
+                    for (int i = 0; i < slots.arraySize; i++)
+                    {
+                        using var entry = slots.GetArrayElementAtIndex(i);
+                        ids[i] = ReferenceId(entry);
+                        clips[i] = entry.objectReferenceValue as AnimationClip;
+                    }
+                    return new Configuration(ReferenceId(defaultClip), ids, target.playAutomatically);
+                }
+
+                private static ulong ReferenceId(SerializedProperty property)
+                {
+#if UNITY_6000_4_OR_NEWER
+                    return EntityId.ToULong(property.objectReferenceEntityIdValue);
+#else
+                    return unchecked((uint)property.objectReferenceInstanceIDValue);
+#endif
+                }
+
+                internal bool Matches(Configuration other) =>
+                    defaultClipId == other.defaultClipId && playAutomatically == other.playAutomatically && clipIds.SequenceEqual(other.clipIds);
+            }
+
+            private sealed class Change
+            {
+                internal WeakReference<UnityEngine.Animation> Target;
+                internal readonly HashSet<string> Names = new HashSet<string>(StringComparer.Ordinal);
+                internal Configuration Configuration;
+            }
+
+            private static readonly List<Change> Changes = new List<Change>();
+            private static bool reconciling;
+
+            internal static void Apply(UnityEngine.Animation target, AnimationClip clip)
+            {
+                bool track = !EditorApplication.isPlayingOrWillChangePlaymode && !EditorUtility.IsPersistent(target);
+                Undo.RecordObject(target, "Assign Animation Clip");
+                target.clip = clip;
+                target.AddClip(clip, clip.name);
+                target.playAutomatically = true;
+                if (PrefabUtility.IsPartOfPrefabInstance(target))
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(target);
+                if (!track)
+                    return;
+                Prune();
+                var change = Changes.FirstOrDefault(value => value.Target.TryGetTarget(out var existing) && existing == target);
+                if (change == null)
+                {
+                    if (Changes.Count == 0)
+                    {
+                        Undo.undoRedoPerformed += Reconcile;
+                        EditorApplication.hierarchyChanged += Prune;
+                        EditorApplication.playModeStateChanged += ClearOnPlayModeChange;
+                    }
+                    change = new Change { Target = new WeakReference<UnityEngine.Animation>(target) };
+                    Changes.Add(change);
+                }
+                change.Names.Add(clip.name);
+                change.Configuration = Configuration.Read(target, out _);
+            }
+
+            private static void Reconcile()
+            {
+                if (reconciling || EditorApplication.isPlayingOrWillChangePlaymode)
+                    return;
+                reconciling = true;
+                try
+                {
+                    for (int i = Changes.Count - 1; i >= 0; i--)
+                    {
+                        var change = Changes[i];
+                        if (!change.Target.TryGetTarget(out var target) || target == null)
+                            continue;
+                        var current = Configuration.Read(target, out var clips);
+                        // Ignore unrelated Undo operations. Current serialized slots, rather than
+                        // command history, also handle assignments undone together in one group.
+                        if (change.Configuration.Matches(current))
+                            continue;
+                        foreach (string name in change.Names)
+                        {
+                            var expected = clips.LastOrDefault(clip => clip != null && clip.name == name);
+                            var actual = target.GetClip(name);
+                            if (actual == expected)
+                                continue;
+                            if (expected == null)
+                            {
+                                // Undo can remove the serialized slot while leaving its named
+                                // native state alive. Removal requires that one slot to exist.
+                                if (actual == null)
+                                    continue;
+                                target.AddClip(actual, name);
+                                target.RemoveClip(name);
+                            }
+                            else
+                            {
+                                target.AddClip(expected, name);
+                            }
+                            // AddClip can append to a list already restored by Undo/Redo. Keep
+                            // exact ordering and duplicate references, leaving other aliases alone.
+                            Configuration.Read(target, out var observedClips);
+                            if (!clips.SequenceEqual(observedClips))
+                                AnimationUtility.SetAnimationClips(target, clips);
+                        }
+                        change.Configuration = current;
+                    }
+                }
+                finally
+                {
+                    reconciling = false;
+                    Prune();
+                }
+            }
+
+            private static void Prune()
+            {
+                Changes.RemoveAll(change => !change.Target.TryGetTarget(out var target) || target == null);
+                if (Changes.Count != 0)
+                    return;
+                Undo.undoRedoPerformed -= Reconcile;
+                EditorApplication.hierarchyChanged -= Prune;
+                EditorApplication.playModeStateChanged -= ClearOnPlayModeChange;
+            }
+
+            private static void ClearOnPlayModeChange(PlayModeStateChange state)
+            {
+                if (state != PlayModeStateChange.ExitingEditMode)
+                    return;
+                Changes.Clear();
+                Prune();
+            }
         }
 
         private static void SetupLegacyClip(AnimationClip clip)
