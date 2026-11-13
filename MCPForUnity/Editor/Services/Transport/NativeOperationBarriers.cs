@@ -76,6 +76,7 @@ namespace MCPForUnity.Editor.Services.Transport
             if (retired != null && TestJobManager.ControlFor(retired.JobId) is { Released: false })
                 retired = null;
             var recovery = PreferRecovery(PreferRecovery(TestJobManager.NativeRecoveryDetails, retired), ProjectAuditorJobs.RecoveryDetails);
+            recovery = PreferRecovery(recovery, PlayScenarioService.CleanupRecovery);
             bool scenePending = UnityPlayScenarioHost.ObservePendingSceneOperation(out bool sceneUnknown);
             if (scenePending)
                 recovery = PreferRecovery(

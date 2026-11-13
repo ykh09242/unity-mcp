@@ -87,6 +87,19 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         internal static bool IsBusy =>
             (_engine != null && (!_finalized || _engine.Running || _engine.State.RunnerResourcesReleased == false)) || _failureCapture?.Pending == true;
 
+        internal static NativeRecoveryDetails CleanupRecovery =>
+            _finalized && _engine?.Running == false && _engine.State.RunnerResourcesReleased == false
+                ? new NativeRecoveryDetails(
+                    "play_scenario",
+                    "cleanup_failed",
+                    "scenario_resources_unreleased",
+                    "restart_required",
+                    "inspect_native_work_then_restart_editor",
+                    "The scenario finished without confirming release of its runner resources. Inspect the job's cleanup and report errors, then restart the Editor before starting native work.",
+                    jobId: _engine.State.JobId
+                )
+                : null;
+
         internal static bool HasForeignNativeOwner(string startingJobId) =>
             IsBusy && !(startingJobId != null && _engine?.Running == true && _engine.State.Phase == "starting" && _engine.State.JobId == startingJobId);
 

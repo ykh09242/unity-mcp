@@ -311,6 +311,63 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }
 
         [Test]
+        public void FinalizedOneShotReleaseFailureRequiresInspectionAndRestartAcrossReload()
+        {
+            if (new PlayScenarioStore(Path.GetDirectoryName(UnityEngine.Application.dataPath)).ListReports().Count >= 20)
+                Assert.Ignore("Preserve the existing report history.");
+            var run = StartingRun();
+            var host = new FailingReleaseHost();
+            var engine = new PlayScenarioEngine(run, host);
+            Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, engine);
+            Service.GetField("_logs", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, null);
+            Service.GetField("_finalized", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, false);
+            string path = Path.Combine(Path.GetDirectoryName(UnityEngine.Application.dataPath), "Library/MCPForUnity/PlayScenarioRuns", run.JobId + ".json");
+            try
+            {
+                engine.Cancel(run.StartedUnixMs + 1);
+                Assert.AreEqual(false, run.RunnerResourcesReleased);
+                Assert.IsTrue(NativeOperationBarriers.ObserveReadiness(false).Retryable, "Finalization can still make progress.");
+                Service.GetMethod("Synchronize", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { true });
+                Assert.That(run.ReportError, Does.Contain("injected host release failure"));
+                AssertCleanupRecovery(run.JobId);
+                Invoke("Restore");
+                AssertCleanupRecovery(run.JobId);
+                Assert.AreEqual(1, host.Attempts);
+            }
+            finally
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+        }
+
+        private static void AssertCleanupRecovery(string jobId)
+        {
+            var blocker = NativeOperationBarriers.ObserveReadiness(false);
+            Assert.AreEqual("recovery_required", blocker.Reason);
+            Assert.IsFalse(blocker.Retryable);
+            Assert.AreEqual("inspect_native_work_then_restart_editor", blocker.RecoveryAction);
+            Assert.AreEqual("restart_required", blocker.Recovery.Mode);
+            Assert.AreEqual("play_scenario", blocker.Recovery.Source);
+            Assert.AreEqual(jobId, blocker.Recovery.JobId);
+            Assert.IsTrue(NativeOperationBarriers.TryGetScenarioBlocker(jobId, jobId, out blocker));
+            Assert.IsFalse(blocker.Retryable, "A continuation cannot exempt an unreleased terminal owner.");
+        }
+
+        private sealed class FailingReleaseHost : IPlayScenarioHost
+        {
+            internal int Attempts;
+
+            public PlayScenarioObservation Evaluate(PlayScenarioStep step, bool firstPoll) => throw new InvalidOperationException("Unexpected execution.");
+
+            public void Release()
+            {
+                Attempts++;
+                throw new InvalidOperationException("injected host release failure");
+            }
+        }
+
+        [Test]
         public void TerminalOutcomeIsNotPublishedUntilFailureEvidenceAndReportAreFinalized()
         {
             PlayScenarioRun run = StartingRun();
