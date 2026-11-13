@@ -1432,6 +1432,11 @@ class UnityConnectionPool:
             self._default_instance_id = env_default
             logger.info(f"Default Unity instance set from environment: {env_default}")
 
+    @property
+    def default_instance_id(self) -> str | None:
+        """The configured stdio selector, which may be a name, hash, port or path."""
+        return self._default_instance_id
+
     def _retire_missing_locked(self, now: float) -> None:
         """Reclaim proven-missing, unused generations while holding the pool lock."""
         for instance_id, missing_at in list(self._missing_since.items()):

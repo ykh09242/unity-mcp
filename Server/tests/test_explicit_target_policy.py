@@ -32,6 +32,8 @@ def target_server(monkeypatch):
     inventory = [SimpleNamespace(id=B, hash="bbbbbbbb")]
 
     class Pool:
+        default_instance_id = None
+
         def discover_all_instances(self, force_refresh=False):
             return inventory
 

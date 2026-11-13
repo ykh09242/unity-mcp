@@ -412,7 +412,7 @@ class UnityInstanceMiddleware(Middleware):
 
     async def _maybe_autoselect_instance(self, ctx) -> str | None:
         """
-        Auto-select the sole Unity instance when no active instance is set.
+        Resolve the local stdio default, or auto-select a sole Unity instance.
 
         Legacy selection follows the connection. Modern automatic selection lives
         only for this request: its SDK connection ID changes on every call.
@@ -422,6 +422,18 @@ class UnityInstanceMiddleware(Middleware):
             # This implicit behavior works well for solo-users, but is dangerous for multi-user setups
             if transport == "http" and config.http_remote_hosted:
                 return None
+            if transport == "stdio" and not config.http_remote_hosted:
+                from transport.legacy.unity_connection import get_unity_connection_pool
+
+                pool = get_unity_connection_pool()
+                if pool.default_instance_id:
+                    # The pool owns default selector semantics (including project names).
+                    # A missing default leaves discovery and session controls available;
+                    # unbound commands still pass through the same pool default.
+                    target = await run_discovery(
+                        pool.resolve_instance, pool.default_instance_id, force_refresh=True
+                    )
+                    return await self.get_active_instance(ctx) or target.id
             if PluginHub.is_configured():
                 try:
                     sessions_data = await PluginHub.get_sessions()

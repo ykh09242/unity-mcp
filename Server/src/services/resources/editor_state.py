@@ -199,10 +199,10 @@ def _in_pytest() -> bool:
 
 async def infer_single_instance_id(ctx: Context) -> str | None:
     """
-    Best-effort: if exactly one Unity instance is connected, return its Name@hash id.
+    Best-effort: return the configured stdio default or the sole connected Unity instance.
     This makes editor_state outputs self-describing even when no explicit active instance is set.
     """
-    logger.info("If exactly one Unity instance is connected, return its Name@hash id.")
+    logger.info("Resolving the implicit Unity instance for Editor state.")
 
     transport = (config.transport_mode or "stdio").lower()
 
@@ -228,14 +228,10 @@ async def infer_single_instance_id(ctx: Context) -> str | None:
         from transport.legacy.unity_connection import get_unity_connection_pool
 
         pool = get_unity_connection_pool()
-        instances = await run_discovery(pool.discover_all_instances, force_refresh=False)
-        if isinstance(instances, list) and len(instances) == 1:
-            inst = instances[0]
-            inst_id = getattr(inst, "id", None)
-            return str(inst_id) if inst_id else None
+        instance = await run_discovery(pool.resolve_instance)
+        return instance.id
     except Exception:
         return None
-    return None
 
 
 async def _local_project_root(instance_id: str) -> str | None:
