@@ -50,6 +50,10 @@ REQUIRED_PARAMS = {
         " a bounded serialized-field diff from the imported source asset to modified isolated "
         "contents without saving. This includes observed load/edit layout changes, supports "
         "component references and child edits, and reports unsupported fields and truncation. It "
+        "defaults to preview_scope='prefab'. For component-property edits, preview_scope='components' "
+        "observes only the selected target's named components. LoadPrefabContents still loads the "
+        "full asset. Inspect scope, complete, whole_prefab_complete and observed counts. Snapshot "
+        "limits are 2048 objects, 20000 properties and 4 MiB; limit errors include bounded recovery guidance. It "
         "does not issue an automatic refresh or create an apply token. Save-time callbacks and a "
         "later run may differ; custom callbacks can have external side effects. Supports object "
         'references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. Use asset '
@@ -175,6 +179,10 @@ async def manage_prefabs(
         bool | None,
         "modify_contents only: inspect changes without saving; includes load/edit side effects, not save callbacks. No apply token; inspect complete/truncated coverage in data.preview.",
     ] = None,
+    preview_scope: Annotated[
+        Literal["prefab", "components"] | None,
+        "Requires preview_only=true. Default prefab observes the whole prefab. components observes only components named by component_properties on the selected target and accepts only component-property edits. Inspect data.preview.scope, complete and whole_prefab_complete.",
+    ] = None,
     max_depth: Annotated[
         int, "get_hierarchy inclusive depth scope, root=0; default 64, maximum 128."
     ] = 64,
@@ -183,6 +191,40 @@ async def manage_prefabs(
         return {"success": False, "message": f"Unknown prefab action: '{action}'."}
     if preview_only is not None and (action != "modify_contents" or type(preview_only) is not bool):
         return {"success": False, "message": "preview_only is a boolean for modify_contents only."}
+    if preview_scope is not None and (
+        action != "modify_contents"
+        or preview_only is not True
+        or preview_scope not in ("prefab", "components")
+    ):
+        return {
+            "success": False,
+            "message": "preview_scope requires modify_contents, preview_only=true, and prefab or components.",
+        }
+    if preview_scope == "components" and (
+        not isinstance(component_properties, dict)
+        or not component_properties
+        or any(
+            value is not None
+            for value in (
+                position,
+                rotation,
+                scale,
+                name,
+                tag,
+                layer,
+                set_active,
+                parent,
+                components_to_add,
+                components_to_remove,
+                create_child,
+                delete_child,
+            )
+        )
+    ):
+        return {
+            "success": False,
+            "message": "preview_scope=components accepts only nonempty component_properties edits on the selected target.",
+        }
     if preview_id is not None and (
         action != "apply_preview"
         or type(preview_id) is not str
@@ -373,6 +415,8 @@ async def manage_prefabs(
         # modify_contents parameters
         if preview_only is not None:
             params["previewOnly"] = preview_only
+        if preview_scope is not None:
+            params["previewScope"] = preview_scope
         if position is not None:
             position_value, position_error = normalize_vector3(position, "position")
             if position_error:
@@ -515,10 +559,18 @@ async def manage_prefabs(
         # Return Unity response directly; ensure success field exists
         # Handle MCPResponse objects (returned on error) by converting to dict
         if hasattr(response, "model_dump"):
-            return response.model_dump()
+            response = response.model_dump()
         if isinstance(response, dict):
             if "success" not in response:
                 response["success"] = False
+            if response.get("code") == "prefab_preview_limit_exceeded" and unity_instance:
+                data = response.get("data")
+                follow_up = data.get("follow_up") if isinstance(data, dict) else None
+                next_call = follow_up.get("next_call") if isinstance(follow_up, dict) else None
+                if isinstance(next_call, dict) and next_call.get("tool") == "prefab_contents":
+                    arguments = next_call.get("arguments")
+                    if isinstance(arguments, dict):
+                        arguments["unity_instance"] = unity_instance
             return response
         return {"success": False, "message": f"Unexpected response type: {type(response).__name__}"}
 

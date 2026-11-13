@@ -16678,6 +16678,21 @@
                 ],
                 "default": null
               },
+              "preview_scope": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "prefab",
+                      "components"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "property_filter": {
                 "anyOf": [
                   {
@@ -22413,6 +22428,9 @@
                     "preview_only": {
                       "type": "null"
                     },
+                    "preview_scope": {
+                      "type": "null"
+                    },
                     "tag": {
                       "type": "null"
                     },
@@ -22486,6 +22504,9 @@
                       ]
                     },
                     "preview_only": {
+                      "type": "null"
+                    },
+                    "preview_scope": {
                       "type": "null"
                     },
                     "rotation": {
@@ -22680,6 +22701,21 @@
                 "anyOf": [
                   {
                     "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "preview_scope": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "prefab",
+                      "components"
+                    ],
+                    "type": "string"
                   },
                   {
                     "type": "null"
@@ -43029,6 +43065,21 @@
                 ],
                 "default": null
               },
+              "preview_scope": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "prefab",
+                      "components"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "property_filter": {
                 "anyOf": [
                   {
@@ -48764,6 +48815,9 @@
                     "preview_only": {
                       "type": "null"
                     },
+                    "preview_scope": {
+                      "type": "null"
+                    },
                     "tag": {
                       "type": "null"
                     },
@@ -48837,6 +48891,9 @@
                       ]
                     },
                     "preview_only": {
+                      "type": "null"
+                    },
+                    "preview_scope": {
                       "type": "null"
                     },
                     "rotation": {
@@ -49031,6 +49088,21 @@
                 "anyOf": [
                   {
                     "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "preview_scope": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "prefab",
+                      "components"
+                    ],
+                    "type": "string"
                   },
                   {
                     "type": "null"

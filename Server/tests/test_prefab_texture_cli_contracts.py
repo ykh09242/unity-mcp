@@ -76,6 +76,56 @@ def domain_transport(monkeypatch):
     return response, requests
 
 
+def test_prefab_component_preview_forwards_scope_without_saving(domain_transport):
+    response, requests = domain_transport
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "prefab",
+            "modify",
+            PREFAB,
+            "--preview-only",
+            "--preview-scope",
+            "components",
+            "--set-property",
+            "Rigidbody.mass=2",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == response
+    assert requests[0]["params"] == {
+        "action": "modify_contents",
+        "prefabPath": PREFAB,
+        "previewOnly": True,
+        "previewScope": "components",
+        "componentProperties": {"Rigidbody": {"mass": 2}},
+    }
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--preview-scope", "components", "--set-property", "Rigidbody.mass=2"],
+        ["--preview-only", "--preview-scope", "components"],
+        [
+            "--preview-only",
+            "--preview-scope",
+            "components",
+            "--set-property",
+            "Rigidbody.mass=2",
+            "--inactive",
+        ],
+    ],
+)
+def test_invalid_component_preview_does_not_dispatch(domain_transport, options):
+    _, requests = domain_transport
+    result = CliRunner().invoke(cli, ["--format", "json", "prefab", "modify", PREFAB, *options])
+    assert result.exit_code != 0
+    assert requests == []
+
+
 @pytest.mark.parametrize("command", COMMANDS)
 def test_json_success_is_one_native_response_document(domain_transport, command):
     response, requests = domain_transport

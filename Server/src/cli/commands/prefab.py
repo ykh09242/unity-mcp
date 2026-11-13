@@ -378,6 +378,12 @@ def _parse_property(prop_str: str) -> tuple[str, str, Any]:
 )
 @click.option("--delete-child", multiple=True, help="Child name/path to remove (repeatable)")
 @click.option("--create-child", help="JSON object for child creation Accepts @file or -/@- stdin.")
+@click.option("--preview-only", is_flag=True, help="Inspect serialized changes without saving.")
+@click.option(
+    "--preview-scope",
+    type=click.Choice(["prefab", "components"]),
+    help="Requires --preview-only. components covers only the components receiving property edits.",
+)
 @handle_unity_errors
 def modify(
     path: str,
@@ -395,6 +401,8 @@ def modify(
     set_property: tuple,
     delete_child: tuple,
     create_child: Optional[str],
+    preview_only: bool = False,
+    preview_scope: str | None = None,
 ):
     """Modify a prefab's contents (headless, no UI).
 
@@ -407,6 +415,21 @@ def modify(
         unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --create-child '{"name":"Spawn","primitive_type":"Sphere"}'
     """
     create_child = admit_json_inputs(create_child=create_child)["create_child"]
+    if preview_scope is not None and not preview_only:
+        raise click.BadParameter("--preview-scope requires --preview-only")
+    if preview_scope == "components" and (
+        not set_property
+        or any(
+            value is not None
+            for value in (position, rotation, scale, name, tag, layer, active, parent, create_child)
+        )
+        or add_component
+        or remove_component
+        or delete_child
+    ):
+        raise click.BadParameter(
+            "--preview-scope components accepts only --set-property edits and an optional --target"
+        )
 
     config = get_config()
 
@@ -414,6 +437,10 @@ def modify(
         "action": "modify_contents",
         "prefabPath": path,
     }
+    if preview_only:
+        params["previewOnly"] = True
+    if preview_scope is not None:
+        params["previewScope"] = preview_scope
 
     if target:
         params["target"] = target
@@ -461,4 +488,4 @@ def modify(
     result = run_command("manage_prefabs", params, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
-        print_success(f"Modified prefab: {path}")
+        print_success(f"Previewed prefab: {path}" if preview_only else f"Modified prefab: {path}")

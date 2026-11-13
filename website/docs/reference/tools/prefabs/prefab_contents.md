@@ -1,7 +1,7 @@
 ---
 title: prefab_contents
 sidebar_label: prefab_contents
-description: "Edit prefab contents, inspect changes without saving with modify_contents preview_only, or preview and apply a guarded transform change."
+description: "Edit prefab contents, inspect whole-prefab or selected-component changes without saving with modify_contents preview_only and preview_scope, or preview and apply a guarded transform change."
 ---
 
 # `prefab_contents`
@@ -14,7 +14,7 @@ description: "Edit prefab contents, inspect changes without saving with modify_c
 
 ## Description
 
-Edit prefab contents, inspect changes without saving with modify_contents preview_only, or preview and apply a guarded transform change. Action inputs: modify_contents: requires prefab_path; excludes non-null preview_id. preview_modify_contents: requires prefab_path; excludes non-null target, name, tag, layer, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_only, preview_id. apply_preview: requires preview_id; excludes non-null prefab_path, target, position, rotation, scale, name, tag, layer, set_active, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_only.
+Edit prefab contents, inspect whole-prefab or selected-component changes without saving with modify_contents preview_only and preview_scope, or preview and apply a guarded transform change. Action inputs: modify_contents: requires prefab_path; excludes non-null preview_id. preview_modify_contents: requires prefab_path; excludes non-null target, name, tag, layer, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_only, preview_scope, preview_id. apply_preview: requires preview_id; excludes non-null prefab_path, target, position, rotation, scale, name, tag, layer, set_active, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_only, preview_scope.
 
 ## Parameters
 
@@ -38,6 +38,7 @@ Edit prefab contents, inspect changes without saving with modify_contents previe
 | `component_properties` | `dict[str, dict[str, Any]] \| None` | — | Set properties on existing components in modify_contents. Keys are component type names, values are dicts of property name to value. Example: {"Rigidbody": {"mass": 5.0}, "MyScript": {"health": 100}}. Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. For Sprite sub-assets: {"guid": "...", "spriteName": "<name>"}. Single-sprite textures auto-resolve. |
 | `preview_id` | `str \| None` | — | One-attempt token from preview_modify_contents, valid 10 minutes. |
 | `preview_only` | `bool \| None` | — | modify_contents only: inspect changes without saving; includes load/edit side effects, not save callbacks. No apply token; inspect complete/truncated coverage in data.preview. |
+| `preview_scope` | `Literal['prefab', 'components'] \| None` | — | Requires preview_only=true. Default prefab observes the whole prefab. components observes only components named by component_properties on the selected target and accepts only component-property edits. Inspect data.preview.scope, complete and whole_prefab_complete. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

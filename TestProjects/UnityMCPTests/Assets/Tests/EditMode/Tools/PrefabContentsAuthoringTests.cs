@@ -393,5 +393,209 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse((bool)result["success"]);
             StringAssert.Contains("preview_only", (string)result["error"]);
         }
+
+        [Test]
+        public void ComponentPreview_SkipsUnrelatedLargeSerializedArrays()
+        {
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                var unrelated = new GameObject("Unrelated");
+                unrelated.transform.SetParent(contents.transform, false);
+                unrelated.AddComponent<PrefabPreviewLifecycleProbe>().Values = new int[21000];
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+            byte[] before = File.ReadAllBytes(path);
+            int scenes = UnityEditor.SceneManagement.EditorSceneManager.previewSceneCount;
+            var request = new JObject
+            {
+                ["action"] = "modify_contents",
+                ["prefabPath"] = path,
+                ["previewOnly"] = true,
+                ["componentProperties"] = new JObject { ["RectTransform"] = new JObject { ["m_AnchoredPosition.x"] = 42 } },
+            };
+            var full = JObject.FromObject(ManagePrefabs.HandleCommand(request));
+            Assert.IsFalse(full.Value<bool>("success"), full.ToString());
+            Assert.AreEqual("prefab_preview_limit_exceeded", full.Value<string>("code"));
+            Assert.AreEqual("properties", (string)full["data"]["limit_kind"]);
+            Assert.AreEqual(20000, (int)full["data"]["limit"]);
+            Assert.AreEqual(20001, (int)full["data"]["observed"]);
+            Assert.AreEqual("components", (string)full["data"]["follow_up"]["next_call"]["arguments"]["preview_scope"]);
+
+            request["previewScope"] = "components";
+            var scoped = JObject.FromObject(ManagePrefabs.HandleCommand(request));
+            Assert.IsTrue(scoped.Value<bool>("success"), scoped.ToString());
+            var preview = scoped["data"]["preview"];
+            Assert.AreEqual("components", (string)preview["scope"]);
+            Assert.IsTrue((bool)preview["complete"]);
+            Assert.IsFalse((bool)preview["whole_prefab_complete"]);
+            Assert.AreEqual(1, (int)preview["observed"]["before"]["objects"]);
+            Assert.Less((int)preview["observed"]["after"]["properties"], 100);
+            StringAssert.Contains("m_AnchoredPosition", preview["changes"].ToString());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+            Assert.AreEqual(scenes, UnityEditor.SceneManagement.EditorSceneManager.previewSceneCount);
+        }
+
+        [TestCase("name", "Renamed")]
+        [TestCase("setActive", false)]
+        [TestCase("position", "[1,2,3]")]
+        [TestCase("parent", "Unrelated")]
+        public void ComponentPreview_RejectsBroaderMutationBeforeEditing(string field, object value)
+        {
+            byte[] before = File.ReadAllBytes(path);
+            var request = new JObject
+            {
+                ["action"] = "modify_contents",
+                ["prefabPath"] = path,
+                ["previewOnly"] = true,
+                ["previewScope"] = "components",
+                ["componentProperties"] = new JObject { ["RectTransform"] = new JObject { ["m_AnchoredPosition.x"] = 42 } },
+                [field] = JToken.FromObject(value),
+            };
+            var result = JObject.FromObject(ManagePrefabs.HandleCommand(request));
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("preview_scope", (string)result["error"]);
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ComponentPreview_NormalizesReferencesAndDeclaresPartialCoverage(bool drift)
+        {
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                var child = new GameObject("Target");
+                child.transform.SetParent(contents.transform, false);
+                contents.AddComponent<PrefabPreviewLifecycleProbe>().Reference = child.transform;
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+            byte[] before = File.ReadAllBytes(path);
+            int scenes = UnityEditor.SceneManagement.EditorSceneManager.previewSceneCount;
+            PrefabPreviewLifecycleProbe.DriftOnEdit = drift;
+            var result = JObject.FromObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_contents",
+                        ["prefab_path"] = path,
+                        ["preview_only"] = true,
+                        ["preview_scope"] = "components",
+                        ["component_properties"] = new JObject
+                        {
+                            [nameof(PrefabPreviewLifecycleProbe)] = drift
+                                ? new JObject { ["DrivenReference"] = null }
+                                : new JObject { ["Values"] = new JArray(1, 2) },
+                        },
+                    }
+                )
+            );
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var preview = result["data"]["preview"];
+            Assert.IsTrue((bool)preview["complete"], preview.ToString());
+            Assert.IsFalse((bool)preview["whole_prefab_complete"]);
+            Assert.AreEqual(1, (int)preview["observed"]["before"]["objects"]);
+            if (drift)
+                StringAssert.Contains(":Reference", preview["changes"].ToString());
+            else
+                StringAssert.DoesNotContain(":Reference", preview["changes"].ToString());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+            Assert.AreEqual(scenes, UnityEditor.SceneManagement.EditorSceneManager.previewSceneCount);
+        }
+
+        [Test]
+        public void ComponentPreview_LimitDoesNotRepeatTheSameRequest()
+        {
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                contents.AddComponent<PrefabPreviewLifecycleProbe>().Values = new int[21000];
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+            byte[] before = File.ReadAllBytes(path);
+            var result = JObject.FromObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_contents",
+                        ["prefabPath"] = path,
+                        ["previewOnly"] = true,
+                        ["previewScope"] = "components",
+                        ["componentProperties"] = new JObject { [nameof(PrefabPreviewLifecycleProbe)] = new JObject { ["Values"] = new JArray(1) } },
+                    }
+                )
+            );
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual("prefab_preview_limit_exceeded", (string)result["code"]);
+            Assert.AreEqual("components", (string)result["data"]["scope"]);
+            Assert.IsNull(result["data"]["follow_up"]["next_call"]);
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+        }
+
+        [TestCase("BoxCollider")]
+        [TestCase("MissingPreviewComponent")]
+        public void ComponentPreview_RejectsAmbiguousOrMissingComponents(string type)
+        {
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                contents.AddComponent<BoxCollider>();
+                contents.AddComponent<BoxCollider>();
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+            byte[] before = File.ReadAllBytes(path);
+            int scenes = UnityEditor.SceneManagement.EditorSceneManager.previewSceneCount;
+            var result = JObject.FromObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_contents",
+                        ["prefabPath"] = path,
+                        ["previewOnly"] = true,
+                        ["previewScope"] = "components",
+                        ["componentProperties"] = new JObject { [type] = new JObject { ["m_Enabled"] = false } },
+                    }
+                )
+            );
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+            Assert.AreEqual(scenes, UnityEditor.SceneManagement.EditorSceneManager.previewSceneCount);
+        }
+
+        [TestCase(false, "components")]
+        [TestCase(true, "unknown")]
+        public void PreviewScope_RejectsUnsupportedInvocation(bool previewOnly, string scope)
+        {
+            var result = JObject.FromObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_contents",
+                        ["prefabPath"] = path,
+                        ["previewOnly"] = previewOnly,
+                        ["previewScope"] = scope,
+                        ["componentProperties"] = new JObject { ["RectTransform"] = new JObject { ["m_AnchoredPosition.x"] = 42 } },
+                    }
+                )
+            );
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("preview_scope", (string)result["error"]);
+        }
     }
 }

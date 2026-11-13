@@ -3220,6 +3220,8 @@ Modify a prefab's contents (headless, no UI). Examples: unity-mcp prefab modify 
 | --set-property | text | optional | nargs=1, repeatable | — | — | Property as 'Component.prop=value' (repeatable) |
 | --delete-child | text | optional | nargs=1, repeatable | — | — | Child name/path to remove (repeatable) |
 | --create-child | text | optional | nargs=1 | — | — | JSON object for child creation Accepts @file or -/@- stdin. |
+| --preview-only | boolean | optional | nargs=1, flag | — | — | Inspect serialized changes without saving. |
+| --preview-scope | choice: prefab, components | optional | nargs=1 | — | — | Requires --preview-only. components covers only the components receiving property edits. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp prefab open`

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -19,10 +20,101 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         private const int MaxChanges = 200;
         private const int MaxReportBytes = 65536;
 
+        internal sealed class LimitExceededException : ArgumentException
+        {
+            internal readonly string Scope;
+            internal readonly string Kind;
+            internal readonly int Limit;
+            internal readonly int Observed;
+
+            internal LimitExceededException(string scope, string kind, int limit, int observed)
+                : base($"Prefab preview {kind} limit exceeded ({observed} > {limit}).")
+            {
+                Scope = scope;
+                Kind = kind;
+                Limit = limit;
+                Observed = observed;
+            }
+        }
+
         internal sealed class Snapshot
         {
             internal readonly SortedDictionary<string, JToken> Values = new(StringComparer.Ordinal);
+            internal string Scope;
             internal int Unsupported;
+            internal int Objects;
+            internal int Properties;
+            internal int Bytes;
+        }
+
+        internal static string GetScope(JObject parameters, bool previewOnly)
+        {
+            JToken token = parameters["previewScope"];
+            if (token == null)
+                return "prefab";
+            if (!previewOnly || token.Type != JTokenType.String || (token.ToString() != "prefab" && token.ToString() != "components"))
+                throw new ArgumentException("preview_scope must be prefab or components and requires preview_only=true.");
+            string scope = token.ToString();
+            if (scope == "components" && !IsComponentOnly(parameters))
+                throw new ArgumentException("preview_scope=components requires nonempty component_properties and accepts only component-property edits.");
+            return scope;
+        }
+
+        private static bool IsComponentOnly(JObject parameters)
+        {
+            if (parameters["componentProperties"] is not JObject properties || properties.Count == 0)
+                return false;
+            return !new[]
+            {
+                "name",
+                "tag",
+                "layer",
+                "position",
+                "rotation",
+                "scale",
+                "setActive",
+                "parent",
+                "componentsToAdd",
+                "componentsToRemove",
+                "createChild",
+                "deleteChild",
+            }.Any(key => parameters[key] != null && parameters[key].Type != JTokenType.Null);
+        }
+
+        internal static ErrorResponse LimitResponse(LimitExceededException error, JObject parameters)
+        {
+            var followUp = new JObject
+            {
+                ["action"] = "narrow_preview_scope",
+                ["message"] = "Inspect a smaller component-property selection. Full-preview hierarchy edits require a prefab within the reported limit.",
+            };
+            if (error.Scope == "prefab" && IsComponentOnly(parameters))
+            {
+                var arguments = new JObject
+                {
+                    ["action"] = "modify_contents",
+                    ["prefab_path"] = parameters["prefabPath"] ?? parameters["path"],
+                    ["component_properties"] = parameters["componentProperties"].DeepClone(),
+                    ["preview_only"] = true,
+                    ["preview_scope"] = "components",
+                };
+                if (parameters["target"] != null)
+                    arguments["target"] = parameters["target"].DeepClone();
+                if (Encoding.UTF8.GetByteCount(arguments.ToString(Formatting.None)) <= 8192)
+                    followUp["next_call"] = new JObject { ["tool"] = "prefab_contents", ["arguments"] = arguments };
+            }
+            return new ErrorResponse(
+                "prefab_preview_limit_exceeded",
+                new JObject
+                {
+                    ["message"] = error.Message,
+                    ["scope"] = error.Scope,
+                    ["limit_kind"] = error.Kind,
+                    ["limit"] = error.Limit,
+                    ["observed"] = error.Observed,
+                    ["follow_up"] = followUp,
+                }
+            );
         }
 
         internal static Snapshot Capture(GameObject root)
@@ -32,8 +124,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             pending.Push((root.transform, "$"));
             void Add(Object target, string path)
             {
-                if (objects.Count == MaxObjects || path.Length > 2048)
-                    throw new ArgumentException("Prefab preview object/path limit exceeded; narrow the prefab before previewing.");
+                if (objects.Count == MaxObjects)
+                    throw new LimitExceededException("prefab", "objects", MaxObjects, objects.Count + 1);
+                if (path.Length > 2048)
+                    throw new LimitExceededException("prefab", "path_characters", 2048, path.Length);
                 if (target == null)
                     throw new ArgumentException("Prefab preview cannot inspect missing scripts.");
                 objects.Add(target, path);
@@ -55,14 +149,76 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 for (int i = item.transform.childCount - 1; i >= 0; i--)
                 {
                     if (objects.Count + pending.Count >= MaxObjects)
-                        throw new ArgumentException("Prefab preview object limit exceeded.");
+                        throw new LimitExceededException("prefab", "objects", MaxObjects, objects.Count + pending.Count + 1);
                     pending.Push((item.transform.GetChild(i), item.path + "/" + i));
                 }
             }
 
-            var result = new Snapshot();
-            int properties = 0,
-                bytes = 0;
+            return CaptureObjects(root, objects, "prefab");
+        }
+
+        internal static Snapshot CaptureComponents(GameObject root, GameObject target, JObject properties)
+        {
+            var objects = new Dictionary<Object, string>();
+            foreach (JProperty property in properties.Properties())
+            {
+                if (!ComponentResolver.TryResolve(property.Name, out Type type, out string error))
+                    throw new ArgumentException(error);
+                Component[] matches = target.GetComponents(type);
+                if (matches.Length != 1)
+                    throw new ArgumentException(
+                        $"preview_scope=components requires exactly one '{property.Name}' component on the target; found {matches.Length}."
+                    );
+                Component component = matches[0];
+                if (!objects.ContainsKey(component))
+                {
+                    if (objects.Count == MaxObjects)
+                        throw new LimitExceededException("components", "objects", MaxObjects, objects.Count + 1);
+                    objects.Add(component, LocalPath(component, root));
+                }
+            }
+            return CaptureObjects(root, objects, "components");
+        }
+
+        private static string LocalPath(Object reference, GameObject root)
+        {
+            GameObject gameObject = reference as GameObject;
+            if (reference is Component component)
+                gameObject = component.gameObject;
+            if (gameObject == null || !gameObject.transform.IsChildOf(root.transform))
+                return null;
+            var indices = new Stack<int>();
+            for (Transform current = gameObject.transform; current != root.transform; current = current.parent)
+            {
+                if (indices.Count == 128)
+                    throw new LimitExceededException("components", "reference_depth", 128, indices.Count + 1);
+                indices.Push(current.GetSiblingIndex());
+            }
+            string path = "$";
+            foreach (int index in indices)
+                path += "/" + index;
+            if (reference is Component selected)
+            {
+                int occurrence = 0;
+                foreach (Component candidate in gameObject.GetComponents(selected.GetType()))
+                {
+                    if (candidate == selected)
+                        break;
+                    if (candidate.GetType() == selected.GetType())
+                        occurrence++;
+                }
+                path += "/" + selected.GetType().FullName + "[" + occurrence + "]";
+            }
+            else
+                path += "/GameObject";
+            if (path.Length > 2048)
+                throw new LimitExceededException("components", "path_characters", 2048, path.Length);
+            return path;
+        }
+
+        private static Snapshot CaptureObjects(GameObject root, Dictionary<Object, string> objects, string scope)
+        {
+            var result = new Snapshot { Scope = scope, Objects = objects.Count };
             foreach (var item in objects)
             {
                 using var serialized = new SerializedObject(item.Key);
@@ -70,8 +226,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 bool enter = true;
                 while (property.Next(enter))
                 {
-                    if (++properties > MaxProperties)
-                        throw new ArgumentException("Prefab preview serialized-property limit exceeded.");
+                    if (++result.Properties > MaxProperties)
+                        throw new LimitExceededException(scope, "properties", MaxProperties, result.Properties);
                     string path = property.propertyPath;
                     enter = false;
                     // Unity's load-context bookkeeping is not authored prefab content.
@@ -82,23 +238,23 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         enter = true;
                         continue;
                     }
-                    JToken value = Value(property, objects);
+                    JToken value = Value(property, objects, root);
                     if (value == null)
                     {
                         result.Unsupported++;
                         continue;
                     }
                     string key = item.Value + ":" + path;
-                    bytes += Encoding.UTF8.GetByteCount(key) + Encoding.UTF8.GetByteCount(value.ToString(Formatting.None));
-                    if (bytes > MaxSnapshotBytes)
-                        throw new ArgumentException("Prefab preview snapshot byte limit exceeded.");
+                    result.Bytes += Encoding.UTF8.GetByteCount(key) + Encoding.UTF8.GetByteCount(value.ToString(Formatting.None));
+                    if (result.Bytes > MaxSnapshotBytes)
+                        throw new LimitExceededException(scope, "snapshot_bytes", MaxSnapshotBytes, result.Bytes);
                     result.Values.Add(key, value);
                 }
             }
             return result;
         }
 
-        private static JToken Value(SerializedProperty property, Dictionary<Object, string> objects)
+        private static JToken Value(SerializedProperty property, Dictionary<Object, string> objects, GameObject root)
         {
             switch (property.propertyType)
             {
@@ -130,6 +286,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 #endif
                     }
                     if (objects.TryGetValue(reference, out string local))
+                        return new JObject { ["prefab_object"] = local };
+                    local = LocalPath(reference, root);
+                    if (local != null)
                         return new JObject { ["prefab_object"] = local };
                     if (AssetDatabase.TryGetGUIDAndLocalFileIdentifier(reference, out string guid, out long id))
                         return new JObject { ["guid"] = guid, ["file_id"] = id };
@@ -195,14 +354,32 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 bytes += size;
                 changes.Add(change);
             }
+            bool complete = before.Unsupported == 0 && after.Unsupported == 0 && changes.Count == count;
             return new JObject
             {
+                ["scope"] = before.Scope,
+                ["observed"] = new JObject
+                {
+                    ["before"] = new JObject
+                    {
+                        ["objects"] = before.Objects,
+                        ["properties"] = before.Properties,
+                        ["snapshot_bytes"] = before.Bytes,
+                    },
+                    ["after"] = new JObject
+                    {
+                        ["objects"] = after.Objects,
+                        ["properties"] = after.Properties,
+                        ["snapshot_bytes"] = after.Bytes,
+                    },
+                },
                 ["changes"] = changes,
                 ["change_count"] = count,
                 ["truncated"] = changes.Count != count,
                 ["unsupported_before"] = before.Unsupported,
                 ["unsupported_after"] = after.Unsupported,
-                ["complete"] = before.Unsupported == 0 && after.Unsupported == 0 && changes.Count == count,
+                ["complete"] = complete,
+                ["whole_prefab_complete"] = before.Scope == "prefab" && complete,
                 ["save_callbacks_observed"] = false,
                 ["basis"] = "source_asset_to_modified_contents_before_save",
             };

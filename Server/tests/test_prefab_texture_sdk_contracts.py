@@ -152,6 +152,11 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
                     result = await client.call_tool("prefab_contents", {"action": "modify_contents", "prefab_path": "Assets/Fixture.prefab", "preview_only": True, "component_properties": {"RectTransform": {"m_AnchorMin": {"x": 0, "y": 1}}}})
                     check(result.structured_content == reply and sent[-1][0] == "prefab_contents" and sent[-1][1]["previewOnly"] is True, "preview survives focused SDK adapter")
                     check(counts == {"state": 1,"refresh": 0,"preflight": 1,"send": 1}, "preview does not automatically refresh")
+                    check("preview_scope" in contents_schema["properties"], "focused contents tool publishes preview scope")
+                    result = await client.call_tool("prefab_contents", {"action": "modify_contents", "prefab_path": "Assets/Fixture.prefab", "preview_only": True, "preview_scope": "components", "component_properties": {"RectTransform": {"m_AnchorMin": {"x": 0, "y": 1}}}})
+                    check(result.structured_content == reply and sent[-1][1]["previewScope"] == "components", "component scope survives focused SDK adapter")
+                    await invalid(client, "prefab_contents", {"action": "modify_contents", "prefab_path": "Assets/Fixture.prefab", "preview_only": True, "preview_scope": "components", "set_active": False, "component_properties": {"Rigidbody": {"mass": 2}}}, "component preview refuses broader edits")
+                    await invalid(client, "prefab_contents", {"action": "apply_preview", "preview_id": "token", "preview_scope": "components"}, "preview scope cannot apply")
                     await invalid(client, "prefab_contents", {"action": "apply_preview", "preview_id": "token", "preview_only": True}, "preview flag cannot apply")
                     for payload in (
                         {"action": "create_from_gameobject", "prefab_path": "Assets/Fixture.prefab", "target": "0", "allow_overwrite": False, "search_inactive": False, "unlink_if_instance": False},

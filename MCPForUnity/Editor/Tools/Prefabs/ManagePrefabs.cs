@@ -90,6 +90,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
             if ((@params["previewOnly"] != null || @params["preview_only"] != null) && action != ACTION_MODIFY_CONTENTS)
                 return new ErrorResponse("preview_only is supported only for modify_contents; no action was performed.");
+            if ((@params["previewScope"] != null || @params["preview_scope"] != null) && action != ACTION_MODIFY_CONTENTS)
+                return new ErrorResponse("preview_scope is supported only for modify_contents with preview_only=true.");
 
             try
             {
@@ -140,6 +142,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             catch (OperationCanceledException)
             {
                 throw;
+            }
+            catch (PrefabContentsPreview.LimitExceededException error)
+            {
+                return PrefabContentsPreview.LimitResponse(error, NormalizeModificationAliases(@params));
             }
             catch (ArgumentException e)
                 when (action == ACTION_GET_HIERARCHY || action == ACTION_MODIFY_CONTENTS || action == "preview_modify_contents" || action == "apply_preview")
@@ -867,6 +873,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             if (previewToken != null && previewToken.Type != JTokenType.Boolean)
                 return new ErrorResponse("preview_only must be a boolean.");
             bool previewOnly = previewToken?.Value<bool>() == true;
+            string previewScope = PrefabContentsPreview.GetScope(@params, previewOnly);
             string prefabPath = @params["prefabPath"]?.ToString() ?? @params["path"]?.ToString();
             if (string.IsNullOrEmpty(prefabPath))
             {
@@ -897,7 +904,15 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 GameObject source = AssetDatabase.LoadAssetAtPath<GameObject>(sanitizedPath);
                 if (source == null)
                     return new ErrorResponse($"Prefab asset '{sanitizedPath}' was not found.");
-                baseline = PrefabContentsPreview.Capture(source);
+                if (previewScope == "components")
+                {
+                    GameObject sourceTarget = FindInPrefabContents(source, @params["target"]?.ToString());
+                    if (sourceTarget == null)
+                        return new ErrorResponse("Preview target was not found in the source prefab.");
+                    baseline = PrefabContentsPreview.CaptureComponents(source, sourceTarget, (JObject)@params["componentProperties"]);
+                }
+                else
+                    baseline = PrefabContentsPreview.Capture(source);
             }
 
             // Load prefab contents in isolated context (no UI)
@@ -936,7 +951,12 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                             targetName = targetGo.name,
                             modified = modifyResult.modified,
                             saved = false,
-                            preview = PrefabContentsPreview.Compare(baseline, PrefabContentsPreview.Capture(prefabContents)),
+                            preview = PrefabContentsPreview.Compare(
+                                baseline,
+                                previewScope == "components"
+                                    ? PrefabContentsPreview.CaptureComponents(prefabContents, targetGo, (JObject)@params["componentProperties"])
+                                    : PrefabContentsPreview.Capture(prefabContents)
+                            ),
                         }
                     );
 
@@ -1347,6 +1367,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 {
                     "prefabPath",
                     "previewOnly",
+                    "previewScope",
                     "setActive",
                     "componentsToAdd",
                     "componentsToRemove",

@@ -27,6 +27,78 @@ async def test_contents_preview_forwards_flag_and_preserves_edit_payload(mock_un
 
 
 @pytest.mark.asyncio
+async def test_component_preview_preserves_explicit_scope(mock_unity):
+    result = await manage_prefabs(
+        SimpleNamespace(),
+        action="modify_contents",
+        prefab_path="Assets/Panel.prefab",
+        component_properties={"RectTransform": {"m_AnchoredPosition.x": 42}},
+        preview_only=True,
+        preview_scope="components",
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["previewScope"] == "components"
+
+
+@pytest.mark.asyncio
+async def test_preview_limit_follow_up_preserves_selected_editor(monkeypatch, mock_unity):
+    arguments = {
+        "action": "modify_contents",
+        "prefab_path": "Assets/Panel.prefab",
+        "preview_only": True,
+        "preview_scope": "components",
+    }
+    response = {
+        "success": False,
+        "code": "prefab_preview_limit_exceeded",
+        "data": {"follow_up": {"next_call": {"tool": "prefab_contents", "arguments": arguments}}},
+    }
+    monkeypatch.setattr(
+        "services.tools.manage_prefabs.send_with_unity_instance", AsyncMock(return_value=response)
+    )
+    monkeypatch.setattr(
+        "services.tools.manage_prefabs.get_unity_instance_from_context",
+        AsyncMock(return_value="Selected@abc"),
+    )
+    result = await manage_prefabs(
+        SimpleNamespace(),
+        action="modify_contents",
+        prefab_path="Assets/Panel.prefab",
+        preview_only=True,
+    )
+    assert result["data"]["follow_up"]["next_call"]["arguments"]["unity_instance"] == "Selected@abc"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"preview_only": False},
+        {"preview_scope": "unknown"},
+        {"component_properties": {}},
+        {"name": "renamed"},
+        {"set_active": False},
+        {"position": [1, 2, 3]},
+        {"components_to_add": ["Rigidbody"]},
+        {"delete_child": "Child"},
+        {"action": "get_info"},
+    ],
+)
+async def test_component_preview_rejects_broader_actions_before_transport(mock_unity, changes):
+    request = dict(
+        action="modify_contents",
+        prefab_path="Assets/Panel.prefab",
+        component_properties={"RectTransform": {"m_AnchoredPosition.x": 42}},
+        preview_only=True,
+        preview_scope="components",
+    )
+    request.update(changes)
+    result = await manage_prefabs(SimpleNamespace(), **request)
+    assert result["success"] is False
+    assert "params" not in mock_unity
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "action", ["save_prefab_stage", "apply_preview", "preview_modify_contents"]
 )
