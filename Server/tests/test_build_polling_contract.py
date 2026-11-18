@@ -10,7 +10,7 @@ from services.custom_tool_service import CustomToolService
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("caller", [{}, {"job_id": None}])
+@pytest.mark.parametrize("caller", [{}, {"job_id": None}, {"job_id": "caller-id"}])
 @pytest.mark.parametrize(
     "final",
     [
@@ -85,9 +85,14 @@ async def test_initial_batch_response_job_id_targets_status_until_terminal(
 
 
 @pytest.mark.asyncio
-async def test_response_job_id_does_not_override_explicit_caller_id(monkeypatch):
+async def test_subsequent_observation_cannot_redirect_the_acknowledged_job(monkeypatch):
     service = object.__new__(CustomToolService)
-    send = AsyncMock(return_value={"success": True, "data": {"job_id": "caller-id"}})
+    send = AsyncMock(
+        side_effect=[
+            {"_mcp_status": "pending", "data": {"job_id": "different-job"}},
+            {"success": True, "data": {"job_id": "accepted-job", "result": "succeeded"}},
+        ]
+    )
     monkeypatch.setattr(module, "send_with_unity_instance", send)
     monkeypatch.setattr(module.asyncio, "sleep", AsyncMock())
     original = {"action": "start", "job_id": "caller-id"}
@@ -95,11 +100,14 @@ async def test_response_job_id_does_not_override_explicit_caller_id(monkeypatch)
         "fixture",
         "Project@hash",
         original,
-        {"_mcp_status": "pending", "data": {"job_id": "other-id"}},
+        {"_mcp_status": "pending", "data": {"job_id": "accepted-job"}},
         "status",
     )
-    assert result.data["job_id"] == "caller-id"
-    assert send.call_args.args[3] == {"action": "status", "job_id": "caller-id"}
+    assert result.data == {"job_id": "accepted-job", "result": "succeeded"}
+    assert [call.args[3] for call in send.await_args_list] == [
+        {"action": "status", "job_id": "accepted-job"},
+        {"action": "status", "job_id": "accepted-job"},
+    ]
     assert original == {"action": "start", "job_id": "caller-id"}
 
 
