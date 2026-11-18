@@ -50,6 +50,11 @@ exact schema, and preview wording alone does not imply a read-only effects hint.
   it with observed inputs. `describe` with `operation` binds that action in a copy
   of the full schema while retaining conditional constraints. Unknown selections
   fail explicitly and descriptions preserve the registered schema.
+- Choose the action that can produce the requested evidence. A direct uGUI event
+  tests a target's handler. A pointer hit-order query inspects occlusion. Raw
+  mouse or touch simulation follows the supported input path and needs a separate
+  observation of the resulting game state. When delegating, pass the selected
+  Editor, observations already made and the evidence still needed.
 - `advertised` reports visibility in this MCP context. `readiness="unobserved"`
   leaves package availability, project state and permission checks to the existing
   runtime workflow. Catalog requests perform local reads.

@@ -101,6 +101,29 @@ def test_unmatched_normalized_query_suggests_broadening():
     assert result["next_action"] == "broaden_catalog_query"
 
 
+def test_ui_action_cards_expose_required_inputs_and_evidence():
+    from cli.main import cli
+
+    runner = CliRunner()
+
+    def page(*args):
+        response = runner.invoke(cli, ["--format", "json", "tool", *args])
+        assert response.exit_code == 0, response.output
+        return json.loads(response.stdout)
+
+    diagnostics = page("catalog", "--tool", "manage_ugui", "--limit", "20")
+    raycast = next(card for card in diagnostics["actions"] if card["action"] == "diagnose_raycast")
+    assert set(raycast["required_parameters"]) == {"target", "screen_position"}
+    assert "RectTransform" in raycast["purpose"] and "bottom left" in raycast["purpose"]
+    assert raycast["evidence_limit"] in diagnostics["tool"]["description"]
+    cards = page("catalog", "--tool", "manage_input", "--limit", "20")
+    click = next(card for card in cards["actions"] if card["action"] == "ui_click")
+    assert "does not test raycast occlusion" in click["evidence_limit"]
+    assert click["required_parameters"] == ["target"]
+    assert click["purpose"] in cards["tool"]["description"]
+    assert click["evidence_limit"] in cards["tool"]["description"]
+
+
 @pytest.mark.parametrize("catalog_query", ["", "  ", "x" * 513, 12, True, ["shader"]])
 def test_catalog_query_validation_is_bounded_and_strict(catalog_query):
     from pydantic import ValidationError

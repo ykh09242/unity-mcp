@@ -7,6 +7,7 @@ from mcp.types import ToolAnnotations
 from models.models import MCPResponse
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
 from services.registry import mcp_for_unity_tool
+from services.registry.action_catalog import UI_CLICK_LIMIT, UI_CLICK_PURPOSE
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
@@ -148,8 +149,7 @@ class InputCommand(BaseModel):
     group="testing",
     description=(
         "Simulate bounded input in Unity Play Mode. status reports capabilities and held controls. "
-        "ui_click dispatches uGUI pointer events to a scene instance ID or exact root hierarchy path "
-        "(independent of raw input backend; does not test raycast occlusion). "
+        f"{UI_CLICK_PURPOSE} {UI_CLICK_LIMIT} "
         "key/mouse/touch/gamepad/wheel require com.unity.inputsystem 1.7+ and Input System or Both handling. "
         "gamepad control is a named stick, trigger or button; sticks use value [x,y] in -1..1, "
         "triggers use scalar value 0..1 and buttons omit value. Release omits value and returns neutral. "

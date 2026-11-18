@@ -30,6 +30,7 @@ from models.ugui_projection_diagnostics import validate_ugui_projection_diagnost
 from models.ugui_tmp_layout_diagnostics import validate_ugui_tmp_layout_diagnostics
 from models.ugui_raycast_diagnostics import validate_ugui_raycast_response
 from services.registry import mcp_for_unity_tool
+from services.registry.action_catalog import UGUI_RAYCAST_LIMIT, UGUI_RAYCAST_PURPOSE
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
 from services.tools.refresh_unity import send_mutation
@@ -754,8 +755,7 @@ async def _diagnose_raycast(
         "diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera "
         "geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility. "
         "diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes. "
-        "diagnose_raycast reports one current native hit order and separate module/handler facts, not event receipt. "
-        "Custom filters are refused by default; explicit allow_custom_filters may run user code without rollback or a hard deadline. "
+        f"{UGUI_RAYCAST_PURPOSE} {UGUI_RAYCAST_LIMIT} "
         "diagnose_device_profiles assesses 1..8 explicit virtual/observed profiles: built-in-only owned Overlay preview or same-resolution current camera geometry, with DPI/safe-area provenance and caller touch thresholds. "
         "The package dispatches no pointer/selection events or explicit source edits."
     ),
@@ -770,7 +770,7 @@ async def manage_ugui(
     action: Annotated[UGUIAction, "Action to perform."],
     target: Annotated[
         str | StrictInt | None,
-        "GameObject name, hierarchy path, or instance ID. Required for get_hierarchy, setters and diagnose.",
+        "GameObject name, hierarchy path, or instance ID. Required for get_hierarchy, setters and diagnose. For diagnose_raycast select a scene UI GameObject with a RectTransform.",
     ] = None,
     parent: Annotated[
         str | StrictInt | None,

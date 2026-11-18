@@ -63,6 +63,7 @@ class ActionGuidance:
     purpose: str
     required: tuple[str, ...] = ()
     effects: CapabilityEffects | None = None
+    evidence_limit: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +85,21 @@ _PHYSICS: Final = ToolGuidance(
     ("create-2d-physics", "physics-3d-collision"),
 )
 _UITK: Final = ToolGuidance("ui toolkit uxml uss layout text 레이아웃", ("ui-uitk",))
+UI_CLICK_PURPOSE: Final = (
+    "ui_click dispatches pointer events directly to a uGUI target such as a button, using its "
+    "scene instance ID or exact root hierarchy path, independently of the raw input backend."
+)
+UI_CLICK_LIMIT: Final = "Direct dispatch does not test raycast occlusion. Observe the handler's gameplay effect separately."
+UGUI_RAYCAST_PURPOSE: Final = (
+    "diagnose_raycast inspects pointer hit order and raycast occlusion at screen_position [x,y] "
+    "in Game View pixels from the bottom left. Supply a scene UI GameObject with a RectTransform "
+    "as target to compare its handler with the first hit."
+)
+UGUI_RAYCAST_LIMIT: Final = (
+    "No click is sent. An unknown result provides no confirmed hit order. "
+    "Even a known hit order does not establish event receipt. Custom filters are refused by "
+    "default; explicit allow_custom_filters may run user code without rollback or a hard deadline."
+)
 _PREFAB_CONTENTS: Final = ToolGuidance(
     actions={
         "modify_contents": ActionGuidance(
@@ -141,10 +157,12 @@ TOOL_GUIDANCE: Final = {
         ("ui-ugui",),
         actions={
             "get_hierarchy": ActionGuidance(
-                "Inspect the existing Canvas hierarchy and UI components."
+                "Inspect the existing Canvas hierarchy and UI components.", ("target",)
             ),
             "diagnose_raycast": ActionGuidance(
-                "Investigate blocked UI clicks using current pointer hit order and input-module/handler facts. Custom filters require explicit opt-in and may run user code."
+                UGUI_RAYCAST_PURPOSE,
+                ("target", "screen_position"),
+                evidence_limit=UGUI_RAYCAST_LIMIT,
             ),
             "diagnose_projection": ActionGuidance(
                 "Inspect current Screen Camera or World Space UI geometry and clipping without rendering or rebuilding layout."
@@ -182,12 +200,32 @@ TOOL_GUIDANCE: Final = {
         },
     ),
     "capture_prefab": ToolGuidance("prefab capture preview thumbnail 프리팹 캡처 미리보기"),
+    "manage_editor": ToolGuidance(
+        actions={
+            "get_game_view_size": ActionGuidance(
+                "Read the current Game View resolution and its available presets. Use the reported pixel dimensions for game screen coordinates.",
+                effects=READ_ONLY_EFFECTS,
+            ),
+        },
+    ),
     "manage_input": ToolGuidance(
         "ui button click input pointer 버튼 클릭 입력 포인터",
         actions={
             "ui_click": ActionGuidance(
-                "Send a UI click through the selected runtime input backend and observe input receipt separately from gameplay effects."
-            )
+                UI_CLICK_PURPOSE,
+                ("target",),
+                evidence_limit=UI_CLICK_LIMIT,
+            ),
+            "mouse": ActionGuidance(
+                "In Play Mode, move the simulated mouse to screen coordinates, then press the button there through the Input System. Observe the visible response separately.",
+            ),
+            "touch": ActionGuidance(
+                "In Play Mode, press or move a simulated touch at a screen position through the Input System. Observe the receiving UI and resulting game state.",
+            ),
+            "status": ActionGuidance(
+                "Read the available input backends and currently held controls before choosing a simulation method.",
+                effects=READ_ONLY_EFFECTS,
+            ),
         },
     ),
     "asset_reference_diagnostics": _ASSET_REFERENCES,
@@ -478,6 +516,11 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
         "purpose_source": "declared"
         if (guidance and guidance.purpose) or action is None
         else "identifier",
+        **(
+            {"evidence_limit": guidance.evidence_limit}
+            if guidance and guidance.evidence_limit
+            else {}
+        ),
         "required_parameters": list(
             dict.fromkeys(
                 [
