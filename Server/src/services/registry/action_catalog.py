@@ -112,6 +112,10 @@ _PHYSICS: Final = ToolGuidance(
     skills=("create-2d-physics", "physics-3d-collision"),
 )
 _UITK: Final = ToolGuidance(skills=("ui-uitk",))
+_SCENE_OBSERVATION_IMPORT: Final = (
+    "Before observation, preflight may import pending external asset changes when refresh "
+    "is permitted. Changed scripts can trigger compilation and domain reload."
+)
 UI_CLICK_PURPOSE: Final = (
     "ui_click dispatches pointer events directly to a uGUI target such as a button, using its "
     "scene instance ID or exact root hierarchy path, independently of the raw input backend."
@@ -207,34 +211,273 @@ TOOL_GUIDANCE: Final = {
             ),
         },
     ),
+    "manage_scene": ToolGuidance(
+        actions={
+            "create": ActionGuidance(
+                "Create and open a new .unity scene, replacing the current scene setup. "
+                "Specify name and optionally a folder under Assets/ (default Assets/Scenes/) "
+                "and template (empty, default, 3d_basic or 2d_basic). Existing destination files "
+                "and unsaved scenes block creation.",
+                ("name",),
+                intent="edit",
+            ),
+            "load": ActionGuidance(
+                "Open an existing scene by full path, name with an optional folder path, "
+                "or build_index. Use additive=true to keep the current scenes. Single mode "
+                "refuses loaded scenes with unsaved changes. Opening can run Editor scene "
+                "lifecycle callbacks. Returns the opened scene's scene_state.",
+                evidence_limit=(
+                    "verify=true observes one bounded validation slice of the affected scene. "
+                    "Check scan coverage before relying on a clean result."
+                ),
+                intent="edit",
+            ),
+            "save": ActionGuidance(
+                "Save the active scene or select the loaded source with scene_handle, scene_path "
+                "or scene_name. Use a destination .unity path or a folder and name to Save As. "
+                "Replacing an existing Save As destination requires allow_overwrite=true.",
+                evidence_limit=(
+                    "scene_state identifies the affected scene. verify=true adds one bounded "
+                    "validation slice, whose results may be incomplete."
+                ),
+                intent="edit",
+            ),
+            "get_hierarchy": ActionGuidance(
+                "List one page of root GameObjects in the current Prefab Stage or active scene, "
+                "or immediate children of parent. Pass next_cursor as cursor for the next page. "
+                "Use include_transform for local transforms.",
+                evidence_limit=(
+                    "Each page covers one hierarchy level and reflects current state. "
+                    + _SCENE_OBSERVATION_IMPORT
+                ),
+                intent="observe",
+            ),
+            "get_active": ActionGuidance(
+                "Read the active scene's path, build index, root count and loaded/dirty flags.",
+                evidence_limit=_SCENE_OBSERVATION_IMPORT,
+                intent="observe",
+            ),
+            "get_build_settings": ActionGuidance(
+                "Read the Editor Build Settings scene list with enabled flags and build indexes. "
+                "Use manage_build scenes to replace the list.",
+                evidence_limit=_SCENE_OBSERVATION_IMPORT,
+                intent="observe",
+            ),
+            "scene_view_frame": ActionGuidance(
+                "Reposition the active Scene View camera to frame scene_view_target or the "
+                "scene bounds. Use manage_camera to capture screenshots.",
+            ),
+            "close_scene": ActionGuidance(
+                "Unload a scene identified by scene_path or a unique scene_name "
+                "(name is also accepted). Use remove_scene=true to remove its hierarchy entry. "
+                "Refuses a dirty scene or the last loaded scene. Closing can run Editor "
+                "scene lifecycle callbacks.",
+                intent="edit",
+            ),
+            "set_active_scene": ActionGuidance(
+                "Make an already loaded scene active. Select it by scene_path or a unique "
+                "scene_name (name is also accepted).",
+            ),
+            "get_loaded_scenes": ActionGuidance(
+                "List the Editor's open scene entries and their loaded, active and dirty flags. "
+                "Use a loaded scene's scene_handle to identify it exactly for save or validate.",
+                evidence_limit=_SCENE_OBSERVATION_IMPORT,
+                intent="observe",
+            ),
+            "move_to_scene": ActionGuidance(
+                "Move a root GameObject to an already loaded scene selected by scene_path "
+                "or a unique scene_name (name is also accepted). Use an instance ID to disambiguate "
+                "the target. In Edit Mode the move uses Undo.",
+                ("target",),
+                intent="edit",
+            ),
+            "validate": ActionGuidance(
+                "Scan the active scene or the specified scene_handle for missing scripts and "
+                "broken prefab instances. Resume bounded read-only scans with continuation. "
+                "auto_repair=true removes missing scripts without Undo after a complete new scan.",
+                evidence_limit=(
+                    "Check scanComplete. A partial scan cannot establish that the whole scene "
+                    "is clean. Use validate_references for broken serialized object references."
+                ),
+            ),
+            "validate_references": ActionGuidance(
+                "Page broken serialized object references in the active scene, all loaded scenes, "
+                "or one prefab or ScriptableObject asset. Asset scopes require path and load "
+                "that asset. Use reference_revision to reject drift on a live rescan, or "
+                "reference_snapshot and the returned referenceCursor for captured pages.",
+                evidence_limit=(
+                    "Check scanComplete. Ordinary nulls are excluded and target GUID/fileID are "
+                    "unavailable. Captured pages report past observations. No repairs are applied."
+                ),
+                intent="observe",
+            ),
+        },
+    ),
     "manage_shader": ToolGuidance(
         actions={
+            "create": ActionGuidance(
+                "Create and import a .shader file in the selected directory. Give name without "
+                "an extension and optionally supply contents instead of the default shader.",
+                ("name",),
+                evidence_limit=(
+                    "Success confirms the save/import. Check compilation.status for Unity's "
+                    "compiler observation, which can be pending or unavailable."
+                ),
+                intent="edit",
+            ),
             "read": ActionGuidance(
-                "Read a bounded page of shader source bytes using its name and containing directory.",
+                "Read a bounded .shader source page by extensionless name and directory path. "
+                "Offsets count source bytes after the BOM. While hasMore is true, pass nextOffset "
+                "as read_offset to continue.",
                 ("name",),
                 READ_ONLY_EFFECTS,
             ),
+            "update": ActionGuidance(
+                "Replace the entire existing .shader source with contents and import it. "
+                "Use name without an extension and path for the containing directory.",
+                ("name", "contents"),
+                evidence_limit=(
+                    "Success confirms the save/import. Unity can still report compiler errors "
+                    "or pending compilation. Inspect compilation.status."
+                ),
+                intent="edit",
+            ),
+            "delete": ActionGuidance(
+                "Delete the .shader asset selected by extensionless name and directory path.",
+                ("name",),
+                intent="edit",
+            ),
             "inspect_graph": ActionGuidance(
-                "Inspect Shader Graph serialized nodes, edges, properties and keywords without compiling or editing the asset.",
+                "Read paged serialized Shader Graph nodes, edges, properties and keywords "
+                "from a full .shadergraph asset path.",
                 ("path",),
                 READ_ONLY_EFFECTS,
+                evidence_limit=(
+                    "Covers supported MultiJSON GraphData v0-3 and reports serialized structure "
+                    "only. Use diagnostics for imported pass and compiler information."
+                ),
             ),
             "diagnostics": ActionGuidance(
-                "Read cached compiler messages for a shader or Shader Graph asset.",
+                "Read cached compiler messages and list imported subshader/pass indexes, stage "
+                "names and compiler platforms for a full .shader or .shadergraph asset path.",
                 ("path",),
                 READ_ONLY_EFFECTS,
+                evidence_limit=(
+                    "Cached messages describe Unity's current observation. Check for pending or "
+                    "unavailable compilation evidence and truncated pass lists."
+                ),
             ),
             "compile_variant": ActionGuidance(
-                "Compile one explicitly selected shader variant in idle Edit Mode and return its outcome and bounded diagnostics.",
+                "Invoke Unity's compiler in idle Edit Mode for one variant of a full .shader "
+                "or .shadergraph asset path. Select shader_type, platform and build_target in "
+                "variant, with optional subshader_index, pass_index and keywords.",
                 ("path", "variant"),
+                evidence_limit=(
+                    "Check outcome and bytecode_size. no_program means empty bytecode. "
+                    "The observation covers one variant and provides no Player build result."
+                ),
             ),
         },
     ),
     "manage_editor": ToolGuidance(
         actions={
+            "telemetry_status": ActionGuidance(
+                "Read whether server tool-usage telemetry is enabled.",
+                evidence_limit=(
+                    "This can start background telemetry initialization and create local "
+                    "telemetry storage. An initial false can reflect initialization in progress."
+                ),
+                intent="observe",
+            ),
+            "telemetry_ping": ActionGuidance(
+                "Submit a server telemetry diagnostic ping through the configured recorder.",
+                evidence_limit="The acknowledgement provides no delivery confirmation.",
+            ),
+            "play": ActionGuidance(
+                "Request entry into Play Mode. Supply wait_until=scene_loaded or first_frame "
+                "to observe a readiness job within timeout_seconds.",
+                evidence_limit=(
+                    "Without a readiness wait, pending acknowledges the transition request. "
+                    "Observe mcpforunity://editor/state for stable entry. first_frame observes "
+                    "simulation progress only. Rendering and application initialization require "
+                    "their own evidence."
+                ),
+                intent="interact",
+            ),
+            "pause": ActionGuidance(
+                "Toggle between paused and resumed while the Editor is in Play Mode.",
+                intent="interact",
+            ),
+            "stop": ActionGuidance(
+                "Request exit from Play Mode and cancel pending play readiness monitoring.",
+                evidence_limit=(
+                    "pending acknowledges the transition request. Observe "
+                    "mcpforunity://editor/state for stable Edit Mode."
+                ),
+                intent="interact",
+            ),
+            "set_active_tool": ActionGuidance(
+                "Choose the active Unity transform tool using tool_name.", ("tool_name",)
+            ),
+            "add_tag": ActionGuidance(
+                "Add tag_name to the project's TagManager.", ("tag_name",), intent="edit"
+            ),
+            "remove_tag": ActionGuidance(
+                "Remove tag_name from the project's TagManager.", ("tag_name",), intent="edit"
+            ),
+            "add_layer": ActionGuidance(
+                "Assign layer_name to an available user layer slot in the project.",
+                ("layer_name",),
+                intent="edit",
+            ),
+            "remove_layer": ActionGuidance(
+                "Clear the user layer slot named layer_name in the project.",
+                ("layer_name",),
+                intent="edit",
+            ),
+            "deploy_package": ActionGuidance(
+                "Replace the Unity MCP package from its stored source. Requires an enabled "
+                "explicit manage_packages consent grant in the Tools panel."
+            ),
+            "restore_package": ActionGuidance(
+                "Restore the last Unity MCP package backup. Requires an enabled explicit "
+                "manage_packages consent grant in the Tools panel."
+            ),
+            "undo": ActionGuidance(
+                "Perform Unity Undo on the current group and return its recorded name if known.",
+                evidence_limit="The Undo stack may be empty. Observe affected state to confirm.",
+            ),
+            "redo": ActionGuidance(
+                "Perform Unity Redo and return the resulting Undo group name if known.",
+                evidence_limit="Observe affected state to confirm the edit was reapplied.",
+            ),
+            "get_play_mode_job": ActionGuidance(
+                "Poll the Play Mode readiness job returned by play with wait_until.",
+                ("job_id",),
+                evidence_limit=(
+                    "Use the job status to establish readiness. A late observation can establish "
+                    "current readiness after the original deadline."
+                ),
+                intent="observe",
+            ),
+            "cancel_play_mode_job": ActionGuidance(
+                "Cancel monitoring for the given Play Mode readiness job. Use stop to request "
+                "exit from Play Mode.",
+                ("job_id",),
+            ),
             "get_game_view_size": ActionGuidance(
-                "Read the current Game View resolution and its available presets. Use the reported pixel dimensions for game screen coordinates.",
+                "Read the open Game View's current selection, render_size and available presets. "
+                "Use the reported render pixels for game screen coordinates.",
                 effects=READ_ONLY_EFFECTS,
+            ),
+            "set_game_view_size": ActionGuidance(
+                "Change the open Game View to a fixed width and height, an aspect_ratio W:H "
+                "or a unique preset label. Returns the resulting size and a restore_token.",
+            ),
+            "restore_game_view_size": ActionGuidance(
+                "Restore the original Game View preset using the token from set_game_view_size. "
+                "The original Game View, build-target group and preset must still be available.",
+                ("restore_token",),
             ),
         },
     ),
@@ -278,6 +521,19 @@ TOOL_GUIDANCE: Final = {
             "build": ActionGuidance(
                 "Schedule an asynchronous ordinary or profile build without a plan hash guard. Build preparation saves assets/scenes, may persist scripting_backend changes and runs build callbacks; target/output_path/scenes/options or profile select the build. Observe the returned job_id with status."
             ),
+            "status": ActionGuidance(
+                "Observe a single or batch build by job_id. With no job_id, report the active "
+                "or latest available build observation.",
+                effects=READ_ONLY_EFFECTS,
+                evidence_limit=(
+                    "A successful status query can report a failed or cancelled build. "
+                    "Check state and result, and use report for retained report details."
+                ),
+            ),
+            "platform": ActionGuidance(
+                "Read the active build target and subtarget when target is omitted. Supplying "
+                "target switches the Editor to an installed platform and may reimport assets."
+            ),
             "settings": ActionGuidance(
                 "Read the selected build property when value is omitted; providing value writes the persistent setting, including an explicit empty string where supported. product_name, company_name and version are project-wide PlayerSettings; bundle_id, scripting_backend, defines and architecture use the selected named build target.",
                 ("property",),
@@ -288,9 +544,50 @@ TOOL_GUIDANCE: Final = {
             "profiles": ActionGuidance(
                 "List Unity 6 Build Profiles when profile is omitted, or load the selected profile's scene details. With profile and activate=true, change the active Build Profile."
             ),
+            "batch": ActionGuidance(
+                "Queue player builds using targets or Unity 6 profiles, with optional output_dir. "
+                "Queued target builds can switch the active build target and reimport assets. "
+                "Build preparation saves assets and dirty scenes that have a path. "
+                "Unity can run callbacks during each build.",
+                evidence_limit=(
+                    "The queue acknowledgement confirms scheduling. Poll status with the returned "
+                    "job_id for build outcomes. Preparation skips dirty scenes without a saved path."
+                ),
+            ),
+            "cancel": ActionGuidance(
+                "Request cancellation for the supplied build or batch job_id.",
+                ("job_id",),
+                evidence_limit=(
+                    "Queued work can be cancelled. Unity cannot interrupt an invoked native "
+                    "build through this action."
+                ),
+            ),
             "clean_output": ActionGuidance(
                 "Preview removal of the explicit output_path under Builds/ by default. Only dry_run=false deletes that selected descendant; links and active builds are refused.",
                 ("output_path",),
+            ),
+            "report_history": ActionGuidance(
+                "Page the retained build report inventory to find report_id values for report "
+                "and compare_reports. Pass history_revision to reject inventory drift.",
+                effects=READ_ONLY_EFFECTS,
+                evidence_limit="Reports expire after 30 days or bounded eviction.",
+            ),
+            "report": ActionGuidance(
+                "Read a retained build report by report_id. Select summary, steps or packed_assets "
+                "with report_section. Pass report_revision to reject drift on later pages.",
+                ("report_id",),
+                READ_ONLY_EFFECTS,
+                evidence_limit="Check for partial, missing or corrupt evidence.",
+            ),
+            "compare_reports": ActionGuidance(
+                "Compare retained baseline and candidate build reports by their IDs. Select "
+                "summary, steps or packed_assets with report_section.",
+                ("baseline_report_id", "candidate_report_id"),
+                READ_ONLY_EFFECTS,
+                evidence_limit=(
+                    "Comparison covers retained observations. Check partial evidence before "
+                    "interpreting differences."
+                ),
             ),
         },
     ),
