@@ -21,6 +21,11 @@ from core.server_runtime import ServerRuntime
 from services.execution_receipt_context import owned_to_thread
 from services.execution_receipt_identity import ReceiptConflict, ReceiptInvalid
 from transport.execution_receipts import rest_receipt_control
+from transport.local_http_target import (
+    configured_default,
+    normalize_instance_token as _normalize_instance_token,
+    select_local_session as _select_local_session,
+)
 from transport.local_project_context import (
     ContextCommand,
     LocalProjectContext,
@@ -29,7 +34,7 @@ from transport.local_project_context import (
     local_project_context,
 )
 from transport.local_server_lifecycle import request_local_shutdown
-from transport.models import SessionDetails, SessionList
+from transport.models import SessionList
 from transport.plugin_hub import (
     CommandNotDispatchedError,
     PluginHub,
@@ -43,46 +48,10 @@ from transport.rest_command_input import InputFailure, ReceiptedCommand, RestCom
 logger = logging.getLogger("mcp-for-unity-server")
 
 
-def _normalize_instance_token(instance_token: str | None) -> tuple[str | None, str | None]:
-    if not instance_token:
-        return None, None
-    if "@" in instance_token:
-        name_part, _, hash_part = instance_token.rpartition("@")
-        return (name_part or None), (hash_part or None)
-    return None, instance_token
-
-
-def _select_local_session(
-    sessions: SessionList,
-    instance_token: str | None,
-) -> tuple[str | None, SessionDetails | None]:
-    """Resolve one unique target; composite names must agree with the exact hash."""
-    if instance_token is None:
-        return (
-            next(iter(sessions.sessions.items())) if len(sessions.sessions) == 1 else (None, None)
-        )
-    if not isinstance(instance_token, str) or not instance_token:
-        return None, None
-    instance_name, instance_hash = _normalize_instance_token(instance_token)
-    matches = [pair for pair in sessions.sessions.items() if pair[1].hash == instance_hash]
-    if matches:
-        if "@" in instance_token and (
-            not instance_name or any(pair[1].project != instance_name for pair in matches)
-        ):
-            return None, None
-        return matches[0] if len(matches) == 1 else (None, None)
-    if "@" in instance_token:
-        return None, None
-    matches = [
-        pair
-        for pair in sessions.sessions.items()
-        if pair[1].project in (instance_name, instance_token)
-    ]
-    return matches[0] if len(matches) == 1 else (None, None)
-
-
 def _local_target_refusal(sessions: SessionList, instance_token: str | None) -> JSONResponse:
     """Expose selectable IDs without dispatching an ambiguous or absent target."""
+    if instance_token is None:
+        instance_token = configured_default()
     if instance_token is not None and (not isinstance(instance_token, str) or not instance_token):
         return JSONResponse(
             {
@@ -347,7 +316,9 @@ def install_http_routes(
                         status_code=503,
                     )
 
-                session_id, session_details = _select_local_session(sessions, unity_instance)
+                session_id, session_details = _select_local_session(
+                    sessions, unity_instance, default=configured_default()
+                )
                 if not session_id:
                     return _local_target_refusal(sessions, unity_instance)
 
@@ -489,7 +460,9 @@ def install_http_routes(
                         status_code=503,
                     )
 
-                _, session_details = _select_local_session(sessions, unity_instance)
+                _, session_details = _select_local_session(
+                    sessions, unity_instance, default=configured_default()
+                )
                 if not session_details:
                     return _local_target_refusal(sessions, unity_instance)
 

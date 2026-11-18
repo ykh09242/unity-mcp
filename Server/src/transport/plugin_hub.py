@@ -63,6 +63,7 @@ from transport.local_project_context import (
     ProjectSelection,
     LocalProjectContext,
 )
+from transport.local_http_target import configured_default, select_local_session
 from transport.tool_list_notifier import ToolListNotifier
 from transport.charge_ledger import ChargeLedger
 from transport.json_decoder import decode_json
@@ -4546,6 +4547,21 @@ class PluginHub(WebSocketEndpoint):
         registry = pinned.registry if pinned is not None else cls._registry
         if registry is None:
             raise RuntimeError("Plugin registry not configured")
+
+        if pinned is None and unity_instance is None and (default := configured_default()):
+            catalog = await cls.get_sessions(user_id=user_id)
+            if cls._registry is not registry or config.http_remote_hosted:
+                raise NoUnitySessionError("Unity plugin server routing changed")
+            _, selected = select_local_session(catalog, None, default=default)
+            if selected is None:
+                raise InstanceSelectionRequiredError(
+                    f"Configured Unity instance '{default}' is unavailable or ambiguous. "
+                    "Choose a connected project explicitly or reconnect the intended Editor.",
+                    available_instances=sorted(
+                        f"{row.project}@{row.hash}" for row in catalog.sessions.values()
+                    ),
+                )
+            unity_instance = selected.hash
 
         # Explicitly selected projects may be compiling/importing large workloads.
         # Unselected discovery retains its short window and ambiguity checks.

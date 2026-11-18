@@ -10,11 +10,80 @@ from fastmcp.exceptions import ToolError
 from services.resources.editor_state import infer_single_instance_id
 from services.tools import manage_scene
 from unittest.mock import AsyncMock
+from tests.test_http_command_outcome import command_hub  # noqa: F401
+from transport.unity_transport import send_with_unity_instance
 
 
 class DummyMiddlewareContext:
     def __init__(self, ctx):
         self.fastmcp_context = ctx
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("default", ["Main", "deadbeef", "Main@deadbeef", "ha"])
+async def test_http_default_does_not_dispatch_to_a_different_sole_editor(
+    command_hub, monkeypatch, default
+):
+    monkeypatch.setenv("UNITY_MCP_DEFAULT_INSTANCE", default)
+    middleware = instance_middleware.UnityInstanceMiddleware()
+    ctx = DummyContext()
+    ctx.session = SimpleNamespace(client_capabilities=None)
+
+    async def inject(override=None):
+        arguments = {"unity_instance": override} if override else {}
+        await middleware._inject_unity_instance(
+            SimpleNamespace(fastmcp_context=ctx, message=SimpleNamespace(arguments=arguments))
+        )
+        return await ctx.get_state("unity_instance")
+
+    # The unbound native command and Editor-state identity must agree about the offline default.
+    assert await inject() is None
+    assert await infer_single_instance_id(ctx) is None
+    blocked = await send_with_unity_instance(None, None, "manage_scene", {"action": "save"})
+    assert not blocked["success"] and blocked["hint"] == "select_instance"
+    assert command_hub.sent == []
+
+    # The caller can deliberately target the online Editor while the default is absent.
+    chosen = await inject("Fixture@hash")
+    assert chosen == "Fixture@hash"
+    result = await send_with_unity_instance(None, chosen, "manage_scene", {"action": "save"})
+    assert result["success"]
+    assert [m["name"] for m in command_hub.sent if m["type"] == "execute"] == ["manage_scene"]
+    assert await middleware.get_active_instance(ctx) is None
+
+    if default == "ha":
+        # A project name that is a prefix of another project's hash is not an exact target.
+        return
+    await command_hub.registry.register("main", "Main", "deadbeef", "6000.3")
+    assert await inject() == "Main@deadbeef"
+    assert await ctx.get_state("unity_session_id") == "main"
+    assert await infer_single_instance_id(ctx) == "Main@deadbeef"
+    assert await instance_middleware.PluginHub._resolve_session_id(None) == "main"
+    assert await middleware.get_active_instance(ctx) is None
+    await middleware.set_active_instance(ctx, "Fixture@hash")
+    assert await inject() == "Fixture@hash"
+    assert await inject("Main@deadbeef") == "Main@deadbeef"
+    assert await inject() == "Fixture@hash"
+
+
+@pytest.mark.asyncio
+async def test_http_ambiguous_default_refuses_without_hiding_session_controls(
+    command_hub, monkeypatch
+):
+    monkeypatch.setenv("UNITY_MCP_DEFAULT_INSTANCE", "Fixture")
+    await command_hub.registry.register("another", "Fixture", "otherhash", "6000.3")
+    middleware = instance_middleware.UnityInstanceMiddleware()
+    ctx = DummyContext()
+    assert await middleware._maybe_autoselect_instance(ctx) is None
+    blocked = await send_with_unity_instance(None, None, "manage_scene", {"action": "save"})
+    assert blocked["data"]["available_instances"] == ["Fixture@hash", "Fixture@otherhash"]
+    assert command_hub.sent == []
+
+    from services.tools.set_active_instance import set_active_instance
+
+    monkeypatch.setattr(instance_middleware, "_unity_instance_middleware", middleware)
+    assert (await set_active_instance(ctx, "Fixture@otherhash"))["success"]
+    assert await middleware.get_active_instance(ctx) == "Fixture@otherhash"
 
 
 @pytest.mark.asyncio

@@ -25,6 +25,7 @@ from transport.legacy.unity_connection import (
     run_discovery,
 )
 from transport.plugin_hub import PluginHub
+from transport.local_http_target import configured_default, select_local_session
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -200,7 +201,7 @@ def _in_pytest() -> bool:
 
 async def infer_single_instance_id(ctx: Context) -> str | None:
     """
-    Best-effort: return the configured stdio default or the sole connected Unity instance.
+    Best-effort: return the local default or the sole visible connected Unity instance.
     This makes editor_state outputs self-describing even when no explicit active instance is set.
     """
     logger.info("Resolving the implicit Unity instance for Editor state.")
@@ -213,9 +214,8 @@ async def infer_single_instance_id(ctx: Context) -> str | None:
             # In remote-hosted mode, filter sessions by user_id
             user_id = (await ctx.get_state("user_id")) if config.http_remote_hosted else None
             sessions_data = await PluginHub.get_sessions(user_id=user_id)
-            sessions = sessions_data.sessions if hasattr(sessions_data, "sessions") else {}
-            if isinstance(sessions, dict) and len(sessions) == 1:
-                session = next(iter(sessions.values()))
+            _, session = select_local_session(sessions_data, None, default=configured_default())
+            if session:
                 project = getattr(session, "project", None)
                 project_hash = getattr(session, "hash", None)
                 if project and project_hash:

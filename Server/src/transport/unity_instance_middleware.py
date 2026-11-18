@@ -37,6 +37,7 @@ from services.execution_receipt_identity import (
     ReceiptUnavailable,
 )
 from transport.local_project_context import full_hash
+from transport.local_http_target import configured_default, select_local_session
 from services.registry import get_registered_tools
 from services.registry.operation_invocation import trusted_tool, wrap_tool
 from services.verification.edits import after_operation
@@ -412,7 +413,7 @@ class UnityInstanceMiddleware(Middleware):
 
     async def _maybe_autoselect_instance(self, ctx) -> str | None:
         """
-        Resolve the local stdio default, or auto-select a sole Unity instance.
+        Resolve the configured local default, or auto-select a sole Unity instance.
 
         Legacy selection follows the connection. Modern automatic selection lives
         only for this request: its SDK connection ID changes on every call.
@@ -437,6 +438,12 @@ class UnityInstanceMiddleware(Middleware):
             if PluginHub.is_configured():
                 try:
                     sessions_data = await PluginHub.get_sessions()
+                    if transport == "http" and (default := configured_default()):
+                        _, selected = select_local_session(sessions_data, None, default=default)
+                        # Keep defaults request-local so explicit session selection wins.
+                        return await self.get_active_instance(ctx) or (
+                            f"{selected.project}@{selected.hash}" if selected else None
+                        )
                     sessions = sessions_data.sessions or {}
                     ids: list[str] = []
                     for session_info in sessions.values():
@@ -536,17 +543,9 @@ class UnityInstanceMiddleware(Middleware):
 
         return await _resolve_user_id_from_request()
 
-    async def _inject_unity_instance(
-        self,
-        context: MiddlewareContext,
-        *,
-        authenticated_user_id: str | None = None,
-        allow_reconnect: bool = True,
-        require_explicit: bool = False,
-    ) -> None:
-        """Inject active Unity instance and user_id into context if available."""
-        ctx = context.fastmcp_context
-
+    async def _inject_request_identity(
+        self, ctx, authenticated_user_id: str | None = None
+    ) -> str | None:
         # Shadow transient values persisted by older server versions in this session.
         for key in ("unity_instance", "unity_session_id", "user_id"):
             await ctx.set_state(key, None, serializable=False)
@@ -561,6 +560,19 @@ class UnityInstanceMiddleware(Middleware):
             raise RuntimeError("API key authentication required. Provide a valid X-API-Key header.")
         if user_id:
             await ctx.set_state("user_id", user_id, serializable=False)
+        return user_id
+
+    async def _inject_unity_instance(
+        self,
+        context: MiddlewareContext,
+        *,
+        authenticated_user_id: str | None = None,
+        allow_reconnect: bool = True,
+        require_explicit: bool = False,
+    ) -> None:
+        """Inject active Unity instance and user_id into context if available."""
+        ctx = context.fastmcp_context
+        user_id = await self._inject_request_identity(ctx, authenticated_user_id)
 
         # Tools supply the selector in arguments; resource requests use _meta.
         # Remove the tool argument before FastMCP validates the tool signature.
@@ -1067,6 +1079,10 @@ class UnityInstanceMiddleware(Middleware):
         """Inject active Unity instance into resource context if available."""
         uri = str(getattr(context.message, "uri", ""))
         await authorize_remote_resource(uri)
+        if uri == "mcpforunity://instances":
+            # Discovery needs the principal, even if the session's selected Editor is offline.
+            await self._inject_request_identity(context.fastmcp_context)
+            return await call_next(context)
         if uri in {TEST_RESULTS_URI, "mcpforunity://doctor/runtime", "mcpforunity://doctor/config"}:
             return await call_next(context)
         if uri.startswith("ui:"):

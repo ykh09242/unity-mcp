@@ -355,3 +355,38 @@ def test_custom_tools_rejects_empty_selector_with_single_editor(routing_client, 
     assert response.status_code == 400
     assert response.json()["data"]["dispatch"] == "not_dispatched"
     listing.assert_not_awaited()
+
+
+@pytest.mark.parametrize("route", ["command", "custom-tools"])
+@pytest.mark.parametrize("default,status", [("Offline", 404), ("SameName", 409), ("bbbb2222", 200)])
+def test_local_rest_omission_honors_default_and_explicit_selector_overrides_it(
+    routing_client, monkeypatch, route, default, status
+):
+    monkeypatch.setenv("UNITY_MCP_DEFAULT_INSTANCE", default)
+    dispatch = AsyncMock(return_value={"success": True})
+    listing = AsyncMock(return_value=[])
+    monkeypatch.setattr(PluginHub, "send_command", dispatch)
+    monkeypatch.setattr(CustomToolService.get_instance(), "list_registered_tools", listing)
+    for selector, expected_status in ((None, status), ("SameName@aaaa1111", 200)):
+        if route == "command":
+            response = routing_client.post(
+                "/api/command",
+                json={
+                    "type": "manage_scene",
+                    "params": {"action": "save"},
+                    "unity_instance": selector,
+                },
+            )
+        else:
+            response = routing_client.get(
+                "/api/custom-tools", params={"instance": selector} if selector else {}
+            )
+        assert response.status_code == expected_status
+        if expected_status != 200:
+            assert response.json()["data"]["dispatch"] == "not_dispatched"
+            dispatch.assert_not_awaited()
+            listing.assert_not_awaited()
+        elif route == "command":
+            assert dispatch.await_args.args[0] == ("first" if selector else "second")
+        else:
+            assert listing.await_args.args[0] == ("aaaa1111" if selector else "bbbb2222")
