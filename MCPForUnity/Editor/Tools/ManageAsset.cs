@@ -168,17 +168,6 @@ namespace MCPForUnity.Editor.Tools
                     if (referenceError != null)
                         return referenceError;
                 }
-                if (
-                    action == "import"
-                    || action == "create"
-                    || action == "modify"
-                    || action == "delete"
-                    || action == "duplicate"
-                    || action == "move"
-                    || action == "rename"
-                    || action == "create_folder"
-                )
-                    AssetSearchSnapshots.Invalidate();
                 switch (action)
                 {
                     case "import":
@@ -344,6 +333,7 @@ namespace MCPForUnity.Editor.Tools
                     return consentError;
                 using (MCPForUnity.Editor.Services.Transport.CommandPhaseTiming.MeasureImport())
                 {
+                    AssetSearchSnapshots.Invalidate();
                     AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
                 }
                 // AssetDatabase.Refresh(); // Usually ImportAsset handles refresh
@@ -433,6 +423,7 @@ namespace MCPForUnity.Editor.Tools
                         }
                     }
                     AssetPathUtility.GetFullAssetPath(fullPath);
+                    AssetSearchSnapshots.Invalidate();
                     AssetDatabase.CreateAsset(mat, fullPath);
                 }
 #if MCP_FOR_UNITY_PHYSICS
@@ -443,6 +434,7 @@ namespace MCPForUnity.Editor.Tools
                     if (properties != null)
                         ApplyPhysicsMaterialProperties(pmat, properties);
                     AssetPathUtility.GetFullAssetPath(fullPath);
+                    AssetSearchSnapshots.Invalidate();
                     AssetDatabase.CreateAsset(pmat, fullPath);
                 }
 #endif
@@ -667,6 +659,7 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 AssetPathUtility.GetFullAssetPath(fullPath);
+                AssetSearchSnapshots.Invalidate();
                 bool success = AssetDatabase.DeleteAsset(fullPath);
                 if (success)
                 {
@@ -721,6 +714,7 @@ namespace MCPForUnity.Editor.Tools
                 folders.EnsureParentDirectory(destPath);
                 AssetPathUtility.GetFullAssetPath(sourcePath);
                 AssetPathUtility.GetFullAssetPath(destPath);
+                AssetSearchSnapshots.Invalidate();
                 bool success = AssetDatabase.CopyAsset(sourcePath, destPath);
                 if (success)
                 {
@@ -773,6 +767,7 @@ namespace MCPForUnity.Editor.Tools
 
                 AssetPathUtility.GetFullAssetPath(sourcePath);
                 AssetPathUtility.GetFullAssetPath(destPath);
+                AssetSearchSnapshots.Invalidate();
                 string moveError = AssetDatabase.MoveAsset(sourcePath, destPath);
                 if (string.IsNullOrEmpty(moveError))
                 {
@@ -1233,6 +1228,8 @@ namespace MCPForUnity.Editor.Tools
                     // Earlier setters may have changed this member, including through an alias.
                     if (object.Equals(assignments[i].get(), assignments[i].next))
                         continue;
+                    if (attempted.Count == 0)
+                        AssetSearchSnapshots.Invalidate();
                     attempted.Add(i);
                     assignments[i].set(assignments[i].next);
                 }

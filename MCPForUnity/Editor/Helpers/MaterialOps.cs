@@ -139,6 +139,7 @@ namespace MCPForUnity.Editor.Helpers
                 var backup = CloneSerializedMaterial(material);
                 try
                 {
+                    AssetSearchSnapshots.Invalidate();
                     EditorUtility.CopySerialized(probe, material);
                 }
                 catch (Exception publishError)

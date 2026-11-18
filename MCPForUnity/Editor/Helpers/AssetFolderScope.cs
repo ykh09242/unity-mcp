@@ -40,12 +40,14 @@ namespace MCPForUnity.Editor.Helpers
             if (Directory.Exists(fullPath))
             {
                 // A folder made outside Unity is pre-existing, even when Unity has not indexed it.
+                AssetSearchSnapshots.Invalidate();
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
                 if (!AssetDatabase.IsValidFolder(path))
                     throw new IOException($"Unity could not register the output folder '{path}'.");
                 return;
             }
 
+            AssetSearchSnapshots.Invalidate();
             string guid = AssetDatabase.CreateFolder(parent, Path.GetFileName(path));
             if (string.IsNullOrEmpty(guid))
                 throw new IOException($"Unity could not create the output folder '{path}'.");
@@ -80,6 +82,7 @@ namespace MCPForUnity.Editor.Helpers
                             continue;
 
                     // Never pass a nonempty or replaced folder to Unity's deletion API.
+                    AssetSearchSnapshots.Invalidate();
                     if (!AssetDatabase.DeleteAsset(folder.path))
                         McpLog.Warn($"Could not remove empty output folder '{folder.path}'.");
                 }

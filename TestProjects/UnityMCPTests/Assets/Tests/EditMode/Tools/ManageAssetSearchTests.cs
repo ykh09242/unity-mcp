@@ -529,26 +529,68 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(Metadata(2, 1).Value<bool>("success"));
         }
 
-        [Test]
-        public void OwnFailedMutationAttempt_InvalidatesSynchronouslyWithoutImportNotification()
+        [TestCase("create_folder", true)]
+        [TestCase("modify", false)]
+        public void PreWriteRefusalAndNoOpKeepSearchPagesWithoutRediscovery(string action, bool success)
         {
-            // Given: a real token and a nonexistent owned target, so no asset import can explain invalidation.
             string token = Metadata(2, 1)["data"].Value<string>("searchSnapshot");
-            // When: a relevant mutation reaches dispatch and fails because the target does not exist.
-            var failed = JObject.FromObject(
+            var operations = new List<string>();
+            var field = SnapshotType.GetField("OperationObserved", BindingFlags.NonPublic | BindingFlags.Static);
+            var previous = field.GetValue(null);
+            try
+            {
+                field.SetValue(null, (Action<string>)operations.Add);
+                var response = JObject.FromObject(
+                    ManageAsset.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = action,
+                            ["path"] = success ? _folder : _folder + "/missing.txt",
+                            ["properties"] = new JObject { ["name"] = "requested" },
+                        }
+                    )
+                );
+                Assert.AreEqual(success, response.Value<bool>("success"), response.ToString());
+                var next = Metadata(2, 2, token);
+                Assert.IsTrue(next.Value<bool>("success"), next.ToString());
+                Assert.AreEqual(token, next["data"].Value<string>("searchSnapshot"));
+                CollectionAssert.DoesNotContain(operations, "find_assets");
+            }
+            finally
+            {
+                field.SetValue(null, previous);
+            }
+        }
+
+        [Test]
+        public void ThrowingSetterInvalidatesSearchEvenWhenRestoredWithoutImport()
+        {
+            string path = _folder + "/Throwing.prefab";
+            var source = new UnityEngine.GameObject("Throwing", typeof(PrefabAssignmentFixture));
+            try
+            {
+                PrefabUtility.SaveAsPrefabAsset(source, path, out bool saved);
+                Assert.IsTrue(saved);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+            string token = Metadata(2, 1)["data"].Value<string>("searchSnapshot");
+            UnityEngine.TestTools.LogAssert.Expect(UnityEngine.LogType.Error, new System.Text.RegularExpressions.Regex("Action 'modify' failed"));
+            var response = JObject.FromObject(
                 ManageAsset.HandleCommand(
                     new JObject
                     {
                         ["action"] = "modify",
-                        ["path"] = _folder + "/missing.txt",
-                        ["properties"] = new JObject(),
+                        ["path"] = path,
+                        ["properties"] = new JObject { [nameof(PrefabAssignmentFixture)] = new JObject { ["Value"] = 9 } },
                     }
                 )
             );
-            // Then: the token is already stale, with a fresh search as the positive control.
-            Assert.IsFalse(failed.Value<bool>("success"));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("restored", response.Value<string>("error"));
             Assert.AreEqual("stale_search_snapshot", Metadata(2, 2, token).Value<string>("code"));
-            Assert.IsTrue(Metadata(2, 1).Value<bool>("success"));
         }
 
         [TestCase("searchPattern", "item1")]
