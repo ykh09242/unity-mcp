@@ -229,7 +229,7 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
         and data["resolve"].get("completion") == "unknown"
     ):
         phase, terminal = "unknown", False
-    elif state in _TERMINAL:
+    elif state in _TERMINAL or kind == "test" and state == "inconclusive":
         phase, terminal = "terminal", True
     elif state in {"pending", "queued", "starting", "waiting"}:
         phase, terminal = "waiting", False

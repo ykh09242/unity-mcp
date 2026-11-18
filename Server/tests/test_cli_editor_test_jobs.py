@@ -248,7 +248,9 @@ def test_cli_async_tests_keep_text_job_guidance(editor_module, monkeypatch):
 
 
 @pytest.mark.parametrize("command", [["tests"], ["poll-test", "job-1"]])
-@pytest.mark.parametrize("status, expected", [("succeeded", 0), ("failed", 1), ("cancelled", 1)])
+@pytest.mark.parametrize(
+    "status, expected", [("succeeded", 0), ("failed", 1), ("cancelled", 1), ("inconclusive", 1)]
+)
 @pytest.mark.parametrize("output_format", ["json", "text", "table"])
 def test_wait_exit_matches_observed_completion(
     editor_module, monkeypatch, command, status, expected, output_format

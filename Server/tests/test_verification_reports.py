@@ -42,6 +42,22 @@ def test_actual_native_success_settles_without_server_wrapper_fields():
 
 
 @pytest.mark.parametrize(
+    "status, counts",
+    [
+        ("inconclusive", {"total": 2, "passed": 1, "inconclusive": 1}),
+        ("succeeded", {"total": 1, "passed": 1, "resultState": "Inconclusive"}),
+        ("succeeded", {"total": 1, "passed": 1, "inconclusive": 1}),
+    ],
+)
+def test_inconclusive_evidence_settles_without_passing_verification(status, counts):
+    data = native_result()
+    data["status"] = status
+    data["result"]["summary"].update(counts)
+    assert observed_test_settled(data)
+    assert observed_test_verdict(data) == "incomplete"
+
+
+@pytest.mark.parametrize(
     "change",
     [
         {"released": False},

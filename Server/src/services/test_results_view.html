@@ -140,9 +140,10 @@
     const page = data?.result_page;
     const summary = data?.result?.summary;
     if (envelope.success !== true || !record(data) || data.job_id !== jobId
-      || !['succeeded', 'failed'].includes(data.status) || data.completion_kind !== 'completed'
+      || !['succeeded', 'failed', 'inconclusive'].includes(data.status) || data.completion_kind !== 'completed'
       || data.result_availability !== 'available' || !record(summary)
       || !summaryKeys.every(key => integer(summary[key])) || !number(summary.durationSeconds)
+      || (summary.inconclusive !== undefined && !integer(summary.inconclusive))
       || !text(summary.resultState) || !record(page) || !Array.isArray(page.items)
       || page.items.length > 100 || !page.items.every(validRow) || !integer(page.total_count)
       || page.total_count < page.items.length || typeof page.has_more !== 'boolean'
@@ -157,7 +158,7 @@
     clearTimeout(deadline);
     rows = page.items;
     el('status').textContent = `Job ${jobId} · ${data.status} · ${summary.durationSeconds}s`;
-    for (const key of summaryKeys) {
+    for (const key of summary.inconclusive === undefined ? summaryKeys : [...summaryKeys, 'inconclusive']) {
       const count = document.createElement('span');
       count.className = 'count';
       count.textContent = `${key}: ${summary[key]}`;

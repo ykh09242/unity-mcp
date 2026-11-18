@@ -799,6 +799,7 @@ namespace MCPForUnity.Editor.Services
                                         passed = testSummary.Passed,
                                         failed = testSummary.Failed,
                                         skipped = testSummary.Skipped,
+                                        inconclusive = testSummary.Inconclusive,
                                     },
                         }
                         : null,

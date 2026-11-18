@@ -92,7 +92,7 @@ async def view_test_results(
         if (
             data is None
             or data.job_id != job_id
-            or data.status not in {"succeeded", "failed"}
+            or data.status not in {"succeeded", "failed", "inconclusive"}
             or data.completion_kind != "completed"
             or data.result_availability != "available"
             or data.result is None

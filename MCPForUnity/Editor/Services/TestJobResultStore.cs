@@ -322,7 +322,7 @@ namespace MCPForUnity.Editor.Services
                         ["completed_unix_ms"] = completed,
                         ["count"] = count,
                         ["truncated_result_count"] = truncatedCount,
-                        ["status"] = summary.Failed > 0 ? "failed" : "succeeded",
+                        ["status"] = TestJobManager.ClassifySummary(summary).ToString().ToLowerInvariant(),
                         ["finished_unix_ms"] = completed,
                     };
                 }

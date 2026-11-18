@@ -727,7 +727,7 @@ def _poll_test_job(
                     "data": data,
                 }
                 break
-            if status in ("succeeded", "failed", "cancelled"):
+            if status in ("succeeded", "failed", "cancelled", "inconclusive"):
                 exit_code = 0 if status == "succeeded" else 1
                 break
             time.sleep(min(2.0, remaining))
@@ -751,6 +751,8 @@ def _poll_test_job(
         status = data.get("status", "unknown")
         if status == "succeeded":
             print_success("Tests completed successfully")
+        elif status == "inconclusive":
+            print_info("Test run was inconclusive")
         elif status in ("failed", "cancelled"):
             test_result = data.get("result")
             summary = test_result.get("summary", {}) if isinstance(test_result, dict) else {}
@@ -780,7 +782,7 @@ def _poll_test_job(
             print_info(f"Tests running: {completed}/{total}")
         native_control = data.get("native_control")
         if (
-            status in ("succeeded", "failed", "cancelled")
+            status in ("succeeded", "failed", "cancelled", "inconclusive")
             and isinstance(native_control, dict)
             and native_control.get("released") is False
         ):

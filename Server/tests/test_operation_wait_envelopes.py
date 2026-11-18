@@ -13,6 +13,17 @@ from services.tools import wait_for_operation as wait_module
 JOB_ID = "a" * 32
 
 
+def test_inconclusive_test_observation_is_terminal_after_native_cleanup():
+    counts = {"total": 2, "passed": 1, "inconclusive": 1}
+    data = {"job_id": JOB_ID, "status": "inconclusive", "result": {"summary": counts}}
+    for released in (False, True):
+        data["native_control"] = {"released": released}
+        result = wait_module.project_observation("test", JOB_ID, {"success": True, "data": data})
+        assert result["data"]["terminal"] is released
+        if released:
+            assert result["data"]["summary"]["counts"] == counts
+
+
 def envelope(kind, state, **evidence):
     """Use the raw HTTP reply shape returned by PluginHub.send_command."""
     return {

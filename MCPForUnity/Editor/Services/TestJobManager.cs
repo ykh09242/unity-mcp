@@ -19,6 +19,7 @@ namespace MCPForUnity.Editor.Services
         Succeeded,
         Failed,
         Cancelled,
+        Inconclusive,
     }
 
     internal sealed class TestJobFailure
@@ -278,6 +279,7 @@ namespace MCPForUnity.Editor.Services
                 "succeeded" => TestJobStatus.Succeeded,
                 "failed" => TestJobStatus.Failed,
                 "cancelled" => TestJobStatus.Cancelled,
+                "inconclusive" => TestJobStatus.Inconclusive,
                 _ => TestJobStatus.Running,
             };
         }
@@ -305,6 +307,8 @@ namespace MCPForUnity.Editor.Services
             foreach (string name in new[] { "total", "passed", "failed", "skipped" })
                 if (!Integer(Field(name), int.MaxValue))
                     return false;
+            if (Field("inconclusive") is JToken inconclusive && !Integer(inconclusive, int.MaxValue))
+                return false;
             var duration = Field("durationSeconds");
             bool supportedDuration =
                 duration?.Type == JTokenType.Integer
@@ -340,7 +344,7 @@ namespace MCPForUnity.Editor.Services
                     if (
                         string.IsNullOrWhiteSpace(id)
                         || Encoding.UTF8.GetByteCount(id) > 256
-                        || status != "running" && status != "failed" && status != "succeeded" && status != "cancelled"
+                        || status != "running" && status != "failed" && status != "succeeded" && status != "cancelled" && status != "inconclusive"
                         || !Integer(row["started_unix_ms"])
                         || !Integer(row["last_update_unix_ms"])
                         || !Integer(row["completed_tests"], int.MaxValue)
@@ -431,7 +435,10 @@ namespace MCPForUnity.Editor.Services
                         Jobs[pj.job_id] = new TestJob
                         {
                             JobId = pj.job_id,
-                            Status = ParseStatus(pj.status),
+                            Status =
+                                pj.status == "succeeded" && ClassifySummary(pj.summary) == TestJobStatus.Inconclusive
+                                    ? TestJobStatus.Inconclusive
+                                    : ParseStatus(pj.status),
                             Mode = pj.mode,
                             StartedUnixMs = pj.started_unix_ms,
                             FinishedUnixMs = pj.finished_unix_ms,
@@ -1075,6 +1082,9 @@ namespace MCPForUnity.Editor.Services
                             if (job.FailuresSoFar?.Count > 0)
                                 failed = Math.Max(1, failed);
                             int skipped = Math.Max(rows.Count(r => r.State == "Skipped"), resultPayload.Skipped);
+                            int inconclusive = Math.Max(rows.Count(r => r.IsInconclusive), Math.Max(resultPayload.Inconclusive, previous?.Inconclusive ?? 0));
+                            // A failure already retained for a replayed leaf takes precedence over its inconclusive callback.
+                            inconclusive = Math.Min(inconclusive, Math.Max(0, total - failed - skipped));
                             bool completeRows = rows.Count == job.TotalTests.GetValueOrDefault(rows.Count);
                             interrupted =
                                 !cancelled
@@ -1084,14 +1094,15 @@ namespace MCPForUnity.Editor.Services
                                 );
                             var summary = new TestRunSummary(
                                 total,
-                                Math.Max(0, total - failed - skipped),
+                                Math.Max(0, total - failed - skipped - inconclusive),
                                 failed,
                                 skipped,
                                 Math.Max(rows.Sum(r => r.DurationSeconds), resultPayload.Summary.DurationSeconds),
                                 cancelled ? resultPayload.Summary.ResultState
                                     : interrupted ? "Partial"
                                     : failed > 0 ? "Failed"
-                                    : resultPayload.Summary.ResultState
+                                    : resultPayload.Summary.ResultState,
+                                inconclusive
                             );
                             string captureFailure = resultPayload.Availability == "available" ? null : resultPayload.Availability;
                             resultPayload = new TestRunResult(summary, rows)
@@ -1277,7 +1288,7 @@ namespace MCPForUnity.Editor.Services
             {
                 if (
                     !Jobs.TryGetValue(jobId, out var job)
-                    || (job.Status != TestJobStatus.Succeeded && job.Status != TestJobStatus.Failed)
+                    || (job.Status != TestJobStatus.Succeeded && job.Status != TestJobStatus.Failed && job.Status != TestJobStatus.Inconclusive)
                     || job.CompletionKind != "completed"
                     || job.ResultArtifact == null
                 )
@@ -1436,7 +1447,8 @@ namespace MCPForUnity.Editor.Services
                     rows.Count(r => r.IsFailure),
                     rows.Count(r => r.State == "Skipped"),
                     rows.Sum(r => r.DurationSeconds),
-                    "Partial"
+                    "Partial",
+                    rows.Count(r => r.IsInconclusive)
                 );
                 var partial = new TestRunResult(summary, rows);
                 var artifact = ResultStore.Save(job.JobId, job.Mode, partial, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -1486,8 +1498,8 @@ namespace MCPForUnity.Editor.Services
                     found = identities.TryGetValue((prior.IdentityGeneration, prior.TestId), out index);
                 if (found)
                 {
-                    // A replay cannot turn an observed failure into a pass.
-                    if (!rows[index].IsFailure || row.IsFailure)
+                    // Preserve failures and inconclusive outcomes when a checkpointed leaf replays.
+                    if (row.IsFailure || !rows[index].IsFailure && (!rows[index].IsInconclusive || row.IsInconclusive))
                         rows[index] = row;
                     if (row.TestId != null)
                         identities[key] = index;
@@ -1794,9 +1806,10 @@ namespace MCPForUnity.Editor.Services
             PersistToSessionState(force: true);
         }
 
-        private static TestJobStatus ClassifySummary(TestRunSummary summary) =>
+        internal static TestJobStatus ClassifySummary(TestRunSummary summary) =>
             IsCancelledSummary(summary) ? TestJobStatus.Cancelled
             : summary?.Failed > 0 ? TestJobStatus.Failed
+            : summary?.Inconclusive > 0 || string.Equals(summary?.ResultState, "Inconclusive", StringComparison.OrdinalIgnoreCase) ? TestJobStatus.Inconclusive
             : TestJobStatus.Succeeded;
 
         private static bool IsCancelledSummary(TestRunSummary summary)

@@ -33,6 +33,7 @@ from utils import focus_nudge
 from utils.focus_nudge import nudge_unity_focus, should_nudge
 
 logger = logging.getLogger(__name__)
+TERMINAL_TEST_STATUSES = frozenset({"succeeded", "failed", "cancelled", "inconclusive"})
 
 # Strong references to background fire-and-forget tasks to prevent premature GC.
 _background_tasks: set[asyncio.Task] = set()
@@ -161,7 +162,7 @@ async def _update_job_nudge(
             old_state.task and not old_state.task.done()
         ):
             del _nudge_states[old_key]
-    if data.get("status") in ("succeeded", "failed", "cancelled"):
+    if data.get("status") in TERMINAL_TEST_STATUSES:
         _terminal_nudge_jobs[key] = now
         _terminal_nudge_jobs.move_to_end(key)
         while len(_terminal_nudge_jobs) > _MAX_NUDGE_STATES:
@@ -308,6 +309,7 @@ class RunTestsSummary(BaseModel):
     passed: int
     failed: int
     skipped: int
+    inconclusive: int | None = Field(default=None, exclude_if=lambda value: value is None)
     durationSeconds: float
     resultState: str
 
@@ -464,7 +466,7 @@ def test_job_response(response: dict[str, Any]) -> GetTestJobResponse:
     pending = native_test_cleanup_pending(data)
     data["native_cleanup_pending"] = pending
     payload = {**response, "data": data}
-    if pending and data.get("status") in ("succeeded", "failed", "cancelled"):
+    if pending and data.get("status") in TERMINAL_TEST_STATUSES:
         payload["hint"] = "wait_for_native_cleanup"
         payload["message"] = (
             "Test results are available; Unity native cleanup is still pending. "

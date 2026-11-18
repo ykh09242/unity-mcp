@@ -89,6 +89,7 @@ async def wait_for_test_job(
 ):
     # Keep existing per-job observation/nudge state in its original owner module.
     from services.tools.run_tests import (
+        TERMINAL_TEST_STATUSES,
         _job_status_reads,
         _update_job_nudge,
         native_test_cleanup_pending,
@@ -267,9 +268,7 @@ async def wait_for_test_job(
                 )
             except asyncio.TimeoutError:
                 return test_job_response(response)
-            if status in ("succeeded", "failed", "cancelled") and not native_test_cleanup_pending(
-                data
-            ):
+            if status in TERMINAL_TEST_STATUSES and not native_test_cleanup_pending(data):
                 return test_job_response(response)
 
             # Check timeout

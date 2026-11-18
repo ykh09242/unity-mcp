@@ -910,6 +910,7 @@ namespace MCPForUnity.Editor.Services
         public int Passed => Summary.Passed;
         public int Failed => Summary.Failed;
         public int Skipped => Summary.Skipped;
+        public int Inconclusive => Summary.Inconclusive;
 
         public object ToSerializable(string mode, bool includeDetails = false, bool includeFailedTests = false)
         {
@@ -952,12 +953,13 @@ namespace MCPForUnity.Editor.Services
                 summary == null
                     ? null
                     : new TestRunSummary(
-                        summary.PassCount + summary.FailCount + summary.SkipCount,
+                        summary.PassCount + summary.FailCount + summary.SkipCount + summary.InconclusiveCount,
                         summary.PassCount,
                         summary.FailCount,
                         summary.SkipCount,
                         summary.Duration,
-                        summary.ResultState ?? "Unknown"
+                        summary.ResultState ?? "Unknown",
+                        summary.InconclusiveCount
                     );
             try
             {
@@ -977,7 +979,8 @@ namespace MCPForUnity.Editor.Services
                             materialized.Count(t => t.State == "Failed"),
                             materialized.Count(t => t.State == "Skipped"),
                             materialized.Sum(t => t.DurationSeconds),
-                            "Unknown"
+                            "Unknown",
+                            materialized.Count(t => t.IsInconclusive)
                         ),
                     materialized
                 );
@@ -1049,12 +1052,13 @@ namespace MCPForUnity.Editor.Services
     public sealed class TestRunSummary
     {
         [Newtonsoft.Json.JsonConstructor]
-        internal TestRunSummary(int total, int passed, int failed, int skipped, double durationSeconds, string resultState)
+        internal TestRunSummary(int total, int passed, int failed, int skipped, double durationSeconds, string resultState, int inconclusive = 0)
         {
             Total = total;
             Passed = passed;
             Failed = failed;
             Skipped = skipped;
+            Inconclusive = inconclusive;
             DurationSeconds = durationSeconds;
             ResultState = resultState;
         }
@@ -1063,6 +1067,7 @@ namespace MCPForUnity.Editor.Services
         public int Passed { get; }
         public int Failed { get; }
         public int Skipped { get; }
+        public int Inconclusive { get; }
         public double DurationSeconds { get; }
         public string ResultState { get; }
 
@@ -1074,6 +1079,7 @@ namespace MCPForUnity.Editor.Services
                 passed = Passed,
                 failed = Failed,
                 skipped = Skipped,
+                inconclusive = Inconclusive,
                 durationSeconds = DurationSeconds,
                 resultState = ResultState,
             };
@@ -1110,6 +1116,7 @@ namespace MCPForUnity.Editor.Services
         public string TestId { get; }
         internal string ReloadIdentity { get; }
         internal int IdentityGeneration { get; }
+        internal bool IsInconclusive => string.Equals(State, "Inconclusive", StringComparison.OrdinalIgnoreCase);
         internal bool IsFailure =>
             State?.IndexOf("fail", StringComparison.OrdinalIgnoreCase) >= 0 || State?.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0;
         public string Name { get; }

@@ -1103,6 +1103,38 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(1, (int)JObject.FromObject(TestJobManager.Page(job, 100, null, false))["total_count"]);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void InconclusiveLeavesSurviveCaptureAndHistoryRestore(bool reloadBetweenLeaves)
+        {
+            var job = AddJob();
+            job.TotalTests = 2;
+            var service = RestoreCallbacks();
+            var inconclusive = new ResultStub("Fixture.Unresolved", "Inconclusive");
+            var passed = new ResultStub("Fixture.Passed", "Passed");
+            service.TestFinished(inconclusive);
+            if (reloadBetweenLeaves)
+            {
+                service = ReloadOwner(service);
+                Assert.AreEqual(1, _jobs[job.JobId].RetainedSummary.Inconclusive);
+            }
+            service.RunStarted(passed.Test);
+            service.TestFinished(passed);
+            var leaves = reloadBetweenLeaves ? new[] { passed } : new[] { inconclusive, passed };
+            // UTF can report a Passed parent even though one child was inconclusive.
+            service.RunFinished(new ResultStub("Suite", "Passed", null, leaves));
+
+            InvokeManager("TryRestoreFromSessionState");
+            var restored = _jobs[job.JobId];
+            Assert.AreEqual(TestJobStatus.Inconclusive, restored.Status);
+            Assert.AreEqual("completed", restored.CompletionKind);
+            var result = JObject.FromObject(TestJobManager.ToSerializable(restored, true, false));
+            Assert.AreEqual(2, (int)result["result"]["summary"]["total"]);
+            Assert.AreEqual(1, (int)result["result"]["summary"]["passed"]);
+            Assert.AreEqual(1, (int)result["result"]["summary"]["inconclusive"]);
+            Assert.AreEqual(0, (int)result["result"]["summary"]["failed"]);
+        }
+
         [Test]
         public void LegacyRowsWithoutIdentityRemainReadableAndAreNeverCollapsedByName()
         {
@@ -1176,7 +1208,10 @@ namespace MCPForUnityTests.Editor.Services
                 : ResultState == "Passed" ? 1
                 : 0;
             public int SkipCount => 0;
-            public int InconclusiveCount => 0;
+            public int InconclusiveCount =>
+                HasChildren ? _children.Sum(c => c.InconclusiveCount)
+                : ResultState == "Inconclusive" ? 1
+                : 0;
             public bool HasChildren => _children.Length > 0;
             public IEnumerable<ITestResultAdaptor> Children => _children;
             public string Output => "test output";

@@ -19,7 +19,7 @@ def final_verdict(stages):
 def test_settled(data):
     control = data.get("native_control")
     if (
-        data.get("status") not in {"succeeded", "failed", "cancelled"}
+        data.get("status") not in {"succeeded", "failed", "cancelled", "inconclusive"}
         or not isinstance(control, dict)
         or type(control.get("version")) is not int
         or control["version"] != 1
@@ -32,7 +32,7 @@ def test_settled(data):
         return False
     if control.get("termination") == "not_started":
         return (
-            data["status"] != "succeeded"
+            data["status"] in {"failed", "cancelled"}
             and control.get("native_invoked") is False
             and control.get("final_witness") is False
             and not control.get("native_guid")
@@ -56,7 +56,12 @@ def test_verdict(data):
         return "incomplete"
     if data.get("status") != "succeeded" or data.get("completion_kind") != "completed":
         return "incomplete"
-    if summary.get("passed") != summary["total"] or summary.get("skipped", 0) != 0:
+    if (
+        summary.get("passed") != summary["total"]
+        or summary.get("skipped", 0) != 0
+        or summary.get("inconclusive", 0) != 0
+        or summary.get("resultState", "Passed") != "Passed"
+    ):
         return "incomplete"
     return "passed"
 

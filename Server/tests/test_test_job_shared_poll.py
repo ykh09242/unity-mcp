@@ -69,6 +69,33 @@ def context():
 
 
 @pytest.mark.asyncio
+async def test_inconclusive_wait_returns_terminal_native_counts_in_one_read(transport):
+    counts = {
+        "total": 2,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "inconclusive": 1,
+        "durationSeconds": 0.1,
+        "resultState": "Passed",
+    }
+    transport.side_effect = [
+        {
+            "success": True,
+            "data": {
+                "job_id": "job",
+                "status": "inconclusive",
+                "result": {"mode": "EditMode", "summary": counts},
+            },
+        }
+    ]
+    response = await jobs.get_test_job(context(), "job", wait_timeout=5)
+    assert response.data.status == "inconclusive"
+    assert response.data.result.summary.model_dump() == counts
+    assert transport.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_paged_wait_returns_completed_page_after_running_status(transport):
     page = {"items": [{"fullName": "Suite.Failed", "state": "Failed"}], "next_cursor": None}
     transport.side_effect = [
