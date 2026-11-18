@@ -56,6 +56,10 @@ def test_verdict(data):
         return "incomplete"
     if data.get("status") != "succeeded" or data.get("completion_kind") != "completed":
         return "incomplete"
+    # Legacy merged summaries could infer passes from a partial checkpoint when
+    # capture failed. A retained page in that case cannot establish full coverage.
+    if "inconclusive" not in summary and data.get("result_availability") not in (None, "available"):
+        return "incomplete"
     if (
         summary.get("passed") != summary["total"]
         or summary.get("skipped", 0) != 0

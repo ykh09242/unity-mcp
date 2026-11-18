@@ -463,6 +463,7 @@ class VerificationRunner:
             {
                 "job_id": child["job_id"],
                 "summary": summary,
+                "result_availability": data.get("result_availability"),
                 **legacy_page,
                 "status": data.get("status"),
                 "completion_kind": data.get("completion_kind"),

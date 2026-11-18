@@ -316,6 +316,9 @@ namespace MCPForUnity.Editor.Services
                 return status;
             if (ClassifySummary(summary) == TestJobStatus.Inconclusive)
                 return TestJobStatus.Inconclusive;
+            bool legacy = !summary.ShouldSerializeInconclusive();
+            if (legacy && job.result_availability != null && job.result_availability != "available")
+                return TestJobStatus.Inconclusive;
             if (
                 job.total_tests > summary.Total
                 || job.completed_tests > summary.Total
@@ -337,7 +340,9 @@ namespace MCPForUnity.Editor.Services
                 }
                 catch (Exception)
                 {
-                    // An evicted or unreadable artifact supplies no additional count evidence.
+                    // Legacy summaries may infer passes. An unreadable artifact cannot confirm them.
+                    if (legacy)
+                        return TestJobStatus.Inconclusive;
                 }
             }
             return status;

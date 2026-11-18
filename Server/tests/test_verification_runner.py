@@ -277,6 +277,42 @@ async def test_dispatch_timeout_is_never_replayed_or_claimed_settled():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "availability, retained",
+    [
+        ("quota_exceeded", [{"state": "Inconclusive"}]),
+        ("write_failed", [{"state": "Passed"}]),
+        ("path_too_long", None),
+        ("path_limit_exceeded", []),
+        ("traversal_limit", None),
+        ("partial_checkpoint_unavailable", None),
+        ("partial", [{"state": "Passed"}]),
+        ("evicted", None),
+        ("missing", None),
+        ("corrupt", None),
+        ("legacy_unavailable", None),
+        ("unavailable", None),
+    ],
+)
+async def test_partial_legacy_capture_cannot_certify_inferred_passes(availability, retained):
+    io = IO()
+    io.tests.update(result_availability=availability, progress={"total": 2, "completed": 2})
+    io.tests["result"]["summary"].update(total=2, passed=2, resultState="Passed")
+    if retained is not None:
+        io.tests["result_page"] = {
+            "items": retained,
+            "total_count": len(retained),
+            "has_more": False,
+        }
+    report = await run(io, test_mode="EditMode")
+    stage = next(stage for stage in report["stages"] if stage["name"] == "tests")
+    assert stage["state"] == "incomplete"
+    assert stage["evidence"]["result_availability"] == availability
+    assert report["native_settled"]
+    assert not any(cmd == "get_test_job" and "page_size" in params for cmd, params in io.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "refusal",
     [
         {"success": False, "error": "unsupported_native_test_control"},

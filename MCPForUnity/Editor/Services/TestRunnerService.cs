@@ -1051,14 +1051,19 @@ namespace MCPForUnity.Editor.Services
 
     public sealed class TestRunSummary
     {
+        private readonly int? _inconclusive;
+
+        internal TestRunSummary(int total, int passed, int failed, int skipped, double durationSeconds, string resultState)
+            : this(total, passed, failed, skipped, durationSeconds, resultState, 0) { }
+
         [Newtonsoft.Json.JsonConstructor]
-        internal TestRunSummary(int total, int passed, int failed, int skipped, double durationSeconds, string resultState, int inconclusive = 0)
+        internal TestRunSummary(int total, int passed, int failed, int skipped, double durationSeconds, string resultState, int? inconclusive)
         {
             Total = total;
             Passed = passed;
             Failed = failed;
             Skipped = skipped;
-            Inconclusive = inconclusive;
+            _inconclusive = inconclusive;
             DurationSeconds = durationSeconds;
             ResultState = resultState;
         }
@@ -1067,22 +1072,27 @@ namespace MCPForUnity.Editor.Services
         public int Passed { get; }
         public int Failed { get; }
         public int Skipped { get; }
-        public int Inconclusive { get; }
+        public int Inconclusive => _inconclusive.GetValueOrDefault();
+
+        public bool ShouldSerializeInconclusive() => _inconclusive.HasValue;
+
         public double DurationSeconds { get; }
         public string ResultState { get; }
 
         internal object ToSerializable()
         {
-            return new
+            var value = new Newtonsoft.Json.Linq.JObject
             {
-                total = Total,
-                passed = Passed,
-                failed = Failed,
-                skipped = Skipped,
-                inconclusive = Inconclusive,
-                durationSeconds = DurationSeconds,
-                resultState = ResultState,
+                ["total"] = Total,
+                ["passed"] = Passed,
+                ["failed"] = Failed,
+                ["skipped"] = Skipped,
+                ["durationSeconds"] = DurationSeconds,
+                ["resultState"] = ResultState,
             };
+            if (_inconclusive.HasValue)
+                value["inconclusive"] = Inconclusive;
+            return value;
         }
     }
 

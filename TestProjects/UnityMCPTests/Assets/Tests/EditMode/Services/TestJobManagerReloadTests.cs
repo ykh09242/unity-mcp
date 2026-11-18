@@ -1211,6 +1211,38 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(1, (int)status["result"]["summary"]["passed"]);
         }
 
+        [TestCase("quota_exceeded", false, "inconclusive")]
+        [TestCase("write_failed", false, "inconclusive")]
+        [TestCase("write_failed", true, "succeeded")]
+        public void RestoredIncompleteCaptureDoesNotUpgradeMissingLegacyCounts(string availability, bool currentSummary, string expected)
+        {
+            var job = AddJob();
+            ManagerField("_currentJobId").SetValue(null, null);
+            job.Status = TestJobStatus.Succeeded;
+            job.CompletionKind = "completed";
+            job.TotalTests = job.CompletedTests = 2;
+            job.RetainedSummary = new TestRunSummary(2, 2, 0, 0, 0.2, "Passed", 0);
+            var retained = new TestRunResult(job.RetainedSummary, new[] { new TestRunTestResult("A", "A", "Passed", 0.1, null, null, null) });
+            job.ResultArtifact = TestJobManager.ResultStore.Save(job.JobId, job.Mode, retained, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            job.ResultAvailability = availability;
+            InvokeManager("PersistToSessionState", true);
+            if (!currentSummary)
+            {
+                var history = JObject.Parse(SessionState.GetString(JobsKey, ""));
+                ((JObject)history["jobs"][0]["summary"]).GetValue("inconclusive", StringComparison.OrdinalIgnoreCase).Parent.Remove();
+                SessionState.SetString(JobsKey, history.ToString());
+            }
+            _jobs.Clear();
+            InvokeManager("TryRestoreFromSessionState");
+            var status = JObject.FromObject(TestJobManager.ToSerializable(_jobs[job.JobId], false, false));
+            Assert.AreEqual(expected, (string)status["status"]);
+            Assert.AreEqual(availability, (string)status["result_availability"]);
+            Assert.AreEqual(currentSummary ? 0 : (int?)null, (int?)status["result"]["summary"]["inconclusive"]);
+            InvokeManager("PersistToSessionState", true);
+            var saved = (JObject)JObject.Parse(SessionState.GetString(JobsKey, ""))["jobs"][0]["summary"];
+            Assert.AreEqual(currentSummary, saved.GetValue("inconclusive", StringComparison.OrdinalIgnoreCase) != null);
+        }
+
         private sealed class ResultStub : ITestResultAdaptor
         {
             private readonly ITestResultAdaptor[] _children;
