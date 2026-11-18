@@ -119,7 +119,9 @@ async def polling(monkeypatch):
     async def dispatch(_send, target, name, params, **kwargs):
         assert target == "Project@hash"
         if name == "get_editor_state":
-            assert kwargs == {"editor_state_read_mode": "authoritative"}
+            assert kwargs.get("editor_state_read_mode") == "authoritative"
+            # This fixture's socket has no negotiated clock to report to the callback.
+            assert callable(kwargs.get("on_editor_state_clock"))
             state.dispatched += 1
             if state.dispatched == state.fail_before_at:
                 raise OSError("connection lost before acquisition")
