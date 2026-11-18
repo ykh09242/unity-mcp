@@ -5,12 +5,9 @@ Python MCP server for the [Unity Editor plugin](../MCPForUnity/README.md). The G
 CI runs the server and repository-tool suites on Python **3.11 through 3.15**.
 Use uv **0.13.0 or newer** when installing Python 3.15 so the stable interpreter is available.
 
-Python 3.15 checks currently set `PY_KEY_VALUE_DISABLE_BEARTYPE=true`: the upstream
-`py-key-value-aio` 0.4.6 protocol annotation triggers Python 3.15's new deprecation
-warning during its optional runtime instrumentation. This leaves application
-validation and warnings-as-errors enabled. Use the same setting when testing with
-warnings-as-errors on 3.15 until an upstream fix is released. The lint runner uses
-one worker on 3.15 because dill 0.4.1 still references the removed `co_lnotab` attribute.
+Python 3.15 runs with warnings treated as errors and the default runtime type
+checks in `py-key-value-aio` 0.5.0 or later. The lint runner uses one worker on
+3.15 because dill 0.4.1 still references the removed `co_lnotab` attribute.
 
 The server uses FastMCP **4.2.1**, MCP SDK and types **2.3.0**, and Pillow **13.x**.
 The server uses typed Skills messages and preserves middleware edits to bounded tool results.

@@ -77,9 +77,11 @@ so tool tests do not wait for the longer server suite.
 - The Windows, Linux and macOS cold/offline bootstrap checks retain separate empty cache
   directories. Candidate server startup is also checked once on every Python minor with an
   independent dependency resolution, rather than relying on the locked test environment.
-- Python 3.15 sets `PY_KEY_VALUE_DISABLE_BEARTYPE=true` for py-key-value-aio's optional
-  instrumentation while its inherited runtime-checkable protocol is incompatible with
-  warnings-as-errors. Application validation and the warning policy remain enabled.
+- The locked and candidate-archive suites exercise py-key-value-aio's runtime type
+  checks on Python 3.15 with warnings treated as errors. Version 0.5.0 fixes its
+  runtime-checkable protocol. The separate released-launcher canary still resolves
+  0.4.x through the immutable FastMCP 4.1.8 archive and disables optional type
+  instrumentation on Python 3.15 for that archive. [Upstream storage fix](https://github.com/strawgate/py-key-value/pull/397)
 
 The installed-candidate archive job retains Python 3.11 checks on Windows, Linux and macOS
 and adds one Linux Python 3.15 check. Each installs the checked commit's server archive with

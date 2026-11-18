@@ -351,9 +351,7 @@ def test_archive_workflow_adds_only_linux_315_and_retains_cross_os_311_behavior(
     assert setup["with"]["python-version"] == "${{ matrix.python-version }}"
     assert "uv venv --no-config --python $env:ARCHIVE_PYTHON_VERSION" in install["run"]
     assert install["env"]["ARCHIVE_PYTHON_VERSION"] == "${{ matrix.python-version }}"
-    assert job["env"]["PY_KEY_VALUE_DISABLE_BEARTYPE"] == (
-        "${{ matrix.python-version == '3.15' && 'true' || 'false' }}"
-    )
+    assert "PY_KEY_VALUE_DISABLE_BEARTYPE" not in job.get("env", {})
     behavior = next(
         step
         for step in job["steps"]

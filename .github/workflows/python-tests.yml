@@ -180,7 +180,6 @@ jobs:
       - name: Install and exercise isolated reference graph
         working-directory: Server
         env:
-          PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python == '3.15' && 'true' || 'false' }}
           UNITY_MCP_LOG_DIR: ${{ runner.temp }}/reference-graph-logs
         run: |
           uv sync --python "${{ matrix.python }}" --locked --extra dev
@@ -190,7 +189,6 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: Server
         env:
-          PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python == '3.15' && 'true' || 'false' }}
           UNITY_MCP_DISABLE_TELEMETRY: "1"
           UNITY_MCP_LOG_DIR: ${{ runner.temp }}/windows-launch-logs
         run: >-
@@ -202,7 +200,6 @@ jobs:
       - name: Verify interrupted private-store initialization
         working-directory: Server
         env:
-          PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python == '3.15' && 'true' || 'false' }}
           UNITY_MCP_LOG_DIR: ${{ runner.temp }}/private-store-logs
         run: |
           uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest tests/test_private_store_bootstrap.py tests/test_execution_receipts.py tests/http/test_mcp_test_wait_lifecycle.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/private-store-tests"
@@ -282,9 +279,6 @@ jobs:
     if: inputs.validation_profile != 'tools-only'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
-    env:
-      # Match the 3.15 suite policy for py-key-value-aio's optional instrumentation.
-      PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python-version == '3.15' && 'true' || 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -378,11 +372,6 @@ jobs:
     name: Run Python ${{ matrix.suite }} tests (${{ matrix.python-version }})
     runs-on: ubuntu-26.04
     timeout-minutes: 20
-    env:
-      # py-key-value-aio 0.4.6 inherits a runtime-checkable protocol without
-      # redecorating it, deprecated in Python 3.15. Disable only its optional
-      # beartype instrumentation; keep application validation and -W error.
-      PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python-version == '3.15' && 'true' || 'false' }}
     strategy:
       fail-fast: false
       matrix:

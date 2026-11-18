@@ -41,7 +41,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     env:
-      # Match the locked 3.15 suite policy for optional py-key-value instrumentation.
+      # The released launcher still pins FastMCP 4.1.8 and py-key-value-aio 0.4.x.
+      # Retire this exception when its immutable source picks up the 3.15 fix.
       PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python-version == '3.15' && 'true' || 'false' }}
     strategy:
       fail-fast: false
