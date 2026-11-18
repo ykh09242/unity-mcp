@@ -658,6 +658,60 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void HeadlessUnchangedRootNameAllowsOtherEdits()
+        {
+            string path = Seed(Source(), "RootName");
+            var request = new JObject
+            {
+                ["prefabPath"] = path,
+                ["target"] = "RootName",
+                ["name"] = "RootName",
+            };
+            byte[] original = Bytes(path);
+            JObject result = Send("modify_contents", request);
+            Success(result);
+            Assert.IsFalse((bool)result["data"]["modified"]);
+            CollectionAssert.AreEqual(original, Bytes(path));
+
+            request["tag"] = "Player";
+            Success(Send("modify_contents", request));
+            Assert.AreEqual("Player", AssetDatabase.LoadAssetAtPath<GameObject>(path).tag);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void HeadlessRootRenameRejectsCombinedEdits(bool preview)
+        {
+            string path = Seed(Source(), "RootName");
+            byte[] original = Bytes(path);
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            JObject result = Send(
+                "modify_contents",
+                new JObject
+                {
+                    ["prefabPath"] = path,
+                    ["name"] = "OtherName",
+                    ["tag"] = "Player",
+                    ["previewOnly"] = preview,
+                }
+            );
+            Failure(result);
+            StringAssert.Contains("root", result.Value<string>("error"));
+            CollectionAssert.AreEqual(original, Bytes(path));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            var reloaded = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                Assert.AreEqual("RootName", reloaded.name);
+                Assert.AreEqual("Untagged", reloaded.tag);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(reloaded);
+            }
+        }
+
+        [Test]
         public void MalformedHeadlessScalarDoesNotPersistAndUnloadsContents()
         {
             string path = Seed(Source(), "Scalar");
@@ -670,7 +724,7 @@ namespace MCPForUnityTests.Editor.Tools
                 new JObject
                 {
                     ["prefabPath"] = path,
-                    ["name"] = "Changed",
+                    ["tag"] = "Player",
                     ["setActive"] = "not-a-bool",
                 }
             );
@@ -752,7 +806,7 @@ namespace MCPForUnityTests.Editor.Tools
             byte[] original = Bytes(path);
             int previewScenes = EditorSceneManager.previewSceneCount;
             changes["prefabPath"] = path;
-            changes["name"] = "Changed";
+            changes["tag"] = "Player";
             bool previousIgnore = LogAssert.ignoreFailingMessages;
             try
             {

@@ -1143,7 +1143,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             string newName = @params["name"]?.ToString();
             if (!string.IsNullOrEmpty(newName) && targetGo.name != newName)
             {
-                // If renaming the root, this will affect the prefab asset name on save
+                if (targetGo == prefabRoot)
+                    return (
+                        false,
+                        new ErrorResponse("The prefab root takes its name from the asset filename. Rename the prefab asset to change its root name.")
+                    );
                 targetGo.name = newName;
                 modified = true;
             }

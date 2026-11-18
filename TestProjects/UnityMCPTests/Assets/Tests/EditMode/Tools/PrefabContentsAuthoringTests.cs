@@ -145,7 +145,7 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void SavedContentsReportsRequestedObjectFieldsAfterRootNameNormalization()
+        public void SavedContentsReportsRequestedRootFieldsAfterCompatibleEdits()
         {
             JObject response = JObject.FromObject(
                 ManagePrefabs.HandleCommand(
@@ -153,7 +153,7 @@ namespace MCPForUnityTests.Editor.Tools
                     {
                         ["action"] = "modify_contents",
                         ["prefabPath"] = path,
-                        ["name"] = "RequestedRootName",
+                        ["name"] = AssetDatabase.LoadAssetAtPath<GameObject>(path).name,
                         ["tag"] = "EditorOnly",
                         ["layer"] = "Ignore Raycast",
                     }
@@ -161,11 +161,9 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsTrue((bool)response["success"], response.ToString());
             JToken verification = response["data"]["verification"];
-            Assert.AreEqual("issues_found", (string)verification["status"], verification.ToString());
-            Assert.IsTrue((bool)verification["further_fixes_required"]);
             var values = (JArray)verification["gameobject_values"];
             Assert.AreEqual(3, values.Count);
-            Assert.IsFalse((bool)values[0]["matches_requested"]);
+            Assert.IsTrue((bool)values[0]["matches_requested"]);
             Assert.IsTrue((bool)values[1]["matches_requested"]);
             Assert.IsTrue((bool)values[2]["matches_requested"]);
         }
