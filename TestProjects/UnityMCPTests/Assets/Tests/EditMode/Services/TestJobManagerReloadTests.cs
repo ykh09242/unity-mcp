@@ -1112,14 +1112,16 @@ namespace MCPForUnityTests.Editor.Services
             var service = RestoreCallbacks();
             var inconclusive = new ResultStub("Fixture.Unresolved", "Inconclusive");
             var passed = new ResultStub("Fixture.Passed", "Passed");
-            service.TestFinished(inconclusive);
             if (reloadBetweenLeaves)
             {
+                service.TestFinished(inconclusive);
                 service = ReloadOwner(service);
                 Assert.AreEqual(1, _jobs[job.JobId].RetainedSummary.Inconclusive);
             }
             service.RunStarted(passed.Test);
-            service.TestFinished(passed);
+            if (reloadBetweenLeaves)
+                service.TestFinished(passed);
+            // Without a checkpoint the final suite is the only source of the counts.
             var leaves = reloadBetweenLeaves ? new[] { passed } : new[] { inconclusive, passed };
             // UTF can report a Passed parent even though one child was inconclusive.
             service.RunFinished(new ResultStub("Suite", "Passed", null, leaves));

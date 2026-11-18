@@ -6304,6 +6304,17 @@
                                       "failed": {
                                         "type": "integer"
                                       },
+                                      "inconclusive": {
+                                        "anyOf": [
+                                          {
+                                            "type": "integer"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ],
+                                        "default": null
+                                      },
                                       "passed": {
                                         "type": "integer"
                                       },
@@ -32727,6 +32738,17 @@
                                       },
                                       "failed": {
                                         "type": "integer"
+                                      },
+                                      "inconclusive": {
+                                        "anyOf": [
+                                          {
+                                            "type": "integer"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ],
+                                        "default": null
                                       },
                                       "passed": {
                                         "type": "integer"
