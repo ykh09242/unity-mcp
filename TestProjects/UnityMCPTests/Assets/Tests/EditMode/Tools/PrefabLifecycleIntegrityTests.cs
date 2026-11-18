@@ -569,6 +569,53 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase(false)]
         [TestCase(true)]
+        public void UnimportedDestinationIsPreservedBeforeUnlink(bool metaOnly)
+        {
+            GameObject source = Source();
+            string original = Seed(source, "Connection");
+            string path = PathFor("Unimported");
+            string occupied = metaOnly ? path + ".meta" : path;
+            byte[] sentinel = { 23, 41, 59 };
+            File.WriteAllBytes(occupied, sentinel);
+            Failure(Create(source, path, new JObject { ["allowOverwrite"] = false, ["unlinkIfInstance"] = true }));
+            CollectionAssert.AreEqual(sentinel, File.ReadAllBytes(occupied));
+            Assert.IsFalse(File.Exists(metaOnly ? path : path + ".meta"));
+            Assert.AreEqual(original, PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(source));
+        }
+
+        [Test]
+        public void DestinationClaimedDuringMaterialPreparationIsPreserved()
+        {
+            GameObject source = Source();
+            string original = Seed(source, "Connection");
+            var renderer = source.AddComponent<MeshRenderer>();
+            var material = new Material(Shader.Find("Hidden/InternalErrorShader"));
+            renderer.sharedMaterial = material;
+            string path = PathFor("Claimed");
+            byte[] sentinel = { 67, 79, 97 };
+            void ClaimDestination(string message, string stack, LogType type)
+            {
+                if (message.Contains("runtime material(s) before prefab save"))
+                    File.WriteAllBytes(path, sentinel);
+            }
+            Application.logMessageReceived += ClaimDestination;
+            try
+            {
+                Failure(Create(source, path, new JObject { ["allowOverwrite"] = false, ["unlinkIfInstance"] = true }));
+                CollectionAssert.AreEqual(sentinel, File.ReadAllBytes(path));
+                Assert.AreEqual(original, PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(source));
+                Assert.AreSame(material, renderer.sharedMaterial);
+                Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot + "/Materials"));
+            }
+            finally
+            {
+                Application.logMessageReceived -= ClaimDestination;
+                Object.DestroyImmediate(material);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void InactiveSourceRetainsExplicitSearchPolicy(bool includeInactive)
         {
             GameObject source = Source();

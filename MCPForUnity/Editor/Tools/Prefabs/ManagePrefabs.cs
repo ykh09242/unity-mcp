@@ -204,17 +204,20 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             // 4. Check for path conflicts and track if file will be replaced
-            bool fileExistedAtPath = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(finalPath) != null;
+            var existingAsset = AssetDatabase.LoadMainAssetAtPath(finalPath);
+            bool replacingPrefab = replaceExisting && existingAsset is GameObject;
+            string replacementGuid = replacingPrefab ? AssetDatabase.AssetPathToGUID(finalPath) : null;
 
-            if (!replaceExisting && fileExistedAtPath)
+            if (!replaceExisting && existingAsset != null)
             {
                 finalPath = AssetDatabase.GenerateUniqueAssetPath(finalPath);
                 McpLog.Info($"[ManagePrefabs] Generated unique path: {finalPath}");
             }
             if (IsDirtyStageForAsset(finalPath))
                 return new ErrorResponse("The destination prefab is open in a dirty Prefab Stage. Save or discard its pending edits before replacing it.");
-            if (Directory.Exists(AssetPathUtility.GetFullAssetPath(finalPath)))
-                return new ErrorResponse($"Cannot save prefab to '{finalPath}': a directory occupies the destination.");
+            var conflict = CheckPrefabSaveDestination(finalPath, replacementGuid);
+            if (conflict != null)
+                return conflict;
             try
             {
                 ValidateRuntimeMaterialPaths(sourceObject, finalPath);
@@ -235,6 +238,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             {
                 // Prepare and verify materials before the caller-authorized, nonreversible unpack.
                 var persistResult = PersistRuntimeMaterials(sourceObject, finalPath, folders, materials);
+                conflict = CheckPrefabSaveDestination(finalPath, replacementGuid);
+                if (conflict != null)
+                    return conflict;
                 if (unlinkIfInstance && objectValidation.shouldUnlink)
                 {
                     try
@@ -253,10 +259,15 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                             $"Failed to unlink prefab instance: {e.Message}. The scene may be partially modified; inspect the target and use Unity Undo if available or restore the scene manually."
                         );
                     }
+                    conflict = CheckPrefabSaveDestination(finalPath, replacementGuid);
+                    if (conflict != null)
+                        return new ErrorResponse(
+                            $"Prefab destination '{finalPath}' changed during unpacking. Inspect the unpacked scene instance before retrying."
+                        );
                 }
 
                 saveAttempted = true;
-                if (!CreatePrefabAsset(sourceObject, finalPath, replaceExisting, () =>
+                if (!CreatePrefabAsset(sourceObject, finalPath, replacingPrefab, () =>
                     {
                         materials.Commit();
                         folders.Complete();
@@ -287,7 +298,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         rootObjectName = prefabAsset?.name,
                         rootObjectPath = prefabAsset?.name,
                         wasUnlinked = unlinkIfInstance && objectValidation.shouldUnlink,
-                        wasReplaced = replaceExisting && fileExistedAtPath,
+                        wasReplaced = replacingPrefab,
                         componentCount = sourceObject.GetComponents<Component>().Length,
                         childCount = sourceObject.transform.childCount,
                         materialsPersisted = persistResult.count,
@@ -422,6 +433,20 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             PrefabUtility.SaveAsPrefabAssetAndConnect(source, path, InteractionMode.AutomatedAction, out bool success);
             return success;
         };
+
+        private static ErrorResponse CheckPrefabSaveDestination(string path, string replacementGuid)
+        {
+            if (string.IsNullOrEmpty(replacementGuid))
+                return AssetPathUtility.IsAssetDestinationOccupied(path) ? new ErrorResponse($"Prefab destination '{path}' is already occupied.") : null;
+            string fullPath = AssetPathUtility.GetFullAssetPath(path);
+            if (
+                !File.Exists(fullPath)
+                || !File.Exists(fullPath + ".meta")
+                || AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets) != replacementGuid
+            )
+                return new ErrorResponse($"Prefab destination '{path}' changed before replacement.");
+            return null;
+        }
 
         private static bool CreatePrefabAsset(GameObject sourceObject, string path, bool replaceExisting, Action onSaved)
         {

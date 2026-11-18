@@ -17,14 +17,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
         private static ErrorResponse CheckPrefabDestination(string path)
         {
-            string fullPath = AssetPathUtility.GetFullAssetPath(path);
-            if (
-                System.IO.File.Exists(fullPath)
-                || System.IO.Directory.Exists(fullPath)
-                || System.IO.File.Exists(fullPath + ".meta")
-                || System.IO.Directory.Exists(fullPath + ".meta")
-                || AssetDatabase.LoadMainAssetAtPath(path) != null
-            )
+            if (AssetPathUtility.IsAssetDestinationOccupied(path))
                 return new ErrorResponse(
                     $"Prefab destination '{path}' already exists. Choose an unused path or use the dedicated prefab tool for replacement."
                 );

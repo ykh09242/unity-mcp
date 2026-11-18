@@ -73,6 +73,16 @@ namespace MCPForUnity.Editor.Helpers
             return SafePathUtility.ResolveWithinRoot(Application.dataPath, canonical.Length == 6 ? "." : canonical.Substring(7));
         }
 
+        internal static bool IsAssetDestinationOccupied(string path)
+        {
+            string fullPath = GetFullAssetPath(path);
+            return File.Exists(fullPath)
+                || Directory.Exists(fullPath)
+                || File.Exists(fullPath + ".meta")
+                || Directory.Exists(fullPath + ".meta")
+                || AssetDatabase.LoadMainAssetAtPath(path) != null;
+        }
+
         /// <summary>
         /// Normalizes path separators to forward slashes without modifying the path structure.
         /// Use this for non-asset paths (e.g., file system paths, relative directories).
