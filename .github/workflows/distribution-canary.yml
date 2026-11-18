@@ -39,7 +39,8 @@ jobs:
     if: inputs.qualification_run || github.event_name != 'push' || github.ref != 'refs/heads/beta' || vars.UNITY_RUN_LICENSED_TESTS != 'true'
     name: Pinned launcher archive (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    # Match the candidate's cold-build allowance on the Intel macOS runner.
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 20 || 10 }}
     env:
       # The released launcher still pins FastMCP 4.1.8 and py-key-value-aio 0.4.x.
       # Retire this exception when its immutable source picks up the 3.15 fix.
@@ -98,6 +99,7 @@ jobs:
           enable-cache: false
 
       - name: Resolve and install the pinned archive without a lock or shared cache
+        timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 18 || 10 }}
         env:
           SERVER_SOURCE: ${{ steps.source.outputs.server_source }}
           PYTHON_VERSION: ${{ matrix.python-version }}

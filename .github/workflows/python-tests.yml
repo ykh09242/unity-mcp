@@ -208,7 +208,8 @@ jobs:
     name: Server Bootstrap (${{ matrix.os }})
     if: inputs.validation_profile != 'tools-only'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    # The pinned launcher also installs into a cold cache on Intel macOS.
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 20 || 10 }}
     strategy:
       fail-fast: false
       matrix:
@@ -249,6 +250,7 @@ jobs:
           enable-cache: false
 
       - name: Verify cold and offline server bootstrap
+        timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 18 || 10 }}
         shell: pwsh
         env:
           UV_CACHE_DIR: ${{ runner.temp }}/unity-mcp-bootstrap-cache

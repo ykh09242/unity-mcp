@@ -298,7 +298,6 @@ def test_server_bootstrap_covers_default_windows_paths_and_offline_cache() -> No
         "ubuntu-26.04",
         "macos-26-intel",
     }
-    assert job["timeout-minutes"] <= 10
     steps = {step["name"]: step for step in job["steps"]}
     assert steps["Checkout source metadata"]["with"]["persist-credentials"] is False
     assert (
@@ -331,17 +330,34 @@ def test_python_lint_is_a_blocking_step_with_locked_dependencies() -> None:
 
 
 @pytest.mark.parametrize(
-    "job_name,step_name,macos_budget",
+    "workflow_name,job_name,step_name,macos_budget",
     [
-        ("reference_graph", None, 20),
-        ("installed_archive", None, 20),
-        ("installed_archive", "Install candidate archive without runtime lock", 18),
+        ("python-tests.yml", "reference_graph", None, 20),
+        ("python-tests.yml", "installed_archive", None, 20),
+        (
+            "python-tests.yml",
+            "installed_archive",
+            "Install candidate archive without runtime lock",
+            18,
+        ),
+        ("python-tests.yml", "server_bootstrap", None, 20),
+        ("python-tests.yml", "server_bootstrap", "Verify cold and offline server bootstrap", 18),
+        ("distribution-canary.yml", "canary", None, 20),
+        (
+            "distribution-canary.yml",
+            "canary",
+            "Resolve and install the pinned archive without a lock or shared cache",
+            18,
+        ),
     ],
 )
 @pytest.mark.parametrize("platform", ["windows-latest", "ubuntu-26.04", "macos-26-intel"])
-def test_cold_build_budgets_are_mac_only(job_name, step_name, macos_budget, platform):
-    job = workflow("python-tests.yml")["jobs"][job_name]
-    assert platform in job["strategy"]["matrix"]["os"]
+def test_cold_build_budgets_are_mac_only(
+    workflow_name, job_name, step_name, macos_budget, platform
+):
+    job = workflow(workflow_name)["jobs"][job_name]
+    matrix = job["strategy"]["matrix"]
+    assert platform in (matrix.get("os", []) + [row["os"] for row in matrix.get("include", [])])
     target = (
         job
         if step_name is None
