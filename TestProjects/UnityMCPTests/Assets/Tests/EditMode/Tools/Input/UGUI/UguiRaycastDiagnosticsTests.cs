@@ -96,7 +96,7 @@ namespace MCPForUnityTests.EditMode.Tools.Input
         }
     }
 
-    /// <summary>Owned native scenarios only. Source proposal: no RED/GREEN result has been executed.</summary>
+    /// <summary>Owned native scenarios with isolated scene state and explicit evidence exports.</summary>
     [Parallelizable(ParallelScope.None)]
     public class UguiRaycastDiagnosticsTests
     {
@@ -120,6 +120,8 @@ namespace MCPForUnityTests.EditMode.Tools.Input
         private static readonly HashSet<string> ExportNames = new HashSet<string>(StringComparer.Ordinal)
         {
             "ui09-public-action.json",
+            "ui09-public-ordered-hits.json",
+            "ui09-public-disabled-events.json",
             "ui09-sorting.json",
             "ui09-transparent-graphic.json",
             "ui09-transparent-group.json",
@@ -400,7 +402,6 @@ namespace MCPForUnityTests.EditMode.Tools.Input
         [Test]
         public void PublicActionRequiresDeferredSharedIntegration()
         {
-            // UNRUN shared integration assertions; all targets and metadata participants are owned.
             var direct = Observe();
             var reply = JObject.FromObject(ManageUGUI.HandleCommand(Request()));
             Assert.IsTrue(reply.Value<bool>("success"), reply.ToString());
@@ -446,6 +447,58 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             Assert.AreEqual(0, eventProbe.Calls);
             Assert.IsNull(EventSystem.current.currentSelectedGameObject);
             Export("ui09-public-action.json", reply);
+        }
+
+        [Test]
+        public void PublicActionReportsOrderedHitsAndThenMissingDisabledEventSystem()
+        {
+            var coverProbe = cover.AddComponent<Ui09EventProbe>();
+            var eventSystem = events.GetComponent<EventSystem>();
+            Assert.AreSame(eventSystem, EventSystem.current);
+            var request = Request();
+            var observed = JObject.Parse(JsonConvert.SerializeObject(ManageUGUI.HandleCommand(request)));
+            EqualNativeOrder(observed);
+            var data = (JObject)observed["data"];
+            var hits = (JArray)data["hits"];
+            CollectionAssert.AreEqual(
+                new[] { cover.GetInstanceIDCompat(), button.GetInstanceIDCompat() },
+                hits.Select(hit => hit.Value<int>("game_object_id"))
+            );
+            Assert.AreEqual(2, data.Value<int>("hits_total"));
+            Assert.IsFalse(data.Value<bool>("hits_truncated"));
+            Assert.IsTrue(JToken.DeepEquals(request["screen_position"], data["screen_position"]));
+            Assert.AreEqual(events.GetInstanceIDCompat(), data["input"].Value<int>("event_system_id"));
+            Assert.AreEqual(false, data.Value<bool?>("first_hit_targets_handler"));
+            Assert.IsTrue(data["policy"].Value<bool>("native_query_attempted"));
+            Assert.AreEqual("not_attempted", (string)data["input"]["delivery"]);
+            Assert.IsNull(eventSystem.currentSelectedGameObject);
+            Assert.AreEqual(0, eventProbe.Calls);
+            Assert.AreEqual(0, coverProbe.Calls);
+
+            eventSystem.enabled = false;
+            Assert.IsNull(EventSystem.current);
+            var unavailable = JObject.Parse(JsonConvert.SerializeObject(ManageUGUI.HandleCommand(request)));
+            Assert.IsTrue(unavailable.Value<bool>("success"), unavailable.ToString());
+            var missing = (JObject)unavailable["data"];
+            Assert.AreEqual("unknown", (string)missing["status"], unavailable.ToString());
+            Assert.AreEqual("missing_event_system", (string)missing["reason"]);
+            Assert.AreEqual(data["target_id"], missing["target_id"]);
+            Assert.IsTrue(JToken.DeepEquals(data["screen_position"], missing["screen_position"]));
+            Assert.IsEmpty((JArray)missing["hits"]);
+            Assert.AreEqual(JTokenType.Null, missing["hits_total"].Type);
+            Assert.IsFalse(missing.Value<bool>("hits_truncated"));
+            Assert.AreEqual(JTokenType.Null, missing["first_hit_targets_handler"].Type);
+            Assert.AreEqual(JTokenType.Null, missing["input"]["event_system_id"].Type);
+            Assert.AreEqual(JTokenType.Null, missing["input"]["current_module_type"].Type);
+            Assert.AreEqual(JTokenType.Null, missing["input"]["current_module_active"].Type);
+            Assert.AreEqual("not_attempted", (string)missing["input"]["delivery"]);
+            Assert.IsFalse(missing["policy"].Value<bool>("native_query_attempted"));
+            Assert.IsNull(EventSystem.current);
+            Assert.IsNull(eventSystem.currentSelectedGameObject);
+            Assert.AreEqual(0, eventProbe.Calls);
+            Assert.AreEqual(0, coverProbe.Calls);
+            Export("ui09-public-ordered-hits.json", observed);
+            Export("ui09-public-disabled-events.json", unavailable);
         }
 
         [UnityTest]
