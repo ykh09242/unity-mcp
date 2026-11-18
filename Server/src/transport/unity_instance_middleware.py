@@ -969,41 +969,14 @@ class UnityInstanceMiddleware(Middleware):
                 ) from error
             raise
 
+        await self._admit_selected_tool(context, getattr(context.message, "name", None), user_id)
         if config.http_remote_hosted:
-            session_id = await ctx.get_state("unity_session_id")
-            identity = (
-                await PluginHub.capture_tool_identity(session_id)
-                if session_id is not None
-                else None
-            )
-            await ctx.set_state(self._TOOL_IDENTITY_STATE_KEY, identity, serializable=False)
-            self._refresh_tool_visibility_metadata_from_registry()
-            tool_name = getattr(context.message, "name", None)
-            allowed = await self._selected_tool_is_visible(context, tool_name, user_id)
-            if allowed is None:
-                enabled_names = await self._resolve_enabled_tool_names_for_context(context)
-                allowed = self._is_tool_visible(tool_name, enabled_names or set())
-            if not allowed:
-                raise ValueError(
-                    f"Tool '{tool_name}' is disabled or unavailable for this Unity instance"
-                )
             # Native payloads omit public wrapper work such as ready waits.
             # Admit the selected plugin's complete normalized public operation
             # before the handler can start any of that work.
             await authorize_remote_operation(
                 public_name, public_params, custom=public_custom, ctx=ctx
             )
-        if not config.http_remote_hosted:
-            self._refresh_tool_visibility_metadata_from_registry()
-            tool_name = getattr(context.message, "name", None)
-            if tool_name not in self._server_only_tool_names:
-                enabled_names = await self._resolve_enabled_tool_names_for_context(context)
-                if enabled_names is not None and not self._is_tool_visible(
-                    tool_name, enabled_names
-                ):
-                    raise ValueError(
-                        f"Tool '{tool_name}' is disabled or unavailable for this Unity instance"
-                    )
         if receipt is not None:
             selected = await ctx.get_state("unity_instance")
             if not isinstance(selected, str) or full_hash(selected) != receipt.options.project_hash:
@@ -1050,6 +1023,31 @@ class UnityInstanceMiddleware(Middleware):
 
             return await receipt.execute(lambda: call_next(context), before_handler=before_handler)
         return await call_next(context)
+
+    async def _admit_selected_tool(self, context, tool_name, user_id):
+        self._refresh_tool_visibility_metadata_from_registry()
+        if config.http_remote_hosted:
+            ctx = context.fastmcp_context
+            session_id = await ctx.get_state("unity_session_id")
+            identity = (
+                await PluginHub.capture_tool_identity(session_id)
+                if session_id is not None
+                else None
+            )
+            await ctx.set_state(self._TOOL_IDENTITY_STATE_KEY, identity, serializable=False)
+            allowed = await self._selected_tool_is_visible(context, tool_name, user_id)
+            if allowed is None:
+                enabled_names = await self._resolve_enabled_tool_names_for_context(context)
+                allowed = self._is_tool_visible(tool_name, enabled_names or set())
+        elif tool_name not in self._server_only_tool_names:
+            enabled_names = await self._resolve_enabled_tool_names_for_context(context)
+            allowed = enabled_names is None or self._is_tool_visible(tool_name, enabled_names)
+        else:
+            return
+        if not allowed:
+            raise ValueError(
+                f"Tool '{tool_name}' is disabled or unavailable for this Unity instance"
+            )
 
     async def _selected_tool_is_visible(
         self, context, tool_name: str | None, user_id: str
@@ -1104,6 +1102,19 @@ class UnityInstanceMiddleware(Middleware):
                     await self._inject_unity_instance(context, allow_reconnect=False)
                 return await call_next(context)
         await self._inject_unity_instance(context)
+        route = uri.partition("?")[0]
+        if route == "mcpforunity://editor/game-view-size" or route.startswith(
+            "mcpforunity://shader/graph/"
+        ):
+            ctx = context.fastmcp_context
+            if not await ctx.get_state("unity_instance"):
+                raise ValueError("Select a Unity instance before reading this resource.")
+            parent = (
+                "manage_editor"
+                if route == "mcpforunity://editor/game-view-size"
+                else "manage_shader"
+            )
+            await self._admit_selected_tool(context, parent, await ctx.get_state("user_id"))
         return await call_next(context)
 
     async def on_list_resources(self, context: MiddlewareContext, call_next):

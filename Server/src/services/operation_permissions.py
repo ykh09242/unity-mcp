@@ -401,7 +401,7 @@ _NATIVE_COMMANDS: Final = (
 )
 _DEFAULT_ACTIONS: Final = {"read_console": "get", "execute_menu_item": "execute"}
 _RESOURCE_PATHS: Final = _names(
-    "capabilities capabilities/scoped doctor doctor/runtime doctor/config tool-diagnostics custom-tools editor/active-tool editor/state scene/cameras scene/gameobject-api project/layers menu-items editor/prefab-stage prefab-api project/info pipeline/renderer-features rendering/stats editor/selection project/tags tests tool-groups instances scene/volumes editor/windows"
+    "capabilities capabilities/scoped doctor doctor/runtime doctor/config tool-diagnostics custom-tools editor/active-tool editor/game-view-size editor/state scene/cameras scene/gameobject-api project/layers menu-items editor/prefab-stage prefab-api project/info pipeline/renderer-features rendering/stats editor/selection project/tags tests tool-groups instances scene/volumes editor/windows"
 )
 _COMPONENT_RESOURCE: Final = re.compile(r"scene/gameobject/-?\d+/(?:components|component/[^/?#]+)")
 _RESOURCE_PATTERNS: Final = (
@@ -411,6 +411,7 @@ _RESOURCE_PATTERNS: Final = (
     _COMPONENT_RESOURCE,
     re.compile(r"scene/gameobject-by-handle/[^/?#]+"),
     re.compile(r"prefab/[^/?#]+(?:/hierarchy)?"),
+    re.compile(r"shader/graph/[^/?#]+"),
 )
 
 

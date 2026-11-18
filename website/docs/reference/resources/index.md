@@ -100,6 +100,13 @@ URI: mcpforunity://editor/windows
 Read this server process's redacted effective settings and captured origins without contacting Unity. Does not describe local CLI or another server configuration.
 
 
+## `game_view_size`
+
+**URI:** `mcpforunity://editor/game-view-size`
+
+Read the selected preset, rendered dimensions and available presets of an open Game View. Requires manage_editor on the selected Editor.
+
+
 ## `gameobject`
 
 **URI:** `mcpforunity://scene/gameobject/{instance_id}`
@@ -315,6 +322,18 @@ Optional comma-separated feature/source selection; always reads current Editor s
 
 - `features` (`str | None`, optional)
 - `sources` (`str | None`, optional)
+
+## `shader_graph_structure`
+
+**URI:** `mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}`
+
+Read serialized nodes, edges, properties and keywords from a project-owned Shader Graph. URL-encode the complete Assets/*.shadergraph path as one segment. Page numbers start at 1; page_size defaults to 50 and accepts 1-100. Requires manage_shader on the selected Editor.
+
+**Parameters:**
+
+- `encoded_path` (`str`, required)
+- `page_size` (`str | None`, optional)
+- `page_number` (`str | None`, optional)
 
 ## `tool_diagnostics`
 
