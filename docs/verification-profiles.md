@@ -11,9 +11,11 @@ creating a project settings file:
 | `playmode-check` | Script stages plus source-guarded PlayMode tests and non-clearing console observations. |
 
 The test defaults select the complete requested mode. Explicit test, assembly or
-category selectors narrow that scope and are retained in the report. No guessed
-impact-based test set is advertised as complete coverage. Zero tests and skipped
-coverage cannot pass verification.
+category selectors narrow that scope and are retained in the report. Impact
+analysis is reported separately from this explicit test selection. Passing
+verification requires at least one test and a pass for every selected case.
+Skipped or inconclusive cases leave the test stage incomplete. A failed case
+makes the stage fail.
 
 ## Prepare, run, observe
 
@@ -51,9 +53,14 @@ errors can still fail verification, and an empty tail remains incomplete.
 Likewise, a detected project analyzer or source generator is not executed by the
 isolated host. Its coverage gap remains visible even when the pinned providers
 return no diagnostics, so that required analysis does not become a false pass.
-Test stages retain the native `succeeded`/`failed`/`cancelled` status and matching
-`native_control` release evidence; available test results alone do not release
-the child operation.
+Test stages retain the native `succeeded`, `failed`, `cancelled` or
+`inconclusive` job status and its `native_control` release evidence. On older
+Editors, recorded progress or retained results can contradict a passing summary.
+The test stage then reports `incomplete`.
+
+A confirmed refusal before the Editor creates a test job releases the verification
+slot. If the start request loses its reply, the runner retains the slot until it
+can establish what happened to the native job.
 The runner never clears Console, changes focus, switches scenes, formats code or
 automatically fixes issues.
 
