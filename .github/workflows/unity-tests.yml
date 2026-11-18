@@ -93,6 +93,7 @@ on:
       - tools/unity_windows_ci.py
       - tools/unity-windows-il2cpp.json
       - tools/check_unity_test_results.py
+      - tools/release_execution.py
       - tools/check_unity_playmode_evidence.py
       - tools/check_play_scenario_evidence.py
       - tools/check_play_scenario_player_evidence.py

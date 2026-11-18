@@ -11,7 +11,9 @@ ROOT = Path(__file__).resolve().parents[2]
 VALIDATIONS = [
     ("python-tests.yml", "tools/lint_python.py"),
     ("unity-tests.yml", "MCPForUnity/Editor/Tools/ManageBuild.cs"),
+    ("unity-tests.yml", "tools/release_execution.py"),
     ("compile-check.yml", "MCPForUnity/Editor/Tools/ManageBuild.cs"),
+    ("compile-check.yml", "tools/release_execution.py"),
     ("workflow-lint.yml", ".github/workflows/python-tests.yml"),
 ]
 # Shared corpus read by Server/tests/test_play_scenario_shared_contract.py.
