@@ -39,9 +39,9 @@ exact schema, and preview wording alone does not imply a read-only effects hint.
 
 ## Browsing and execution
 
-- The root catalog returns every registered built-in tool name in a complete group
-  index, including currently hidden tools. Project custom tools use the existing
-  project-scoped custom-tool discovery path.
+- The live catalog includes selectable built-ins and tools advertised for this
+  request, including server utilities. The exact description uses the currently
+  exposed schema when available. Offline discovery uses local declarations.
 - `catalog` with `group="GROUP"` returns tool descriptions. With `tool="NAME"` it
   returns action cards and the enclosing tool description. Select one scope per
   call. Pages accept `limit` 1..20 and nonnegative `offset`. Follow `next_offset`

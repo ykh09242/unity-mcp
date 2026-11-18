@@ -12,6 +12,48 @@ from tests.test_http_command_outcome import command_hub  # pylint: disable=unuse
 
 
 @pytest.mark.asyncio
+async def test_transport_tool_is_discoverable_from_its_actual_wire_schema():
+    from fastmcp import Client, FastMCP
+    from jsonschema import Draft202012Validator
+    from transport.execution_receipts import install_execution_receipts
+
+    server = FastMCP("transport-discovery")
+    server.tool(module.manage_tools)
+    install_execution_receipts(server, None)
+    async with Client(server) as client:
+        tools = {item.name: item for item in await client.list_tools()}
+        name = "get_execution_receipt"
+        for action in ("catalog", "describe"):
+            result = await client.call_tool("manage_tools", {"action": action, "tool": name})
+            assert result.structured_content["tool"]["name"] == name
+        description = result.structured_content
+        assert description["tool"]["input_schema"] == tools[name].input_schema
+        assert description["catalog"]["advertised"] is True
+        assert description["catalog"]["readiness"] == "unobserved"
+        bound = await client.call_tool(
+            "manage_tools", {"action": "describe", "tool": name, "operation": "get"}
+        )
+        schema = bound.structured_content["tool"]["input_schema"]
+        assert schema["properties"]["action"]["const"] == "get"
+        assert set(bound.structured_content["operation"]["required_parameters"]) == {
+            "store_id",
+            "project_hash",
+        }
+        validator = Draft202012Validator(schema)
+        scope = {"action": "get", "store_id": "store", "project_hash": "project"}
+        assert not validator.is_valid({"action": "get"})
+        assert not validator.is_valid(scope)
+        assert not validator.is_valid({**scope, "receipt_id": "id", "idempotency_key": "key"})
+        for key in ("receipt_id", "idempotency_key"):
+            assert validator.is_valid({**scope, key: "value"})
+        default = Draft202012Validator(tools[name].input_schema)
+        assert default.is_valid({}) and default.is_valid(
+            {"action": "describe", "include_result": False}
+        )
+        assert not default.is_valid({"include_result": True})
+
+
+@pytest.mark.asyncio
 async def test_activation_can_return_schema_and_declared_readiness(monkeypatch):
     def feature(action: Literal["capabilities", "edit"]):
         return action

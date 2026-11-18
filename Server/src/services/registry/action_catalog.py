@@ -34,6 +34,7 @@ class CatalogEntry(TypedDict):
     kwargs: dict[str, ToolAnnotations | dict[str, JsonValue]]
     maturity: NotRequired[ToolMaturity]
     func: NotRequired[Callable]
+    input_schema: NotRequired[dict]
 
 
 class SkillLink(TypedDict):
@@ -358,7 +359,12 @@ def declared_actions(entry: CatalogEntry) -> list[str]:
         return list(capability.actions)
     function = entry.get("func")
     if function is None:
-        return []
+        selector = entry.get("input_schema", {}).get("properties", {}).get("action", {})
+        if not isinstance(selector, dict):
+            return []
+        if isinstance(selector.get("const"), str):
+            return [selector["const"]]
+        return [value for value in selector.get("enum", []) if isinstance(value, str)]
     parameter = inspect.signature(function, eval_str=True).parameters.get("action")
     if parameter is None:
         return []
@@ -373,6 +379,25 @@ def declared_actions(entry: CatalogEntry) -> list[str]:
 
 def guidance_for(name: str) -> ToolGuidance:
     return TOOL_GUIDANCE.get(name, ToolGuidance())
+
+
+def action_guidance(entry: CatalogEntry, action: str | None) -> ActionGuidance | None:
+    """Use reviewed action evidence or the tool's own wire schema alternative."""
+    if action is None:
+        return None
+    guidance = TOOL_GUIDANCE.get(entry["name"])
+    if guidance and action in guidance.actions:
+        return guidance.actions[action]
+    for variant in entry.get("input_schema", {}).get("oneOf", ()):
+        selector = (
+            variant.get("properties", {}).get("action") if isinstance(variant, dict) else None
+        )
+        if isinstance(selector, dict) and selector.get("const") == action:
+            return ActionGuidance(
+                variant.get("description", ""),
+                tuple(name for name in variant.get("required", ()) if name != "action"),
+            )
+    return None
 
 
 def tool_description(entry: CatalogEntry) -> str:
@@ -416,13 +441,15 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
     if action not in declared:
         raise ValueError(f"Unknown action {action!r} for {entry['name']}.")
     tool = tool_capability(entry)
-    guidance = guidance_for(entry["name"]).actions.get(action)
+    guidance = action_guidance(entry, action)
     rules = next(
         (rule for rule in ACTION_RULES.get(entry["name"], ()) if rule.action == action), None
     )
     function = entry.get("func")
     parameters = inspect.signature(function).parameters.values() if function else ()
     required = [
+        name for name in entry.get("input_schema", {}).get("required", ()) if name != "action"
+    ] + [
         parameter.name
         for parameter in parameters
         if parameter.name not in {"ctx", "action"}
@@ -446,9 +473,11 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
         "tool": entry["name"],
         "action": action,
         "purpose": guidance.purpose
-        if guidance
+        if guidance and guidance.purpose
         else (action.replace("_", " ") if action else tool["description"]),
-        "purpose_source": "declared" if guidance or action is None else "identifier",
+        "purpose_source": "declared"
+        if (guidance and guidance.purpose) or action is None
+        else "identifier",
         "required_parameters": list(
             dict.fromkeys(
                 [
@@ -570,7 +599,9 @@ def describe_action(
         action_schema = schema["properties"]["action"]
         action_schema["const"] = operation
         action_schema.pop("default", None)
-        schema["required"] = list(dict.fromkeys([*schema.get("required", ()), "action"]))
+        schema["required"] = list(
+            dict.fromkeys([*schema.get("required", ()), "action", *card["required_parameters"]])
+        )
         if "options_schema" in card:
             option_schema = card["options_schema"]
             options = schema["properties"]["options"]

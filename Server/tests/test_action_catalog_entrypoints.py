@@ -117,6 +117,8 @@ def test_every_action_card_binds_a_real_schema_property(server):
             Draft202012Validator.check_schema(schema)
             card = result["operation"]
             assert set(card["required_parameters"]) <= schema["properties"].keys()
+            if action is not None:
+                assert set(card["required_parameters"]) <= set(schema["required"])
             assert set(card["forbidden_parameters"]) <= schema["properties"].keys()
             if action is not None:
                 validator = Draft202012Validator(schema["properties"]["action"])

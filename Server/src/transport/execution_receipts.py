@@ -15,11 +15,12 @@ from contextvars import Context
 from dataclasses import asdict, dataclass
 from importlib.metadata import version
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 from uuid import uuid4
 
 import anyio
 from fastmcp import Context as FastMCPContext
+from fastmcp.tools import FunctionTool
 from fastmcp.tools.base import ToolResult
 from mcp_types import CallToolResult
 from pydantic import BaseModel
@@ -889,7 +890,7 @@ def install_execution_receipts(server, root: Path | None, *, private_root: bool 
 
     async def get_execution_receipt(
         ctx: FastMCPContext,
-        action: str = "describe",
+        action: Literal["describe", "get"] = "describe",
         store_id: str | None = None,
         project_hash: str | None = None,
         receipt_id: str | None = None,
@@ -913,7 +914,32 @@ def install_execution_receipts(server, root: Path | None, *, private_root: bool 
             ctx=ctx,
         )
 
-    server.tool(name="get_execution_receipt")(get_execution_receipt)
+    tool = FunctionTool.from_function(get_execution_receipt)
+    lookup_keys = ("receipt_id", "idempotency_key")
+    tool.parameters["oneOf"] = [
+        {
+            "description": "Report receipt support and store availability for this connection.",
+            "properties": {
+                "action": {"const": "describe"},
+                **{field: {"type": "null"} for field in ("store_id", "project_hash", *lookup_keys)},
+                "include_result": {"const": False},
+            },
+        },
+        {
+            "description": "Look up an authorized historical receipt by store_id and project_hash with exactly one of receipt_id or idempotency_key. Set include_result to request the retained result.",
+            "required": ["action", "store_id", "project_hash"],
+            "properties": {
+                "action": {"const": "get"},
+                "store_id": {"type": "string"},
+                "project_hash": {"type": "string"},
+            },
+            "oneOf": [
+                {"required": [field], "properties": {field: {"type": "string"}}}
+                for field in lookup_keys
+            ],
+        },
+    ]
+    server.add_tool(tool)
     return runtime
 
 

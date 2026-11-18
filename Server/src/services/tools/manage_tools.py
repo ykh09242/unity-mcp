@@ -116,8 +116,6 @@ async def manage_tools(
     if include_schema and (action != "activate" or not tool or group is not None):
         return {"success": False, "error": "include_schema requires activating one tool."}
     entries = get_registered_tools()
-    if action in ("catalog", "search", "describe") and discovery is not None:
-        entries = [entry for entry in entries if entry["name"] in discovery.definitions]
     if action == "catalog":
         from services.registry.action_catalog import CatalogRequest, browse_catalog
 
@@ -128,8 +126,8 @@ async def manage_tools(
             }
         try:
             request = CatalogRequest(group=group, tool=tool, offset=offset, limit=limit)
-            visible_names = {item.name for item in await _visible_tools(ctx)}
-            return browse_catalog(request, entries, visible_names=visible_names)
+            entries, visible = await _catalog_inventory(ctx, entries, discovery)
+            return browse_catalog(request, list(entries.values()), visible_names=set(visible))
         except ValueError as error:
             return {"success": False, "error": str(error)}
     if action == "search":
@@ -147,8 +145,8 @@ async def manage_tools(
                 "success": False,
                 "error": "search requires nonempty query/catalog_query strings of at most 512 characters and limit 1..20. catalog_query may be omitted.",
             }
-        visible_names = {item.name for item in await _visible_tools(ctx)}
-        return search_catalog(request, entries, visible_names=visible_names)
+        entries, visible = await _catalog_inventory(ctx, entries, discovery)
+        return search_catalog(request, list(entries.values()), visible_names=set(visible))
     if action in ("activate", "deactivate", "reset") and modern:
         if discovery is None or await discovery.scope_key(ctx) is None:
             return {"success": False, "error": UNSCOPED_GUIDANCE}
@@ -157,20 +155,22 @@ async def manage_tools(
 
         if group is not None or not tool:
             return {"success": False, "error": "describe requires a tool name and no group."}
-        definition = discovery.definitions.get(tool.strip()) if discovery is not None else None
-        if definition is None:
+        entries, visible = await _catalog_inventory(ctx, entries, discovery)
+        name = tool.strip()
+        definition = visible.get(name)
+        if definition is None and discovery is not None:
+            definition = discovery.definitions.get(name)
+        if definition is None or name not in entries:
             return {
                 "success": False,
-                "error": "Unknown built-in tool. Use list_groups to discover names.",
+                "error": "Unknown tool in this catalog and the current advertised inventory. Browse catalog or refresh the client tool list.",
             }
-        entry = next(item for item in entries if item["name"] == tool.strip())
-        visible_names = {item.name for item in await _visible_tools(ctx)}
         try:
             return describe_action(
-                entry,
+                entries[name],
                 definition.to_mcp_tool().model_dump(mode="json", exclude_none=True),
                 operation,
-                visible_names=visible_names,
+                visible_names=set(visible),
             )
         except ValueError as error:
             return {"success": False, "error": str(error)}
@@ -322,16 +322,38 @@ async def manage_tools(
     return {"success": False, "error": f"Unknown action '{action}'"}
 
 
+async def _catalog_inventory(ctx, declarations, discovery):
+    """Retain selectable built-ins and add wire descriptors visible to this request only."""
+    entries = {
+        entry["name"]: entry
+        for entry in declarations
+        if discovery is None or entry["name"] in discovery.definitions
+    }
+    visible = {item.name: item for item in await _visible_tools(ctx)}
+    for name, item in visible.items():
+        if name not in entries:
+            entries[name] = {
+                "name": name,
+                "group": None,
+                "description": item.description,
+                "kwargs": {"annotations": item.annotations},
+                "input_schema": item.parameters,
+            }
+    return entries, visible
+
+
 async def _visible_tools(ctx: Context):
     """Read the same final availability cap used by tools/list."""
     # Server/session transforms and authenticated Unity catalogs both affect visibility.
     # Reuse this request's resolved routing instead of reinjecting it via tools/list.
     from transport.unity_instance_middleware import UnityInstanceMiddleware
+    from services.test_results_app import project_test_results_tools
 
     visible_tools = await ctx.fastmcp.list_tools(run_middleware=False)
     for middleware in ctx.fastmcp.middleware:
         if isinstance(middleware, UnityInstanceMiddleware):
             visible_tools = await middleware.filter_tools_for_context(ctx, visible_tools)
+            visible_tools = project_test_results_tools(ctx, visible_tools)
     return visible_tools
 
 
