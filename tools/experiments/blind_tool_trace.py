@@ -678,6 +678,8 @@ def role_status(role: str, trace: ClientTrace, connections: list[list[Call]]) ->
     if any(call.actor_binding == "conflict" for call in reads):
         return "mixed", "conflicting-request-actor-metadata"
     if role == "main":
+        if trace.waits:
+            return "mixed", "native-wait-in-direct-main-trial"
         if (
             trace.child_actors
             or len(observing) > 1

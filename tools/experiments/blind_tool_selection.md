@@ -166,6 +166,10 @@ serialized bytes. The digest binds the verdict to the task, answer and retained
 observations. Re-scoring ignores a stale review. Keep adjudication reasons, wire
 summaries and comparison reports private because they can contain project data.
 
+Main trials request direct execution. A completed native agent wait in a main
+trial makes its role mixed, including when the CLI omits the spawn receipt and
+only a separate MCP connection recorded observations.
+
 Confirmed subagent attribution requires a host-observed native spawn with a
 receiver ID, business requests linked to that same child, and no competing
 parent business calls. A spawn and unbound requests support inference.

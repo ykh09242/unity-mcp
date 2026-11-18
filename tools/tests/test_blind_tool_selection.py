@@ -449,6 +449,51 @@ def test_child_evidence_cannot_be_inferred_from_parent_answer(tmp_path):
     assert score_case(case)["live_evidence"] == "unattributed"
 
 
+def test_direct_main_with_native_wait_and_separate_business_connection_is_mixed(tmp_path):
+    parent = {"type": "thread.started", "thread_id": "01800000-0000-4000-8100-000000000001"}
+    waits = [
+        {
+            "type": "item.completed",
+            "item": {
+                "id": f"wait-{n}",
+                "type": "collab_tool_call",
+                "tool": "wait",
+                "receiver_thread_ids": ["01800000-0000-4000-8100-000000000002"],
+                "status": "completed",
+            },
+        }
+        for n in range(2)
+    ]
+    case = trial(
+        tmp_path,
+        "game-view",
+        host=[parent, *waits, {"type": "turn.completed"}],
+        audit=[request(1, "initialize", "discovery"), response(1)],
+    )
+    write_rows(case / "mcp-2.jsonl", [request(1, GAME_VIEW), response(1, render_size=[800, 600])])
+    report = score_case(case)
+    assert (report["role_status"], report["role_attribution"]) == (
+        "mixed",
+        "native-wait-in-direct-main-trial",
+    )
+    assert report["wire_evidence"] == "complete"
+    assert report["live_evidence"] == "unattributed"
+
+    direct_receipt = {
+        "type": "item.completed",
+        "item": {
+            "type": "mcp_tool_call",
+            "server": "unityMCP",
+            "tool": "manage_editor",
+            "arguments": {"action": "get_game_view_size"},
+            "id": "read-1",
+            "status": "completed",
+        },
+    }
+    write_rows(case / "events.jsonl", [parent, direct_receipt, {"type": "turn.completed"}])
+    assert score_case(case)["role_status"] == "confirmed"
+
+
 def test_native_wait_without_spawn_receipt_leaves_actor_inference_explicit(tmp_path):
     parent = "01800000-0000-4000-8100-000000000001"
     child = "01800000-0000-4000-8100-000000000002"
