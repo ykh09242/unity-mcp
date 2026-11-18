@@ -287,6 +287,9 @@ jobs:
   installed_archive:
     name: Installed candidate archive (${{ matrix.os }}, Python ${{ matrix.python-version }})
     if: inputs.validation_profile != 'tools-only'
+    permissions:
+      contents: read
+      actions: read
     runs-on: ${{ matrix.os }}
     # The cold, unlocked install can build cryptography from source on macOS Intel.
     timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 20 || 10 }}
@@ -334,6 +337,7 @@ jobs:
           platform: ${{ matrix.os }}
           python-version: ${{ matrix.python-version }}
       - name: Install candidate archive without runtime lock
+        id: archive_install
         # Leave time for the evidence upload if a macOS source build times out.
         timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 18 || 10 }}
         env:
@@ -387,6 +391,18 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Compare archive installation
+        if: always() && steps.archive_install.outcome != 'skipped'
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: ./.github/actions/report-archive-install
+        with:
+          kind: candidate
+          platform: ${{ matrix.os }}
+          python-version: ${{ matrix.python-version }}
+          evidence: .tmp/candidate-archive
+          outcome: ${{ steps.archive_install.outcome }}
 
   archive_attempts:
     needs: [installed_archive, server_bootstrap]

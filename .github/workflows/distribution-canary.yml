@@ -21,7 +21,10 @@ on:
       - tools/check_source_pin_drift.py
       - tools/check_release_evidence.py
       - tools/ci_archive_attempts.py
+      - tools/ci_archive_install_report.py
+      - tools/ci_archive_install_history.py
       - .github/actions/archive-checkpoint/**
+      - .github/actions/report-archive-install/**
       - .github/workflows/archive-attempts.yml
       - tools/tests/test_distribution_canary.py
       - .github/workflows/distribution-canary.yml
@@ -41,6 +44,9 @@ jobs:
     # licensed beta pushes; direct license-free, PR, manual and scheduled runs stay available.
     if: inputs.qualification_run || github.event_name != 'push' || github.ref != 'refs/heads/beta' || vars.UNITY_RUN_LICENSED_TESTS != 'true'
     name: Pinned launcher archive (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    permissions:
+      contents: read
+      actions: read
     runs-on: ${{ matrix.os }}
     # Match the candidate's cold-build allowance on the Intel macOS runner.
     timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 20 || 10 }}
@@ -109,6 +115,7 @@ jobs:
           platform: ${{ matrix.os }}
           python-version: ${{ matrix.python-version }}
       - name: Resolve and install the pinned archive without a lock or shared cache
+        id: archive_install
         timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 18 || 10 }}
         env:
           SERVER_SOURCE: ${{ steps.source.outputs.server_source }}
@@ -152,6 +159,18 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Compare archive installation
+        if: always() && steps.archive_install.outcome != 'skipped'
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: ./.github/actions/report-archive-install
+        with:
+          kind: published
+          platform: ${{ matrix.os }}
+          python-version: ${{ matrix.python-version }}
+          evidence: .tmp/distribution-canary
+          outcome: ${{ steps.archive_install.outcome }}
 
   archive_attempts:
     needs: [canary]

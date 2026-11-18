@@ -169,5 +169,13 @@ def test_checkpoint_is_stored_before_install_and_attempt_names_are_immutable(
             s for s in steps if s.get("uses", "").startswith("actions/upload-artifact@")
         )
         assert "github.run_attempt" in artifact["with"]["name"]
+        report = next(
+            s for s in steps if s.get("uses") == "./.github/actions/report-archive-install"
+        )
+        assert steps.index(artifact) < steps.index(report)
+        assert report["with"]["kind"] == kind
+        assert report["with"]["outcome"] == "${{ steps.archive_install.outcome }}"
+        assert next(s for s in steps if s.get("id") == "archive_install")["name"] == step
+        assert report["continue-on-error"] and "always()" in report["if"]
     assert job in jobs["archive_attempts"]["needs"]
     assert "always()" in jobs["archive_attempts"]["if"]

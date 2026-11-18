@@ -65,6 +65,14 @@ does not. Missing metadata remains unknown. To inspect a past fork run locally, 
 --kind candidate --output history.json` with GitHub CLI read access. The `published`
 kind selects distribution canary jobs.
 
+After uploading the installation evidence, candidate and distribution jobs also
+compare the current package inventory, confirmed source builds and uv phase times
+with a previous successful installation for the same workflow, archive kind,
+platform and interpreter. The job summary and `archive-install-report-` artifact
+identify the baseline run and attempt. Missing history or an incomplete freeze
+leaves the corresponding comparison unknown. Rerun evidence and performance
+diagnostics are independent of the blocking installation and behavior checks.
+
 ## Source metadata recovery
 
 The package source, bundle manifest and generated `release-source-inputs.json`

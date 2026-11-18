@@ -1,0 +1,40 @@
+name: Compare archive installation
+description: Compare this installation with a previous successful installation on the same platform
+inputs:
+  kind:
+    description: Candidate or published archive
+    required: true
+  platform:
+    description: Matrix runner label
+    required: true
+  python-version:
+    description: Requested Python version
+    required: true
+  evidence:
+    description: Existing install evidence directory
+    required: true
+  outcome:
+    description: Actual installation step outcome
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Compare selected package versions and source builds
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ github.token }}
+        ARCHIVE_KIND: ${{ inputs.kind }}
+        ARCHIVE_OS: ${{ inputs.platform }}
+        ARCHIVE_PYTHON: ${{ inputs.python-version }}
+        ARCHIVE_EVIDENCE: ${{ inputs.evidence }}
+        ARCHIVE_OUTCOME: ${{ inputs.outcome }}
+      run: |
+        python tools/ci_archive_install_report.py --kind $env:ARCHIVE_KIND --os $env:ARCHIVE_OS --python $env:ARCHIVE_PYTHON --evidence $env:ARCHIVE_EVIDENCE --install-outcome $env:ARCHIVE_OUTCOME
+        exit $LASTEXITCODE
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: archive-install-report-${{ inputs.kind }}-${{ inputs.platform }}-python-${{ inputs.python-version }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: ${{ inputs.evidence }}/install-report.json
+        include-hidden-files: true
+        if-no-files-found: error
+        retention-days: 30

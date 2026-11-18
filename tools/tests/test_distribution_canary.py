@@ -186,7 +186,7 @@ def test_direct_canary_push_inputs_are_covered_by_qualification():
     assert not job.get("continue-on-error")
     assert not job["strategy"]["fail-fast"]
     optional = {step.get("name") for step in job["steps"] if step.get("continue-on-error")}
-    assert optional == {"Preserve installer checkpoint"}
+    assert optional == {"Preserve installer checkpoint", "Compare archive installation"}
     report = config["jobs"]["archive_attempts"]
     assert report["needs"] == ["canary"]
     assert report["uses"] == "./.github/workflows/archive-attempts.yml"
