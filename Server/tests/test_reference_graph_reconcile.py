@@ -2152,6 +2152,55 @@ async def test_analysis_upgrade_rechecks_unchanged_external_keys(setup, tmp_path
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mapped", [False, True])
+async def test_external_guid_rechecks_unchanged_source_after_upgrade_and_catalog_delta(
+    setup, tmp_path, mapped
+):
+    store, workspace, editor, engine = setup
+    number = 0xABCD
+    guid = f"{number:032X}"
+    path = "Assets/Icon.prefab"
+    target = editor.add(number, path)
+    root = tmp_path / "settings"
+    root.mkdir()
+    (root / "a.json").write_text(json.dumps({"prefab": guid}), encoding="utf-8")
+    mappings = [{"field": "/prefab", "scheme": "guid"}] if mapped else []
+    provider = "external:settings"
+    workspace.set_source(
+        provider,
+        {"root": str(root), "include": ["*.json"], "mappings": mappings},
+        expected_version=0,
+    )
+    assert await engine.reconcile()
+    previous_key = _hash(
+        (
+            11,
+            1,
+            workspace.policy()["version"],
+            store.rules_state()["revision"],
+            workspace.state("catalog_revision", 0),
+        )
+    )
+    with store._connect(write=True) as connection:
+        # Recreate the cached v11 omission for the same file and catalog.
+        connection.execute("DELETE FROM edges WHERE provider=?", (provider,))
+        connection.execute("UPDATE graph_external SET analysis_key=?", (previous_key,))
+        workspace._set(connection, "analysis_version", 11)
+        store._bump(connection)
+    assert not store.query(target, direction="incoming")["edges"]
+    assert await engine.reconcile()
+    assert [edge["key"] for edge in store.query(target, direction="incoming")["edges"]] == [guid]
+
+    del editor.assets[guid.lower()]
+    editor.event(path, deleted=True)
+    assert await engine.reconcile()
+    assert not store.query(target, direction="incoming")["edges"]
+    editor.add(number, path)
+    assert await engine.reconcile()
+    assert [edge["key"] for edge in store.query(target, direction="incoming")["edges"]] == [guid]
+
+
+@pytest.mark.asyncio
 async def test_external_decode_failure_does_not_skip_later_files(setup, tmp_path):
     store, workspace, editor, engine = setup
     target = editor.add(
@@ -2847,7 +2896,10 @@ async def test_yaml_stop_interrupts_work_and_releases_lease(setup, monkeypatch, 
         (9, 11, False),
         (10, 11, False),
         (6, 11, True),
-        (11, 12, True),
+        (6, 12, True),
+        (7, 12, False),
+        (11, 12, False),
+        (11, 13, True),
     ],
 )
 async def test_analysis_version_upgrade_scopes_only_known_migration(

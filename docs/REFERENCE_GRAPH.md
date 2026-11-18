@@ -130,8 +130,10 @@ case-sensitive `*`, `**`, and `?` on every OS. Hidden, linked/reparse, hard-link
 escaping, and non-JSON/CSV inputs are refused. A JSON field is a pointer pattern;
 a CSV field is a column name. Schemes are `resources`, `addressables`, `guid`, or
 `path`; optional `prefix`, `suffix`, and `mode:"all"` support explicit conventions.
-Without mappings, exact catalog strings are possible candidates. Numeric IDs are
-not guessed. Inaccessible files cannot reveal cached external references.
+Without mappings, matching catalog strings are possible candidates. GUIDs match
+regardless of hex digit case, while paths and Addressables keys retain exact
+spelling. Add a `values` table to map string or integer IDs to asset keys
+explicitly. Inaccessible files cannot reveal cached external references.
 
 Read `sources` before editing an existing source and supply its `version` as
 `expected_version`. Disable it with `enabled:false` and that version. Revocation or
@@ -194,9 +196,11 @@ using complete sweeps. The filesystem backend can accumulate a batch before it
 yields to Python. These limits bound registrations and the durable queue, while
 the backend's pre-yield memory use during an event flood has no documented bound.
 
-Unresolved external mapping diagnostics retain field, line and reason while
-omitting the unknown value (`key_redacted:true`), including diagnostics stored by
-older versions. Resolved asset links retain their normal keys and provenance.
+Unresolved external mapping diagnostics retain the field, line and reason.
+Matched JSON scalars of an unsupported type report `non_string_value` with the
+JSON pointer. Missed catalog lookups omit the unknown key (`key_redacted:true`),
+including diagnostics stored by older versions. Resolved asset links retain
+their keys and provenance.
 
 ## Authored declarations, wrappers, and exclusions
 

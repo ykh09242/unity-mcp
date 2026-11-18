@@ -61,6 +61,68 @@ def test_default_exact_matches_are_candidates_not_proven_schema_contracts():
     assert result.coverage == "exact_catalog_strings"
 
 
+@pytest.mark.parametrize("mapped", [False, True])
+def test_external_guid_is_case_insensitive_and_other_keys_keep_exact_spelling(mapped):
+    guid = "AbCD" * 8
+    catalog = Catalog(
+        [
+            {
+                "guid": guid.lower(),
+                "path": "Assets/Icon.prefab",
+                "keys": [{"scheme": "addressables", "value": "MenuIcon"}],
+            }
+        ]
+    )
+    data = {
+        "guid": "stable-id" if mapped else guid,
+        "path": "assets/Icon.prefab",
+        "address": "menuicon",
+    }
+    mappings = (
+        [
+            {"field": "/guid", "scheme": "guid", "values": {"stable-id": guid}},
+            {"field": "/path", "scheme": "path"},
+            {"field": "/address", "scheme": "addressables"},
+        ]
+        if mapped
+        else []
+    )
+    result = analyze_document("settings.json", json.dumps(data), catalog, mappings)
+    assert [(edge.target, edge.key, edge.source_pointer) for edge in result.edges] == [
+        ("asset:" + guid.lower(), guid, "/guid")
+    ]
+    assert [issue["reason"] for issue in result.unresolved] == (
+        ["key_not_found"] * 2 if mapped else []
+    )
+
+
+def test_mapped_json_value_types_keep_pointers_without_coercing_noninteger_ids():
+    data = {"a/b": ["icon", None, 2.5, True, False, 7, 8], "~solo": None}
+    mappings = [
+        {
+            "field": "/a~1b/*",
+            "scheme": "resources",
+            "values": dict.fromkeys(("icon", "None", "2.5", "True", "False", "7"), "GameData/icon"),
+        },
+        {"field": "/~0solo", "scheme": "resources"},
+    ]
+    result = analyze_document("settings.json", json.dumps(data), assets(), mappings)
+    assert [edge.source_pointer for edge in result.edges] == ["/a~1b/0", "/a~1b/5"]
+    assert result.unresolved == [
+        {"field": pointer, "line": 0, "reason": reason, "source_pointer": pointer}
+        for pointer, reason in [
+            ("/a~1b/1", "non_string_value"),
+            ("/a~1b/2", "non_string_value"),
+            ("/a~1b/3", "non_string_value"),
+            ("/a~1b/4", "non_string_value"),
+            ("/a~1b/6", "unmapped_value"),
+            ("/~0solo", "non_string_value"),
+        ]
+    ]
+    unmapped = analyze_document("settings.json", json.dumps(data), assets(), [])
+    assert not unmapped.edges and not unmapped.unresolved
+
+
 def test_resources_folder_lookup_charges_only_selected_keys_and_targets():
     def asset(i, *keys, excluded=False):
         return {
@@ -481,6 +543,9 @@ def test_json_node_admission_counts_empty_containers_and_skips_string_punctuatio
     budget = CollectionBudget(CollectionLimits(max_items=9))
     assert list(_values("data.json", text, visit=lambda: budget.admit_items(1))) == [
         ("/~1/2", 'a",\\[{},', 0, "/~1/2"),
+        ("/~1/3", 100.0, 0, "/~1/3"),
+        ("/~1/4", False, 0, "/~1/4"),
+        ("/~1/5", None, 0, "/~1/5"),
         ("/~0", -1, 0, "/~0"),
     ]
     assert budget.items == 9

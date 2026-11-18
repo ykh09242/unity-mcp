@@ -705,7 +705,7 @@ def _values(
     text: str,
     check: Callable[[], None] = lambda: None,
     visit: Callable[[], None] = lambda: None,
-) -> Iterator[tuple[str, str | int, int, str]]:
+) -> Iterator[tuple[str, str | int | float | bool | None, int, str]]:
     check()
     if Path(relative).suffix.lower() == ".json":
 
@@ -748,7 +748,7 @@ def _values(
                 pending.append((path, iter(value.items())))
             elif isinstance(value, list):
                 pending.append((path, iter(enumerate(value))))
-            elif isinstance(value, str) or type(value) is int:
+            else:
                 yield path, value, 0, path
     elif Path(relative).suffix.lower() == ".csv":
         # csv exposes only a process-wide field limit. Raise it monotonically
@@ -833,12 +833,18 @@ def document_events(
             if not _field_matches(mapping["field"], field_name):
                 continue
             seen.add(i)
-            mapped = mapping.get("values", {}).get(str(value)) if "values" in mapping else value
+            values = mapping.get("values")
+            if values is not None and (isinstance(value, str) or type(value) is int):
+                mapped = values.get(str(value))
+                reason = "unmapped_value"
+            else:
+                mapped = value
+                reason = "non_string_value"
             if not isinstance(mapped, str):
                 yield {
                     "field": field_name,
                     "line": line,
-                    "reason": "unmapped_value" if "values" in mapping else "non_string_value",
+                    "reason": reason,
                     "source_pointer": pointer,
                 }
                 continue

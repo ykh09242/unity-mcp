@@ -36,7 +36,7 @@ from services.reference_graph.store import Edge, _hash
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 11
+ANALYSIS_VERSION = 12
 # Limit both the semantic value and nonliteral representation before allocating
 # expanded storage. Source size alone cannot bound repeated constant expansion.
 MAX_EXPRESSION_CHARS = 65536
@@ -1025,6 +1025,8 @@ class CatalogLookups:
 class Catalog:
     @staticmethod
     def canonical_key(scheme: str, value: str) -> str:
+        if scheme == "guid" and _GUID.fullmatch(value):
+            return value.lower()
         if scheme == "resources":
             # Avoid full Unicode folding that conflates different-length names
             # such as sharp-s and SS. Paths/Addressables retain exact spelling.
