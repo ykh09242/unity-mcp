@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -1134,7 +1135,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             string shapeError = ValidateModificationParameterShapes(@params);
             if (shapeError != null)
                 return (false, new ErrorResponse(shapeError));
-            string componentError = ValidatePrefabComponentPlan(targetGo, @params, true);
+            var removals = new List<Component>();
+            string componentError = ValidatePrefabComponentPlan(targetGo, @params, removals);
             if (componentError != null)
                 return (false, new ErrorResponse(componentError));
             bool modified = false;
@@ -1262,27 +1264,13 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             // Components to remove
-            if (@params["componentsToRemove"] is JArray componentsToRemove)
+            foreach (Component component in removals)
             {
-                foreach (var compToken in componentsToRemove)
-                {
-                    string typeName = compToken.ToString();
-                    if (!string.IsNullOrEmpty(typeName))
-                    {
-                        if (!ComponentResolver.TryResolve(typeName, out Type componentType, out string error))
-                        {
-                            return (false, new ErrorResponse($"Component type '{typeName}' not found: {error}"));
-                        }
-                        Component comp = targetGo.GetComponent(componentType);
-                        if (comp != null)
-                        {
-                            UnityEngine.Object.DestroyImmediate(comp);
-                            if (comp != null)
-                                return (false, new ErrorResponse($"Unity did not remove component '{typeName}' from '{targetGo.name}'. No changes saved."));
-                            modified = true;
-                        }
-                    }
-                }
+                string typeName = component.GetType().Name;
+                UnityEngine.Object.DestroyImmediate(component);
+                if (component != null)
+                    return (false, new ErrorResponse($"Unity did not remove component '{typeName}' from '{targetGo.name}'. No changes saved."));
+                modified = true;
             }
 
             // Create child GameObjects (supports single object or array)
@@ -1340,22 +1328,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             if (componentProperties != null && componentProperties.Count > 0)
             {
                 var errors = new List<string>();
-
+                var candidates = targetGo.GetComponents<Component>();
                 foreach (var entry in componentProperties.Properties())
                 {
                     string typeName = entry.Name;
-                    if (!ComponentResolver.TryResolve(typeName, out Type componentType, out string resolveError))
-                    {
-                        errors.Add($"{typeName}: type not found — {resolveError}");
-                        continue;
-                    }
-
-                    Component component = targetGo.GetComponent(componentType);
-                    if (component == null)
-                    {
-                        errors.Add($"{typeName}: not found on '{targetGo.name}'");
-                        continue;
-                    }
+                    Component component = SelectPrefabComponent(typeName, candidates);
 
                     if (entry.Value is not JObject props || !props.HasValues)
                     {
@@ -1427,24 +1404,72 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             return null;
         }
 
-        private static string ValidatePrefabComponentPlan(GameObject target, JObject parameters, bool removals)
+        internal static Component SelectPrefabComponent(string selector, IEnumerable<Component> components) =>
+            SelectPrefabComponent(selector, components, component => component != null ? component.GetType() : null);
+
+        private static T SelectPrefabComponent<T>(string selector, IEnumerable<T> candidates, Func<T, Type> getType)
+        {
+            string typeName = selector;
+            int occurrence = -1;
+            int bracket = selector.LastIndexOf('[');
+            if (bracket >= 0 && selector.EndsWith("]", StringComparison.Ordinal))
+            {
+                if (
+                    !int.TryParse(
+                        selector.Substring(bracket + 1, selector.Length - bracket - 2),
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out occurrence
+                    )
+                )
+                    throw new ArgumentException($"Invalid component selector '{selector}'. Use Type[zero-based index].");
+                typeName = selector.Substring(0, bracket);
+            }
+            if (!ComponentResolver.TryResolve(typeName, out Type type, out string error))
+                throw new ArgumentException($"Component type '{typeName}' not found: {error}");
+            T[] matches = candidates.Where(candidate => type.IsAssignableFrom(getType(candidate))).ToArray();
+            if (matches.Length == 0)
+                throw new ArgumentException($"Component '{typeName}' not found on the target.");
+            if (occurrence >= matches.Length)
+                throw new ArgumentException($"Component selector '{selector}' is out of range. Found {matches.Length} matching components.");
+            if (occurrence < 0 && matches.Length > 1)
+                throw new ArgumentException(
+                    $"Component '{typeName}' is ambiguous. Found {matches.Length} matches; specify '{typeName}[index]' with a zero-based index."
+                );
+            return matches[Math.Max(occurrence, 0)];
+        }
+
+        private static string ValidatePrefabComponentPlan(GameObject target, JObject parameters, List<Component> removals = null)
         {
             try
             {
-                List<Type> planned = ManageGameObjectCommon.ValidateComponentParameters(parameters, removals, target);
-                if (removals && parameters["componentsToRemove"] is JArray removed)
+                if (removals != null && parameters["componentsToRemove"] is JArray removed)
+                {
+                    Component[] original = target.GetComponents<Component>();
                     foreach (JToken token in removed)
                     {
-                        string typeError = GameObjectComponentHelpers.ValidateComponentType(token.ToString(), true, out Type removedType);
-                        if (typeError != null)
-                            return typeError;
-                        Type actualRemovedType = target?.GetComponent(removedType)?.GetType() ?? removedType;
+                        Component selected = SelectPrefabComponent(token.ToString(), original);
+                        if (removals.Contains(selected))
+                            return $"Component '{token}' is already selected for removal.";
+                        removals.Add(selected);
+                    }
+                }
+                List<Type> planned = ManageGameObjectCommon.ValidateComponentParameters(parameters, removals != null, target, removals);
+                if (removals != null)
+                {
+                    foreach (Component selected in removals)
+                    {
+                        Type actualRemovedType = selected.GetType();
                         foreach (Type remaining in planned)
                         foreach (RequireComponent requirement in remaining.GetCustomAttributes(typeof(RequireComponent), true))
                         foreach (Type required in new[] { requirement.m_Type0, requirement.m_Type1, requirement.m_Type2 })
                             if (required != null && required.IsAssignableFrom(actualRemovedType) && !planned.Any(required.IsAssignableFrom))
-                                return $"Cannot remove component '{removedType.Name}': '{remaining.Name}' requires it.";
+                                return $"Cannot remove component '{actualRemovedType.Name}': '{remaining.Name}' requires it.";
                     }
+                    if (parameters["componentProperties"] is JObject properties)
+                        foreach (JProperty entry in properties.Properties())
+                            SelectPrefabComponent(entry.Name, planned, type => type);
+                }
                 return null;
             }
             catch (ArgumentException error)
@@ -1621,7 +1646,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return (false, new ErrorResponse("'source_prefab_path' and 'primitive_type' are mutually exclusive in create_child."));
             }
 
-            string componentError = ValidatePrefabComponentPlan(null, childParams, false);
+            string componentError = ValidatePrefabComponentPlan(null, childParams);
             if (componentError != null)
                 return (false, new ErrorResponse(componentError));
 
@@ -1644,7 +1669,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     return (false, new ErrorResponse($"Source prefab not found at path: '{sanitizedSourcePath}'."));
                 }
 
-                componentError = ValidatePrefabComponentPlan(sourcePrefabAsset, childParams, false);
+                componentError = ValidatePrefabComponentPlan(sourcePrefabAsset, childParams);
                 if (componentError != null)
                     return (false, new ErrorResponse(componentError));
 
@@ -1699,7 +1724,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
             // Add components
             JArray componentsToAdd = childParams["componentsToAdd"] as JArray ?? childParams["components_to_add"] as JArray;
-            componentError = ValidatePrefabComponentPlan(newChild, childParams, false);
+            componentError = ValidatePrefabComponentPlan(newChild, childParams);
             if (componentError != null)
             {
                 UnityEngine.Object.DestroyImmediate(newChild);
@@ -2050,19 +2075,23 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 var expectations = new Dictionary<Component, IEnumerable<KeyValuePair<string, JToken>>>();
                 foreach (JProperty entry in (properties?.Properties() ?? Enumerable.Empty<JProperty>()).Take(16))
                 {
-                    if (!ComponentResolver.TryResolve(entry.Name, out Type type, out _) || entry.Value is not JObject values)
+                    if (!componentsComplete || entry.Value is not JObject values)
                     {
                         ambiguous = true;
                         continue;
                     }
-                    Component[] matches = components.Where(component => component != null && type.IsInstanceOfType(component)).Take(2).ToArray();
-                    if (matches.Length != 1 || !componentsComplete)
+                    Component selectedComponent;
+                    try
+                    {
+                        selectedComponent = SelectPrefabComponent(entry.Name, components);
+                    }
+                    catch (ArgumentException)
                     {
                         ambiguous = true;
                         continue;
                     }
                     var pairs = values.Properties().Select(value => new KeyValuePair<string, JToken>(value.Name, value.Value));
-                    expectations[matches[0]] = expectations.TryGetValue(matches[0], out var earlier) ? earlier.Concat(pairs) : pairs;
+                    expectations[selectedComponent] = expectations.TryGetValue(selectedComponent, out var earlier) ? earlier.Concat(pairs) : pairs;
                 }
                 foreach (var pair in new[] { ("position", "localPosition"), ("rotation", "localEulerAngles"), ("scale", "localScale") })
                     if (requested[pair.Item1] != null)

@@ -23,7 +23,12 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             return value;
         }
 
-        internal static List<Type> ValidateComponentParameters(JObject parameters, bool validateRemovals, GameObject componentSource = null)
+        internal static List<Type> ValidateComponentParameters(
+            JObject parameters,
+            bool validateRemovals,
+            GameObject componentSource = null,
+            IReadOnlyList<Component> selectedRemovals = null
+        )
         {
             var additionDefinitions = new List<KeyValuePair<Type, JObject>>();
             Type transformType =
@@ -63,16 +68,23 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             {
                 if (!(removals is JArray components))
                     throw new ArgumentException("'componentsToRemove' must be an array.");
-                foreach (JToken component in components)
+                for (int i = 0; i < components.Count; i++)
                 {
+                    JToken component = components[i];
                     if (component.Type != JTokenType.String || string.IsNullOrWhiteSpace(component.ToString()))
                         throw new ArgumentException("Each 'componentsToRemove' entry must be a nonempty component type name.");
-                    string typeError = GameObjectComponentHelpers.ValidateComponentType(component.ToString(), true, out Type removalType);
-                    if (typeError != null)
-                        throw new ArgumentException(typeError);
+                    Type removalType;
+                    if (selectedRemovals == null)
+                    {
+                        string typeError = GameObjectComponentHelpers.ValidateComponentType(component.ToString(), true, out removalType);
+                        if (typeError != null)
+                            throw new ArgumentException(typeError);
+                    }
+                    else
+                        removalType = selectedRemovals[i].GetType();
                     if (componentSource != null)
                     {
-                        int index = presentTypes.FindIndex(removalType.IsAssignableFrom);
+                        int index = selectedRemovals == null ? presentTypes.FindIndex(removalType.IsAssignableFrom) : presentTypes.IndexOf(removalType);
                         if (index < 0)
                             throw new ArgumentException($"Component '{component}' not found on '{componentSource.name}' to remove.");
                         if (typeof(Transform).IsAssignableFrom(presentTypes[index]))

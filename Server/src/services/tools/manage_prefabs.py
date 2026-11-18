@@ -130,7 +130,11 @@ async def manage_prefabs(
         "New local scale [x, y, z] or {x, y, z} for modify_contents.",
     ]
     | None = None,
-    name: Annotated[str, "New name for the target object in modify_contents."] | None = None,
+    name: Annotated[
+        str,
+        "Source name for create_from_gameobject when target is omitted. In modify_contents, renames a child. The root uses the prefab asset filename.",
+    ]
+    | None = None,
     tag: Annotated[str, "New tag for the target object in modify_contents."] | None = None,
     layer: Annotated[str, "New layer name for the target object in modify_contents."] | None = None,
     set_active: Annotated[bool, "Set active state of target object in modify_contents."]
@@ -139,7 +143,10 @@ async def manage_prefabs(
     | None = None,
     components_to_add: Annotated[list[str], "Component types to add in modify_contents."]
     | None = None,
-    components_to_remove: Annotated[list[str], "Component types to remove in modify_contents."]
+    components_to_remove: Annotated[
+        list[str],
+        "Remove original target components by unique type or zero-based Type[index], e.g. BoxCollider[1].",
+    ]
     | None = None,
     create_child: Annotated[
         dict[str, Any] | list[dict[str, Any]],
@@ -153,7 +160,7 @@ async def manage_prefabs(
     | None = None,
     component_properties: Annotated[
         dict[str, dict[str, Any]],
-        'Set properties on existing components in modify_contents. Keys are component type names, values are dicts of property name to value. Example: {"Rigidbody": {"mass": 5.0}, "MyScript": {"health": 100}}. Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. For Sprite sub-assets: {"guid": "...", "spriteName": "<name>"}. Single-sprite textures auto-resolve.',
+        'Map a unique component type or zero-based Type[index] to properties. Indices count matching components after requested additions and removals. Example: {"Rigidbody": {"mass": 5.0}, "BoxCollider[1]": {"isTrigger": true}}. Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. For Sprite sub-assets: {"guid": "...", "spriteName": "<name>"}. Single-sprite textures auto-resolve.',
     ]
     | None = None,
     override_ids: Annotated[

@@ -160,16 +160,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         internal static Snapshot CaptureComponents(GameObject root, GameObject target, JObject properties)
         {
             var objects = new Dictionary<Object, string>();
+            var candidates = target.GetComponents<Component>();
             foreach (JProperty property in properties.Properties())
             {
-                if (!ComponentResolver.TryResolve(property.Name, out Type type, out string error))
-                    throw new ArgumentException(error);
-                Component[] matches = target.GetComponents(type);
-                if (matches.Length != 1)
-                    throw new ArgumentException(
-                        $"preview_scope=components requires exactly one '{property.Name}' component on the target; found {matches.Length}."
-                    );
-                Component component = matches[0];
+                Component component = ManagePrefabs.SelectPrefabComponent(property.Name, candidates);
                 if (!objects.ContainsKey(component))
                 {
                     if (objects.Count == MaxObjects)

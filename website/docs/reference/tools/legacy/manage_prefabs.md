@@ -29,16 +29,16 @@ Manages Unity Prefab assets. get_hierarchy returns bounded sibling-index depth-f
 | `position` | `list[float] \| dict[str, float] \| str \| None` | — | New local position [x, y, z] or {x, y, z} for modify_contents. |
 | `rotation` | `list[float] \| dict[str, float] \| str \| None` | — | New local rotation (euler angles) [x, y, z] or {x, y, z} for modify_contents. |
 | `scale` | `list[float] \| dict[str, float] \| str \| None` | — | New local scale [x, y, z] or {x, y, z} for modify_contents. |
-| `name` | `str \| None` | — | New name for the target object in modify_contents. |
+| `name` | `str \| None` | — | Source name for create_from_gameobject when target is omitted. In modify_contents, renames a child. The root uses the prefab asset filename. |
 | `tag` | `str \| None` | — | New tag for the target object in modify_contents. |
 | `layer` | `str \| None` | — | New layer name for the target object in modify_contents. |
 | `set_active` | `bool \| None` | — | Set active state of target object in modify_contents. |
 | `parent` | `str \| None` | — | New parent object name/path within prefab for modify_contents. |
 | `components_to_add` | `list[str] \| None` | — | Component types to add in modify_contents. |
-| `components_to_remove` | `list[str] \| None` | — | Component types to remove in modify_contents. |
+| `components_to_remove` | `list[str] \| None` | — | Remove original target components by unique type or zero-based Type[index], e.g. BoxCollider[1]. |
 | `create_child` | `dict[str, Any] \| list[dict[str, Any]] \| None` | — | Create child GameObject(s) in the prefab. Single object or array of objects, each with: name (required), parent (optional, defaults to target), source_prefab_path (optional: asset path to instantiate as nested prefab, e.g. 'Assets/Prefabs/Bullet.prefab'), primitive_type (optional: Cube, Sphere, Capsule, Cylinder, Plane, Quad), position, rotation, scale, components_to_add, tag, layer, set_active. source_prefab_path and primitive_type are mutually exclusive. |
 | `delete_child` | `str \| list[str] \| None` | — | Child name(s) or path(s) to remove from the prefab. Supports single string or array for batch deletion (e.g. 'Child1' or ['Child1', 'Child1/Grandchild']). |
-| `component_properties` | `dict[str, dict[str, Any]] \| None` | — | Set properties on existing components in modify_contents. Keys are component type names, values are dicts of property name to value. Example: {"Rigidbody": {"mass": 5.0}, "MyScript": {"health": 100}}. Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. For Sprite sub-assets: {"guid": "...", "spriteName": "<name>"}. Single-sprite textures auto-resolve. |
+| `component_properties` | `dict[str, dict[str, Any]] \| None` | — | Map a unique component type or zero-based Type[index] to properties. Indices count matching components after requested additions and removals. Example: {"Rigidbody": {"mass": 5.0}, "BoxCollider[1]": {"isTrigger": true}}. Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. For Sprite sub-assets: {"guid": "...", "spriteName": "<name>"}. Single-sprite textures auto-resolve. |
 | `override_ids` | `list[str] \| None` | — | Explicit overrideId values from list_overrides; 1-100 unique values. Required for revert_overrides/apply_overrides. Select object/component/property entries via their IDs; no implicit apply-all. |
 | `object_id` | `int \| None` | — | list_overrides: filter by scene GameObject or component instance ID. |
 | `property_filter` | `str \| None` | — | list_overrides: case-insensitive property-path substring filter. |

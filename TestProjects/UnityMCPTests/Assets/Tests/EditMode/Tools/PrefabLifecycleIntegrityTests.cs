@@ -162,6 +162,102 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(Vector3.zero, target.transform.localPosition);
         }
 
+        [TestCase(false, "BoxCollider", "ambiguous")]
+        [TestCase(true, "Collider", "ambiguous")]
+        [TestCase(false, "BoxCollider[2]", "out of range")]
+        [TestCase(true, "BoxCollider[-1]", "Invalid component selector")]
+        public void RejectedDuplicateComponentEditsPreserveCombinedChanges(bool remove, string selector, string expected)
+        {
+            var source = Source();
+            source.AddComponent<BoxCollider>();
+            source.AddComponent<BoxCollider>();
+            string path = Seed(source, "DuplicateSelectors");
+            byte[] before = Bytes(path);
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            var request = new JObject { ["prefabPath"] = path, ["tag"] = "Player" };
+            if (remove)
+                request["componentsToRemove"] = new JArray(selector);
+            else
+                request["componentProperties"] = new JObject { [selector] = new JObject { ["isTrigger"] = true } };
+            JObject result = Send("modify_contents", request);
+            Failure(result);
+            StringAssert.Contains(expected, result.Value<string>("error"));
+            CollectionAssert.AreEqual(before, Bytes(path));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+        }
+
+        [Test]
+        public void IndexedPropertyPreviewAndWriteSelectOnlySecondCollider()
+        {
+            var source = Source();
+            source.AddComponent<BoxCollider>();
+            source.AddComponent<BoxCollider>();
+            string path = Seed(source, "IndexedWrite");
+            byte[] before = Bytes(path);
+            var request = new JObject
+            {
+                ["prefabPath"] = path,
+                ["previewOnly"] = true,
+                ["previewScope"] = "components",
+                ["componentProperties"] = new JObject { ["BoxCollider[1]"] = new JObject { ["isTrigger"] = true } },
+            };
+            var preview = Send("modify_contents", request);
+            Success(preview);
+            StringAssert.Contains("BoxCollider[1]", preview["data"]["preview"]["changes"].ToString());
+            CollectionAssert.AreEqual(before, Bytes(path));
+            request.Remove("previewOnly");
+            request.Remove("previewScope");
+            var saved = Send("modify_contents", request);
+            Success(saved);
+            JArray observed = (JArray)saved["data"]["verification"]["observed_values"];
+            Assert.AreEqual(true, (bool)observed[2]["observed_values"][0]["matches_requested"], observed.ToString());
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                var colliders = contents.GetComponents<BoxCollider>();
+                Assert.AreEqual(2, colliders.Length);
+                Assert.IsFalse(colliders[0].isTrigger);
+                Assert.IsTrue(colliders[1].isTrigger);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
+        [Test]
+        public void IndexedRemovalKeepsOriginalOccurrencesAcrossMultipleRemovals()
+        {
+            var source = Source();
+            source.AddComponent<BoxCollider>().size = Vector3.one;
+            source.AddComponent<BoxCollider>().size = Vector3.one * 2;
+            source.AddComponent<BoxCollider>().size = Vector3.one * 3;
+            string path = Seed(source, "IndexedRemoval");
+            Success(
+                Send(
+                    "modify_contents",
+                    new JObject
+                    {
+                        ["prefabPath"] = path,
+                        ["componentsToRemove"] = new JArray("BoxCollider[0]", "Collider[2]"),
+                        ["componentProperties"] = new JObject { ["BoxCollider[0]"] = new JObject { ["isTrigger"] = true } },
+                    }
+                )
+            );
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                var colliders = contents.GetComponents<BoxCollider>();
+                Assert.AreEqual(1, colliders.Length);
+                Assert.AreEqual(Vector3.one * 2, colliders[0].size);
+                Assert.IsTrue(colliders[0].isTrigger);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void DuplicateDisallowedComponent_PreservesPrefabBytesAndGuid(bool createChild)
