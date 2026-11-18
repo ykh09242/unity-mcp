@@ -918,7 +918,7 @@ namespace MCPForUnity.Editor.Services
                     admission = TestJobAdmission.Busy;
                     throw new InvalidOperationException("A Unity test run is already in progress.");
                 }
-                // From the first mutation onward an exception cannot prove this request was refused.
+                // Failures after registration are uncertain unless rollback finishes before persistence or native execution.
                 admission = TestJobAdmission.Unknown;
                 Jobs[jobId] = job;
                 _currentJobId = jobId;
@@ -930,6 +930,7 @@ namespace MCPForUnity.Editor.Services
                 {
                     Jobs.Remove(jobId);
                     _currentJobId = null;
+                    admission = TestJobAdmission.NotCreated;
                     throw new NotSupportedException("unsupported_native_test_control");
                 }
                 BindControl(job);
@@ -941,6 +942,7 @@ namespace MCPForUnity.Editor.Services
                 job.Control?.Dispose();
                 Jobs.Remove(jobId);
                 _currentJobId = null;
+                admission = TestJobAdmission.NotCreated;
                 throw new InvalidOperationException("Test job admission exceeds bounded metadata limits.");
             }
             if (!PersistAdmissionTransition(jobId))

@@ -237,6 +237,46 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(err.Error.Contains("Unknown test mode", StringComparison.OrdinalIgnoreCase));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void OnlyDeterministicAdmissionRollbackProvesNoJob(bool persistenceUncertain)
+        {
+            const string marker = "MCPForUnity.TestAdmissionWriteV1";
+            var previous = SessionState.GetString(marker, "");
+            try
+            {
+                var request = new JObject { ["source_token"] = new string('a', 64) };
+                if (persistenceUncertain)
+                    SessionState.SetString(marker, "previous-write-outcome-unknown");
+                else
+                {
+                    var names = new JArray();
+                    for (int i = 0; i < 9; i++)
+                        names.Add(new string((char)('a' + i), 500));
+                    request["testNames"] = names;
+                }
+                var reply = JObject.FromObject(MCPForUnity.Editor.Tools.RunTests.HandleCommand(request).GetAwaiter().GetResult());
+                Assert.AreEqual(false, (bool?)reply["success"]);
+                Assert.AreEqual(0, service.Calls);
+                Assert.AreEqual(0, Jobs.Count);
+                Assert.IsNull(TestJobManager.CurrentJobId);
+                if (persistenceUncertain)
+                {
+                    StringAssert.Contains("could not be persisted", (string)reply["error"]);
+                    Assert.IsNull(reply["data"]?["test_job_created"]);
+                }
+                else
+                {
+                    StringAssert.Contains("exceeds bounded metadata", (string)reply["error"]);
+                    Assert.AreEqual(false, (bool?)reply["data"]["test_job_created"]);
+                }
+            }
+            finally
+            {
+                SessionState.SetString(marker, previous);
+            }
+        }
+
         [TestCase(null)]
         [TestCase("")]
         [TestCase("old-source")]
