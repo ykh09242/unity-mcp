@@ -424,12 +424,46 @@ class VerificationRunner:
         child["dispatch"] = "acknowledged"
         self.publish()
         data = await self.poll(child, deadline)
+        verdict = test_verdict(data)
+        summary = (data.get("result") or {}).get("summary") or {}
+        legacy_page = {}
+        if (
+            verdict == "passed"
+            and "inconclusive" not in summary
+            and data.get("result_availability") == "available"
+        ):
+            # Legacy status-only responses can hide inconclusive leaves. Query the
+            # non-passing selection once, without loading an unbounded result list.
+            page_parameters = {
+                "job_id": child["job_id"],
+                "includeFailedTests": True,
+                "page_size": 1,
+            }
+            try:
+                response = await self.io.native("get_test_job", page_parameters, deadline)
+                detail = response.get("data") or {}
+                page = detail.get("result_page") or {}
+                if response.get("success") is True and detail.get("job_id") == child["job_id"]:
+                    count = page.get("total_count")
+                    if type(count) is int and count >= 0 and isinstance(page.get("items"), list):
+                        legacy_page["nonpassing_count"] = count
+                        verdict = test_verdict(detail)
+                        if verdict == "passed" and (
+                            count or page["items"] or page.get("has_more") is not False
+                        ):
+                            verdict = "incomplete"
+            except (ConnectionError, TimeoutError):
+                pass
+            if not legacy_page:
+                verdict = "incomplete"
+                legacy_page["reason"] = "legacy_result_page_unavailable"
         self.stage(
             "tests",
-            test_verdict(data),
+            verdict,
             {
                 "job_id": child["job_id"],
-                "summary": (data.get("result") or {}).get("summary"),
+                "summary": summary,
+                **legacy_page,
                 "status": data.get("status"),
                 "completion_kind": data.get("completion_kind"),
                 "native_control": data.get("native_control"),

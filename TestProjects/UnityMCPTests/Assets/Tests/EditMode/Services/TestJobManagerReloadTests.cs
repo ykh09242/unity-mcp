@@ -1163,6 +1163,54 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(3, (int)JObject.FromObject(TestJobManager.Page(job, 100, null, false))["total_count"]);
         }
 
+        [TestCase("progress", "inconclusive")]
+        [TestCase("extra_row", "inconclusive")]
+        [TestCase("nonpassing_row", "inconclusive")]
+        [TestCase("all_passed", "succeeded")]
+        [TestCase("skipped_extra", "inconclusive")]
+        [TestCase("skipped_only", "succeeded")]
+        public void RestoredLegacyPassedSummaryChecksProgressAndRetainedArtifact(string evidence, string expected)
+        {
+            var job = AddJob();
+            ManagerField("_currentJobId").SetValue(null, null);
+            int skipped = evidence.StartsWith("skipped", StringComparison.Ordinal) ? 1 : 0;
+            job.CompletedTests = 1 + skipped;
+            job.TotalTests = evidence == "progress" ? 2 : job.CompletedTests;
+            job.Status = TestJobStatus.Succeeded;
+            job.CompletionKind = "completed";
+            job.RetainedSummary = new TestRunSummary(1 + skipped, 1, 0, skipped, 0.1, "Passed");
+            if (evidence != "progress")
+            {
+                var rows = new List<TestRunTestResult>();
+                if (evidence != "nonpassing_row")
+                    rows.Add(new TestRunTestResult("A", "Fixture.A", "Passed", 0.1, null, null, null));
+                if (skipped > 0)
+                    rows.Add(new TestRunTestResult("C", "Fixture.C", "Skipped", 0, null, null, null));
+                if (evidence != "all_passed" && evidence != "skipped_only")
+                    rows.Add(new TestRunTestResult("B", "Fixture.B", "Inconclusive", 0, null, null, null));
+                var store = TestJobManager.ResultStore;
+                var result = new TestRunResult(job.RetainedSummary, rows);
+                var artifact = store.Save(job.JobId, job.Mode, result, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                string path = Path.Combine(store.DirectoryFor(job.JobId, (string)artifact["generation"]), "manifest.json");
+                var manifest = JObject.Parse(File.ReadAllText(path));
+                ((JObject)manifest["summary"]).Remove("inconclusive");
+                byte[] bytes = System.Text.Encoding.UTF8.GetBytes(manifest.ToString(Newtonsoft.Json.Formatting.None));
+                File.WriteAllBytes(path, bytes);
+                artifact["sha256"] = TestJobResultStore.Hash(bytes);
+                job.ResultArtifact = artifact;
+                job.ResultAvailability = "available";
+            }
+            InvokeManager("PersistToSessionState", true);
+            var history = JObject.Parse(SessionState.GetString(JobsKey, ""));
+            ((JObject)history["jobs"][0]["summary"]).GetValue("inconclusive", StringComparison.OrdinalIgnoreCase).Parent.Remove();
+            SessionState.SetString(JobsKey, history.ToString());
+            _jobs.Clear();
+            InvokeManager("TryRestoreFromSessionState");
+            var status = JObject.FromObject(TestJobManager.ToSerializable(_jobs[job.JobId], false, false));
+            Assert.AreEqual(expected, (string)status["status"]);
+            Assert.AreEqual(1, (int)status["result"]["summary"]["passed"]);
+        }
+
         private sealed class ResultStub : ITestResultAdaptor
         {
             private readonly ITestResultAdaptor[] _children;

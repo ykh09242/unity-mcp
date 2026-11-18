@@ -63,6 +63,28 @@ def test_verdict(data):
         or summary.get("resultState", "Passed") != "Passed"
     ):
         return "incomplete"
+    progress = data.get("progress") or {}
+    page = data.get("result_page") or {}
+    rows = (data.get("result") or {}).get("results") or []
+    # A legacy UTF summary may omit inconclusive leaves even under a Passed suite.
+    if (
+        any(
+            type(count) is int and count > summary["total"]
+            for count in (
+                progress.get("total"),
+                progress.get("completed"),
+                page.get("total_count"),
+                len(rows),
+            )
+        )
+        or progress.get("failures_so_far")
+        or any(
+            not isinstance(row, dict) or row.get("state") != "Passed"
+            for group in (rows, page.get("items") or [])
+            for row in group
+        )
+    ):
+        return "incomplete"
     return "passed"
 
 

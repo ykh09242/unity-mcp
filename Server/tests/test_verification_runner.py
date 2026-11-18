@@ -218,6 +218,54 @@ async def test_zero_tests_and_unknown_console_are_incomplete():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "evidence, expected",
+    [
+        ("progress", "incomplete"),
+        ("details", "incomplete"),
+        ("nonpassing_page", "incomplete"),
+        ("clean_page", "passed"),
+        ("missing_page", "incomplete"),
+        ("new_summary", "passed"),
+    ],
+)
+async def test_legacy_passed_summary_respects_native_evidence(evidence, expected):
+    io = IO()
+    io.tests["result"]["summary"]["resultState"] = "Passed"
+    io.tests["result_availability"] = "available"
+    io.tests["progress"] = {"total": 2 if evidence == "progress" else 1, "completed": 1}
+    if evidence == "details":
+        io.tests["result"]["results"] = [{"state": "Passed"}, {"state": "Inconclusive"}]
+    if evidence == "new_summary":
+        io.tests["result"]["summary"]["inconclusive"] = 0
+    native = io.native
+    pages = []
+
+    async def observed(command, params, deadline):
+        reply = await native(command, params, deadline)
+        if command == "get_test_job" and "page_size" in params:
+            pages.append(params)
+            if evidence != "missing_page":
+                rows = [{"state": "Inconclusive"}] if evidence == "nonpassing_page" else []
+                reply["data"]["result_page"] = {
+                    "total_count": len(rows),
+                    "items": rows,
+                    "has_more": False,
+                }
+        return reply
+
+    io.native = observed
+    report = await run(io, test_mode="EditMode")
+    stage = next(stage for stage in report["stages"] if stage["name"] == "tests")
+    assert stage["state"] == expected
+    assert report["native_settled"]
+    if evidence in {"nonpassing_page", "clean_page", "missing_page"}:
+        assert pages == [{"job_id": io.tests["job_id"], "includeFailedTests": True, "page_size": 1}]
+    else:
+        assert not pages
+
+
+@pytest.mark.asyncio
 async def test_dispatch_timeout_is_never_replayed_or_claimed_settled():
     io = IO()
     io.test_timeout = True

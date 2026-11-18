@@ -308,6 +308,41 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
+        private static TestJobStatus RestoredStatus(PersistedJob job)
+        {
+            var status = ParseStatus(job.status);
+            var summary = job.summary;
+            if (status != TestJobStatus.Succeeded || summary == null)
+                return status;
+            if (ClassifySummary(summary) == TestJobStatus.Inconclusive)
+                return TestJobStatus.Inconclusive;
+            if (
+                job.total_tests > summary.Total
+                || job.completed_tests > summary.Total
+                || summary.Failed == 0 && (job.failures_so_far?.Count > 0 || job.omitted_failure_previews > 0)
+            )
+                return TestJobStatus.Inconclusive;
+            if (job.artifact != null)
+            {
+                if ((int)job.artifact["count"] > summary.Total)
+                    return TestJobStatus.Inconclusive;
+                try
+                {
+                    // The hash-checked, size-limited manifest counts every non-passing row (including inconclusive).
+                    // A restored job can be checked without reading any result shards.
+                    var manifest = ResultStore.Manifest(job.job_id, job.artifact);
+                    long expectedNonpassing = (long)summary.Skipped + summary.Failed + summary.Inconclusive;
+                    if ((int)manifest["count"] > summary.Total || (int)manifest["failed_count"] > expectedNonpassing)
+                        return TestJobStatus.Inconclusive;
+                }
+                catch (Exception)
+                {
+                    // An evicted or unreadable artifact supplies no additional count evidence.
+                }
+            }
+            return status;
+        }
+
         private static bool ValidSummary(JToken token)
         {
             if (token is not JObject value)
@@ -444,10 +479,7 @@ namespace MCPForUnity.Editor.Services
                         Jobs[pj.job_id] = new TestJob
                         {
                             JobId = pj.job_id,
-                            Status =
-                                pj.status == "succeeded" && ClassifySummary(pj.summary) == TestJobStatus.Inconclusive
-                                    ? TestJobStatus.Inconclusive
-                                    : ParseStatus(pj.status),
+                            Status = RestoredStatus(pj),
                             Mode = pj.mode,
                             StartedUnixMs = pj.started_unix_ms,
                             FinishedUnixMs = pj.finished_unix_ms,
