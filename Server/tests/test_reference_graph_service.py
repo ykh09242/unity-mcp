@@ -36,19 +36,27 @@ REQUEST_MARKER = ContextVar("graph_test_request_marker", default=None)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "options",
+    ("action", "options"),
     [
-        {"node": "asset:fixture", "limit": 0},
-        {"node": "asset:fixture", "limti": 10},
-        {"node": "asset:fixture", "direction": "both"},
-        {"limit": 10},
+        ("query", {"node": "asset:fixture", "limit": 0}),
+        ("query", {"node": "asset:fixture", "limti": 10}),
+        ("query", {"node": "asset:fixture", "direction": "both"}),
+        ("query", {"limit": 10}),
+        ("cleanup", {}),
+        ("begin_mutation", {}),
+        ("add_mutation_targets", {"id": "receipt", "paths": [], "guids": []}),
+        ("set_source", {"id": "settings", "expected_version": 0}),
+        (
+            "import_config",
+            {"kind": "source", "config": {}, "id": "settings", "expected_version": 0},
+        ),
     ],
 )
-async def test_graph_tool_distinguishes_request_errors_from_unavailability(options):
+async def test_graph_tool_distinguishes_request_errors_from_unavailability(action, options):
     service = ReferenceGraphService()
     ctx = SimpleNamespace(fastmcp=SimpleNamespace(_reference_graph_service=service))
     try:
-        rejected = await manage_reference_graph(ctx, "query", options)
+        rejected = await manage_reference_graph(ctx, action, options)
         assert rejected["success"] is False
         assert rejected["error"] == "invalid_reference_graph_request"
         assert rejected["message"]

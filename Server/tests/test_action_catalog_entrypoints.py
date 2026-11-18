@@ -58,6 +58,17 @@ async def test_catalog_and_describe_preserve_inventory_and_schema(server, mode):
         original = server._tool_discovery.definitions["manage_shader"].parameters
         assert "const" not in original["properties"]["action"]
 
+        graph = (
+            await client.call_tool(
+                "manage_tools",
+                {"action": "describe", "tool": "manage_reference_graph", "operation": "path"},
+            )
+        ).structured_content
+        schema = graph["tool"]["input_schema"]
+        assert "options" in schema["required"]
+        assert schema["properties"]["options"]["required"] == ["node", "target"]
+        assert graph["operation"]["options_schema"]["additionalProperties"] is False
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(

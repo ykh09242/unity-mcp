@@ -24,6 +24,7 @@ from services.credential_lease import (
     require_credential_lease,
 )
 from services.operation_permissions import OperationPermissionError, authorize_operation
+from services.reference_graph.action_options import GRAPH_ACTION_OPTIONS
 from services.reference_graph.analysis import ANALYSIS_VERSION, validate_rule
 from services.reference_graph.collection_protocol import integer, text
 from services.reference_graph.external import ExternalSource
@@ -1050,50 +1051,8 @@ class ReferenceGraphService:
             self._operator_grant(workspace.store.scope, source["config"])
 
     async def execute(self, ctx, action: str, options: dict) -> dict:
-        fields = {
-            "overview": set(),
-            "export_config": {"kind", "after", "limit"},
-            "import_config": {"kind", "id", "config", "expected_version", "enabled", "reauthorize"},
-            "cleanup": {"before", "limit"},
-            "retry": set(),
-            "status": set(),
-            "sync": {"force"},
-            "query": {"node", "direction", "limit", "cursor", "consistency"},
-            "diagnostics": {"node", "offset", "limit", "revision", "cursor", "consistency"},
-            "explain": {"id", "consistency"},
-            "impact": {"node", "direction", "limit", "cursor", "max_depth", "consistency"},
-            "path": {"node", "target", "direction", "limit", "cursor", "consistency"},
-            "snapshot": {"name", "limit", "cursor", "consistency"},
-            "diff": {"before", "after", "limit", "cursor"},
-            "release_query": {"id"},
-            "delete_snapshot": {"id"},
-            "begin_mutation": {"paths", "guids"},
-            "add_mutation_targets": {"id", "paths", "guids"},
-            "finish_mutation": {"id", "outcome"},
-            "await_mutation": {"id", "wait_seconds"},
-            "mutation_diff": {"id", "limit", "cursor"},
-            "release_mutation": {"id"},
-            "runtime_sessions": {"after", "limit"},
-            "runtime_start": {"id"},
-            "runtime_poll": {"id", "limit"},
-            "runtime_status": {"id"},
-            "runtime_stop": {"id", "limit"},
-            "runtime_events": {"id", "after", "limit"},
-            "runtime_handles": {"id", "after", "limit"},
-            "runtime_release": {"id"},
-            "declarations": set(),
-            "declare": {"id", "owner", "edge", "expected_version"},
-            "remove_declaration": {"id", "expected_version"},
-            "sources": set(),
-            "set_source": {"id", "config", "enabled", "expected_version"},
-            "rules": set(),
-            "set_rule": {"id", "config", "expected_version"},
-            "policy": set(),
-            "set_policy": {"config", "expected_version"},
-            "rebuild": set(),
-            "watch": {"enabled"},
-        }
-        if action not in fields or not isinstance(options, dict) or set(options) - fields[action]:
+        contract = GRAPH_ACTION_OPTIONS.get(action)
+        if contract is None or not isinstance(options, dict) or options.keys() - contract.fields:
             raise InvalidGraphRequest("Unsupported reference graph action or fields")
         for key in ("config", "edge"):
             if key in options and not isinstance(options[key], dict):
@@ -1124,6 +1083,13 @@ class ReferenceGraphService:
             "policy",
         ):
             raise InvalidGraphRequest("Configuration kind must be rule, source or policy")
+        missing = contract.missing(options)
+        if missing:
+            raise InvalidGraphRequest(
+                "Missing required reference graph options: " + ", ".join(missing)
+            )
+        if contract.exactly_one and len(options.keys() & contract.exactly_one) != 1:
+            raise InvalidGraphRequest("Supply exactly one target page: paths or inventoried GUIDs")
         entry, editor = await self.resolve(
             ctx,
             action,
@@ -1136,7 +1102,7 @@ class ReferenceGraphService:
         entry.request_tasks.add(request)
         entry.requests_drained.clear()
         try:
-            return await self._execute(entry, editor, action, options, fields[action])
+            return await self._execute(entry, editor, action, options)
         finally:
             entry.active_requests -= 1
             entry.request_tasks.discard(request)
@@ -1146,14 +1112,10 @@ class ReferenceGraphService:
                 if not entry.watching:
                     self._retire(entry)
 
-    async def _execute(
-        self, entry: Entry, editor: dict, action: str, options: dict, fields: set
-    ) -> dict:
+    async def _execute(self, entry: Entry, editor: dict, action: str, options: dict) -> dict:
         created_queries = []
         try:
-            result = await self._execute_owned(
-                entry, editor, action, options, fields, created_queries
-            )
+            result = await self._execute_owned(entry, editor, action, options, created_queries)
             await drained_thread(require_response, result)
             return result
         except BaseException:
@@ -1170,7 +1132,6 @@ class ReferenceGraphService:
         editor: dict,
         action: str,
         options: dict,
-        fields: set,
         created_queries: list,
     ) -> dict:
         workspace, store = entry.workspace, entry.workspace.store
@@ -1178,7 +1139,6 @@ class ReferenceGraphService:
             from services.reference_graph.operations import import_action
 
             action, options = import_action(options)
-            fields = set(options)
         # An authenticated CAS replacement is also the repair path for an old
         # oversized policy. Do not read that policy before replacing it; normal
         # bounded admission checks resume below after the write has succeeded.
@@ -1279,11 +1239,7 @@ class ReferenceGraphService:
                 raise InvalidGraphRequest(
                     "Read current state and supply its nonnegative expected_version"
                 )
-        if (
-            "id" in fields
-            and not (action == "runtime_start" and "id" not in options)
-            and (not isinstance(options.get("id"), str) or not options["id"])
-        ):
+        if "id" in options and (not isinstance(options["id"], str) or not options["id"]):
             raise InvalidGraphRequest("An explicit stable id is required")
         if consistency not in ("cached", "checked"):
             raise InvalidGraphRequest("consistency must be cached or checked")

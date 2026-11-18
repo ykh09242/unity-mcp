@@ -21,6 +21,7 @@ from pydantic import (
     model_validator,
 )
 
+from services.reference_graph.action_options import GRAPH_ACTION_OPTIONS
 from services.registry.action_contracts import ACTION_RULES
 from services.registry.capability_catalog import CAPABILITIES, CapabilityEffects, READ_ONLY_EFFECTS
 from services.registry.tool_registry import TOOL_GROUPS, ToolMaturity
@@ -436,6 +437,11 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
             "idempotentHint": guidance.effects.idempotent,
             "openWorldHint": guidance.effects.open_world,
         }
+    graph_options = (
+        GRAPH_ACTION_OPTIONS[action] if entry["name"] == "manage_reference_graph" else None
+    )
+    if graph_options and (graph_options.required or graph_options.exactly_one):
+        required.append("options")
     return {
         "tool": entry["name"],
         "action": action,
@@ -453,6 +459,7 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
             )
         ),
         "forbidden_parameters": list(rules.forbidden) if rules else [],
+        **({"options_schema": graph_options.schema()} if graph_options else {}),
         "input_contract": "Inspect the full tool schema and parameter descriptions for conditional requirements.",
         "effects": effects,
         "effects_scope": "action" if guidance and guidance.effects else "tool",
@@ -564,6 +571,14 @@ def describe_action(
         action_schema["const"] = operation
         action_schema.pop("default", None)
         schema["required"] = list(dict.fromkeys([*schema.get("required", ()), "action"]))
+        if "options_schema" in card:
+            option_schema = card["options_schema"]
+            options = schema["properties"]["options"]
+            options.update(option_schema)
+            if option_schema["type"] == "object":
+                if "options" not in schema["required"]:
+                    schema["required"].append("options")
+                options.pop("default", None)
     elif not declared_actions(entry):
         card = action_card(entry, None)
     catalog = tool_capability(entry, visible_names=visible_names)

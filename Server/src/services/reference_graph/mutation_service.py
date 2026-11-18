@@ -119,8 +119,6 @@ async def execute(service, entry, editor, action, options):
     receipts = await drained_thread(entry.workspace.mutations)
     identity = options.get("id")
     if action in {"begin_mutation", "add_mutation_targets"}:
-        if ("paths" in options) == ("guids" in options):
-            raise InvalidGraphRequest("Supply exactly one target page: paths or inventoried GUIDs")
         paths = (
             await drained_thread(receipts.resolve_guids, options["guids"])
             if "guids" in options

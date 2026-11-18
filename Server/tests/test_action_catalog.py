@@ -370,6 +370,51 @@ def test_actionless_tool_has_one_callable_card(entries):
     assert card["effects"]["readOnlyHint"] is False
 
 
+def test_reference_graph_cards_expose_nested_inputs_used_by_execution(entries):
+    from jsonschema import Draft202012Validator
+    from services.registry.action_catalog import action_card, declared_actions, describe_action
+
+    entry = next(entry for entry in entries if entry["name"] == "manage_reference_graph")
+    for action in declared_actions(entry):
+        assert "options_schema" in action_card(entry, action)
+
+    for name, required in (
+        ("query", ["node"]),
+        ("path", ["node", "target"]),
+        ("diff", ["before", "after"]),
+    ):
+        card = action_card(entry, name)
+        assert card["required_parameters"] == ["options"]
+        assert card["options_schema"]["required"] == required
+        assert "cursor" in card["options_schema"]["properties"]
+        assert card["options_schema"]["additionalProperties"] is False
+
+    mutation = action_card(entry, "begin_mutation")["options_schema"]
+    assert mutation["oneOf"] == [{"required": ["paths"]}, {"required": ["guids"]}]
+    mutation_validator = Draft202012Validator(mutation)
+    assert mutation_validator.is_valid({"guids": ["a" * 32]})
+    assert not mutation_validator.is_valid({"guids": [], "paths": []})
+    source = Draft202012Validator(action_card(entry, "set_source")["options_schema"])
+    version = {"id": "settings", "expected_version": 1}
+    assert source.is_valid({**version, "enabled": False})
+    assert not source.is_valid(version)
+    assert source.is_valid({**version, "config": {"root": "/project", "include": ["*.json"]}})
+    descriptor = {
+        "inputSchema": {"properties": {"action": {}, "options": {"description": "Graph options"}}}
+    }
+    bound = describe_action(entry, descriptor, "path")["tool"]["inputSchema"]
+    assert "options" in bound["required"]
+    assert bound["properties"]["options"]["required"] == ["node", "target"]
+    assert bound["properties"]["options"]["description"] == "Graph options"
+    assert descriptor["inputSchema"]["properties"]["options"] == {"description": "Graph options"}
+    assert (
+        "options"
+        not in describe_action(entry, descriptor, "runtime_start")["tool"]["inputSchema"][
+            "required"
+        ]
+    )
+
+
 def test_all_guidance_matches_registered_actions_and_parameters(entries):
     from services.registry.action_catalog import TOOL_GUIDANCE, declared_actions
 
