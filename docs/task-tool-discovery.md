@@ -82,11 +82,27 @@ contributes once per candidate at the weight of its strongest field.
 Every search includes the same navigable group purposes and resource entry for
 this inventory, including when a partial lexical match is irrelevant. The
 agent can follow those selectors directly in any request language. A miss
-returns `recommended_action="browse_catalog"`. The older `next_action` field
+or an isolated shared term such as `UI` returns `recommended_action="browse_catalog"`.
+`match_basis` describes the first route's lexical evidence and each route lists its
+`matched_terms`. Words found in more than a quarter of the current inventory
+do not corroborate a route. The remaining overlaps appear in `distinctive_terms`.
+An exact identifier is sufficient to inspect a candidate. Word
+overlap measures spelling and carries no claim about the user's intended outcome.
+The older `next_action` field
 retains its tool-only lexical retry hints for existing clients. `routes`
 reports bounded lexical matches for operations and resources. The optional `catalog_query` supplies
 terms for callers using the lexical shortcut. Browse the complete
 catalog when candidate meanings fail to satisfy the requested outcome.
+
+Supply `intent="observe"`, `"interact"` or `"edit"` after interpreting the request.
+Search filters `routes` and passes the intent to its group selectors. The legacy
+`results` list retains the raw tool matches. `catalog` accepts the same intent
+with one tool or tool group and pages through classified actions even with no
+matching words. For example, browsing the UI group for `observe` includes the
+pointer hit-order diagnostic. Browsing the input tool for `interact` includes
+direct event dispatch. Read the selected card's evidence and callback limits.
+Unclassified actions remain in ordinary browsing. The CLI exposes both filters
+as `--intent`.
 
 Tool and action maturity describe support status independently of visibility
 and runtime readiness. Official skill links retain their reviewed immutable

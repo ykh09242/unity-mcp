@@ -20,6 +20,8 @@ def format_task_search(result: SearchResponse, config: CLIConfig) -> str:
     """Show useful suggestions without implying runtime availability or permission."""
     entries = result["results"]
     lines = [f"Tools: {len(entries)} shown of {result['total_matches']} matches"]
+    if result["routes"] and result["recommended_action"] == "browse_catalog":
+        lines.append("Weak lexical evidence. Browse by purpose before choosing an action.")
     for route in result["routes"]:
         target = (
             route.get("uri")

@@ -21239,6 +21239,22 @@
                 "default": false,
                 "type": "boolean"
               },
+              "intent": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "observe",
+                      "interact",
+                      "edit"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "limit": {
                 "default": 5,
                 "maximum": 20,
@@ -47694,6 +47710,22 @@
               "include_schema": {
                 "default": false,
                 "type": "boolean"
+              },
+              "intent": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "observe",
+                      "interact",
+                      "edit"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "limit": {
                 "default": 5,

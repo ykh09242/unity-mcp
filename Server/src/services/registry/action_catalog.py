@@ -29,6 +29,9 @@ from services.registry.capability_catalog import CAPABILITIES, CapabilityEffects
 from services.registry.tool_registry import TOOL_GROUPS, ToolMaturity
 
 
+ActionIntent = Literal["observe", "interact", "edit"]
+
+
 class CatalogEntry(TypedDict):
     name: str
     group: str | None
@@ -89,6 +92,7 @@ class ActionGuidance:
     required: tuple[str, ...] = ()
     effects: CapabilityEffects | None = None
     evidence_limit: str = ""
+    intent: ActionIntent | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -162,10 +166,12 @@ _ASSET_MUTATIONS: Final = {
     "move": ActionGuidance(
         "Move path to destination through the AssetDatabase. Supply reference_revision from preview_move to recheck the same scan options, require complete scan coverage and reject reference drift before mutation; omitting it performs an unguarded move.",
         ("path", "destination"),
+        intent="edit",
     ),
     "delete": ActionGuidance(
         "Delete the asset at path through the AssetDatabase. Supply reference_revision from preview_delete to recheck the same scan options, require complete scan coverage and reject reference drift before mutation; omitting it performs an unguarded delete.",
         ("path",),
+        intent="edit",
     ),
 }
 TOOL_GUIDANCE: Final = {
@@ -177,21 +183,27 @@ TOOL_GUIDANCE: Final = {
         skills=("ui-ugui",),
         actions={
             "get_hierarchy": ActionGuidance(
-                "Inspect the existing Canvas hierarchy and UI components.", ("target",)
+                "Inspect the existing Canvas hierarchy and UI components.",
+                ("target",),
+                intent="observe",
             ),
             "diagnose_raycast": ActionGuidance(
                 UGUI_RAYCAST_PURPOSE,
                 ("target", "screen_position"),
                 evidence_limit=UGUI_RAYCAST_LIMIT,
+                intent="observe",
             ),
             "diagnose_projection": ActionGuidance(
-                "Inspect current Screen Camera or World Space UI geometry and clipping without rendering or rebuilding layout."
+                "Inspect current Screen Camera or World Space UI geometry and clipping without rendering or rebuilding layout.",
+                intent="observe",
             ),
             "diagnose_text": ActionGuidance(
-                "Inspect existing generated TextMeshPro layout for text overflow and missing layout data."
+                "Inspect existing generated TextMeshPro layout for text overflow and missing layout data.",
+                intent="observe",
             ),
             "diagnose_device_profiles": ActionGuidance(
-                "Assess UI geometry across explicit device resolutions, safe areas and touch thresholds."
+                "Assess UI geometry across explicit device resolutions, safe areas and touch thresholds.",
+                intent="observe",
             ),
         },
     ),
@@ -232,12 +244,15 @@ TOOL_GUIDANCE: Final = {
                 UI_CLICK_PURPOSE,
                 ("target",),
                 evidence_limit=UI_CLICK_LIMIT,
+                intent="interact",
             ),
             "mouse": ActionGuidance(
                 "In Play Mode, move the simulated mouse to screen coordinates, then press the button there through the Input System. Observe the visible response separately.",
+                intent="interact",
             ),
             "touch": ActionGuidance(
                 "In Play Mode, press or move a simulated touch at a screen position through the Input System. Observe the receiving UI and resulting game state.",
+                intent="interact",
             ),
             "status": ActionGuidance(
                 "Read the available input backends and currently held controls before choosing a simulation method.",
@@ -474,6 +489,18 @@ def tool_capability(entry: CatalogEntry, *, visible_names: set[str] | None = Non
     }
 
 
+def action_intent(guidance: ActionGuidance | None, tool: CatalogTool) -> ActionIntent | None:
+    """Classify reviewed purposes or declared read-only effects, never admission."""
+    if guidance and guidance.intent:
+        return guidance.intent
+    read_only = (
+        guidance.effects.read_only
+        if guidance and guidance.effects
+        else tool["effects"]["readOnlyHint"]
+    )
+    return "observe" if read_only is True else None
+
+
 def action_card(entry: CatalogEntry, action: str | None) -> dict:
     """Describe one declared operation, retaining conservative tool-wide effects."""
     declared = declared_actions(entry) or [None]
@@ -511,6 +538,7 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
     return {
         "tool": entry["name"],
         "action": action,
+        "intent": action_intent(guidance, tool),
         "purpose": guidance.purpose
         if guidance and guidance.purpose
         else (action.replace("_", " ") if action else tool["description"]),
@@ -545,6 +573,7 @@ class CatalogRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     group: StrictStr | None = Field(default=None, min_length=1, max_length=128)
     tool: StrictStr | None = Field(default=None, min_length=1, max_length=128)
+    intent: ActionIntent | None = None
     offset: StrictInt = Field(default=0, ge=0)
     limit: StrictInt = Field(default=20, ge=1, le=20)
 
@@ -559,6 +588,12 @@ class CatalogRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_scope(self):
+        if (
+            self.intent
+            and not self.tool
+            and (self.group is None or self.group in {"resources", "resource_templates"})
+        ):
+            raise ValueError("Select a tool or tool group to browse actions by intent.")
         if self.group is not None and self.tool is not None:
             raise ValueError("Select one catalog group or tool.")
         if self.group is None and self.tool is None and self.offset:
@@ -682,7 +717,29 @@ def browse_catalog(
         "hint": "Interpret the user's intent in its original language. Compare purposes, targets and effects, then describe the exact tool and operation before calling it. Follow next_offset when the current page does not resolve the task.",
         "note": "Declarations describe capabilities. Advertisement, project readiness and execution permission require their own checks. Identifier-derived purposes use the enclosing tool description as context.",
     }
-    if request.group == "resources":
+    if request.intent is not None:
+        selector = "name" if request.tool else "group"
+        selected = [
+            entry for entry in ordered if entry.get(selector) == (request.tool or request.group)
+        ]
+        if not selected and (request.tool or request.group not in TOOL_GROUPS):
+            raise ValueError("Unknown tool or group for intent-based browsing.")
+        candidates = []
+        for entry in selected:
+            summary = tool_capability(entry, visible_names=visible_names)
+            for operation in summary["actions"] or [None]:
+                if action_intent(action_guidance(entry, operation), summary) == request.intent:
+                    candidates.append((entry, operation, summary["advertised"]))
+        response.update(view="intent_actions", group=request.group, intent=request.intent)
+        rows = [
+            {**action_card(entry, operation), "advertised": advertised, "readiness": "unobserved"}
+            for entry, operation, advertised in candidates[
+                request.offset : request.offset + request.limit
+            ]
+        ]
+        total = len(candidates)
+        key = "actions"
+    elif request.group == "resources":
         available = concrete_resources(resources or [])
         response.update(view="resources", group="resources")
         response["resource_templates"] = _resource_template_branch(

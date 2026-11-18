@@ -4322,6 +4322,7 @@ Browse the complete offline catalog for agent semantic selection. Start with the
 | --tool | text | optional | nargs=1 | — | — | List actions of one exact tool. |
 | --offset | integer range: [0..None] | optional | nargs=1 | 0 | — |  |
 | --limit | integer range: [1..20] | optional | nargs=1 | 20 | — |  |
+| --intent | choice: observe, interact, edit | optional | nargs=1 | — | — | Browse classified actions of the selected tool or group. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp tool describe`
@@ -4376,6 +4377,7 @@ Search the offline local catalog by task purpose, without a Unity connection. Ad
 | query | text | required | nargs=1 | — | — |  |
 | --limit | integer range: [1..20] | optional | nargs=1 | 5 | — |  |
 | --catalog-query | text | optional | nargs=1 | — | — | Optional alternate terms for literal search, such as a known API identifier. |
+| --intent | choice: observe, interact, edit | optional | nargs=1 | — | — | Filter routes by the requested outcome. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp ui`

@@ -26,8 +26,7 @@ from services.registry import (
     get_group_tool_names,
     get_registered_tools,
 )
-
-from services.registry.action_catalog import CatalogResource
+from services.registry.action_catalog import ActionIntent, CatalogResource
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -105,11 +104,17 @@ async def manage_tools(
         Field(min_length=1, max_length=128),
         "For describe, select one exact action from catalog. The returned full schema binds that action.",
     ] = None,
+    intent: Annotated[
+        ActionIntent | None,
+        "Optional purpose interpreted from any language. For search or catalog with a tool/group: observe state, interact with the running game/editor, or edit project content. Classified routes only; inspect action effects separately.",
+    ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
     discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
     modern = is_sessionless(ctx)
+    if intent is not None and action not in {"catalog", "search"}:
+        return {"success": False, "error": "intent is supported only for search or catalog."}
     if catalog_query is not None and action != "search":
         return {"success": False, "error": "catalog_query is supported only for search."}
     if offset and action != "catalog":
@@ -128,7 +133,9 @@ async def manage_tools(
                 "error": "catalog uses group or tool selectors without a query.",
             }
         try:
-            request = CatalogRequest(group=group, tool=tool, offset=offset, limit=limit)
+            request = CatalogRequest(
+                group=group, tool=tool, offset=offset, limit=limit, intent=intent
+            )
             entries, visible = await _catalog_inventory(ctx, entries, discovery)
             resources = await _catalog_resources(ctx) if request.includes_resources else []
             return browse_catalog(
@@ -145,7 +152,9 @@ async def manage_tools(
                 "error": "search accepts query, catalog_query and limit, without a group or tool selector.",
             }
         try:
-            request = SearchRequest(query=query, catalog_query=catalog_query, limit=limit)
+            request = SearchRequest(
+                query=query, catalog_query=catalog_query, limit=limit, intent=intent
+            )
         except ValidationError:
             return {
                 "success": False,

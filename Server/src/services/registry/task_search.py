@@ -1,16 +1,19 @@
 """Bounded local task matching over declarations; never an admission mechanism."""
 
 import unicodedata
+from collections import Counter
 from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
 from services.registry.action_catalog import (
+    ActionIntent,
     CatalogEntry as SearchEntry,
     CatalogResource,
     CatalogTool as SearchResult,
     RESOURCE_TEMPLATE_EXPANSION,
     action_guidance,
+    action_intent,
     catalog_navigation,
     concrete_resources,
     resource_templates,
@@ -24,6 +27,7 @@ class SearchRequest(BaseModel):
     query: StrictStr = Field(min_length=1, max_length=512)
     limit: StrictInt = Field(default=5, ge=1, le=20)
     catalog_query: StrictStr | None = Field(default=None, min_length=1, max_length=512)
+    intent: ActionIntent | None = None
 
     @field_validator("query", "catalog_query")
     @classmethod
@@ -37,6 +41,9 @@ class SearchRequest(BaseModel):
         return value
 
 
+MatchBasis = Literal["exact_identifier", "multiple_terms", "single_term", "incidental", "none"]
+
+
 class SearchResponse(TypedDict):
     scope: Literal["local_catalog", "mcp_context"]
     query: str
@@ -45,6 +52,8 @@ class SearchResponse(TypedDict):
     catalog_language: Literal["en"]
     next_action: Literal["inspect_candidates", "provide_catalog_query", "broaden_catalog_query"]
     recommended_action: Literal["inspect_candidates", "browse_catalog"]
+    match_basis: MatchBasis
+    intent: ActionIntent | None
     hint: str
     results: list[SearchResult]
     routes: list["SearchRoute"]
@@ -67,6 +76,9 @@ class SearchRoute(TypedDict):
     evidence_limit: NotRequired[str]
     advertised: bool | None
     readiness: Literal["unobserved"]
+    intent: NotRequired[ActionIntent | None]
+    matched_terms: NotRequired[list[str]]
+    distinctive_terms: NotRequired[list[str]]
 
 
 def _normalized(value: str) -> str:
@@ -94,6 +106,30 @@ def _term_evidence(words: set[str], *fields: tuple[str, int]) -> dict[str, int]:
     return evidence
 
 
+def _route_evidence(
+    route: SearchRoute, query: str, words: set[str], distinctive: set[str]
+) -> MatchBasis:
+    identifiers = [
+        value
+        for value in (
+            route.get("tool"),
+            route.get("operation"),
+            route.get("uri"),
+            route.get("uri_template"),
+            route.get("name"),
+        )
+        if value
+    ]
+    terms = sorted(words & _words(" ".join([*identifiers, route["purpose"]])))
+    route["matched_terms"] = terms
+    route["distinctive_terms"] = [word for word in terms if word in distinctive]
+    if any(query == _normalized(identifier) for identifier in identifiers):
+        return "exact_identifier"
+    if len(route["distinctive_terms"]) >= 2:
+        return "multiple_terms"
+    return "single_term" if route["distinctive_terms"] else "incidental"
+
+
 def search_catalog(
     request: SearchRequest,
     entries: list[SearchEntry],
@@ -107,6 +143,7 @@ def search_catalog(
     matched_query = request.catalog_query or request.query
     query = _normalized(matched_query)
     query_words = _words(query)
+    occurrences: Counter[str] = Counter()
     for entry in entries:
         name = entry["name"]
         result = tool_capability(entry, visible_names=visible_names)
@@ -125,6 +162,7 @@ def search_catalog(
         score += 1000 if query == _normalized(name) else 0
         score += 100 if query in _normalized(name) else 0
         action_matches = []
+        entry_terms = set(terms)
         for action in actions:
             guidance = action_guidance(entry, action)
             action_terms = _term_evidence(
@@ -132,6 +170,7 @@ def search_catalog(
             )
             if not action_terms:
                 continue
+            entry_terms.update(action_terms)
             # A repeated domain word in tool/title/action cannot crowd out the words
             # that distinguish an operation, such as performing or observing an input.
             weight = sum(
@@ -140,12 +179,18 @@ def search_catalog(
             if query == _normalized(action):
                 weight += 150
             action_matches.append((weight, action, guidance))
+        occurrences.update(entry_terms)
         action_matches.sort(key=lambda item: (-item[0], item[1]))
         if not score and not action_matches:
             continue
         best = score + action_matches[0][0] if action_matches else score
         matches.append((-best, name, result))
-        for weight, action, guidance in action_matches[:3]:
+        suggested_actions = action_matches
+        if request.intent:
+            suggested_actions = [
+                item for item in action_matches if action_intent(item[2], result) == request.intent
+            ]
+        for weight, action, guidance in suggested_actions[:3]:
             routes.append(
                 (
                     -(weight + score),
@@ -155,6 +200,7 @@ def search_catalog(
                         "kind": "tool",
                         "tool": name,
                         "operation": action,
+                        "intent": action_intent(guidance, result),
                         "purpose": guidance.purpose
                         if guidance and guidance.purpose
                         else action.replace("_", " "),
@@ -178,6 +224,7 @@ def search_catalog(
                         "kind": "tool",
                         "tool": name,
                         "purpose": result["description"][:320],
+                        "intent": action_intent(None, result),
                         "advertised": result["advertised"],
                         "readiness": "unobserved",
                     },
@@ -194,6 +241,7 @@ def search_catalog(
             "purpose": summary[:320],
             "advertised": True if visible_names is not None else None,
             "readiness": "unobserved",
+            "intent": "observe",
         }
         exact_name = False
         if "uri_template" in resource:
@@ -215,19 +263,33 @@ def search_catalog(
             route["uri"] = identifier
             evidence = _term_evidence(query_words, (resource["name"], 8), (purpose, 6))
         route["name"] = resource["name"]
+        occurrences.update(evidence.keys())
         weight = sum(evidence.values())
         if exact_name or query == _normalized(identifier):
             weight += 1000
         if weight:
             routes.append((-weight, identifier, "", route))
     matches.sort(key=lambda item: (item[0], item[1]))
+    if request.intent:
+        routes = [item for item in routes if item[3].get("intent") == request.intent]
     routes.sort(key=lambda item: item[:3])
+    selected_routes = [item[3] for item in routes[: request.limit]]
+    # Words shared by more than a quarter of this inventory cannot independently
+    # corroborate a route. This derives common vocabulary from the catalog itself.
+    documents = len(entries) + len(available_resources) + len(available_templates)
+    distinctive = {term for term, count in occurrences.items() if count <= max(1, documents // 4)}
+    bases = [_route_evidence(route, query, query_words, distinctive) for route in selected_routes]
+    basis = bases[0] if bases else "none"
     if matches:
         lexical_action = "inspect_candidates"
     elif request.catalog_query is None:
         lexical_action = "provide_catalog_query"
     else:
         lexical_action = "broaden_catalog_query"
+    navigation = catalog_navigation(entries, available_resources, available_templates)
+    if request.intent:
+        for domain in navigation["groups"]:
+            domain["browse"]["intent"] = request.intent
     return {
         "scope": "mcp_context" if visible_names is not None else "local_catalog",
         "query": request.query,
@@ -235,15 +297,20 @@ def search_catalog(
         "matching": "lexical",
         "catalog_language": "en",
         "next_action": lexical_action,
-        "recommended_action": "inspect_candidates" if routes else "browse_catalog",
+        "recommended_action": "inspect_candidates"
+        if basis in {"multiple_terms", "exact_identifier"}
+        else "browse_catalog",
+        "match_basis": basis,
+        "intent": request.intent,
         "hint": (
             "Interpret the original request in its own language. Use navigation to choose by purpose "
             "even when words do not match or lexical suggestions are incidental. Browse the selected "
-            "domain and compare action outcomes or read a listed resource. catalog_query is optional."
+            "domain and compare action outcomes or read a listed resource. Supply intent with a tool or tool group in catalog "
+            "to browse classified actions without matching any words. catalog_query is optional."
         ),
-        "navigation": catalog_navigation(entries, available_resources, available_templates),
+        "navigation": navigation,
         "results": [item[2] for item in matches[: request.limit]],
-        "routes": [item[3] for item in routes[: request.limit]],
+        "routes": selected_routes,
         "total_matches": len(matches),
         "truncated": len(matches) > request.limit,
         "note": (

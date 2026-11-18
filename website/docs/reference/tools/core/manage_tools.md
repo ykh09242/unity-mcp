@@ -29,6 +29,7 @@ Find Unity tools, actions and readable resources for a task; inspect schemas or 
 | `catalog_query` | `str \| None` | — | Optional alternate terms for literal search, such as a known API identifier. The complete catalog is available for requests in any language. |
 | `offset` | `int` | — | Catalog page offset for a selected group or tool. |
 | `operation` | `str \| None` | — | For describe, select one exact action from catalog. The returned full schema binds that action. |
+| `intent` | `Literal['observe', 'interact', 'edit'] \| None` | — | Optional purpose interpreted from any language. For search or catalog with a tool/group: observe state, interact with the running game/editor, or edit project content. Classified routes only; inspect action effects separately. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

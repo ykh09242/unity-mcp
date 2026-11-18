@@ -63,7 +63,12 @@ def _validate_query(_ctx, _param, value):
     callback=_validate_query,
     help="Optional alternate terms for literal search, such as a known API identifier.",
 )
-def search(query: str, limit: int, catalog_query: str | None) -> None:
+@click.option(
+    "--intent",
+    type=click.Choice(["observe", "interact", "edit"]),
+    help="Filter routes by the requested outcome.",
+)
+def search(query: str, limit: int, catalog_query: str | None, intent: str | None) -> None:
     """Search the offline local catalog by task purpose, without a Unity connection.
 
     Advertisement and project readiness remain unobserved in this offline scope.
@@ -79,7 +84,7 @@ def search(query: str, limit: int, catalog_query: str | None) -> None:
     list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
     list(discover_modules(Path(resources_package.__file__).parent, resources_package.__name__))
     result = search_catalog(
-        SearchRequest(query=query, catalog_query=catalog_query, limit=limit),
+        SearchRequest(query=query, catalog_query=catalog_query, limit=limit, intent=intent),
         get_registered_tools(),
         resources=get_registered_resources(),
     )
@@ -100,7 +105,14 @@ def search(query: str, limit: int, catalog_query: str | None) -> None:
 @click.option("--tool", "tool_name", help="List actions of one exact tool.")
 @click.option("--offset", type=click.IntRange(min=0), default=0, show_default=True)
 @click.option("--limit", type=click.IntRange(1, 20), default=20, show_default=True)
-def catalog(group: str | None, tool_name: str | None, offset: int, limit: int) -> None:
+@click.option(
+    "--intent",
+    type=click.Choice(["observe", "interact", "edit"]),
+    help="Browse classified actions of the selected tool or group.",
+)
+def catalog(
+    group: str | None, tool_name: str | None, offset: int, limit: int, intent: str | None
+) -> None:
     """Browse the complete offline catalog for agent semantic selection.
 
     Start with the group index, then compare tool purposes and actions. Use
@@ -116,7 +128,9 @@ def catalog(group: str | None, tool_name: str | None, offset: int, limit: int) -
     from utils.module_discovery import discover_modules
 
     try:
-        request = CatalogRequest(group=group, tool=tool_name, offset=offset, limit=limit)
+        request = CatalogRequest(
+            group=group, tool=tool_name, offset=offset, limit=limit, intent=intent
+        )
         list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
         if request.includes_resources:
             list(
