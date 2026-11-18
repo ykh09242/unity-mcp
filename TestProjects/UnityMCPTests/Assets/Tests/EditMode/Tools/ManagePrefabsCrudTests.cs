@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using System.Threading;
 using MCPForUnity.Editor.Tools.Prefabs;
 using MCPForUnity.Runtime.Helpers;
@@ -1918,11 +1917,11 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(invalidTarget.Value<string>("error").Contains("not found"));
 
                 // Invalid path
-                LogAssert.Expect(LogType.Error, new Regex(".*modify_contents.*does not exist.*"));
-                var invalidPath = ToJObject(
-                    ManagePrefabs.HandleCommand(new JObject { ["action"] = "modify_contents", ["prefabPath"] = "Assets/Nonexistent.prefab" })
-                );
+                const string missingPath = TempDirectory + "/Nonexistent.prefab";
+                var invalidPath = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "modify_contents", ["prefabPath"] = missingPath }));
                 Assert.IsFalse(invalidPath.Value<bool>("success"));
+                StringAssert.Contains(missingPath, invalidPath.Value<string>("error"));
+                LogAssert.NoUnexpectedReceived();
             }
             finally
             {
