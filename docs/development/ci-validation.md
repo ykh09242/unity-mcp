@@ -184,11 +184,18 @@ server-suite worker while the child suite runs.
 read-only qualification entry point for the exact receiving beta SHA. Relevant package,
 server, test, helper and workflow changes select it on beta pushes; it can also be
 dispatched on reviewed beta. It rejects other refs and never creates a release, tag,
-publication or version commit. Every reused job checks out the caller's immutable
-`github.sha`, verifies its checkout, and records the package-selected server separately.
+publication or version commit. Package checks verify the caller's immutable `github.sha`.
+The selected-server Python job verifies the immutable server checkout independently.
 
-With `UNITY_RUN_LICENSED_TESTS=true`, qualification requires all of these existing jobs:
+With `UNITY_RUN_LICENSED_TESTS=true`, qualification requires all of these jobs:
 
+- The [focused selected-server Python suite](../../website/docs/contributing/releases.md#validate-the-selected-server-commit).
+  Its checkout and test evidence use S, the immutable server commit selected by the receiving
+  package. The final gate compares its tested SHA to that selection.
+- The untouched UPM install workflow on both the minimum supported and current supported
+  Editors, using the original package manifest from the exact receiving SHA. Both rows require
+  the native `OriginalManifestImportsAndResolvesDependencies` test to pass. The final gate
+  checks the installation workflow's returned package SHA.
 - The real E2E bridge using the receiving package and its installed immutable selected
   server archive, with smoke, EditMode and strict PlayMode legs. The reusable
   `require_native=true` input passes `--strict-playmode`, so any failing PlayMode
@@ -775,7 +782,7 @@ The [fork release guide](../../website/docs/contributing/releases.md) defines tw
 
 The Unity package commit, its selected immutable server archive and its independent skill revision can differ. A workflow's API head SHA is retained separately from the full actual checkout SHA printed by its checkout step; PR merge tests and earlier receiving commits do not automatically verify the release target. Executed CI checkout and execution roles must use the identical complete saved job log, so a checkout snippet cannot be grafted onto another execution. A trigger head differing from a legitimately tested PR merge commit is not itself a refusal; the actual execution checkout controls attribution. Source maps containing only selected local files are historical-only because matching entries do not prove that required sources, tests, metadata or configuration were included.
 
-Keep compilation, package preparation and native execution distinct. A successful parent workflow or prepared dependency cache cannot turn skipped native jobs into passes. A native passed row requires actual coherent NUnit records, a matching Editor invocation/log and a successful applicable runner, including positive passing cases and no failed, skipped or inconclusive cases. A passing family inside a failed combined batch remains historical factual evidence with aggregate disclosure.
+Keep compilation, package preparation and native execution distinct. A successful parent workflow or prepared dependency cache cannot turn skipped native jobs into passes. A successful native evidence row requires coherent NUnit records, a matching Editor invocation and log, and a successful runner and originating job, including all applicable required-case gates. Use the [release guide's result format for all-pass runs and runs with expected platform skips](../../website/docs/contributing/releases.md#record-successful-test-runs-with-skips). A passing family inside a failed combined batch remains historical factual evidence with aggregate disclosure.
 
 Current CI release evidence also requires the execution association described in the
 [release guide](../../website/docs/contributing/releases.md#associate-execution-and-saved-outputs).

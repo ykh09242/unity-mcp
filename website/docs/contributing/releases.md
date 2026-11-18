@@ -84,11 +84,13 @@ Inside this block, use exactly these headers and values:
 - **Tested input:** `commit:` followed by the full lowercase 40-hex actual tested commit. Passed/current rows must match the selected component input P, S or C. Skipped/not-run rows use `none`. Historical local-native rows use `partial:` followed by the full lowercase SHA256 of their original nonempty source map.
 - **Evidence:** exactly one `[ID](HTTPS_URL)` link, with a unique lowercase ID matching `[a-z][a-z0-9-]{0,63}`. Retain the actual job/bundle, results and input records at that link. Local paths alone are not public retention.
 
-For a successful Python or Unity test job with expected platform skips, write the actual counts in the result cell, for example `37 passed, 2 skipped`. Both counts must be positive and match the saved JUnit or NUnit cases. The job must have zero failures, errors or inconclusive cases. Identify the platform in the scope and retain the report with the skipped cases and their reasons. Use plain `passed` when every case passed.
-
 A historical row still requires actual supported executed records with their original result, counts and environment. Local partial source maps cannot prove completeness, even when every remaining entry matches P. They are historical-only; deleting a source/test/metadata/config entry cannot turn them into current-release evidence. This first format has no complete-local-inventory adapter.
 
 Manual/live E2E and other unsupported executed records stay in truthful prose **outside** the checked block with their original links. Their kinds are rejected inside the block for every result. Do not disguise an executed unsupported record as not-run or evidence-free historical. Failed jobs that never produced the required execution records also stay outside the block as infrastructure failures; do not invent results for them.
+
+### Record successful test runs with skips
+
+Use plain `passed` when every case passed. For a successful Python, EditMode or PlayMode job with expected platform skips, write the actual counts in the result cell, for example `37 passed, 2 skipped`. Both counts must be positive and match the saved JUnit or NUnit cases. The job must have zero failures, errors or inconclusive cases. Identify the platform in the scope and retain the report with the skipped cases and their reasons. A required test case must pass even when the suite allows unrelated platform skips.
 
 ### Validate the prepared body offline
 
@@ -142,7 +144,7 @@ The destination's parent must already exist. Existing destinations, parent trave
 
 ## Publish a fork GitHub release
 
-1. Select the fork version and whether it is a prerelease or stable release. Complete the relevant checks for the prepared Git version and validate its prepared release evidence block.
+1. Select the fork version and whether it is a prerelease or stable release. Complete [exact beta release qualification](https://github.com/ykh09242/unity-mcp/blob/beta/docs/development/ci-validation.md#exact-beta-release-qualification) for the prepared Git version and validate its prepared release evidence block.
 2. Create a fork release tag on the verified commit, then publish its GitHub release with the selected prerelease state and any explicitly prepared assets. Publication is a manual maintainer operation; it does not use the upstream release workflow.
 3. Explain the fork changes, identify the Unity and Python component versions, immutable server and skill commits, and actual bounded verification evidence, and credit the original MIT authorship. Link the upstream version and commit as the baseline.
 4. Verify the published tag, target commit, release notes, prerelease state, and attached assets. Users can pin the Unity Git installation URL to the verified fork tag or commit.
