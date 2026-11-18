@@ -12,7 +12,11 @@ Use the client that fits your workflow. This package configures MCP connections;
 
 ## Use the Editor configurator
 
-Open **Window > Unity MCP (ykh09242)** and select the client in its configuration section. For local HTTP, start the server first so configuration includes its current token. Configure the selected client or detected clients together, inspect failures, then reconnect.
+Open **Window > Unity MCP (ykh09242) > Toggle MCP Window**. For local HTTP, click
+**Start Server** first so the client configuration can use its current token.
+For stdio, select **Stdio** and click **Start Session** under **Editor connection**,
+or use **Switch to stdio and connect** when it appears. Under **AI client setup**,
+select your client and click **Configure**. Review the result, then reconnect.
 
 The [Client Configurators](../guides/client-configurators.md) guide documents the package's supported config formats and special cases:
 

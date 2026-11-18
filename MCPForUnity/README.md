@@ -7,9 +7,9 @@
 Use [Install And Connect](https://ykh09242.github.io/unity-mcp/getting-started/install). Remove `com.coplaydev.unity-mcp` first: the packages share assembly names and asset GUIDs and must not coexist.
 
 1. Let the package import and resolve compilation errors.
-2. Open **Window > Unity MCP (ykh09242)** and complete dependency checks.
-3. For local HTTP, start the server before configuring clients, then connect the Unity bridge. Stdio clients launch their own server process.
-4. Configure the intended client, reconnect it, and read `mcpforunity://instances` to verify the Editor identity.
+2. Open **Window > Unity MCP (ykh09242) > Toggle MCP Window**. Use **Local Setup Window** from the same menu for dependency checks.
+3. For local HTTP, click **Start Server** before configuring clients and click **Connect** if the Editor has not connected automatically. For stdio, select **Stdio** under **Transport** and click **Start Session**, or use **Switch to stdio and connect** when it appears.
+4. Under **AI client setup**, select your client and click **Configure**, then reconnect it. A stdio client launches its own Python server. Read `mcpforunity://instances` from the client and confirm it lists your Editor.
 5. Try [a small first change](https://ykh09242.github.io/unity-mcp/getting-started/first-prompt) in a saved or disposable scene.
 
 Local HTTP uses a fresh token each launch. Verified Codex and Claude Code clients use automatic token-file lookup; configure once after upgrading and reconnect if necessary. Static-header clients need reconfiguration after server restarts. See [client configuration](https://ykh09242.github.io/unity-mcp/getting-started/clients). Keep token files and generated client configs private.

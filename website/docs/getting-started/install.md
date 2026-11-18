@@ -35,10 +35,12 @@ This tag identifies stable `2.5.0`. For a commit-addressed install, replace the 
 
 1. Let the package import and fix any Unity compilation errors first.
 2. Open **Window > Unity MCP (ykh09242) > Toggle MCP Window**. For dependency checks, open **Local Setup Window** from the same menu.
-3. Select local **HTTP** for a shared server, or **stdio** when your client needs a separate server process. Keep local HTTP on loopback unless deliberately configuring a trusted tunnel.
-4. For HTTP, start the local server and wait for it to be reachable **before configuring clients**. Connect the Unity bridge to that server. Stdio clients launch their own Python process from the generated configuration.
+3. In **Editor connection**, choose a **Transport** and start the Editor session.
+   - **Local HTTP** uses a shared server. Click **Start Server** and wait for it to become reachable before configuring clients. If the Editor has not connected automatically, click **Connect**. Keep local HTTP on loopback unless you are setting up a trusted tunnel.
+   - **Stdio** uses a server process launched by your MCP client. Select **Stdio** and click **Start Session** to enable the Editor bridge. If a transport mismatch offers **Switch to stdio and connect**, clicking it changes the transport and starts the bridge.
+4. Confirm that **Session** shows **Session Active** for your project.
 
-The Unity bridge and the MCP client are separate connections. A running Python process alone does not mean an Editor is connected.
+In stdio mode, **Start Session** enables the Unity-side bridge. The MCP client launches the Python server from its configuration when it connects in the next step.
 
 You can close the MCP window after connecting. Closing a window does not stop the
 server or disconnect the bridge. Use the explicit server/session controls when
@@ -78,7 +80,7 @@ see the release notes for exact startup, compile and runtime-evidence limits.
 
 ## 3. Configure your client
 
-Use the Editor window's client configuration section for the selected client, or configure the detected clients together. Review the result, then reconnect or restart the client if it has not reloaded its configuration.
+Under **AI client setup**, choose your client under **Selected client** and click **Configure**. Review the result, then reconnect or restart the client to load the configuration. If your client requires manual setup, use the matching [manual client configuration](./clients.md#manual-client-configuration).
 
 For Codex, Unity uses the `CODEX_HOME` inherited by the Editor, falling back to
 `~/.codex` when it is unset or empty. Detection and configuration use that root's
@@ -111,7 +113,7 @@ Then try [Your First Prompt](./first-prompt.md) in a disposable or saved scene. 
 | Python server does not start | Dependency paths and `Library/MCPForUnity/Logs/server-launch-<port>.log`. |
 | HTTP returns 401 | Current launch token; reconfigure after restart. |
 | HTTP returns 403 | Browser-origin headers are unsupported; use a native client. |
-| Server responds but no Editor is listed | Unity compile errors, bridge status, matching transport/endpoint. |
+| Server responds but no Editor is listed | Check for Unity compile errors and confirm the client and Editor use the same transport. For stdio, confirm that **Session Active** appears in Unity, then reconnect the client and read `mcpforunity://instances` again. |
 | Multiple Editors are listed | Send the chosen `unity_instance` explicitly. |
 
 Continue with [Troubleshooting](../guides/troubleshooting.md); report fork issues at [ykh09242/unity-mcp](https://github.com/ykh09242/unity-mcp/issues).

@@ -60,7 +60,7 @@ Connect an MCP assistant to the Unity Editor to inspect scenes, create objects, 
 
 1. **Install** — Unity → Package Manager → Add from git URL:
    `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v2.5.0`
-2. **Connect** — Open `Window > Unity MCP (ykh09242)`. For local HTTP, start the server before configuring clients, then connect the Unity bridge. Configure your selected client and reconnect it.
+2. **Connect** — Open **Window > Unity MCP (ykh09242) > Toggle MCP Window**. For local HTTP, click **Start Server**, wait for it to become reachable, then click **Connect** if the Editor has not connected automatically. For stdio, select **Stdio** under **Transport** and click **Start Session**. If the panel offers **Switch to stdio and connect**, that button starts the bridge for you. Under **AI client setup**, select your client and click **Configure**, then reconnect it. A stdio client launches its own Python server when it connects.
 3. **Verify** — Read `mcpforunity://instances`, choose the Editor, and inspect its project/scene before making [a small first change](website/docs/getting-started/first-prompt.md).
 
 **Start here:** [Install And Connect](website/docs/getting-started/install.md) · [Migrate From Upstream](website/docs/getting-started/migrate.md) · [Manual Client Configuration](website/docs/getting-started/clients.md) · [Troubleshooting](website/docs/guides/troubleshooting.md).
