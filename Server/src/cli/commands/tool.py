@@ -94,7 +94,8 @@ def search(query: str, limit: int, catalog_query: str | None) -> None:
 
 @tool.command("catalog")
 @click.option(
-    "--group", help="List tools in one catalog group, or select resources for readable Unity state."
+    "--group",
+    help="Select a tool group, resources for fixed URIs, or resource_templates for parameterized Unity observations.",
 )
 @click.option("--tool", "tool_name", help="List actions of one exact tool.")
 @click.option("--offset", type=click.IntRange(min=0), default=0, show_default=True)

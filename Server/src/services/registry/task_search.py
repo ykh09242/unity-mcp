@@ -9,9 +9,11 @@ from services.registry.action_catalog import (
     CatalogEntry as SearchEntry,
     CatalogResource,
     CatalogTool as SearchResult,
+    RESOURCE_TEMPLATE_EXPANSION,
     action_guidance,
     catalog_navigation,
     concrete_resources,
+    resource_templates,
     tool_capability,
     tool_description,
 )
@@ -53,10 +55,14 @@ class SearchResponse(TypedDict):
 
 
 class SearchRoute(TypedDict):
-    kind: Literal["tool", "resource"]
+    kind: Literal["tool", "resource", "resource_template"]
     tool: NotRequired[str]
     operation: NotRequired[str]
     uri: NotRequired[str]
+    uri_template: NotRequired[str]
+    name: NotRequired[str]
+    required_parameters: NotRequired[list[str]]
+    optional_parameters: NotRequired[list[str]]
     purpose: str
     evidence_limit: NotRequired[str]
     advertised: bool | None
@@ -178,28 +184,42 @@ def search_catalog(
                 )
             )
     available_resources = concrete_resources(resources or [])
-    for resource in available_resources:
-        uri = resource["uri"]
+    available_templates = resource_templates(resources or [])
+    for resource in [*available_resources, *available_templates]:
         description = resource.get("description") or ""
-        purpose = description.split("\n", 1)[0].split(". ", 1)[0]
-        weight = sum(_term_evidence(query_words, (resource["name"], 8), (purpose, 6)).values())
-        if query == _normalized(uri):
+        summary = description.split("\n", 1)[0]
+        purpose = summary.split(". ", 1)[0]
+        route: SearchRoute = {
+            "kind": "resource",
+            "purpose": summary[:320],
+            "advertised": True if visible_names is not None else None,
+            "readiness": "unobserved",
+        }
+        exact_name = False
+        if "uri_template" in resource:
+            identifier = resource["uri_template"]
+            route["kind"] = "resource_template"
+            route["uri_template"] = identifier
+            route["required_parameters"] = resource["required_parameters"]
+            route["optional_parameters"] = resource["optional_parameters"]
+            route["evidence_limit"] = RESOURCE_TEMPLATE_EXPANSION
+            exact_name = query == _normalized(resource["name"])
+            evidence = _term_evidence(
+                query_words,
+                (resource["name"], 6),
+                (purpose, 5),
+                (identifier.partition("://")[2], 4),
+            )
+        else:
+            identifier = resource["uri"]
+            route["uri"] = identifier
+            evidence = _term_evidence(query_words, (resource["name"], 8), (purpose, 6))
+        route["name"] = resource["name"]
+        weight = sum(evidence.values())
+        if exact_name or query == _normalized(identifier):
             weight += 1000
         if weight:
-            routes.append(
-                (
-                    -weight,
-                    uri,
-                    "",
-                    {
-                        "kind": "resource",
-                        "uri": uri,
-                        "purpose": description.split("\n", 1)[0][:320],
-                        "advertised": True if visible_names is not None else None,
-                        "readiness": "unobserved",
-                    },
-                )
-            )
+            routes.append((-weight, identifier, "", route))
     matches.sort(key=lambda item: (item[0], item[1]))
     routes.sort(key=lambda item: item[:3])
     if matches:
@@ -221,7 +241,7 @@ def search_catalog(
             "even when words do not match or lexical suggestions are incidental. Browse the selected "
             "domain and compare action outcomes or read a listed resource. catalog_query is optional."
         ),
-        "navigation": catalog_navigation(entries, available_resources),
+        "navigation": catalog_navigation(entries, available_resources, available_templates),
         "results": [item[2] for item in matches[: request.limit]],
         "routes": [item[3] for item in routes[: request.limit]],
         "total_matches": len(matches),

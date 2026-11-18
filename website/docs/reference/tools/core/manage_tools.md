@@ -21,7 +21,7 @@ Find Unity tools, actions and readable resources for a task; inspect schemas or 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `action` | `Literal['list_groups', 'activate', 'deactivate', 'sync', 'reset', 'describe', 'search', 'catalog']` | yes | Action to perform. |
-| `group` | `str \| None` | — | Group name for activate/deactivate/catalog; use resources to browse readable state in catalog. Valid groups: animation, asset_gen, assets, camera, core, docs, graphics, legacy, physics, prefabs, probuilder, profiling, scene, scripting_ext, testing, ui, vfx |
+| `group` | `str \| None` | — | Group name for activate/deactivate/catalog. Catalog also supports resources for fixed URIs and resource_templates for parameterized Unity observations. Valid groups: animation, asset_gen, assets, camera, core, docs, graphics, legacy, physics, prefabs, probuilder, profiling, scene, scripting_ext, testing, ui, vfx |
 | `tool` | `str \| None` | — | Single tool name for activate/deactivate/describe/catalog. Discover names with catalog. |
 | `query` | `str \| None` | — | Original task query or exact identifier for search (1..512 characters). |
 | `limit` | `int` | — | Maximum search or catalog page entries (1..20). |

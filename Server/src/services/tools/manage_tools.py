@@ -27,6 +27,8 @@ from services.registry import (
     get_registered_tools,
 )
 
+from services.registry.action_catalog import CatalogResource
+
 logger = logging.getLogger("mcp-for-unity-server")
 
 
@@ -69,7 +71,8 @@ async def manage_tools(
     ],
     group: Annotated[
         str | None,
-        "Group name for activate/deactivate/catalog; use resources to browse readable state in catalog. "
+        "Group name for activate/deactivate/catalog. Catalog also supports resources for fixed URIs "
+        "and resource_templates for parameterized Unity observations. "
         "Valid groups: " + ", ".join(sorted(TOOL_GROUPS.keys())),
     ] = None,
     tool: Annotated[
@@ -330,11 +333,30 @@ async def manage_tools(
     return {"success": False, "error": f"Unknown action '{action}'"}
 
 
-async def _catalog_resources(ctx):
-    return [
+async def _catalog_resources(ctx: Context) -> list[CatalogResource]:
+    from fastmcp.utilities.versions import dedupe_with_versions
+    from services.operation_permissions import authorize_remote_resource
+
+    # Keep the resource listing permission check when skipping the listing middleware.
+    await authorize_remote_resource()
+    resources: list[CatalogResource] = [
         {"uri": str(item.uri), "name": item.name, "description": item.description or ""}
         for item in await ctx.fastmcp.list_resources(run_middleware=False)
     ]
+    templates = dedupe_with_versions(
+        await ctx.fastmcp.list_resource_templates(run_middleware=False),
+        lambda item: item.uri_template,
+    )
+    resources.extend(
+        {
+            "uri": item.uri_template,
+            "name": item.name,
+            "description": item.description or "",
+            "schema_required": tuple(item.parameters.get("required", ())),
+        }
+        for item in templates
+    )
+    return resources
 
 
 async def _catalog_inventory(ctx, declarations, discovery):

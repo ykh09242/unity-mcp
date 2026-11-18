@@ -4,10 +4,12 @@ Catalog hints describe capabilities. Existing invocation and permission checks
 remain authoritative and never consult these hints for admission or retries.
 """
 
+import inspect
+import re
+from collections.abc import Callable, Collection
 from copy import deepcopy
 from dataclasses import dataclass, field
-import inspect
-from typing import Callable, Final, Literal, NotRequired, TypedDict, get_args, get_origin
+from typing import Final, Literal, NotRequired, TypedDict, get_args, get_origin
 
 from mcp.types import ToolAnnotations
 from pydantic import (
@@ -45,7 +47,24 @@ class SkillLink(TypedDict):
 class CatalogResource(TypedDict):
     name: str
     uri: str
+    description: str | None
+    func: NotRequired[Callable]
+    schema_required: NotRequired[Collection[str]]
+
+
+class CatalogResourceTemplate(TypedDict):
+    kind: Literal["resource_template"]
+    name: str
+    uri_template: str
     description: str
+    required_parameters: list[str]
+    optional_parameters: list[str]
+
+
+RESOURCE_TEMPLATE_EXPANSION: Final = (
+    "Expand the URI template (RFC 6570) with observed values for required parameters "
+    "and any needed optional parameters, then read the resulting URI."
+)
 
 
 class CatalogTool(TypedDict):
@@ -548,7 +567,7 @@ class CatalogRequest(BaseModel):
 
     @property
     def includes_resources(self) -> bool:
-        return self.tool is None and self.group in (None, "resources")
+        return self.tool is None and self.group in (None, "resources", "resource_templates")
 
 
 def concrete_resources(resources: list[CatalogResource]) -> list[CatalogResource]:
@@ -563,6 +582,51 @@ def concrete_resources(resources: list[CatalogResource]) -> list[CatalogResource
     )
 
 
+def resource_templates(resources: list[CatalogResource]) -> list[CatalogResourceTemplate]:
+    """Project template variables, keeping their spelling and order for URI expansion."""
+    templates: list[CatalogResourceTemplate] = []
+    for item in resources:
+        uri = item["uri"]
+        if not uri.startswith("mcpforunity://"):
+            continue
+        expressions = re.findall(r"\{([^{}]+)\}", uri)
+        if not expressions:
+            continue
+        declared_required = set(item.get("schema_required", ()))
+        if function := item.get("func"):
+            declared_required.update(
+                parameter.name
+                for parameter in inspect.signature(function).parameters.values()
+                if parameter.default is inspect.Parameter.empty
+            )
+        variables: dict[str, bool] = {}
+        for expression in expressions:
+            operator = expression[0] if expression[0] in "+#./;?&" else ""
+            for spec in expression[len(operator) :].split(","):
+                name = spec.removesuffix("*").partition(":")[0]
+                # A simple path value occupies a required segment. Prefixed expansions
+                # such as {/child} can disappear unless the handler requires the variable.
+                variables[name] = (
+                    variables.get(name, False)
+                    or operator in ("", "+")
+                    or name in declared_required
+                    or name.replace("-", "_") in declared_required
+                )
+        templates.append(
+            {
+                "kind": "resource_template",
+                "name": item["name"],
+                "uri_template": uri,
+                "description": item["description"] or "",
+                "required_parameters": [name for name, required in variables.items() if required],
+                "optional_parameters": [
+                    name for name, required in variables.items() if not required
+                ],
+            }
+        )
+    return sorted(templates, key=lambda item: item["uri_template"])
+
+
 def _resource_branch(total: int) -> dict:
     return {
         "purpose": "Read published Unity Editor, project and scene observations.",
@@ -571,7 +635,19 @@ def _resource_branch(total: int) -> dict:
     }
 
 
-def catalog_navigation(entries: list[CatalogEntry], resources: list[CatalogResource]) -> dict:
+def _resource_template_branch(total: int) -> dict:
+    return {
+        "purpose": "Read parameterized Unity observations, such as one GameObject or prefab.",
+        "total": total,
+        "browse": {"action": "catalog", "group": "resource_templates"},
+    }
+
+
+def catalog_navigation(
+    entries: list[CatalogEntry],
+    resources: list[CatalogResource],
+    templates: list[CatalogResourceTemplate] | None = None,
+) -> dict:
     """An agent can choose a domain by purpose without translating or matching query words."""
     groups = sorted({item["group"] for item in entries if item.get("group")})
     return {
@@ -585,6 +661,7 @@ def catalog_navigation(entries: list[CatalogEntry], resources: list[CatalogResou
         ],
         "server_tools": sorted(item["name"] for item in entries if not item.get("group")),
         "resources": _resource_branch(len(resources)),
+        "resource_templates": _resource_template_branch(len(templates or ())),
     }
 
 
@@ -608,6 +685,9 @@ def browse_catalog(
     if request.group == "resources":
         available = concrete_resources(resources or [])
         response.update(view="resources", group="resources")
+        response["resource_templates"] = _resource_template_branch(
+            len(resource_templates(resources or []))
+        )
         total = len(available)
         rows = [
             {
@@ -620,6 +700,20 @@ def browse_catalog(
             for item in available[request.offset : request.offset + request.limit]
         ]
         key = "resources"
+    elif request.group == "resource_templates":
+        templates = resource_templates(resources or [])
+        response.update(view="resource_templates", group="resource_templates")
+        response["input_contract"] = RESOURCE_TEMPLATE_EXPANSION
+        total = len(templates)
+        rows = [
+            {
+                **item,
+                "advertised": True if visible_names is not None else None,
+                "readiness": "unobserved",
+            }
+            for item in templates[request.offset : request.offset + request.limit]
+        ]
+        key = "resource_templates"
     elif request.tool is not None:
         entry = next((entry for entry in ordered if entry["name"] == request.tool), None)
         if entry is None:
@@ -649,6 +743,9 @@ def browse_catalog(
     else:
         response["view"] = "groups"
         response["resources"] = _resource_branch(len(concrete_resources(resources or [])))
+        response["resource_templates"] = _resource_template_branch(
+            len(resource_templates(resources or []))
+        )
         groups = sorted({entry.get("group") for entry in ordered}, key=lambda value: value or "")
         response["groups"] = [
             {

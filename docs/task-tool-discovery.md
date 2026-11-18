@@ -1,7 +1,13 @@
 # Action catalog and task discovery
 
 Use `manage_tools(action="catalog")` to read the group index and the entry for
-readable Unity state. Follow its resource selector to inspect fixed resource URIs.
+readable Unity state. Follow `resources` for fixed URIs or `resource_templates`
+for parameterized reads. Both branches have their own pagination. Template rows
+preserve the original `uri_template` and list required and optional parameters.
+For example, after observing a GameObject instance ID in the selected scene,
+expand `mcpforunity://scene/gameobject/{instance_id}/children{?page_size,cursor}`
+with that ID. Read the expanded URI. A continuation uses the returned cursor
+and the same page size. Component or hierarchy changes can invalidate live IDs.
 The calling agent interprets the user's request in its original language, selects
 relevant groups/tools, compares action purposes and effects, and obtains the full
 schema with `manage_tools(action="describe", tool="NAME", operation="ACTION")`.

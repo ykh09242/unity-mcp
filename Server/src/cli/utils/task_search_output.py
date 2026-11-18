@@ -21,8 +21,10 @@ def format_task_search(result: SearchResponse, config: CLIConfig) -> str:
     entries = result["results"]
     lines = [f"Tools: {len(entries)} shown of {result['total_matches']} matches"]
     for route in result["routes"]:
-        target = route.get("uri") or ".".join(
-            value for value in (route.get("tool"), route.get("operation")) if value
+        target = (
+            route.get("uri")
+            or route.get("uri_template")
+            or ".".join(value for value in (route.get("tool"), route.get("operation")) if value)
         )
         lines.append(f"  {route['kind']} {target} — {_summary(route['purpose'])}")
         if route.get("evidence_limit"):
@@ -33,6 +35,13 @@ def format_task_search(result: SearchResponse, config: CLIConfig) -> str:
         lines.append(f"  {group['group']}: {group['purpose']}")
     if result["navigation"]["resources"]["total"]:
         lines.append("  resources: " + result["navigation"]["resources"]["purpose"])
+    if result["navigation"]["resource_templates"]["total"]:
+        lines.append(
+            "  resource_templates: " + result["navigation"]["resource_templates"]["purpose"]
+        )
+        lines.append(
+            "  " + followup_command(config, ["tool", "catalog", "--group", "resource_templates"])
+        )
     lines.append("  " + followup_command(config, ["tool", "catalog"]))
     for entry in entries:
         lines.append(f"\n{entry['name']} [{entry['maturity']}] — {_summary(entry['title'])}")

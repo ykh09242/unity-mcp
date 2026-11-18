@@ -4318,7 +4318,7 @@ Browse the complete offline catalog for agent semantic selection. Start with the
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| --group | text | optional | nargs=1 | — | — | List tools in one catalog group, or select resources for readable Unity state. |
+| --group | text | optional | nargs=1 | — | — | Select a tool group, resources for fixed URIs, or resource_templates for parameterized Unity observations. |
 | --tool | text | optional | nargs=1 | — | — | List actions of one exact tool. |
 | --offset | integer range: [0..None] | optional | nargs=1 | 0 | — |  |
 | --limit | integer range: [1..20] | optional | nargs=1 | 20 | — |  |
