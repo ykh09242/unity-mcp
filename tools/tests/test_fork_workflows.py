@@ -331,18 +331,32 @@ def test_python_lint_is_a_blocking_step_with_locked_dependencies() -> None:
 
 
 @pytest.mark.parametrize(
-    "platform,budget", [("windows-latest", 10), ("ubuntu-26.04", 10), ("macos-26-intel", 20)]
+    "job_name,step_name,macos_budget",
+    [
+        ("reference_graph", None, 20),
+        ("installed_archive", None, 20),
+        ("installed_archive", "Install candidate archive without runtime lock", 18),
+    ],
 )
-def test_reference_graph_cold_build_budget_is_mac_only(platform, budget):
-    job = workflow("python-tests.yml")["jobs"]["reference_graph"]
+@pytest.mark.parametrize("platform", ["windows-latest", "ubuntu-26.04", "macos-26-intel"])
+def test_cold_build_budgets_are_mac_only(job_name, step_name, macos_budget, platform):
+    job = workflow("python-tests.yml")["jobs"][job_name]
     assert platform in job["strategy"]["matrix"]["os"]
-    expression = re.fullmatch(
-        r"\$\{\{ startsWith\(matrix.os, '([^']+)'\) && ([0-9]+) \|\| ([0-9]+) }}",
-        str(job["timeout-minutes"]),
+    target = (
+        job
+        if step_name is None
+        else next(step for step in job["steps"] if step.get("name") == step_name)
     )
-    assert expression is not None, "Use the OS row's bounded cold-build deadline"
-    actual = int(expression[2] if platform.startswith(expression[1]) else expression[3])
-    assert actual == budget
+    timeout = target.get("timeout-minutes", job["timeout-minutes"])
+    if isinstance(timeout, int):
+        actual = timeout
+    else:
+        expression = re.fullmatch(
+            r"\$\{\{ startsWith\(matrix.os, '([^']+)'\) && ([0-9]+) \|\| ([0-9]+) }}", timeout
+        )
+        assert expression is not None, "Use the OS row's bounded cold-build deadline"
+        actual = int(expression[2] if platform.startswith(expression[1]) else expression[3])
+    assert actual == (macos_budget if platform.startswith("macos") else 10)
 
 
 @pytest.mark.parametrize(

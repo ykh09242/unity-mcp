@@ -278,7 +278,8 @@ jobs:
     name: Installed candidate archive (${{ matrix.os }}, Python ${{ matrix.python-version }})
     if: inputs.validation_profile != 'tools-only'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    # The cold, unlocked install can build cryptography from source on macOS Intel.
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 20 || 10 }}
     strategy:
       fail-fast: false
       matrix:
@@ -316,6 +317,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: false
       - name: Install candidate archive without runtime lock
+        # Leave time for the evidence upload if a macOS source build times out.
+        timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 18 || 10 }}
         env:
           UV_CACHE_DIR: ${{ runner.temp }}/candidate-archive-cache
           ARCHIVE_PYTHON_VERSION: ${{ matrix.python-version }}
