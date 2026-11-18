@@ -13,7 +13,7 @@ warnings-as-errors on 3.15 until an upstream fix is released. The lint runner us
 one worker on 3.15 because dill 0.4.1 still references the removed `co_lnotab` attribute.
 
 The server uses FastMCP **4.2.1**, MCP SDK and types **2.3.0**, and Pillow **13.x**.
-The FastMCP update includes fixes for tool schemas and JSON argument matching.
+The server uses typed Skills messages and preserves middleware edits to bounded tool results.
 The test-results App uses FastMCP's typed UI metadata. The local CLI shares one
 MCP SDK client implementation so each diagnostic owns its HTTP connection until
 cleanup completes. See the [November dependency review](../docs/development/dependency-refresh-2026-11-05.md).

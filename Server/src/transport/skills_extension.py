@@ -1,7 +1,6 @@
 """Serve the canonical packaged skill through the final read-only Skills extension."""
 
 import base64
-import copy
 import hashlib
 from importlib import metadata, resources
 from inspect import signature
@@ -139,8 +138,10 @@ def install_skills(
         # Optional API imports stay inside the refusal boundary.
         from fastmcp.resources import Resource
         from fastmcp.server.extensions import MethodBinding, ServerExtension
+        from fastmcp.skills import GetSkillResult, ListSkillsResult
+        from fastmcp.skills.models import GetSkillParams, ListSkillsParams
         from mcp.shared.exceptions import MCPError
-        from mcp_types import CacheableResult, INVALID_PARAMS, RequestParams
+        from mcp_types import INVALID_PARAMS
         from pydantic import Field
 
         if not all(
@@ -165,18 +166,9 @@ def install_skills(
             with resources.files("services").joinpath("skills_bundle.json").open("rb") as stream:
                 bundle_bytes = stream.read(MAX_BUNDLE_BYTES + 1)
         texts, listed, fetched = _snapshot(bundle_bytes)
-
-        class ListParams(RequestParams):
-            cursor: str | None = None
-
-        class GetParams(RequestParams):
-            uri: str
-
-        class ListResult(CacheableResult):
-            skills: list[dict[str, JsonValue]]
-
-        class GetResult(CacheableResult):
-            skill: dict[str, JsonValue]
+        # Validate the protocol projections once, before publishing any resources.
+        list_result = ListSkillsResult.model_validate(listed)
+        get_result = GetSkillResult.model_validate(fetched)
 
         class SkillResource(Resource):
             text: str = Field(exclude=True, repr=False)
@@ -190,18 +182,18 @@ def install_skills(
             async def list_skills(self, _context, params):
                 if params.cursor is not None:
                     raise MCPError(INVALID_PARAMS, "Unknown skill cursor")
-                return ListResult.model_validate(copy.deepcopy(listed))
+                return list_result.model_copy(deep=True)
 
             async def get_skill(self, _context, params):
                 if params.uri != SKILL_URI:
                     raise MCPError(INVALID_PARAMS, "Unknown skill URI")
-                return GetResult.model_validate(copy.deepcopy(fetched))
+                return get_result.model_copy(deep=True)
 
             def methods(self):
                 versions = frozenset({"2026-07-28"})
                 return (
-                    MethodBinding("skills/list", ListParams, self.list_skills, versions),
-                    MethodBinding("skills/get", GetParams, self.get_skill, versions),
+                    MethodBinding("skills/list", ListSkillsParams, self.list_skills, versions),
+                    MethodBinding("skills/get", GetSkillParams, self.get_skill, versions),
                 )
 
         extension = SkillsExtension()

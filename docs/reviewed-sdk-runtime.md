@@ -71,7 +71,17 @@ then restart. A closed input ledger reports `restart_server`. Disabled scene
 inputs leave ordinary explicit scene arguments available. No limits or operation
 deadlines are reduced by these diagnostics.
 
-## Experimental Skills provider evaluation
+## Skills on FastMCP 4.2.1
+
+The packaged adapter uses FastMCP's `ListSkillsParams`, `GetSkillParams`,
+`ListSkillsResult` and `GetSkillResult`. It validates the bundled manifest
+before registering resources and gives each request a detached result. The
+server's tool visibility transforms still prevent the upstream `SkillsExtension`
+from discovering skill sources. The packaged adapter preserves the approved
+revision, file digests and private cache hints with those transforms enabled.
+[FastMCP 4.2 Skills release](https://github.com/PrefectHQ/fastmcp/releases/tag/v4.2.0) · [Upstream extension implementation](https://github.com/PrefectHQ/fastmcp/blob/v4.2.1/fastmcp_slim/fastmcp/skills/extension.py)
+
+## Earlier experimental Skills provider evaluation
 
 The FastMCP 4.1.3 provider was compared with the packaged adapter using an owned
 copy of the canonical skill bundle and real modern HTTP list/get/read requests.

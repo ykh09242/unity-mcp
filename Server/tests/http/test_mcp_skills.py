@@ -177,7 +177,16 @@ async def test_packaged_skill_is_discovered_then_read_on_demand(skills_server, d
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "kind", ["checksum", "file_digest", "file_size", "name", "missing_main", "case_collision"]
+    "kind",
+    [
+        "checksum",
+        "file_digest",
+        "file_size",
+        "name",
+        "allowed_tools",
+        "missing_main",
+        "case_collision",
+    ],
 )
 async def test_invalid_bundle_refuses_the_whole_optional_publication(bare_skills_server, kind):
     # Given: accidental corruption or an invalid metadata/file-set record.
@@ -195,6 +204,8 @@ async def test_invalid_bundle_refuses_the_whole_optional_publication(bare_skills
             payload["files"][0]["size"] += 1
         elif kind == "name":
             payload["frontmatter"]["name"] = "unexpected-skill"
+        elif kind == "allowed_tools":
+            payload["frontmatter"]["allowed-tools"] = {"tool": "unexpected mapping"}
         elif kind == "missing_main":
             payload["files"] = [item for item in payload["files"] if item["path"] != "SKILL.md"]
         else:
