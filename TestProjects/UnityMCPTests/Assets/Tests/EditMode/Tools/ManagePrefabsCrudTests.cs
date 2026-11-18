@@ -14,6 +14,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.TestTools;
 using static MCPForUnityTests.Editor.TestUtilities;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -534,6 +535,78 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(keys.Count, keys.Distinct().Count());
             CollectionAssert.AreEqual(new[] { "0", "0/0", "0/1" }, keys.Take(3));
             Assert.IsNull(PrefabStageUtility.GetCurrentPrefabStage());
+        }
+
+        [TestCase(37)]
+        [TestCase(150)]
+        public void HierarchyPaging_MeasuresWholeTraversalAndNativeLoads(int pageSize)
+        {
+            string path = CreatePagingPrefab(603);
+            Assert.IsTrue(ReadHierarchyPage(path, pageSize).Value<bool>("success"));
+            int previewScenes = EditorSceneManager.previewSceneCount;
+            var field = typeof(ManagePrefabs).GetField("LoadHierarchyPrefabContents", BindingFlags.Static | BindingFlags.NonPublic);
+            var original = (Func<string, GameObject>)field.GetValue(null);
+            int nativeLoads = 0;
+            long nativeLoadTicks = 0;
+            Func<string, GameObject> measure = assetPath =>
+            {
+                long start = Stopwatch.GetTimestamp();
+                try
+                {
+                    return original(assetPath);
+                }
+                finally
+                {
+                    nativeLoads++;
+                    nativeLoadTicks += Stopwatch.GetTimestamp() - start;
+                }
+            };
+            var keys = new HashSet<string>();
+            long handlerTicks = 0;
+            long maxPageTicks = 0;
+            int pages = 0;
+            string cursor = null;
+            try
+            {
+                field.SetValue(null, measure);
+                do
+                {
+                    var request = new JObject
+                    {
+                        ["action"] = "get_hierarchy",
+                        ["prefabPath"] = path,
+                        ["page_size"] = pageSize,
+                        ["cursor"] = cursor,
+                    };
+                    long start = Stopwatch.GetTimestamp();
+                    object result = ManagePrefabs.HandleCommand(request);
+                    long ticks = Stopwatch.GetTimestamp() - start;
+                    handlerTicks += ticks;
+                    maxPageTicks = Math.Max(maxPageTicks, ticks);
+                    var response = ToJObject(result);
+                    Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                    var data = (JObject)response["data"];
+                    foreach (JObject row in data["items"])
+                        Assert.IsTrue(keys.Add(row.Value<string>("hierarchyKey")));
+                    cursor = data.Value<string>("next_cursor");
+                    Assert.AreEqual(previewScenes, EditorSceneManager.previewSceneCount);
+                    Assert.Less(++pages, 30);
+                } while (cursor != null);
+            }
+            finally
+            {
+                field.SetValue(null, original);
+            }
+            Assert.AreEqual(604, keys.Count);
+            Assert.Greater(pages, 1);
+            Assert.Greater(nativeLoads, 0, "The traversal must exercise the measured native load boundary.");
+            Assert.LessOrEqual(nativeLoads, pages);
+            double ms = 1000.0 / Stopwatch.Frequency;
+            TestContext.WriteLine(
+                FormattableString.Invariant(
+                    $"prefab_hierarchy_paging nodes={keys.Count} page_size={pageSize} pages={pages} native_loads={nativeLoads} native_load_ms={nativeLoadTicks * ms:F3} handler_ms={handlerTicks * ms:F3} slowest_page_ms={maxPageTicks * ms:F3}"
+                )
+            );
         }
 
         [Test]

@@ -825,11 +825,14 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             });
         }
 
+        // The measurement fixture wraps the native load without timing unrelated traversal or receipt serialization.
+        private static Func<string, GameObject> LoadHierarchyPrefabContents = PrefabUtility.LoadPrefabContents;
+
         private static object ReadLoadedPrefab(string sanitizedPath, Func<GameObject, object> read)
         {
             // Unity's synchronous native load reads the full asset; the managed traversal and
             // response budgets below cannot preempt this operation. Never retain its scene.
-            GameObject prefabContents = PrefabUtility.LoadPrefabContents(sanitizedPath);
+            GameObject prefabContents = LoadHierarchyPrefabContents(sanitizedPath);
             if (prefabContents == null)
             {
                 return new ErrorResponse($"Failed to load prefab contents from '{sanitizedPath}'.");
