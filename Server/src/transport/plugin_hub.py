@@ -66,7 +66,7 @@ from transport.local_project_context import (
 from transport.tool_list_notifier import ToolListNotifier
 from transport.charge_ledger import ChargeLedger
 from transport.json_decoder import decode_json
-from transport.editor_state_store import EditorStateStore
+from transport.editor_state_store import EditorStateClock, EditorStateStore
 from transport.large_result_assembler import (
     CAPABILITY as LARGE_RESULT_CAPABILITY,
     MAGIC,
@@ -1313,6 +1313,7 @@ class PluginHub(WebSocketEndpoint):
             return
         lease = cls._socket_lease(websocket)
         async with lease.own() if lease is not None else nullcontext():
+            websocket.state.plugin_before_accept = time.monotonic()
             await websocket.accept()
             msg = WelcomeMessage(
                 serverTimeout=self.SERVER_TIMEOUT,
@@ -1700,6 +1701,8 @@ class PluginHub(WebSocketEndpoint):
         cls,
         unity_instance: str | None,
         user_id: str | None = None,
+        *,
+        on_clock: Callable[[EditorStateClock], None] | None = None,
     ) -> dict[str, Any] | None:
         """Read only a fresh snapshot owned by the currently routed connection."""
         if cls._registry is None or cls._lock is None:
@@ -1728,7 +1731,13 @@ class PluginHub(WebSocketEndpoint):
                 or websocket.client_state != WebSocketState.CONNECTED
             ):
                 return None
-            return cls._editor_states.get(session_id, user_id)
+            clock = getattr(websocket.state, "plugin_editor_state_clock", None)
+            if not isinstance(clock, EditorStateClock):
+                return cls._editor_states.get(session_id, user_id)
+            state = cls._editor_states.get(session_id, user_id, clock=clock)
+            if state is not None and on_clock is not None:
+                on_clock(clock)
+            return state
 
     @classmethod
     async def _read_identity(
@@ -2553,6 +2562,18 @@ class PluginHub(WebSocketEndpoint):
                 lambda: command_envelope(command_id, command_type, params, unity_timeout_s),
                 large=large_payload or needs_response_worker(params),
             )
+            request_clock = (
+                command_type == "get_editor_state"
+                and not params
+                and _catalog_guard is None
+                and isinstance(
+                    getattr(websocket.state, "plugin_editor_state_clock", None), EditorStateClock
+                )
+            )
+            if request_clock:
+                # The per-attempt witness is transport metadata. Journal admission,
+                # status and cancellation must all fingerprint the original params.
+                payload["editor_clock_request"] = command_id
             if arbitration is not None:
                 payload["arbitration"] = arbitration.to_wire()
                 entry["arbitration_params"] = payload["params"]
@@ -2707,6 +2728,20 @@ class PluginHub(WebSocketEndpoint):
                 if receipt_pin is not None:
                     own_future(send_task, receipt_pin)
                 result = await dispatch.observe(send_task, wait_for=asyncio.wait_for)
+                if command_type == "get_editor_state":
+                    clock = getattr(websocket.state, "plugin_editor_state_clock", None)
+                    if (
+                        request_clock
+                        and isinstance(clock, EditorStateClock)
+                        and budget.editor_state_clock_sent is not None
+                    ):
+                        clock = clock.refine_from_reply(
+                            result, command_id, budget.editor_state_clock_sent, time.monotonic()
+                        )
+                        websocket.state.plugin_editor_state_clock = clock
+                    budget.editor_state_clock = (
+                        clock if isinstance(clock, EditorStateClock) else None
+                    )
                 if "rejected_result_observed" in entry:
                     may_mutate = _catalog_guard is not None or not cls._is_non_mutating(
                         command_type, params
@@ -3169,6 +3204,15 @@ class PluginHub(WebSocketEndpoint):
                 accepted = accepted - {ORIGIN_CAPABILITY, CLOCK_CAPABILITY}
             websocket.state.plugin_resume_clock = (
                 resume_clock if CLOCK_CAPABILITY in accepted else None
+            )
+            before_accept = getattr(websocket.state, "plugin_before_accept", None)
+            websocket.state.plugin_editor_state_clock = (
+                EditorStateClock(resume_clock.editor_unix_ms, before_accept)
+                if config.http_remote_hosted
+                and CLOCK_CAPABILITY in accepted
+                and resume_clock is not None
+                and isinstance(before_accept, float)
+                else None
             )
             websocket.state.plugin_resume_generation = (
                 resume_generation if RESUME_CAPABILITY in accepted else None
@@ -4657,6 +4701,7 @@ class PluginHub(WebSocketEndpoint):
         retry_on_reload: bool = True,
         *,
         editor_state_read_mode: Literal["ordinary", "authoritative"] | None = None,
+        on_editor_state_clock: Callable[[EditorStateClock], None] | None = None,
         _catalog_guard=None,
         _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
@@ -4722,6 +4767,11 @@ class PluginHub(WebSocketEndpoint):
                     result = MCPResponse(success=False, error="auth_required").model_dump()
             except TimeoutError:
                 result = budget.timeout_response(command_type)
+            if command_type == "get_editor_state" and on_editor_state_clock is not None:
+                # Shared ordinary reads use the actual producing command's budget.
+                clock = (budget.active or budget).editor_state_clock
+                if clock is not None:
+                    on_editor_state_clock(clock)
             observe_native_result(result)
             return result
 

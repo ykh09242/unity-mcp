@@ -3,6 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Resources.Editor;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -19,6 +21,21 @@ namespace MCPForUnityTests.Editor.Services
     // The nested JSON helper has no Unity dependency or outer-cache initialization.
     public class EditorStateObservationTests
     {
+        [Test]
+        public void ClockSampleIsBoundToTheRequestedReadAndOmittedFromCachedState()
+        {
+            var requestId = Guid.NewGuid().ToString("D");
+            long before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var response = (SuccessResponse)EditorState.HandleCommand(new JObject { ["_editor_clock_request"] = requestId });
+            var snapshot = (JObject)response.Data;
+            Assert.AreEqual(requestId, (string)snapshot["_editor_clock"]["request_id"]);
+            Assert.That((long)snapshot["_editor_clock"]["unix_ms"], Is.InRange(before, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+            Assert.IsNotNull(snapshot["observed_at_unix_ms"]);
+            Assert.IsNull(EditorStateCache.GetSnapshot()["_editor_clock"]);
+            var ordinary = (SuccessResponse)EditorState.HandleCommand(new JObject());
+            Assert.IsNull(((JObject)ordinary.Data)["_editor_clock"]);
+        }
+
         [Test]
         public void LifecycleHealthIsPresentInActualCachedPublisherFrames()
         {

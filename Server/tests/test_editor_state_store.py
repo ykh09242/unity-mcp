@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 from pydantic import JsonValue
 
-from transport.editor_state_store import EditorStateStore
+from transport.editor_state_store import EditorStateClock, EditorStateStore
 
 
 def message(
@@ -51,6 +51,27 @@ def test_initial_state_is_detached_from_sender_and_readers(store):
     original = cache.get("actual-socket", "alice")
     assert original["compilation"]["is_compiling"] is False
     assert original["editor"]["active_scene"]["name"] == "fixture"
+
+
+def test_slow_clock_sample_and_mismatched_replies_cannot_refresh_delayed_state(store):
+    cache, _ = store
+    initial = EditorStateClock(100_000, 5.0)
+    assert cache.accept("actual-socket", message(observed=100_000))
+
+    def reply(request_id):
+        return {
+            "success": True,
+            "data": {"_editor_clock": {"request_id": request_id, "unix_ms": 100_000}},
+        }
+
+    assert initial.refine_from_reply(reply("previous"), "current", 9.95, 10.0) is initial
+    assert (
+        initial.refine_from_reply({"success": True, "data": {}}, "current", 9.95, 10.0) is initial
+    )
+    calibrated = initial.refine_from_reply(reply("current"), "current", 7.0, 10.0)
+    # Even a correct sample from this request spent up to three seconds in transit.
+    assert calibrated.now_ms(10.0) == 103_000
+    assert cache.get("actual-socket", "alice", clock=calibrated) is None
 
 
 @pytest.mark.parametrize(

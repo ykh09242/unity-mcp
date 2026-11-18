@@ -43,6 +43,43 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public async Task EditorStateClockRequestIsScopedToMatchingExecuteFrame()
+        {
+            RequireOwnedProgressEditor();
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                await peer.Negotiate(false);
+                string firstId = Guid.NewGuid().ToString("D");
+                foreach (string id in new[] { firstId, Guid.NewGuid().ToString("D") })
+                {
+                    peer.Send(
+                        new JObject
+                        {
+                            ["type"] = "execute",
+                            ["name"] = "get_editor_state",
+                            ["params"] = new JObject(),
+                            ["id"] = id,
+                            ["editor_clock_request"] = firstId,
+                        }
+                    );
+                    var reply = await peer.Result(id);
+                    var state = (JObject)reply.SelectToken("result.result.data");
+                    Assert.IsNotNull(state);
+                    Assert.IsNotNull(state["observed_at_unix_ms"]);
+                    Assert.AreEqual(id == firstId ? firstId : null, (string)state.SelectToken("_editor_clock.request_id"));
+                }
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                await client.StopAsync();
+            }
+        }
+
+        [Test]
         public async Task FailedInitialConnection_PreservesReasonThroughCleanupUntilExplicitStop()
         {
             var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);

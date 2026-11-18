@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager, nullcontext
 from copy import deepcopy
 import json
 import sys
+import time
 from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -522,3 +523,136 @@ def test_cached_resource_reads_reuse_push_but_strict_and_stale_reads_use_rpc(cli
         assert expired.data["sequence"] == 99
         assert rpc.await_count == 2
         assert rpc.call_args.kwargs["editor_state_read_mode"] == "ordinary"
+
+
+@pytest.mark.parametrize("clock_offset_ms", [-30_000, 30_000])
+@pytest.mark.parametrize("queued", [False, True])
+def test_hosted_state_uses_its_registered_editor_clock(
+    client, monkeypatch, clock_offset_ms, queued
+):
+    import services.resources.editor_state as resource
+    from transport import plugin_hub
+    from transport.command_resume import queued_origin
+    from tests.http.test_command_resume_wire import respond
+
+    ctx = SimpleNamespace(get_state=AsyncMock(return_value="alice"))
+    monkeypatch.setattr(
+        resource, "get_unity_instance_from_context", AsyncMock(return_value="owner")
+    )
+    # Registration samples UTC after acceptance. Model three seconds of Editor
+    # initialization before sampling without sleeping or changing the loop clock.
+    monkeypatch.setattr(
+        plugin_hub,
+        "time",
+        SimpleNamespace(monotonic=lambda: time.monotonic() - 3, time=time.time),
+    )
+
+    with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as wire:
+        wire.receive_json()
+        monkeypatch.setattr(plugin_hub, "time", time)
+        sample = int(time.time() * 1000) + clock_offset_ms
+        wire.send_json(
+            {
+                "type": "register",
+                "project_hash": "owner",
+                "capabilities": [
+                    "editor_state_v1",
+                    "native_arbitration_v1",
+                    "command_resume_v1",
+                    "command_resume_clock_v1",
+                    "command_resume_origin_v1",
+                ],
+                "arbitration_generation": "a" * 32,
+                "resume_generation": "e" * 32,
+                "resume_clock_unix_ms": sample,
+            }
+        )
+        assert "command_resume_clock_v1" in wire.receive_json()["capabilities"]
+        client.app.state.clock["mono"] = time.monotonic()
+
+        def rpc(reader, observed, *, prior_state=None):
+            async def read():
+                token = queued_origin.set("c" * 32 if queued else None)
+                try:
+                    return await requester_call(client, "alice", reader, ctx)
+                finally:
+                    queued_origin.reset(token)
+
+            task = client.portal.start_task_soon(read)
+            request = wire.receive_json()
+            assert request["name"] == "get_editor_state"
+            assert request["params"] == {}
+            assert request["editor_clock_request"] == request["id"]
+            first_id = request["id"]
+            if queued:
+                assert request["resume"]["action"] == "new"
+                assert request["resume"]["origin_generation"] == "c" * 32
+                if prior_state:
+                    respond(wire, request, prior_state)
+                    resume = request["resume"]
+                    request = wire.receive_json()
+                    action = "status" if prior_state == "executing" else "resume"
+                    assert request["resume"] == {**resume, "action": action}
+                    assert request["params"] == {}
+                    assert request["editor_clock_request"] == request["id"] != first_id
+            state = state_message(99, observed)["state"]
+            state["_editor_clock"] = {
+                # A restored result still carries the earlier handler's witness.
+                "request_id": first_id if prior_state == "executing" else request["id"],
+                "unix_ms": sample,
+            }
+            payload = {"status": "success", "result": {"success": True, "data": state}}
+            if queued:
+                respond(wire, request, "completed", payload)
+            else:
+                wire.send_json(
+                    {
+                        "type": "command_result",
+                        "id": request["id"],
+                        "result": {
+                            "native_arbitration": {
+                                **request["arbitration"],
+                                "disposition": "started",
+                                "retryable": False,
+                            },
+                            "payload": payload,
+                        },
+                    }
+                )
+            return task.result(watchdog_timeout()).data
+
+        # A newly received but already old push cannot shortcut the ordinary RPC.
+        wire.send_json(state_message(1, sample - 35_000))
+        if queued:
+            restored = rpc(resource.get_editor_state_authoritative, sample, prior_state="executing")
+            assert not restored["advice"]["ready_for_tools"]
+            # This is the first new snapshot that can calibrate the queued
+            # test preflight. No ordinary cache read primes its clock.
+            fresh = rpc(resource.get_editor_state_authoritative, sample)
+            resumed = rpc(resource.get_editor_state_authoritative, sample, prior_state="queued")
+            assert resumed["advice"]["ready_for_tools"]
+        else:
+            fresh = rpc(resource.get_editor_state, sample)
+        assert fresh["advice"]["ready_for_tools"]
+        assert fresh["observed_at_unix_ms"] == sample
+        assert cached(client) is None
+        stale = rpc(resource.get_editor_state, sample - 35_000)
+        assert stale["sequence"] == 99
+        assert stale["diagnostics"]["status"] == "unresponsive"
+        assert not stale["advice"]["ready_for_tools"]
+
+        current = state_message(2, sample)
+        wire.send_json(current)
+        strict = rpc(resource.get_editor_state_authoritative, sample)
+        assert strict["sequence"] == 99
+        assert strict["advice"]["ready_for_tools"]
+        assert strict["observed_at_unix_ms"] == sample
+        pushed = client.portal.call(requester_call, client, "alice", resource.get_editor_state, ctx)
+        assert pushed.data["sequence"] == 2
+        assert pushed.data["advice"]["ready_for_tools"]
+        assert pushed.data["observed_at_unix_ms"] == sample
+
+        # Replay leaves the original receive watermark in place.
+        client.app.state.clock["mono"] += 3
+        wire.send_json(current)
+        assert rpc(resource.get_editor_state, sample)["sequence"] == 99

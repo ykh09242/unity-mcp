@@ -1674,6 +1674,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 arbitration = arbitrationNegotiated ? payload["arbitration"] as JObject : null,
                 server_info = payload["server_info"],
                 resume = payload["resume"] as JObject,
+                EditorClockRequest =
+                    commandName == "get_editor_state"
+                    && !parameters.HasValues
+                    && payload["editor_clock_request"]?.Type == JTokenType.String
+                    && (string)payload["editor_clock_request"] == commandId
+                        ? commandId
+                        : null,
             };
             if (command.resume != null)
             {

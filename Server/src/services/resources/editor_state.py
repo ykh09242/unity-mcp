@@ -18,6 +18,7 @@ from services.tools.immutable_json import prepare_json_copy
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 from services.state.external_changes_scanner import external_changes_scanner
 import transport.unity_transport as unity_transport
+from transport.editor_state_store import EditorStateClock
 from transport.legacy.unity_connection import (
     async_send_command_with_retry,
     get_authenticated_stdio_generation,
@@ -256,14 +257,17 @@ async def _local_project_root(instance_id: str) -> str | None:
     return None
 
 
-def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
+def _enrich_advice_and_staleness(
+    state_v2: dict[str, Any], editor_clock: EditorStateClock | None = None
+) -> dict[str, Any]:
     now_ms = _now_unix_ms()
+    editor_now_ms = editor_clock.now_ms(time.monotonic()) if editor_clock is not None else now_ms
     from models.source_freshness import parse_freshness
 
     source = parse_freshness(state_v2.get("source_freshness"))
     state_v2["source_freshness"] = source.model_dump(by_alias=True)
     state_v2["source_observation_age_ms"] = (
-        max(0, now_ms - source.observed_at_unix_ms)
+        max(0, editor_now_ms - source.observed_at_unix_ms)
         if source.observed_at_unix_ms is not None
         else None
     )
@@ -271,11 +275,11 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
     try:
         observed_ms = int(observed)
     except Exception:
-        observed_ms = now_ms
+        observed_ms = editor_now_ms
 
-    age_ms = max(0, now_ms - observed_ms)
+    age_ms = max(0, editor_now_ms - observed_ms)
     # Conservative default: treat >2s as stale (covers common unfocused-editor throttling).
-    is_stale = age_ms > 2000
+    is_stale = age_ms > 2000 or (editor_clock is not None and observed_ms > editor_now_ms + 5000)
 
     compilation = state_v2.get("compilation") or {}
     tests = state_v2.get("tests") or {}
@@ -353,7 +357,7 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
 
     ready_for_tools = len(blocking) == 0
     try:
-        activity_age_ms = max(0, now_ms - int(activity.get("since_unix_ms")))
+        activity_age_ms = max(0, editor_now_ms - int(activity.get("since_unix_ms")))
     except (TypeError, ValueError, OverflowError):
         activity_age_ms = None
     # A missing heartbeat cannot distinguish a native dialog, a blocked editor,
@@ -479,6 +483,12 @@ async def _read_editor_state(
 ) -> MCPResponse:
     unity_instance = await get_unity_instance_from_context(ctx)
 
+    editor_clock = None
+
+    def capture_clock(clock: EditorStateClock) -> None:
+        nonlocal editor_clock
+        editor_clock = clock
+
     response = None
     stdio_key = None
     if (
@@ -497,7 +507,11 @@ async def _read_editor_state(
         and PluginHub.is_configured()
     ):
         user_id = await ctx.get_state("user_id") if config.http_remote_hosted else None
-        cached = await PluginHub.get_cached_editor_state(unity_instance, user_id=user_id)
+        cached = await PluginHub.get_cached_editor_state(
+            unity_instance,
+            user_id=user_id,
+            **({"on_clock": capture_clock} if config.http_remote_hosted else {}),
+        )
         if cached is not None:
             response = {"success": True, "data": cached}
     if response is None:
@@ -508,6 +522,8 @@ async def _read_editor_state(
                 read_options["editor_state_read_mode"] = (
                     "authoritative" if require_fresh else "ordinary"
                 )
+                if config.http_remote_hosted:
+                    read_options["on_editor_state_clock"] = capture_clock
             elif command_deadline is not None:
                 read_options["_deadline"] = command_deadline
             if command_deadline is not None:
@@ -642,7 +658,7 @@ async def _read_editor_state(
         pass
 
     try:
-        state_v2 = _enrich_advice_and_staleness(state_v2)
+        state_v2 = _enrich_advice_and_staleness(state_v2, editor_clock)
         if hasattr(EditorStateData, "model_validate"):
             validated = EditorStateData.model_validate(state_v2)
         else:

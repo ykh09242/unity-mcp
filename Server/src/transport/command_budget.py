@@ -10,9 +10,12 @@ import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from models.models import MCPResponse
+
+if TYPE_CHECKING:
+    from transport.editor_state_store import EditorStateClock
 
 
 def command_outcome_unknown(command: str, detail: str, **context: Any) -> dict[str, Any]:
@@ -64,6 +67,8 @@ class _CommandBudget:
     command: str | None = None
     active: _CommandBudget | None = None
     prior_dispatch: _CommandBudget | None = None
+    editor_state_clock: EditorStateClock | None = None
+    editor_state_clock_sent: float | None = None
 
     def execution_evidence(self) -> _CommandBudget:
         current = self.active.execution_evidence() if self.active is not None else self

@@ -13,6 +13,41 @@ from models.response_limits import response_size
 EDITOR_STATE_CAPABILITY: Final = "editor_state_v1"
 
 
+@dataclass(frozen=True, slots=True)
+class EditorStateClock:
+    """Upper bound on Editor UTC from a post-handshake or correlated RPC sample."""
+
+    editor_unix_ms: int
+    before_sample: float
+
+    def now_ms(self, monotonic_now: float) -> int:
+        # Charging the whole transit cannot make a delayed push younger.
+        return self.editor_unix_ms + math.ceil((monotonic_now - self.before_sample) * 1000)
+
+    def refine_from_reply(
+        self, result: object, command_id: str, sent: float, received: float
+    ) -> "EditorStateClock":
+        """Only this read's emission sample can narrow the same socket's bound."""
+        if not isinstance(result, dict):
+            return self
+        reply = result.get("result") if result.get("status") == "success" else result
+        if not isinstance(reply, dict) or reply.get("success") is not True:
+            return self
+        data = reply.get("data")
+        sample = data.pop("_editor_clock", None) if isinstance(data, dict) else None
+        if not isinstance(sample, dict) or sample.get("request_id") != command_id:
+            return self
+        utc = sample.get("unix_ms")
+        if type(utc) is not int or not 0 < utc <= 9223372036854775807:
+            return self
+        candidate = EditorStateClock(utc, sent)
+        previous_upper = self.now_ms(received)
+        # Keep a tighter existing bound unless the Editor clock moved beyond it.
+        if utc > previous_upper or candidate.now_ms(received) < previous_upper:
+            return candidate
+        return self
+
+
 class CompilationState(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True, frozen=True)
     __pydantic_extra__: dict[str, JsonValue] = Field(init=False)
@@ -197,7 +232,12 @@ class EditorStateStore:
             return True
 
     def get(
-        self, session_id: str, user_id: str | None, *, max_age_s: float = 2.0
+        self,
+        session_id: str,
+        user_id: str | None,
+        *,
+        max_age_s: float = 2.0,
+        clock: EditorStateClock | None = None,
     ) -> dict[str, JsonValue] | None:  # noqa: DICT_OK
         """Return a detached snapshot only for the registered owner while fresh."""
         if not math.isfinite(max_age_s) or max_age_s <= 0:
@@ -214,9 +254,14 @@ class EditorStateStore:
                 return None
             # Keep both limits finite, even if a caller requests an excessive TTL.
             age_limit = min(max_age_s, 2.0)
-            observation_age_s = self._wall_time() - state.observed_ms / 1000.0
+            now = self._monotonic()
+            observation_age_s = (
+                (clock.now_ms(now) - state.observed_ms) / 1000.0
+                if clock is not None
+                else self._wall_time() - state.observed_ms / 1000.0
+            )
             if (
-                self._monotonic() - state.received_at > age_limit
+                now - state.received_at > age_limit
                 or observation_age_s > age_limit
                 or observation_age_s < -5.0
             ):

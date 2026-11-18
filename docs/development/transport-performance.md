@@ -120,8 +120,19 @@ pending snapshot. Unchanged observations reuse the cached state rather than
 rebuilding it. All Unity state is observed on the main thread.
 
 The server binds snapshots to the authenticated registered connection. It checks
-epoch, sequence, wall time and monotonic receipt age. A duplicate observation
-cannot extend freshness. Reload or an epoch change invalidates the slot until a
+epoch, sequence, observation age and monotonic receipt age. When a hosted Editor
+negotiates `command_resume_clock_v1`, push and RPC reads measure observation age
+against the Editor's registration clock. A state RPC can tighten the initial
+handshake bound with a request-correlated Editor clock sample taken while
+returning the snapshot. The server charges the round-trip time and preserves
+the snapshot's original observation timestamp. The request ID belongs to a
+single wire attempt and stays outside the resume journal fingerprint. A stored
+reply can still supply its original state but cannot calibrate a later attempt.
+A peer that supplies only the
+registration sample retains that initial bound. Peers without a negotiated
+clock use the server wall clock and need synchronized clocks for accurate age
+reporting. A duplicate observation cannot extend freshness. Reload or an epoch
+change invalidates the slot until a
 new registration. Cached reads require both a live connection and a snapshot no
 older than two seconds. Disconnect and replacement remove the old slot.
 

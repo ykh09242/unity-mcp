@@ -132,6 +132,65 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void EditorClockSampleBelongsToActualResumedHandlerAndNeverChangesJournalFingerprint()
+        {
+            var original = new JObject();
+            var request = Request();
+            request["origin_generation"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            JObject Inspect(string action)
+            {
+                var inspect = (JObject)request.DeepClone();
+                inspect["action"] = action;
+                return inspect;
+            }
+            string currentId = Guid.NewGuid().ToString("D");
+            handlers[Name] = new HandlerInfo(
+                Name,
+                parameters =>
+                {
+                    calls++;
+                    Assert.AreEqual(currentId, (string)parameters["_editor_clock_request"]);
+                    Assert.AreEqual("executing", journal.Admit(Inspect("status"), Name, original).State);
+                    return new { clock_request = parameters["_editor_clock_request"] };
+                },
+                null
+            );
+            var first = journal.Admit(request, Name, original);
+            Assert.IsNotNull(first.Ticket);
+            Assert.AreEqual("queued", journal.Admit(Inspect("status"), Name, original).State);
+            journal.Release(first.Ticket);
+            var resumed = journal.Admit(Inspect("resume"), Name, original);
+            Assert.IsNotNull(resumed.Ticket);
+            var result = TransportCommandDispatcher.ExecuteCommandAsync(
+                new Command
+                {
+                    type = Name,
+                    @params = original,
+                    arbitration = Binding(),
+                    resume = Inspect("resume"),
+                    ResumeTicket = resumed.Ticket,
+                    EditorClockRequest = currentId,
+                },
+                CancellationToken.None
+            );
+            var completed = JObject.Parse(result.Response.Result.ToJson());
+            Assert.AreEqual("completed", (string)completed["command_resume"]["state"]);
+            Assert.AreEqual(currentId, (string)completed["payload"]["payload"]["result"]["clock_request"]);
+            Assert.IsFalse(original.HasValues);
+            journal.Release(resumed.Ticket);
+            journal = Open();
+            foreach (string action in new[] { "new", "resume", "status" })
+            {
+                var replay = journal.Admit(Inspect(action), Name, original);
+                Assert.IsNull(replay.Ticket);
+                Assert.AreEqual("completed", replay.State);
+                var restored = JObject.Parse(replay.Response(Binding()).ToJson());
+                Assert.AreEqual(currentId, (string)restored["payload"]["payload"]["result"]["clock_request"]);
+            }
+            Assert.AreEqual(1, calls);
+        }
+
+        [Test]
         public void DispatcherPersistsCompletionBeforePublishingAndCachedReplyRebindsCurrentProof()
         {
             handlers[Name] = new HandlerInfo(
@@ -258,6 +317,7 @@ namespace MCPForUnityTests.Editor.Services
                     null,
                     CancellationToken.None,
                     CancellationToken.None,
+                    null,
                 },
                 null
             );

@@ -684,6 +684,10 @@ namespace MCPForUnity.Editor.Services.Transport
                         RemovePending(id, pending);
                         return;
                     }
+                    // Only a handler about to execute receives this attempt's clock
+                    // request. Journal identity and cached results retain their original data.
+                    if (command.EditorClockRequest != null)
+                        parameters = new JObject { ["_editor_clock_request"] = command.EditorClockRequest };
                     result = CommandRegistry.ExecuteCommand(
                         command.type,
                         parameters,

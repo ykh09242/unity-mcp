@@ -7,6 +7,7 @@ helper borrows their exact owners and never reserves or releases capacity.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -192,6 +193,8 @@ class CommandDispatch:
         self.budget.session_id = self.session_id
         self.budget.command_id = self.command_id
         self.budget.dispatched = True
+        if self.payload.get("editor_clock_request") == self.command_id:
+            self.budget.editor_state_clock_sent = time.monotonic()
 
     async def observe(
         self, send_task: asyncio.Task, *, wait_for: Callable[..., Awaitable[Any]]

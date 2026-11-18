@@ -24,6 +24,7 @@ namespace MCPForUnity.Editor.Models
         public JObject arbitration { get; set; }
 
         public JObject resume { get; set; }
+        internal string EditorClockRequest { get; set; }
         internal Services.Transport.CommandResumeJournal.Ticket ResumeTicket { get; set; }
     }
 }
