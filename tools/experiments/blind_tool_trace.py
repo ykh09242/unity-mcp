@@ -350,6 +350,7 @@ def relay_stdio(relay: list[str], audit_dir: Path, graph_asset: str, *, endpoint
                                         "message": "Outside observation scope",
                                     },
                                 }
+                                record(event="response", sequence=sequence, outcome="error")
                                 send_to_host((json.dumps(response) + "\n").encode())
                                 continue
                             pending[request_id] = (sequence, route, channel)
@@ -455,6 +456,14 @@ def saved_read_grade(command: str, output: str, asset: str) -> str:
         arg.replace("\\", "/").removeprefix("./") for arg in args if arg.casefold() not in flags
     ]
     if command_name not in {"get-content", "cat"} or paths != [asset]:
+        return "review"
+    options = {argument.casefold() for argument in args}
+    literal_path = (
+        command_name == "get-content" and "-literalpath" in options and "-path" not in options
+    )
+    if any(character in asset for character in "$`") or (
+        any(character in asset for character in "*?[]{}") and not literal_path
+    ):
         return "review"
     decoder = json.JSONDecoder()
     try:

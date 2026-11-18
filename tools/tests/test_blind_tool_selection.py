@@ -34,6 +34,7 @@ from tools.experiments.blind_tool_trace import (
     has_saved_read,
     observation,
     route_name,
+    saved_read_grade,
     score_case,
     score_directory,
     unpack,
@@ -282,6 +283,38 @@ def test_failed_response_and_approval_block_are_independent_of_selection(tmp_pat
     assert report["live_evidence"] == "none"
 
 
+def test_guard_rejection_is_counted_once_before_suitable_call(tmp_path):
+    host = {
+        "type": "item.completed",
+        "item": {
+            "id": "host-guard",
+            "type": "mcp_tool_call",
+            "server": "unityMCP",
+            "tool": "manage_editor",
+            "arguments": {"action": "play"},
+            "status": "failed",
+            "error": {"message": "Outside observation scope"},
+        },
+    }
+    case = trial(
+        tmp_path,
+        "graph",
+        host=[host],
+        audit=[
+            request(1, "unapproved_route", "blocked"),
+            response(1, "error"),
+            request(2, GRAPH),
+            response(2, nodes=2, edges=1, node_types=["FixtureNode", "OtherNode"]),
+        ],
+    )
+    report = score_case(case)
+    assert report["first_business_call"] == "unapproved_route"
+    assert report["first_suitable_business_call"] == GRAPH
+    assert report["calls_before_first_suitable"] == 1
+    assert report["observation_guard_blocks"] == 1
+    assert report["live_evidence"] == "complete"
+
+
 def test_host_only_block_and_wire_only_success_are_both_counted(tmp_path):
     host = {
         "type": "item.completed",
@@ -439,9 +472,8 @@ def test_native_wait_without_spawn_receipt_leaves_actor_inference_explicit(tmp_p
     assert report["wire_evidence"] == "complete"
 
 
-def test_saved_graph_evidence_does_not_count_as_live_graph(tmp_path):
-    command = f'Get-Content -Raw -LiteralPath "{ASSET}"'
-    output = "\n\n".join(
+def saved_graph_output():
+    return "\n\n".join(
         map(
             json.dumps,
             (
@@ -451,6 +483,25 @@ def test_saved_graph_evidence_does_not_count_as_live_graph(tmp_path):
             ),
         )
     )
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ('Get-Content -Raw -LiteralPath "{asset}"', "observed"),
+        ('Get-Content -Raw -Path "{asset}"', "review"),
+        ('Get-Content -Raw "{asset}"', "review"),
+        ('cat "{asset}"', "review"),
+    ],
+)
+def test_wildcard_paths_need_literal_powershell_read(command, expected):
+    asset = "Assets/Examples/[AB].shadergraph"
+    assert saved_read_grade(command.format(asset=asset), saved_graph_output(), asset) == expected
+
+
+def test_saved_graph_evidence_does_not_count_as_live_graph(tmp_path):
+    command = f'Get-Content -Raw -LiteralPath "{ASSET}"'
+    output = saved_graph_output()
     assert has_saved_read(command, output, ASSET)
     assert not has_saved_read(f'Test-Path "{ASSET}"', "True", ASSET)
     assert not has_saved_read(command, "file exists", ASSET)
@@ -532,4 +583,5 @@ def test_wire_records_real_results_and_never_forwards_mutation(tmp_path):
     assert len(traces) == 1
     audit = list(map(json.loads, traces[0].read_text(encoding="utf-8").splitlines()))
     assert audit[0]["channel"] == "blocked"
+    assert audit[1] == {"event": "response", "sequence": 1, "outcome": "error"}
     assert audit[-1]["observation"] == {"render_size": [800, 600]}
