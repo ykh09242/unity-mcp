@@ -231,20 +231,17 @@ async def test_dispatch_timeout_is_never_replayed_or_claimed_settled():
 async def test_pre_dispatch_native_refusals_leave_capacity_for_another_run():
     from services.verification.reports import ReportStore
 
+    class RefusingIO(IO):
+        async def native(self, command, params, deadline):
+            if command == "run_tests":
+                return {"success": False, "error": "unsupported_native_test_control"}
+            return await super().native(command, params, deadline)
+
     store = ReportStore()
     owner = ("user", "project")
     for _ in range(store.max_active_per_scope + 1):
         identity = store.create(owner, {})
-        io = IO()
-        native = io.native
-
-        async def refuse(command, params, deadline):
-            if command == "run_tests":
-                return {"success": False, "error": "unsupported_native_test_control"}
-            return await native(command, params, deadline)
-
-        io.native = refuse
-        report = await run(io, test_mode="EditMode")
+        report = await run(RefusingIO(), test_mode="EditMode")
         stage = next(stage for stage in report["stages"] if stage["name"] == "tests")
         assert stage["state"] == "incomplete"
         assert stage["evidence"]["reason"] == "unsupported_native_test_control"
