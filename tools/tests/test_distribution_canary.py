@@ -182,7 +182,11 @@ def test_direct_canary_push_inputs_are_covered_by_qualification():
     config = workflow("distribution-canary.yml")
     for path in config.get("on", config.get(True))["push"]["paths"]:
         assert selected("release-qualification.yml", "push", "beta", path), path
-    for job in config["jobs"].values():
-        assert not job.get("continue-on-error")
-        assert not job["strategy"]["fail-fast"]
-        assert all(not step.get("continue-on-error") for step in job["steps"])
+    job = config["jobs"]["canary"]
+    assert not job.get("continue-on-error")
+    assert not job["strategy"]["fail-fast"]
+    optional = {step.get("name") for step in job["steps"] if step.get("continue-on-error")}
+    assert optional == {"Preserve installer checkpoint"}
+    report = config["jobs"]["archive_attempts"]
+    assert report["needs"] == ["canary"]
+    assert report["uses"] == "./.github/workflows/archive-attempts.yml"

@@ -133,6 +133,9 @@ jobs:
   distribution:
     needs: [identity]
     if: vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/distribution-canary.yml
     with:
       ref: ${{ github.sha }}

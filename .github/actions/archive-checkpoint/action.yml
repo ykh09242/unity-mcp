@@ -1,0 +1,61 @@
+name: Preserve installer checkpoint
+description: Upload the selected source and toolchain before a cold installation starts
+inputs:
+  kind:
+    description: Archive workload
+    required: true
+  platform:
+    description: Runner matrix label
+    required: true
+  python-version:
+    description: Requested Python version
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Record toolchain and checked source
+      shell: python
+      env:
+        ARCHIVE_KIND: ${{ inputs.kind }}
+        ARCHIVE_PLATFORM: ${{ inputs.platform }}
+        ARCHIVE_PYTHON: ${{ inputs.python-version }}
+      run: |
+        import json
+        import os
+        from pathlib import Path
+        import re
+        import subprocess
+
+        def read(*command):
+            return subprocess.check_output(command, text=True, timeout=20).strip()
+
+        kind = os.environ['ARCHIVE_KIND']
+        checked = read('git', 'rev-parse', 'HEAD')
+        source = checked
+        if kind in ('bootstrap', 'published'):
+            url = json.loads(Path('MCPForUnity/package.json').read_text(encoding='utf-8'))['mcpServerSource']
+            match = re.fullmatch(r'https://github\.com/ykh09242/unity-mcp/archive/([0-9a-f]{40})\.zip#subdirectory=Server', url)
+            source = match[1] if match else None
+        requested = os.environ['ARCHIVE_PYTHON']
+        interpreter = read('uv', 'python', 'find', '--offline', '--no-config', requested)
+        checkpoint = {
+            'repository': os.environ['GITHUB_REPOSITORY'], 'run_id': int(os.environ['GITHUB_RUN_ID']),
+            'attempt': int(os.environ['GITHUB_RUN_ATTEMPT']), 'kind': kind,
+            'checked_commit': checked, 'source_commit': source, 'platform': os.environ['ARCHIVE_PLATFORM'],
+            'runner_arch': os.environ['RUNNER_ARCH'], 'python_requested': requested,
+            'python': read(interpreter, '-I', '-c', 'import platform; print(platform.python_version())'),
+            'uv': read('uv', '--version'), 'last_completed': 'toolchain_ready', 'next_phase': 'installation',
+        }
+        output = Path(os.environ['RUNNER_TEMP']) / 'archive-checkpoint.json'
+        output.write_text(json.dumps(checkpoint, indent=2) + '\n', encoding='utf-8')
+        with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
+            summary.write(f"Installer checkpoint for `{kind}`, attempt {checkpoint['attempt']}, "
+                          f"`{checkpoint['platform']}`, Python `{checkpoint['python']}`, `{checkpoint['uv']}`. "
+                          f"Checked `{checked}`, source `{source or 'unknown'}`.\n")
+    - name: Upload checkpoint
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: archive-checkpoint-${{ inputs.kind }}-${{ inputs.platform }}-python-${{ inputs.python-version }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/archive-checkpoint.json
+        if-no-files-found: error
+        retention-days: 30

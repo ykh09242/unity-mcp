@@ -47,6 +47,24 @@ The new job covers Windows, Linux and Intel macOS on Python 3.11 in CI; the lock
 Python 3.11-3.15 test matrix remains independent. These focused checks do not
 establish Unity execution, network listener behavior, or all unlocked combinations.
 
+### Archive installation attempts
+
+Candidate, launcher bootstrap and distribution jobs upload an `archive-checkpoint-`
+artifact as soon as the selected uv and Python toolchain is ready. It records the
+checked commit, selected server commit, runner label, versions, run ID and attempt.
+The checkpoint precedes installation. The installed-archive and distribution
+evidence bundles also include the attempt number in their names, so reruns retain
+the earlier evidence. GitHub's artifact retention policy applies to all bundles.
+
+An independent runner publishes the installer phases that GitHub observed in each
+attempt of the run. Its summary links each matrix job and reports the last phase
+started, last phase passed and first unsuccessful phase. When a runner disappears,
+the checkpoint and hosted phase history can survive even if its final install log
+does not. Missing metadata remains unknown. To inspect a past fork run locally, use
+`python tools/ci_archive_attempts.py --repository OWNER/REPO --run-id ID --attempt N
+--kind candidate --output history.json` with GitHub CLI read access. The `published`
+kind selects distribution canary jobs.
+
 ## Source metadata recovery
 
 The package source, bundle manifest and generated `release-source-inputs.json`

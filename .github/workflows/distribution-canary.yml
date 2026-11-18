@@ -20,6 +20,9 @@ on:
       - tools/check_server_startup.py
       - tools/check_source_pin_drift.py
       - tools/check_release_evidence.py
+      - tools/ci_archive_attempts.py
+      - .github/actions/archive-checkpoint/**
+      - .github/workflows/archive-attempts.yml
       - tools/tests/test_distribution_canary.py
       - .github/workflows/distribution-canary.yml
   push:
@@ -98,6 +101,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: false
 
+      - name: Preserve installer checkpoint
+        uses: ./.github/actions/archive-checkpoint
+        continue-on-error: true
+        with:
+          kind: published
+          platform: ${{ matrix.os }}
+          python-version: ${{ matrix.python-version }}
       - name: Resolve and install the pinned archive without a lock or shared cache
         timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 18 || 10 }}
         env:
@@ -137,8 +147,19 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: distribution-canary-${{ matrix.os }}-python-${{ matrix.python-version }}-${{ github.run_id }}
+          name: distribution-canary-${{ matrix.os }}-python-${{ matrix.python-version }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: .tmp/distribution-canary/
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 30
+
+  archive_attempts:
+    needs: [canary]
+    if: always() && needs.canary.result != 'skipped'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/archive-attempts.yml
+    with:
+      kind: published
+      ref: ${{ inputs.ref || github.sha }}
