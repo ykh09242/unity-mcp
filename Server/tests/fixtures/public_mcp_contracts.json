@@ -25040,6 +25040,23 @@
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
+              "evidence_needed": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "include_context": {
                 "default": false,
                 "type": "boolean"
@@ -51479,6 +51496,23 @@
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
+              "evidence_needed": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "include_context": {
                 "default": false,
                 "type": "boolean"

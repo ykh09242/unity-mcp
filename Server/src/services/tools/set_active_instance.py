@@ -20,7 +20,7 @@ from pydantic import Field
 @mcp_for_unity_tool(
     unity_target=None,
     group=None,
-    description="Set the active Unity instance for this client/session. Accepts Name@hash, hash prefix, or port number (stdio only).",
+    description="Select a Unity instance by Name@hash, hash prefix, or stdio port. On sessionless clients, include_context returns a request-scoped observation.",
     annotations=ToolAnnotations(
         title="Set Active Instance",
         # Changes session-local routing only; touches nothing in the project.
@@ -38,6 +38,13 @@ async def set_active_instance(
     include_context: Annotated[
         bool, Field(strict=True), "Attach a bounded read-only snapshot of the selected Editor."
     ] = False,
+    evidence_needed: Annotated[
+        list[Annotated[str, Field(strict=True, min_length=1, max_length=256)]] | None,
+        Field(
+            max_length=8,
+            description="Caller-supplied checks still needed by the receiving agent. Supplying this includes context.",
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     value = (instance or "").strip()
     if not value:
@@ -46,7 +53,9 @@ async def set_active_instance(
             "error": "Instance identifier is required. "
             "Use mcpforunity://instances to copy a Name@hash or provide a hash prefix.",
         }
-    if is_sessionless(ctx):
+    sessionless = is_sessionless(ctx)
+    with_context = include_context or evidence_needed is not None
+    if sessionless and not with_context:
         return {
             "success": False,
             "error": "This MCP protocol is sessionless, so active instance selection cannot persist. "
@@ -92,7 +101,7 @@ async def set_active_instance(
         return {"success": False, "error": str(error)}
 
     target = None
-    if include_context:
+    if with_context:
         from services.tools.wait_for_operation import capture_observation_target
 
         deadline = asyncio.get_running_loop().time() + 3
@@ -105,20 +114,37 @@ async def set_active_instance(
         except Exception:
             pass  # Unavailable optional observation must not prevent selection.
 
-    # Store selection in middleware (session-scoped via FastMCP context state).
-    middleware = get_unity_instance_middleware()
-    await middleware.set_active_instance(ctx, resolved)
-
-    result = {
-        "success": True,
-        "message": f"Active instance set to {resolved}",
-        "data": {
+    if sessionless:
+        result = {
+            "success": True,
+            "message": f"Resolved {resolved} for this observation.",
+            "data": {"instance": resolved, "selection_persisted": False},
+        }
+    else:
+        middleware = get_unity_instance_middleware()
+        await middleware.set_active_instance(ctx, resolved)
+        result = {
+            "success": True,
+            "message": f"Active instance set to {resolved}",
+            "data": {"instance": resolved, "session_id": getattr(ctx, "session_id", None)},
+        }
+    if with_context:
+        context, observation = await selected_context(target, deadline)
+        result["data"]["context"] = context
+        result["data"]["handoff"] = {
             "instance": resolved,
-            "session_id": getattr(ctx, "session_id", None),
-        },
-    }
-    if include_context:
-        result["data"]["context"] = await selected_context(target, deadline)
+            "generation": context.get("generation"),
+            "status": context["status"],
+            "source": "live_editor" if observation is not None else "unavailable",
+            "saved_state": "unobserved",
+            **handoff_observation(observation),
+            "evidence_needed": evidence_needed or [],
+            "evidence_needed_source": "caller",
+        }
+        if sessionless and observation is None:
+            result["success"] = False
+            result["error"] = context["reason"]
+            result["message"] = f"Could not observe {resolved}."
     return result
 
 
@@ -129,7 +155,7 @@ async def selected_context(target, deadline):
     from models.unity_response import normalize_unity_response
 
     if target is None:
-        return {"status": "unavailable", "reason": "selected_editor_identity_unavailable"}
+        return {"status": "unavailable", "reason": "selected_editor_identity_unavailable"}, None
     try:
         async with asyncio.timeout_at(deadline):
             await authorize_remote_operation("get_editor_state", {}, session_id=target.session_id)
@@ -144,8 +170,18 @@ async def selected_context(target, deadline):
                     isinstance(data, dict)
                     and data.get("reason") == "observation_generation_changed"
                 ):
-                    return {"status": "unavailable", "reason": "observation_generation_changed"}
-                return {"status": "unavailable", "reason": "editor_state_unavailable"}
+                    return {
+                        "status": "unavailable",
+                        "reason": "observation_generation_changed",
+                    }, None
+                return {"status": "unavailable", "reason": "editor_state_unavailable"}, None
+            unity = data.get("unity")
+            if isinstance(unity, dict) and unity.get("instance_id") not in (
+                None,
+                "",
+                target.instance,
+            ):
+                return {"status": "unavailable", "reason": "editor_instance_mismatch"}, None
             fields = {}
             for section, keys in (
                 ("unity", ("unity_version", "platform", "is_batch_mode")),
@@ -168,6 +204,35 @@ async def selected_context(target, deadline):
                 "editor_state": fields,
                 "readiness": "unobserved",
                 "capabilities_resource": "mcpforunity://capabilities",
-            }
+            }, data
     except Exception as error:
-        return {"status": "unavailable", "reason": type(error).__name__}
+        return {"status": "unavailable", "reason": type(error).__name__}, None
+
+
+def handoff_observation(observation: dict | None) -> dict:
+    """Project identity from one native observation, preserving missing fields from older peers."""
+    state = observation or {}
+    editor = state.get("editor")
+    editor = editor if isinstance(editor, dict) else {}
+    play = editor.get("play_mode")
+    mode = "unknown"
+    if isinstance(play, dict):
+        if play.get("is_changing") is True:
+            mode = "transitioning"
+        elif play.get("is_changing") is False and type(play.get("is_playing")) is bool:
+            mode = "play" if play["is_playing"] else "edit"
+    scene = editor.get("active_scene")
+    scene = scene if isinstance(scene, dict) else {}
+    scene_identity = {}
+    for key, limit in (("path", 4096), ("guid", 64), ("name", 256)):
+        value = scene.get(key)
+        scene_identity[key] = value if isinstance(value, str) and 0 < len(value) <= limit else None
+    observed_at = state.get("observed_at_unix_ms")
+    if type(observed_at) is not int or observed_at <= 0:
+        observed_at = None
+    return {
+        "mode": mode,
+        "active_scene": scene_identity,
+        "observed_at_unix_ms": observed_at,
+        "freshness": "point_in_time" if observed_at is not None else "unknown",
+    }

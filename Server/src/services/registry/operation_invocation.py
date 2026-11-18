@@ -362,7 +362,10 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                 if key != "ctx" and not _omitted_default(signature.parameters[key].default, value)
             }
         )
-        await authorize_remote_operation(name, params, ctx=ctx)
+        # Selection resolves its own destination and checks that captured
+        # plugin before reading it. A prior request's route has no authority here.
+        admission_ctx = None if trusted and name == "set_active_instance" else ctx
+        await authorize_remote_operation(name, params, ctx=admission_ctx)
         hosted_graph_write = (
             config.http_remote_hosted
             and name == "manage_reference_graph"

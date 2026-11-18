@@ -794,6 +794,29 @@ class UnityInstanceMiddleware(Middleware):
                 message=context.message.model_copy(update={"arguments": receipt.identity.arguments})
             )
         try:
+            if (
+                config.http_remote_hosted
+                and name == "set_active_instance"
+                and _trusted_builtin_callback(getattr(tool, "fn", None), name, None)
+            ):
+                # This control selects its own destination. Bind hosted admission
+                # and any receipt to that Editor, even if the old grant expired.
+                await self._inject_request_identity(ctx, user_id)
+                destination = await self._resolve_instance_value(params["instance"], ctx)
+                if selector is not None and selector not in (params["instance"], destination):
+                    routed_instance = await self._resolve_instance_value(selector, ctx)
+                    if routed_instance != destination:
+                        raise ValidationError(
+                            "unity_instance and instance select different Unity instances."
+                        )
+                routed = {
+                    **context.message.arguments,
+                    "instance": destination,
+                    "unity_instance": destination,
+                }
+                context = context.copy(
+                    message=context.message.model_copy(update={"arguments": routed})
+                )
             return await self._route_validated_tool(
                 context, call_next, user_id, name, params, public_params, public_custom, receipt
             )

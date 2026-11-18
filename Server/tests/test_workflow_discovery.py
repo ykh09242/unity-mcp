@@ -148,15 +148,14 @@ async def test_selected_context_is_bounded_to_captured_editor(monkeypatch):
         }
     )
     monkeypatch.setattr(waiting, "fetch_observation", fetch)
-    result = await selected_context(target, asyncio.get_running_loop().time() + 3)
+    result, _ = await selected_context(target, asyncio.get_running_loop().time() + 3)
     assert result["generation"] == "generation"
     assert result["editor_state"]["compilation"] == {"is_compiling": True}
     assert "unexpected" not in result["editor_state"]["unity"]
     fetch.assert_awaited_once_with(target, "get_editor_state", {})
     fetch.reset_mock()
-    assert (await selected_context(None, asyncio.get_running_loop().time() + 3))[
-        "status"
-    ] == "unavailable"
+    result, observation = await selected_context(None, asyncio.get_running_loop().time() + 3)
+    assert result["status"] == "unavailable" and observation is None
     fetch.assert_not_awaited()
 
 
@@ -229,6 +228,10 @@ async def test_remote_switch_checks_read_permission_on_new_socket(command_hub, m
             result = await selection.set_active_instance(ctx, "Fixture@hash", include_context=True)
     assert result["success"]
     assert result["data"]["context"] == {"status": "unavailable", "reason": "CredentialLeaseError"}
+    handoff = result["data"]["handoff"]
+    assert handoff["instance"] == "Fixture@hash"
+    assert handoff["mode"] == "unknown" and handoff["generation"] is None
+    assert handoff["source"] == "unavailable" and handoff["observed_at_unix_ms"] is None
     fetch.assert_not_awaited()
 
 
@@ -264,3 +267,150 @@ async def test_stdio_switch_captures_and_reads_only_selected_connection(monkeypa
         retry_on_reload=False,
         _expected_generation="new-generation",
     )
+
+
+@pytest.mark.asyncio
+async def test_handoff_is_recaptured_across_sessions_and_scene_or_mode_changes(command_hub):
+    from services.tools.set_active_instance import set_active_instance
+    from tests.integration.test_helpers import DummyContext
+    from transport.models import CommandResultMessage
+
+    scene = {"path": "Assets/Menu.unity", "guid": "menu-guid", "name": "Menu"}
+    play_mode = {"is_playing": True, "is_changing": False}
+    snapshot = {
+        "observed_at_unix_ms": 12345,
+        "unity": {"instance_id": "Fixture@hash"},
+        "editor": {"active_scene": scene, "play_mode": play_mode},
+    }
+
+    async def answer(message):
+        assert message["name"] == "get_editor_state"
+        await command_hub.endpoint._handle_command_result(
+            command_hub.websocket,
+            CommandResultMessage(id=message["id"], result={"success": True, "data": snapshot}),
+        )
+
+    command_hub.websocket.send_json = answer
+    checks = ["Capture the closed menu in Game View"]
+    result = await set_active_instance(DummyContext(), "hash", evidence_needed=checks)
+    previous = result["data"]["handoff"]
+    assert previous == {
+        "instance": "Fixture@hash",
+        "generation": "generation",
+        "status": "observed",
+        "source": "live_editor",
+        "saved_state": "unobserved",
+        "mode": "play",
+        "active_scene": dict(scene),
+        "observed_at_unix_ms": 12345,
+        "freshness": "point_in_time",
+        "evidence_needed": checks,
+        "evidence_needed_source": "caller",
+    }
+
+    play_mode["is_playing"] = False
+    scene.update(path="Assets/Boot.unity", guid="boot-guid", name="Boot")
+    snapshot["observed_at_unix_ms"] += 100
+    receiver = DummyContext()
+    current = (await set_active_instance(receiver, previous["instance"], include_context=True))[
+        "data"
+    ]["handoff"]
+    assert current["mode"] == "edit" and current["active_scene"] == scene
+    assert current["observed_at_unix_ms"] == 12445 and current["evidence_needed"] == []
+    assert previous["mode"] == "play" and previous["active_scene"]["name"] == "Menu"
+
+    snapshot["unity"]["instance_id"] = "Another@hash"
+    result = await set_active_instance(receiver, previous["instance"], evidence_needed=checks)
+    assert result["data"]["context"]["reason"] == "editor_instance_mismatch"
+    unavailable = result["data"]["handoff"]
+    assert unavailable["mode"] == "unknown" and unavailable["freshness"] == "unknown"
+    assert set(unavailable["active_scene"].values()) == {None}
+    assert unavailable["status"] == "unavailable" and unavailable["evidence_needed"] == checks
+
+
+@pytest.mark.parametrize(
+    ("play", "mode"),
+    [
+        ({"is_changing": True, "is_playing": True}, "transitioning"),
+        ({"is_playing": True}, "unknown"),
+        ({"is_changing": False, "is_playing": "false"}, "unknown"),
+    ],
+)
+def test_handoff_preserves_incomplete_observations(play, mode):
+    from services.tools.set_active_instance import handoff_observation
+
+    observation = handoff_observation(
+        {
+            "observed_at_unix_ms": True,
+            "editor": {
+                "play_mode": play,
+                "active_scene": {"name": "Untitled", "path": "", "guid": None},
+            },
+        }
+    )
+    assert observation["mode"] == mode
+    assert observation["active_scene"] == {"name": "Untitled", "path": None, "guid": None}
+    assert observation["observed_at_unix_ms"] is None and observation["freshness"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_sessionless_wire_handoff_targets_one_generation_without_persisting(
+    command_hub, monkeypatch
+):
+    from fastmcp import Client, FastMCP
+    import services.operation_permissions as permissions
+    import services.tools.set_active_instance as selection
+    from transport.models import CommandResultMessage
+
+    monkeypatch.setattr(
+        selection,
+        "get_unity_instance_middleware",
+        lambda: pytest.fail("Persisted sessionless selection"),
+    )
+    commands = []
+
+    async def answer(message):
+        commands.append(message["name"])
+        data = {
+            "observed_at_unix_ms": 2500,
+            "editor": {
+                "play_mode": {"is_playing": False, "is_changing": False},
+                "active_scene": {"name": "Fixture", "path": "Assets/Fixture.unity", "guid": "guid"},
+            },
+        }
+        await command_hub.endpoint._handle_command_result(
+            command_hub.websocket,
+            CommandResultMessage(id=message["id"], result={"success": True, "data": data}),
+        )
+
+    command_hub.websocket.send_json = answer
+    server = FastMCP("sessionless-handoff")
+    server.tool(selection.set_active_instance)
+    params = {"instance": "Fixture@hash", "evidence_needed": ["Inspect the saved prefab"]}
+    async with Client(server, mode="2026-07-28") as client:
+        result = (await client.call_tool("set_active_instance", params)).structured_content
+        assert result["success"]
+        data = result["data"]
+        assert data["selection_persisted"] is False and "session_id" not in data
+        assert data["handoff"]["instance"] == "Fixture@hash"
+        assert data["handoff"]["mode"] == "edit" and data["handoff"]["generation"] == "generation"
+        assert data["handoff"]["evidence_needed"] == params["evidence_needed"]
+        wrong = (
+            await client.call_tool("set_active_instance", {**params, "instance": "Other@hash"})
+        ).structured_content
+        assert wrong["success"] is False and "data" not in wrong
+        selection_only = (
+            await client.call_tool("set_active_instance", {"instance": "Fixture@hash"})
+        ).structured_content
+        assert selection_only["success"] is False
+
+        async def reconnect(*args, **kwargs):
+            command_hub.websocket.state.plugin_generation = "replacement"
+
+        monkeypatch.setattr(permissions, "authorize_remote_operation", reconnect)
+        stale = (await client.call_tool("set_active_instance", params)).structured_content
+        assert not stale["success"] and stale["error"] == "observation_generation_changed"
+        assert stale["data"]["handoff"]["status"] == "unavailable"
+        assert stale["data"]["handoff"]["observed_at_unix_ms"] is None
+        assert stale["data"]["handoff"]["evidence_needed"] == params["evidence_needed"]
+        assert commands == ["get_editor_state"]

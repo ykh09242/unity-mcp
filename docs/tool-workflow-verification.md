@@ -83,4 +83,28 @@ Prefab serialized previews include `scope`, `complete`, `whole_prefab_complete` 
 
 `manage_tools` can return a schema when explicitly activating one tool with `include_schema=true`. Readiness hints describe supported actions and carry their observation state. `set_active_instance(include_context=true)` adds a bounded observation from the selected instance.
 
+To hand an observation to another agent, copy `data.handoff` from that selection. Pass
+`evidence_needed` to record up to eight caller-supplied checks of up to 256 characters each.
+This argument also requests context. For example, a pending check might be "Capture the
+Game View after dismissing the dialog." These checks travel with the copied handoff.
+
+The handoff identifies the selected full instance, connection generation, active scene
+(path, GUID and name), Play/Edit mode and Editor observation time in Unix milliseconds.
+`freshness=point_in_time` refers to that timestamp. Saved scene contents require separate
+evidence. A scene with no saved path or GUID can carry a name alone. An unavailable read
+preserves the selected instance and pending checks and leaves the observation unknown.
+On a new stdio connection, `context.reason=selected_editor_identity_unavailable` can
+mean the connection has yet to authenticate. Read `mcpforunity://editor/state` on the
+selected instance, then request the handoff again.
+
+On receipt, call `set_active_instance` with the full `instance` and `include_context=true`.
+Sessionless clients receive the same handoff with `data.selection_persisted=false`.
+Pass the full `unity_instance` on subsequent tools and `_meta.unity_instance` on resource
+reads. Carry forward outstanding `evidence_needed` entries explicitly. Compare the
+generation, mode and scene GUID/path. If any changed,
+the mode is transitioning, identity is ambiguous, or the observation time is missing,
+collect the affected evidence again. A scene name alone cannot distinguish unsaved scenes.
+Use a current Game View or runtime observation for Play-mode claims and a saved-asset
+read for claims about persisted content.
+
 Python clients can use `utils.retained_response.assemble_response` for bounded page assembly, SHA verification and optional field selection. Supply the existing `read_response` caller and retained handle. Page, byte and time limits remain explicit.

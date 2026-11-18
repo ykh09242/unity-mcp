@@ -84,7 +84,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`scene_lifecycle`](./core/scene_lifecycle.md)** — Create, load, save or close scenes and organize loaded scene objects.
 - **[`script_apply_edits`](./core/script_apply_edits.md)** — Edit C# source using operations scoped to the intended members or text.
 - **[`script_change_set`](./core/script_change_set.md)** — Prepare, apply, inspect or recover 1–256 existing C# source replacements as one bounded change set.
-- **[`set_active_instance`](./core/set_active_instance.md)** — Set the active Unity instance for this client/session.
+- **[`set_active_instance`](./core/set_active_instance.md)** — Select a Unity instance by Name@hash, hash prefix, or stdio port.
 - **[`validate_script`](./core/validate_script.md)** — Validate a C# script and report diagnostics, the effective validation engine, and context limitations.
 - **[`wait_for_operation`](./core/wait_for_operation.md)** — Observe an existing test, build, package query/mutation/resolve, single scenario, recording, or Project Auditor job.
 
