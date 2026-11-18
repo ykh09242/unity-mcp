@@ -103,8 +103,18 @@ async def test_registered_handoff_admits_requested_editor_after_old_grant_revoca
                 setattr(
                     new.state, AUTHENTICATED_LEASE_STATE, (await auth.service.validate("new")).lease
                 )
-                with pytest.raises(MCPError):
+                with pytest.raises(MCPError) as sdk_error:
                     await client.call_tool("set_active_instance", params)
+                if mode != "legacy":
+                    assert sdk_error.value.code == -32603
+                    assert sdk_error.value.message == "Internal server error"
+                    assert sdk_error.value.data == {"reason": "permission_denied"}
+                from utils.editor_handoff import receive_editor_handoff
+
+                packet = {**data["handoff"], "evidence_needed": ["Inspect the saved prefab"]}
+                receipt = await receive_editor_handoff(client.call_tool, packet)
+                assert receipt["confirmed"] == {} and receipt["handoff"] == {}
+                assert receipt["evidence_needed"] == packet["evidence_needed"]
                 refused = await wrapped(ctx=ctx, **params)
                 assert refused["data"]["context"]["reason"] == "OperationPermissionError"
                 assert refused["data"]["handoff"]["status"] == "unavailable"

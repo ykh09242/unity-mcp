@@ -76,6 +76,8 @@ namespace MCPForUnity.Editor.Services
         // State tracking to detect when snapshot actually changes (checked BEFORE building)
         private static string _lastTrackedScenePath;
         private static string _lastTrackedSceneName;
+        private static int _lastTrackedSceneHandle;
+        private static string _lastTrackedSceneEpoch;
         private static bool _lastTrackedIsFocused;
         private static bool _lastTrackedIsPlaying;
         private static bool _lastTrackedIsPaused;
@@ -179,6 +181,12 @@ namespace MCPForUnity.Editor.Services
 
         private sealed class EditorStateActiveScene
         {
+            [JsonProperty("handle")]
+            public int? Handle { get; set; }
+
+            [JsonProperty("lifetime_epoch")]
+            public string LifetimeEpoch { get; set; }
+
             [JsonProperty("path")]
             public string Path { get; set; }
 
@@ -484,6 +492,8 @@ namespace MCPForUnity.Editor.Services
                 || compilationEdge
                 || _lastTrackedScenePath != scenePath
                 || _lastTrackedSceneName != sceneName
+                || _lastTrackedSceneHandle != scene.handle
+                || _lastTrackedSceneEpoch != ObjectHandles.Epoch
                 || _lastTrackedIsFocused != isFocused
                 || _lastTrackedIsPlaying != isPlaying
                 || _lastTrackedIsPaused != isPaused
@@ -741,6 +751,8 @@ namespace MCPForUnity.Editor.Services
                     },
                     ActiveScene = new EditorStateActiveScene
                     {
+                        Handle = scene.IsValid() ? scene.handle : (int?)null,
+                        LifetimeEpoch = ObjectHandles.Epoch,
                         Path = scenePath,
                         Guid = sceneGuid,
                         Name = scene.name ?? string.Empty,
@@ -821,6 +833,8 @@ namespace MCPForUnity.Editor.Services
             // unchanged tick, and short completed test runs are still observed.
             _lastTrackedScenePath = scenePath;
             _lastTrackedSceneName = snapshot.Editor.ActiveScene.Name;
+            _lastTrackedSceneHandle = scene.handle;
+            _lastTrackedSceneEpoch = snapshot.Editor.ActiveScene.LifetimeEpoch;
             _lastTrackedIsFocused = isFocused;
             _lastTrackedIsPlaying = snapshot.Editor.PlayMode.IsPlaying == true;
             _lastTrackedIsPaused = snapshot.Editor.PlayMode.IsPaused == true;

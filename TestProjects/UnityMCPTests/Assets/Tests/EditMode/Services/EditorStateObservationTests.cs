@@ -6,11 +6,13 @@ using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Resources.Editor;
 using MCPForUnity.Editor.Services;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using Unity.Profiling;
 using UnityEditor;
 using UnityEditor.Compilation;
+using UnityEditor.SceneManagement;
 using UnityEditor.TestTools.TestRunner.Api;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -21,6 +23,37 @@ namespace MCPForUnityTests.Editor.Services
     // The nested JSON helper has no Unity dependency or outer-cache initialization.
     public class EditorStateObservationTests
     {
+        [Test]
+        public void ReopenedSceneKeepsAssetIdentityAndInvalidatesLoadedSceneLifetime()
+        {
+            const string prefix = "EditorStateObservationTest";
+            var path = AssetDatabase.GenerateUniqueAssetPath("Assets/" + prefix + ".unity");
+            var fixture = new PrefabTestSceneFixture();
+            fixture.PrepareRunnerBootstrap();
+            try
+            {
+                var owned = fixture.Create(prefix, "");
+                Assert.IsTrue(EditorSceneManager.SaveScene(owned, path));
+                var first = EditorStateCache.GetSnapshot()["editor"]["active_scene"];
+                Assert.AreEqual(owned.handle, (int)first["handle"]);
+                owned = fixture.ReopenSavedScene();
+                var second = EditorStateCache.GetSnapshot()["editor"]["active_scene"];
+                Assert.AreEqual(path, (string)second["path"]);
+                Assert.AreEqual(AssetDatabase.AssetPathToGUID(path), (string)second["guid"]);
+                Assert.AreEqual((string)first["guid"], (string)second["guid"]);
+                Assert.AreEqual(owned.handle, (int)second["handle"]);
+                Assert.IsNotEmpty((string)first["lifetime_epoch"]);
+                Assert.IsNotEmpty((string)second["lifetime_epoch"]);
+                Assert.AreNotEqual((string)first["lifetime_epoch"], (string)second["lifetime_epoch"]);
+            }
+            finally
+            {
+                fixture.Close();
+                AssetDatabase.DeleteAsset(path);
+                fixture.RestoreRunnerBootstrap();
+            }
+        }
+
         [Test]
         public void ClockSampleIsBoundToTheRequestedReadAndOmittedFromCachedState()
         {

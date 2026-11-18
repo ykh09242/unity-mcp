@@ -89,7 +89,9 @@ This argument also requests context. For example, a pending check might be "Capt
 Game View after dismissing the dialog." These checks travel with the copied handoff.
 
 The handoff identifies the selected full instance, connection generation, active scene
-(path, GUID and name), Play/Edit mode and Editor observation time in Unix milliseconds.
+(path, GUID, name, loaded scene handle and lifetime epoch when available), Play/Edit mode and Editor
+observation time in Unix milliseconds.
+`unity_version` is included when the same native snapshot supplies it.
 `freshness=point_in_time` refers to that timestamp. Saved scene contents require separate
 evidence. A scene with no saved path or GUID can carry a name alone. An unavailable read
 preserves the selected instance and pending checks and leaves the observation unknown.
@@ -101,10 +103,48 @@ On receipt, call `set_active_instance` with the full `instance` and `include_con
 Sessionless clients receive the same handoff with `data.selection_persisted=false`.
 Pass the full `unity_instance` on subsequent tools and `_meta.unity_instance` on resource
 reads. Carry forward outstanding `evidence_needed` entries explicitly. Compare the
-generation, mode and scene GUID/path. If any changed,
+generation, mode, scene GUID/path, loaded scene handle and lifetime epoch. If any changed,
 the mode is transitioning, identity is ambiguous, or the observation time is missing,
 collect the affected evidence again. A scene name alone cannot distinguish unsaved scenes.
 Use a current Game View or runtime observation for Play-mode claims and a saved-asset
 read for claims about persisted content.
+
+A Python receiving client can perform the comparison and forward the checks in one
+selection. Pass the trusted parent's packet and use a separate connected client:
+
+```python
+from utils.editor_handoff import receive_editor_handoff
+
+received = await receive_editor_handoff(child.call_tool, parent_packet)
+confirmed = received["confirmed"]
+pending_checks = received["evidence_needed"]
+```
+
+`confirmed` names only the identity fields observed in both snapshots. An unchanged
+saved scene, stable mode and authenticated connection let the child proceed to the
+pending checks without another project-info or scene lookup for these fields. Scene
+contents, object IDs, readiness and saved state require their own evidence. To check
+an explicitly reassigned destination, pass its full `instance=` selector. A changed
+target, generation, mode or scene handle yields an empty `confirmed` with the new observation
+in `handoff`. The helper also leaves `confirmed` empty for missing identity, an
+unchanged or regressing timestamp, or a child sample outside the receiving call's time
+window or more than two seconds old. Clock skew can therefore require a new check.
+Unity can reuse a scene handle after unloading and reopening a scene. The lifetime
+epoch follows the Editor's object-handle invalidation events, including scene opens,
+unloads, Edit/Play transitions and Undo/Redo. A changed epoch clears the confirmed
+fields even when the saved scene and handle match.
+An older Editor may omit the loaded scene handle or epoch. When the scene asset identity still
+matches, `comparison="same_scene_asset"` confirms `scene_asset` (GUID, path and name),
+mode and editor identity. The receiving client must observe any loaded scene instance
+or object it needs. A recognized SDK permission or target refusal returns
+`comparison="observation_unavailable"`, empty observations and the pending checks.
+Unclassified errors and cancellation propagate to the caller.
+
+From `Server/`, run `python -m pytest -s tests/test_editor_handoff_clients.py` to
+exercise separate parent and receiving MCP clients against controlled Editor peers.
+The comparison client reads the project-info and editor-state resources independently.
+The test counts native reads and UTF-8 application payload bytes for unchanged context,
+a changed scene on the same connection, a replacement connection and another Editor.
+The parent packet size is reported separately from the receiver's response bytes.
 
 Python clients can use `utils.retained_response.assemble_response` for bounded page assembly, SHA verification and optional field selection. Supply the existing `read_response` caller and retained handle. Page, byte and time limits remain explicit.

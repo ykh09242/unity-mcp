@@ -54,6 +54,8 @@ class EditorStateActiveScene(BaseModel):
     path: str | None = None
     guid: str | None = None
     name: str | None = None
+    handle: int | None = None
+    lifetime_epoch: str | None = None
 
 
 class EditorStateEditor(BaseModel):

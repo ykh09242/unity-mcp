@@ -21,6 +21,7 @@ namespace MCPForUnity.Editor.Helpers
         private const double LifetimeSeconds = 600;
         private static readonly Dictionary<string, Entry> Entries = new Dictionary<string, Entry>(StringComparer.Ordinal);
         private static string _epoch = Guid.NewGuid().ToString("N");
+        internal static string Epoch => _epoch;
         private static long _access;
         private static Action<string> OperationForTests = null;
         private static Func<double> ClockForTests = null;

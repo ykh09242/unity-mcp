@@ -684,6 +684,21 @@ class UnityInstanceMiddleware(Middleware):
         try:
             async with foreground_progress(context.fastmcp_context):
                 return await self._call_tool_with_receipts(context, call_next)
+        except OperationPermissionError as error:
+            if (
+                not config.http_remote_hosted
+                or context.message.name != "set_active_instance"
+                or not is_sessionless(context.fastmcp_context)
+            ):
+                raise
+            # Retain the modern protocol's opaque error envelope; disclose only
+            # that this client's selection was refused, never the Editor or grants.
+            from mcp.shared.exceptions import MCPError
+            from mcp_types import INTERNAL_ERROR
+
+            raise MCPError(
+                INTERNAL_ERROR, "Internal server error", {"reason": "permission_denied"}
+            ) from error
         except (
             ReceiptConflict,
             ReceiptInvalid,

@@ -227,10 +227,23 @@ def handoff_observation(observation: dict | None) -> dict:
     for key, limit in (("path", 4096), ("guid", 64), ("name", 256)):
         value = scene.get(key)
         scene_identity[key] = value if isinstance(value, str) and 0 < len(value) <= limit else None
+    handle = scene.get("handle")
+    if type(handle) is int and -(2**31) <= handle < 2**31 and handle != 0:
+        scene_identity["handle"] = handle
+    epoch = scene.get("lifetime_epoch")
+    if isinstance(epoch, str) and len(epoch) == 32 and all(c in "0123456789abcdef" for c in epoch):
+        scene_identity["lifetime_epoch"] = epoch
     observed_at = state.get("observed_at_unix_ms")
     if type(observed_at) is not int or observed_at <= 0:
         observed_at = None
+    unity = state.get("unity")
+    version = unity.get("unity_version") if isinstance(unity, dict) else None
     return {
+        **(
+            {"unity_version": version}
+            if isinstance(version, str) and 0 < len(version) <= 256
+            else {}
+        ),
         "mode": mode,
         "active_scene": scene_identity,
         "observed_at_unix_ms": observed_at,
