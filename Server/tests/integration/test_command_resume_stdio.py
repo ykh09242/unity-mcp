@@ -186,7 +186,8 @@ def resume_peer(
                             "code": "command_outcome_unknown",
                             "error": "Command continuation state: unknown",
                         }
-                    reply = result(command, "unknown" if mode == "unknown" else "completed", value)
+                    state = mode if mode in {"unknown", "unavailable"} else "completed"
+                    reply = result(command, state, value)
                     if mode == "malformed":
                         reply["command_resume"]["invocation_id"] = "0" * 32
                     send_frame(peer, reply)
@@ -256,6 +257,34 @@ def configure(monkeypatch, port, reconnect_failures=0):
     monkeypatch.setattr(uc, "get_unity_connection", select)
     monkeypatch.setattr(uc, "read_status_file", lambda *_: None)
     return connection
+
+
+@pytest.mark.asyncio
+async def test_stdio_unavailable_journal_retains_health_without_replaying(monkeypatch):
+    health = {
+        "state": "unavailable",
+        "reason": "snapshot_invalid",
+        "recovery_allowed": False,
+        "recovery_action": "inspect_storage_without_reset",
+        "capacity": {"occupied": 0},
+    }
+    payload = {
+        "status": "error",
+        "code": "command_resume_unavailable",
+        "command_resume_health": health,
+    }
+    with resume_peer("unavailable", reloads=0, business_result=payload) as (port, commands, _, _):
+        connection = configure(monkeypatch, port)
+        try:
+            response = await uc.async_send_command_with_retry(
+                "manage_scene", {"action": "save"}, instance_id=connection.instance_id
+            )
+            assert len(commands) == 1
+            assert response["data"]["reason"] == "outcome_unknown"
+            assert response["data"]["command_resume_health"] == health
+            assert response["hint"] == "inspect_state_before_retry"
+        finally:
+            connection.disconnect()
 
 
 @pytest.mark.asyncio

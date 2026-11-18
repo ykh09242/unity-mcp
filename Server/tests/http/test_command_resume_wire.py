@@ -401,6 +401,12 @@ def test_origin_extension_requires_negotiation_and_covers_preflight_reads(wire_c
 
 
 def test_journal_capacity_is_returned_before_dispatch_without_replaying(wire_client):
+    capacity = {
+        "recovery_action": "wait_for_owner_settlement",
+        "expired_active": 128,
+        "earliest_reclaim_unix_ms": None,
+        "retry_after_ms": None,
+    }
     with wire_client.websocket_connect("/hub/plugin") as socket:
         ack = register(socket)
         future = wire_client.portal.start_task_soon(
@@ -411,13 +417,20 @@ def test_journal_capacity_is_returned_before_dispatch_without_replaying(wire_cli
             socket,
             command,
             "unavailable",
-            {"code": "command_resume_capacity", "error": "Journal full"},
+            {
+                "code": "command_resume_capacity",
+                "error": "Retry after expiry",
+                "capacity": capacity,
+            },
             refusal_reason="command_resume_capacity",
         )
         result = future.result(watchdog_timeout())
         assert result["success"] is False
         assert result["code"] == "command_resume_capacity"
         assert result["data"]["execution"] == "not_started"
+        assert result["data"]["capacity"] == capacity
+        assert result["hint"] == "wait_for_owner_settlement"
+        assert "expir" not in result["error"].lower()
         assert not PluginHub._pending
 
 

@@ -224,7 +224,21 @@ def test_journal_capacity_only_reports_nonexecution_with_pre_dispatch_proof(prov
     invocation = CommandResumeInvocation.create("a" * 32, time.monotonic() + 60)
     invocation.state = "unavailable"
     reply = NativeReply(
-        {"status": "error", "code": "command_resume_capacity", "error": "Journal full"},
+        {
+            "status": "error",
+            "code": "command_resume_capacity",
+            "error": "Journal full",
+            "capacity": {
+                "limit": 128,
+                "recovery_action": "wait_for_expiry",
+                "retry_after_ms": 500,
+                "occupied": True,
+                "active": -1,
+                "available": 2**63,
+                "terminal": "1",
+                "raw_snapshot": "private",
+            },
+        },
         not_started=proved,
         reason="command_resume_capacity" if proved else None,
     )
@@ -234,6 +248,43 @@ def test_journal_capacity_only_reports_nonexecution_with_pre_dispatch_proof(prov
     if proved:
         assert normalized.payload["data"]["execution"] == "not_started"
         assert normalized.payload["data"]["reason"] == "command_resume_capacity"
+        assert normalized.payload["data"]["capacity"] == {
+            "limit": 128,
+            "recovery_action": "wait_for_expiry",
+            "retry_after_ms": 500,
+        }
+        assert normalized.payload["hint"] == "retry_after_journal_expiry"
     else:
         assert normalized.payload["data"]["reason"] == "outcome_unknown"
+        assert "capacity" not in normalized.payload["data"]
         assert normalized.payload["hint"] == "inspect_state_before_retry"
+
+
+def test_unavailable_health_outputs_only_known_native_values_and_fields():
+    invocation = CommandResumeInvocation.create("a" * 32, time.monotonic() + 60)
+    invocation.state = "unavailable"
+    reply = NativeReply(
+        {
+            "code": "command_resume_unavailable",
+            "command_resume_health": {
+                "state": "unavailable",
+                "reason": ["secret"],
+                "recovery_allowed": 1,
+                "recovery_action": "unrecognized",
+                "path": "private",
+                "capacity": {
+                    "occupied": 3,
+                    "recovery_action": {"invalid": True},
+                    "owner": "private",
+                },
+            },
+        }
+    )
+    normalized = invocation.normalize_reply("manage_scene", reply)
+    assert normalized.payload["data"]["command_resume_health"] == {
+        "state": "unavailable",
+        "capacity": {"occupied": 3},
+    }
+    assert normalized.payload["data"]["reason"] == "outcome_unknown"
+    assert normalized.payload["hint"] == "inspect_state_before_retry"
+    assert not normalized.retryable and not normalized.not_started

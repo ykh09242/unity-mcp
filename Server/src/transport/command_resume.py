@@ -25,6 +25,69 @@ _STATES: Final = frozenset(
     {"queued", "executing", "completed", "canceled", "expired", "unknown", "unavailable"}
 )
 
+
+def _journal_capacity(raw: object) -> dict[str, JsonValue]:
+    """Expose only the native journal's bounded aggregate diagnostics."""
+    if not isinstance(raw, dict):
+        return {}
+    capacity: dict[str, JsonValue] = {}
+    for field in (
+        "limit",
+        "occupied",
+        "active",
+        "terminal",
+        "unexpired",
+        "expired_active",
+        "reclaimable",
+        "available",
+        "last_persisted_bytes",
+        "snapshot_byte_limit",
+        "earliest_reclaim_unix_ms",
+        "retry_after_ms",
+    ):
+        value = raw.get(field)
+        if type(value) is int and 0 <= value <= 2**63 - 1:
+            capacity[field] = value
+        elif (
+            field in ("earliest_reclaim_unix_ms", "retry_after_ms")
+            and field in raw
+            and value is None
+        ):
+            capacity[field] = None
+    action = raw.get("recovery_action")
+    if action in ("none", "wait_for_expiry", "wait_for_owner_settlement"):
+        capacity["recovery_action"] = action
+    return capacity
+
+
+def _journal_health(raw: object) -> dict[str, JsonValue]:
+    if not isinstance(raw, dict):
+        return {}
+    health: dict[str, JsonValue] = {}
+    for field, choices in (
+        ("state", ("available", "unavailable")),
+        (
+            "reason",
+            (
+                None,
+                "storage_read_failed",
+                "snapshot_invalid",
+                "snapshot_serialization_failed",
+                "snapshot_size_limit",
+                "persistence_write_failed",
+            ),
+        ),
+        ("recovery_action", (None, "retry_persistence", "inspect_storage_without_reset")),
+    ):
+        if field in raw and raw[field] in choices:
+            health[field] = raw[field]
+    if type(raw.get("recovery_allowed")) is bool:
+        health["recovery_allowed"] = raw["recovery_allowed"]
+    if capacity := _journal_capacity(raw.get("capacity")):
+        health["capacity"] = capacity
+    return health
+
+
 # These built-in native reads can maintain observation caches and still need their
 # normal arbitration. They do not need durable mutation fences between pages.
 _JOURNAL_FREE_READS: Final = {
@@ -200,15 +263,30 @@ class CommandResumeInvocation:
             "command": command,
             "native_resume_state": self.state,
         }
+        hint = "inspect_state_before_retry"
         if capacity:
             data["execution"] = "not_started"
+            metrics = _journal_capacity(reply.payload.get("capacity"))
+            if metrics:
+                data["capacity"] = metrics
+            action = metrics.get("recovery_action")
+            if action == "wait_for_owner_settlement":
+                hint = "wait_for_owner_settlement"
+                detail = "The Editor command resume journal is full. Wait for an active command owner to settle."
+            elif action == "wait_for_expiry":
+                hint = "retry_after_journal_expiry"
+            else:
+                hint = "inspect_journal_capacity"
         elif code == "completed_result_not_retained":
             data["execution"] = "completed"
+        elif code == "command_resume_unavailable" and self.state == "unavailable":
+            if health := _journal_health(reply.payload.get("command_resume_health")):
+                data["command_resume_health"] = health
         return NativeReply(
             {
                 "success": False,
                 "error": detail,
-                "hint": "retry_after_journal_expiry" if capacity else "inspect_state_before_retry",
+                "hint": hint,
                 "code": code,
                 "data": data,
             },
