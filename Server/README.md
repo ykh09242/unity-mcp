@@ -13,7 +13,7 @@ The server uses FastMCP **4.2.1**, MCP SDK and types **2.3.0**, and Pillow **13.
 The server uses typed Skills messages and preserves middleware edits to bounded tool results.
 The test-results App uses FastMCP's typed UI metadata. The local CLI shares one
 MCP SDK client implementation so each diagnostic owns its HTTP connection until
-cleanup completes. See the [November dependency review](../docs/development/dependency-refresh-2026-11-05.md).
+cleanup completes. [November 18 dependency review](../docs/development/dependency-refresh-2026-11-18.md)
 
 The scene-input, skills, task-wait and execution-receipt compatibility gates use
 the same generated reviewed SDK manifest. They refuse an unreviewed FastMCP, MCP

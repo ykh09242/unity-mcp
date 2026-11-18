@@ -24,7 +24,7 @@ Treat configured glob patterns and build plugins as trusted build inputs. The li
 
 The minimum `postcss-selector-parser` override is 7.2.1. CSS Modules now keeps an escaped identifier consistent between the emitted selector and the JavaScript class export. The dependency test exercises the same PostCSS scoping plugin used in the production build. [Selector parser changelog](https://github.com/postcss/postcss-selector-parser/blob/main/CHANGELOG.md#721---2026-11-10)
 
-The npm 12.2.3 audit reports 36 high-severity package entries from one `picomatch` advisory in the documentation build and watcher dependencies. The advisory covers releases through 4.0.7, and npm lists no available fix. The November 11 `deepmerge` finding is absent from this audit. [GitHub advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)
+The npm 12.2.3 audit reports 36 high-severity package entries from one `picomatch` advisory in the documentation build and watcher dependencies. The advisory covers releases through 4.0.7, and npm lists no available fix. The November 11 `deepmerge` finding is absent from this audit. [GitHub advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) · [Refresh and verification](../docs/development/dependency-refresh-2026-11-18.md)
 
 ## November 11, 2026
 
