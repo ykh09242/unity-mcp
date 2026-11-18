@@ -676,9 +676,8 @@ def test_public_legacy_sse_preserves_stream_and_limits_message_body(public_app):
                         assert response.status_code == 202
                     await response_ready.wait()
                 disconnect.set()
-        # FastMCP's legacy SSE endpoint returns an empty Response after the
-        # stream disconnects, yielding two starts on both baseline and fixed apps.
-        assert [m["status"] for m in wire if m["type"] == "http.response.start"] == [200, 200]
+        # The SSE stream owns the response, including disconnect cleanup.
+        assert [m["status"] for m in wire if m["type"] == "http.response.start"] == [200]
         assert any(b'"result"' in m.get("body", b"") for m in wire)
 
     anyio.run(scenario)

@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import ParamSpec, TypeVar, get_args
 
+from mcp_types import CallToolResult
 from pydantic import MISSING
 from pydantic_core import to_jsonable_python
 from pydantic.fields import FieldInfo
@@ -396,8 +397,14 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                 guard = guard_graph_edit(check_public_authority)
             with guard, bind_edit_target(target) if edit_composition else nullcontext():
                 if inspect.iscoroutinefunction(function):
-                    return await function(*args, **kwargs)
-                return await owned_to_thread(function, *args, **kwargs)
+                    value = await function(*args, **kwargs)
+                else:
+                    value = await owned_to_thread(function, *args, **kwargs)
+            if isinstance(value, CallToolResult):
+                from transport.response_limit_middleware import prepare_raw_tool_result
+
+                return await prepare_raw_tool_result(value)
+            return value
 
         await validate_enabled()
         if unity_target is None or ctx is None:

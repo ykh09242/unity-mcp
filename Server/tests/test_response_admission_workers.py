@@ -35,8 +35,6 @@ async def test_admission_uses_worker_only_for_large_graphs(monkeypatch, kind, la
     source = result_for(kind, large)
     if rejected:
         source.meta = {"invalid": float("nan")}
-        if kind == "raw":
-            source._raw_mcp_result.meta = source.meta
     loop_thread = threading.get_ident()
     original = ResponseLimitMiddleware.admit_tool_result
     guard = ResponseLimitMiddleware()

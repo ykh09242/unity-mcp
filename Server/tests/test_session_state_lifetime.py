@@ -153,15 +153,27 @@ async def test_fastmcp_contexts_keep_session_state_isolated(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_unknown_collections_do_not_allocate_unbounded_setup_metadata():
+async def test_unknown_collections_do_not_allocate_unbounded_setup_metadata(monkeypatch):
+    from key_value.aio.stores.base import BaseStore
     from transport.session_state_store import SessionStateStore
 
+    setup_calls = []
+    original_setup = BaseStore.setup_collection
+
+    async def observe_setup(self, *, collection):
+        setup_calls.append(collection)
+        await original_setup(self, collection=collection)
+
+    monkeypatch.setattr(BaseStore, "setup_collection", observe_setup)
     store = SessionStateStore()
     for number in range(20):
         with pytest.raises(ValueError, match="reserved"):
             await store.put("key", {"value": 1}, collection=f"unknown-{number}")
-    assert not store._setup_collection_complete
-    assert not store._setup_collection_locks
+    assert setup_calls == []
+    assert store.retained_entries == store.retained_bytes == 0
+    await store.put("key", {"value": 2})
+    assert setup_calls == [store.default_collection]
+    assert await store.get("key") == {"value": 2}
 
 
 @pytest.mark.asyncio

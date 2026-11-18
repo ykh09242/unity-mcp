@@ -58,7 +58,7 @@ class SessionStateStore(BaseDestroyStore, BaseEnumerateKeysStore):
         return self._retained_bytes
 
     async def setup_collection(self, *, collection: str) -> None:
-        # Reject before BaseStore allocates per-collection initialization locks.
+        # Only the reserved collection may create setup state in the shared backend.
         if collection != self.default_collection:
             raise ValueError("This store is reserved for FastMCP session state")
         await super().setup_collection(collection=collection)

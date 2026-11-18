@@ -98,13 +98,36 @@ def _release_http_owner(key: tuple[str, str, type, str], *, closing: bool = Fals
         owner.release()
 
 
+class _WireCallToolResult(CallToolResult):
+    """Freeze admitted JSON extras using only the trusted SDK result schema."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+def _bounded_raw_copy(raw: CallToolResult) -> _WireCallToolResult | None:
+    if response_size(raw, max_bytes=MAX_RESPONSE_BYTES - 32_768) is None:
+        return None
+    projection = BaseModel.model_dump(raw, by_alias=True, mode="json", exclude_none=True)
+    return _WireCallToolResult.model_validate(projection)
+
+
+def _limit_tool_result() -> ToolResult:
+    error = response_limit_error()
+    return ToolResult(content=error, structured_content=error, is_error=True)
+
+
+async def prepare_raw_tool_result(raw: CallToolResult) -> ToolResult:
+    """Admit native returns before FastMCP converts their structured content."""
+
+    def prepare():
+        wire = _bounded_raw_copy(raw)
+        return ToolResult.from_mcp_result(wire) if wire is not None else _limit_tool_result()
+
+    return await response_work(prepare, large=needs_response_worker(raw))
+
+
 class ResponseLimitMiddleware(ResponseCatalogLimits):
     """Measure both text and structured content before the final MCP serializer."""
-
-    class _WireCallToolResult(CallToolResult):
-        """Freeze admitted JSON extras using only the trusted SDK result schema."""
-
-        model_config = ConfigDict(extra="allow")
 
     async def on_message(self, context: MiddlewareContext, call_next: CallNext) -> Any:
         owner = ResponseOwner()
@@ -231,20 +254,30 @@ class ResponseLimitMiddleware(ResponseCatalogLimits):
                 response_size(result, max_bytes=min(MCP_RESULT_BYTES, MAX_RESPONSE_BYTES - 32_768))
                 is None
             ):
-                error = response_limit_error()
-                return ToolResult(content=error, structured_content=error, is_error=True)
+                return _limit_tool_result()
             return result
         raw = getattr(result, "_raw_mcp_result", None)
-        wire = (
-            raw
-            if raw is not None
-            else {
+        if raw is not None:
+            base = raw if type(raw) is _WireCallToolResult else _bounded_raw_copy(raw)
+            if base is None:
+                return _limit_tool_result()
+            # FastMCP 4.2.1 overlays public middleware edits on protocol-only fields.
+            # Make that same projection on a trusted model before measuring it.
+            wire = base.model_copy(
+                update={
+                    "content": result.content,
+                    "structured_content": result.structured_content,
+                    "meta": result.meta,
+                    "is_error": result.is_error,
+                }
+            )
+        else:
+            wire = {
                 "content": result.content,
                 "structuredContent": result.structured_content,
                 "_meta": result.meta,
                 "isError": result.is_error,
             }
-        )
         # Ordinary small responses need one admission traversal. A result that
         # exceeds the client's budget still gets the independent workload check.
         fits_delivery = (
@@ -253,14 +286,13 @@ class ResponseLimitMiddleware(ResponseCatalogLimits):
             is not None
         )
         if not fits_delivery and response_size(wire, max_bytes=MAX_RESPONSE_BYTES - 32_768) is None:
-            error = response_limit_error()
-            return ToolResult(content=error, structured_content=error, is_error=True)
+            return _limit_tool_result()
         if raw is not None:
             # Eligibility and stored/alias/extra bounds precede this allocation.
             # Extension serializers are never executed by either this dump or the
             # SDK. Normalization removes subclasses from nested SDK content too.
-            projection = BaseModel.model_dump(raw, by_alias=True, mode="json", exclude_none=True)
-            result = ToolResult.from_mcp_result(self._WireCallToolResult.model_validate(projection))
+            projection = BaseModel.model_dump(wire, by_alias=True, mode="json", exclude_none=True)
+            result = ToolResult.from_mcp_result(_WireCallToolResult.model_validate(projection))
         if not result.is_error and is_execution_failure(result.structured_content, result.meta):
             # Construct the trusted envelope without subclass copy/serialization hooks.
             # The raw projection above is newly owned; application graphs stay shared.

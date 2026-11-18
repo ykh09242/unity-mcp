@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Annotated
 
 import pytest
+from fastmcp.tools import FunctionTool
 from fastmcp.tools.base import ToolResult
 from fastmcp.resources.base import ResourceResult
 from mcp.server.runner import _dump_result
@@ -22,6 +23,7 @@ from pydantic import (
 )
 
 from models import response_limits as limits
+from services.registry.operation_invocation import wrap_tool
 from transport import response_limit_middleware as middleware
 
 
@@ -33,16 +35,42 @@ def wire_bytes(result):
 
 async def admit(raw, monkeypatch, budget=500):
     monkeypatch.setattr(middleware, "MAX_RESPONSE_BYTES", 32_768 + budget)
-    result = ToolResult.from_mcp_result(raw)
+
+    async def native_result():
+        return raw
+
+    tool = FunctionTool.from_function(wrap_tool(native_result, "native_result", None))
 
     async def call_next(_context):
-        return result
+        return await tool.run({})
 
     return await middleware.ResponseLimitMiddleware().on_call_tool(None, call_next)
 
 
 class ExtraResult(CallToolResult):
     model_config = ConfigDict(extra="allow")
+
+
+def test_middleware_edits_to_public_fields_reach_wire_with_protocol_extras():
+    raw = ExtraResult(content=[TextContent(text="original")], extension="retained")
+    edited = ToolResult.from_mcp_result(raw).model_copy(
+        update={
+            "content": [TextContent(text="edited")],
+            "structured_content": {"message": "edited"},
+            "meta": {"source": "middleware"},
+            "is_error": True,
+        }
+    )
+
+    result = middleware.ResponseLimitMiddleware().admit_tool_result(edited)
+    wire = _dump_result(result.to_mcp_result())
+
+    assert wire["content"] == [{"type": "text", "text": "edited"}]
+    assert wire["structuredContent"] == {"message": "edited"}
+    assert wire["_meta"] == {"source": "middleware"}
+    assert wire["isError"] is True
+    assert wire["extension"] == "retained"
+    assert raw.content[0].text == "original"
 
 
 @pytest.mark.asyncio
@@ -249,8 +277,12 @@ async def test_custom_core_schema_is_rejected_before_expanding_alias(monkeypatch
     raw = CustomSchema(content=[])
     assert len(wire_bytes(ToolResult.from_mcp_result(raw))) > 500
 
-    def refuse_dump(*_args, **_kwargs):
-        raise AssertionError("custom schema must be rejected before model_dump")
+    original_dump = BaseModel.model_dump
+
+    def refuse_dump(model, *args, **kwargs):
+        if type(model) is CustomSchema:
+            raise AssertionError("custom schema must be rejected before model_dump")
+        return original_dump(model, *args, **kwargs)
 
     monkeypatch.setattr(BaseModel, "model_dump", refuse_dump)
     # When: preflight sees the custom schema hook.
