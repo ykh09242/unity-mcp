@@ -481,6 +481,77 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(EditorUtility.IsDirty(unrelated));
         }
 
+        private static JObject ModifyScriptableFields(string path, JObject properties) =>
+            JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = path,
+                        ["properties"] = properties,
+                    }
+                )
+            );
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ScriptableObjectDirtyFilePreservesNoOpsAndRefusesWrites(bool dirtySubAsset)
+        {
+            string path = folder + "/Target.asset";
+            var target = ScriptableObject.CreateInstance<VerificationAsset>();
+            AssetDatabase.CreateAsset(target, path);
+            var edited = target;
+            if (dirtySubAsset)
+            {
+                edited = ScriptableObject.CreateInstance<VerificationAsset>();
+                edited.name = "Child";
+                AssetDatabase.AddObjectToAsset(edited, path);
+                EditorUtility.SetDirty(target);
+                AssetDatabase.SaveAssetIfDirty(target);
+            }
+            byte[] before = File.ReadAllBytes(path);
+            edited.text = "pending";
+            EditorUtility.SetDirty(edited);
+            int group = Undo.GetCurrentGroup();
+            var noChange = ModifyScriptableFields(path, new JObject { ["number"] = 0 });
+            Assert.IsTrue(noChange.Value<bool>("success"), noChange.ToString());
+            var conflict = ModifyScriptableFields(path, new JObject { ["number"] = 7 });
+            Assert.IsFalse(conflict.Value<bool>("success"), conflict.ToString());
+            StringAssert.Contains("unsaved edits", conflict.Value<string>("error"));
+            Assert.AreEqual(group, Undo.GetCurrentGroup());
+            Assert.AreEqual(0, target.number);
+            Assert.AreEqual("pending", edited.text);
+            Assert.IsTrue(EditorUtility.IsDirty(edited));
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+        }
+
+        [Test]
+        public void ScriptableObjectCleanWriteSupportsSingleUndoRedoForAllFields()
+        {
+            string path = folder + "/Target.asset";
+            var target = ScriptableObject.CreateInstance<VerificationAsset>();
+            target.text = "before";
+            AssetDatabase.CreateAsset(target, path);
+            try
+            {
+                var response = ModifyScriptableFields(path, new JObject { ["number"] = 7, ["text"] = "after" });
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.IsFalse(EditorUtility.IsDirty(target));
+                Assert.AreEqual(7, target.number);
+                Assert.AreEqual("after", target.text);
+                Undo.PerformUndo();
+                Assert.AreEqual(0, target.number);
+                Assert.AreEqual("before", target.text);
+                Undo.PerformRedo();
+                Assert.AreEqual(7, target.number);
+                Assert.AreEqual("after", target.text);
+            }
+            finally
+            {
+                Undo.ClearUndo(target);
+            }
+        }
+
         [TestCase("asset_create")]
         [TestCase("asset_modify")]
         [TestCase("controller_create")]

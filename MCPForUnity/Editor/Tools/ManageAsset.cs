@@ -586,7 +586,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     // Deprecated: Prefer manage_scriptable_object for robust patching.
                     // Kept for simple property setting fallback on existing assets if manage_scriptable_object isn't used.
-                    modified |= ApplyObjectPropertiesAtomically(so, properties);
+                    return ModifyScriptableObject(fullPath, so, properties);
                 }
                 // Example: Modifying TextureImporter settings
                 else if (asset is Texture)
@@ -1142,6 +1142,40 @@ namespace MCPForUnity.Editor.Tools
             };
         }
 #endif
+
+        private static object ModifyScriptableObject(string path, ScriptableObject target, JObject properties)
+        {
+            var assignments = new List<(string name, Func<object> get, Action<object> set, object previous, object next)>();
+            PrepareObjectProperties(target, properties, assignments);
+            if (assignments.All(entry => object.Equals(entry.previous, entry.next)))
+                return new SuccessResponse($"Asset '{path}' already has the requested values; no changes were made.", GetAssetData(path));
+
+            // Unity saves the whole file, including dirty sub-assets sharing this path.
+            if (AssetDatabase.LoadAllAssetsAtPath(path).Any(asset => asset != null && EditorUtility.IsDirty(asset)))
+                return new ErrorResponse($"Asset '{path}' has unsaved edits. Save or discard them before modifying it.");
+
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            try
+            {
+                Undo.SetCurrentGroupName("Modify ScriptableObject");
+                Undo.RecordObject(target, "Modify ScriptableObject");
+                ApplyPreparedAssignments(assignments);
+                Undo.FlushUndoRecordObjects();
+                AssetPathUtility.GetFullAssetPath(path);
+                EditorUtility.SetDirty(target);
+                AssetDatabase.SaveAssetIfDirty(target);
+                return SavedAssetResponse(path, $"Asset '{path}' modified successfully.");
+            }
+            finally
+            {
+                if (Undo.GetCurrentGroup() == group)
+                {
+                    Undo.CollapseUndoOperations(group);
+                    Undo.IncrementCurrentGroup();
+                }
+            }
+        }
 
         // Validate and capture every member before making any direct asset assignment.
         private static bool ApplyObjectPropertiesAtomically(UnityEngine.Object target, JObject properties)
