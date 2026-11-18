@@ -13,7 +13,7 @@
     "com.unity.nuget.newtonsoft-json@3.2.2": "5db19a6ec4478ab974922d155aa32b952bc34abadaa78afc7973cf049b62db41",
     "com.unity.probuilder@6.1.4": "11fb186a82e7e8fd037662c7c32d87ecd3cb99d5824ed6638d5a9f25ecaa6350",
     "com.unity.searcher@4.9.5": "8f46f2a1094539a64eaae7716af574693398571929bf2f39c1b6cb901c376e08",
-    "com.unity.settings-manager@2.1.1": "21fafed1676dd59eeeeede0fe13f936a522ac69dda97353f9819e941b0b8854d",
+    "com.unity.settings-manager@2.1.2": "f344d97c8f92d16c114242a3c0dd0b5fe46cf00b27d124e2fca0c87c743d188e",
     "com.unity.splines@2.9.2": "84f669f1e3e7f7fa961f12b7c20d352b7974876a193ed6b5262229516689c64d",
     "com.unity.test-framework@1.4.6": "9d1bcfea3f886c4e2b30a1014192b9ea78f9296b5172a3bf85e49aec2b784bf4",
     "com.unity.test-framework.performance@3.7.0": "19c17d91a273deae12cff84a388963ac7d80799681df40797e29567f8f3457c6"
