@@ -264,7 +264,7 @@ def test_asset_duplicate_setup_attributes_fail_before_staging(asset_fixture, mon
 
 def test_asset_url_is_a_literal_csharp_string(asset_fixture, monkeypatch):
     helper, repo, _, project, destination = asset_fixture
-    url = 'https://example.test/mcp?label="test"&path=\\1'
+    url = "https://example.test/café?label=%22test%22&path=%5C1"
     assert run_asset(helper, monkeypatch, repo, project, url=url) == 0
     content = (destination / "Editor/Helpers/HttpEndpointUtility.cs").read_text()
     assert content == f"private const string DefaultRemoteBaseUrl = {json.dumps(url)};\n"

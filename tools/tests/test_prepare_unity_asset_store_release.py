@@ -40,6 +40,7 @@ SCRIPT = ROOT / "tools/prepare_unity_asset_store_release.py"
         ("ftp://example.com", False),
         ("https://example.com:99999", False),
         ('https://example.com/";bad', False),
+        (r"https://example.com/mcp?path=\1", False),
         ("https://example.com/\nattack", False),
     ],
 )
