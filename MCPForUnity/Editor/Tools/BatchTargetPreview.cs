@@ -24,11 +24,29 @@ namespace MCPForUnity.Editor.Tools
     internal static class BatchTargetPreview
     {
         private static readonly byte[] SigningKey = NewKey();
+        private const int HashBufferSize = 128 * 1024;
 
         private sealed class Incomplete : Exception
         {
             internal Incomplete(string message)
                 : base(message) { }
+        }
+
+        internal sealed class SynchronousHashBudget
+        {
+            private long remaining = 1024 * 1024;
+            private byte[] buffer;
+
+            internal static SynchronousHashBudget ForEditor() => Application.platform == RuntimePlatform.WindowsEditor ? null : new SynchronousHashBudget();
+
+            internal void Reserve(long bytes)
+            {
+                if (bytes > remaining)
+                    throw new Incomplete("synchronous_hash_budget_exceeded");
+                remaining -= bytes;
+            }
+
+            internal byte[] Buffer => buffer ??= new byte[HashBufferSize];
         }
 
         private static byte[] NewKey()
@@ -72,11 +90,13 @@ namespace MCPForUnity.Editor.Tools
             return difference == 0;
         }
 
-        internal static object Prepare(JArray commands) => PrepareCore(commands, false, CancellationToken.None).GetAwaiter().GetResult();
+        internal static object Prepare(JArray commands) =>
+            PrepareCore(commands, false, SynchronousHashBudget.ForEditor(), CancellationToken.None).GetAwaiter().GetResult();
 
-        internal static Task<object> PrepareAsync(JArray commands, CancellationToken cancellationToken) => PrepareCore(commands, true, cancellationToken);
+        internal static Task<object> PrepareAsync(JArray commands, CancellationToken cancellationToken) =>
+            PrepareCore(commands, true, SynchronousHashBudget.ForEditor(), cancellationToken);
 
-        private static async Task<object> PrepareCore(JArray commands, bool background, CancellationToken cancellationToken)
+        internal static async Task<object> PrepareCore(JArray commands, bool background, SynchronousHashBudget budget, CancellationToken cancellationToken)
         {
             var observations = new List<Observation>();
             try
@@ -96,7 +116,7 @@ namespace MCPForUnity.Editor.Tools
                         reason = "ok";
                     try
                     {
-                        Observation observation = await ObserveAsync(command, background, cancellationToken);
+                        Observation observation = await ObserveAsync(command, background, budget, cancellationToken);
                         observations.Add(observation);
                         JObject target = observation.State;
                         var writes = target["keys"].Values<string>().Concat(target["writes"]?.Values<string>() ?? Enumerable.Empty<string>());
@@ -204,12 +224,13 @@ namespace MCPForUnity.Editor.Tools
             if (!SignatureMatches(Sign(unsigned), preview.Value<string>("signature")) || preview.Value<string>("commandsHash") != Hash(commands))
                 return null;
             var observations = new List<Observation>(commands.Count);
+            var budget = SynchronousHashBudget.ForEditor();
             bool transferred = false;
             try
             {
                 for (int index = 0; index < commands.Count; index++)
                 {
-                    Observation observation = await ObserveAsync((JObject)commands[index], true, cancellationToken);
+                    Observation observation = await ObserveAsync((JObject)commands[index], true, budget, cancellationToken);
                     observations.Add(observation);
                     if (revisions[index]?.Type != JTokenType.String || Hash(observation.State) != revisions[index].Value<string>())
                         return null;
@@ -234,12 +255,18 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        internal static async Task<Observation> MatchAsync(JObject command, JObject preview, int index, CancellationToken cancellationToken)
+        internal static async Task<Observation> MatchAsync(
+            JObject command,
+            JObject preview,
+            int index,
+            SynchronousHashBudget budget,
+            CancellationToken cancellationToken
+        )
         {
             Observation observation = null;
             try
             {
-                observation = await ObserveAsync(command, true, cancellationToken);
+                observation = await ObserveAsync(command, true, budget, cancellationToken);
                 if (preview["revisions"][index]?.Type == JTokenType.String && Hash(observation.State) == preview["revisions"][index].Value<string>())
                 {
                     Observation matched = observation;
@@ -318,10 +345,10 @@ namespace MCPForUnity.Editor.Tools
                 FileHashes != null && FileHashes.TryGetValue(path, out string hash) ? hash : throw new Incomplete("target_changed_during_preparation");
         }
 
-        private static async Task<Observation> ObserveAsync(JObject command, bool background, CancellationToken cancellationToken)
+        private static async Task<Observation> ObserveAsync(JObject command, bool background, SynchronousHashBudget budget, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!background)
+            if (!background && budget == null)
                 return new Observation { State = Describe(command) };
             var paths = new List<string>(2);
             JObject before = Describe(command, path =>
@@ -338,7 +365,7 @@ namespace MCPForUnity.Editor.Tools
                 Dictionary<string, string> ReadFiles()
                 {
                     var result = new Dictionary<string, string>(StringComparer.Ordinal);
-                    var buffer = new byte[128 * 1024];
+                    byte[] buffer = null;
                     foreach (string path in paths)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
@@ -348,14 +375,22 @@ namespace MCPForUnity.Editor.Tools
                         // after their hash but before the compare-before-dispatch check.
                         var stream = File.OpenRead(checkedPath);
                         observed.Readers.Add(stream);
+                        long toRead = budget == null ? long.MaxValue : stream.Length;
+                        budget?.Reserve(toRead);
+                        buffer ??= budget?.Buffer ?? new byte[HashBufferSize];
                         using (var sha = SHA256.Create())
                         {
-                            int count;
-                            while ((count = stream.Read(buffer, 0, buffer.Length)) != 0)
+                            while (toRead > 0)
                             {
                                 cancellationToken.ThrowIfCancellationRequested();
+                                int count = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, toRead));
+                                if (count == 0)
+                                    break;
                                 sha.TransformBlock(buffer, 0, count, buffer, 0);
+                                toRead -= count;
                             }
+                            if (budget != null && (toRead != 0 || stream.Length != stream.Position))
+                                throw new Incomplete("target_changed_during_preparation");
                             cancellationToken.ThrowIfCancellationRequested();
                             sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
                             result.Add(path, Convert.ToBase64String(sha.Hash));
@@ -363,13 +398,9 @@ namespace MCPForUnity.Editor.Tools
                     }
                     return result;
                 }
-#if UNITY_EDITOR_WIN
-                observed.FileHashes = await Task.Run(ReadFiles, cancellationToken);
-#else
-                // File sharing outside Windows can be advisory. Keep the existing no-yield
-                // observation semantics until native sharing guarantees are verified there.
-                observed.FileHashes = await Task.FromResult(ReadFiles());
-#endif
+                // Outside Windows sharing may be advisory. Never yield between file and Editor
+                // observations there. A batch-wide allowance bounds this main-thread pass.
+                observed.FileHashes = budget == null ? await Task.Run(ReadFiles, cancellationToken) : ReadFiles();
                 cancellationToken.ThrowIfCancellationRequested();
                 // Only AssetMove describes files; retain the original full-byte revision contract.
                 before["source"] = observed.FileHashes[paths[0]];

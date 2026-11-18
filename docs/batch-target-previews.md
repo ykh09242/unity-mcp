@@ -48,8 +48,7 @@ rollback, automatic replay or callback prediction is promised. A lost reply reta
 the existing unknown-outcome contract. Compare guards are not one-shot operation
 receipts; the underlying prefab plan's own consumption rules still apply.
 
-Asset hashing streams input; it adds no new asset-size, batch-size or operation-time
-limit. Strong previews are opt-in and never run on the ordinary batch path.
+Strong previews are opt-in. Ordinary unguarded batches do not hash targets.
 
 On Windows, target preview file hashing and guarded application hash checks run
 on a worker, with cancellation between 128 KiB reads. Checked paths, scalar hashes
@@ -69,8 +68,43 @@ later file work. The applying caller retains the whole-batch handles through the
 first child rehash, rechecks state after each await, and releases handles
 immediately before dispatch without yielding. All handles are released on
 success, rejection and cancellation. Windows read-sharing behavior is covered by
-native tests. Other platforms keep synchronous streamed hashing, avoiding a new
-Editor yield while their file-sharing guarantees remain unverified; their
-fallback is covered by compilation. This is transient read sharing, not a
-filesystem transaction. External processes that bypass the platform's sharing
-rules remain outside the compare-before-dispatch guarantee.
+native tests. External processes that bypass the platform's sharing rules remain
+outside the compare-before-dispatch guarantee.
+
+On macOS and Linux, each batch preview can hash up to **1 MiB (1,048,576 bytes)**
+in total for asset moves and renames. Source files and their `.meta` files share
+the allowance. The Editor reads them synchronously so Editor callbacks cannot
+interleave with observation. It checks the open file's length before reading
+and never reads beyond the reserved length. A file that exceeds the remaining
+allowance produces the item reason `synchronous_hash_budget_exceeded`, an
+`incomplete` result and a null guard. Splitting independent moves can help if
+each source and its metadata fit individually. Both validation entry points
+enforce the same limit. Guarded application enforces it again during whole-batch
+verification and during the subsequent pass of per-child rechecks. Every
+accepted revision still includes SHA-256 over every source and metadata byte.
+The byte limit does not bound filesystem latency or other Editor work.
+
+### Measuring Editor responsiveness
+
+The ordinary EditMode test
+`MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.NativePreviewReportsEditorUpdateGapAtTheSynchronousHashBoundary`
+records near-limit and 8 MiB samples, including during Linux GameCI. For the
+larger measurement use an isolated UnityMCPTests project and run the Editor on
+the operating system being measured:
+
+```sh
+"$UNITY_EDITOR" -batchmode -nographics -projectPath "$TEST_PROJECT" -runTests \
+  -testPlatform EditMode \
+  -testFilter MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.LargeAssetPreviewMeasurementPreservesStrongRevision \
+  -testResults "$RESULTS_XML" -logFile "$EDITOR_LOG"
+```
+
+Find the `BETA03` samples in the test output. The explicit test rotates three
+modes over three rounds on identical warm files at the inclusive 1 MiB boundary
+and at 128 MiB. `sync` is the full synchronous SHA baseline, `registry` invokes
+the native platform's public command, and `bounded` exercises the same capped
+implementation on every platform. Each sample reports platform, Unity version,
+source and metadata sizes, validation outcome, dispatch and total duration,
+updates during the operation, and the largest interval between real Editor
+updates bracketing it. The fixture checks each accepted guard against the
+full-byte baseline and checks the refusal reason for oversized capped requests.

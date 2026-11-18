@@ -151,7 +151,7 @@ def invalidate_cached_max_commands() -> None:
 def _preview_reply_is_exact(
     reply: Any, commands: list[dict[str, Any]], scope: str = "action_names"
 ) -> bool:
-    """Accept only the dedicated peer's complete, ordered action-name receipt."""
+    """Check the dedicated peer's ordered receipt against the requested validation scope."""
     if not isinstance(reply, dict) or type(reply.get("success")) is not bool:
         return False
     data = reply.get("data")
@@ -196,6 +196,8 @@ def _preview_reply_is_exact(
         allowed_reasons["incomplete"] = {
             "unsupported_target_preview",
             "dependent_target",
+            "synchronous_hash_budget_exceeded",
+            "target_changed_during_preparation",
             "editor_not_stable",
             "prepare_prefab_plan_first",
             "directory_move_not_modeled",

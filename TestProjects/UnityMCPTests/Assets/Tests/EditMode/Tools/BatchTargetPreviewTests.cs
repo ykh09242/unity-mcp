@@ -118,6 +118,113 @@ namespace MCPForUnityTests.Editor.Tools
             return path;
         }
 
+        private static Task<object> BoundedPreview(JArray commands) =>
+            BatchTargetPreview.PrepareCore(commands, true, new BatchTargetPreview.SynchronousHashBudget(), CancellationToken.None);
+
+        private static void AssertBudgetExceeded(JObject response, int index)
+        {
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(response.SelectToken("data.validation.complete").Value<bool>());
+            Assert.AreEqual("incomplete", (string)response["data"]["validation"]["items"][index]["status"]);
+            Assert.AreEqual("synchronous_hash_budget_exceeded", (string)response["data"]["validation"]["items"][index]["reason"]);
+            Assert.AreEqual(JTokenType.Null, response["data"]["preview"].Type);
+        }
+
+        [Test]
+        public async Task BoundedHashPreviewCountsSourceAndMetaAcrossCommands()
+        {
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                string first = Asset("First"),
+                    second = Asset("Second");
+                var commands = new JArray(Move(first, folder + "/FirstMoved.txt"), Move(second, folder + "/SecondMoved.txt"));
+                long metaBytes = new FileInfo(first + ".meta").Length + new FileInfo(second + ".meta").Length;
+                using (var stream = File.OpenWrite(first))
+                    stream.SetLength(512 * 1024);
+                using (var stream = File.OpenWrite(second))
+                    stream.SetLength(512 * 1024 - metaBytes);
+                JToken expected = Guard(Preview(commands));
+                Assert.IsTrue(JToken.DeepEquals(expected, Guard(JObject.FromObject(await BoundedPreview(commands)))));
+
+                // Both moves fit independently. One extra byte puts only the combined pass over budget.
+                using (var stream = File.OpenWrite(second))
+                    stream.SetLength(stream.Length + 1);
+                AssertBudgetExceeded(JObject.FromObject(await BoundedPreview(commands)), 1);
+                if (Application.platform != RuntimePlatform.WindowsEditor)
+                {
+                    AssertBudgetExceeded(Preview(commands), 1);
+                    AssertBudgetExceeded(
+                        JObject.FromObject(
+                            await CommandRegistry.InvokeCommandAsync("batch_validate", new JObject { ["commands"] = commands, ["previewScope"] = "targets" })
+                        ),
+                        1
+                    );
+                    JObject applied = await Apply(commands, expected);
+                    Assert.IsFalse(applied.Value<bool>("success"));
+                    Assert.AreEqual(0, applied["data"].Value<int>("attemptedCount"));
+                }
+                using (File.Open(first, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+                using (File.Open(second + ".meta", FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+                Assert.IsFalse(File.Exists(folder + "/FirstMoved.txt"));
+            }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        [Test]
+        public async Task BoundedHashGuardDetectsSameLengthTailChanges()
+        {
+            string source = Asset("Source"),
+                destination = folder + "/Moved.txt";
+            var commands = new JArray(Edit(), Move(source, destination));
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                using (var stream = File.OpenWrite(source))
+                    stream.SetLength(512 * 1024);
+                JToken guard = Guard(JObject.FromObject(await BoundedPreview(commands)));
+                foreach (string path in new[] { source, source + ".meta" })
+                {
+                    var timestamp = File.GetLastWriteTimeUtc(path);
+                    int original;
+                    using (var stream = File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                    {
+                        stream.Seek(-1, SeekOrigin.End);
+                        original = stream.ReadByte();
+                        stream.Seek(-1, SeekOrigin.End);
+                        stream.WriteByte((byte)(original ^ 1));
+                    }
+                    try
+                    {
+                        File.SetLastWriteTimeUtc(path, timestamp);
+                        JToken changed = Guard(JObject.FromObject(await BoundedPreview(commands)));
+                        Assert.IsFalse(JToken.DeepEquals(guard["revisions"][1], changed["revisions"][1]));
+                        JObject result = await Apply(commands, guard);
+                        Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                        Assert.AreEqual(0, result["data"].Value<int>("attemptedCount"));
+                        Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+                        Assert.IsFalse(File.Exists(destination));
+                    }
+                    finally
+                    {
+                        using (var stream = File.OpenWrite(path))
+                        {
+                            stream.Seek(-1, SeekOrigin.End);
+                            stream.WriteByte((byte)original);
+                        }
+                        File.SetLastWriteTimeUtc(path, timestamp);
+                    }
+                }
+            }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
         [Test]
         public async Task AssetPreviewYieldsAndHonorsCancellationBeforeIssuingGuard()
         {
@@ -401,51 +508,89 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
-        [Test, Explicit("Controller-owned large-file A/B measurement; ordinary regressions use smaller files.")]
-        public async Task LargeAssetPreviewMeasurementPreservesStrongRevision()
+        [Test]
+        public Task NativePreviewReportsEditorUpdateGapAtTheSynchronousHashBoundary() => MeasureNativePreview(8, 1);
+
+        [Test, Explicit("Native Editor update-gap measurement for full-byte, bounded and registry previews.")]
+        public Task LargeAssetPreviewMeasurementPreservesStrongRevision() => MeasureNativePreview(128, 3);
+
+        private async Task MeasureNativePreview(int largeMebibytes, int rounds)
         {
-            if (Application.platform != RuntimePlatform.WindowsEditor)
-                Assert.Ignore("Cooperative file hashing requires the Windows read-sharing guarantee; other Editors retain synchronous hashing.");
             AssetDatabase.DisallowAutoRefresh();
             try
             {
-                string path = LargeAsset(128);
+                string path = Asset("Measured");
                 var commands = new JArray(Move(path, folder + "/Moved.txt"));
-                JToken expected = Guard(Preview(commands));
-                // Counterbalanced warm A/B pairs use the same bytes, metadata and target identities.
-                for (int round = 0; round < 3; round++)
-                for (int position = 0; position < 2; position++)
+                long metaBytes = new FileInfo(path + ".meta").Length;
+                foreach (long bytes in new[] { 1024 * 1024 - metaBytes, (long)largeMebibytes * 1024 * 1024 })
                 {
-                    bool asynchronous = (round + position) % 2 == 0;
-                    int updates = 0;
-                    double maximumGap = 0;
-                    var timer = Stopwatch.StartNew();
-                    double previous = timer.Elapsed.TotalMilliseconds;
-                    void Observe()
+                    using (var stream = File.OpenWrite(path))
+                        stream.SetLength(bytes);
+                    Task<object> FullSync() => BatchTargetPreview.PrepareCore(commands, false, null, CancellationToken.None);
+                    JToken expected = Guard(JObject.FromObject(await FullSync()));
+                    // Rotate the three modes so each runs once at each position on the same warm files.
+                    for (int round = 0; round < rounds; round++)
+                    for (int position = 0; position < 3; position++)
                     {
-                        double now = timer.Elapsed.TotalMilliseconds;
-                        maximumGap = Math.Max(maximumGap, now - previous);
-                        previous = now;
-                        updates++;
-                    }
-                    EditorApplication.update += Observe;
-                    try
-                    {
-                        Task<object> pending = asynchronous
-                            ? CommandRegistry.InvokeCommandAsync("batch_validate", new JObject { ["commands"] = commands, ["previewScope"] = "targets" })
-                            : Task.FromResult<object>(BatchExecute.ValidateCommand(new JObject { ["commands"] = commands, ["previewScope"] = "targets" }));
-                        double dispatchMs = timer.Elapsed.TotalMilliseconds;
-                        JObject response = JObject.FromObject(await pending);
-                        double totalMs = timer.Elapsed.TotalMilliseconds;
-                        maximumGap = Math.Max(maximumGap, totalMs - previous);
-                        Assert.IsTrue(JToken.DeepEquals(expected, Guard(response)), response.ToString());
-                        TestContext.WriteLine(
-                            $"BETA03 mode={(asynchronous ? "async" : "sync")} round={round} bytes={new FileInfo(path).Length} dispatch_ms={dispatchMs:F3} total_ms={totalMs:F3} updates={updates} max_gap_ms={maximumGap:F3}"
-                        );
-                    }
-                    finally
-                    {
-                        EditorApplication.update -= Observe;
+                        string mode = new[] { "sync", "registry", "bounded" }[(round + position) % 3];
+                        int updates = 0;
+                        double maximumGap = 0,
+                            previous = 0;
+                        bool settled = false;
+                        var timer = Stopwatch.StartNew();
+                        var firstUpdate = new TaskCompletionSource<bool>();
+                        var followingUpdate = new TaskCompletionSource<bool>();
+                        void Observe()
+                        {
+                            double now = timer.Elapsed.TotalMilliseconds;
+                            if (!firstUpdate.Task.IsCompleted)
+                            {
+                                previous = now;
+                                firstUpdate.SetResult(true);
+                                return;
+                            }
+                            maximumGap = Math.Max(maximumGap, now - previous);
+                            previous = now;
+                            if (settled)
+                                followingUpdate.TrySetResult(true);
+                            else
+                                updates++;
+                        }
+                        EditorApplication.update += Observe;
+                        try
+                        {
+                            await firstUpdate.Task;
+                            double start = timer.Elapsed.TotalMilliseconds;
+                            Task<object> pending = mode switch
+                            {
+                                "registry" => CommandRegistry.InvokeCommandAsync(
+                                    "batch_validate",
+                                    new JObject { ["commands"] = commands, ["previewScope"] = "targets" }
+                                ),
+                                "bounded" => BoundedPreview(commands),
+                                _ => FullSync(),
+                            };
+                            double dispatchMs = timer.Elapsed.TotalMilliseconds - start;
+                            object payload = await pending;
+                            double totalMs = timer.Elapsed.TotalMilliseconds - start;
+                            settled = true;
+                            await followingUpdate.Task;
+                            JObject response = JObject.FromObject(payload);
+                            bool overBudget =
+                                bytes + metaBytes > 1024 * 1024
+                                && (mode == "bounded" || (mode == "registry" && Application.platform != RuntimePlatform.WindowsEditor));
+                            if (overBudget)
+                                AssertBudgetExceeded(response, 0);
+                            else
+                                Assert.IsTrue(JToken.DeepEquals(expected, Guard(response)), response.ToString());
+                            TestContext.WriteLine(
+                                $"BETA03 platform={Application.platform} unity={Application.unityVersion} batch_mode={Application.isBatchMode} mode={mode} round={round} bytes={bytes} meta_bytes={metaBytes} outcome={(overBudget ? "incomplete" : "valid")} dispatch_ms={dispatchMs:F3} total_ms={totalMs:F3} updates={updates} max_gap_ms={maximumGap:F3}"
+                            );
+                        }
+                        finally
+                        {
+                            EditorApplication.update -= Observe;
+                        }
                     }
                 }
                 Assert.IsTrue(File.Exists(path));

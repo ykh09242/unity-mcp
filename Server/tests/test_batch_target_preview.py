@@ -122,15 +122,24 @@ async def test_batch_refuses_ambiguous_runtime_request_before_any_peer_io(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("complete", [True, False])
-async def test_targets_preview_uses_dedicated_read_only_alias(batch, monkeypatch, complete):
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "ok",
+        "unsupported_target_preview",
+        "synchronous_hash_budget_exceeded",
+        "target_changed_during_preparation",
+    ],
+)
+async def test_targets_preview_uses_dedicated_read_only_alias(batch, monkeypatch, reason):
     commands = [
         {
             "tool": "asset_edit",
             "params": {"action": "move", "path": "Assets/A", "destination": "Assets/B"},
         }
     ]
-    reply = receipt(commands, complete=complete)
+    reply = receipt(commands, complete=reason == "ok")
+    reply["data"]["validation"]["items"][0]["reason"] = reason
     send = AsyncMock(return_value=reply)
     monkeypatch.setattr(batch, "send_with_unity_instance", send)
     ctx = object()
@@ -167,7 +176,9 @@ async def test_guarded_apply_never_sends_to_legacy_execution_alias(batch, monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["scope", "missing_item", "wrong_tool", "missing_guard"])
+@pytest.mark.parametrize(
+    "change", ["scope", "missing_item", "wrong_tool", "missing_guard", "unknown_incomplete_reason"]
+)
 async def test_targets_preview_does_not_accept_partial_or_legacy_claims(batch, monkeypatch, change):
     commands = [
         {
@@ -175,7 +186,7 @@ async def test_targets_preview_does_not_accept_partial_or_legacy_claims(batch, m
             "params": {"action": "move", "path": "Assets/A", "destination": "Assets/B"},
         }
     ]
-    reply = receipt(commands)
+    reply = receipt(commands, complete=change != "unknown_incomplete_reason")
     validation = reply["data"]["validation"]
     if change == "scope":
         validation["scope"] = "action_names"
@@ -183,6 +194,8 @@ async def test_targets_preview_does_not_accept_partial_or_legacy_claims(batch, m
         validation["items"] = []
     elif change == "wrong_tool":
         validation["items"][0]["tool"] = "other"
+    elif change == "unknown_incomplete_reason":
+        validation["items"][0]["reason"] = "unknown_target_observation"
     else:
         reply["data"]["preview"] = None
     send = AsyncMock(return_value=reply)

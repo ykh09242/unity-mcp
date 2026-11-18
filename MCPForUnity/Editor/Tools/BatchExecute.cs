@@ -336,6 +336,7 @@ namespace MCPForUnity.Editor.Tools
 
             long sliceStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             long sliceTicks = Math.Max(1, System.Diagnostics.Stopwatch.Frequency / 250); // Four milliseconds, between settled children only.
+            var dispatchHashBudget = preview == null ? null : BatchTargetPreview.SynchronousHashBudget.ForEditor();
             int inputIndex = 0;
             foreach (var token in commandsToken)
             {
@@ -358,7 +359,8 @@ namespace MCPForUnity.Editor.Tools
                     var commandObj = (JObject)token;
                     string toolName = commandObj.Value<string>("tool");
 
-                    using var targetObservation = preview == null ? null : await BatchTargetPreview.MatchAsync(commandObj, preview, index, cancellationToken);
+                    using var targetObservation =
+                        preview == null ? null : await BatchTargetPreview.MatchAsync(commandObj, preview, index, dispatchHashBudget, cancellationToken);
                     cancellationToken.ThrowIfCancellationRequested();
                     if (
                         preview != null
