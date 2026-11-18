@@ -3,6 +3,11 @@
 from fastmcp import Context
 
 from services.registry import mcp_for_unity_resource
+from services.registry.action_catalog import (
+    GAME_VIEW_OBSERVATION,
+    GRAPH_FILE_OBSERVATION,
+    OBSERVATION_META,
+)
 from services.registry.operation_invocation import wrap_tool
 from services.tools.manage_editor import manage_editor
 from services.tools.manage_shader import manage_shader
@@ -18,9 +23,10 @@ _shader = wrap_tool(manage_shader, "manage_shader", "manage_shader")
 @mcp_for_unity_resource(
     uri="mcpforunity://editor/game-view-size",
     name="game_view_size",
+    meta={OBSERVATION_META: GAME_VIEW_OBSERVATION},
     description=(
-        "Read the selected preset, rendered dimensions and available presets of an open Game View. "
-        "Requires manage_editor on the selected Editor."
+        "Read render_size in pixels, the selected preset and available presets from an open "
+        "Game View. Equivalent tool action: manage_editor.get_game_view_size on the selected Editor."
     ),
 )
 async def get_game_view_size(ctx: Context) -> dict:
@@ -30,10 +36,12 @@ async def get_game_view_size(ctx: Context) -> dict:
 @mcp_for_unity_resource(
     uri="mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}",
     name="shader_graph_structure",
+    meta={OBSERVATION_META: GRAPH_FILE_OBSERVATION},
     description=(
-        "Read serialized nodes, edges, properties and keywords from a project-owned Shader Graph. "
-        "URL-encode the complete Assets/*.shadergraph path as one segment. Page numbers start at "
-        "1; page_size defaults to 50 and accepts 1-100. Requires manage_shader on the selected Editor."
+        "Read node and edge counts and paged structure from the saved Shader Graph file through "
+        "the selected Editor. Unsaved graph-window edits and property values are unavailable. "
+        "URL-encode the full Assets/*.shadergraph path as one segment. Pages start at 1 and "
+        "page_size accepts 1-100 (default 50). Equivalent tool action: manage_shader.inspect_graph."
     ),
 )
 async def get_shader_graph_structure(

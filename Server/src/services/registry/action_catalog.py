@@ -47,12 +47,41 @@ class SkillLink(TypedDict):
     url: str
 
 
+class Observation(TypedDict):
+    """Data origin and selected result fields that a successful read can supply."""
+
+    source: Literal["editor_live", "asset_file", "imported_asset"]
+    values: list[str]
+    unavailable: list[str]
+
+
+OBSERVATION_META: Final = "io.github.ykh09242.unity-mcp/observation"
+ACTION_OBSERVATIONS_META: Final = "io.github.ykh09242.unity-mcp/action-observations"
+GAME_VIEW_OBSERVATION: Final[Observation] = {
+    "source": "editor_live",
+    "values": [
+        "render_size.width",
+        "render_size.height",
+        "current_size",
+        "view_instance_id",
+        "presets",
+    ],
+    "unavailable": ["rendered_image", "pointer_hit_order"],
+}
+GRAPH_FILE_OBSERVATION: Final[Observation] = {
+    "source": "asset_file",
+    "values": ["nodeCount", "edgeCount", "nodes", "edges", "properties", "keywords"],
+    "unavailable": ["unsaved_graph_structure", "property_values", "shader_source"],
+}
+
+
 class CatalogResource(TypedDict):
     name: str
     uri: str
     description: str | None
     func: NotRequired[Callable]
     schema_required: NotRequired[Collection[str]]
+    kwargs: NotRequired[dict]
 
 
 class CatalogResourceTemplate(TypedDict):
@@ -62,6 +91,7 @@ class CatalogResourceTemplate(TypedDict):
     description: str
     required_parameters: list[str]
     optional_parameters: list[str]
+    observation: NotRequired[Observation]
 
 
 RESOURCE_TEMPLATE_EXPANSION: Final = (
@@ -93,6 +123,7 @@ class ActionGuidance:
     effects: CapabilityEffects | None = None
     evidence_limit: str = ""
     intent: ActionIntent | None = None
+    observation: Observation | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -112,9 +143,13 @@ _PHYSICS: Final = ToolGuidance(
     skills=("create-2d-physics", "physics-3d-collision"),
 )
 _UITK: Final = ToolGuidance(skills=("ui-uitk",))
-GAME_VIEW_READ: Final = "For the current render size and presets, prefer the listed resource mcpforunity://editor/game-view-size."
+GAME_VIEW_READ: Final = (
+    "get_game_view_size reads render_size in pixels and current_size from an open Game View "
+    "in the selected Editor. Resource clients can read mcpforunity://editor/game-view-size."
+)
 SHADER_GRAPH_READ: Final = (
-    "For graph structure, prefer the listed resource template "
+    "inspect_graph reads the saved .shadergraph file through the selected Editor. "
+    "Unsaved graph-window edits are unavailable. Resource clients can read "
     "mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}. "
     "Encode the full asset path as one URI segment."
 )
@@ -337,6 +372,11 @@ TOOL_GUIDANCE: Final = {
                 "as read_offset to continue.",
                 ("name",),
                 READ_ONLY_EFFECTS,
+                observation={
+                    "source": "asset_file",
+                    "values": ["contents", "encodedContents", "nextOffset"],
+                    "unavailable": ["shader_graph_structure", "unsaved_source"],
+                },
             ),
             "update": ActionGuidance(
                 "Replace the entire existing .shader source with contents and import it. "
@@ -359,9 +399,11 @@ TOOL_GUIDANCE: Final = {
                 ("path",),
                 READ_ONLY_EFFECTS,
                 evidence_limit=(
-                    "Covers supported MultiJSON GraphData v0-3 and reports serialized structure "
-                    "only. Use diagnostics for imported pass and compiler information."
+                    "Covers saved MultiJSON GraphData v0-3. Node and property summaries include "
+                    "identifiers and names. Unsaved graph structure and property values are "
+                    "unavailable. Use diagnostics for imported pass and compiler information."
                 ),
+                observation=GRAPH_FILE_OBSERVATION,
             ),
             "diagnostics": ActionGuidance(
                 "Read cached compiler messages and list imported subshader/pass indexes, stage "
@@ -372,6 +414,11 @@ TOOL_GUIDANCE: Final = {
                     "Cached messages describe Unity's current observation. Check for pending or "
                     "unavailable compilation evidence and truncated pass lists."
                 ),
+                observation={
+                    "source": "imported_asset",
+                    "values": ["compilation", "passes", "subshader_count"],
+                    "unavailable": ["unsaved_graph_structure", "shader_source"],
+                },
             ),
             "compile_variant": ActionGuidance(
                 "Invoke Unity's compiler in idle Edit Mode for one variant of a full .shader "
@@ -472,9 +519,14 @@ TOOL_GUIDANCE: Final = {
                 ("job_id",),
             ),
             "get_game_view_size": ActionGuidance(
-                "Read the open Game View's current selection, render_size and available presets. "
-                "Use the reported render pixels for game screen coordinates. " + GAME_VIEW_READ,
+                GAME_VIEW_READ,
                 effects=READ_ONLY_EFFECTS,
+                evidence_limit=(
+                    "Inspect render_size for screen coordinates. current_size describes the "
+                    "selected preset, which may specify an aspect ratio. The read requires an "
+                    "existing Game View and reports its view_instance_id."
+                ),
+                observation=GAME_VIEW_OBSERVATION,
             ),
             "set_game_view_size": ActionGuidance(
                 "Change the open Game View to a fixed width and height, an aspect_ratio W:H "
@@ -738,6 +790,20 @@ def guidance_for(name: str) -> ToolGuidance:
     return TOOL_GUIDANCE.get(name, ToolGuidance())
 
 
+def action_observations(name: str) -> dict[str, Observation]:
+    return {
+        action: guidance.observation
+        for action, guidance in guidance_for(name).actions.items()
+        if guidance.observation
+    }
+
+
+def resource_observation(item: CatalogResource) -> dict:
+    meta = item.get("kwargs", {}).get("meta") or {}
+    observation = meta.get(OBSERVATION_META)
+    return {"observation": observation} if observation else {}
+
+
 def action_guidance(entry: CatalogEntry, action: str | None) -> ActionGuidance | None:
     """Use reviewed action evidence or the tool's own wire schema alternative."""
     if action is None:
@@ -848,6 +914,7 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
         "purpose_source": "declared"
         if (guidance and guidance.purpose) or action is None
         else "identifier",
+        **({"observation": guidance.observation} if guidance and guidance.observation else {}),
         **(
             {"evidence_limit": guidance.evidence_limit}
             if guidance and guidance.evidence_limit
@@ -956,6 +1023,7 @@ def resource_templates(resources: list[CatalogResource]) -> list[CatalogResource
                 "name": item["name"],
                 "uri_template": uri,
                 "description": item["description"] or "",
+                **resource_observation(item),
                 "required_parameters": [name for name, required in variables.items() if required],
                 "optional_parameters": [
                     name for name, required in variables.items() if not required
@@ -1054,6 +1122,7 @@ def browse_catalog(
                 "name": item["name"],
                 "uri": item["uri"],
                 "description": item["description"],
+                **resource_observation(item),
                 "advertised": True if visible_names is not None else None,
                 "readiness": "unobserved",
             }

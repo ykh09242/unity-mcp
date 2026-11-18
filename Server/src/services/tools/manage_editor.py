@@ -10,7 +10,11 @@ from models.editor_readiness import PlayReadinessJob
 from models.response_lifetime import ResponsePollLifetime
 
 from services.registry import mcp_for_unity_tool
-from services.registry.action_catalog import GAME_VIEW_READ
+from services.registry.action_catalog import (
+    ACTION_OBSERVATIONS_META,
+    GAME_VIEW_READ,
+    action_observations,
+)
 from core.telemetry import is_telemetry_enabled, record_tool_usage
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
@@ -18,6 +22,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 
 @mcp_for_unity_tool(
+    meta={ACTION_OBSERVATIONS_META: action_observations("manage_editor")},
     description=(
         "Controls Unity editor state and settings. "
         f"{GAME_VIEW_READ} "

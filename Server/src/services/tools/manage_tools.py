@@ -349,7 +349,12 @@ async def _catalog_resources(ctx: Context) -> list[CatalogResource]:
     # Keep the resource listing permission check when skipping the listing middleware.
     await authorize_remote_resource()
     resources: list[CatalogResource] = [
-        {"uri": str(item.uri), "name": item.name, "description": item.description or ""}
+        {
+            "uri": str(item.uri),
+            "name": item.name,
+            "description": item.description or "",
+            "kwargs": {"meta": item.meta},
+        }
         for item in await ctx.fastmcp.list_resources(run_middleware=False)
     ]
     templates = dedupe_with_versions(
@@ -361,6 +366,7 @@ async def _catalog_resources(ctx: Context) -> list[CatalogResource]:
             "uri": item.uri_template,
             "name": item.name,
             "description": item.description or "",
+            "kwargs": {"meta": item.meta},
             "schema_required": tuple(item.parameters.get("required", ())),
         }
         for item in templates

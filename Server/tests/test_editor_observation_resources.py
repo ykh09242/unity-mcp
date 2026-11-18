@@ -21,6 +21,9 @@ from transport.unity_instance_middleware import UnityInstanceMiddleware
 GAME_VIEW = "mcpforunity://editor/game-view-size"
 GRAPH_PATH = "Assets/Shaders/Fixture #1.shadergraph"
 GRAPH = "mcpforunity://shader/graph/" + quote(GRAPH_PATH, safe="")
+GRAPH_TEMPLATE = "mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}"
+ACTION_OBSERVATIONS = "io.github.ykh09242.unity-mcp/action-observations"
+OBSERVATION = "io.github.ykh09242.unity-mcp/observation"
 READS = (
     (GAME_VIEW, "manage_editor", {"action": "get_game_view_size"}),
     (
@@ -33,24 +36,107 @@ TARGET = {"unity_instance": "Fixture@hash"}
 
 
 @pytest.mark.asyncio
-async def test_mixed_tool_descriptions_point_to_advertised_read_surfaces(monkeypatch):
-    from services.registry import get_registered_tools
-    from services.registry.action_catalog import action_card
-
-    server = observation_server(monkeypatch)
-    async with Client(server) as client:
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_tools_only_client_discovers_source_and_invokes_the_read(
+    command_hub, monkeypatch, mode
+):
+    monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", "full")
+    server = FastMCP("tools-only")
+    server.add_middleware(UnityInstanceMiddleware())
+    register_all_tools(server)
+    async with Client(server, mode=mode, cache=False) as client:
         tools = {item.name: item for item in await client.list_tools()}
-        resources = {item.name: str(item.uri) for item in await client.list_resources()}
-        resources.update(
-            {item.name: str(item.uri_template) for item in await client.list_resource_templates()}
-        )
-        declarations = {entry["name"]: entry for entry in get_registered_tools()}
-        for parent, action, resource in [
-            ("manage_editor", "get_game_view_size", "game_view_size"),
-            ("manage_shader", "inspect_graph", "shader_graph_structure"),
+        for _, name, expected in READS:
+            action = expected["action"]
+            parent = tools[name]
+            assert action in parent.description
+            description = (
+                await client.call_tool(
+                    "manage_tools",
+                    {
+                        "action": "describe",
+                        "tool": name,
+                        "operation": action,
+                    },
+                )
+            ).structured_content
+            card = description["operation"]
+            observation = parent.meta[ACTION_OBSERVATIONS][action]
+            assert card["observation"] == observation
+            arguments = card["invoke"]["arguments"].copy()
+            if action == "inspect_graph":
+                assert "Unsaved" in parent.description
+                assert observation["source"] == "asset_file"
+                assert {"nodes", "nodeCount", "edgeCount"} <= set(observation["values"])
+                assert "unsaved_graph_structure" in observation["unavailable"]
+                assert "path" in card["required_parameters"]
+                arguments.update(path=GRAPH_PATH, page_size=3, page_number=2)
+            else:
+                assert observation["source"] == "editor_live"
+                assert {"render_size.width", "render_size.height", "current_size"} <= set(
+                    observation["values"]
+                )
+            result = await client.call_tool(name, {**arguments, **TARGET})
+            assert result.structured_content["success"]
+            [sent] = command_hub.sent
+            assert (sent["name"], sent["params"]) == (name, expected)
+            command_hub.sent.clear()
+        shader = tools["manage_shader"].meta[ACTION_OBSERVATIONS]
+        assert shader["read"]["source"] == "asset_file"
+        assert shader["diagnostics"]["source"] == "imported_asset"
+        assert all("unsaved_graph_structure" not in read["values"] for read in shader.values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_resource_observation_matches_the_same_tool_and_catalog(
+    command_hub, monkeypatch, mode
+):
+    async with Client(observation_server(monkeypatch), mode=mode, cache=False) as client:
+        tools = {item.name: item for item in await client.list_tools()}
+        resources = {str(item.uri): item for item in await client.list_resources()}
+        templates = {
+            str(item.uri_template): item for item in await client.list_resource_templates()
+        }
+        for uri, resource, group, parent, action in [
+            (GAME_VIEW, resources[GAME_VIEW], "resources", "manage_editor", "get_game_view_size"),
+            (
+                GRAPH_TEMPLATE,
+                templates[GRAPH_TEMPLATE],
+                "resource_templates",
+                "manage_shader",
+                "inspect_graph",
+            ),
         ]:
-            assert resources[resource] in tools[parent].description
-            assert resources[resource] in action_card(declarations[parent], action)["purpose"]
+            assert uri in tools[parent].description
+            assert action in resource.description
+            observation = resource.meta[OBSERVATION]
+            assert tools[parent].meta[ACTION_OBSERVATIONS][action] == observation
+            page = (
+                await client.call_tool(
+                    "manage_tools",
+                    {
+                        "action": "catalog",
+                        "group": group,
+                        "limit": 20,
+                    },
+                )
+            ).structured_content
+            assert (
+                next(row for row in page[group] if row["name"] == resource.name)["observation"]
+                == observation
+            )
+            found = (
+                await client.call_tool(
+                    "manage_tools",
+                    {
+                        "action": "search",
+                        "query": uri,
+                    },
+                )
+            ).structured_content["routes"][0]
+            assert found["observation"] == observation
+        assert command_hub.sent == []
 
 
 def observation_server(monkeypatch, profile="full"):

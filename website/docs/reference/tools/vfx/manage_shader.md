@@ -1,7 +1,7 @@
 ---
 title: manage_shader
 sidebar_label: manage_shader
-description: "Manages shader source, graph structure and compiler diagnostics."
+description: "Manages shader source, graph structure and compiler diagnostics. inspect_graph reads the saved .shadergraph file through the selected Editor."
 ---
 
 # `manage_shader`
@@ -14,7 +14,7 @@ description: "Manages shader source, graph structure and compiler diagnostics."
 
 ## Description
 
-Manages shader source, graph structure and compiler diagnostics. For graph structure, prefer the listed resource template mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}. Encode the full asset path as one URI segment. read returns a bounded source page (64 KiB by default); follow data.nextOffset with read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. inspect_graph takes a full Assets/*.shadergraph path and returns bounded, paged serialized nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 16 MiB files; at most 100 results per collection per page). diagnostics reads cached messages for a full .shader/.shadergraph path. compile_variant compiles one explicit variant in idle Edit Mode and returns outcome, bytecode size and up to 100 bounded messages. Empty bytecode reports no_program. Platform/target support depends on the installed Editor.
+Manages shader source, graph structure and compiler diagnostics. inspect_graph reads the saved .shadergraph file through the selected Editor. Unsaved graph-window edits are unavailable. Resource clients can read mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}. Encode the full asset path as one URI segment. read returns a bounded .shader source page (64 KiB by default); follow data.nextOffset with read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. inspect_graph takes a full Assets/*.shadergraph path and returns nodeCount, edgeCount and paged nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 16 MiB files; at most 100 results per collection per page). diagnostics reads cached messages for a full .shader/.shadergraph path. compile_variant compiles one explicit variant in idle Edit Mode and returns outcome, bytecode size and up to 100 bounded messages. Empty bytecode reports no_program. Platform/target support depends on the installed Editor.
 
 ## Parameters
 

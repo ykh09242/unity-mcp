@@ -31,6 +31,27 @@ its name as a short label and the enclosing tool description for context.
 `effects_scope="tool"` indicates conservative tool-wide effects. Known required
 parameters on cards supplement conditional requirements in the full live schema.
 
+For reviewed observations, `observation.source` names the origin of the data.
+`values` lists selected fields relative to a successful result's `data` object.
+`unavailable` names evidence this operation cannot supply. Catalog cards, exact
+descriptions and matching search routes expose the same observation record.
+Tools-only clients can also inspect `_meta["io.github.ykh09242.unity-mcp/action-observations"]`
+in `tools/list`, keyed by action. Corresponding resource and template listings
+carry the record under `_meta["io.github.ykh09242.unity-mcp/observation"]`.
+The tool description names the direct action for clients that hide metadata.
+
+| Requested observation | Operation | Source and scope |
+| --- | --- | --- |
+| Current Game View pixels and preset | `manage_editor.get_game_view_size` or `mcpforunity://editor/game-view-size` | `editor_live`. Use `render_size.width` and `render_size.height` for pixels. `current_size` identifies the preset, which may be an aspect ratio. An existing Game View is required. |
+| Saved Shader Graph structure | `manage_shader.inspect_graph` or the `shader_graph_structure` template | `asset_file`. The selected Editor reads the named file. Counts cover the whole graph. Node types, edge endpoints and property summaries are paged. |
+| Shader source text | `manage_shader.read` | `asset_file`. Reads one source page from a named `.shader` file. |
+| Imported shader passes and compiler messages | `manage_shader.diagnostics` | `imported_asset`. Reads imported pass information and Unity's cached compiler observations. |
+
+If the request specifically requires unsaved Shader Graph edits, report that the
+graph inspection action and template cannot observe the open window's in-memory
+model. A disk read, including one performed by the Editor, supplies only the saved
+version. Inspect that version when it satisfies the requested evidence.
+
 Intent guidance is targeted at routes where the action name obscures different
 outcomes. Build cards distinguish observing a non-profile `plan`, repeating its
 inputs with `expected_plan_sha256` for `build_from_plan`, and an unguarded `build`.

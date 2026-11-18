@@ -62,7 +62,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_audio`](./core/manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./core/manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
 - **[`manage_components`](./core/manage_components.md)** — Add, remove, or set properties on components attached to GameObjects.
-- **[`manage_editor`](./core/manage_editor.md)** — Controls Unity editor state and settings.
+- **[`manage_editor`](./core/manage_editor.md)** — Controls Unity editor state and settings. get_game_view_size reads render_size in pixels and current_size from an open Game View in the selected Editor.
 - **[`manage_input_actions`](./core/manage_input_actions.md)** — Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and exis…
 - **[`manage_localization`](./core/manage_localization.md)** — Inspect optional Unity Localization locale/table identities, shared keys, missing translations, static Smart String selectors and asset GUID references.
 - **[`manage_material`](./core/manage_material.md)** — Manages Unity materials (properties, colors, shaders, render state).
@@ -184,7 +184,7 @@ UI Toolkit (UXML, USS, UIDocument, optional PanelRenderer) and Canvas-based uGUI
 
 ## `vfx` &nbsp; (3 tools)
 Visual effects – VFX Graph, shaders, procedural textures
-- **[`manage_shader`](./vfx/manage_shader.md)** — Manages shader source, graph structure and compiler diagnostics.
+- **[`manage_shader`](./vfx/manage_shader.md)** — Manages shader source, graph structure and compiler diagnostics. inspect_graph reads the saved .shadergraph file through the selected Editor.
 - **[`manage_texture`](./vfx/manage_texture.md)** — Procedural texture generation for Unity.
 - **[`manage_vfx`](./vfx/manage_vfx.md)** — Manage Unity VFX components (ParticleSystem, VisualEffect, LineRenderer, TrailRenderer).
 

@@ -10,12 +10,14 @@ from services.registry.action_catalog import (
     ActionIntent,
     CatalogEntry as SearchEntry,
     CatalogResource,
+    Observation,
     CatalogTool as SearchResult,
     RESOURCE_TEMPLATE_EXPANSION,
     action_guidance,
     action_intent,
     catalog_navigation,
     concrete_resources,
+    resource_observation,
     resource_templates,
     tool_capability,
     tool_description,
@@ -74,6 +76,7 @@ class SearchRoute(TypedDict):
     optional_parameters: NotRequired[list[str]]
     purpose: str
     evidence_limit: NotRequired[str]
+    observation: NotRequired[Observation]
     advertised: bool | None
     readiness: Literal["unobserved"]
     intent: NotRequired[ActionIntent | None]
@@ -200,6 +203,11 @@ def search_catalog(
                         "kind": "tool",
                         "tool": name,
                         "operation": action,
+                        **(
+                            {"observation": guidance.observation}
+                            if guidance and guidance.observation
+                            else {}
+                        ),
                         "intent": action_intent(guidance, result),
                         "purpose": guidance.purpose
                         if guidance and guidance.purpose
@@ -250,6 +258,8 @@ def search_catalog(
             route["uri_template"] = identifier
             route["required_parameters"] = resource["required_parameters"]
             route["optional_parameters"] = resource["optional_parameters"]
+            if "observation" in resource:
+                route["observation"] = resource["observation"]
             route["evidence_limit"] = RESOURCE_TEMPLATE_EXPANSION
             exact_name = query == _normalized(resource["name"])
             evidence = _term_evidence(
@@ -260,6 +270,7 @@ def search_catalog(
             )
         else:
             identifier = resource["uri"]
+            route.update(resource_observation(resource))
             route["uri"] = identifier
             evidence = _term_evidence(query_words, (resource["name"], 8), (purpose, 6))
         route["name"] = resource["name"]

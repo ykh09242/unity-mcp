@@ -528,11 +528,11 @@ def _build_instructions(project_scoped_tools: bool) -> str:
         if project_scoped_tools
         else "Custom tools appear as standard tools after Unity connects."
     )
-    return f"""Unity Editor tools. Use live schemas and a resource or action for Editor observations. Files describe saved content.
+    return f"""Unity Editor tools. Use live schemas. Editor reads can return saved files.
 
 Target and discover
 - Resolve mcpforunity://instances. When ambiguous or sessionless, pass unity_instance=Name@hash on tools and _meta.unity_instance on resources. Where supported, use set_active_instance.
-- For observations prefer listed resources (unityMCP in Codex). Expand templates with observed values. Read data.
+- Prefer a listed resource that answers from the requested source. Otherwise use its tool action. Expand templates with observed values.
 - Use manage_tools(action="catalog") by meaning in any language. Filter groups by intent, follow next_offset and describe the operation. Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck target, scene and mode.
 - For missing tools inspect manage_tools(action="list_groups").discovery. Selection needs client scope/project binding, Editor toggles and consent. Fixed-inventory clients can use UNITY_MCP_TOOL_PROFILE=full and reconnect. {custom_tools_note}
 

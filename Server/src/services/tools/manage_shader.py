@@ -6,7 +6,11 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, f
 from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
-from services.registry.action_catalog import SHADER_GRAPH_READ
+from services.registry.action_catalog import (
+    ACTION_OBSERVATIONS_META,
+    SHADER_GRAPH_READ,
+    action_observations,
+)
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -34,13 +38,14 @@ class ShaderVariantOptions(BaseModel):
 
 @mcp_for_unity_tool(
     group="vfx",
+    meta={ACTION_OBSERVATIONS_META: action_observations("manage_shader")},
     description=(
         "Manages shader source, graph structure and compiler diagnostics. "
         f"{SHADER_GRAPH_READ} "
-        "read returns a bounded source page (64 KiB by default); follow data.nextOffset with "
+        "read returns a bounded .shader source page (64 KiB by default); follow data.nextOffset with "
         "read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. "
-        "inspect_graph takes a full Assets/*.shadergraph path and returns bounded, paged serialized "
-        "nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 16 MiB files; "
+        "inspect_graph takes a full Assets/*.shadergraph path and returns nodeCount, edgeCount and "
+        "paged nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 16 MiB files; "
         "at most 100 results per collection per page). diagnostics reads cached messages for a "
         "full .shader/.shadergraph path. compile_variant compiles one explicit variant in idle Edit Mode "
         "and returns outcome, bytecode size and up to 100 bounded messages. Empty bytecode reports "
