@@ -37,20 +37,26 @@ runs:
             match = re.fullmatch(r'https://github\.com/ykh09242/unity-mcp/archive/([0-9a-f]{40})\.zip#subdirectory=Server', url)
             source = match[1] if match else None
         requested = os.environ['ARCHIVE_PYTHON']
-        interpreter = read('uv', 'python', 'find', '--offline', '--no-config', requested)
+        try:
+            interpreter = read('uv', 'python', 'find', '--offline', '--no-config', requested)
+            python_version = read(interpreter, '-I', '-c', 'import platform; print(platform.python_version())')
+        except (OSError, subprocess.SubprocessError):
+            # The cold installer can provision the interpreter after this checkpoint.
+            python_version = None
         checkpoint = {
             'repository': os.environ['GITHUB_REPOSITORY'], 'run_id': int(os.environ['GITHUB_RUN_ID']),
             'attempt': int(os.environ['GITHUB_RUN_ATTEMPT']), 'kind': kind,
             'checked_commit': checked, 'source_commit': source, 'platform': os.environ['ARCHIVE_PLATFORM'],
             'runner_arch': os.environ['RUNNER_ARCH'], 'python_requested': requested,
-            'python': read(interpreter, '-I', '-c', 'import platform; print(platform.python_version())'),
-            'uv': read('uv', '--version'), 'last_completed': 'toolchain_ready', 'next_phase': 'installation',
+            'python': python_version, 'uv': read('uv', '--version'),
+            'last_completed': 'toolchain_ready' if python_version else 'uv_ready', 'next_phase': 'installation',
         }
         output = Path(os.environ['RUNNER_TEMP']) / 'archive-checkpoint.json'
         output.write_text(json.dumps(checkpoint, indent=2) + '\n', encoding='utf-8')
         with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
             summary.write(f"Installer checkpoint for `{kind}`, attempt {checkpoint['attempt']}, "
-                          f"`{checkpoint['platform']}`, Python `{checkpoint['python']}`, `{checkpoint['uv']}`. "
+                          f"`{checkpoint['platform']}`, requested Python `{requested}`, "
+                          f"observed `{python_version or 'unobserved before installation'}`, `{checkpoint['uv']}`. "
                           f"Checked `{checked}`, source `{source or 'unknown'}`.\n")
     - name: Upload checkpoint
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

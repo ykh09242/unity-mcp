@@ -50,8 +50,10 @@ establish Unity execution, network listener behavior, or all unlocked combinatio
 ### Archive installation attempts
 
 Candidate, launcher bootstrap and distribution jobs upload an `archive-checkpoint-`
-artifact as soon as the selected uv and Python toolchain is ready. It records the
-checked commit, selected server commit, runner label, versions, run ID and attempt.
+artifact as soon as uv is ready. It records the checked commit, selected server
+commit, runner label, uv version, requested Python version, run ID and attempt.
+It also records the Python version already available offline. When the cold installer
+must download Python, the observed version is null until installation.
 The checkpoint precedes installation. The installed-archive and distribution
 evidence bundles also include the attempt number in their names, so reruns retain
 the earlier evidence. GitHub's artifact retention policy applies to all bundles.

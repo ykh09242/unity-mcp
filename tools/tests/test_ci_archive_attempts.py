@@ -16,8 +16,9 @@ INSTALL = "Install candidate archive without runtime lock"
 
 
 @pytest.mark.parametrize("kind", ["candidate", "published", "bootstrap"])
+@pytest.mark.parametrize("python_available", [True, False])
 def test_checkpoint_records_the_actual_toolchain_and_distinct_source_before_install(
-    tmp_path, monkeypatch, kind
+    tmp_path, monkeypatch, kind, python_available
 ):
     action = yaml.safe_load((ROOT / ".github/actions/archive-checkpoint/action.yml").read_text())
     capture, upload = action["runs"]["steps"]
@@ -52,9 +53,13 @@ def test_checkpoint_records_the_actual_toolchain_and_distinct_source_before_inst
         ("uv", "python", "find", "--offline", "--no-config", "3.11"): "/python3.11",
         ("/python3.11", "-I", "-c", "import platform; print(platform.python_version())"): "3.11.15",
     }
-    monkeypatch.setattr(
-        subprocess, "check_output", lambda command, **kwargs: commands[tuple(command)]
-    )
+
+    def run(command, **_kwargs):
+        if tuple(command[:3]) == ("uv", "python", "find") and not python_available:
+            raise subprocess.CalledProcessError(2, command)
+        return commands[tuple(command)]
+
+    monkeypatch.setattr(subprocess, "check_output", run)
     exec(compile(capture["run"], "archive-checkpoint", "exec"), {})
     checkpoint = json.loads((tmp_path / "archive-checkpoint.json").read_text())
     assert (checkpoint["run_id"], checkpoint["attempt"], checkpoint["checked_commit"]) == (
@@ -64,10 +69,12 @@ def test_checkpoint_records_the_actual_toolchain_and_distinct_source_before_inst
     )
     assert checkpoint["source_commit"] == (checked if kind == "candidate" else selected)
     assert (checkpoint["python"], checkpoint["uv"], checkpoint["next_phase"]) == (
-        "3.11.15",
+        "3.11.15" if python_available else None,
         "uv 0.13.9",
         "installation",
     )
+    assert checkpoint["python_requested"] == "3.11"
+    assert checkpoint["last_completed"] == ("toolchain_ready" if python_available else "uv_ready")
 
 
 def example_job(attempt, conclusion, steps):
