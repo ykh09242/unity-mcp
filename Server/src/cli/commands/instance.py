@@ -3,7 +3,7 @@
 import click
 
 from cli.utils.config import get_config
-from cli.utils.output import format_output, print_info
+from cli.utils.output import format_instance_line, format_output, print_info
 from cli.utils.connection import run_list_instances, handle_unity_errors
 
 
@@ -37,14 +37,8 @@ def list_instances():
 
     click.echo("Available Unity instances:")
     for inst in instances:
-        project = inst.get("project", "Unknown")
-        version = inst.get("unity_version", "Unknown")
-        hash_id = inst.get("hash", "")
+        click.echo(format_instance_line(inst))
         session_id = inst.get("session_id", "")
-
-        # Format: ProjectName@hash (Unity version)
-        display_id = f"{project}@{hash_id}" if hash_id else project
-        click.echo(f"  • {display_id} (Unity {version})")
         if session_id:
             click.echo(f"    Session: {session_id[:8]}...")
 

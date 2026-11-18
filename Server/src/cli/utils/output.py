@@ -9,6 +9,15 @@ import click
 _TABLE_ROW_LIMIT = 50
 
 
+def format_instance_line(instance: dict[str, Any]) -> str:
+    """Show the full instance selector in human-readable discovery output."""
+    project = instance.get("project", "Unknown")
+    version = instance.get("unity_version", "Unknown")
+    hash_id = instance.get("hash", "")
+    display_id = f"{project}@{hash_id}" if hash_id else project
+    return f"  • {display_id} (Unity {version})"
+
+
 def format_output(
     data: Any,
     format_type: str = "text",

@@ -151,7 +151,7 @@ Checking connection to 127.0.0.1:8080...
 ✅ Connected to Unity MCP server at 127.0.0.1:8080
 
 Connected Unity instances:
-  • MyProject (Unity 6000.2.10f1) [09abcc51]
+  • MyProject@09abcc51a2b3c4d5 (Unity 6000.2.10f1)
 ```
 
 ### 3. Run Your First Commands
@@ -423,21 +423,23 @@ and an empty `instances` list.
 ### Selecting a Unity Instance
 
 Use the global `--instance` option before the command, or set
-`UNITY_MCP_INSTANCE` in your shell:
+`UNITY_MCP_INSTANCE` in your shell. Copy the complete `Name@hash` from
+`unity-mcp status` or `unity-mcp instance list`. If the project name contains
+`@`, the last `@` separates the name from the hash.
 
 ```bash
 # Read the full instance catalog, including identifiers
 unity-mcp -f json instance list
 
 # Target a specific instance for this request
-unity-mcp --instance "MyProject@09abcc51" scene hierarchy
+unity-mcp --instance "MyProject@09abcc51a2b3c4d5" scene hierarchy
 
 # Inspect the configured selector without contacting the server
-unity-mcp --instance "MyProject@09abcc51" -f json instance current
+unity-mcp --instance "MyProject@09abcc51a2b3c4d5" -f json instance current
 ```
 
 `instance current` reports the CLI option or environment value; JSON contains
-`{"success": true, "data": {"instance": "MyProject@09abcc51"}}`. With no explicit
+`{"success": true, "data": {"instance": "MyProject@09abcc51a2b3c4d5"}}`. With no explicit
 selector, `instance` is `null`. Local commands automatically select the sole
 connected Editor. With multiple Editors, a missing selector or ambiguous project
 name is refused before dispatch; the response lists available `Name@hash` IDs.

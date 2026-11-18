@@ -16,7 +16,24 @@ def disposable_auth(monkeypatch):
     monkeypatch.delenv("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", raising=False)
 
 
-@pytest.mark.parametrize("target", [None, "aaaa1111", "6400", "Project@", "bad@target@twice"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        None,
+        "aaaa1111",
+        "6400",
+        "@aaaa1111",
+        "Project@",
+        "Project@aaaa111",
+        "bad@target@twice",
+        "dir/Game@2026@aaaa1111",
+        "dir\\Game@2026@aaaa1111",
+        "Game\n@2026@aaaa1111",
+        " Game@2026@aaaa1111",
+        f"{'a' * 129}@aaaa1111",
+        f"Game@2026@{'a' * 65}",
+    ],
+)
 def test_doctor_rejects_nonexact_target_before_auth(monkeypatch, target):
     from cli.main import cli
     import core.local_auth as auth
@@ -313,7 +330,7 @@ async def test_live_server_releases_accepted_socket_when_windows_shutdown_resets
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode,legacy_only", [("auto", False), ("legacy", False), ("auto", True)])
-@pytest.mark.parametrize("project_name", ["Fixture", "My Project", "Project #One"])
+@pytest.mark.parametrize("project_name", ["Fixture", "My Project", "Project #One", "Game@2026"])
 async def test_real_click_sdk_loopback_discovery_and_safe_read(
     command_hub, monkeypatch, mode, legacy_only, project_name
 ):
@@ -325,10 +342,12 @@ async def test_real_click_sdk_loopback_discovery_and_safe_read(
 
     monkeypatch.setenv("UNITY_MCP_LOCAL_AUTH_TOKEN", "disposable-fixture-token")
     monkeypatch.delenv("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", raising=False)
+    project_hash = "aaaa111122223333"
+    target = f"{project_name}@{project_hash}"
     await command_hub.registry.unregister("session")
-    await command_hub.registry.register("session", project_name, "aaaa1111", "6000")
+    await command_hub.registry.register("session", project_name, project_hash, "6000")
     values = observations()
-    values["get_editor_state"]["unity"]["instance_id"] = f"{project_name}@aaaa1111"
+    values["get_editor_state"]["unity"]["instance_id"] = target
     await install_native_replies(command_hub, values)
     monkeypatch.setattr(doctor, "RUNNING_SERVER", ServerBuild("1.2.0", "a" * 40, "c" * 32))
     import cli.utils.doctor_connection as connection
@@ -352,7 +371,7 @@ async def test_real_click_sdk_loopback_discovery_and_safe_read(
                     "--port",
                     str(port),
                     "--instance",
-                    f"{project_name}@aaaa1111",
+                    target,
                     "--format",
                     "json",
                     "doctor",
@@ -365,6 +384,7 @@ async def test_real_click_sdk_loopback_discovery_and_safe_read(
     assert streams and all(stream.response.is_closed for stream in streams)
     receipt = json.loads(result.stdout)
     assert receipt["connection_verified"] is True
+    assert receipt["requested_target"] == receipt["data"]["target"]["instance_id"] == target
     assert receipt["external_client_verified"] is False
     assert "resources/list" in trace and "resources/read" in trace
     if mode == "legacy" or legacy_only:

@@ -9,29 +9,45 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_composition_uses_the_actual_sdk_wire_once(monkeypatch):
-    from fastmcp import FastMCP
-    from cli.utils.config import CLIConfig
-    from cli.utils.composed_tools import send_composed_tool
+    import anyio
+    from fastmcp import Context, FastMCP
+    from cli.main import cli
     from tests.test_cli_doctor import live_mcp
 
     monkeypatch.setenv("UNITY_MCP_LOCAL_AUTH_TOKEN", "disposable-composition-token")
     monkeypatch.delenv("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", raising=False)
     server, calls, trace = FastMCP("composition-wire"), [], []
+    target = "Game@2026@aaaa111122223333"
 
     @server.tool()
-    def manage_verification(action: str, options: dict) -> dict:
-        calls.append((action, options))
+    def manage_verification(action: str, options: dict, ctx: Context) -> dict:
+        calls.append((action, options, ctx.request_context.meta["unity_instance"]))
         return {"success": True, "data": {"run_id": "a" * 32}}
 
     async with live_mcp(server, trace) as port:
-        result = await send_composed_tool(
-            "manage_verification",
-            "run",
-            {"preparation_id": "b" * 32},
-            CLIConfig(port=port, unity_instance="Fixture@aaaa1111", timeout=5),
+        result = await anyio.to_thread.run_sync(
+            lambda: CliRunner().invoke(
+                cli,
+                [
+                    "--port",
+                    str(port),
+                    "--timeout",
+                    "5",
+                    "--instance",
+                    target,
+                    "--no-project-context",
+                    "--format",
+                    "json",
+                    "verification",
+                    "run",
+                    "--options",
+                    json.dumps({"preparation_id": "b" * 32}),
+                ],
+            )
         )
-    assert result["data"]["run_id"] == "a" * 32
-    assert calls == [("run", {"preparation_id": "b" * 32, "wait_seconds": 0})]
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["data"]["run_id"] == "a" * 32
+    assert calls == [("run", {"preparation_id": "b" * 32, "wait_seconds": 0}, target)]
     assert trace.count("tools/call") == 1
 
 

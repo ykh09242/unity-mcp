@@ -24,7 +24,13 @@ from cli.utils.connection import (
     run_list_instances,
     remote_host_warning_scope,
 )
-from cli.utils.output import format_output, print_error, print_info, print_success
+from cli.utils.output import (
+    format_instance_line,
+    format_output,
+    print_error,
+    print_info,
+    print_success,
+)
 from cli.utils.input_errors import CLIInputError
 from cli.utils.suggestions import format_suggestions, suggest_matches
 
@@ -257,10 +263,7 @@ def status(ctx: Context, ready: bool):
             if instances:
                 click.echo("\nConnected Unity instances:")
                 for inst in instances:
-                    project = inst.get("project", "Unknown")
-                    version = inst.get("unity_version", "Unknown")
-                    hash_id = inst.get("hash", "")[:8]
-                    click.echo(f"  • {project} (Unity {version}) [{hash_id}]")
+                    click.echo(format_instance_line(inst))
             else:
                 print_info("No Unity instances currently connected")
         except UnityConnectionError as e:

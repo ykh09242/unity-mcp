@@ -6,7 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from models.native_recovery import NativeCoordination, RecoveryAction
 from models.source_recovery import RecoveryDiagnostic
 
-EXACT_TARGET_PATTERN: Final = r"(?=\S)[^@/\\\x00-\x1f\x7f]{1,128}@[0-9a-fA-F]{8,64}\Z"
+# The anchored hexadecimal suffix makes the final @ the separator.
+EXACT_TARGET_PATTERN: Final = r"(?=\S)[^/\\\x00-\x1f\x7f]{1,128}@[0-9a-fA-F]{8,64}\Z"
 
 SafeVersion = Annotated[str, Field(pattern=r"^[0-9][0-9A-Za-z+_.-]{0,79}$")]
 Commit = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]

@@ -20,8 +20,12 @@ def test_status_formats_health_failures_and_environment_precedence(tmp_path):
 
         current = None
         requests = []
-        rows = [{"project": "Fixture", "hash": "fullfixturehash", "unity_version": "6000.fixture",
-                 "session_id": "fixture-session", "extra": {"active": False, "count": 0}}]
+        rows = [
+            {"project": "Game@2026", "hash": "abcd123400000001", "unity_version": "6000.fixture",
+             "session_id": "abcd1234", "extra": {"active": False, "count": 0}},
+            {"project": "Game@2026", "hash": "abcd123400000002", "unity_version": "6000.fixture",
+             "session_id": "other-session"},
+        ]
         client_type = httpx.AsyncClient
         def respond(request):
             requests.append(str(request.url))
@@ -72,6 +76,20 @@ def test_status_formats_health_failures_and_environment_precedence(tmp_path):
         assert inherited.exit_code == 0 and json.loads(inherited.stdout)["instances"] == rows
         override = runner.invoke(cli, ["--format", "text", "status"], env={"UNITY_MCP_FORMAT": "json"})
         assert override.exit_code == 0 and "Checking connection" in override.stdout
+        listed = runner.invoke(cli, ["--format", "text", "instance", "list"])
+        assert listed.exit_code == 0, listed.output
+        for result in (override, listed):
+            selectors = [
+                line.split(" (Unity ", 1)[0].removeprefix("  • ")
+                for line in result.stdout.splitlines() if " (Unity " in line
+            ]
+            assert selectors == [f"{row['project']}@{row['hash']}" for row in rows]
+            for selector in selectors:
+                ready = runner.invoke(cli, ["--instance", selector, "status", "--ready"])
+                assert ready.exit_code == 0, ready.output
+        for invalid in ("abcd1234", "Game@2026@abcd1234", "Other@abcd123400000001"):
+            ready = runner.invoke(cli, ["--instance", invalid, "status", "--ready"])
+            assert ready.exit_code == 1, ready.output
         remote = runner.invoke(cli, ["--host", "fixture.invalid", "--format", "json", "status"])
         assert remote.exit_code == 0 and json.loads(remote.stdout)["host"] == "fixture.invalid"
         assert "Security Warning" in remote.stderr and "Security Warning" not in remote.stdout
