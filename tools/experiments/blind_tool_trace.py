@@ -1,0 +1,814 @@
+"""Record allowed Unity MCP observations and adjudicate blind-trial traces."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from hashlib import sha256
+from pathlib import Path
+from threading import Lock, Thread
+from typing import IO, Any
+from urllib.parse import parse_qs, unquote, urlsplit
+from uuid import UUID
+
+EDITOR_STATE = "mcpforunity://editor/state"
+PROJECT_INFO = "mcpforunity://project/info"
+GAME_VIEW = "manage_editor.get_game_view_size"
+GAME_VIEW_RESOURCE = "mcpforunity://editor/game-view-size"
+RAYCAST = "manage_ugui.diagnose_raycast"
+GRAPH = "manage_shader.inspect_graph"
+GRAPH_PREFIX = "mcpforunity://shader/graph/"
+GRAPH_RESOURCE = GRAPH_PREFIX + "{encoded_path}"
+SIZE_ROUTES = {GAME_VIEW, GAME_VIEW_RESOURCE}
+GRAPH_ROUTES = {GRAPH, GRAPH_RESOURCE}
+ACTIVE_SCENE = {"scene_inspect.get_active", "manage_scene.get_active"}
+ROUTES = {
+    "editor": {EDITOR_STATE, *ACTIVE_SCENE},
+    "context": {PROJECT_INFO},
+    "game-view": SIZE_ROUTES,
+    "raycast": {*SIZE_ROUTES, RAYCAST},
+    "graph": GRAPH_ROUTES,
+    "graph-saved": set(),
+}
+DISCOVERY = {
+    "initialize",
+    "tools/list",
+    "resources/list",
+    "resources/templates/list",
+    "manage_tools.catalog",
+    "manage_tools.describe",
+    "manage_tools.list_groups",
+    "manage_tools.search",
+    "manage_tools.activate",
+    "manage_tools.deactivate",
+    "manage_tools.reset",
+    "mcpforunity://capabilities",
+    "mcpforunity://capabilities/scoped",
+    "mcpforunity://instances",
+    "mcpforunity://scene/gameobject-api",
+}
+OTHER_READS = {
+    "find_gameobjects",
+    "gameobject_inspect.find",
+    "gameobject_inspect.get_info",
+    "gameobject_inspect.get_components",
+    "manage_input.status",
+    "manage_input.player_status",
+    "manage_ugui.get_hierarchy",
+    "manage_ugui.inspect_layout",
+    "manage_ugui.inspect_canvas",
+    "manage_ugui.diagnose_projection",
+    "manage_ugui.ping",
+    "scene_inspect.get_hierarchy",
+    "scene_inspect.get_loaded_scenes",
+    "mcpforunity://editor/windows",
+    "mcpforunity://scene/cameras",
+}
+# These callbacks avoid refresh-capable generic preflight. The HTTP adapter
+# explicitly disables refresh for the one allowlisted exception.
+SAFE_HTTP_READS = {EDITOR_STATE, PROJECT_INFO, *SIZE_ROUTES, *GRAPH_ROUTES, "find_gameobjects"}
+APPROVAL = re.compile(
+    r"approval[^\n]{0,80}(?:denied|rejected|blocked|never|declined|required)|"
+    r"(?:denied|rejected|blocked|declined)[^\n]{0,80}approval",
+    re.IGNORECASE,
+)
+
+
+def mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def string(value: Any) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def json_object(value: str | bytes) -> dict[str, Any]:
+    try:
+        return mapping(json.loads(value))
+    except (ValueError, UnicodeError):
+        return {}
+
+
+def thread_digest(value: Any) -> str:
+    """Correlate opaque host thread IDs without retaining their original values."""
+    try:
+        key = UUID(string(value))
+    except ValueError:
+        return ""
+    return sha256(key.bytes).hexdigest()
+
+
+def call_actor(params: dict[str, Any]) -> str:
+    """Use only the documented Codex-owned MCP request metadata fields."""
+    meta = mapping(params.get("_meta"))
+    direct = thread_digest(meta.get("threadId"))
+    raw = meta.get("x-codex-turn-metadata")
+    turn = json_object(raw) if isinstance(raw, str) else mapping(raw)
+    nested = thread_digest(turn.get("thread_id"))
+    if direct and nested and direct != nested:
+        return ""
+    return direct or nested
+
+
+def route_name(method: str, params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Identify the action as well as the tool without retaining user-supplied text."""
+    if method == "tools/call":
+        name = string(params.get("name"))
+        args = mapping(params.get("arguments"))
+        action = string(args.get("action"))
+        return (f"{name}.{action}" if action else name), args
+    if method == "resources/read":
+        uri = string(params.get("uri"))
+        address, _, query = uri.partition("?")
+        if address.startswith(GRAPH_PREFIX):
+            decoded = unquote(address.removeprefix(GRAPH_PREFIX))
+            return GRAPH_RESOURCE, {"uri": uri, "path": decoded}
+        return address, {"uri": uri, "url_query": query}
+    return method, {}
+
+
+def decision(route: str, args: dict[str, Any], graph_asset: str, *, endpoint: bool = False) -> str:
+    """Keep the bridge limited to observation and connection-local discovery."""
+    serialized = unquote(json.dumps(args, ensure_ascii=False)).replace("\\", "/").casefold()
+    if any(
+        part in serialized
+        for part in ("assets/resources/gamedata", "assets//resources", "../", "/..")
+    ):
+        return "blocked"
+    if any(args.get(key) for key in ("allow_custom_filters", "evaluate_getters", "include_values")):
+        return "blocked"
+    if route in GRAPH_ROUTES:
+        if not graph_asset or args.get("path") != graph_asset:
+            return "blocked"
+        if route == GRAPH_RESOURCE:
+            uri = urlsplit(args["uri"])
+            segment = uri.path.removeprefix("/graph/")
+            query = parse_qs(uri.query, keep_blank_values=True)
+            if (
+                "/" in segment
+                or uri.fragment
+                or set(query) - {"page_number", "page_size"}
+                or any(
+                    len(values) != 1 or not values[0].isascii() or not values[0].isdecimal()
+                    for values in query.values()
+                )
+            ):
+                return "blocked"
+    elif "uri" in args and args.get("url_query"):
+        return "blocked"
+    if route in DISCOVERY or route.startswith("skill://unity-mcp-orchestrator/"):
+        return "discovery"
+    if endpoint:
+        return "unity" if route in SAFE_HTTP_READS else "blocked"
+    if route in OTHER_READS or any(route in routes for routes in ROUTES.values()):
+        return "unity"
+    return "blocked"
+
+
+def unpack(response: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Read MCP success separately from the domain payload nested in content."""
+    result = mapping(response.get("result"))
+    if response.get("error") or result.get("isError") or result.get("is_error"):
+        return "error", {}
+    value = mapping(result.get("structuredContent") or result.get("structured_content"))
+    if not value:
+        blocks = result.get("contents") or result.get("content") or []
+        if isinstance(blocks, list) and blocks:
+            value = json_object(string(mapping(blocks[0]).get("text")))
+    if value.get("success") is False or value.get("error"):
+        return "error", {}
+    if value.get("success") is True:
+        return "returned", mapping(value.get("data"))
+    if result:
+        return "returned", {}
+    return "missing", {}
+
+
+def positive_size(value: Any) -> list[int] | None:
+    size = mapping(value)
+    width, height = size.get("width"), size.get("height")
+    if type(width) is int and type(height) is int and min(width, height) > 0:
+        return [width, height]
+    return None
+
+
+def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Retain the documented evidence fields for the scored read operations."""
+    if route in SIZE_ROUTES:
+        size = positive_size(data.get("render_size"))
+        selected = mapping(data.get("current_size"))
+        preset = bool(string(selected.get("label"))) or bool(positive_size(selected))
+        observation_fields = {"render_size": size} if size else {}
+        if preset:
+            observation_fields["preset_reported"] = True
+        return observation_fields
+    if route == RAYCAST:
+        if data.get("kind") != "ugui_raycast_diagnostics":
+            return {}
+        point = data.get("screen_position")
+        status = string(data.get("status"))
+        if not (
+            isinstance(point, list)
+            and len(point) == 2
+            and all(type(value) in (int, float) for value in point)
+            and status in {"observed", "unknown"}
+        ):
+            return {}
+        hit_count = data.get("hits_total")
+        hits = data.get("hits")
+        first_hit = mapping(hits[0]) if isinstance(hits, list) and hits else {}
+        return {
+            "point": point,
+            "status": status,
+            "reason": string(data.get("reason")) or None,
+            "ordered_hits": (
+                type(hit_count) is int
+                and hit_count >= 0
+                and isinstance(hits, list)
+                and (
+                    (hit_count == 0 and not hits)
+                    or (
+                        hit_count > 0
+                        and first_hit.get("rank") == 0
+                        and bool(string(first_hit.get("name")))
+                    )
+                )
+            ),
+            "policy_safe": (
+                mapping(data.get("policy")).get("package_explicit_event_dispatch") is False
+                and mapping(data.get("policy")).get("user_code_may_have_run") is False
+            ),
+            "native_query_attempted": mapping(data.get("policy")).get("native_query_attempted")
+            is True,
+            "delivery": string(mapping(data.get("input")).get("delivery")) or None,
+        }
+    if route in GRAPH_ROUTES:
+        nodes = data.get("nodes")
+        count, edges = data.get("nodeCount"), data.get("edgeCount")
+        if type(count) is not int or type(edges) is not int or min(count, edges) < 0:
+            return {}
+        types = (
+            {string(mapping(node).get("type")) for node in nodes}
+            if isinstance(nodes, list)
+            else set()
+        )
+        return {"nodes": count, "edges": edges, "node_types": sorted(types - {""})}
+    if route == EDITOR_STATE:
+        editor = mapping(data.get("editor"))
+        play = mapping(editor.get("play_mode")).get("is_playing")
+        compile_state = mapping(data.get("compilation")).get("is_compiling")
+        scene = mapping(editor.get("active_scene"))
+        if type(play) is not bool or type(compile_state) is not bool:
+            return {}
+        return {
+            "playing": play,
+            "compiling": compile_state,
+            "active_scene": bool(string(scene.get("name")) or string(scene.get("path"))),
+            "fresh": mapping(data.get("staleness")).get("is_stale") is False,
+        }
+    if route in ACTIVE_SCENE:
+        scene = mapping(data.get("scene")) or data
+        return {"active_scene": True} if string(scene.get("name") or scene.get("path")) else {}
+    if route == PROJECT_INFO:
+        fields = ("projectRoot", "unityVersion", "renderPipeline")
+        return {"project_fields": True} if all(string(data.get(key)) for key in fields) else {}
+    return {}
+
+
+def page_number(route: str, args: dict[str, Any]) -> int:
+    """Graph pages are distinct work. A second request for a page is a repeat."""
+    page = args.get("page_number", 1)
+    if route == GRAPH_RESOURCE:
+        page = parse_qs(urlsplit(string(args.get("uri"))).query).get("page_number", ["1"])[0]
+    if route in GRAPH_ROUTES and (type(page) is int or re.fullmatch(r"[0-9]{1,10}", string(page))):
+        return int(page)
+    return 1
+
+
+def relay_stdio(relay: list[str], audit_dir: Path, graph_asset: str, *, endpoint: bool) -> None:
+    """Audit actual JSON-RPC requests while forwarding bytes through the vetted relay."""
+    pending: dict[str | int, tuple[int, str, str]] = {}
+    lock = Lock()
+    audit_path = audit_dir / f"mcp-{os.getpid()}.jsonl"
+    with (
+        audit_path.open("x", encoding="utf-8") as audit,
+        subprocess.Popen(
+            [sys.executable, "-X", "utf8", *relay],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        ) as bridge,
+    ):
+        assert bridge.stdin is not None and bridge.stdout is not None
+
+        def record(**fields: Any) -> None:
+            audit.write(json.dumps(fields, ensure_ascii=True) + "\n")
+            audit.flush()
+
+        def send_to_host(payload: bytes) -> None:
+            sys.stdout.buffer.write(payload)
+            sys.stdout.buffer.flush()
+
+        def send_requests() -> None:
+            try:
+                sequence = 0
+                for payload in sys.stdin.buffer:
+                    request = json_object(payload)
+                    method = string(request.get("method"))
+                    request_id = request.get("id")
+                    if method and type(request_id) in (str, int):
+                        if method == "ping":
+                            bridge.stdin.write(payload)
+                            bridge.stdin.flush()
+                            continue
+                        params = mapping(request.get("params"))
+                        route, args = route_name(method, params)
+                        channel = decision(route, args, graph_asset, endpoint=endpoint)
+                        label = route if channel != "blocked" else "unapproved_route"
+                        sequence += 1
+                        with lock:
+                            record(
+                                event="request",
+                                sequence=sequence,
+                                route=label,
+                                channel=channel,
+                                page=page_number(route, args),
+                                actor=call_actor(params),
+                            )
+                            if channel == "blocked":
+                                response = {
+                                    "jsonrpc": "2.0",
+                                    "id": request_id,
+                                    "error": {
+                                        "code": -32602,
+                                        "message": "Outside observation scope",
+                                    },
+                                }
+                                send_to_host((json.dumps(response) + "\n").encode())
+                                continue
+                            pending[request_id] = (sequence, route, channel)
+                    elif method not in {"notifications/initialized", "notifications/cancelled"}:
+                        continue
+                    bridge.stdin.write(payload)
+                    bridge.stdin.flush()
+            except BrokenPipeError:
+                pass
+            finally:
+                bridge.stdin.close()
+
+        thread = Thread(target=send_requests, daemon=True)
+        thread.start()
+        for payload in bridge.stdout:
+            response = json_object(payload)
+            request_id = response.get("id")
+            with lock:
+                request = pending.pop(request_id, None) if type(request_id) in (str, int) else None
+                if request is not None:
+                    sequence, route, channel = request
+                    outcome, data = unpack(response)
+                    if route == RAYCAST and data.get("status") == "failed":
+                        outcome = "error"
+                    detail = observation(route, data) if channel == "unity" else {}
+                    record(event="response", sequence=sequence, outcome=outcome, observation=detail)
+                send_to_host(payload)
+
+
+def load_lines(stream: IO[str]) -> Iterator[dict[str, Any]]:
+    """An interrupted process may leave the final JSON line incomplete."""
+    for line in stream:
+        if row := json_object(line):
+            yield row
+
+
+@dataclass(slots=True)
+class Call:
+    route: str
+    channel: str
+    order: int
+    status: str = "missing"
+    evidence: dict[str, Any] = field(default_factory=dict)
+    page: int = 1
+    actor: str = ""
+
+
+def wire_trace(path: Path) -> list[Call]:
+    """Join request and response records by connection-local sequence number."""
+    calls: dict[int, Call] = {}
+    with path.open(encoding="utf-8") as stream:
+        for row in load_lines(stream):
+            number = row.get("sequence")
+            if type(number) is not int:
+                continue
+            match row.get("event"):
+                case "request":
+                    page = row.get("page")
+                    calls[number] = Call(
+                        string(row.get("route")),
+                        string(row.get("channel")),
+                        number,
+                        page=page if type(page) is int else 1,
+                        actor=string(row.get("actor")),
+                    )
+                case "response" if number in calls:
+                    call = calls[number]
+                    call.status = string(row.get("outcome"))
+                    call.evidence = mapping(row.get("observation"))
+                case _:
+                    continue
+    return list(calls.values())
+
+
+def event_route(item: dict[str, Any]) -> str:
+    name = string(item.get("tool"))
+    args = mapping(item.get("arguments"))
+    if name == "read_mcp_resource":
+        return route_name("resources/read", args)[0]
+    if name in {"list_mcp_resources", "list_mcp_resource_templates"}:
+        return "resources/list"
+    return route_name("tools/call", {"name": name, "arguments": args})[0]
+
+
+def saved_read_grade(command: str, output: str, asset: str) -> str:
+    """Credit a direct exact-path read with serialized graph structure in the output."""
+    if not asset or asset.casefold() not in command.casefold().replace("\\", "/"):
+        return "none"
+    try:
+        tokens = shlex.split(command)
+        if len(tokens) == 3 and tokens[1].casefold() in {"-command", "-lc"}:
+            executable = tokens[0].replace("\\", "/").rsplit("/", maxsplit=1)[-1].casefold()
+            if executable in {"pwsh", "pwsh.exe", "powershell", "powershell.exe", "bash"}:
+                tokens = shlex.split(tokens[-1])
+    except ValueError:
+        return "review"
+    if not tokens:
+        return "review"
+    command_name, *args = tokens
+    command_name = command_name.casefold()
+    flags = {"-raw", "-literalpath", "-path"} if command_name == "get-content" else {"--"}
+    paths = [
+        arg.replace("\\", "/").removeprefix("./") for arg in args if arg.casefold() not in flags
+    ]
+    if command_name not in {"get-content", "cat"} or paths != [asset]:
+        return "review"
+    decoder = json.JSONDecoder()
+    try:
+        content = output.lstrip("\ufeff \t\r\n")
+        root, boundary = decoder.raw_decode(content)
+    except ValueError:
+        return "review"
+    nodes, edges = mapping(root).get("m_Nodes"), mapping(root).get("m_Edges")
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        return "review"
+    node_ids = {string(mapping(node).get("m_Id")) for node in nodes} - {""}
+    node_types: set[str] = set()
+    while len(node_types) < 2:
+        content = content[boundary:].lstrip()
+        if not content:
+            break
+        try:
+            value, boundary = decoder.raw_decode(content)
+        except ValueError:
+            break
+        node = mapping(value)
+        kind = string(node.get("m_Type"))
+        if kind and string(node.get("m_ObjectId")) in node_ids:
+            node_types.add(kind)
+    return "observed" if len(node_types) >= 2 else "review"
+
+
+def has_saved_read(command: str, output: str, asset: str) -> bool:
+    return saved_read_grade(command, output, asset) == "observed"
+
+
+@dataclass(slots=True)
+class ClientTrace:
+    calls: dict[str, Call] = field(default_factory=dict)
+    approval_blocks: int = 0
+    shell_calls: int = 0
+    saved_reads: int = 0
+    saved_reads_to_review: int = 0
+    child_actors: set[str] = field(default_factory=set)
+    parent_actor: str = ""
+    waits: int = 0
+    completed: bool = False
+
+
+def client_trace(path: Path, asset: str, *, endpoint: bool) -> ClientTrace:
+    """Use host accounting for calls blocked before the relay and main-role shell activity."""
+    trace = ClientTrace()
+    if not path.exists():
+        return trace
+    with path.open(encoding="utf-8") as stream:
+        for event in load_lines(stream):
+            item = mapping(event.get("item"))
+            item_id = string(item.get("id"))
+            match event.get("type"), item.get("type"):
+                case "thread.started", _:
+                    trace.parent_actor = thread_digest(event.get("thread_id"))
+                case "item.started" | "item.completed", "mcp_tool_call" if (
+                    item.get("server") == "unityMCP"
+                ):
+                    route = event_route(item)
+                    args = mapping(item.get("arguments"))
+                    if item.get("tool") == "read_mcp_resource":
+                        _, args = route_name("resources/read", args)
+                    channel = decision(route, args, asset, endpoint=endpoint)
+                    call = trace.calls.setdefault(
+                        item_id,
+                        Call(
+                            route if channel != "blocked" else "unapproved_route",
+                            channel,
+                            len(trace.calls) + 1,
+                            page=page_number(route, args),
+                        ),
+                    )
+                    if event.get("type") == "item.completed":
+                        message = string(mapping(item.get("error")).get("message"))
+                        if item.get("status") == "failed" and APPROVAL.search(message):
+                            call.status = "approval_blocked"
+                            trace.approval_blocks += 1
+                        else:
+                            call.status = string(item.get("status"))
+                            result = mapping(item.get("result"))
+                            if result and call.status == "completed":
+                                call.status, data = unpack({"result": result})
+                                if route == RAYCAST and data.get("status") == "failed":
+                                    call.status = "error"
+                case "item.completed", "command_execution":
+                    trace.shell_calls += 1
+                    output = string(item.get("aggregated_output"))
+                    if item.get("exit_code") == 0:
+                        grade = saved_read_grade(string(item.get("command")), output, asset)
+                        trace.saved_reads += int(grade == "observed")
+                        trace.saved_reads_to_review += int(grade == "review")
+                    elif APPROVAL.search(output):
+                        trace.approval_blocks += 1
+                case (
+                    "item.completed",
+                    "collab_tool_call" | "collaboration_tool_call" | "subagent_tool_call",
+                ):
+                    if (
+                        item.get("tool") in {"spawn_agent", "spawn"}
+                        and item.get("status") == "completed"
+                    ):
+                        peers = item.get("receiver_thread_ids")
+                        if isinstance(peers, list):
+                            trace.child_actors.update(filter(None, map(thread_digest, peers)))
+                    if item.get("tool") == "wait" and item.get("status") == "completed":
+                        trace.waits += 1
+                case "turn.completed", _:
+                    trace.completed = True
+                case _:
+                    continue
+    return trace
+
+
+def role_status(role: str, trace: ClientTrace, connections: list[list[Call]]) -> tuple[str, str]:
+    """Join native role events with distinct observed business connections."""
+    observing = [
+        calls for calls in connections if any(call.channel != "discovery" for call in calls)
+    ]
+    actors = {
+        call.actor
+        for calls in observing
+        for call in calls
+        if call.actor and call.channel != "discovery"
+    }
+    host_business = any(call.channel != "discovery" for call in trace.calls.values())
+    if role == "main":
+        if (
+            trace.child_actors
+            or len(observing) > 1
+            or (actors and trace.parent_actor and actors != {trace.parent_actor})
+        ):
+            return "mixed", "competing-actors"
+        return "confirmed", "host-main"
+    if host_business or trace.shell_calls or trace.parent_actor in actors:
+        return "mixed", "parent-business-activity"
+    if (
+        len(trace.child_actors) == 1
+        and len(observing) <= 1
+        and (not actors or actors == trace.child_actors)
+    ):
+        return "confirmed", "native-spawn-receipt"
+    if trace.waits and len(observing) == 1 and len(connections) == 2:
+        if len(actors) == 1 and trace.parent_actor and trace.parent_actor not in actors:
+            return "inferred", "distinct-mcp-actor-and-native-wait"
+        if not actors:
+            return "inferred", "isolated-mcp-connection-and-native-wait"
+    return "unverified", "missing-actor-evidence"
+
+
+def evidence_grade(task: str, calls: list[Call]) -> str:
+    """Require task-specific live facts and separate limitations from complete answers."""
+    evidence = [call for call in calls if call.evidence and call.status == "returned"]
+    if not evidence:
+        return "none"
+    if task == "graph":
+        totals: dict[tuple[int, int], set[str]] = {}
+        for call in evidence:
+            entry = call.evidence
+            key = (entry["nodes"], entry["edges"])
+            totals.setdefault(key, set()).update(entry["node_types"])
+        return (
+            "complete" if len(totals) == 1 and len(next(iter(totals.values()))) >= 2 else "partial"
+        )
+    if task == "editor":
+        if any(call.route == EDITOR_STATE and call.evidence["fresh"] for call in evidence) and any(
+            call.evidence.get("active_scene")
+            and (call.route in ACTIVE_SCENE or call.evidence.get("fresh"))
+            for call in evidence
+        ):
+            return "complete"
+        return "partial"
+    if task == "raycast":
+        sizes = [
+            call.evidence["render_size"] for call in evidence if "render_size" in call.evidence
+        ]
+        hits = [call.evidence for call in evidence if call.route == RAYCAST]
+        if sizes and any(
+            result.get("policy_safe")
+            and result.get("ordered_hits")
+            and result.get("status") == "observed"
+            and result.get("native_query_attempted")
+            and result.get("point") == [sizes[-1][0] / 2, sizes[-1][1] / 2]
+            for result in hits
+        ):
+            return "complete"
+        return "partial"
+    if task == "game-view":
+        return "complete" if any("render_size" in call.evidence for call in evidence) else "partial"
+    return "complete"
+
+
+def repeat_counts(calls: list[Call]) -> tuple[int, int]:
+    """Count repeats and the subset that follow a recorded error on the same operation/page."""
+    prior: dict[tuple[str, int], str] = {}
+    repeated = retries = 0
+    for call in calls:
+        family = (
+            GAME_VIEW
+            if call.route in SIZE_ROUTES
+            else GRAPH
+            if call.route in GRAPH_ROUTES
+            else call.route
+        )
+        key = family, call.page
+        if key in prior:
+            repeated += 1
+            retries += int(prior[key] in {"error", "failed", "approval_blocked"})
+        prior[key] = call.status
+    return repeated, retries
+
+
+def merge_business_calls(host: list[Call], wire: list[Call]) -> list[Call]:
+    """Join overlapping attempts while retaining host-only blocks and wire-only work."""
+    calls = []
+    offset = 0
+    for visible in host:
+        if visible.status == "approval_blocked":
+            calls.append(visible)
+            continue
+        # The same request can be visible twice. Merge matching completions in
+        # request order without swallowing a later success for the same route.
+        status = {"completed": "returned", "failed": "error"}.get(visible.status, visible.status)
+        match = next(
+            (
+                index
+                for index in range(offset, len(wire))
+                if (wire[index].route, wire[index].page) == (visible.route, visible.page)
+                and (status == wire[index].status or status == "missing")
+            ),
+            None,
+        )
+        if match is None:
+            calls.append(visible)
+        else:
+            calls.extend(wire[offset : match + 1])
+            offset = match + 1
+    calls.extend(wire[offset:])
+    return calls
+
+
+def score_case(case_dir: Path) -> dict[str, Any]:
+    """Score transport evidence separately from attempts, approval, and role integrity."""
+    row = json_object((case_dir / "case.json").read_bytes())
+    task = string(row["task"])
+    routes = ROUTES[task]
+    host = client_trace(
+        case_dir / "events.jsonl",
+        string(row["graph_asset"]),
+        endpoint=row.get("backend") == "unity-mcp-loopback",
+    )
+    connections = [wire_trace(path) for path in sorted(case_dir.glob("mcp-*.jsonl"))]
+    wire = [call for calls in connections for call in calls]
+    unity = [call for call in wire if call.channel == "unity"]
+    relevant = [call for call in unity if call.route in routes]
+    grade = evidence_grade(task, relevant)
+    role, attribution = role_status(string(row["role"]), host, connections)
+    discovery_sources = [call for call in wire if call.channel == "discovery"]
+    # Start order comes from the client when present, including pre-wire approvals. For
+    # an isolated child, the single wire connection is the only source of call order.
+    host_business = [call for call in host.calls.values() if call.channel != "discovery"]
+    business = merge_business_calls(
+        host_business, [call for call in wire if call.channel != "discovery"]
+    )
+    first = business[0] if business else None
+    first_suitable = next(
+        (call for call in business if call.channel == "unity" and call.route in routes), None
+    )
+    sequence = [call for call in business if call.channel == "unity" and call.route in routes]
+    repeated, retries = repeat_counts(sequence)
+    return {
+        **row,
+        "role_status": role,
+        "role_attribution": attribution,
+        "turn_completed": host.completed,
+        "first_business_call": first.route if first else None,
+        "first_suitable_business_call": first_suitable.route if first_suitable else None,
+        "calls_before_first_suitable": business.index(first_suitable) if first_suitable else None,
+        "first_business_call_suitable": first is not None and first == first_suitable,
+        "suitable_attempts": len(sequence),
+        "repeat_suitable_calls": repeated,
+        "retry_suitable_calls": retries,
+        "discovery_calls": len(discovery_sources),
+        "discovery_successes": sum(call.status == "returned" for call in discovery_sources),
+        "unity_call_errors": sum(call.status == "error" for call in unity),
+        "observation_guard_blocks": sum(call.channel == "blocked" for call in wire),
+        "approval_blocks": host.approval_blocks,
+        "shell_calls_visible_to_host": host.shell_calls,
+        "saved_graph_file_reads_visible_to_host": host.saved_reads,
+        "saved_graph_evidence": (
+            "observed"
+            if host.saved_reads and role == "confirmed"
+            else "unattributed"
+            if host.saved_reads
+            else "manual-review"
+            if host.saved_reads_to_review
+            else "none"
+        ),
+        "live_evidence": grade
+        if role == "confirmed"
+        else "unattributed"
+        if grade != "none"
+        else "none",
+        "wire_evidence": grade,
+        "live_observations": [
+            {"route": call.route, **call.evidence} for call in relevant if call.evidence
+        ],
+    }
+
+
+def score_directory(output: Path) -> dict[str, Any]:
+    """Summarize the captured trial matrix while keeping missing cells visible."""
+    if not output.is_dir():
+        raise FileNotFoundError(f"Trial directory does not exist: {output}")
+    cases = [score_case(path.parent) for path in sorted(output.glob("*/case.json"))]
+    matrix = output / "matrix.json"
+    planned = json.loads(matrix.read_text(encoding="utf-8")) if matrix.exists() else []
+    observed = {
+        (case["task"], case["language"], case["role"], case["repetition"]) for case in cases
+    }
+    return {
+        "schema": "unity-mcp/blind-tool-selection@1",
+        "planned_cases": len(planned),
+        "observed_cases": len(cases),
+        "unrun_cases": [case for case in planned if tuple(case) not in observed],
+        "complete_live_evidence": sum(case["live_evidence"] == "complete" for case in cases),
+        "cases_with_approval_blocks": sum(bool(case["approval_blocks"]) for case in cases),
+        "runner_failures": sum(case.get("runner_status") != "finished" for case in cases),
+        "cases": cases,
+    }
+
+
+def proxy_main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    backend = parser.add_mutually_exclusive_group(required=True)
+    backend.add_argument("--relay", type=Path)
+    backend.add_argument("--endpoint")
+    parser.add_argument("--instance")
+    parser.add_argument("--project", type=Path)
+    parser.add_argument("--audit-dir", type=Path, required=True)
+    parser.add_argument("--graph-asset", required=True)
+    args = parser.parse_args()
+    if args.relay:
+        command = [str(args.relay)]
+    else:
+        command = [
+            str(Path(__file__).with_name("blind_tool_http.py")),
+            args.endpoint,
+            args.instance,
+            str(args.project),
+            args.graph_asset,
+        ]
+    relay_stdio(command, args.audit_dir, args.graph_asset, endpoint=bool(args.endpoint))
+
+
+if __name__ == "__main__":
+    proxy_main()
