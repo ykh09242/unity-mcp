@@ -12,7 +12,7 @@ from core.config import config
 from models.models import ToolDefinitionModel
 from services.credential_lease import bind_credential_lease
 from services.resources import register_all_resources
-from services.tools import register_all_tools
+from services.tools import editor_observations, register_all_tools
 from tests.http.test_remote_permissions import permission_service
 from tests.test_http_command_outcome import command_hub  # pylint: disable=unused-import
 from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
@@ -35,9 +35,9 @@ READS = (
 )
 TARGET = {"unity_instance": "Fixture@hash"}
 FOCUSED = {
-    "manage_editor": ("get_game_view_size", {}),
+    "manage_editor": (editor_observations.get_game_view_size.__name__, {}),
     "manage_shader": (
-        "inspect_shader_graph",
+        editor_observations.inspect_shader_graph.__name__,
         {"path": GRAPH_PATH, "page_size": 3, "page_number": 2},
     ),
 }

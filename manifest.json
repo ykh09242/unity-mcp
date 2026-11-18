@@ -159,6 +159,10 @@
       "description": "Read compilation request outcomes and bounded diagnostics without refreshing Unity"
     },
     {
+      "name": "get_game_view_size",
+      "description": "Read the current render dimensions and selected preset from the existing Unity Game View."
+    },
+    {
       "name": "get_sha",
       "description": "Get SHA hash of script content"
     },
@@ -185,6 +189,10 @@
     {
       "name": "inspect_serialized_object",
       "description": "Inspect one exact Component or ScriptableObject instance ID through SerializedObject. The initial Unity ID lookup MAY load a previously unloaded asset and invoke OnEnable or serialization callbacks before type/context admission. (group: scripting_ext)"
+    },
+    {
+      "name": "inspect_shader_graph",
+      "description": "Inspect nodes, edges and properties in a saved project-owned Shader Graph file. Unsaved graph-window edits are unavailable."
     },
     {
       "name": "manage_addressables",

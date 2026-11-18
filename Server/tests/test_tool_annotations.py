@@ -43,6 +43,9 @@ READ_ONLY = {
     "find_in_file",
     # Read-only compilation ledger query; never refreshes or dispatches compilation.
     "get_compile_job",
+    # Fixed reads of the existing Game View and the saved graph file; neither refreshes the Editor.
+    "get_game_view_size",
+    "inspect_shader_graph",
     "get_sha",
     "get_test_job",
     "wait_for_operation",
