@@ -16,6 +16,7 @@ from services.tools.utils import coerce_bool, coerce_int
 from services.verification.edits import complete_edit
 from transport.unity_transport import send_with_unity_instance
 import transport.legacy.unity_connection
+from utils.script_paths import script_name_from_filename
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -198,9 +199,7 @@ def _split_uri(uri: str) -> tuple[str, str]:
     # Use wire separators independently of the server host's operating system.
     # Never truncate at an Assets segment: it may belong to another project.
     norm = posixpath.normpath(raw_path)
-    name, extension = posixpath.splitext(posixpath.basename(norm))
-    if extension and extension.lower() != ".cs":
-        raise ValueError("Script paths must use a .cs suffix or be extensionless.")
+    name = script_name_from_filename(posixpath.basename(norm))
     directory = posixpath.dirname(norm)
     return name, directory
 

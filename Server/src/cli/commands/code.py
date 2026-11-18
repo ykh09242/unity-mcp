@@ -1,6 +1,5 @@
 """Code CLI commands - read, search, and execute source code."""
 
-import os
 import re
 import click
 import regex
@@ -16,10 +15,21 @@ from cli.utils.connection import (
 )
 from cli.utils.script_read import echo_script_read, script_contents
 from cli.utils.source_input import read_source_input
+from utils.script_paths import script_name_from_filename
 
 _SEARCH_RESULT_LIMIT = 1000
 _EXCERPT_CHARS = 500
 _MATCH_CHARS = 200
+
+
+def _script_locator(path: str) -> tuple[str, str]:
+    """Split a CLI path without changing its target filename."""
+    directory, _, filename = path.replace("\\", "/").rpartition("/")
+    try:
+        name = script_name_from_filename(filename)
+    except ValueError as error:
+        raise CLIInputError("invalid_script_path", str(error)) from error
+    return name, directory or "Assets"
 
 
 def _read_source(params: dict[str, Any], config: CLIConfig) -> dict[str, Any]:
@@ -153,10 +163,7 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
     """
     config = get_config()
 
-    # Extract name and directory from path
-    parts = path.replace("\\", "/").split("/")
-    filename = os.path.splitext(parts[-1])[0]
-    directory = "/".join(parts[:-1]) or "Assets"
+    filename, directory = _script_locator(path)
 
     params: dict[str, Any] = {
         "action": "read",
@@ -207,10 +214,7 @@ def search(pattern: str, path: str, max_results: int, case_sensitive: bool):
     """
     config = get_config()
 
-    # Extract name and directory from path
-    parts = path.replace("\\", "/").split("/")
-    filename = os.path.splitext(parts[-1])[0]
-    directory = "/".join(parts[:-1]) or "Assets"
+    filename, directory = _script_locator(path)
 
     # Step 1: Read the file via Unity's manage_script
     read_params: dict[str, Any] = {

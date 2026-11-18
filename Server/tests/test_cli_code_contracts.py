@@ -104,6 +104,29 @@ def test_read_rejects_nonpositive_windows_before_http(script_response, group, op
     assert requests == []
 
 
+@pytest.mark.parametrize("command", [["read"], ["search", "first"]])
+@pytest.mark.parametrize("path", ["Assets/Fixture.txt", r"Assets\Dir\Fixture.cs.meta"])
+def test_code_commands_reject_other_file_extensions_before_http(script_response, command, path):
+    _, requests = script_response
+    result = CliRunner().invoke(cli, ["--format", "json", "code", *command, path])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["code"] == "invalid_script_path"
+    assert requests == []
+
+
+@pytest.mark.parametrize("command", [["read"], ["search", "first"]])
+@pytest.mark.parametrize("path", [r"Assets\Dir\Fixture.CS", "Assets/Dir/Fixture"])
+def test_code_commands_preserve_valid_script_paths(script_response, command, path):
+    _, requests = script_response
+    result = CliRunner().invoke(cli, ["--format", "json", "code", *command, path])
+
+    assert result.exit_code == 0, result.output
+    assert [request["params"] for request in requests] == [
+        {"action": "read", "name": "Fixture", "path": "Assets/Dir"}
+    ]
+
+
 @pytest.mark.parametrize(
     "contents,lines", [("", []), ("else\n", []), ("first\n", [1]), ("FIRST\nfirst\n", [1, 2])]
 )
