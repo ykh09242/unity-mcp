@@ -49,12 +49,19 @@ async def find_in_file(
     ctx: Context,
     uri: Annotated[str, "The C# script URI or path under Assets/ (.cs or extensionless)"],
     pattern: Annotated[str, "The regex pattern to search for"],
-    project_root: Annotated[str | None, "Optional project root path"] = None,
+    project_root: Annotated[
+        str | None, "Reserved. Omit or pass null and select the Unity instance to search."
+    ] = None,
     max_results: Annotated[int, "Cap results to avoid huge payloads"] = 200,
     ignore_case: Annotated[bool | str | None, "Case insensitive search"] = True,
     cursor: Annotated[str | None, "Opaque next_cursor from the preceding page"] = None,
 ) -> dict[str, Any]:
-    # project_root is currently unused but kept for interface consistency
+    if project_root is not None:
+        return {
+            "success": False,
+            "code": "unsupported_project_root",
+            "message": "Omit project_root and select the Unity instance that owns the script.",
+        }
     try:
         expected_fingerprint, offset = _cursor_position(cursor)
     except ValueError as exc:

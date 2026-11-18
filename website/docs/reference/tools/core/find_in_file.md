@@ -22,7 +22,7 @@ Searches a C# script with a regex pattern and returns line numbers, excerpts and
 |------|------|----------|-------------|
 | `uri` | `str` | yes | The C# script URI or path under Assets/ (.cs or extensionless) |
 | `pattern` | `str` | yes | The regex pattern to search for |
-| `project_root` | `str \| None` | — | Optional project root path |
+| `project_root` | `str \| None` | — | Reserved. Omit or pass null and select the Unity instance to search. |
 | `max_results` | `int` | — | Cap results to avoid huge payloads |
 | `ignore_case` | `bool \| str \| None` | — | Case insensitive search |
 | `cursor` | `str \| None` | — | Opaque next_cursor from the preceding page |

@@ -25,6 +25,21 @@ async def search(search_module, contents, pattern, **kwargs):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("project_root", ["C:/AnotherProject", ""])
+async def test_explicit_project_root_is_refused_before_resolving_target(
+    search_module, project_root
+):
+    module, sender = search_module
+    result = await search(search_module, "owned", "owned", project_root=project_root)
+
+    assert result["success"] is False
+    assert result["code"] == "unsupported_project_root"
+    assert "select" in result["message"].lower()
+    module.get_unity_instance_from_context.assert_not_awaited()
+    sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "uri,directory",
     [
