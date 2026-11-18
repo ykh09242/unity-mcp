@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 
 import pytest
+import yaml
 
 import check_source_pin_drift as drift
 import prepare_source_pin_history as preparation
@@ -152,3 +153,49 @@ def test_workflow_prepares_history_before_offline_comparison():
     assert workflow.count("- tools/prepare_source_pin_history.py") == 2
     assert workflow.count("- tools/tests/test_prepare_source_pin_history.py") == 2
     assert "persist-credentials: false" in workflow
+
+
+@pytest.mark.parametrize(
+    ("event", "state", "baseline_state", "requires_current", "should_test"),
+    [
+        ("pull_request", "current", "valid", True, True),
+        ("pull_request", "current", "invalid_metadata", True, True),
+        ("pull_request", "current", "valid", False, False),
+        ("push", "current", "not_provided", False, True),
+        ("workflow_dispatch", "current", "not_provided", True, True),
+        ("workflow_dispatch", "current", "not_provided", False, False),
+        ("pull_request", "stale", "valid", True, False),
+        ("pull_request", "unavailable", "unavailable", False, False),
+    ],
+)
+def test_workflow_routes_validated_pins_to_the_focused_suite(
+    monkeypatch, tmp_path, event, state, baseline_state, requires_current, should_test
+):
+    # Given a source freshness decision for a committed package with a distinct server SHA.
+    path = Path(__file__).resolve().parents[2] / ".github/workflows/source-pin-drift.yml"
+    steps = yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]["source_pin"]["steps"]
+    reporter = next(step["run"] for step in steps if step.get("id") == "summary")
+    server = "b" * 40
+    report = {
+        "state": state,
+        "checked_commit": "a" * 40,
+        "server_commit": server,
+        "pin_changed": requires_current,
+        "requires_current": requires_current,
+        "baseline_state": baseline_state,
+        "changed_path_count": int(state == "stale"),
+        "next_action": "none",
+    }
+    (tmp_path / "source-pin-drift.json").write_text(json.dumps(report), encoding="utf-8")
+    outputs = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "summary.md"))
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    # When the real workflow emits the selection for the dependent checkout job.
+    exec(compile(reporter, "source-pin-workflow-summary", "exec"), {})
+    # Then only eligible current pins are forwarded as the actual server SHA.
+    if should_test:
+        assert outputs.read_text(encoding="utf-8") == f"selected_sha={server}\n"
+    else:
+        assert not outputs.exists()

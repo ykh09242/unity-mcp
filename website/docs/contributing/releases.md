@@ -35,6 +35,21 @@ When preparing a stable release, also update the current release links and versi
 
 A server commit and a Unity-package commit need not be the same: the latter records the former's immutable source.
 
+### Validate the selected server commit
+
+Run the focused regression suite using the source, tests, `pyproject.toml` and `uv.lock` committed at the selected server SHA S. A clean checkout of S or a fresh extraction of `git --no-replace-objects archive S Server tools` works before S is pushed. Use uv 0.13.7 and Python 3.14. From that copy's `Server/` directory, run:
+
+```sh
+UNITY_MCP_DISABLE_TELEMETRY=1 uv run --python 3.14 --locked --extra dev python -m pytest \
+  tests/test_editor_stall_diagnostics.py tests/test_preflight_response_lifetime.py \
+  tests/test_build_polling_contract.py tests/test_build_public_contracts.py \
+  -q -W error --tb=short --junitxml=test-results.xml
+```
+
+Require all cases to pass. The suite exercises stalled Editor diagnostics and preflight, preflight response ownership, and build polling from the acknowledged job ID through terminal state, including the registered MCP and CLI boundaries. Commit any needed test corrections before selecting S. The runtime drift check excludes `Server/tests/`, so equal runtime inputs alone do not establish that S contains or passes the corrected regression tests.
+
+The existing Immutable server source workflow runs this suite from an exact checkout of S when the pin changes on a covered PR or beta push, or when dispatched with `require_current=true`. Exact beta release qualification also requires the suite and compares its tested SHA to the server selected by the receiving package. CI retains the associated execution log and JUnit report for S. Keep local execution records as local verification. The checked release evidence block uses the actual hosted execution and its saved records.
+
 ## Prepare the independent skill pin
 
 Verify both skill copies against the intended Unity contracts, then commit that content as C. In a later package commit P, declare the full C as `mcpSkillRevision` in `MCPForUnity/package.json`. Keep `mcpServerSource` independent: a verified server commit does not establish a verified skill revision. Do not try to make a commit contain its own SHA.

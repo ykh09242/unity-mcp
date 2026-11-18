@@ -43,6 +43,16 @@ on:
         description: Fail when the immutable launcher differs from committed server inputs
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      selected_server:
+        description: Full server commit resolved from the qualification package's committed metadata
+        type: string
+        required: true
+    outputs:
+      tested_sha:
+        description: Exact selected server commit that passed the focused pytest suite
+        value: ${{ jobs.selected_server_tests.outputs.tested_sha }}
 
 permissions:
   contents: read
@@ -50,8 +60,11 @@ permissions:
 jobs:
   source_pin:
     name: Check immutable server source
+    if: inputs.selected_server == ''
     runs-on: ubuntu-26.04
     timeout-minutes: 10
+    outputs:
+      selected_sha: ${{ steps.summary.outputs.selected_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,10 +93,10 @@ jobs:
           fi
           python3 tools/check_source_pin_drift.py "${args[@]}" > "$RUNNER_TEMP/source-pin-drift.json"
       - name: Summarize source freshness
+        id: summary
         if: always() && steps.drift.outcome != 'skipped'
-        shell: bash
+        shell: python
         run: |
-          python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -95,7 +108,12 @@ jobs:
                   output.write("## Immutable server source\n\n")
                   for key in ("state", "checked_commit", "server_commit", "pin_changed", "requires_current", "changed_path_count", "next_action"):
                       output.write(f"- {key}: `{report[key]}`\n")
-          PY
+              if report["state"] == "current" and (
+                  report["requires_current"]
+                  or (os.environ["GITHUB_EVENT_NAME"] == "push" and report["baseline_state"] == "not_provided")
+              ):
+                  with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                      output.write(f"selected_sha={report['server_commit']}\n")
       - name: Preserve drift report
         if: always() && steps.drift.outcome != 'skipped'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -113,3 +131,79 @@ jobs:
       - name: Verify pinned skill content
         if: always() && steps.skill_history.outcome != 'skipped'
         run: python3 tools/check_skill_pin.py --verify-git
+
+  selected_server_tests:
+    name: Test the immutable selected server
+    needs: [source_pin]
+    if: >-
+      !cancelled() && (inputs.selected_server != '' ||
+      (needs.source_pin.result == 'success' && needs.source_pin.outputs.selected_sha != ''))
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    env:
+      EXPECTED_SERVER: ${{ inputs.selected_server || needs.source_pin.outputs.selected_sha }}
+      GIT_NO_REPLACE_OBJECTS: '1'
+      UNITY_MCP_DISABLE_TELEMETRY: '1'
+    outputs:
+      tested_sha: ${{ steps.accept.outputs.tested_sha }}
+    steps:
+      - name: Checkout selected server
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ykh09242/unity-mcp
+          ref: ${{ env.EXPECTED_SERVER }}
+          persist-credentials: false
+      - name: Verify selected checkout
+        shell: bash
+        run: |
+          [[ "$EXPECTED_SERVER" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SERVER"
+          printf 'Package input: `%s`. Selected server checkout: `%s`.\n' \
+            "$GITHUB_SHA" "$EXPECTED_SERVER" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          python-version: "3.14"
+          enable-cache: false
+      - name: Run selected-server regression tests [selected_server_tests:python-3.14]
+        id: test
+        working-directory: Server
+        env:
+          EVIDENCE_STEP_NAME: Run selected-server regression tests [selected_server_tests:python-3.14]
+        run: |
+          uv run --python 3.14 --locked --extra dev python ../tools/release_execution.py run \
+            --kind python --step-name "$EVIDENCE_STEP_NAME" --output results=test-results.xml -- \
+            python -m pytest tests/test_editor_stall_diagnostics.py tests/test_preflight_response_lifetime.py \
+            tests/test_build_polling_contract.py tests/test_build_public_contracts.py \
+            -q -W error --tb=short --junitxml=test-results.xml
+      - name: Require a complete passing focused suite
+        id: accept
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+
+          sys.path.insert(0, "tools")
+          from check_release_evidence import junit_result
+
+          passed, _ = junit_result(Path("Server/test-results.xml").read_bytes())
+          if not passed:
+              raise SystemExit("Selected server regression suite must pass with zero skips")
+          revision = os.environ["EXPECTED_SERVER"]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"tested_sha={revision}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(f"Focused Python suite passed at selected server commit `{revision}`.\n")
+      - name: Preserve selected server execution evidence
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: selected-server-${{ env.EXPECTED_SERVER }}-${{ github.run_attempt }}
+          path: |
+            Server/test-results.xml
+            Server/.release-evidence/*/execution.log
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

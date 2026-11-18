@@ -191,7 +191,12 @@ def test_wrapped_workflow_records_are_emitted_by_the_named_execution_step():
     import yaml
 
     count = 0
-    for filename in ("python-tests.yml", "compile-check.yml", "unity-tests.yml"):
+    for filename in (
+        "python-tests.yml",
+        "compile-check.yml",
+        "unity-tests.yml",
+        "source-pin-drift.yml",
+    ):
         config = yaml.safe_load((ROOT / ".github/workflows" / filename).read_text(encoding="utf-8"))
         for job_key, job in config["jobs"].items():
             for step in job.get("steps", []):
@@ -206,7 +211,7 @@ def test_wrapped_workflow_records_are_emitted_by_the_named_execution_step():
                     assert "--output results=test-results.xml" in step["run"]
                 elif "--kind package-preparation" in step["run"]:
                     assert "resolved-packages.json" in step["run"]
-    assert count == 8
+    assert count == 9
 
 
 @pytest.mark.parametrize("kind", ["python", "native-editmode", "native-playmode"])

@@ -16,10 +16,20 @@ from tests.test_ci_trigger_policy import selected
 
 ROOT = Path(__file__).resolve().parents[2]
 pytest_plugins = ("tests.test_check_source_pin_drift",)
+PACKAGE_COMMIT = "a" * 40
+SERVER_COMMIT = "b" * 40
 
 
 def workflow(name):
     return yaml.safe_load((ROOT / ".github/workflows" / name).read_text(encoding="utf-8"))
+
+
+def passing_qualification_results(gate):
+    results = {name: {"result": "success"} for name in gate["needs"]}
+    results["identity"]["outputs"] = {"selected_server": SERVER_COMMIT}
+    results["selected_server"]["outputs"] = {"tested_sha": SERVER_COMMIT}
+    results["upm"]["outputs"] = {"checked_sha": PACKAGE_COMMIT}
+    return results
 
 
 @pytest.mark.parametrize(
@@ -28,16 +38,16 @@ def workflow(name):
 def test_qualification_rejects_absent_or_invalid_upm_evidence(monkeypatch, tmp_path, outcome):
     # Given successful curated checks and invalid untouched installation evidence.
     gate = workflow("release-qualification.yml")["jobs"]["qualification"]
-    results = {name: {"result": "success"} for name in gate["needs"]}
-    results["upm"] = {"result": outcome, "outputs": {"checked_sha": "a" * 40}}
+    results = passing_qualification_results(gate)
+    results["upm"]["result"] = outcome
     if outcome == "missing":
         del results["upm"]
     if outcome == "wrong_sha":
-        results["upm"] = {"result": "success", "outputs": {"checked_sha": "b" * 40}}
+        results["upm"] = {"result": "success", "outputs": {"checked_sha": SERVER_COMMIT}}
     if outcome == "missing_sha":
         results["upm"] = {"result": "success", "outputs": {}}
     monkeypatch.setenv("JOB_RESULTS", json.dumps(results))
-    monkeypatch.setenv("QUALIFICATION_SHA", "a" * 40)
+    monkeypatch.setenv("QUALIFICATION_SHA", PACKAGE_COMMIT)
     summary = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
     program = next(step["run"] for step in gate["steps"] if step.get("id") == "require")
@@ -45,6 +55,26 @@ def test_qualification_rejects_absent_or_invalid_upm_evidence(monkeypatch, tmp_p
     with pytest.raises(SystemExit):
         exec(compile(program, "qualification-gate", "exec"), {})
     # Then no release qualification summary is emitted.
+    assert not summary.exists()
+
+
+@pytest.mark.parametrize("tested_sha", [None, "", PACKAGE_COMMIT])
+def test_qualification_requires_the_selected_server_suite_at_the_server_sha(
+    monkeypatch, tmp_path, tested_sha
+):
+    # Given an otherwise successful run whose Python result lacks the correct server SHA.
+    gate = workflow("release-qualification.yml")["jobs"]["qualification"]
+    results = passing_qualification_results(gate)
+    results["selected_server"]["outputs"] = {} if tested_sha is None else {"tested_sha": tested_sha}
+    monkeypatch.setenv("JOB_RESULTS", json.dumps(results))
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setenv("QUALIFICATION_SHA", PACKAGE_COMMIT)
+    program = next(step["run"] for step in gate["steps"] if step.get("id") == "require")
+    # When the real release gate evaluates the job outputs.
+    with pytest.raises(SystemExit, match="selected-server Python suite at the package-pinned SHA"):
+        exec(compile(program, "qualification-gate", "exec"), {})
+    # Then a package checkout result cannot qualify the selected server.
     assert not summary.exists()
 
 
@@ -91,6 +121,10 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
         assert "github.event_name == 'workflow_dispatch'" in job["if"]
     assert jobs["bridge"]["with"]["pair_mode"] == "selected"
     assert jobs["bridge"]["with"]["require_native"] is True
+    server = jobs["selected_server"]
+    assert server["uses"] == "./.github/workflows/source-pin-drift.yml"
+    assert server["needs"] == ["identity"]
+    assert server["with"]["selected_server"] == "${{ needs.identity.outputs.selected_server }}"
     assert jobs["upm"]["with"]["require_upm_install"] is True
     assert jobs["reload"]["with"]["run_assetgen_reload"] is True
     assert jobs["player"]["with"] == {
@@ -119,6 +153,7 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
     gate = jobs["qualification"]
     assert set(gate["needs"]) == {
         "identity",
+        "selected_server",
         "bridge",
         "reload",
         "windows_vfx",
@@ -257,27 +292,36 @@ def test_player_delegation_requires_the_qualification_commit():
 
 
 @pytest.mark.parametrize(
-    "job", ["identity", "bridge", "reload", "windows_vfx", "player", "distribution", "upm"]
+    "job",
+    [
+        "identity",
+        "selected_server",
+        "bridge",
+        "reload",
+        "windows_vfx",
+        "player",
+        "distribution",
+        "upm",
+    ],
 )
 @pytest.mark.parametrize("outcome", ["failure", "cancelled", "skipped", "missing", "", "success"])
 def test_qualification_gate_requires_every_actual_success(monkeypatch, tmp_path, job, outcome):
     gate = workflow("release-qualification.yml")["jobs"]["qualification"]
     program = next(step["run"] for step in gate["steps"] if step.get("id") == "require")
-    results = {name: {"result": "success"} for name in gate["needs"]}
-    results["upm"]["outputs"] = {"checked_sha": "a" * 40}
+    results = passing_qualification_results(gate)
     if outcome == "missing":
         del results[job]
     else:
         results[job]["result"] = outcome
     monkeypatch.setenv("JOB_RESULTS", json.dumps(results))
     summary = tmp_path / "summary.md"
-    revision = "a" * 40
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
-    monkeypatch.setenv("QUALIFICATION_SHA", revision)
+    monkeypatch.setenv("QUALIFICATION_SHA", PACKAGE_COMMIT)
     if outcome == "success":
         exec(compile(program, "qualification-gate", "exec"), {})
         text = summary.read_text(encoding="utf-8")
-        assert revision in text
+        assert PACKAGE_COMMIT in text
+        assert SERVER_COMMIT in text
         assert "Windows standalone Player (Mono, standard)" in text
         assert "No publication was performed" in text
     else:
