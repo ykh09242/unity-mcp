@@ -31,7 +31,7 @@ from anyio.abc import Process
 from pydantic import JsonValue
 
 ROOT: Final = Path(__file__).resolve().parents[1]
-PINNED_CODEX_VERSION: Final = "0.167.1"
+PINNED_CODEX_VERSION: Final = "0.170.0"
 
 
 class InteropFailure(AssertionError):

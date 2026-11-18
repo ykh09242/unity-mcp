@@ -1,7 +1,8 @@
 # Shared connections and request ownership
 
-This matrix describes Unity MCP 2.4.1, FastMCP 4.1.8, MCP Python 2.3.0 and
-Codex CLI 0.167.1. Codex protocol research is pinned to
+The original matrix was verified with Unity MCP 2.4.1, FastMCP 4.1.8, MCP
+Python 2.3.0 and Codex CLI 0.167.1. The November 18 client results appear under
+[evidence boundaries](#evidence-boundaries). Original protocol research is pinned to
 [source commit 0a94398fa60c4fac0e7659e4213a0a36e613dd46](https://github.com/openai/codex/tree/0a94398fa60c4fac0e7659e4213a0a36e613dd46).
 The MCP client connection and the server-to-Unity native transport are separate
 boundaries. Sharing one does not establish the capabilities of the other.
@@ -80,8 +81,9 @@ remote socket is still reachable; normal command processing owns liveness checks
 
 ## Evidence boundaries
 
-The Windows 2026-11-11 actual-client run covers the five cases above with Codex
-0.167.1. Receipts record the exact version and checkout commit, flags, observed
+The Windows 2026-11-18 run repeated all five cases with FastMCP 4.2.1 and
+Codex 0.170.0. The original 2026-11-11 run used Codex 0.167.1. Receipts
+record the exact version and checkout commit, flags, observed
 protocols, process identities, complete lifecycle notifications, cancellation and
 handle results. Local modified-source evidence is accompanied by a scoped diff and
 file hashes; a checkout SHA alone does not identify uncommitted edits.
