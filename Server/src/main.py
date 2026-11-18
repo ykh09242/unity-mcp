@@ -532,7 +532,7 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 
 Target and discover
 - Resolve mcpforunity://instances. When ambiguous or sessionless, pass unity_instance=Name@hash on tools and _meta.unity_instance on resources. Where supported, use set_active_instance.
-- Use listed URIs or expand templates with observed IDs (unityMCP in Codex). Payloads usually sit under data.
+- For observations prefer listed resources (unityMCP in Codex). Expand templates with observed values. Read data.
 - Use manage_tools(action="catalog") by meaning in any language. Filter groups by intent, follow next_offset and describe the operation. Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck target, scene and mode.
 - For missing tools inspect manage_tools(action="list_groups").discovery. Selection needs client scope/project binding, Editor toggles and consent. Fixed-inventory clients can use UNITY_MCP_TOOL_PROFILE=full and reconnect. {custom_tools_note}
 

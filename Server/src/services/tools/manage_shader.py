@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, f
 from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
+from services.registry.action_catalog import SHADER_GRAPH_READ
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -35,6 +36,7 @@ class ShaderVariantOptions(BaseModel):
     group="vfx",
     description=(
         "Manages shader source, graph structure and compiler diagnostics. "
+        f"{SHADER_GRAPH_READ} "
         "read returns a bounded source page (64 KiB by default); follow data.nextOffset with "
         "read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. "
         "inspect_graph takes a full Assets/*.shadergraph path and returns bounded, paged serialized "

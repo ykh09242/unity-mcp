@@ -112,6 +112,12 @@ _PHYSICS: Final = ToolGuidance(
     skills=("create-2d-physics", "physics-3d-collision"),
 )
 _UITK: Final = ToolGuidance(skills=("ui-uitk",))
+GAME_VIEW_READ: Final = "For the current render size and presets, prefer the listed resource mcpforunity://editor/game-view-size."
+SHADER_GRAPH_READ: Final = (
+    "For graph structure, prefer the listed resource template "
+    "mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}. "
+    "Encode the full asset path as one URI segment."
+)
 _SCENE_OBSERVATION_IMPORT: Final = (
     "Before observation, preflight may import pending external asset changes when refresh "
     "is permitted. Changed scripts can trigger compilation and domain reload."
@@ -349,7 +355,7 @@ TOOL_GUIDANCE: Final = {
             ),
             "inspect_graph": ActionGuidance(
                 "Read paged serialized Shader Graph nodes, edges, properties and keywords "
-                "from a full .shadergraph asset path.",
+                "from a full .shadergraph asset path. " + SHADER_GRAPH_READ,
                 ("path",),
                 READ_ONLY_EFFECTS,
                 evidence_limit=(
@@ -467,7 +473,7 @@ TOOL_GUIDANCE: Final = {
             ),
             "get_game_view_size": ActionGuidance(
                 "Read the open Game View's current selection, render_size and available presets. "
-                "Use the reported render pixels for game screen coordinates.",
+                "Use the reported render pixels for game screen coordinates. " + GAME_VIEW_READ,
                 effects=READ_ONLY_EFFECTS,
             ),
             "set_game_view_size": ActionGuidance(

@@ -32,6 +32,27 @@ READS = (
 TARGET = {"unity_instance": "Fixture@hash"}
 
 
+@pytest.mark.asyncio
+async def test_mixed_tool_descriptions_point_to_advertised_read_surfaces(monkeypatch):
+    from services.registry import get_registered_tools
+    from services.registry.action_catalog import action_card
+
+    server = observation_server(monkeypatch)
+    async with Client(server) as client:
+        tools = {item.name: item for item in await client.list_tools()}
+        resources = {item.name: str(item.uri) for item in await client.list_resources()}
+        resources.update(
+            {item.name: str(item.uri_template) for item in await client.list_resource_templates()}
+        )
+        declarations = {entry["name"]: entry for entry in get_registered_tools()}
+        for parent, action, resource in [
+            ("manage_editor", "get_game_view_size", "game_view_size"),
+            ("manage_shader", "inspect_graph", "shader_graph_structure"),
+        ]:
+            assert resources[resource] in tools[parent].description
+            assert resources[resource] in action_card(declarations[parent], action)["purpose"]
+
+
 def observation_server(monkeypatch, profile="full"):
     monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", profile)
     server = FastMCP("editor-observations")

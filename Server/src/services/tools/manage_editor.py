@@ -10,6 +10,7 @@ from models.editor_readiness import PlayReadinessJob
 from models.response_lifetime import ResponsePollLifetime
 
 from services.registry import mcp_for_unity_tool
+from services.registry.action_catalog import GAME_VIEW_READ
 from core.telemetry import is_telemetry_enabled, record_tool_usage
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
@@ -17,7 +18,21 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 
 @mcp_for_unity_tool(
-    description="Controls Unity editor state and settings. Default play/stop acknowledge requests: data.status is pending until a stable target is already observed; success alone does not confirm entry/exit. Observe mcpforunity://editor/state. play optionally waits for scene_loaded or first_frame with a bounded persisted job. first_frame confirms simulation frame progress, not rendered pixels or application async initialization. get_play_mode_job polls; cancel_play_mode_job cancels monitoring without stopping Play Mode. get_game_view_size lists current size and presets for an open Game View. set_game_view_size selects fixed width/height, aspect_ratio W:H, or a preset label; restore_game_view_size uses the returned restore_token. Screenshots do not mutate Game View size. pause toggles pause/resume. Also supports telemetry_status, telemetry_ping, set_active_tool, add_tag, remove_tag, add_layer, remove_layer, deploy_package, restore_package, undo, redo. For prefab stages use manage_prefabs.",
+    description=(
+        "Controls Unity editor state and settings. "
+        f"{GAME_VIEW_READ} "
+        "Default play/stop acknowledge requests: data.status is pending until a stable target "
+        "is already observed; success alone does not confirm entry/exit. Observe "
+        "mcpforunity://editor/state. play optionally waits for scene_loaded or first_frame with "
+        "a bounded persisted job. first_frame confirms simulation frame progress, not rendered "
+        "pixels or application async initialization. get_play_mode_job polls; "
+        "cancel_play_mode_job cancels monitoring without stopping Play Mode. set_game_view_size "
+        "selects fixed width/height, aspect_ratio W:H, or a preset label; "
+        "restore_game_view_size uses the returned restore_token. Screenshots do not mutate Game "
+        "View size. pause toggles pause/resume. Also supports telemetry_status, telemetry_ping, "
+        "set_active_tool, add_tag, remove_tag, add_layer, remove_layer, deploy_package, "
+        "restore_package, undo, redo. For prefab stages use manage_prefabs."
+    ),
     annotations=ToolAnnotations(
         title="Manage Editor",
         readOnlyHint=False,
