@@ -18,7 +18,7 @@ internal static class Program
                             ["host"] = "1",
                             ["runtime"] = Environment.Version.ToString(),
                             ["Microsoft.Unity.Analyzers"] = "1.28.0",
-                            ["Microsoft.CodeAnalysis.CSharp.CodeStyle"] = "5.9.0",
+                            ["Microsoft.CodeAnalysis.CSharp.CodeStyle"] = "5.12.0",
                         },
                     }
                 );

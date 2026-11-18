@@ -2,9 +2,9 @@
 
 The host restores a locked dependency graph only during explicit setup. No analyzer binaries are shipped in this source directory. See `packages.lock.json` for all exact dependency versions and NuGet content hashes.
 
-- [Roslyn and C# CodeStyle 5.9.0](https://github.com/dotnet/roslyn): MIT, copyright .NET Foundation and contributors.
+- [Roslyn and C# CodeStyle 5.12.0](https://github.com/dotnet/roslyn): MIT, copyright .NET Foundation and contributors.
 - [Microsoft.Unity.Analyzers 1.28.0](https://github.com/microsoft/Microsoft.Unity.Analyzers): MIT, copyright Microsoft Corporation.
-- [Microsoft.Bcl.AsyncInterfaces 10.0.1](https://github.com/dotnet/runtime): MIT, copyright .NET Foundation and contributors.
+- [Microsoft.Bcl.AsyncInterfaces 11.0.0](https://github.com/dotnet/runtime): MIT, copyright .NET Foundation and contributors.
 - [Humanizer 2.14.1](https://github.com/Humanizr/Humanizer): MIT, copyright Mehdi Khalili and contributors.
 - [System.Composition](https://github.com/dotnet/runtime), as pinned in the lock file: MIT, copyright .NET Foundation and contributors.
 

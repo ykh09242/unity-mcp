@@ -29,7 +29,7 @@ public class ProcessOwnershipTests
         Assert.That(owner.HasActiveChild("running"), Is.True);
         Assert.That(owner.HasActiveChild("waiting"), Is.False);
         cancellation.Cancel();
-        Assert.ThrowsAsync<OperationCanceledException>(async () => await run);
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await run);
         Assert.That(owner.ActiveProcessId, Is.Zero);
         Assert.That(owner.HasActiveChild("running"), Is.False);
         Assert.That(owner.Occupied, Is.Zero);
@@ -55,22 +55,24 @@ public class ProcessOwnershipTests
             .ToArray();
         for (int i = 0; i < 100 && owner.ActiveProcessId == 0; i++)
             await Task.Delay(20);
-        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await owner.RunAsync("dotnet", [], AppContext.BaseDirectory, null, false, CancellationToken.None)
         );
         int pid = owner.ActiveProcessId;
         Assert.That(owner.Stop(), Is.True);
         foreach (var job in jobs)
-            Assert.CatchAsync<OperationCanceledException>(async () => await job);
+            await Assert.CatchAsync<OperationCanceledException>(async () => await job);
         Assert.That(Exited(pid), Is.True);
         Assert.That(owner.Occupied, Is.Zero);
     }
 
     [Test]
-    public void MissingRuntimeDoesNotOccupyCapacity()
+    public async Task MissingRuntimeDoesNotOccupyCapacity()
     {
         using var owner = new AnalysisHostProcess();
-        Assert.CatchAsync(async () => await owner.RunAsync("missing-unity-analysis-dotnet", [], AppContext.BaseDirectory, null, true, CancellationToken.None));
+        await Assert.CatchAsync(async () =>
+            await owner.RunAsync("missing-unity-analysis-dotnet", [], AppContext.BaseDirectory, null, true, CancellationToken.None)
+        );
         Assert.That(owner.Occupied, Is.Zero);
     }
 
@@ -88,10 +90,10 @@ public class ProcessOwnershipTests
     }
 
     [Test]
-    public void HostRefusalKeepsBoundedStderrAndReapsBeforeReturning()
+    public async Task HostRefusalKeepsBoundedStderrAndReapsBeforeReturning()
     {
         using var owner = new AnalysisHostProcess();
-        var error = Assert.CatchAsync<IOException>(async () =>
+        var error = await Assert.CatchAsync<IOException>(async () =>
             await owner.RunAsync(
                 "dotnet",
                 [typeof(AnalysisRequest).Assembly.Location, "--invalid"],
@@ -101,7 +103,7 @@ public class ProcessOwnershipTests
                 CancellationToken.None
             )
         );
-        Assert.That(error.Message, Does.Contain("unsupported_arguments"));
+        Assert.That(error?.Message, Does.Contain("unsupported_arguments"));
         Assert.That(owner.ActiveProcessId, Is.Zero);
         Assert.That(owner.Occupied, Is.Zero);
     }

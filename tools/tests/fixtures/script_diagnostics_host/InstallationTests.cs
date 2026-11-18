@@ -31,7 +31,7 @@ public class InstallationTests
         var replacement = AnalysisHostInstallation.InstallAsync(package, cache, owner, canceled.Token);
         Assert.That(owner.ActiveProcessId, Is.GreaterThan(0));
         canceled.Cancel();
-        Assert.CatchAsync<OperationCanceledException>(async () => await replacement);
+        await Assert.CatchAsync<OperationCanceledException>(async () => await replacement);
         Assert.That(File.ReadAllBytes(Path.Combine(cache, "current.json")), Is.EqualTo(pointer));
         Assert.That(File.ReadAllText(Path.Combine(cache, "unowned.txt")), Is.EqualTo("preserve"));
         Assert.That(AnalysisHostInstallation.ResolveVerifiedHost(cache), Is.EqualTo(host));

@@ -17,8 +17,8 @@ public static class AnalyzerRunner
     private static readonly Lazy<ImmutableArray<DiagnosticAnalyzer>> PinnedAnalyzers = new(LoadPinnedAnalyzers);
     private static readonly Dictionary<string, string> Providers = new()
     {
-        ["compiler"] = "5.9.0",
-        ["Microsoft.CodeAnalysis.CSharp.CodeStyle"] = "5.9.0",
+        ["compiler"] = "5.12.0",
+        ["Microsoft.CodeAnalysis.CSharp.CodeStyle"] = "5.12.0",
         ["Microsoft.Unity.Analyzers"] = "1.28.0",
     };
 

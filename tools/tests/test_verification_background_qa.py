@@ -71,8 +71,8 @@ def test_pinned_diagnostics_with_explicit_project_generator_gap_stays_incomplete
         evidence={
             "coverage_gaps": ["project_analyzers_and_generators_not_executed"],
             "providers": {
-                "compiler": "5.9.0",
-                "Microsoft.CodeAnalysis.CSharp.CodeStyle": "5.9.0",
+                "compiler": "5.12.0",
+                "Microsoft.CodeAnalysis.CSharp.CodeStyle": "5.12.0",
                 "Microsoft.Unity.Analyzers": "1.28.0",
             },
             "source_token": "a" * 64,

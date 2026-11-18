@@ -14,8 +14,8 @@ The transactional installation lives under
 explicit host update. Ordinary capability checks and analysis never install,
 restore packages or run project MSBuild scripts.
 
-The isolated host pins Roslyn Workspaces and CSharp CodeStyle **5.9.0**,
-Microsoft.Unity.Analyzers **1.28.0**, and Microsoft.Bcl.AsyncInterfaces **10.0.1**.
+The isolated host pins Roslyn Workspaces and CSharp CodeStyle **5.12.0**,
+Microsoft.Unity.Analyzers **1.28.0**, and Microsoft.Bcl.AsyncInterfaces **11.0.0**.
 Its lock file and third-party notices ship in `Editor/ScriptDiagnosticsHost~`;
 Unity excludes that folder from its assembly compilation. The host does not load
 arbitrary project analyzers, generators or code-fix providers. The allowlisted
