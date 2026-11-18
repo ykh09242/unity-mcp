@@ -12,6 +12,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEditorInternal;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace MCPForUnity.Editor.Services
 {
@@ -76,7 +77,7 @@ namespace MCPForUnity.Editor.Services
         // State tracking to detect when snapshot actually changes (checked BEFORE building)
         private static string _lastTrackedScenePath;
         private static string _lastTrackedSceneName;
-        private static int _lastTrackedSceneHandle;
+        private static Scene _lastTrackedScene;
         private static string _lastTrackedSceneEpoch;
         private static bool _lastTrackedIsFocused;
         private static bool _lastTrackedIsPlaying;
@@ -182,7 +183,7 @@ namespace MCPForUnity.Editor.Services
         private sealed class EditorStateActiveScene
         {
             [JsonProperty("handle")]
-            public int? Handle { get; set; }
+            public JValue Handle { get; set; }
 
             [JsonProperty("lifetime_epoch")]
             public string LifetimeEpoch { get; set; }
@@ -492,7 +493,7 @@ namespace MCPForUnity.Editor.Services
                 || compilationEdge
                 || _lastTrackedScenePath != scenePath
                 || _lastTrackedSceneName != sceneName
-                || _lastTrackedSceneHandle != scene.handle
+                || _lastTrackedScene != scene
                 || _lastTrackedSceneEpoch != ObjectHandles.Epoch
                 || _lastTrackedIsFocused != isFocused
                 || _lastTrackedIsPlaying != isPlaying
@@ -751,7 +752,7 @@ namespace MCPForUnity.Editor.Services
                     },
                     ActiveScene = new EditorStateActiveScene
                     {
-                        Handle = scene.IsValid() ? scene.handle : (int?)null,
+                        Handle = scene.IsValid() ? UnityJsonSerializer.SceneHandle(scene) : null,
                         LifetimeEpoch = ObjectHandles.Epoch,
                         Path = scenePath,
                         Guid = sceneGuid,
@@ -833,7 +834,7 @@ namespace MCPForUnity.Editor.Services
             // unchanged tick, and short completed test runs are still observed.
             _lastTrackedScenePath = scenePath;
             _lastTrackedSceneName = snapshot.Editor.ActiveScene.Name;
-            _lastTrackedSceneHandle = scene.handle;
+            _lastTrackedScene = scene;
             _lastTrackedSceneEpoch = snapshot.Editor.ActiveScene.LifetimeEpoch;
             _lastTrackedIsFocused = isFocused;
             _lastTrackedIsPlaying = snapshot.Editor.PlayMode.IsPlaying == true;

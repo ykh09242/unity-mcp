@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using MCPForUnity.Runtime.Serialization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using UnityEngine.SceneManagement;
 
 namespace MCPForUnity.Editor.Helpers
 {
@@ -12,6 +13,15 @@ namespace MCPForUnity.Editor.Helpers
     /// </summary>
     public static class UnityJsonSerializer
     {
+        internal static JValue SceneHandle(Scene scene)
+        {
+#if UNITY_6000_4_OR_NEWER
+            return new JValue(scene.handle.GetRawData());
+#else
+            return new JValue((int)scene.handle);
+#endif
+        }
+
         /// <summary>
         /// Shared JsonSerializer instance with converters for Unity types.
         /// Use this for all JToken-to-Unity-type conversions.

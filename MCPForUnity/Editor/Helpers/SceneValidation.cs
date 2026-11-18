@@ -111,14 +111,7 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
-        internal static JValue SceneHandle(Scene scene)
-        {
-#if UNITY_6000_4_OR_NEWER
-            return new JValue(scene.handle.GetRawData());
-#else
-            return new JValue((int)scene.handle);
-#endif
-        }
+        internal static JValue SceneHandle(Scene scene) => UnityJsonSerializer.SceneHandle(scene);
 
         private static string SaveSelector(JObject parameters, string nativeName, string publicName)
         {

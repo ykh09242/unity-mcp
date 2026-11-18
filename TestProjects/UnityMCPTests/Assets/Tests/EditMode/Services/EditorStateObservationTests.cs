@@ -35,13 +35,14 @@ namespace MCPForUnityTests.Editor.Services
                 var owned = fixture.Create(prefix, "");
                 Assert.IsTrue(EditorSceneManager.SaveScene(owned, path));
                 var first = EditorStateCache.GetSnapshot()["editor"]["active_scene"];
-                Assert.AreEqual(owned.handle, (int)first["handle"]);
+                Assert.AreEqual(JTokenType.Integer, first["handle"].Type);
+                Assert.IsTrue(JToken.DeepEquals(SceneValidation.SceneHandle(owned), first["handle"]));
                 owned = fixture.ReopenSavedScene();
                 var second = EditorStateCache.GetSnapshot()["editor"]["active_scene"];
                 Assert.AreEqual(path, (string)second["path"]);
                 Assert.AreEqual(AssetDatabase.AssetPathToGUID(path), (string)second["guid"]);
                 Assert.AreEqual((string)first["guid"], (string)second["guid"]);
-                Assert.AreEqual(owned.handle, (int)second["handle"]);
+                Assert.IsTrue(JToken.DeepEquals(SceneValidation.SceneHandle(owned), second["handle"]));
                 Assert.IsNotEmpty((string)first["lifetime_epoch"]);
                 Assert.IsNotEmpty((string)second["lifetime_epoch"]);
                 Assert.AreNotEqual((string)first["lifetime_epoch"], (string)second["lifetime_epoch"]);

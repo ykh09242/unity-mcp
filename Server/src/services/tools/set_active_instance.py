@@ -228,7 +228,8 @@ def handoff_observation(observation: dict | None) -> dict:
         value = scene.get(key)
         scene_identity[key] = value if isinstance(value, str) and 0 < len(value) <= limit else None
     handle = scene.get("handle")
-    if type(handle) is int and -(2**31) <= handle < 2**31 and handle != 0:
+    # Older Editors expose Int32; Unity 6.4+ exposes the raw UInt64 scene identity.
+    if type(handle) is int and -(2**31) <= handle < 2**64 and handle != 0:
         scene_identity["handle"] = handle
     epoch = scene.get("lifetime_epoch")
     if isinstance(epoch, str) and len(epoch) == 32 and all(c in "0123456789abcdef" for c in epoch):

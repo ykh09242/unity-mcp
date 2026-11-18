@@ -14,7 +14,7 @@ import pytest
 from services.resources import _serialize_pydantic
 from services.resources.editor_state import get_editor_state
 from services.resources.project_info import get_project_info
-from services.tools.set_active_instance import set_active_instance
+from services.tools.set_active_instance import handoff_observation, set_active_instance
 from tests.test_http_command_outcome import command_hub  # pylint: disable=unused-import
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
@@ -23,6 +23,26 @@ from utils.editor_handoff import receive_editor_handoff
 
 def encoded_size(value):
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
+
+
+@pytest.mark.parametrize(
+    "handle, accepted",
+    [
+        (-(1 << 31), True),
+        (31, True),
+        ((1 << 64) - 1, True),
+        (-(1 << 31) - 1, False),
+        (1 << 64, False),
+        (0, False),
+        (True, False),
+    ],
+)
+def test_handoff_retains_only_native_scene_handle_values(handle, accepted):
+    identity = handoff_observation({"editor": {"active_scene": {"handle": handle}}})["active_scene"]
+    if accepted:
+        assert identity["handle"] == handle
+    else:
+        assert "handle" not in identity
 
 
 @pytest.mark.asyncio
@@ -37,7 +57,7 @@ async def test_receive_handoff_between_clients(command_hub, change):
     instance = "Fixture@hash"
     scene = {"name": "Menu", "path": "Assets/Menu.unity", "guid": "menu-guid"}
     if change != "legacy":
-        scene["handle"] = 31
+        scene["handle"] = (1 << 63) + 31
         scene["lifetime_epoch"] = "1" * 32
     reads = []
     question = ["Observe the Game View dimensions"]
@@ -77,7 +97,8 @@ async def test_receive_handoff_between_clients(command_hub, change):
         if change == "scene":
             scene.update(name="Boot", path="Assets/Boot.unity", guid="boot-guid")
         elif change == "reopened":
-            scene["handle"] = 92
+            # The low 32 bits may match while the loaded scene identity differs.
+            scene["handle"] += 1 << 32
         elif change == "reused_handle":
             scene["lifetime_epoch"] = "2" * 32
         elif change in ("editor", "reconnect"):
