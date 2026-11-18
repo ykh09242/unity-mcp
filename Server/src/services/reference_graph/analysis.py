@@ -808,9 +808,11 @@ def parse_csharp(
                 "record",
             )
             and tokens[i + 1].text in ("=", ";", "{", "=>", ",")
-            and not (i >= 2 and tokens[i - 2].text == "const")
         ):
-            fields[scopes[i].type_id].add(tokens[i].text)
+            # String constants remain resolvable as key expressions, while every
+            # member constant can be the receiver of a user-defined extension method.
+            if not (i >= 2 and tokens[i - 2].text == "const" and tokens[i - 1].text == "string"):
+                fields[scopes[i].type_id].add(tokens[i].text)
             if body is not None and body not in initializer_bodies:
                 partial_fields.add(partial_bodies[body] + "." + tokens[i].text)
     calls, method_calls = [], defaultdict(list)
@@ -1673,7 +1675,9 @@ class AnalysisIndex:
         self._prepare(affected)
         return affected
 
-    def _names(self, item: Facts, name: str, scope: str, import_scope: str = "") -> list[str]:
+    def _names(
+        self, item: Facts, name: str, scope: str, import_scope: str = "", *, partial_receiver=False
+    ) -> list[str]:
         imports = item.imports.get(import_scope, {"aliases": item.aliases, "usings": item.usings})
         if name.startswith("global::"):
             return self._lookup_names(item.owner, [name[len("global::") :]])
@@ -1685,7 +1689,12 @@ class AnalysisIndex:
             full = scope + "." + name
             names.append(full)
             self._lookup_names(item.owner, [full, scope + "." + first])
-            if self._declared(item, scope + "." + first) or self._declared(item, full):
+            # Cross-file fields of this type were checked by exact assembly and type identity.
+            # Rechecking constants here by their dotted names would merge unrelated types.
+            local_constants = partial_receiver and item.owner in self.types.get(scope, ())
+            if self._declared(item, scope + "." + first, local_constants) or self._declared(
+                item, full, local_constants
+            ):
                 return [full]
             scope = scope.rpartition(".")[0]
         if first in imports["aliases"]:
@@ -1741,12 +1750,15 @@ class AnalysisIndex:
             for key, value in sorted(build.items())
         )
 
-    def _declared(self, item: Facts, name: str) -> bool:
+    def _declared(self, item: Facts, name: str, local_constants: bool = False) -> bool:
         return (
             any(self._visible(item, owner) for owner in self.types.get(name, ()))
             or any(self._visible(item, owner) for owner in self.namespaces.get(name, ()))
             or any(self._visible(item, owner) for owner, _ in self.methods.get(name, ()))
-            or any(self._visible(item, owner) for owner, _ in self.constants.get(name, ()))
+            or any(
+                (not local_constants or owner == item.owner) and self._visible(item, owner)
+                for owner, _ in self.constants.get(name, ())
+            )
         )
 
     def _lookup_names(self, owner: str, names: list[str]) -> list[str]:
@@ -1854,7 +1866,10 @@ class AnalysisIndex:
             if owners := self.partial_fields.get(symbol):
                 self._depend(item.owner, owners)
                 return [], None, "unresolved_receiver", ()
-        names = self._names(item, call.name, call.scope, call.import_scope)
+        partial_receiver = bool(call.receiver_fields)
+        names = self._names(
+            item, call.name, call.scope, call.import_scope, partial_receiver=partial_receiver
+        )
         rule_matches = [self.rules[name] for name in names if name in self.rules]
         if len(rule_matches) > 1:
             return [], None, "ambiguous_call", ()
@@ -1904,7 +1919,9 @@ class AnalysisIndex:
         qualifier, _, method = call.name.rpartition(".")
         if method not in _LOADER_METHODS:
             return [], None, None, ()
-        qualified = self._names(item, qualifier, call.scope, call.import_scope)
+        qualified = self._names(
+            item, qualifier, call.scope, call.import_scope, partial_receiver=partial_receiver
+        )
         # A project type with the same visible qualifier takes precedence.
         if any(
             self._visible(item, owner) for name in qualified for owner in self.types.get(name, ())

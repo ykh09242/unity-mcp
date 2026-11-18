@@ -369,6 +369,33 @@ def test_new_global_type_shadow_invalidates_an_imported_constant_binding():
     assert keys(index) == {"one"}
 
 
+@pytest.mark.parametrize(("type_", "value"), [("int", "32"), ("string", '"ignored"')])
+def test_partial_constant_receiver_rebinds_without_hiding_string_key_constants(type_, value):
+    caller = facts(
+        "caller",
+        """using UnityEngine; partial class A {
+            const string Key = "two";
+            void Run() { Resources.Load("one"); global::UnityEngine.Resources.Load(Key); }
+        }""",
+        context("Game", references=("Library",)),
+    )
+    source = (
+        f"partial class A {{ const {type_} Resources = {value}; }} "
+        f"static class Extensions {{ public static object Load(this {type_} x, string p) => null; }}"
+    )
+    foreign = facts("foreign", source, context("Library"))
+    other_arity = facts("generic", f"partial class A<T> {{ const {type_} Resources = {value}; }}")
+    member = Facts.from_dict(asdict(facts("member", source, context("Game"))))
+    initial = [caller, foreign, other_arity]
+    index = AnalysisIndex(initial, catalog())
+    assert keys(index) == {"one", "two"}
+    assert "caller" in index.update([member])
+    assert index.analyze("caller") == AnalysisIndex([*initial, member], catalog()).analyze("caller")
+    assert keys(index) == {"two"}
+    assert "caller" in index.update([], removed=["member"])
+    assert keys(index) == {"one", "two"}
+
+
 @pytest.mark.parametrize(
     ("literal", "expected"),
     [
