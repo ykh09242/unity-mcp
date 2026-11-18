@@ -11,7 +11,6 @@ What changed and why:
   (quick socket connect + ping) before choosing it.
 """
 
-import glob
 from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -104,8 +103,7 @@ class PortDiscovery:
         """
         base = PortDiscovery.get_registry_dir()
         candidates: list[tuple[Path, float]] = []
-        for name in glob.glob(str(base / "unity-mcp-port-*.json")):
-            path = Path(name)
+        for path in base.glob("unity-mcp-port-*.json"):
             try:
                 candidates.append((path, path.stat().st_mtime))
             except FileNotFoundError:
@@ -237,7 +235,7 @@ class PortDiscovery:
         try:
             base = PortDiscovery.get_registry_dir()
             status_files = sorted(
-                (Path(p) for p in glob.glob(str(base / "unity-mcp-status-*.json"))),
+                base.glob("unity-mcp-status-*.json"),
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )
@@ -352,17 +350,16 @@ class PortDiscovery:
         """Read the metadata snapshot before deciding which ports to probe."""
         entries = []
         base = PortDiscovery.get_registry_dir()
-        for filename in glob.glob(str(base / "unity-mcp-status-*.json")):
+        for path in base.glob("unity-mcp-status-*.json"):
             check_discovery()
             try:
-                path = Path(filename)
                 modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
                 with path.open("r", encoding="utf-8") as stream:
                     data = json.load(stream)
                 if isinstance(data, dict):
                     entries.append((path, data, modified))
             except Exception as exc:
-                logger.debug(f"Failed to parse status file {filename}: {exc}")
+                logger.debug(f"Failed to parse status file {path}: {exc}")
         return entries
 
     @staticmethod

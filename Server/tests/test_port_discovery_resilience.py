@@ -22,6 +22,25 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return tmp_path
 
 
+def test_registry_directory_is_literal_during_all_discovery(isolated_registry, monkeypatch):
+    literal = isolated_registry / "Build[A]"
+    neighbor = isolated_registry / "BuildA"
+    for root, port, project_hash in ((literal, 6411, "12345678"), (neighbor, 6412, "87654321")):
+        root.mkdir()
+        status = {"project_path": "/Owned/Example/Assets", "unity_port": port}
+        (root / f"unity-mcp-status-{project_hash}.json").write_text(json.dumps(status))
+        (root / f"unity-mcp-port-{project_hash}.json").write_text(json.dumps({"unity_port": port}))
+    monkeypatch.setenv("UNITY_MCP_STATUS_DIR", str(literal))
+
+    assert PortDiscovery.list_candidate_files() == [literal / "unity-mcp-port-12345678.json"]
+    assert PortDiscovery.get_port_config() == {"unity_port": 6411}
+    assert PortDiscovery.discover_unity_port() == 6411
+    assert [instance.id for instance in PortDiscovery.discover_all_unity_instances()] == [
+        "Example@12345678"
+    ]
+    assert PortDiscovery.discover_unity_instance("Example@12345678").port == 6411
+
+
 @pytest.mark.parametrize("heartbeat", [None, "2026-01-01T00:00:00", "2026-01-01T00:00:00Z"])
 def test_mixed_heartbeat_formats_do_not_break_instance_sorting(
     isolated_registry: Path,
@@ -76,8 +95,8 @@ def test_conflicting_legacy_claims_are_rejected_regardless_of_timestamp_order(
         ),
         encoding="utf-8",
     )
-    paths = [str(newer), str(older)] if newest_first else [str(older), str(newer)]
-    monkeypatch.setattr("transport.legacy.port_discovery.glob.glob", lambda pattern: paths)
+    paths = [newer, older] if newest_first else [older, newer]
+    monkeypatch.setattr(Path, "glob", lambda self, pattern: iter(paths))
 
     instances = PortDiscovery.discover_all_unity_instances()
 
@@ -91,9 +110,7 @@ def test_disappearing_port_registry_does_not_hide_surviving_candidate(
     missing = isolated_registry / "unity-mcp-port-deleted.json"
     surviving = isolated_registry / "unity-mcp-port-surviving.json"
     surviving.write_text(json.dumps({"unity_port": 6401}), encoding="utf-8")
-    monkeypatch.setattr(
-        "transport.legacy.port_discovery.glob.glob", lambda pattern: [str(missing), str(surviving)]
-    )
+    monkeypatch.setattr(Path, "glob", lambda self, pattern: iter([missing, surviving]))
 
     assert PortDiscovery.list_candidate_files() == [surviving]
     assert PortDiscovery.get_port_config() == {"unity_port": 6401}
