@@ -1633,7 +1633,7 @@ def _start_utf(
 def _poll_utf(
     send, job_id: str, instance_id: str, deadline: float, max_retries: int, retry_ms: int
 ) -> dict[str, Any] | Any:
-    """Poll get_test_job until terminal {succeeded, failed} or deadline.
+    """Poll get_test_job until a terminal test status or deadline.
 
     A returned MCPResponse / reason=="reloading" / hint=="retry" is treated as
     non-terminal (keep polling). Returns the last response (terminal or a wedge
@@ -1666,7 +1666,7 @@ def _poll_utf(
             time.sleep(2)
             continue
         status = _dig(poll, "status")
-        if status in ("succeeded", "failed"):
+        if status in ("succeeded", "failed", "inconclusive"):
             return poll
         time.sleep(2)
     return {"_wedge": True}
@@ -1693,7 +1693,7 @@ def _outcome_from_terminal(
         )
 
     result = _dig(terminal, "result")
-    if status == "succeeded" or (status == "failed" and isinstance(result, dict)):
+    if status == "succeeded" or (status in ("failed", "inconclusive") and isinstance(result, dict)):
         summary = (result.get("summary") if isinstance(result, dict) else None) or {}
 
         def invalid_results(detail: str) -> LegOutcome:
@@ -1703,15 +1703,17 @@ def _outcome_from_terminal(
             )
 
         try:
-            total, passed, failed, skipped = (
-                int(summary.get(key, 0) or 0) for key in ("total", "passed", "failed", "skipped")
-            )
-            if min(total, passed, failed, skipped) < 0 or total != passed + failed + skipped:
+            total = int(summary.get("total", 0) or 0)
+            counts = {
+                key: int(summary.get(key, 0) or 0)
+                for key in ("passed", "failed", "skipped", "inconclusive")
+            }
+            if min(counts.values()) < 0 or total != sum(counts.values()):
                 return invalid_results("inconsistent Unity test summary counts")
             rows = result.get("results") if isinstance(result, dict) else None
             if not isinstance(rows, list) or len(rows) != total:
                 return invalid_results("Unity test result rows do not match the complete summary")
-            recorded = {"passed": 0, "failed": 0, "skipped": 0}
+            recorded = dict.fromkeys(counts, 0)
             for r in rows:
                 if not isinstance(r, dict):
                     return invalid_results("invalid Unity test result row")
@@ -1725,8 +1727,8 @@ def _outcome_from_terminal(
                     suite.cases.append(
                         JUnitCase(name=rname, time_s=rtime, failure=fmsg.strip() or "test failed")
                     )
-                elif state in ("skipped", "ignored"):
-                    recorded["skipped"] += 1
+                elif state in ("skipped", "ignored", "inconclusive"):
+                    recorded["inconclusive" if state == "inconclusive" else "skipped"] += 1
                     suite.cases.append(JUnitCase(name=rname, time_s=rtime, skipped=True))
                 elif state == "passed":
                     recorded["passed"] += 1
@@ -1738,8 +1740,9 @@ def _outcome_from_terminal(
         except (AttributeError, TypeError, ValueError, OverflowError):
             return invalid_results("invalid Unity test summary or duration")
 
-        if recorded != {"passed": passed, "failed": failed, "skipped": skipped}:
+        if recorded != counts:
             return invalid_results("Unity test result states disagree with the summary counts")
+        passed, failed = counts["passed"], counts["failed"]
         if failed > 0:
             return LegOutcome(
                 name,
@@ -1751,6 +1754,15 @@ def _outcome_from_terminal(
             )
         if status == "failed":
             return invalid_results(str(_dig(terminal, "error") or "test job failed"))
+        if counts["inconclusive"] or status == "inconclusive":
+            return LegOutcome(
+                name,
+                "fail",
+                blocking=blocking,
+                detail=f"{counts['inconclusive']}/{total} {mode} tests inconclusive",
+                exit_code=1,
+                junit_suite=suite,
+            )
         if passed == 0:
             return invalid_results("Unity did not execute any passing tests")
         return LegOutcome(

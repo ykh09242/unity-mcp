@@ -960,6 +960,19 @@ class TestEditorDiagnostics:
 
 
 class TestTerminalJUnit:
+    def test_mixed_inconclusive_job_finishes_wait_and_preserves_junit_rows(self):
+        rows = [{"fullName": "A", "state": "Passed"}, {"fullName": "B", "state": "Inconclusive"}]
+        response = self.terminal(rows, 1, status="inconclusive")
+        response["data"]["result"]["summary"].update(total=2, inconclusive=1)
+        terminal = lh._poll_utf(
+            lambda *_a, **_kw: response, "job", "editor", lh.time.monotonic() + 1, 0, 0
+        )
+        outcome = lh._outcome_from_terminal("editmode", "EditMode", terminal, True)
+        assert outcome.exit_code == 1
+        assert "1/2 EditMode tests inconclusive" == outcome.detail
+        root = lh.merge_junit([outcome.junit_suite]).getroot()
+        assert root.get("tests") == "2" and root.get("skipped") == "1"
+
     @staticmethod
     def terminal(rows, passed, failed=0, skipped=0, status="succeeded"):
         return {
@@ -1037,13 +1050,16 @@ class TestTerminalJUnit:
         assert outcome.status == "fail"
         assert "did not execute" in outcome.detail
 
-    @pytest.mark.parametrize("state", ["Unknown", "", "Inconclusive"])
-    def test_unrecognized_or_inconclusive_leaf_is_not_counted_as_a_pass(self, state):
+    @pytest.mark.parametrize(
+        "state, reason",
+        [("Unknown", "unsupported"), ("", "unsupported"), ("Inconclusive", "disagree")],
+    )
+    def test_unrecognized_or_inconclusive_leaf_is_not_counted_as_a_pass(self, state, reason):
         outcome = lh._outcome_from_terminal(
             "editmode", "EditMode", self.terminal([{"state": state}], 1), True
         )
         assert outcome.status == "fail"
-        assert "unsupported" in outcome.detail
+        assert reason in outcome.detail
 
     def test_row_buckets_must_match_summary(self):
         outcome = lh._outcome_from_terminal(
