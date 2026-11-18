@@ -29,6 +29,7 @@ Search GameObjects by name, tag, layer, component, path or ID; defaults to IDs o
 | `conditions` | `list[dict[str, Any]] \| None` | — | AND predicates with exactly search_method and search_term; max8 including top-level search |
 | `max_depth` | `int \| None` | — | Scoped inclusive depth: root0, default64, maximum128 |
 | `projection` | `list[Literal['name', 'active', 'transform', 'components', 'handle']] \| None` | — | Optional same-ID projection; handles use existing session-scoped lifetime |
+| `refresh_if_dirty` | `bool` | — | Set false to search the current scene without a preflight asset refresh. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

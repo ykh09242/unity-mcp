@@ -23,7 +23,11 @@ def test_registered_scoped_gameobject_search_contract(mode, tmp_path):
         import anyio
         from fastmcp import Client, FastMCP
         from core.config import config
+        from models import MCPResponse
         import services.tools as tools
+        import services.resources.editor_state as editor_state
+        import services.tools.preflight as preflight_service
+        import services.tools.refresh_unity as refresh_service
         from services.tools import find_gameobjects as module
         from services.registry import get_registered_tools
         from transport.plugin_hub import PluginHub
@@ -84,6 +88,30 @@ def test_registered_scoped_gameobject_search_contract(mode, tmp_path):
                 assert await call({**args, "cursor": "b" * 32}) == reply
                 module.preflight.assert_awaited()
                 assert all(call.kwargs == {"wait_for_no_compile": True, "refresh_if_dirty": True} for call in module.preflight.await_args_list)
+
+                # Drive the real gate against a dirty editor with refresh permission.
+                preflight_service._in_pytest = lambda: False
+                preflight_service.remote_operation_allowed = AsyncMock(return_value=True)
+                editor_state.get_editor_state_authoritative = AsyncMock(
+                    return_value=MCPResponse(success=True, data={"assets": {"external_changes_dirty": True}})
+                )
+                refresh_service.refresh_unity = AsyncMock(return_value=MCPResponse(success=True))
+                module.preflight = AsyncMock(wraps=preflight_service.preflight)
+                assert await call(args) == reply
+                refresh_service.refresh_unity.assert_awaited_once()
+                refresh_service.refresh_unity.reset_mock()
+                editor_state.get_editor_state_authoritative.reset_mock()
+                preflight_service.remote_operation_allowed.reset_mock()
+                assert await call({**args, "refresh_if_dirty": False}) == reply
+                editor_state.get_editor_state_authoritative.assert_awaited_once()
+                refresh_service.refresh_unity.assert_not_awaited()
+                assert [call.args[0] for call in preflight_service.remote_operation_allowed.await_args_list] == ["get_editor_state"]
+                assert "refresh_if_dirty" not in requests[-1][2]
+                before = len(requests)
+                gates = module.preflight.await_count
+                invalid_refresh = await client.call_tool("find_gameobjects", {**args, "refresh_if_dirty": "false"}, raise_on_error=False)
+                assert invalid_refresh.is_error or json.loads(invalid_refresh.content[0].text)["success"] is False
+                assert len(requests) == before and module.preflight.await_count == gates
             print("scoped public SDK contract passed", MODE, len(requests))
         anyio.run(scenario)
     """

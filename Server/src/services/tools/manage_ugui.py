@@ -663,6 +663,97 @@ async def _diagnose_text(
     return {"success": True, "data": data}
 
 
+def _raycast_next_observation(
+    data: dict[str, JsonValue],
+    params: dict[str, JsonValue],
+    budgets: dict[str, tuple[int | None, int, int, int]],
+) -> dict[str, JsonValue]:
+    """Suggest one bounded read from an unknown, validated native receipt."""
+    observation: dict[str, JsonValue] = {"retry_unchanged": False}
+    reason = data["reason"]
+    match reason:
+        case "missing_event_system" | "ambiguous_event_system" | "unsupported_event_system":
+            basis = "event_system_candidates"
+            component_type = "UnityEngine.EventSystems.EventSystem"
+        case "unsupported_graphic":
+            culprit = data.get("unsupported_component")
+            if isinstance(culprit, dict) and culprit["instance_id"] not in (0, -1):
+                # Native v1 reports the owning GameObject ID for the culprit Graphic.
+                game_object_id = culprit["instance_id"]
+                return {
+                    **observation,
+                    "basis": "registered_graphic_candidate",
+                    "resource_uri": (
+                        f"mcpforunity://scene/gameobject/{game_object_id}/components"
+                        "?page_size=20&include_properties=false&evaluate_getters=false"
+                    ),
+                }
+            basis = "graphic_candidates"
+            component_type = "UnityEngine.UI.Graphic"
+        case "screen_position_unavailable":
+            return {
+                **observation,
+                "basis": "current_game_view_size",
+                "tool": "manage_editor",
+                "arguments": {"action": "get_game_view_size"},
+            }
+        case "unsupported_native_version" | "ugui_unavailable" | "unsupported_native_shape":
+            return {
+                **observation,
+                "basis": "project_configuration",
+                "resource_uri": "mcpforunity://project/info",
+            }
+        case "invalid_scene_target":
+            return {
+                **observation,
+                "basis": "editor_scene_context",
+                "resource_uri": "mcpforunity://editor/state",
+            }
+        case "max_nodes" | "max_depth" | "max_evaluations" | "max_characters":
+            requested, default, _, maximum = budgets[reason]
+            current = default if requested is None else requested
+            if current < maximum and data["policy"]["native_query_attempted"] is False:
+                return {
+                    **observation,
+                    "basis": "changed_observation_budget",
+                    "tool": "manage_ugui",
+                    "arguments": {
+                        **params,
+                        "target": data["target_id"],
+                        "allow_custom_filters": False,
+                        reason: default if current < default else maximum,
+                    },
+                }
+            basis = "graphic_raycaster_candidates"
+            component_type = "UnityEngine.UI.GraphicRaycaster"
+        case (
+            "unsupported_display_route"
+            | "unsupported_blocking_objects"
+            | "custom_filters_not_allowed"
+        ):
+            basis = "graphic_raycaster_candidates"
+            component_type = "UnityEngine.UI.GraphicRaycaster"
+        case _:
+            # Registry, raycaster and native hit/inventory refusals leave scene candidates to inspect.
+            basis = "raycaster_candidates"
+            component_type = "UnityEngine.EventSystems.BaseRaycaster"
+    return {
+        **observation,
+        "basis": basis,
+        "tool": "find_gameobjects",
+        "arguments": {
+            "search_method": "by_component",
+            "search_term": component_type,
+            "scene_scope": "all_loaded",
+            "include_inactive": True,
+            "page_size": 20,
+            "max_depth": 64,
+            "projection": ["name", "active", "components"],
+            "refresh_if_dirty": False,
+        },
+    }
+
+
 async def _diagnose_raycast(
     ctx,
     target,
@@ -739,6 +830,16 @@ async def _diagnose_raycast(
                 _float32(a) != _float32(b) for a, b in zip(data["screen_position"], screen_position)
             ):
                 raise ValueError("point echo")
+            if data["status"] == "unknown":
+                observation = _raycast_next_observation(data, params, budgets)
+                if instance:
+                    # Native object IDs can only be reused in the Editor that returned them.
+                    arguments = observation.get("arguments")
+                    if isinstance(arguments, dict):
+                        arguments["unity_instance"] = instance
+                    else:
+                        observation["meta"] = {"unity_instance": instance}
+                decoded["next_observation"] = observation
         return decoded
     except (ValueError, TypeError, KeyError, OverflowError):
         return {"success": False, "message": "unsupported_raycast_response"}

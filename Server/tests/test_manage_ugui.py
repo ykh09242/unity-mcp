@@ -866,6 +866,8 @@ async def test_raycast_preserves_closed_receipts_and_only_null_adapter_fields(
         screen_position=[100.0, 80.0],
         allow_custom_filters=allow,
     )
+    if native["data"]["status"] == "unknown":
+        assert result.pop("next_observation")["retry_unchanged"] is False
     assert result == native
     assert boundary.read.await_args.args[3] == {
         "action": "diagnose_raycast",
@@ -881,6 +883,51 @@ async def test_raycast_preserves_closed_receipts_and_only_null_adapter_fields(
         SimpleNamespace(), requires_no_tests=False, wait_for_no_compile=True
     )
     boundary.mutate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_depth", [0, 24])
+async def test_unknown_raycast_budget_only_recommends_changed_bounds_without_filter_opt_in(
+    boundary, max_depth
+):
+    # Given a budget refusal from a request that permitted custom filters.
+    native = raycast_sample()
+    native["data"].update(
+        status="unknown",
+        reason="max_depth",
+        hits=[],
+        hits_total=None,
+        first_hit_targets_handler=None,
+    )
+    native["data"]["policy"].update(
+        allow_custom_filters=True, custom_filters_present=None, native_query_attempted=False
+    )
+    native["data"]["budget"]["max_depth"] = max_depth
+    boundary.read.return_value = MCPResponse(**native)
+
+    # When the MCP action decodes the refusal.
+    result = await manage_ugui(
+        SimpleNamespace(),
+        action="diagnose_raycast",
+        target="Button",
+        screen_position=[100.0, 80.0],
+        allow_custom_filters=True,
+        max_depth=max_depth,
+    )
+
+    # Then the next observation never repeats an unchanged request or opts into filters.
+    observation = result["next_observation"]
+    assert observation["retry_unchanged"] is False
+    if max_depth == 0:
+        assert observation["tool"] == "manage_ugui"
+        assert observation["arguments"]["action"] == "diagnose_raycast"
+        assert observation["arguments"]["max_depth"] == 10
+        assert observation["arguments"]["target"] == 7
+        assert observation["arguments"]["allow_custom_filters"] is False
+    else:
+        assert observation["tool"] == "find_gameobjects"
+        assert observation["basis"] == "graphic_raycaster_candidates"
+    boundary.read.assert_awaited_once()
 
 
 @pytest.mark.asyncio

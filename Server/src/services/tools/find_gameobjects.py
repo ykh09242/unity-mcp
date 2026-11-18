@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import Field, StrictBool
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
@@ -133,8 +133,16 @@ async def find_gameobjects(
             description="Optional same-ID projection; handles use existing session-scoped lifetime",
         ),
     ] = None,
+    refresh_if_dirty: Annotated[
+        StrictBool,
+        Field(
+            description="Set false to search the current scene without a preflight asset refresh."
+        ),
+    ] = True,
 ) -> dict[str, Any]:
     """Preserve legacy payloads; validate scoped options before refresh-capable preflight."""
+    if type(refresh_if_dirty) is not bool:
+        return {"success": False, "message": "refresh_if_dirty must be a boolean."}
     if projection is not None and (
         not isinstance(projection, list)
         or len(projection) > 5
@@ -184,7 +192,7 @@ async def find_gameobjects(
             return {"success": False, "message": str(exc)}
 
     unity_instance = await get_unity_instance_from_context(ctx)
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=refresh_if_dirty)
     if gate is not None:
         return gate.model_dump()
 

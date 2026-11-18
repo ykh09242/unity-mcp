@@ -3383,6 +3383,10 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean"
+              },
               "scene_scope": {
                 "default": "legacy",
                 "enum": [
@@ -29817,6 +29821,10 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean"
               },
               "scene_scope": {
                 "default": "legacy",
