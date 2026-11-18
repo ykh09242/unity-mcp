@@ -65,11 +65,12 @@ namespace MCPForUnityTests.Editor.Tools
             return JObject.FromObject(state.Read(ConsoleTailQuery.Parse(Request(token, marker)), snapshot));
         }
 
-        [TestCase(false, true)]
-        [TestCase(true, false)]
-        public void ActualRegistryAndTransportCannotBypassDisabledParentOrAlias(bool parent, bool alias)
+        [TestCase(false, true, false)]
+        [TestCase(true, false, false)]
+        [TestCase(false, true, true)]
+        [TestCase(true, false, true)]
+        public void ActualRegistryAndTransportCannotBypassDisabledParentOrAlias(bool parent, bool alias, bool verification)
         {
-            // Given isolated policy services; malformed input would fail differently after policy.
             object previousTools = ToolService.GetValue(null);
             object previousResources = ResourceService.GetValue(null);
             var policy = new Policy { Parent = parent, Alias = alias };
@@ -82,15 +83,31 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 CommandRegistry.Initialize();
-                // When the actual registered handler and transport are called.
-                JObject direct = JObject.FromObject(CommandRegistry.GetHandler("tail_console")(new JObject()));
-                var pending = TransportCommandDispatcher.ExecuteCommandJsonAsync("{\"type\":\"tail_console\",\"params\":{}}", CancellationToken.None);
+                var request = new JObject { ["tail_cursor"] = "begin" };
+                if (verification)
+                    request["verification_window"] = "begin";
+                var handler = CommandRegistry.GetHandler("tail_console");
+                var command = new JObject { ["type"] = "tail_console", ["params"] = request };
+                var pending = TransportCommandDispatcher.ExecuteCommandJsonAsync(command.ToString(), CancellationToken.None);
                 Assert.IsTrue(pending.IsCompleted, "The main-thread blocked policy response is synchronous.");
                 JObject wire = JObject.Parse(pending.GetAwaiter().GetResult());
-                // Then parent/alias disablement wins before parsing or native console reads.
-                Assert.IsFalse((bool)direct["success"]);
-                Assert.AreEqual("tool_disabled", (string)direct["data"]["reason"]);
-                StringAssert.Contains("disabled", wire.ToString().ToLowerInvariant());
+                if (alias)
+                {
+                    // The alias can dispatch, but its handler enforces the parent read_console policy.
+                    JObject direct = JObject.FromObject(handler(request));
+                    Assert.IsFalse((bool)direct["success"]);
+                    Assert.AreEqual("tool_disabled", (string)direct["data"]["reason"]);
+                    Assert.IsFalse((bool)wire["result"]["success"]);
+                    Assert.AreEqual("tool_disabled", (string)wire["result"]["data"]["reason"]);
+                }
+                else
+                {
+                    // A disabled registered tool is refused before its handler executes.
+                    const string denial = "Tool 'tail_console' is disabled in the Unity Editor.";
+                    Assert.AreEqual(denial, Assert.Throws<InvalidOperationException>(() => handler(request)).Message);
+                    Assert.AreEqual("error", (string)wire["status"]);
+                    Assert.AreEqual(denial, (string)wire["error"]);
+                }
                 Assert.IsFalse(typeof(TailConsole).GetCustomAttribute<McpForUnityToolAttribute>().AutoRegister);
             }
             finally
