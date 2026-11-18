@@ -41,7 +41,8 @@ namespace MCPForUnity.Editor.Tools
         private static bool cleanupScheduled;
         private static EventInfo addressableEvent;
         private static Delegate addressableObserver;
-        private static int addressableChanged;
+        private static int addressableCatalogChanged;
+        private static readonly HashSet<string> pendingAddressableEntries = new(StringComparer.Ordinal);
         private static string addressableObservationError;
         private static ReferenceGraphIgnoreRules ignoreRules;
         private const string IgnoreRevisionKey = "MCP.ReferenceGraph.IgnoreRevision.v1";
@@ -631,10 +632,12 @@ namespace MCPForUnity.Editor.Tools
         private static string ValidateGuid(JObject request)
         {
             string guid = request.Value<string>("guid");
-            if (guid == null || guid.Length != 32 || guid.Any(c => !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f')))
+            if (!IsAssetGuid(guid))
                 throw new ArgumentException("A lowercase Unity asset GUID is required.");
             return guid;
         }
+
+        private static bool IsAssetGuid(string guid) => guid != null && guid.Length == 32 && guid.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
 
         private static JObject Inventory(JObject request, int count, bool refresh = false)
         {
@@ -817,7 +820,18 @@ namespace MCPForUnity.Editor.Tools
                 .Select(parameter => Expression.Parameter(parameter.ParameterType))
                 .ToArray();
             MethodInfo mark = typeof(ReferenceGraphCollector).GetMethod(nameof(MarkAddressablesChanged), BindingFlags.Static | BindingFlags.NonPublic);
-            Delegate observer = Expression.Lambda(changed.EventHandlerType, Expression.Call(mark), parameters).Compile();
+            bool knownSignature =
+                parameters.Length == 3
+                && parameters[0].Type == settings
+                && parameters[1].Type == settings.GetNestedType("ModificationEvent")
+                && parameters[2].Type == typeof(object);
+            Expression unknown = Expression.Constant(null, typeof(object));
+            var call = Expression.Call(
+                mark,
+                knownSignature ? Expression.Convert(parameters[1], typeof(object)) : unknown,
+                knownSignature ? parameters[2] : unknown
+            );
+            Delegate observer = Expression.Lambda(changed.EventHandlerType, call, parameters).Compile();
             changed.AddEventHandler(null, observer);
             addressableEvent = changed;
             addressableObserver = observer;
@@ -825,12 +839,52 @@ namespace MCPForUnity.Editor.Tools
             EditorApplication.quitting += ReleaseAddressablesObserver;
         }
 
-        private static void MarkAddressablesChanged() => Interlocked.Exchange(ref addressableChanged, 1);
+        private static void MarkAddressablesChanged(object modification, object data)
+        {
+            if (Volatile.Read(ref addressableCatalogChanged) != 0)
+                return;
+            string guid = ChangedAddressableEntryGuid(modification, data);
+            if (guid != null && pendingAddressableEntries.Count < ReferenceGraphJournal.RetainedEvents)
+                pendingAddressableEntries.Add(guid);
+            else
+                Interlocked.Exchange(ref addressableCatalogChanged, 1);
+        }
+
+        private static string ChangedAddressableEntryGuid(object modification, object data)
+        {
+            if (
+                !ToolConsentThread.IsMainThread
+                || data?.GetType().FullName != "UnityEditor.AddressableAssets.Settings.AddressableAssetEntry"
+                || modification?.ToString() is not ("EntryCreated" or "EntryAdded" or "EntryModified" or "EntryMoved" or "EntryRemoved")
+            )
+                return null;
+            try
+            {
+                string guid = data.GetType().GetProperty("guid")?.GetValue(data) as string;
+                if (!IsAssetGuid(guid))
+                    return null;
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!Admitted(path) || AssetDatabase.IsValidFolder(path))
+                    return null;
+                // AddressableAssetEntryCollection can supply implicit keys for other GUIDs.
+                Type assetType = AssetDatabase.GetMainAssetTypeAtPath(path);
+                return assetType == null || assetType.FullName == "UnityEditor.AddressableAssets.Settings.AddressableAssetEntryCollection" ? null : guid;
+            }
+            catch (Exception)
+            {
+                // Incomplete metadata during an import requires a full catalog refresh.
+                return null;
+            }
+        }
 
         internal static void FlushPendingChanges()
         {
-            if (Interlocked.Exchange(ref addressableChanged, 0) != 0)
+            if (Interlocked.Exchange(ref addressableCatalogChanged, 0) != 0)
                 ReferenceGraphJournal.RecordCatalogChange();
+            else
+                foreach (string guid in pendingAddressableEntries)
+                    ReferenceGraphJournal.RecordCatalogChange(guid);
+            pendingAddressableEntries.Clear();
         }
 
         private static void ReleaseAddressablesObserver()

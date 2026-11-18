@@ -16,7 +16,7 @@ namespace MCPForUnity.Editor.Tools
         private const string StateKey = "MCP.ReferenceGraph.Journal.v1";
         private const string InstanceKey = "MCP.ReferenceGraph.EditorInstance.v1";
         private const string ActiveKey = "MCP.ReferenceGraph.Active.v1";
-        private const int RetainedEvents = 65536;
+        internal const int RetainedEvents = 65536;
         private static JArray changes = new JArray();
         private static bool active;
         internal static string Epoch { get; private set; }
@@ -153,14 +153,17 @@ namespace MCPForUnity.Editor.Tools
             };
         }
 
-        internal static void RecordCatalogChange()
+        internal static void RecordCatalogChange(string entryGuid = null)
         {
             if (changes.Count == RetainedEvents)
             {
                 Reset();
                 return;
             }
-            changes.Add(new JObject { ["revision"] = ++Revision, ["kind"] = "addressables_catalog" });
+            var change = new JObject { ["revision"] = ++Revision, ["kind"] = "addressables_catalog" };
+            if (entryGuid != null)
+                change["entry_guid"] = entryGuid;
+            changes.Add(change);
         }
     }
 

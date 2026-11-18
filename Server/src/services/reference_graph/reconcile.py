@@ -693,7 +693,13 @@ class Reconciler:
             offset = 0
             while offset < len(changes):
                 change = changes[offset]
-                if change.get("deleted"):
+                if change.get("kind") == "addressables_catalog":
+                    if not catalog and change["revision"] > self.progress.get(
+                        "catalog_through", -1
+                    ):
+                        catalog = await self._refresh_catalog_entry(change, admitted)
+                    offset += 1
+                elif change.get("deleted"):
                     destination, needs_census = await self._remove_changed_path(
                         change["path"], change["revision"], through
                     )
@@ -703,7 +709,12 @@ class Reconciler:
                     offset += 1
                 else:
                     end = next(
-                        (i for i in range(offset + 1, len(changes)) if changes[i].get("deleted")),
+                        (
+                            i
+                            for i in range(offset + 1, len(changes))
+                            if changes[i].get("deleted")
+                            or changes[i].get("kind") == "addressables_catalog"
+                        ),
                         len(changes),
                     )
                     # Leave room for legacy single-asset RPCs on constrained attempts.
@@ -731,6 +742,29 @@ class Reconciler:
             if not more:
                 return
 
+    async def _refresh_catalog_entry(self, change: dict, admitted) -> bool:
+        """Refresh an attributed entry, or request a census when its scope is uncertain."""
+        guid = change.get("entry_guid")
+        if not isinstance(guid, str) or not re.fullmatch(r"[0-9a-f]{32}", guid):
+            return True
+        asset = await self.collect("asset", guid=guid)
+        path = asset.get("path")
+        if (
+            asset.get("present") is not True
+            or asset.get("guid") != guid
+            or not isinstance(path, str)
+            or not path
+            or not isinstance(asset.get("keys"), list)
+        ):
+            return True
+        if not admitted(path):
+            await drained_thread(self.workspace.block_admission)
+        self._budget.admit_items(1)
+        await drained_thread(
+            self.workspace.record_page, self.worker, [asset], self.progress, "event", force=False
+        )
+        return False
+
     async def _import_changes(self, changes: list[dict], admitted, moved_roots: set[str]) -> bool:
         described = await self._describe_changes(changes)
         descriptions = iter(described) if described is not None else None
@@ -745,9 +779,6 @@ class Reconciler:
                 pending_assets.clear()
 
         for change in changes:
-            if change.get("kind") == "addressables_catalog":
-                catalog |= change["revision"] > self.progress.get("catalog_through", -1)
-                continue
             path = change["path"]
             moved = path in moved_roots
             moved_roots.discard(path)
@@ -776,11 +807,7 @@ class Reconciler:
         version = self.progress.get("editor", {}).get("asset_batch_version")
         if type(version) is not int or version != 1:
             return None
-        paths = [
-            change["path"]
-            for change in changes
-            if change.get("kind") != "addressables_catalog" and not change["deleted"]
-        ]
+        paths = [change["path"] for change in changes]
         descriptions = []
         for start in range(0, len(paths), 32):
             batch = paths[start : start + 32]

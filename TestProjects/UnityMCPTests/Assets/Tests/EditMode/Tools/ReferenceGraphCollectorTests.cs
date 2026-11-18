@@ -1352,10 +1352,50 @@ namespace MCPForUnityTests.EditMode.Tools
                 Assert.AreEqual(settings, retained);
                 CollectionAssert.AreEqual(before, File.ReadAllBytes(root + "/Settings.asset"));
                 JObject prior = Call("status");
+                JToken[] CatalogChanges()
+                {
+                    JObject changed = Call("changes", "epoch", prior.Value<string>("epoch"), "after", prior.Value<long>("revision"));
+                    prior = changed;
+                    return changed["changes"].Where(row => row.Value<string>("kind") == "addressables_catalog").ToArray();
+                }
                 Invoke(entry, "SetAddress", "owned/changed", true);
-                JObject changed = Call("changes", "epoch", prior.Value<string>("epoch"), "after", prior.Value<long>("revision"));
-                Assert.IsTrue(changed["changes"].Any(row => row.Value<string>("kind") == "addressables_catalog"), changed.ToString());
+                Invoke(entry, "SetLabel", "owned-label", false, false, true);
+                Assert.AreEqual(guid, CatalogChanges().Single().Value<string>("entry_guid"));
                 Assert.IsTrue(Call("asset", "guid", guid)["keys"].Any(key => key.Value<string>("value") == "owned/changed"));
+
+                string folderGuid = AssetDatabase.CreateFolder(root, "AddressableFolder");
+                object folder = Invoke(settings, "CreateOrMoveEntry", folderGuid, group, false, false);
+                Invoke(folder, "SetAddress", "owned/folder", true);
+                Assert.IsNull(CatalogChanges().Single()["entry_guid"]);
+
+                Type collectionType = settingsType.Assembly.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetEntryCollection");
+                if (collectionType != null)
+                {
+                    string collectionPath = root + "/Collection.asset";
+                    AssetDatabase.CreateAsset(ScriptableObject.CreateInstance(collectionType), collectionPath);
+                    object collection = Invoke(settings, "CreateOrMoveEntry", AssetDatabase.AssetPathToGUID(collectionPath), group, false, false);
+                    prior = Call("status");
+                    Invoke(collection, "SetAddress", "owned/collection", true);
+                    Assert.IsNull(CatalogChanges().Single()["entry_guid"]);
+                }
+
+                Type modification = settingsType.GetNestedType("ModificationEvent");
+                foreach (string eventName in new[] { "GroupRenamed", "BatchModification", "EntryModified" })
+                {
+                    Invoke(entry, "SetAddress", eventName, true);
+                    object data =
+                        eventName == "GroupRenamed" ? group
+                        : eventName == "EntryModified" ? new[] { entry }
+                        : null;
+                    Invoke(settings, "SetDirty", Enum.Parse(modification, eventName), data, true, false);
+                    Assert.IsNull(CatalogChanges().Single()["entry_guid"], eventName);
+                }
+                object secondGroup = Invoke(settings, "CreateGroup", "Second", false, false, false, null, Array.Empty<Type>());
+                prior = Call("status");
+                Invoke(settings, "MoveEntry", entry, secondGroup, false, true);
+                Assert.AreEqual(guid, CatalogChanges().Single().Value<string>("entry_guid"));
+                Invoke(settings, "RemoveAssetEntry", guid, true);
+                Assert.AreEqual(guid, CatalogChanges().Single().Value<string>("entry_guid"));
             }
             finally
             {
