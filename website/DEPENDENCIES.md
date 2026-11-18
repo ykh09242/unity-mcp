@@ -20,7 +20,13 @@ GitHub withdrew the advisory for `braces` 3.0.3 on 2026-10-23. The November 5 np
 
 Treat configured glob patterns and build plugins as trusted build inputs. The library's optional `maxLength` check is covered as an API contract. Docusaurus's glob-based watchers use their ordinary defaults.
 
-## November 2026 refresh
+## November 18, 2026
+
+The minimum `postcss-selector-parser` override is 7.2.1. CSS Modules now keeps an escaped identifier consistent between the emitted selector and the JavaScript class export. The dependency test exercises the same PostCSS scoping plugin used in the production build. [Selector parser changelog](https://github.com/postcss/postcss-selector-parser/blob/main/CHANGELOG.md#721---2026-11-10)
+
+The npm 12.2.3 audit reports 36 high-severity package entries from one `picomatch` advisory in the documentation build and watcher dependencies. The advisory covers releases through 4.0.7, and npm lists no available fix. The November 11 `deepmerge` finding is absent from this audit. [GitHub advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)
+
+## November 11, 2026
 
 On November 11, npm 12.2.2 still reports one low-severity advisory in `deepmerge` and counts four dependents in Docusaurus's SVG build chain (five low entries total). The installed version is 4.3.1 and the advisory lists no patched release. `npm audit` exits 1 for these findings; it does not report a failed installation or an invalid dependency graph. Its force-fix suggestion downgrades `@docusaurus/preset-classic` to 3.6.3, so do not apply it. Recheck the upstream package and SVGR resolution at the next refresh. [deepmerge advisory](https://github.com/advisories/GHSA-gcqx-w48m-w2h4)
 

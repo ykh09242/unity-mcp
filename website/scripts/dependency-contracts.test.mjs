@@ -100,6 +100,22 @@ test('selector input cap is opt-in and rejects oversized input before parsing', 
     /length .* exceeds the maximum/);
 });
 
+test('CSS Modules emits a selector that matches its exported class name', async () => {
+  const postcss = require('postcss');
+  const scope = require('postcss-modules-scope');
+  const parser = require('postcss-selector-parser');
+  const result = await postcss([scope({ generateScopedName: () => 'menu\\:active' })])
+    .process(':local(.menu) { color: red }', { from: 'navigation.module.css' });
+  const [rule, exports] = result.root.nodes;
+  const selectedClasses = [];
+  parser((root) => root.walkClasses((node) => { selectedClasses.push(node.value); }))
+    .processSync(rule.selector);
+  assert.equal(exports.selector, ':export');
+  assert.equal(exports.first.prop, 'menu');
+  assert.equal(exports.first.value, 'menu:active');
+  assert.deepEqual(selectedClasses, [exports.first.value]);
+});
+
 test('Markdown raw HTML repairs table nesting and preserves entities and template content', async () => {
   const { raw } = await import('hast-util-raw');
   const result = raw({ type: 'root', children: [{
