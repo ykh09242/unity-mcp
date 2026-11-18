@@ -39,9 +39,15 @@ compile failure blocks test admission while current-source analysis can still ru
 Source drift overrides passing tests with `stale`. Required analyzer/context gaps,
 uncertain termination or unknown console loss produce `incomplete`.
 
-The current native console tail reports `loss_unknown=true`; even an empty tail
-cannot prove a clean interval. Consequently a test profile can show passing native
-tests while its overall report remains incomplete. Inspect the stage evidence.
+Both test profiles arm a threaded Unity application log listener before dispatch.
+The admitted native job claims that checkpoint and closes it when its native
+control settles. The console stage passes for an intact interval with zero
+project Error, Assert or Exception callbacks. It excludes MCP logger messages
+and retains up to 12 error previews of 256 UTF-8 bytes each. Observed errors
+fail the stage. Overflow marks coverage unknown. Domain reload, expiry, or a
+missing or mismatched job checkpoint also leave clean coverage unproven.
+Older Editors return retained Console rows with `loss_unknown=true`; observed
+errors can still fail verification, and an empty tail remains incomplete.
 Likewise, a detected project analyzer or source generator is not executed by the
 isolated host. Its coverage gap remains visible even when the pinned providers
 return no diagnostics, so that required analysis does not become a false pass.

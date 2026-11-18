@@ -4,7 +4,8 @@ import asyncio
 from time import monotonic, time
 
 from services.script_quality.pages import encoded_size
-from services.verification.reports import console_delta, final_verdict, test_settled, test_verdict
+from services.verification.console import ConsoleObservation
+from services.verification.reports import final_verdict, test_settled, test_verdict
 
 
 class VerificationCanceled(Exception):
@@ -367,21 +368,10 @@ class VerificationRunner:
             )
             return
         await self.check()
-        console_parameters = {
-            "tail_cursor": "begin",
-            "types": ["error"],
-            "format": "json",
-            "pageSize": 200,
-            "includeStacktrace": False,
-            "includeMcpLogs": False,
-        }
-        try:
-            response = await self.io.native(
-                "tail_console", console_parameters, self.until("console")
-            )
-            before = response.get("data") if response.get("success") is True else None
-        except (ConnectionError, TimeoutError):
-            before = None
+        async with ConsoleObservation(self.io.native, self.until) as console:
+            await self.run_test_job(source_token, console)
+
+    async def run_test_job(self, source_token, console):
         await self.check()
         deadline, started = self.until("tests"), int(time() * 1000)
         parameters = {
@@ -390,6 +380,8 @@ class VerificationRunner:
             "require_source_freshness": True,
             "runTimeoutMs": max(1, int((deadline - monotonic()) * 1000)),
         }
+        if console.window_id:
+            parameters["console_window_id"] = console.window_id
         for field, native in (
             ("test_names", "testNames"),
             ("assembly_names", "assemblyNames"),
@@ -449,18 +441,8 @@ class VerificationRunner:
             started=started,
         )
         await self.check()
-        after = None
-        if before and before.get("next_cursor"):
-            console_parameters["tail_cursor"] = before["next_cursor"]
-            try:
-                response = await self.io.native(
-                    "tail_console", console_parameters, self.until("console")
-                )
-                after = response.get("data") if response.get("success") is True else None
-            except (ConnectionError, TimeoutError):
-                pass
-        console = console_delta(before, after)
-        self.stage("console", console["state"], console)
+        evidence = await console.read(child["job_id"])
+        self.stage("console", evidence["state"], evidence)
 
     async def observe_saved_sources(self, name):
         if self.expected_sources is None:

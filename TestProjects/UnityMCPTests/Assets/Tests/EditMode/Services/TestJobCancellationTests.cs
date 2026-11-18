@@ -643,6 +643,43 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void VerificationConsoleClosesOnTheOwnedNativeSettlement()
+        {
+            WithManager(_ =>
+            {
+                // Isolate this checkpoint even when an outer verification profile is running the fixture.
+                var slot = typeof(VerificationConsoleWindow).GetField("active", Members);
+                var previous = slot.GetValue(null);
+                slot.SetValue(null, null);
+                string window = null;
+                try
+                {
+                    NativeTestRunControl.DisableForTests = false;
+                    JObject view = Native(true);
+                    NativeTestRunControl.FactoryOverride = (id, timeout) => new NativeTestRunControl(id, timeout, () => 10, () => view, _ => false);
+                    var begin = JObject.FromObject(VerificationConsoleWindow.Begin());
+                    window = (string)begin["data"]["window_id"];
+                    string id = TestJobManager.StartJob(TestMode.EditMode, runTimeoutMs: 5000, consoleWindowId: window);
+                    var job = TestJobManager.GetJob(id);
+                    Assert.AreEqual("running", (string)JObject.FromObject(TestJobManager.ReadConsoleWindow(id, window))["data"]["end"]);
+                    job.Control.BindGuid(Guid);
+                    job.Control.ObserveFinal(Guid);
+                    view = Native(false);
+                    typeof(TestJobManager).GetMethod("OnNativeControlEditorUpdate", Members).Invoke(null, null);
+                    var after = JObject.FromObject(TestJobManager.ReadConsoleWindow(id, window));
+                    Assert.AreEqual("settled", (string)after["data"]["end"]);
+                    Assert.AreEqual(id, (string)after["data"]["job_id"]);
+                    Assert.IsNull(slot.GetValue(null));
+                }
+                finally
+                {
+                    VerificationConsoleWindow.Discard(window);
+                    slot.SetValue(null, previous);
+                }
+            });
+        }
+
+        [Test]
         public void CompletedHistoryPressureCannotEvictAnUnreleasedNativeOwner()
         {
             WithManager(_ =>

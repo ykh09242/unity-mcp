@@ -57,6 +57,7 @@ namespace MCPForUnity.Editor.Services
         public JObject NativeControl { get; set; }
         public JObject RunAdmission { get; set; }
         internal NativeTestRunControl Control;
+        internal VerificationConsoleWindow ConsoleWindow;
     }
 
     /// <summary>
@@ -219,6 +220,7 @@ namespace MCPForUnity.Editor.Services
                     job.CompletionKind = job.ReloadGeneration > 0 ? "interrupted_by_reload" : "interrupted";
                     job.FinishedUnixMs = now;
                     job.LastUpdateUnixMs = now;
+                    job.ConsoleWindow?.Stop("interrupted");
                     McpLog.Warn($"[TestJobManager] Manually cleared stuck job {_currentJobId}");
                     cleared = true;
                 }
@@ -794,6 +796,7 @@ namespace MCPForUnity.Editor.Services
                 }
                 TestRunnerService.ConfirmNativeTermination(job.JobId);
                 control.State["settled"] = true;
+                job.ConsoleWindow?.Stop("settled");
                 PersistToSessionState(force: true);
                 control.Dispose();
             }
@@ -805,7 +808,13 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        public static string StartJob(TestMode mode, TestFilterOptions filterOptions = null, long initTimeoutMs = 0, long runTimeoutMs = 0)
+        public static string StartJob(
+            TestMode mode,
+            TestFilterOptions filterOptions = null,
+            long initTimeoutMs = 0,
+            long runTimeoutMs = 0,
+            string consoleWindowId = null
+        )
         {
             if (runTimeoutMs < 0 || runTimeoutMs > 86400000)
                 throw new ArgumentException("runTimeoutMs must be 1..86400000 when supplied.");
@@ -889,6 +898,7 @@ namespace MCPForUnity.Editor.Services
 
             // This domain already owns the original waiter; only a later domain may resume it.
             ResumingJobs.Add(jobId);
+            job.ConsoleWindow = VerificationConsoleWindow.Claim(consoleWindowId, jobId, runTimeoutMs);
             // Kick the run (must be called on main thread; our command handlers already run there).
             Task<TestRunResult> task;
             try
@@ -898,6 +908,7 @@ namespace MCPForUnity.Editor.Services
             catch (Exception ex)
             {
                 // A synchronous startup failure has no task continuation to release the job.
+                job.ConsoleWindow?.Stop("dispatch_failed");
                 FinalizeFromTask(jobId, Task.FromException<TestRunResult>(ex));
                 throw;
             }
@@ -1275,6 +1286,13 @@ namespace MCPForUnity.Editor.Services
                 job.CurrentTestFullName = null;
             }
             PersistToSessionState(force: true);
+        }
+
+        internal static object ReadConsoleWindow(string jobId, string windowId)
+        {
+            if (jobId != null && Jobs.TryGetValue(jobId, out var job) && job.ConsoleWindow != null)
+                return job.ConsoleWindow.Read(windowId, jobId);
+            return Tools.ConsoleTailCursor.Failure("verification_console_window_unavailable");
         }
 
         internal static TestJob GetCompletedJobForExport(string jobId)

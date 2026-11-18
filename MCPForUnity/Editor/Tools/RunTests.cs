@@ -65,7 +65,7 @@ namespace MCPForUnity.Editor.Tools
                 if (filterOptions.SourceToken == null || !System.Text.RegularExpressions.Regex.IsMatch(filterOptions.SourceToken, "\\A[a-f0-9]{64}\\z"))
                     return Task.FromResult<object>(new ErrorResponse("source_freshness_required", new { reason = "source_token_required" }));
                 long initTimeoutMs = p.GetInt("initTimeout") ?? 0;
-                string jobId = TestJobManager.StartJob(parsedMode.Value, filterOptions, initTimeoutMs, runTimeoutMs);
+                string jobId = TestJobManager.StartJob(parsedMode.Value, filterOptions, initTimeoutMs, runTimeoutMs, (string)@params?["console_window_id"]);
 
                 return Task.FromResult<object>(
                     new SuccessResponse(

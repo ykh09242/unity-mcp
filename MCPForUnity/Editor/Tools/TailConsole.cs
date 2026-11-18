@@ -17,6 +17,23 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (!MCPServiceLocator.ToolDiscovery.IsToolEnabled("read_console") || !MCPServiceLocator.ToolDiscovery.IsToolEnabled("tail_console"))
                     return ConsoleTailCursor.Failure("tool_disabled");
+                if (parameters?["verification_window"] != null)
+                {
+                    string StringOption(string name) => parameters[name]?.Type == JTokenType.String ? (string)parameters[name] : null;
+                    string id = StringOption("window_id");
+                    switch (StringOption("verification_window"))
+                    {
+                        case "begin":
+                            return VerificationConsoleWindow.Begin();
+                        case "read":
+                            return TestJobManager.ReadConsoleWindow(StringOption("job_id"), id);
+                        case "discard":
+                            VerificationConsoleWindow.Discard(id);
+                            return new SuccessResponse("Verification console observation released.");
+                        default:
+                            return ConsoleTailCursor.Failure("invalid_verification_window");
+                    }
+                }
                 ConsoleTailQuery query = ConsoleTailQuery.Parse(parameters);
                 using var snapshot = ReadConsole.OpenTailSnapshot();
                 return Cursors.Read(query, snapshot);
