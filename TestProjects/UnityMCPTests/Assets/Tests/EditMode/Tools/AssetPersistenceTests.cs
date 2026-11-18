@@ -499,6 +499,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string path = folder + "/Target.asset";
             var target = ScriptableObject.CreateInstance<VerificationAsset>();
+            target.values = new[] { 2, 3 };
             AssetDatabase.CreateAsset(target, path);
             var edited = target;
             if (dirtySubAsset)
@@ -513,7 +514,7 @@ namespace MCPForUnityTests.Editor.Tools
             edited.text = "pending";
             EditorUtility.SetDirty(edited);
             int group = Undo.GetCurrentGroup();
-            var noChange = ModifyScriptableFields(path, new JObject { ["number"] = 0 });
+            var noChange = ModifyScriptableFields(path, new JObject { ["number"] = 0, ["values"] = new JArray(2, 3) });
             Assert.IsTrue(noChange.Value<bool>("success"), noChange.ToString());
             var conflict = ModifyScriptableFields(path, new JObject { ["number"] = 7 });
             Assert.IsFalse(conflict.Value<bool>("success"), conflict.ToString());

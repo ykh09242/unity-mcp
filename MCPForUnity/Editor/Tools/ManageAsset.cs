@@ -1141,8 +1141,15 @@ namespace MCPForUnity.Editor.Tools
         private static object ModifyScriptableObject(string path, ScriptableObject target, JObject properties)
         {
             var assignments = new List<(string name, Func<object> get, Action<object> set, object previous, object next)>();
-            PrepareObjectProperties(target, properties, assignments);
-            if (assignments.All(entry => object.Equals(entry.previous, entry.next)))
+            try
+            {
+                PrepareObjectProperties(target, properties, assignments);
+            }
+            catch (ArgumentException error)
+            {
+                return new ErrorResponse($"Failed to modify asset '{path}': {error.Message}");
+            }
+            if (assignments.All(entry => SameScriptableValue(entry.previous, entry.next)))
                 return new SuccessResponse($"Asset '{path}' already has the requested values; no changes were made.", GetAssetData(path));
 
             // Unity saves the whole file, including dirty sub-assets sharing this path.
@@ -1170,6 +1177,18 @@ namespace MCPForUnity.Editor.Tools
                     Undo.IncrementCurrentGroup();
                 }
             }
+        }
+
+        private static bool SameScriptableValue(object current, object requested)
+        {
+            if (object.Equals(current, requested))
+                return true;
+            if (current is not System.Collections.IList left || requested is not System.Collections.IList right || left.GetType() != right.GetType())
+                return false;
+            // JSON conversion allocates a new container even when all serialized elements match.
+            Type type = left.GetType();
+            bool supported = type.IsArray ? type.GetArrayRank() == 1 : type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>);
+            return supported && left.Count == right.Count && left.Cast<object>().SequenceEqual(right.Cast<object>());
         }
 
         // Validate and capture every member before making any direct asset assignment.
