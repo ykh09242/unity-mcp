@@ -1,11 +1,13 @@
 """Credential lifecycle and native client discovery without real user files."""
 
+import errno
 import os
 import socket
 import multiprocessing
 from contextlib import ExitStack
 from itertools import count
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import httpcore
 import httpx
@@ -217,6 +219,50 @@ def test_localhost_listeners_share_an_ephemeral_port():
     with local_http_sockets("localhost", 0) as listeners:
         assert len({listener.getsockname()[1] for listener in listeners}) == 1
         assert all(listener.getsockname()[1] != 0 for listener in listeners)
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_ephemeral_port_retries_close_partial_listeners(monkeypatch, persistent):
+    addresses = [
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0)),
+        (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("::1", 0, 0, 0)),
+    ]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: addresses)
+    listeners = []
+
+    def listener_for(family, *unused):
+        listener = MagicMock()
+        listener.__enter__.return_value = listener
+        chosen_port = 41000 + len(listeners) // 2
+        listener.getsockname.return_value = ("127.0.0.1", chosen_port)
+        if family == socket.AF_INET6 and (persistent or chosen_port == 41000):
+            listener.bind.side_effect = OSError(errno.EADDRINUSE, "port occupied")
+        if family == socket.AF_INET and listeners:
+            listeners[-1].__exit__.assert_called_once()
+            listeners[-2].__exit__.assert_called_once()
+        listeners.append(listener)
+        return listener
+
+    monkeypatch.setattr(socket, "socket", listener_for)
+    if persistent:
+        with pytest.raises(OSError) as error, local_http_sockets("localhost", 0):
+            pytest.fail("The acquisition must fail while the port remains occupied")
+        assert error.value.errno == errno.EADDRINUSE
+        assert 2 < len(listeners) <= 32
+    else:
+        with local_http_sockets("localhost", 0) as ready:
+            assert ready == listeners[2:]
+            listeners[1].bind.assert_called_once_with(("::1", 41000, 0, 0))
+            listeners[3].bind.assert_called_once_with(("::1", 41001, 0, 0))
+    for listener in listeners:
+        listener.__exit__.assert_called_once()
+
+
+def test_duplicate_resolver_entries_share_one_listener(monkeypatch):
+    address = (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0))
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [address, address])
+    with local_http_sockets("localhost", 0) as listeners:
+        assert len(listeners) == 1
 
 
 def test_partial_bind_failure_releases_previously_bound_socket(monkeypatch):

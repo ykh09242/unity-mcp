@@ -20,39 +20,51 @@ LOCAL_AUTH_FILE_ENV: Final = "UNITY_MCP_LOCAL_AUTH_TOKEN_FILE"
 @contextmanager
 def local_http_sockets(host: str, port: int) -> Iterator[list[socket.socket]]:
     """Own every resolved listener before making the launch credential discoverable."""
-    addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)
-    seen = set()
-    with ExitStack() as stack:
-        sockets = []
-        assigned_port = port
-        for family, kind, protocol, _, address in addresses:
-            if port == 0 and assigned_port:
-                address = (address[0], assigned_port, *address[2:])
-            key = (family, kind, protocol, address)
-            if key in seen:
-                continue
-            seen.add(key)
+    resolved = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)
+    addresses = dict.fromkeys(
+        (family, kind, protocol, address) for family, kind, protocol, _, address in resolved
+    )
+    attempts = 8 if port == 0 else 1
+    for attempt in range(attempts):
+        with ExitStack() as stack:
             try:
-                listener = stack.enter_context(socket.socket(family, kind, protocol))
-                if os.name == "nt":
-                    # The Windows socket option is absent from POSIX Python builds.
-                    # pylint: disable-next=no-member
-                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-                else:
-                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                if family == socket.AF_INET6:
-                    listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-                listener.bind(address)
-                listener.listen(socket.SOMAXCONN)
+                sockets = _bind_listeners(stack, addresses, port)
             except OSError as exc:
-                if exc.errno in (errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT, errno.EADDRNOTAVAIL):
-                    continue
-                raise
-            assigned_port = listener.getsockname()[1]
-            sockets.append(listener)
-        if not sockets:
-            raise OSError(f"No addresses available for {host}:{port}")
-        yield sockets
+                # A port chosen for IPv4 may already be occupied on IPv6, or vice versa.
+                if exc.errno != errno.EADDRINUSE or attempt + 1 == attempts:
+                    raise
+                continue
+            if not sockets:
+                raise OSError(f"No addresses available for {host}:{port}")
+            yield sockets
+            return
+
+
+def _bind_listeners(stack: ExitStack, addresses, port: int) -> list[socket.socket]:
+    sockets = []
+    assigned_port = port
+    for family, kind, protocol, address in addresses:
+        if port == 0 and assigned_port:
+            address = (address[0], assigned_port, *address[2:])
+        try:
+            listener = stack.enter_context(socket.socket(family, kind, protocol))
+            if os.name == "nt":
+                # The Windows socket option is absent from POSIX Python builds.
+                # pylint: disable-next=no-member
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            else:
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if family == socket.AF_INET6:
+                listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            listener.bind(address)
+            listener.listen(socket.SOMAXCONN)
+        except OSError as exc:
+            if exc.errno in (errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT, errno.EADDRNOTAVAIL):
+                continue
+            raise
+        assigned_port = listener.getsockname()[1]
+        sockets.append(listener)
+    return sockets
 
 
 def local_auth_token_path(port: int) -> Path:
