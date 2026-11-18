@@ -2100,6 +2100,84 @@ async def test_supplementary_unicode_escape_is_resolved_and_persisted(setup):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cache", ["warm", "expired", "reopened"])
+async def test_partial_receiver_rebinds_unchanged_callers_after_member_edits(setup, cache):
+    store, workspace, editor, engine = setup
+    target = editor.add(1, "Assets/Icon.prefab", keys=[{"scheme": "resources", "value": "Icon"}])
+    caller = editor.add(2, "Assets/Caller.cs", 'class Caller { void Go() { Loader.Get("Icon"); } }')
+    wrapper = editor.add(
+        3,
+        "Assets/Loader.cs",
+        "using UnityEngine; partial class Loader { "
+        "public static object Get(string key) => Resources.Load(key); }",
+    )
+    path = "Assets/Loader.Fields.cs"
+
+    async def check(shadowed):
+        nonlocal engine
+        if cache == "expired":
+            engine._analysis_used = time.monotonic() - 301
+        elif cache == "reopened":
+            engine = Reconciler(
+                GraphWorkspace(GraphStore(store.path, store.scope)), editor, allowed
+            )
+        assert await engine.reconcile()
+        assert [edge["target"] for edge in store.query(caller)["edges"]] == (
+            [] if shadowed else [target]
+        )
+        issues = workspace.diagnostics(wrapper)["issues"]
+        assert any(issue["reason"] == "unresolved_receiver" for issue in issues) is shadowed
+
+    await check(False)
+    part = editor.add(4, path, "partial class Loader { static MyLoader Resources; }")
+    await check(True)
+    editor.add(4, path, "partial class Loader { static MyLoader Other; }")
+    await check(False)
+    editor.add(4, path, "partial class Loader { static MyLoader Resources; }")
+    await check(True)
+    del editor.assets[part[6:]]
+    editor.event(path, deleted=True)
+    await check(False)
+
+
+@pytest.mark.asyncio
+async def test_v12_partial_facts_are_reparsed_before_reusing_their_published_edges(setup):
+    store, workspace, editor, engine = setup
+    target = editor.add(1, "Assets/Icon.prefab", keys=[{"scheme": "resources", "value": "Icon"}])
+    caller = editor.add(
+        2,
+        "Assets/Use.cs",
+        'using UnityEngine; partial class Use { void Run() { Resources.Load("Icon"); } }',
+    )
+    part = editor.add(3, "Assets/Fields.cs", "partial class Use { MyLoader Resources; }")
+    assert await engine.reconcile()
+    assert workspace.acquire(engine.worker)
+    for row in workspace.documents([caller, part]):
+        data = row["data"]
+        data["version"] = 12
+        del data["partial_fields"]
+        for call in data["calls"]:
+            del call["receiver_fields"]
+        workspace.save_document(engine.worker, row["owner"], "csharp", row["fingerprint"], data)
+    with store._connect(write=True) as db:
+        workspace._set(db, "analysis_version", 12)
+    await engine._analysis()
+    assert [edge["target"] for edge in store.query(caller)["edges"]] == [target]
+    workspace.release(engine.worker)
+
+    editor.calls.clear()
+    assert await engine.reconcile()
+    assert not store.query(caller)["edges"]
+    assert {p["guid"] for action, p in editor.calls if action == "source"} == {
+        caller[6:],
+        part[6:],
+    }
+    editor.calls.clear()
+    assert await engine.reconcile()
+    assert not any(action == "source" for action, _ in editor.calls)
+
+
+@pytest.mark.asyncio
 async def test_analysis_upgrade_reparses_old_facts_once_without_native_import(setup):
     store, workspace, editor, engine = setup
     editor.add(1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}])
@@ -2899,7 +2977,9 @@ async def test_yaml_stop_interrupts_work_and_releases_lease(setup, monkeypatch, 
         (6, 12, True),
         (7, 12, False),
         (11, 12, False),
-        (11, 13, True),
+        (11, 13, False),
+        (12, 13, False),
+        (12, 14, True),
     ],
 )
 async def test_analysis_version_upgrade_scopes_only_known_migration(

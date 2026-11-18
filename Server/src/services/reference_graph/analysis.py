@@ -36,7 +36,7 @@ from services.reference_graph.store import Edge, _hash
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 12
+ANALYSIS_VERSION = 13
 # Limit both the semantic value and nonliteral representation before allocating
 # expanded storage. Source size alone cannot bound repeated constant expansion.
 MAX_EXPRESSION_CHARS = 65536
@@ -396,6 +396,7 @@ class Call:
     argument_names: tuple[str, ...] = ()
     argument_types: tuple[str, ...] = ()
     target_type: str = ""
+    receiver_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +423,11 @@ class Facts:
     version: int = ANALYSIS_VERSION
     build: dict = field(default_factory=dict)
     diagnostics: tuple[dict, ...] = ()
+    partial_fields: tuple[str, ...] = ()
+
+    def field_symbol(self, name: str) -> str:
+        # Referenced assemblies can expose identically named types, but cannot share members.
+        return f"field:{self.build.get('assembly', '')}|{name}"
 
     @classmethod
     def from_dict(cls, data: dict) -> Facts:
@@ -458,6 +464,7 @@ class Facts:
                     tuple(item.get("argument_names", ())),
                     tuple(item.get("argument_types", ())),
                     item.get("target_type", ""),
+                    tuple(item.get("receiver_fields", ())),
                 )
                 for item in data["calls"]
             ),
@@ -465,7 +472,40 @@ class Facts:
             data.get("version", 1),
             data.get("build", {}),
             tuple(data.get("diagnostics", ())),
+            tuple(data.get("partial_fields", ())),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _Scope:
+    stop: int
+    name: str
+    kind: str
+    type_id: str
+    partial_types: tuple[str, ...]
+
+
+def _type_identity(parent, name, tokens, declaration, end, pairs, owner, check):
+    separator = "." if parent.kind == "namespace" else "+"
+    identity = (parent.type_id + separator if parent.type_id else "") + name
+    # An enclosing generic or file-local type also distinguishes its nested partial types.
+    if end < len(tokens) and tokens[end].text == "<":
+        position, arity = end + 1, 1
+        while position < len(tokens) and tokens[position].text not in (">", "{", ";"):
+            check()
+            if tokens[position].text == "[":
+                position = pairs.get(position, position)
+            elif tokens[position].text == ",":
+                arity += 1
+            position += 1
+        identity += f"`{arity}"
+    modifier = declaration - 1
+    while modifier >= 0 and tokens[modifier].kind == "id":
+        check()
+        if tokens[modifier].text == "file":
+            return owner + "|" + identity
+        modifier -= 1
+    return identity
 
 
 def parse_csharp(
@@ -481,13 +521,15 @@ def parse_csharp(
     diagnostics = list(build_issues)
     tokens = _tokens(source, check)
     pairs = _pairs(tokens, check)
-    scopes = [""] * len(tokens)
+    root_scope = _Scope(len(tokens), "", "namespace", "", ())
+    scopes = [root_scope] * len(tokens)
     import_scopes = [""] * len(tokens)
     imports = {"": {"usings": [], "statics": [], "aliases": {}, "alias_scopes": {}}}
     import_parents = {}
     active_imports = []
     types, usings, aliases, constants = [], [], {}, {}
-    active: list[tuple[int, str, str]] = []
+    active = [root_scope]
+    partial_bodies = {}
     for i, token in enumerate(tokens):
         check()
         if token.kind == "unscanned_interpolation":
@@ -498,29 +540,44 @@ def parse_csharp(
                     "hint": "Inspect this interpolated string for asset loader calls.",
                 }
             )
-        while active and active[-1][0] <= i:
+        while active[-1].stop <= i:
             active.pop()
         while active_imports and active_imports[-1][0] <= i:
             active_imports.pop()
         import_scope = active_imports[-1][1] if active_imports else ""
         import_scopes[i] = import_scope
-        scope = active[-1][1] if active else ""
-        scopes[i] = scope
+        parent = scopes[i] = active[-1]
+        scope = parent.name
         if token.text in ("namespace", "class", "struct", "record") and i + 1 < len(tokens):
-            end = i + 1
+            if i and tokens[i - 1].text == "record" and token.text in ("class", "struct"):
+                continue
+            start = i + 1
+            if token.text == "record" and tokens[start].text in ("class", "struct"):
+                start += 1
+            end = start
             while end < len(tokens) and tokens[end].text not in ("{", ";", "(", ":", "<"):
                 check()
                 end += 1
-            name = "".join(t.text for t in tokens[i + 1 : end])
+            name = "".join(t.text for t in tokens[start:end])
             if not name:
                 continue
             full = (scope + "." if scope else "") + name
+            type_id = (
+                full
+                if token.text == "namespace"
+                else _type_identity(parent, name, tokens, i, end, pairs, owner, check)
+            )
             while end < len(tokens) and tokens[end].text not in ("{", ";"):
                 check()
                 end += 1
             if end < len(tokens):
                 stop = pairs.get(end, len(tokens)) if tokens[end].text == "{" else len(tokens)
-                active.append((stop, full, token.text))
+                partial_types = parent.partial_types
+                if token.text != "namespace" and i and tokens[i - 1].text == "partial":
+                    partial_types = (type_id, *partial_types)
+                    if tokens[end].text == "{":
+                        partial_bodies[end] = type_id
+                active.append(_Scope(stop, full, token.text, type_id, partial_types))
                 if token.text != "namespace":
                     types.append(full)
                 else:
@@ -533,7 +590,7 @@ def parse_csharp(
                     }
                     import_parents[identity] = import_scope
                     active_imports.append((stop, identity))
-        elif token.text == "using" and (not active or active[-1][2] == "namespace"):
+        elif token.text == "using" and parent.kind == "namespace":
             end = i + 1
             while end < len(tokens) and tokens[end].text not in (";", "(", "{"):
                 check()
@@ -615,7 +672,7 @@ def parse_csharp(
                 parameter_types.append("".join(t.text for t in before_default[:-1]))
                 defaults.append(
                     _expression(
-                        pieces[1], scopes[i], (), import_scope=import_scopes[i], check=check
+                        pieces[1], scopes[i].name, (), import_scope=import_scopes[i], check=check
                     )
                     if len(pieces) == 2
                     else None
@@ -629,7 +686,7 @@ def parse_csharp(
             identity = owner + ":" + str(i)
             declarations[i] = (
                 identity,
-                (scopes[i] + "." if scopes[i] else "") + name,
+                (scopes[i].name + "." if scopes[i].name else "") + name,
                 tuple(parameters),
                 after,
                 stop,
@@ -707,6 +764,9 @@ def parse_csharp(
                 )
         local_names[method[0]] |= frozenset(tainted)
     fields = defaultdict(set)
+    partial_fields = set()
+    delimiters = []
+    initializer_bodies = set()
     parameter_positions = set()
     for start in declarations:
         for position in range(start, pairs[start] + 1):
@@ -714,6 +774,19 @@ def parse_csharp(
             parameter_positions.add(position)
     for i in range(1, len(tokens) - 1):
         check()
+        if partial_bodies:
+            previous = i - 1
+            if previous in pairs:
+                if pairs[previous] > previous:
+                    delimiters.append(previous)
+                elif delimiters:
+                    delimiters.pop()
+        body = delimiters[-1] if delimiters and delimiters[-1] in partial_bodies else None
+        if body is not None:
+            if tokens[i].text in ("=", "=>"):
+                initializer_bodies.add(body)
+            elif tokens[i].text in (";", ","):
+                initializer_bodies.discard(body)
         if (
             not inside_method[i]
             and i not in parameter_positions
@@ -736,7 +809,9 @@ def parse_csharp(
             and tokens[i + 1].text in ("=", ";", "{", "=>", ",")
             and not (i >= 2 and tokens[i - 2].text == "const")
         ):
-            fields[scopes[i]].add(tokens[i].text)
+            fields[scopes[i].type_id].add(tokens[i].text)
+            if body is not None and body not in initializer_bodies:
+                partial_fields.add(partial_bodies[body] + "." + tokens[i].text)
     calls, method_calls = [], defaultdict(list)
     active_methods = []
     cursor = 0
@@ -750,7 +825,8 @@ def parse_csharp(
         method = active_methods[-1] if active_methods else None
         parameters = method[2] if method else ()
         identity = method[0] if method else ""
-        locals_ = local_names.get(identity, frozenset()) | fields[scopes[i]]
+        scope = scopes[i]
+        locals_ = local_names.get(identity, frozenset()) | fields[scope.type_id]
         receiver = name.partition(".")[0]
         argument_parts, argument_names = [], []
         for part in _split(tokens[i + 1 : end], ",", check):
@@ -761,11 +837,11 @@ def parse_csharp(
         call = Call(
             name,
             tuple(
-                _expression(part, scopes[i], parameters, locals_, import_scopes[i], check)
+                _expression(part, scope.name, parameters, locals_, import_scopes[i], check)
                 for part in argument_parts
             ),
             tokens[start].line,
-            scopes[i],
+            scope.name,
             identity,
             # A member chain can start at a call/index/parenthesized expression.
             # Keep that receiver uncertainty when only its trailing identifiers
@@ -782,6 +858,9 @@ def parse_csharp(
             _generic_type(tokens[type_arguments[i - 1] + 1 : i - 1], check)
             if i - 1 in type_arguments
             else "",
+            tuple(type_id + "." + receiver for type_id in scope.partial_types)
+            if scope.partial_types and "." in name and "::" not in receiver
+            else (),
         )
         method_calls[identity].append(len(calls))
         calls.append(call)
@@ -800,8 +879,9 @@ def parse_csharp(
         # Local declarations do not become class-wide constants.
         if inside_method[i]:
             continue
-        constants[(scopes[i] + "." if scopes[i] else "") + name] = _expression(
-            tokens[end:stop], scopes[i], (), import_scope=import_scopes[i], check=check
+        scope = scopes[i].name
+        constants[(scope + "." if scope else "") + name] = _expression(
+            tokens[end:stop], scope, (), import_scope=import_scopes[i], check=check
         )
     methods = tuple(
         Method(m[0], m[1], m[2], tuple(method_calls[m[0]]), m[5], m[6]) for m in method_ranges
@@ -819,6 +899,7 @@ def parse_csharp(
         imports,
         build=build,
         diagnostics=tuple(diagnostics),
+        partial_fields=tuple(sorted(partial_fields)),
     )
 
 
@@ -1391,6 +1472,7 @@ class AnalysisIndex:
         self.method_ids = {}
         self.types = defaultdict(set)
         self.namespaces = defaultdict(set)
+        self.partial_fields: dict[str, set[str]] = defaultdict(set)
         self.dependencies: dict[str, set[str]] = defaultdict(set)
         self.reverse: dict[str, set[str]] = defaultdict(set)
         self.lookups: dict[str, set[str]] = defaultdict(set)
@@ -1417,6 +1499,7 @@ class AnalysisIndex:
             *item.types,
             *item.constants,
             *(method.name for method in item.methods),
+            *(item.field_symbol(name) for name in item.partial_fields),
             *AnalysisIndex._prefixes(item),
         }
 
@@ -1436,6 +1519,8 @@ class AnalysisIndex:
         self.facts[item.owner] = item
         for name in item.types:
             self.types[name].add(item.owner)
+        for name in item.partial_fields:
+            self.partial_fields[item.field_symbol(name)].add(item.owner)
         for name in self._prefixes(item):
             self.namespaces[name].add(item.owner)
         for name, expr in item.constants.items():
@@ -1453,6 +1538,11 @@ class AnalysisIndex:
         if not self._contexts[context_key][1]:
             del self._contexts[context_key]
         self._visibility.pop(owner, None)
+        for name in item.partial_fields:
+            symbol = item.field_symbol(name)
+            self.partial_fields[symbol].discard(owner)
+            if not self.partial_fields[symbol]:
+                del self.partial_fields[symbol]
         for name in item.types:
             self.types[name].discard(owner)
             if not self.types[name]:
@@ -1757,6 +1847,12 @@ class AnalysisIndex:
     ) -> tuple[list[Effect], str | None, str | None, tuple[Expr, ...]]:
         if call.shadowed_receiver:
             return [], None, "unresolved_receiver", ()
+        for field in call.receiver_fields:
+            symbol = item.field_symbol(field)
+            self._lookup_names(item.owner, [symbol])
+            if owners := self.partial_fields.get(symbol):
+                self._depend(item.owner, owners)
+                return [], None, "unresolved_receiver", ()
         names = self._names(item, call.name, call.scope, call.import_scope)
         rule_matches = [self.rules[name] for name in names if name in self.rules]
         if len(rule_matches) > 1:

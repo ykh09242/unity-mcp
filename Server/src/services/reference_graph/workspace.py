@@ -242,7 +242,7 @@ class GraphWorkspace:
             previous = self._state(connection, "analysis_version")
             if previous == version:
                 return
-            if previous in (7, 8, 9, 10, 11) and previous < version <= 12:
+            if previous in (7, 8, 9, 10, 11, 12) and previous < version <= 13:
                 # These releases change C# and external analysis. Failed YAML scans
                 # were never published and remain in the retry queue.
                 connection.execute(

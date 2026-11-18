@@ -309,6 +309,49 @@ def test_same_type_name_in_unreferenced_assembly_cannot_shadow_visible_symbol():
     assert keys(index) == {"two"}
 
 
+@pytest.mark.parametrize(
+    ("part_source", "assembly", "shadowed"),
+    [
+        ("namespace N; partial class Use<T> { MyLoader Resources; }", "Game", True),
+        ("namespace N; partial class Use<T> { MyLoader Resources { get; } }", "Game", True),
+        ("namespace N; partial class Use<T> { MyLoader Resources; }", "Library", False),
+        ("namespace Other; partial class Use<T> { MyLoader Resources; }", "Game", False),
+        ("namespace N; partial class Other<T> { MyLoader Resources; }", "Game", False),
+        ("namespace N; partial class Use { MyLoader Resources; }", "Game", False),
+        ("namespace N; file partial class Use<T> { MyLoader Resources; }", "Game", False),
+        ("namespace N; partial class Use<T> { void F(MyLoader Resources) {} }", "Game", False),
+        ("namespace N; partial class Use<T> { void F() { MyLoader Resources; } }", "Game", False),
+        (
+            "namespace N; partial class Use<T> { bool Active => Value is MyLoader Resources; }",
+            "Game",
+            False,
+        ),
+        (
+            "namespace N; partial class Use<T> { int P { get { MyLoader Resources; return 0; } } }",
+            "Game",
+            False,
+        ),
+    ],
+)
+def test_partial_receiver_requires_a_member_of_the_same_assembly_and_type(
+    part_source, assembly, shadowed
+):
+    caller = facts(
+        "caller",
+        """using UnityEngine; namespace N; partial class Use<T> { void Run() {
+            Resources.Load("one");
+            global::UnityEngine.Resources.Load("two");
+        } }""",
+        context("Game", references=("Library",)),
+    )
+    part = Facts.from_dict(asdict(facts("part", part_source, context(assembly))))
+    index = AnalysisIndex([caller, part], catalog())
+    result = index.analyze("caller")
+    assert keys(index) == ({"two"} if shadowed else {"one", "two"})
+    assert ("part" in result.dependencies) is shadowed
+    assert any(issue["reason"] == "unresolved_receiver" for issue in result.unresolved) is shadowed
+
+
 def test_new_global_type_shadow_invalidates_an_imported_constant_binding():
     imported = facts("keys", 'namespace N { class Keys { public const string Value="one"; } }')
     caller = facts(
