@@ -39,6 +39,7 @@ from services.execution_receipt_identity import (
 from transport.local_project_context import full_hash
 from transport.local_http_target import configured_default, select_local_session
 from services.registry import get_registered_tools
+from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 from services.registry.operation_invocation import trusted_tool, wrap_tool
 from services.verification.edits import after_operation
 from services.test_results_app import TEST_RESULTS_URI, project_test_results_tools
@@ -1094,6 +1095,8 @@ class UnityInstanceMiddleware(Middleware):
             return False
         target = self._tool_alias_to_unity_target.get(tool_name)
         names = (tool_name, target) if target else (tool_name,)
+        if tool_name in FIXED_OBSERVATION_ACTIONS:
+            names = (FIXED_OBSERVATION_ACTIONS[tool_name][0],)
         return await PluginHub.has_tool_for_identity(identity, project_hashes[0], user_id, names)
 
     async def on_read_resource(self, context: MiddlewareContext, call_next):
@@ -1178,6 +1181,14 @@ class UnityInstanceMiddleware(Middleware):
             tools = [tool for tool in tools if getattr(tool, "name", None) in builtin_names]
 
         tool_names_from_fastmcp = sorted(getattr(t, "name", "?") for t in tools)
+        # A projected read cannot advertise a parent hidden by this SDK session,
+        # even when its Unity-side command is available to the project.
+        tools = [
+            tool
+            for tool in tools
+            if tool.name not in FIXED_OBSERVATION_ACTIONS
+            or FIXED_OBSERVATION_ACTIONS[tool.name][0] in tool_names_from_fastmcp
+        ]
         _diag.debug(
             "on_list_tools: FastMCP returned %d tools: %s",
             len(tools),
@@ -1381,6 +1392,8 @@ class UnityInstanceMiddleware(Middleware):
     def _is_tool_visible(self, tool_name: str | None, enabled_tool_names: set[str]) -> bool:
         if not isinstance(tool_name, str) or not tool_name:
             return True
+        if tool_name in FIXED_OBSERVATION_ACTIONS:
+            return FIXED_OBSERVATION_ACTIONS[tool_name][0] in enabled_tool_names
 
         if tool_name in self._server_only_tool_names:
             return True

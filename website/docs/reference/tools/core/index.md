@@ -21,12 +21,13 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`gameobject_create`](./gameobject_create.md)** — Create a named GameObject with transform, components and optional prefab output. name must contain non-whitespace text. save_as_prefab=true requires a nonempty .prefab prefab_path or prefab_folder for the generated name.prefab destination.
 - **[`gameobject_edit`](./gameobject_edit.md)** — Modify a GameObject or delete all selector matches, including inactive objects, in the active scene or current prefab stage.
 - **[`get_compile_job`](./get_compile_job.md)** — Read compilation status, bounded diagnostics and the last successful compile by compile_id.
+- **[`get_game_view_size`](./get_game_view_size.md)** — Read the current Game View render size in pixels, selected preset and available presets from an existing window in the selected Unity Editor.
 - **[`get_sha`](./get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_addressables`](./manage_addressables.md)** — Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing native build-layout report for duplicate…
 - **[`manage_audio`](./manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
 - **[`manage_components`](./manage_components.md)** — Add, remove, or set properties on components attached to GameObjects.
-- **[`manage_editor`](./manage_editor.md)** — Controls Unity editor state and settings. get_game_view_size reads render_size in pixels and current_size from an open Game View in the selected Editor.
+- **[`manage_editor`](./manage_editor.md)** — Controls Unity editor state and settings.
 - **[`manage_input_actions`](./manage_input_actions.md)** — Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and exis…
 - **[`manage_localization`](./manage_localization.md)** — Inspect optional Unity Localization locale/table identities, shared keys, missing translations, static Smart String selectors and asset GUID references.
 - **[`manage_material`](./manage_material.md)** — Manages Unity materials (properties, colors, shaders, render state).

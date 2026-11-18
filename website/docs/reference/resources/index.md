@@ -104,7 +104,7 @@ Read this server process's redacted effective settings and captured origins with
 
 **URI:** `mcpforunity://editor/game-view-size`
 
-Read render_size in pixels, the selected preset and available presets from an open Game View. Equivalent tool action: manage_editor.get_game_view_size on the selected Editor.
+Read render_size in pixels, the selected preset and available presets from an open Game View. Equivalent read-only tool: get_game_view_size (manage_editor.get_game_view_size).
 
 
 ## `gameobject`
@@ -327,7 +327,7 @@ Optional comma-separated feature/source selection; always reads current Editor s
 
 **URI:** `mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}`
 
-Read node and edge counts and paged structure from the saved Shader Graph file through the selected Editor. Unsaved graph-window edits and property values are unavailable. URL-encode the full Assets/*.shadergraph path as one segment. Pages start at 1 and page_size accepts 1-100 (default 50). Equivalent tool action: manage_shader.inspect_graph.
+Read node and edge counts and paged structure from the saved Shader Graph file through the selected Editor. Unsaved graph-window edits and property values are unavailable. URL-encode the full Assets/*.shadergraph path as one segment. Pages start at 1 and page_size accepts 1-100 (default 50). Equivalent read-only tool: inspect_shader_graph (manage_shader.inspect_graph).
 
 **Parameters:**
 

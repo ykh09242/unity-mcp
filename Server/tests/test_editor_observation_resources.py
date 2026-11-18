@@ -4,6 +4,7 @@ import json
 from urllib.parse import quote
 
 from fastmcp import Client, FastMCP
+from fastmcp.exceptions import ToolError
 from mcp.shared.exceptions import MCPError
 import pytest
 
@@ -33,6 +34,13 @@ READS = (
     ),
 )
 TARGET = {"unity_instance": "Fixture@hash"}
+FOCUSED = {
+    "manage_editor": ("get_game_view_size", {}),
+    "manage_shader": (
+        "inspect_shader_graph",
+        {"path": GRAPH_PATH, "page_size": 3, "page_number": 2},
+    ),
+}
 
 
 @pytest.mark.asyncio
@@ -81,6 +89,25 @@ async def test_tools_only_client_discovers_source_and_invokes_the_read(
             [sent] = command_hub.sent
             assert (sent["name"], sent["params"]) == (name, expected)
             command_hub.sent.clear()
+            fixed, inputs = FOCUSED[name]
+            tool = tools[fixed]
+            assert tool.annotations.read_only_hint is True
+            assert tool.annotations.destructive_hint is False
+            assert tool.meta[OBSERVATION] == observation
+            assert set(tool.input_schema.get("properties", {})) - {"unity_instance"} == set(inputs)
+            assert tools[name].annotations.read_only_hint is not True
+            fixed_description = (
+                await client.call_tool("manage_tools", {"action": "describe", "tool": fixed})
+            ).structured_content
+            assert fixed_description["operation"]["observation"] == observation
+            result = await client.call_tool(fixed, {**inputs, **TARGET})
+            assert result.structured_content["success"]
+            [sent] = command_hub.sent
+            assert (sent["name"], sent["params"]) == (name, expected)
+            command_hub.sent.clear()
+            with pytest.raises(ToolError, match="unexpected_keyword_argument"):
+                await client.call_tool(fixed, {**inputs, **TARGET, "action": "delete"})
+            assert command_hub.sent == []
         shader = tools["manage_shader"].meta[ACTION_OBSERVATIONS]
         assert shader["read"]["source"] == "asset_file"
         assert shader["diagnostics"]["source"] == "imported_asset"
@@ -198,6 +225,25 @@ async def test_no_dispatch_when_parent_tool_unselected(command_hub, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_deactivating_one_parent_also_hides_and_denies_its_fixed_read(
+    command_hub, monkeypatch
+):
+    async with Client(observation_server(monkeypatch), mode="legacy", cache=False) as client:
+        for parent, (fixed, inputs) in FOCUSED.items():
+            assert fixed in {item.name for item in await client.list_tools()}
+            await client.call_tool("manage_tools", {"action": "deactivate", "tool": parent})
+            await client.call_tool("manage_tools", {"action": "activate", "tool": fixed})
+            assert fixed not in {item.name for item in await client.list_tools()}
+            description = (
+                await client.call_tool("manage_tools", {"action": "describe", "tool": fixed})
+            ).structured_content
+            assert description["catalog"]["advertised"] is False
+            result = await client.call_tool(fixed, {**inputs, **TARGET})
+            assert result.structured_content["success"] is False
+        assert command_hub.sent == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("request_read,plugin_read", [(True, True), (False, True), (True, False)])
 async def test_hosted_reads_require_both_grants_and_selected_catalog(
     command_hub, monkeypatch, request_read, plugin_read
@@ -218,9 +264,15 @@ async def test_hosted_reads_require_both_grants_and_selected_catalog(
         with bind_credential_lease(requester):
             async with Client(server, cache=False) as client:
                 for uri, name, expected in READS:
-                    await command_hub.registry.register_tools_for_session("session", [])
+                    fixed, inputs = FOCUSED[name]
+                    # A peer advertising only the projection cannot stand in for the native parent.
+                    await command_hub.registry.register_tools_for_session(
+                        "session", [ToolDefinitionModel(name=fixed)]
+                    )
                     with pytest.raises(MCPError):
                         await client.read_resource(uri, meta=TARGET)
+                    with pytest.raises(MCPError):
+                        await client.call_tool(fixed, {**inputs, **TARGET})
                     assert command_hub.sent == []
                     await command_hub.registry.register_tools_for_session(
                         "session", [ToolDefinitionModel(name=name)]
@@ -233,7 +285,31 @@ async def test_hosted_reads_require_both_grants_and_selected_catalog(
                         [sent] = command_hub.sent
                         assert (sent["name"], sent["params"]) == (name, expected)
                         command_hub.sent.clear()
+                        result = await client.call_tool(fixed, {**inputs, **TARGET})
+                        assert result.structured_content["success"]
+                        [sent] = command_hub.sent
+                        assert (sent["name"], sent["params"]) == (name, expected)
+                        command_hub.sent.clear()
+                        await command_hub.registry.register_tools_for_session("session", [])
+                        with pytest.raises(MCPError):
+                            await client.call_tool(fixed, {**inputs, **TARGET})
+                        assert command_hub.sent == []
                     else:
                         with pytest.raises(MCPError):
                             await client.read_resource(uri, meta=TARGET)
+                        with pytest.raises(MCPError):
+                            await client.call_tool(fixed, {**inputs, **TARGET})
                         assert command_hub.sent == []
+
+                if request_read and plugin_read:
+                    await command_hub.registry.register_tools_for_session(
+                        "session", [ToolDefinitionModel(name=parent) for parent in FOCUSED]
+                    )
+                    claims["plugin"] = {"unity_mcp_permissions": []}
+                    await fixture.service.invalidate_cache("plugin")
+                    renewed = (await fixture.service.validate("plugin")).lease
+                    setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, renewed)
+                    for fixed, inputs in FOCUSED.values():
+                        with pytest.raises(MCPError):
+                            await client.call_tool(fixed, {**inputs, **TARGET})
+                    assert command_hub.sent == []

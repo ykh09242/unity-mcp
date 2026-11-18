@@ -16,6 +16,7 @@ from services.animator_actions import (
     guarded_animator_parameters,
 )
 from services.registry.capability_catalog import CAPABILITIES
+from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 from services.texture_actions import CHECKED_TEXTURE_ACTIONS, checked_texture_parameters
 
 JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
@@ -455,6 +456,9 @@ def required_permissions(
     """Classify a known operation, rejecting unknown and nested scoped batch members."""
     if custom or name == "execute_custom_tool":
         return CUSTOM_GRANTS
+    if not native and name in FIXED_OBSERVATION_ACTIONS:
+        name, fixed_action = FIXED_OBSERVATION_ACTIONS[name]
+        params = {**params, "action": fixed_action}
     # The Python tool routes inspect/exists to a different native command.
     # Native execute handlers ignore a supplied action: do not trust that alias input.
     if native and name in {"execute_menu_item", "execute_menu_item_observed"}:

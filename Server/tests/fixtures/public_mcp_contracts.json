@@ -5468,6 +5468,36 @@
             "type": "object"
           }
         },
+        "get_game_view_size": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "get_sha": {
           "annotations": {
             "destructiveHint": false,
@@ -7128,6 +7158,55 @@
             },
             "required": [
               "instance_id"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "inspect_shader_graph": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "page_number": {
+                "default": 1,
+                "maximum": 2147483647,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "page_size": {
+                "default": 50,
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "path": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "path"
             ],
             "type": "object"
           },
@@ -31940,6 +32019,36 @@
             "type": "object"
           }
         },
+        "get_game_view_size": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "get_sha": {
           "annotations": {
             "destructiveHint": false,
@@ -33600,6 +33709,55 @@
             },
             "required": [
               "instance_id"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "inspect_shader_graph": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "page_number": {
+                "default": 1,
+                "maximum": 2147483647,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "page_size": {
+                "default": 50,
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "path": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "path"
             ],
             "type": "object"
           },

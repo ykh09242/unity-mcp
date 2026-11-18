@@ -40,6 +40,12 @@ in `tools/list`, keyed by action. Corresponding resource and template listings
 carry the record under `_meta["io.github.ykh09242.unity-mcp/observation"]`.
 The tool description names the direct action for clients that hide metadata.
 
+Tools-only clients can select the fixed read-only tools `get_game_view_size` and
+`inspect_shader_graph` directly. Each advertises the singular observation record
+in its tool metadata. These tools require the corresponding parent in the same
+Editor and client selection. The graph tool takes a required `path` and optional
+`page_size` and `page_number`. Neither tool accepts an action selector.
+
 | Requested observation | Operation | Source and scope |
 | --- | --- | --- |
 | Current Game View pixels and preset | `manage_editor.get_game_view_size` or `mcpforunity://editor/game-view-size` | `editor_live`. Use `render_size.width` and `render_size.height` for pixels. `current_size` identifies the preset, which may be an aspect ratio. An existing Game View is required. |

@@ -223,6 +223,7 @@ def search_catalog(
                 )
             )
         if not action_matches:
+            guidance = action_guidance(entry, None)
             routes.append(
                 (
                     -score,
@@ -232,6 +233,11 @@ def search_catalog(
                         "kind": "tool",
                         "tool": name,
                         "purpose": result["description"][:320],
+                        **(
+                            {"observation": guidance.observation}
+                            if guidance and guidance.observation
+                            else {}
+                        ),
                         "intent": action_intent(None, result),
                         "advertised": result["advertised"],
                         "readiness": "unobserved",

@@ -10,12 +10,18 @@ cannot be disabled by the group system (used for server meta-tools like
 ``set_active_instance`` and ``manage_tools``).
 """
 
-from typing import Callable, Any, Literal
+from typing import Callable, Any, Final, Literal
 
 from services.registry.scalar_validation import enforce_strict_tool_inputs
 
 # Global registry to collect decorated tools
 _tool_registry: list[dict[str, Any]] = []
+
+# Server-only read projections require the existing parent tool in the same selection.
+FIXED_OBSERVATION_ACTIONS: Final = {
+    "get_game_view_size": ("manage_editor", "get_game_view_size"),
+    "inspect_shader_graph": ("manage_shader", "inspect_graph"),
+}
 
 # Valid group names. ``None`` is also accepted (always-visible meta-tools).
 TOOL_GROUPS: dict[str, str] = {

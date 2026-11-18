@@ -8,6 +8,7 @@ description: "MCP for Unity tools in the vfx group."
 
 Visual effects – VFX Graph, shaders, procedural textures
 
-- **[`manage_shader`](./manage_shader.md)** — Manages shader source, graph structure and compiler diagnostics. inspect_graph reads the saved .shadergraph file through the selected Editor.
+- **[`inspect_shader_graph`](./inspect_shader_graph.md)** — Read a saved Shader Graph file through the selected Unity Editor.
+- **[`manage_shader`](./manage_shader.md)** — Manages shader source, graph structure and compiler diagnostics.
 - **[`manage_texture`](./manage_texture.md)** — Procedural texture generation for Unity.
 - **[`manage_vfx`](./manage_vfx.md)** — Manage Unity VFX components (ParticleSystem, VisualEffect, LineRenderer, TrailRenderer).

@@ -144,11 +144,12 @@ _PHYSICS: Final = ToolGuidance(
 )
 _UITK: Final = ToolGuidance(skills=("ui-uitk",))
 GAME_VIEW_READ: Final = (
-    "get_game_view_size reads render_size in pixels and current_size from an open Game View "
+    "The read-only tool get_game_view_size reads render_size in pixels and current_size from an open Game View "
     "in the selected Editor. Resource clients can read mcpforunity://editor/game-view-size."
 )
 SHADER_GRAPH_READ: Final = (
-    "inspect_graph reads the saved .shadergraph file through the selected Editor. "
+    "The read-only tool inspect_shader_graph and this tool's inspect_graph action read the "
+    "saved .shadergraph file through the selected Editor. "
     "Unsaved graph-window edits are unavailable. Resource clients can read "
     "mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}. "
     "Encode the full asset path as one URI segment."
@@ -807,6 +808,9 @@ def resource_observation(item: CatalogResource) -> dict:
 def action_guidance(entry: CatalogEntry, action: str | None) -> ActionGuidance | None:
     """Use reviewed action evidence or the tool's own wire schema alternative."""
     if action is None:
+        observation = (entry.get("kwargs", {}).get("meta") or {}).get(OBSERVATION_META)
+        if observation:
+            return ActionGuidance(tool_description(entry), observation=observation)
         return None
     guidance = TOOL_GUIDANCE.get(entry["name"])
     if guidance and action in guidance.actions:

@@ -42,7 +42,7 @@ Camera setup, Cinemachine and view capture
 - **[`manage_cameras`](./camera/manage_cameras.md)** — Create or list cameras, select targets and configure lenses or priority.
 - **[`manage_cinemachine`](./camera/manage_cinemachine.md)** — Configure Cinemachine brains, tracking, extensions and camera blends.
 
-## `core` &nbsp; (43 tools)
+## `core` &nbsp; (44 tools)
 Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`asset_inspect`](./core/asset_inspect.md)** — Search assets or inspect their metadata and components.
@@ -57,12 +57,13 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`gameobject_create`](./core/gameobject_create.md)** — Create a named GameObject with transform, components and optional prefab output. name must contain non-whitespace text. save_as_prefab=true requires a nonempty .prefab prefab_path or prefab_folder for the generated name.prefab destination.
 - **[`gameobject_edit`](./core/gameobject_edit.md)** — Modify a GameObject or delete all selector matches, including inactive objects, in the active scene or current prefab stage.
 - **[`get_compile_job`](./core/get_compile_job.md)** — Read compilation status, bounded diagnostics and the last successful compile by compile_id.
+- **[`get_game_view_size`](./core/get_game_view_size.md)** — Read the current Game View render size in pixels, selected preset and available presets from an existing window in the selected Unity Editor.
 - **[`get_sha`](./core/get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_addressables`](./core/manage_addressables.md)** — Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing native build-layout report for duplicate…
 - **[`manage_audio`](./core/manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./core/manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
 - **[`manage_components`](./core/manage_components.md)** — Add, remove, or set properties on components attached to GameObjects.
-- **[`manage_editor`](./core/manage_editor.md)** — Controls Unity editor state and settings. get_game_view_size reads render_size in pixels and current_size from an open Game View in the selected Editor.
+- **[`manage_editor`](./core/manage_editor.md)** — Controls Unity editor state and settings.
 - **[`manage_input_actions`](./core/manage_input_actions.md)** — Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and exis…
 - **[`manage_localization`](./core/manage_localization.md)** — Inspect optional Unity Localization locale/table identities, shared keys, missing translations, static Smart String selectors and asset GUID references.
 - **[`manage_material`](./core/manage_material.md)** — Manages Unity materials (properties, colors, shaders, render state).
@@ -182,9 +183,10 @@ UI Toolkit (UXML, USS, UIDocument, optional PanelRenderer) and Canvas-based uGUI
 - **[`ui_inspect`](./ui/ui_inspect.md)** — Inspect the visual tree or diagnose UI Toolkit layout and text.
 - **[`ui_source`](./ui/ui_source.md)** — Create, read or edit UXML/USS assets, link stylesheets or preview source patches.
 
-## `vfx` &nbsp; (3 tools)
+## `vfx` &nbsp; (4 tools)
 Visual effects – VFX Graph, shaders, procedural textures
-- **[`manage_shader`](./vfx/manage_shader.md)** — Manages shader source, graph structure and compiler diagnostics. inspect_graph reads the saved .shadergraph file through the selected Editor.
+- **[`inspect_shader_graph`](./vfx/inspect_shader_graph.md)** — Read a saved Shader Graph file through the selected Unity Editor.
+- **[`manage_shader`](./vfx/manage_shader.md)** — Manages shader source, graph structure and compiler diagnostics.
 - **[`manage_texture`](./vfx/manage_texture.md)** — Procedural texture generation for Unity.
 - **[`manage_vfx`](./vfx/manage_vfx.md)** — Manage Unity VFX components (ParticleSystem, VisualEffect, LineRenderer, TrailRenderer).
 
