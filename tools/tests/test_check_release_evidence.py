@@ -321,6 +321,16 @@ def native_log(platform: str = "EditMode", exit_code: int = 0) -> str:
     )
 
 
+def mixed_native_xml(status: str = "Skipped:Ignored") -> str:
+    return (
+        '<test-run total="2" passed="1" failed="0" skipped="1" inconclusive="0" '
+        f'result="{status}"><test-suite>'
+        '<test-case fullname="Fixture.RequiredCase" result="Passed" />'
+        '<test-case fullname="Fixture.WindowsOnly" result="Skipped" label="Ignored">'
+        "<reason><message>Windows only</message></reason></test-case></test-suite></test-run>"
+    )
+
+
 def add_native(
     bundle: Bundle, entry: dict, result: str = "Passed", platform: str = "EditMode"
 ) -> None:
@@ -755,6 +765,75 @@ def test_mixed_python_run_discloses_verified_counts(
     bundle.index(entry)
     issues = bundle.check(bundle.notes("python", result=published))
     assert (issues == []) is accepted
+
+
+@pytest.mark.parametrize(
+    ("platform", "status", "published", "accepted"),
+    [
+        ("EditMode", "Skipped:Ignored", "1 passed, 1 skipped", True),
+        ("PlayMode", "Passed", "1 passed, 1 skipped", True),
+        ("EditMode", "Skipped:Ignored", "passed", False),
+        ("EditMode", "Skipped:Ignored", "2 passed, 1 skipped", False),
+        ("PlayMode", "Passed", "1 passed, 2 skipped", False),
+        ("PlayMode", "Passed", "0 passed, 2 skipped", False),
+    ],
+)
+def test_mixed_native_run_discloses_verified_counts(
+    bundle: Bundle, platform: str, status: str, published: str, accepted: bool
+) -> None:
+    kind = "native-" + platform.lower()
+    entry = bundle.ci(kind)
+    entry["files"]["results"] = bundle.file("results", mixed_native_xml(status))
+    bundle.execution(entry, native_log(platform))
+    bundle.index(entry)
+
+    issues = bundle.check(bundle.notes(kind, result=published))
+
+    assert (issues == []) is accepted
+
+
+@pytest.mark.parametrize("case", ["Failed", "Inconclusive"])
+def test_mixed_native_counts_cannot_hide_an_unsuccessful_case(case: str) -> None:
+    document = (
+        mixed_native_xml("Failed")
+        .replace('total="2"', 'total="3"')
+        .replace(f'{case.lower()}="0"', f'{case.lower()}="1"')
+        .replace(
+            "</test-suite>", f'<test-case fullname="Fixture.Other" result="{case}" /></test-suite>'
+        )
+    )
+
+    assert checker().native_result(document.encode(), (1, 1)) == (False, True)
+
+
+def test_all_skipped_native_results_cannot_pass() -> None:
+    document = native_xml("Skipped").encode()
+
+    assert checker().native_result(document, (0, 1)) == (False, False)
+
+
+@pytest.mark.parametrize("invalid", ["failed job", "other checkout", "other results"])
+def test_mixed_native_run_still_requires_current_successful_associated_evidence(
+    bundle: Bundle, invalid: str
+) -> None:
+    kind = "native-editmode"
+    # The runner itself succeeded even if the job's required-case gate failed.
+    entry = bundle.ci(
+        kind,
+        conclusion="failure" if invalid == "failed job" else "success",
+        revision=bundle.server if invalid == "other checkout" else bundle.package,
+    )
+    results = mixed_native_xml()
+    entry["files"]["results"] = bundle.file("results", results)
+    bundle.execution(entry, native_log())
+    bundle.index(entry)
+    if invalid == "other results":
+        entry["files"]["results"] = bundle.file(
+            "results", results.replace("Fixture.WindowsOnly", "Fixture.Other")
+        )
+        bundle.index(entry)
+
+    assert bundle.check(bundle.notes(kind, result="1 passed, 1 skipped"))
 
 
 def test_mixed_python_row_cannot_hide_errors_or_an_entirely_skipped_run():

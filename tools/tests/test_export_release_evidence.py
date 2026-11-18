@@ -11,7 +11,8 @@ from types import ModuleType
 
 import pytest
 
-from tools.tests.test_check_release_evidence import Bundle, bundle  # noqa: F401
+from tools.tests.test_check_release_evidence import Bundle, mixed_native_xml, native_log
+from tools.tests.test_check_release_evidence import bundle as bundle
 
 
 @pytest.fixture
@@ -178,11 +179,23 @@ def test_component_substitution_fails_against_committed_pins(
         exporter.validate_bundle(bundle.repo, destination)
 
 
+@pytest.mark.parametrize("kind", ["compile", "native-editmode"])
 def test_cli_exports_and_verifies_without_network(
-    bundle: Bundle, exporter: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    bundle: Bundle,
+    exporter: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
 ) -> None:
+    result = "passed"
+    if kind == "native-editmode":
+        entry = bundle.ci(kind)
+        entry["files"]["results"] = bundle.file("results", mixed_native_xml())
+        bundle.execution(entry, native_log())
+        bundle.index(entry)
+        result = "1 passed, 1 skipped"
     notes = tmp_path / "prepared.md"
-    notes.write_text(bundle.notes(), encoding="utf-8")
+    notes.write_text(bundle.notes(kind, result=result), encoding="utf-8")
     destination = tmp_path / "retained"
     assert (
         exporter.main(

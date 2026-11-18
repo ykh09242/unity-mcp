@@ -327,7 +327,7 @@ class Row:
     tested: str
     evidence: str
     url: str
-    python_counts: tuple[int, int] | None = None
+    published_counts: tuple[int, int] | None = None
 
 
 def parse_notes(notes: str, selected: Components) -> list[Row]:
@@ -386,13 +386,26 @@ def parse_notes(notes: str, selected: Components) -> list[Row]:
         )
         # Publishing the two counts keeps skipped cases visible in the release itself.
         counts = re.fullmatch(r"([1-9][0-9]*) passed, ([1-9][0-9]*) skipped", result)
-        python_counts = None
+        published_counts = None
+        verification_kind = Kind(kind)
         if counts:
-            require(kind == Kind.PYTHON.value, "Mixed pass/skip counts require Python evidence")
-            python_counts = int(counts[1]), int(counts[2])
+            require(
+                verification_kind in (Kind.PYTHON, Kind.EDIT, Kind.PLAY),
+                "Mixed pass/skip counts require Python or native test evidence",
+            )
+            published_counts = int(counts[1]), int(counts[2])
             result = Result.PASSED.value
         rows.append(
-            Row(label, component, Kind(kind), Result(result), tested, eid, url, python_counts)
+            Row(
+                label,
+                component,
+                verification_kind,
+                Result(result),
+                tested,
+                eid,
+                url,
+                published_counts,
+            )
         )
     return rows
 
@@ -529,7 +542,9 @@ def count(element: ET.Element, name: str) -> int:
     return int(value)
 
 
-def native_result(data: bytes) -> tuple[bool, bool]:
+def native_result(
+    data: bytes, published_counts: tuple[int, int] | None = None
+) -> tuple[bool, bool]:
     root = xml_root(data)
     require(root.tag == "test-run", "Native result must be NUnit test-run XML")
     cases = list(root.iter("test-case"))
@@ -563,6 +578,12 @@ def native_result(data: bytes) -> tuple[bool, bool]:
         status in ("Passed", "Failed", "Skipped") and (status == "Failed") == failures,
         "NUnit root status contradicts cases",
     )
+    if published_counts is not None:
+        passed, skipped = values["passed"], values["skipped"]
+        require(
+            published_counts == (passed, skipped), "Published pass/skip counts differ from NUnit"
+        )
+        return passed > 0 and skipped > 0 and not failures, failures
     return values["passed"] == values["total"] and status == "Passed", failures
 
 
@@ -648,7 +669,7 @@ def native_log(data: bytes, kind: Kind) -> int:
 
 
 def check_execution(
-    kind: Kind, files: dict[str, bytes], python_counts: tuple[int, int] | None = None
+    kind: Kind, files: dict[str, bytes], published_counts: tuple[int, int] | None = None
 ) -> tuple[bool, bool]:
     log = files["log"].decode("utf-8-sig")
     match kind:
@@ -694,9 +715,9 @@ def check_execution(
                 re.search(r"Python [0-9]+\.[0-9]+", log) is not None and "pytest" in log,
                 "Python log lacks actual invocation/version",
             )
-            return junit_result(files["results"], python_counts)
+            return junit_result(files["results"], published_counts)
         case Kind.EDIT | Kind.PLAY:
-            complete, failed = native_result(files["results"])
+            complete, failed = native_result(files["results"], published_counts)
             exit_code = native_log(files["log"], kind)
             require((exit_code != 0) == failed, "Native runner ending contradicts NUnit failures")
             return complete and exit_code == 0, failed
@@ -856,7 +877,7 @@ def validate_row(row: Row, entry: JsonMap, index_path: Path, selected: Component
             )
         )
         execution_files = {**files, "log": files["execution-log"]}
-    complete, failed = check_execution(row.kind, execution_files, row.python_counts)
+    complete, failed = check_execution(row.kind, execution_files, row.published_counts)
     require(
         not failed or succeeded is not True, "Failed records contradict successful execution step"
     )
