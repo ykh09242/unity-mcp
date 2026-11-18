@@ -18,8 +18,9 @@ async def complete_batch(ctx, instance, response, commands):
     selected_indices = []
     excluded = 0
     for index, command in enumerate(commands):
-        params = command.get("params", {})
-        if command.get("tool") != "manage_script" or params.get("action") not in _SOURCE_WRITES:
+        action = command.get("params", {}).get("action")
+        action = action.lower() if isinstance(action, str) else None
+        if command.get("tool") != "manage_script" or action not in _SOURCE_WRITES:
             excluded += 1
             continue
         if index >= len(results) or index >= len(outcomes):
@@ -58,7 +59,7 @@ async def complete_batch(ctx, instance, response, commands):
         identity = {
             key: saved[key] for key in ("bytes_sha256", "sha256") if isinstance(saved.get(key), str)
         }
-        if params["action"] == "delete":
+        if action == "delete":
             identity = {"absent": True}
         if not identity:
             excluded += 1

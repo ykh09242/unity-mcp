@@ -8,11 +8,16 @@ import services.verification.batch as module
 
 
 @pytest.mark.asyncio
-async def test_partial_batch_coalesces_final_source_and_deletion_once(monkeypatch):
-    commands = [
-        {"tool": "manage_script", "params": {"action": action}}
-        for action in ("update", "update", "delete", "update")
-    ]
+@pytest.mark.parametrize(
+    "actions",
+    [
+        ("update", "update", "delete", "update"),
+        ("Update", "UPDATE", "Delete", ["update"]),
+        ("UPDATE", "update", "DELETE", {"action": "update"}),
+    ],
+)
+async def test_partial_batch_coalesces_final_source_and_deletion_once(monkeypatch, actions):
+    commands = [{"tool": "manage_script", "params": {"action": action}} for action in actions]
     data = {
         "executionStatus": "partial",
         "results": [
@@ -53,6 +58,8 @@ async def test_partial_batch_coalesces_final_source_and_deletion_once(monkeypatc
         },
     )
     assert data["batch_verification_selection"]["excluded_commands"] == 1
+    assert data["batch_verification_selection"]["selected_command_indices"] == [0, 1, 2]
+    assert data["results"][3]["result"]["error"] == "rejected"
 
 
 @pytest.mark.asyncio
