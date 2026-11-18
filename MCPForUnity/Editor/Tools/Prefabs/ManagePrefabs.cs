@@ -211,6 +211,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 finalPath = AssetDatabase.GenerateUniqueAssetPath(finalPath);
                 McpLog.Info($"[ManagePrefabs] Generated unique path: {finalPath}");
             }
+            if (IsDirtyStageForAsset(finalPath))
+                return new ErrorResponse("The destination prefab is open in a dirty Prefab Stage. Save or discard its pending edits before replacing it.");
             if (Directory.Exists(AssetPathUtility.GetFullAssetPath(finalPath)))
                 return new ErrorResponse($"Cannot save prefab to '{finalPath}': a directory occupies the destination.");
             try
