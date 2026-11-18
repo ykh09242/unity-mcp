@@ -228,6 +228,49 @@ async def test_dispatch_timeout_is_never_replayed_or_claimed_settled():
 
 
 @pytest.mark.asyncio
+async def test_pre_dispatch_native_refusals_leave_capacity_for_another_run():
+    from services.verification.reports import ReportStore
+
+    store = ReportStore()
+    owner = ("user", "project")
+    for _ in range(store.max_active_per_scope + 1):
+        identity = store.create(owner, {})
+        io = IO()
+        native = io.native
+
+        async def refuse(command, params, deadline):
+            if command == "run_tests":
+                return {"success": False, "error": "unsupported_native_test_control"}
+            return await native(command, params, deadline)
+
+        io.native = refuse
+        report = await run(io, test_mode="EditMode")
+        stage = next(stage for stage in report["stages"] if stage["name"] == "tests")
+        assert stage["state"] == "incomplete"
+        assert stage["evidence"]["reason"] == "unsupported_native_test_control"
+        child = next(child for child in report["children"] if child["kind"] == "tests")
+        assert child == {"kind": "tests", "job_id": None, "settled": True, "dispatch": "refused"}
+        assert report["native_settled"]
+        store.finish(identity, owner, report, settled=report["native_settled"])
+
+
+@pytest.mark.asyncio
+async def test_unrecognized_start_failure_keeps_uncertain_native_ownership():
+    io = IO()
+    native = io.native
+
+    async def fail(command, params, deadline):
+        if command == "run_tests":
+            return {"success": False, "error": "Failed to receive native acknowledgment"}
+        return await native(command, params, deadline)
+
+    io.native = fail
+    report = await run(io, test_mode="EditMode")
+    assert report["state"] == "incomplete"
+    assert not report["native_settled"]
+
+
+@pytest.mark.asyncio
 async def test_permission_revocation_before_analysis_blocks_all_dependent_dispatch():
     io = IO()
     original = io.freshness

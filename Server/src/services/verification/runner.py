@@ -404,11 +404,22 @@ class VerificationRunner:
         data = response.get("data") or {}
         child["job_id"] = data.get("job_id")
         if response.get("success") is not True or not child["job_id"]:
-            child["settled"] = response.get("settled") is True
+            # The native handler refuses a deadline on unsupported UTF before creating a job.
+            refused = (
+                response.get("success") is False
+                and response.get("error") == "unsupported_native_test_control"
+                and child["job_id"] is None
+            )
+            if refused:
+                child["dispatch"] = "refused"
+            child["settled"] = refused or response.get("settled") is True
             self.stage(
                 "tests",
                 "incomplete",
-                {"reason": "test_start_not_confirmed", "job_id": child["job_id"]},
+                {
+                    "reason": response["error"] if refused else "test_start_not_confirmed",
+                    "job_id": child["job_id"],
+                },
                 started=started,
             )
             return
