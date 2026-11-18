@@ -13,6 +13,13 @@ using UnityEditorInternal;
 
 namespace MCPForUnity.Editor.Services
 {
+    internal enum TestJobAdmission
+    {
+        NotCreated,
+        Busy,
+        Unknown,
+    }
+
     internal enum TestJobStatus
     {
         Running,
@@ -814,14 +821,27 @@ namespace MCPForUnity.Editor.Services
             long initTimeoutMs = 0,
             long runTimeoutMs = 0,
             string consoleWindowId = null
+        ) => StartJob(out _, mode, filterOptions, initTimeoutMs, runTimeoutMs, consoleWindowId);
+
+        internal static string StartJob(
+            out TestJobAdmission admission,
+            TestMode mode,
+            TestFilterOptions filterOptions,
+            long initTimeoutMs,
+            long runTimeoutMs,
+            string consoleWindowId
         )
         {
+            admission = TestJobAdmission.NotCreated;
             if (runTimeoutMs < 0 || runTimeoutMs > 86400000)
                 throw new ArgumentException("runTimeoutMs must be 1..86400000 when supplied.");
             if (runTimeoutMs > 0 && !NativeTestRunControl.Available)
                 throw new NotSupportedException("unsupported_native_test_control");
             if (NativeAdmissionBlocked)
+            {
+                admission = TestJobAdmission.Busy;
                 throw new InvalidOperationException("A Unity test run or native cleanup is already in progress.");
+            }
             TestRunnerService.ThrowIfRetiredRunPending();
             // Clamp to valid range: non-positive values mean "use default", cap at 10 minutes
             if (initTimeoutMs < 0)
@@ -863,8 +883,11 @@ namespace MCPForUnity.Editor.Services
             {
                 if (!string.IsNullOrEmpty(_currentJobId))
                 {
+                    admission = TestJobAdmission.Busy;
                     throw new InvalidOperationException("A Unity test run is already in progress.");
                 }
+                // From the first mutation onward an exception cannot prove this request was refused.
+                admission = TestJobAdmission.Unknown;
                 Jobs[jobId] = job;
                 _currentJobId = jobId;
             }

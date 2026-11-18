@@ -228,37 +228,77 @@ async def test_dispatch_timeout_is_never_replayed_or_claimed_settled():
 
 
 @pytest.mark.asyncio
-async def test_pre_dispatch_native_refusals_leave_capacity_for_another_run():
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        {"success": False, "error": "unsupported_native_test_control"},
+        {"success": False, "error": "tests_running", "data": {"test_job_created": False}},
+        {
+            "success": False,
+            "error": "source_freshness_required",
+            "data": {"test_job_created": False},
+        },
+    ],
+)
+async def test_pre_dispatch_native_refusals_leave_capacity_for_another_run(refusal):
     from services.verification.reports import ReportStore
 
     class RefusingIO(IO):
         async def native(self, command, params, deadline):
             if command == "run_tests":
-                return {"success": False, "error": "unsupported_native_test_control"}
+                return refusal
             return await super().native(command, params, deadline)
 
     store = ReportStore()
     owner = ("user", "project")
-    for _ in range(store.max_active_per_scope + 1):
+    for _ in range(store.max_active_per_scope):
         identity = store.create(owner, {})
         report = await run(RefusingIO(), test_mode="EditMode")
         stage = next(stage for stage in report["stages"] if stage["name"] == "tests")
         assert stage["state"] == "incomplete"
-        assert stage["evidence"]["reason"] == "unsupported_native_test_control"
+        assert stage["evidence"]["reason"] == refusal["error"]
         child = next(child for child in report["children"] if child["kind"] == "tests")
         assert child == {"kind": "tests", "job_id": None, "settled": True, "dispatch": "refused"}
         assert report["native_settled"]
         store.finish(identity, owner, report, settled=report["native_settled"])
 
+    identity = store.create(owner, {})
+    report = await run(IO(), test_mode="EditMode")
+    assert (
+        next(stage for stage in report["stages"] if stage["name"] == "tests")["state"] == "passed"
+    )
+    assert report["native_settled"]
+    store.finish(identity, owner, report, settled=report["native_settled"])
+
 
 @pytest.mark.asyncio
-async def test_unrecognized_start_failure_keeps_uncertain_native_ownership():
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"success": False, "error": "Failed to receive native acknowledgment"},
+        {"success": False, "error": "tests_running", "data": {"reason": "tests_running"}},
+        {"success": False, "error": "tests_running", "settled": True},
+        {"success": False, "error": "tests_running", "data": {"test_job_created": 0}},
+        {
+            "success": False,
+            "error": "unsupported_native_test_control",
+            "data": {"test_job_created": True},
+        },
+        {
+            "success": False,
+            "error": "tests_running",
+            "data": {"test_job_created": False, "job_id": "existing"},
+        },
+        {"success": True, "data": {"test_job_created": False}},
+    ],
+)
+async def test_unrecognized_start_failure_keeps_uncertain_native_ownership(reply):
     io = IO()
     native = io.native
 
     async def fail(command, params, deadline):
         if command == "run_tests":
-            return {"success": False, "error": "Failed to receive native acknowledgment"}
+            return reply
         return await native(command, params, deadline)
 
     io.native = fail

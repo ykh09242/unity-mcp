@@ -17,11 +17,22 @@ namespace MCPForUnity.Editor.Tools
     {
         public static Task<object> HandleCommand(JObject @params)
         {
+            var admission = TestJobAdmission.NotCreated;
+            Task<object> StartError(string message, JObject data = null)
+            {
+                if (admission != TestJobAdmission.Unknown)
+                {
+                    data ??= new JObject();
+                    data["test_job_created"] = false;
+                }
+                return Task.FromResult<object>(new ErrorResponse(message, data));
+            }
             try
             {
                 // Check for clear_stuck action first
                 if (ParamCoercion.CoerceBool(@params?["clear_stuck"], false))
                 {
+                    admission = TestJobAdmission.Unknown; // This separate action operates on an existing job.
                     bool wasCleared = TestJobManager.ClearStuckJob();
                     return Task.FromResult<object>(
                         new SuccessResponse(wasCleared ? "Stuck job cleared." : "No running job to clear.", new { cleared = wasCleared })
@@ -36,7 +47,7 @@ namespace MCPForUnity.Editor.Tools
 
                 if (!ModeParser.TryParse(modeStr, out var parsedMode, out var parseError))
                 {
-                    return Task.FromResult<object>(new ErrorResponse(parseError));
+                    return StartError(parseError);
                 }
 
                 long runTimeoutMs = 0;
@@ -48,9 +59,9 @@ namespace MCPForUnity.Editor.Tools
                         || runTimeoutMs < 1
                         || runTimeoutMs > 86400000
                     )
-                        return Task.FromResult<object>(new ErrorResponse("runTimeoutMs must be 1..86400000 milliseconds."));
+                        return StartError("runTimeoutMs must be 1..86400000 milliseconds.");
                     if (!NativeTestRunControl.Available)
-                        return Task.FromResult<object>(new ErrorResponse("unsupported_native_test_control"));
+                        return StartError("unsupported_native_test_control");
                 }
                 var p = new ToolParams(@params);
                 bool includeDetails = p.GetBool("includeDetails");
@@ -63,9 +74,16 @@ namespace MCPForUnity.Editor.Tools
                 filterOptions.RequireSourceFreshness = true;
                 filterOptions.SourceToken = (string)@params?["source_token"];
                 if (filterOptions.SourceToken == null || !System.Text.RegularExpressions.Regex.IsMatch(filterOptions.SourceToken, "\\A[a-f0-9]{64}\\z"))
-                    return Task.FromResult<object>(new ErrorResponse("source_freshness_required", new { reason = "source_token_required" }));
+                    return StartError("source_freshness_required", new JObject { ["reason"] = "source_token_required" });
                 long initTimeoutMs = p.GetInt("initTimeout") ?? 0;
-                string jobId = TestJobManager.StartJob(parsedMode.Value, filterOptions, initTimeoutMs, runTimeoutMs, (string)@params?["console_window_id"]);
+                string jobId = TestJobManager.StartJob(
+                    out admission,
+                    parsedMode.Value,
+                    filterOptions,
+                    initTimeoutMs,
+                    runTimeoutMs,
+                    (string)@params?["console_window_id"]
+                );
 
                 return Task.FromResult<object>(
                     new SuccessResponse(
@@ -85,12 +103,11 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception ex)
             {
-                // Normalize the already-running case to a stable error token.
-                if (ex.Message != null && ex.Message.IndexOf("already in progress", StringComparison.OrdinalIgnoreCase) >= 0)
+                if (admission == TestJobAdmission.Busy)
                 {
-                    return Task.FromResult<object>(new ErrorResponse("tests_running", new { reason = "tests_running", retry_after_ms = 5000 }));
+                    return StartError("tests_running", new JObject { ["reason"] = "tests_running", ["retry_after_ms"] = 5000 });
                 }
-                return Task.FromResult<object>(new ErrorResponse($"Failed to start test job: {ex.Message}"));
+                return StartError($"Failed to start test job: {ex.Message}");
             }
         }
 

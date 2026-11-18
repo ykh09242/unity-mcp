@@ -99,6 +99,7 @@ namespace MCPForUnityTests.Editor.Tools
             var response = MCPForUnity.Editor.Tools.RunTests.HandleCommand(new JObject { [key] = JToken.Parse(json) }).GetAwaiter().GetResult();
             Assert.AreEqual(0, service.Calls, "Malformed selector reached the test runner before rejection.");
             Assert.IsInstanceOf<ErrorResponse>(response, "Malformed selectors must not start an unfiltered or altered test run.");
+            Assert.AreEqual(false, (bool?)JObject.FromObject(((ErrorResponse)response).Data)["test_job_created"]);
             StringAssert.Contains(key.Replace("_", "").ToLowerInvariant(), ((ErrorResponse)response).Error.Replace("_", "").ToLowerInvariant());
             Assert.AreEqual(0, Jobs.Count);
             Assert.IsNull(TestJobManager.CurrentJobId);
@@ -158,12 +159,15 @@ namespace MCPForUnityTests.Editor.Tools
         {
             public int Calls;
             public TestFilterOptions Options;
+            public Exception StartupError;
             private readonly TaskCompletionSource<TestRunResult> completion = new TaskCompletionSource<TestRunResult>();
 
             public Task<TestRunResult> RunTestsAsync(TestMode mode, TestFilterOptions filterOptions = null)
             {
                 Calls++;
                 Options = filterOptions;
+                if (StartupError != null)
+                    throw StartupError;
                 return completion.Task;
             }
 
@@ -200,12 +204,26 @@ namespace MCPForUnityTests.Editor.Tools
                 var data = err.Data != null ? JObject.FromObject(err.Data) : null;
                 Assert.NotNull(data, "Expected data payload on tests_running error");
                 Assert.AreEqual("tests_running", data["reason"]?.ToString());
+                Assert.AreEqual(false, (bool?)data["test_job_created"]);
                 Assert.GreaterOrEqual(data["retry_after_ms"]?.Value<int>() ?? 0, 500);
             }
             finally
             {
                 currentJobIdField.SetValue(null, originalJobId);
             }
+        }
+
+        [Test]
+        public void SynchronousFailureAfterJobCreationCannotClaimBusyRefusal()
+        {
+            service.StartupError = new InvalidOperationException("Native execution is already in progress.");
+            var reply = JObject.FromObject(
+                MCPForUnity.Editor.Tools.RunTests.HandleCommand(new JObject { ["source_token"] = new string('a', 64) }).GetAwaiter().GetResult()
+            );
+            Assert.AreEqual(1, service.Calls);
+            Assert.AreEqual(false, (bool?)reply["success"]);
+            Assert.AreNotEqual("tests_running", (string)reply["error"]);
+            Assert.IsNull(reply["data"]?["test_job_created"]);
         }
 
         [Test]
