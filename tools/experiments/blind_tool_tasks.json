@@ -13,6 +13,13 @@
     "es": "En el editor de Unity ya abierto para este proyecto, examina el grafo de {graph_asset}. Indica el total de nodos y conexiones y dos tipos de nodo observados en la respuesta del editor. Si el editor no puede responder, indícalo claramente.",
     "ar": "في محرر Unity المفتوح حاليًا لهذا المشروع، افحص الرسم الموجود في {graph_asset}. اذكر العدد الإجمالي للعقد والوصلات ونوعين من العقد لاحظتهما فعليًا في استجابة المحرر. إذا تعذر الحصول على استجابة المحرر، اذكر ذلك بوضوح."
   },
+  "graph-open": {
+    "en": "For {graph_asset}, can you establish the graph's current contents in the open Shader Graph window, including any unsaved edits? Report node and connection totals and two node types only if the current window contents can be verified. Explain any observation limit.",
+    "ko": "{graph_asset}의 열린 Shader Graph 창에서 아직 저장하지 않은 편집까지 포함한 현재 내용을 확인해 주세요. 창의 내용을 확인할 수 있을 때만 노드와 연결의 총수, 노드 유형 두 가지를 알려 주세요. 관찰의 한계도 밝혀 주세요.",
+    "ja": "{graph_asset} の開いている Shader Graph ウィンドウについて、未保存の編集も含む現在の内容を確認できますか。ウィンドウの内容を確認できた場合のみ、ノード数と接続数、ノードの種類を二つ報告し、観察の限界を明示してください。",
+    "es": "¿Puedes verificar el contenido actual de {graph_asset} en la ventana abierta de Shader Graph, incluidos los cambios sin guardar? Indica el total de nodos y conexiones y dos tipos de nodo solo si puedes verificar el contenido de esa ventana. Explica los límites de la observación.",
+    "ar": "هل يمكنك التحقق من محتوى {graph_asset} الحالي في نافذة Shader Graph المفتوحة، بما في ذلك التعديلات غير المحفوظة؟ اذكر عدد العقد والوصلات ونوعين من العقد فقط إذا أمكن التحقق من محتوى النافذة الحالية. وضح حدود الملاحظة."
+  },
   "graph-saved": {
     "en": "Inspect the saved Shader Graph file at {graph_asset} in this project. Report the total nodes and connections and two node types from the saved file. This request concerns the file on disk, regardless of the Editor's current state.",
     "ko": "이 프로젝트에서 저장된 Shader Graph 파일 {graph_asset}을 조사해 주세요. 파일에서 확인한 전체 노드와 연결의 수, 노드 유형 두 가지를 알려 주세요. 에디터의 현재 상태와 관계없이 디스크에 저장된 파일을 확인해 주세요.",

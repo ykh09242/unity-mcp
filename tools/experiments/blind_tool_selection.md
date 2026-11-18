@@ -29,7 +29,7 @@ python tools/experiments/blind_tool_selection.py run \
 ```
 
 Repeat `--task`, `--language` or `--role` to select the matrix axes. The other task
-IDs are `game-view`, `editor` and `context`. The other locales are `ja`, `es` and
+IDs include `graph-open`, `editor` and `context`. The other locales are `ja`, `es` and
 `ar`. `raycast` requires a trusted relay that guarantees read-only raycasts.
 The generic endpoint adapter admits fixed observations and disables refresh for
 its GameObject lookup. Use `--repeat` for repeated samples. Run the same matrix against baseline
@@ -48,11 +48,54 @@ for the evaluation. Record permission blocks with the trial. Keep the policy the
 same when comparing model outcomes. Neither live models nor connected Editors
 are used by the CI test.
 
+## Compare two conditions
+
+Pin each relay to its respective server revision and use the same Editor and
+policy for both arms. A trusted read-only Python state probe receives the
+absolute project directory as its only argument. Before each case it should
+verify the project and print one JSON object containing the stable facts
+relevant to the selected tasks. For example, record the instance, scene, play
+and compile state, rendered dimensions and preset, and the saved asset digest
+when testing a graph. Leave volatile counters and timestamps out of this object.
+If the probe cannot verify the state, it should exit nonzero. A missing or failed
+probe preserves both observations and excludes the pair from controlled totals.
+
+```sh
+python tools/experiments/blind_tool_selection.py matched \
+  --project /work/Game --instance Game@0123456789abcdef \
+  --baseline-relay /work/bench/baseline.py --candidate-relay /work/bench/candidate.py \
+  --state-probe /work/bench/observe_state.py --graph-asset Assets/Example.shadergraph \
+  --output .work/matched-01 --model gpt-6.2-sol --effort medium --approval never \
+  --task game-view --task graph --task graph-open --language ko --language ja \
+  --role main --role subagent --delegation legacy --repeat 2
+python tools/experiments/blind_tool_selection.py compare .work/matched-01/baseline .work/matched-01/candidate
+```
+
+Each adjacent pair gets the same prompt, model request, effort request, project,
+policy and delegation mode. AB/BA order alternates across repetitions within
+each task, language and role. Every case records its prompt digest, measured
+starting state, relay script digest or endpoint address, and position in the
+schedule. Record the actual upstream revisions alongside private runs when a
+relay imports external code or two endpoints proxy different revisions. Identical
+backend identifiers cannot establish two treatments. The state probe also works
+with `run`. Use `--baseline-endpoint` and `--candidate-endpoint` for HTTP arms
+under the same instance and endpoint restrictions as `run`.
+
+`compare` joins the union of planned and recorded cells by task, language,
+role and repetition. It preserves both arm results and the reasons for excluding
+a pair when the conditions, completion, role or execution order cannot be
+verified or differ. Its aggregate counts share one eligible-pair denominator.
+Older independent matrices can therefore be rescored without promoting them to
+counterbalanced evidence. It also reports descriptive counts for every observed
+arm by requested role, including the native actor attribution breakdown. The
+report includes counts in each observed order.
+An incomplete comparison exits nonzero after printing the report.
+
 ## Score the traces
 
 ```sh
 python tools/experiments/blind_tool_selection.py score .work/blind-trial-01
-python -m pytest tools/tests/test_blind_tool_selection.py -q
+python -m pytest tools/tests/test_blind_tool_selection.py tools/tests/test_blind_tool_comparison.py -q
 ```
 
 The report records the first Unity business attempt and the first suitable
@@ -64,6 +107,15 @@ keeps Shader Graph pages distinct. It includes intentional re-observation. The
 retry count reports the subset that follows a failure or an approval block on
 the same operation and page.
 
+`repeats_after_complete_evidence` counts repeated operation/page attempts after
+a complete result was already available. A trace cannot establish the reason
+for repeating an observation. `raycast_before_size` counts pointer queries
+issued before a successful rendered-size response. Both timing metrics compare
+the requesting and responding events on the same wire connection. Overlapping
+requests cannot use a later response. A missing common timeline yields null,
+and the summary includes the number of measurable cases. Host-visible shell reads count in
+business-call order. Child approval counts cover the events visible to the parent.
+
 The MCP recorder validates and summarizes task-specific domain data. An RPC
 response, a tool error, or discovery success alone earns no evidence. The
 Game View task requires positive rendered dimensions. The raycast task requires
@@ -74,12 +126,50 @@ types. The Editor task requires fresh play and compile state and an observed
 active scene. The context task requires the project root, Unity version and
 render pipeline from the Editor. The saved graph task uses a separate signal for
 raw serialized graph output from a direct shell read of the exact path. The
-report flags other possible saved-file observations for manual review. Review the raw
-observation and answer to check the actual reported values. The score covers
-trace evidence. Review natural-language answers separately.
+report flags other possible saved-file observations for manual review. A graph
+summary returned through the Editor also reads serialized file contents. The
+`graph` task requests the Editor's response. Neither route observes unsaved
+window contents. For `graph-open` the saved file can establish only the
+observation limit. The report keeps the first suitable window read empty.
+`wire_evidence` and the historical `live_evidence` field report transport
+and role-attributed evidence. The graph data state identifies the content source.
+`task_evidence` also credits a confirmed saved-file read for the saved graph task.
+
+Matched runs request a final JSON object after the localized user task. Single
+runs default to prose. Use `--answer-format json|prose` to select either format.
+The current `--answer-protocol v2` identifies the response channel with
+`channel` (`editor` or `file`) and the content origin with `source`
+(`editor_live` or `asset_file`). A serialized graph returned by the Editor
+has channel `editor` and source `asset_file`. Direct disk reads use the same
+source with channel `file`. Use `--answer-protocol v1` to reproduce the older
+single-source-field prompt verbatim. Cases without protocol metadata retain v1.
+Successful-looking legacy graph values require review when that field leaves
+their provenance ambiguous. A checked review remains bound to the recorded
+protocol, answer and evidence.
+For a child trial the delivered answer is the parent's final relay. Native actor
+attribution is independently measured from host events and wire receipts.
+`final_answer` scores the delivered answer independently from wire evidence. It
+checks named dimensions, graph totals, two distinct types, graph provenance, the
+ordered pointer result and exact center, and the requested scene or project
+settings. A new size receipt replaces the prior dimensions and preset. A later
+unknown result at the center supersedes an older observed hit. Reporting unknowns can receive `limited` when the evidence establishes
+a limit. Legacy records can recover omitted facts from a uniquely matching host
+MCP result. Unverified values or free prose in any language remain
+`needs_review` until adjudicated. A missing answer remains `missing`.
+
+To adjudicate a private case, read its answer and the relevant raw receipts.
+Store `answer-review.json` in its case directory with `review_digest` from that
+case's score, a `status` of `correct`, `incorrect`, `limited` or `needs_review`,
+and a specific evidence-based `reason`. Check, for example, that the answer
+assigns each total to the right quantity and distinguishes Editor transport from
+serialized bytes. The digest binds the verdict to the task, answer and retained
+observations. Re-scoring ignores a stale review. Keep adjudication reasons, wire
+summaries and comparison reports private because they can contain project data.
 
 Confirmed subagent attribution requires a host-observed native spawn with a
-receiver ID and no competing parent business calls. Some CLI versions omit
+receiver ID, business requests linked to that same child, and no competing
+parent business calls. A spawn and unbound requests support inference.
+Conflicting request actor metadata makes the role mixed. Some CLI versions omit
 nested shell activity or v2 spawn notifications from JSONL. Try `--delegation
 legacy` with the installed CLI if v2 omits them. If the host reports a native
 wait and a separate MCP process recorded the only business reads, the report

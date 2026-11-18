@@ -437,6 +437,9 @@ def test_child_evidence_cannot_be_inferred_from_parent_answer(tmp_path):
         },
     }
     write_rows(case / "events.jsonl", [spawn])
+    assert score_case(case)["role_status"] == "inferred"
+    audit[0]["actor"] = call_actor({"_meta": {"threadId": spawn["item"]["receiver_thread_ids"][0]}})
+    write_rows(case / "mcp-1.jsonl", audit)
     assert score_case(case)["live_evidence"] == "complete"
     write_rows(
         case / "events.jsonl",

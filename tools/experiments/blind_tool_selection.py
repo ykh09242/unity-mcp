@@ -9,15 +9,19 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
+from hashlib import sha256
 from itertools import product
 from pathlib import Path, PurePosixPath
+from uuid import uuid4
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from tools.experiments.blind_tool_answers import answer_instruction
+from tools.experiments.blind_tool_comparison import compare_directories, paired_schedule
 from tools.experiments.blind_tool_trace import score_directory
 
-TASKS = ("raycast", "graph", "graph-saved", "game-view", "editor", "context")
+TASKS = ("raycast", "graph", "graph-saved", "graph-open", "game-view", "editor", "context")
 LANGUAGES = ("en", "ko", "ja", "es", "ar")
 ROLES = ("main", "subagent")
 
@@ -32,6 +36,8 @@ def task_prompt(task: str, language: str, graph_asset: str) -> str:
 
 def delivery_prompt(args: argparse.Namespace, task: str, language: str, role: str) -> str:
     prompt = task_prompt(task, language, args.graph_asset)
+    if getattr(args, "answer_format", "prose") == "json":
+        prompt += "\n\n" + answer_instruction(task, getattr(args, "answer_protocol", "v1"))
     if role == "main":
         return f"Perform this task yourself, without delegating.\n\n{prompt}"
     return (
@@ -39,7 +45,8 @@ def delivery_prompt(args: argparse.Namespace, task: str, language: str, role: st
         f"{args.model} and {args.effort} reasoning. Do not inherit this chat. Use the same "
         f"workspace and connection. Announce that model and effort as benchmark-selected "
         f"and explain each choice before launching. Wait for the subagent and relay its "
-        f"findings. Do not inspect the Editor, files, or tool catalog yourself.\n\n"
+        f"findings using the requested answer format. Do not inspect the Editor, files, "
+        f"or tool catalog yourself.\n\n"
         f"<request>\n{prompt}\n</request>"
     )
 
@@ -110,6 +117,7 @@ def run_case(
 ) -> None:
     case_dir = args.output / f"{task}-{language}-{role}-{repetition:02d}"
     case_dir.mkdir()
+    prompt = delivery_prompt(args, task, language, role)
     metadata = {
         "task": task,
         "language": language,
@@ -122,6 +130,12 @@ def run_case(
         "delegation": args.delegation,
         "backend": "trusted-stdio-relay" if args.relay else "unity-mcp-loopback",
         "runner_status": "launch_failed",
+        "project": str(args.project),
+        "instance": args.instance,
+        "answer_format": getattr(args, "answer_format", "prose"),
+        "answer_protocol": getattr(args, "answer_protocol", "v1"),
+        "prompt_digest": sha256(prompt.encode()).hexdigest(),
+        **getattr(args, "case_metadata", {}),
     }
     command = codex_command(args, case_dir)
     environment = {**os.environ, "PYTHONUTF8": "1"}
@@ -134,7 +148,7 @@ def run_case(
                 command,
                 cwd=args.project,
                 env=environment,
-                input=delivery_prompt(args, task, language, role).encode(),
+                input=prompt.encode(),
                 stdout=events,
                 stderr=errors,
                 timeout=args.timeout,
@@ -153,11 +167,8 @@ def run_case(
 def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_subparsers(dest="mode", required=True)
-    launch = modes.add_parser("run", help="Opt in to authenticated trials against an open Editor")
+    launch = argparse.ArgumentParser(add_help=False)
     launch.add_argument("--project", type=Path, required=True)
-    backend = launch.add_mutually_exclusive_group(required=True)
-    backend.add_argument("--relay", type=Path, help="Trusted read-only Python MCP relay")
-    backend.add_argument("--endpoint", help="Running Unity MCP HTTP loopback endpoint")
     launch.add_argument("--instance", help="Exact Editor Name@hash on the HTTP endpoint")
     launch.add_argument("--output", type=Path, required=True, help="New private output directory")
     launch.add_argument("--codex", default=shutil.which("codex.exe") or shutil.which("codex"))
@@ -170,37 +181,87 @@ def create_parser() -> argparse.ArgumentParser:
     launch.add_argument("--repeat", type=int, default=1)
     launch.add_argument("--timeout", type=int, default=240, help="Seconds per trial")
     launch.add_argument("--approval", choices=("never", "auto-review"), default="never")
+    launch.add_argument("--answer-format", choices=("json", "prose"))
+    launch.add_argument(
+        "--answer-protocol",
+        choices=("v1", "v2"),
+        default="v2",
+        help="JSON answer schema (v1 reproduces the earlier prompt)",
+    )
+    launch.add_argument("--state-probe", type=Path, help="Trusted read-only Python state probe")
     launch.add_argument(
         "--delegation",
         choices=("v2", "legacy"),
         default="v2",
         help="Use legacy native delegation if v2 omits spawn receipts from CLI events",
     )
+    single = modes.add_parser("run", parents=[launch], help="Run an observation matrix")
+    matched = modes.add_parser("matched", parents=[launch], help="Run counterbalanced pairs")
+    for command, prefix in [(single, ""), (matched, "baseline-"), (matched, "candidate-")]:
+        backend = command.add_mutually_exclusive_group(required=True)
+        backend.add_argument(
+            f"--{prefix}relay", type=Path, help="Trusted read-only Python MCP relay"
+        )
+        backend.add_argument(f"--{prefix}endpoint", help="Running Unity MCP loopback endpoint")
+    compare = modes.add_parser("compare", help="Re-score two private matrix directories")
+    compare.add_argument("baseline", type=Path)
+    compare.add_argument("candidate", type=Path)
     score = modes.add_parser("score", help="Score stored observations without launching a client")
     score.add_argument("output", type=Path)
     return parser
 
 
+def validate_backend(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.relay:
+        args.relay = args.relay.resolve()
+        if not args.relay.is_file():
+            parser.error("trusted relay script does not exist")
+    elif not args.instance or "@" not in args.instance:
+        parser.error("--endpoint requires the exact --instance Name@hash")
+    elif "raycast" in args.task:
+        parser.error("raycast requires a trusted --relay that guarantees read-only raycasts")
+    else:
+        from tools.experiments.blind_tool_http import loopback_port
+
+        try:
+            loopback_port(args.endpoint)
+        except ValueError:
+            parser.error("trial endpoint must be an HTTP loopback URL without credentials or query")
+
+
+def probe_state(args: argparse.Namespace) -> dict | None:
+    if not args.state_probe:
+        return None
+    try:
+        result = subprocess.run(
+            [sys.executable, "-X", "utf8", str(args.state_probe), str(args.project)],
+            capture_output=True,
+            timeout=min(args.timeout, 60),
+            check=True,
+        )
+        state = json.loads(result.stdout)
+        return state if isinstance(state, dict) and state else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
-    if args.mode == "run":
+    if args.mode in {"run", "matched"}:
         args.project, args.output = map(Path.resolve, (args.project, args.output))
         if not args.codex or not args.project.is_dir():
             parser.error("run requires an installed Codex CLI and the Unity project directory")
-        if args.relay:
-            args.relay = args.relay.resolve()
-            if not args.relay.is_file():
-                parser.error("trusted relay script does not exist")
-        elif not args.instance or "@" not in args.instance:
-            parser.error("--endpoint requires the exact --instance Name@hash")
-        elif "raycast" in args.task:
-            parser.error("raycast requires a trusted --relay that guarantees read-only raycasts")
+        args.answer_format = args.answer_format or ("json" if args.mode == "matched" else "prose")
+        if args.state_probe:
+            args.state_probe = args.state_probe.resolve()
+            if not args.state_probe.is_file():
+                parser.error("trusted state probe script does not exist")
         if args.output.is_relative_to(args.project) or args.output.exists():
             parser.error("output must be a new private directory outside the Unity project")
         asset = PurePosixPath(args.graph_asset)
-        if {"graph", "graph-saved"}.intersection(args.task) and not args.graph_asset:
-            parser.error("--graph-asset is required for graph and graph-saved")
+        if any(task.startswith("graph") for task in args.task) and not args.graph_asset:
+            parser.error("--graph-asset is required for graph tasks")
         if args.graph_asset and (
             asset.parts[:1] != ("Assets",)
             or args.graph_asset != asset.as_posix()
@@ -226,11 +287,44 @@ def main(argv: Sequence[str] | None = None) -> int:
                 range(1, args.repeat + 1),
             )
         )
-        args.output.mkdir(parents=True)
-        (args.output / "matrix.json").write_text(json.dumps(cells) + "\n", encoding="utf-8")
-        for task, language, role, repetition in cells:
-            print(f"{task}/{language}/{role}/{repetition}", file=sys.stderr, flush=True)
-            run_case(args, task, language, role, repetition)
+        arms = {}
+        for arm in ("baseline", "candidate") if args.mode == "matched" else ("single",):
+            selected = argparse.Namespace(**vars(args))
+            if arm != "single":
+                selected.output = args.output / arm
+                selected.relay = getattr(args, arm + "_relay")
+                selected.endpoint = getattr(args, arm + "_endpoint")
+            validate_backend(parser, selected)
+            arms[arm] = selected
+        for selected in arms.values():
+            selected.output.mkdir(parents=True)
+            (selected.output / "matrix.json").write_text(json.dumps(cells) + "\n", encoding="utf-8")
+        schedule = (
+            paired_schedule(cells) if args.mode == "matched" else [("single", c) for c in cells]
+        )
+        schedule_id = str(uuid4())
+        (args.output / "schedule.json").write_text(json.dumps(schedule) + "\n", encoding="utf-8")
+        for index, (arm, cell) in enumerate(schedule, 1):
+            selected = arms[arm]
+            selected.case_metadata = {
+                "arm": arm,
+                "schedule_id": schedule_id,
+                "execution_order": index,
+                "editor_start_state": probe_state(selected),
+                "backend_identity": sha256(selected.relay.read_bytes()).hexdigest()
+                if selected.relay
+                else selected.endpoint,
+            }
+            print(f"{arm}/{cell}", file=sys.stderr, flush=True)
+            run_case(selected, *cell)
+        if args.mode == "matched":
+            args.baseline, args.candidate = arms["baseline"].output, arms["candidate"].output
+    if args.mode in {"matched", "compare"}:
+        report = compare_directories(args.baseline, args.candidate)
+        print(json.dumps(report, indent=2))
+        return int(
+            report["eligible_pairs"] != report["planned_pairs"] or not report["planned_pairs"]
+        )
     report = score_directory(args.output)
     print(json.dumps(report, indent=2))
     return int(bool(report["runner_failures"] or report["unrun_cases"]))

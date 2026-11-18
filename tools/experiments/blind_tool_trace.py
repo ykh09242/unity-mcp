@@ -18,16 +18,26 @@ from typing import IO, Any
 from urllib.parse import parse_qs, unquote, urlsplit
 from uuid import UUID
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tools.experiments.blind_tool_answers import (
+    GAME_VIEW,
+    GAME_VIEW_RESOURCE,
+    RAYCAST,
+    SIZE_ROUTES,
+    current_view,
+    final_answer,
+    observed_center_hit,
+)
+
 EDITOR_STATE = "mcpforunity://editor/state"
 PROJECT_INFO = "mcpforunity://project/info"
-GAME_VIEW = "manage_editor.get_game_view_size"
-GAME_VIEW_RESOURCE = "mcpforunity://editor/game-view-size"
-RAYCAST = "manage_ugui.diagnose_raycast"
 GRAPH = "manage_shader.inspect_graph"
 GRAPH_PREFIX = "mcpforunity://shader/graph/"
 GRAPH_RESOURCE = GRAPH_PREFIX + "{encoded_path}"
-SIZE_ROUTES = {GAME_VIEW, GAME_VIEW_RESOURCE}
-GRAPH_ROUTES = {GRAPH, GRAPH_RESOURCE}
+GRAPH_ROUTES = {GRAPH, GRAPH_RESOURCE, "inspect_shader_graph"}
+SAVED_FILE = "shell.read_saved_graph"
 ACTIVE_SCENE = {"scene_inspect.get_active", "manage_scene.get_active"}
 ROUTES = {
     "editor": {EDITOR_STATE, *ACTIVE_SCENE},
@@ -35,7 +45,8 @@ ROUTES = {
     "game-view": SIZE_ROUTES,
     "raycast": {*SIZE_ROUTES, RAYCAST},
     "graph": GRAPH_ROUTES,
-    "graph-saved": set(),
+    "graph-saved": GRAPH_ROUTES,
+    "graph-open": GRAPH_ROUTES,
 }
 DISCOVERY = {
     "initialize",
@@ -105,7 +116,7 @@ def thread_digest(value: Any) -> str:
     return sha256(key.bytes).hexdigest()
 
 
-def call_actor(params: dict[str, Any]) -> str:
+def actor_binding(params: dict[str, Any]) -> tuple[str, str]:
     """Use only the documented Codex-owned MCP request metadata fields."""
     meta = mapping(params.get("_meta"))
     direct = thread_digest(meta.get("threadId"))
@@ -113,8 +124,12 @@ def call_actor(params: dict[str, Any]) -> str:
     turn = json_object(raw) if isinstance(raw, str) else mapping(raw)
     nested = thread_digest(turn.get("thread_id"))
     if direct and nested and direct != nested:
-        return ""
-    return direct or nested
+        return "", "conflict"
+    return direct or nested, "bound" if direct or nested else "missing"
+
+
+def call_actor(params: dict[str, Any]) -> str:
+    return actor_binding(params)[0]
 
 
 def route_name(method: str, params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -208,6 +223,8 @@ def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
         observation_fields = {"render_size": size} if size else {}
         if preset:
             observation_fields["preset_reported"] = True
+        if label := string(selected.get("label")):
+            observation_fields["preset_label"] = label
         return observation_fields
     if route == RAYCAST:
         if data.get("kind") != "ugui_raycast_diagnostics":
@@ -226,6 +243,8 @@ def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
         first_hit = mapping(hits[0]) if isinstance(hits, list) and hits else {}
         return {
             "point": point,
+            "hits_total": hit_count if type(hit_count) is int else None,
+            "first_hit": string(first_hit.get("name")) or None,
             "status": status,
             "reason": string(data.get("reason")) or None,
             "ordered_hits": (
@@ -259,7 +278,12 @@ def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
             if isinstance(nodes, list)
             else set()
         )
-        return {"nodes": count, "edges": edges, "node_types": sorted(types - {""})}
+        return {
+            "nodes": count,
+            "edges": edges,
+            "node_types": sorted(types - {""}),
+            "data_state": "saved",
+        }
     if route == EDITOR_STATE:
         editor = mapping(data.get("editor"))
         play = mapping(editor.get("play_mode")).get("is_playing")
@@ -271,14 +295,28 @@ def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
             "playing": play,
             "compiling": compile_state,
             "active_scene": bool(string(scene.get("name")) or string(scene.get("path"))),
+            "scene_name": string(scene.get("name")) or None,
             "fresh": mapping(data.get("staleness")).get("is_stale") is False,
         }
     if route in ACTIVE_SCENE:
         scene = mapping(data.get("scene")) or data
-        return {"active_scene": True} if string(scene.get("name") or scene.get("path")) else {}
+        return (
+            {"active_scene": True, "scene_name": string(scene.get("name")) or None}
+            if string(scene.get("name") or scene.get("path"))
+            else {}
+        )
     if route == PROJECT_INFO:
         fields = ("projectRoot", "unityVersion", "renderPipeline")
-        return {"project_fields": True} if all(string(data.get(key)) for key in fields) else {}
+        return (
+            {
+                "project_fields": True,
+                "project_root": data["projectRoot"],
+                "unity_version": data["unityVersion"],
+                "render_pipeline": data["renderPipeline"],
+            }
+            if all(string(data.get(key)) for key in fields)
+            else {}
+        )
     return {}
 
 
@@ -333,13 +371,15 @@ def relay_stdio(relay: list[str], audit_dir: Path, graph_asset: str, *, endpoint
                         label = route if channel != "blocked" else "unapproved_route"
                         sequence += 1
                         with lock:
+                            actor, binding = actor_binding(params)
                             record(
                                 event="request",
                                 sequence=sequence,
                                 route=label,
                                 channel=channel,
                                 page=page_number(route, args),
-                                actor=call_actor(params),
+                                actor=actor,
+                                actor_binding=binding,
                             )
                             if channel == "blocked":
                                 response = {
@@ -396,13 +436,17 @@ class Call:
     evidence: dict[str, Any] = field(default_factory=dict)
     page: int = 1
     actor: str = ""
+    actor_binding: str = ""
+    timeline: str = ""
+    request_at: int = 0
+    response_at: int = 0
 
 
 def wire_trace(path: Path) -> list[Call]:
     """Join request and response records by connection-local sequence number."""
     calls: dict[int, Call] = {}
     with path.open(encoding="utf-8") as stream:
-        for row in load_lines(stream):
+        for ordinal, row in enumerate(load_lines(stream), 1):
             number = row.get("sequence")
             if type(number) is not int:
                 continue
@@ -415,11 +459,15 @@ def wire_trace(path: Path) -> list[Call]:
                         number,
                         page=page if type(page) is int else 1,
                         actor=string(row.get("actor")),
+                        actor_binding=string(row.get("actor_binding")),
+                        timeline=path.name,
+                        request_at=ordinal,
                     )
                 case "response" if number in calls:
                     call = calls[number]
                     call.status = string(row.get("outcome"))
                     call.evidence = mapping(row.get("observation"))
+                    call.response_at = ordinal
                 case _:
                     continue
     return list(calls.values())
@@ -465,18 +513,23 @@ def saved_read_grade(command: str, output: str, asset: str) -> str:
         any(character in asset for character in "*?[]{}") and not literal_path
     ):
         return "review"
+    return "observed" if saved_graph_facts(output) else "review"
+
+
+def saved_graph_facts(output: str) -> dict[str, Any]:
+    """Use types of objects referenced by the root graph's actual node list."""
     decoder = json.JSONDecoder()
     try:
         content = output.lstrip("\ufeff \t\r\n")
         root, boundary = decoder.raw_decode(content)
     except ValueError:
-        return "review"
+        return {}
     nodes, edges = mapping(root).get("m_Nodes"), mapping(root).get("m_Edges")
     if not isinstance(nodes, list) or not isinstance(edges, list):
-        return "review"
+        return {}
     node_ids = {string(mapping(node).get("m_Id")) for node in nodes} - {""}
     node_types: set[str] = set()
-    while len(node_types) < 2:
+    while True:
         content = content[boundary:].lstrip()
         if not content:
             break
@@ -488,7 +541,16 @@ def saved_read_grade(command: str, output: str, asset: str) -> str:
         kind = string(node.get("m_Type"))
         if kind and string(node.get("m_ObjectId")) in node_ids:
             node_types.add(kind)
-    return "observed" if len(node_types) >= 2 else "review"
+    return (
+        {
+            "nodes": len(nodes),
+            "edges": len(edges),
+            "node_types": sorted(node_types),
+            "data_state": "saved",
+        }
+        if len(node_types) >= 2
+        else {}
+    )
 
 
 def has_saved_read(command: str, output: str, asset: str) -> bool:
@@ -502,10 +564,12 @@ class ClientTrace:
     shell_calls: int = 0
     saved_reads: int = 0
     saved_reads_to_review: int = 0
+    saved_observations: list[dict] = field(default_factory=list)
     child_actors: set[str] = field(default_factory=set)
     parent_actor: str = ""
     waits: int = 0
     completed: bool = False
+    final_message: str = ""
 
 
 def client_trace(path: Path, asset: str, *, endpoint: bool) -> ClientTrace:
@@ -517,6 +581,8 @@ def client_trace(path: Path, asset: str, *, endpoint: bool) -> ClientTrace:
         for event in load_lines(stream):
             item = mapping(event.get("item"))
             item_id = string(item.get("id"))
+            if event.get("type") in {"item.started", "turn.started"}:
+                trace.final_message = ""
             match event.get("type"), item.get("type"):
                 case "thread.started", _:
                     trace.parent_actor = thread_digest(event.get("thread_id"))
@@ -547,15 +613,30 @@ def client_trace(path: Path, asset: str, *, endpoint: bool) -> ClientTrace:
                             result = mapping(item.get("result"))
                             if result and call.status == "completed":
                                 call.status, data = unpack({"result": result})
+                                call.evidence = observation(route, data)
                                 if route == RAYCAST and data.get("status") == "failed":
                                     call.status = "error"
-                case "item.completed", "command_execution":
+                case "item.started" | "item.completed", "command_execution":
+                    # Reserve the start position even when a later command completes first.
+                    command = string(item.get("command"))
+                    exact_path = bool(
+                        asset and asset.casefold() in command.casefold().replace("\\", "/")
+                    )
+                    call = trace.calls.setdefault(
+                        item_id, Call("shell.command", "shell", len(trace.calls) + 1)
+                    )
+                    if event.get("type") != "item.completed":
+                        continue
                     trace.shell_calls += 1
+                    call.status = "returned" if item.get("exit_code") == 0 else "error"
                     output = string(item.get("aggregated_output"))
                     if item.get("exit_code") == 0:
-                        grade = saved_read_grade(string(item.get("command")), output, asset)
+                        grade = saved_read_grade(command, output, asset) if exact_path else "none"
                         trace.saved_reads += int(grade == "observed")
                         trace.saved_reads_to_review += int(grade == "review")
+                        if grade == "observed":
+                            call.route = SAVED_FILE
+                            trace.saved_observations.append(saved_graph_facts(output))
                     elif APPROVAL.search(output):
                         trace.approval_blocks += 1
                 case (
@@ -573,6 +654,9 @@ def client_trace(path: Path, asset: str, *, endpoint: bool) -> ClientTrace:
                         trace.waits += 1
                 case "turn.completed", _:
                     trace.completed = True
+                case "item.completed", "agent_message":
+                    if item.get("phase") in {None, "final_answer"}:
+                        trace.final_message = string(item.get("text"))
                 case _:
                     continue
     return trace
@@ -590,6 +674,9 @@ def role_status(role: str, trace: ClientTrace, connections: list[list[Call]]) ->
         if call.actor and call.channel != "discovery"
     }
     host_business = any(call.channel != "discovery" for call in trace.calls.values())
+    reads = [call for calls in observing for call in calls if call.channel != "discovery"]
+    if any(call.actor_binding == "conflict" for call in reads):
+        return "mixed", "conflicting-request-actor-metadata"
     if role == "main":
         if (
             trace.child_actors
@@ -600,12 +687,12 @@ def role_status(role: str, trace: ClientTrace, connections: list[list[Call]]) ->
         return "confirmed", "host-main"
     if host_business or trace.shell_calls or trace.parent_actor in actors:
         return "mixed", "parent-business-activity"
-    if (
-        len(trace.child_actors) == 1
-        and len(observing) <= 1
-        and (not actors or actors == trace.child_actors)
-    ):
-        return "confirmed", "native-spawn-receipt"
+    if len(trace.child_actors) == 1 and len(observing) == 1:
+        if actors - trace.child_actors:
+            return "mixed", "unrelated-request-actor"
+        if all(call.actor in trace.child_actors for call in reads):
+            return "confirmed", "native-spawn-and-linked-requests"
+        return "inferred", "spawn-with-unbound-business-requests"
     if trace.waits and len(observing) == 1 and len(connections) == 2:
         if len(actors) == 1 and trace.parent_actor and trace.parent_actor not in actors:
             return "inferred", "distinct-mcp-actor-and-native-wait"
@@ -619,7 +706,9 @@ def evidence_grade(task: str, calls: list[Call]) -> str:
     evidence = [call for call in calls if call.evidence and call.status == "returned"]
     if not evidence:
         return "none"
-    if task == "graph":
+    if task == "graph-open":
+        return "partial"
+    if task in {"graph", "graph-saved"}:
         totals: dict[tuple[int, int], set[str]] = {}
         for call in evidence:
             entry = call.evidence
@@ -629,30 +718,23 @@ def evidence_grade(task: str, calls: list[Call]) -> str:
             "complete" if len(totals) == 1 and len(next(iter(totals.values()))) >= 2 else "partial"
         )
     if task == "editor":
-        if any(call.route == EDITOR_STATE and call.evidence["fresh"] for call in evidence) and any(
-            call.evidence.get("active_scene")
-            and (call.route in ACTIVE_SCENE or call.evidence.get("fresh"))
-            for call in evidence
-        ):
+        fresh = scene = False
+        for call in calls:
+            if call.status != "returned":
+                continue
+            if call.route == EDITOR_STATE:
+                fresh = bool(call.evidence.get("fresh"))
+                scene = fresh and bool(call.evidence.get("active_scene"))
+            elif call.route in ACTIVE_SCENE:
+                scene = bool(call.evidence.get("active_scene"))
+        return "complete" if fresh and scene else "partial"
+    if task in {"raycast", "game-view"}:
+        size, ray = current_view(
+            [{"route": c.route, **c.evidence} for c in calls if c.status == "returned"]
+        )
+        if size.get("render_size") and (task == "game-view" or observed_center_hit(ray)):
             return "complete"
         return "partial"
-    if task == "raycast":
-        sizes = [
-            call.evidence["render_size"] for call in evidence if "render_size" in call.evidence
-        ]
-        hits = [call.evidence for call in evidence if call.route == RAYCAST]
-        if sizes and any(
-            result.get("policy_safe")
-            and result.get("ordered_hits")
-            and result.get("status") == "observed"
-            and result.get("native_query_attempted")
-            and result.get("point") == [sizes[-1][0] / 2, sizes[-1][1] / 2]
-            for result in hits
-        ):
-            return "complete"
-        return "partial"
-    if task == "game-view":
-        return "complete" if any("render_size" in call.evidence for call in evidence) else "partial"
     return "complete"
 
 
@@ -674,6 +756,39 @@ def repeat_counts(calls: list[Call]) -> tuple[int, int]:
             retries += int(prior[key] in {"error", "failed", "approval_blocked"})
         prior[key] = call.status
     return repeated, retries
+
+
+def timing_metrics(task: str, calls: list[Call]) -> tuple[int | None, int | None]:
+    """Only earlier responses on a common timeline can justify a later attempt."""
+    if (
+        any(not c.request_at or not c.timeline for c in calls)
+        or len({c.timeline for c in calls}) > 1
+    ):
+        return None, None
+    seen = set()
+    count = early_rays = 0
+    for call in calls:
+        family = (
+            GAME_VIEW
+            if call.route in SIZE_ROUTES
+            else GRAPH
+            if call.route in GRAPH_ROUTES
+            else call.route
+        )
+        key = (family, call.page)
+        prior = sorted(
+            (c for c in calls if 0 < c.response_at < call.request_at), key=lambda c: c.response_at
+        )
+        if key in seen:
+            complete = any(c.route == SAVED_FILE and c.status == "returned" for c in prior)
+            count += int(complete or evidence_grade(task, prior) == "complete")
+        if call.route == RAYCAST:
+            size, _ = current_view(
+                [{"route": c.route, **c.evidence} for c in prior if c.status == "returned"]
+            )
+            early_rays += int(not size.get("render_size"))
+        seen.add(key)
+    return count, early_rays
 
 
 def merge_business_calls(host: list[Call], wire: list[Call]) -> list[Call]:
@@ -719,8 +834,14 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     wire = [call for calls in connections for call in calls]
     unity = [call for call in wire if call.channel == "unity"]
     relevant = [call for call in unity if call.route in routes]
+    # Wire response order is established only within a connection.
+    relevant = sorted(relevant, key=lambda c: (c.timeline, c.response_at))
     grade = evidence_grade(task, relevant)
     role, attribution = role_status(string(row["role"]), host, connections)
+    attributed = grade if role == "confirmed" or grade == "none" else "unattributed"
+    task_evidence = attributed
+    if task == "graph-saved" and host.saved_reads:
+        task_evidence = "complete" if role == "confirmed" else "unattributed"
     discovery_sources = [call for call in wire if call.channel == "discovery"]
     # Start order comes from the client when present, including pre-wire approvals. For
     # an isolated child, the single wire connection is the only source of call order.
@@ -729,13 +850,43 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         host_business, [call for call in wire if call.channel != "discovery"]
     )
     first = business[0] if business else None
-    first_suitable = next(
-        (call for call in business if call.channel == "unity" and call.route in routes), None
-    )
-    sequence = [call for call in business if call.channel == "unity" and call.route in routes]
+    # The registered graph readers cannot inspect an unsaved window. Their responses
+    # can document that limitation but are not a suitable business read of its contents.
+    sequence = [
+        call
+        for call in business
+        if (task != "graph-open" and call.channel == "unity" and call.route in routes)
+        or (task == "graph-saved" and call.route == SAVED_FILE)
+    ]
+    first_suitable = next(iter(sequence), None)
     repeated, retries = repeat_counts(sequence)
+    live_observations = []
+    for call in relevant:
+        if call.status != "returned":
+            continue
+        detail = dict(call.evidence)
+        # Older relay summaries omit some values. Only recover them when one
+        # successful host result and one wire response identify the same call.
+        matches = [
+            c
+            for c in host_business
+            if c.route == call.route
+            and c.page == call.page
+            and c.status == "returned"
+            and c.evidence
+        ]
+        if (
+            len(matches) == 1
+            and sum((c.route, c.page) == (call.route, call.page) for c in relevant) == 1
+            and all(matches[0].evidence.get(k) == v for k, v in detail.items())
+        ):
+            detail.update(matches[0].evidence)
+        if detail or call.route in SIZE_ROUTES or call.route == RAYCAST:
+            live_observations.append({"route": call.route, **detail})
+    redundant, early_rays = timing_metrics(task, sequence)
     return {
         **row,
+        "answer_protocol": string(row.get("answer_protocol")) or "v1",
         "role_status": role,
         "role_attribution": attribution,
         "turn_completed": host.completed,
@@ -746,11 +897,14 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         "suitable_attempts": len(sequence),
         "repeat_suitable_calls": repeated,
         "retry_suitable_calls": retries,
+        "repeats_after_complete_evidence": redundant,
+        "raycast_before_size": early_rays if task == "raycast" else None,
         "discovery_calls": len(discovery_sources),
         "discovery_successes": sum(call.status == "returned" for call in discovery_sources),
         "unity_call_errors": sum(call.status == "error" for call in unity),
         "observation_guard_blocks": sum(call.channel == "blocked" for call in wire),
         "approval_blocks": host.approval_blocks,
+        "approval_visibility": "parent-host-events" if row["role"] == "subagent" else "host-events",
         "shell_calls_visible_to_host": host.shell_calls,
         "saved_graph_file_reads_visible_to_host": host.saved_reads,
         "saved_graph_evidence": (
@@ -762,15 +916,22 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             if host.saved_reads_to_review
             else "none"
         ),
-        "live_evidence": grade
-        if role == "confirmed"
-        else "unattributed"
-        if grade != "none"
-        else "none",
+        "live_evidence": attributed,
         "wire_evidence": grade,
-        "live_observations": [
-            {"route": call.route, **call.evidence} for call in relevant if call.evidence
-        ],
+        "task_evidence": task_evidence,
+        "live_observations": live_observations,
+        "graph_data_state": "saved"
+        if task.startswith("graph") and (live_observations or host.saved_reads)
+        else None,
+        "unsaved_graph_observed": False if task.startswith("graph") else None,
+        "final_answer": final_answer(
+            case_dir,
+            task,
+            live_observations,
+            host.saved_observations,
+            host.final_message if host.completed else "",
+            protocol=string(row.get("answer_protocol")) or "v1",
+        ),
     }
 
 
