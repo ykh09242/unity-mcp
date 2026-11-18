@@ -29,6 +29,10 @@ class UnityConnectionError(Exception):
     pass
 
 
+class UnityCommandTimeoutError(UnityConnectionError):
+    """Raised when a Unity command HTTP request times out."""
+
+
 class UnityCommandError(Exception):
     """A completed Unity command failed, retaining its diagnostic payload."""
 
@@ -364,11 +368,11 @@ async def send_command(
             f"Make sure the server is running and Unity is connected.\n"
             f"Error: {e}"
         )
-    except httpx.TimeoutException:
-        raise UnityConnectionError(
+    except httpx.TimeoutException as error:
+        raise UnityCommandTimeoutError(
             f"Connection to Unity timed out after {timeout or cfg.timeout}s. "
             f"Unity may be busy or unresponsive."
-        )
+        ) from error
     except httpx.HTTPStatusError as e:
         _raise_known_no_editor(e.response)
         if guarded:

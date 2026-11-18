@@ -2,6 +2,7 @@ import importlib
 import json
 from unittest.mock import Mock
 
+import httpx
 from click.testing import CliRunner
 import pytest
 
@@ -79,6 +80,47 @@ def test_cli_wait_stops_without_polling_after_deadline(editor_module, monkeypatc
     assert payload["data"]["status"] == "running"
     assert sleeps == [1]
     send.assert_called_once()
+
+
+@pytest.mark.parametrize("prior_observation", [False, True])
+@pytest.mark.parametrize("at_deadline", [False, True])
+def test_http_read_timeout_uses_cli_deadline(
+    editor_module, monkeypatch, prior_observation, at_deadline
+):
+    from cli.utils import connection
+
+    now = [0.0]
+    requests = []
+    last_data = {"status": "running", "progress": {"completed": 2, "total": 3}}
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        if prior_observation and len(requests) == 1:
+            return httpx.Response(200, json={"success": True, "data": last_data})
+        now[0] = 3.0 if at_deadline else 2.5
+        raise httpx.ReadTimeout("Synthetic timeout", request=request)
+
+    monkeypatch.setattr(
+        editor_module,
+        "time",
+        Mock(monotonic=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay)),
+    )
+    monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
+    monkeypatch.setattr(
+        connection,
+        "_http_client",
+        lambda config: httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    result = CliRunner().invoke(editor_module.editor, ["poll-test", "job-1", "--wait", "3"])
+
+    assert result.exit_code == (124 if at_deadline else 1), result.output
+    payload = json.loads(result.stdout)
+    assert payload["code"] == ("test_wait_timeout" if at_deadline else "test_job_transport_error")
+    assert payload["data"]["job_id"] == "job-1"
+    if at_deadline and prior_observation:
+        assert payload["data"] == {"job_id": "job-1", **last_data}
+    assert result.stderr == ""
+    assert [request["type"] for request in requests] == ["get_test_job"] * (1 + prior_observation)
 
 
 @pytest.mark.parametrize("initial_selector", [None, "Fixture"])

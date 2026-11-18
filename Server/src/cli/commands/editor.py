@@ -20,6 +20,7 @@ from cli.utils.connection import (
     handle_unity_errors,
     UnityConnectionError,
     UnityCommandError,
+    UnityCommandTimeoutError,
     PUBLIC_CONNECTION_ERROR,
 )
 from cli.utils.suggestions import suggest_matches, format_suggestions
@@ -691,46 +692,54 @@ def _poll_test_job(
     if cursor is not None:
         params["cursor"] = cursor
 
-    deadline = time.monotonic() + max(wait, 0)
     exit_code = 0
-    if wait > 0:
-        result = _run_test_job_command(
-            "get_test_job", params, config, timeout=min(config.timeout, wait)
-        )
-    else:
+    if wait <= 0:
         result = _run_test_job_command("get_test_job", params, config)
-    while wait > 0 and result.get("success"):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
+    else:
+        deadline = time.monotonic() + wait
+        last_data = {"job_id": job_id}
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                result = _run_test_job_command(
+                    "get_test_job", params, config, timeout=min(config.timeout, remaining)
+                )
+            except UnityCommandError as error:
+                if (
+                    not isinstance(error.__cause__, UnityCommandTimeoutError)
+                    or time.monotonic() < deadline
+                ):
+                    raise
+                continue
+            if not result.get("success"):
+                break
+            data = result.get("data")
+            if isinstance(data, dict):
+                last_data = {**data, "job_id": job_id}
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                continue
+            status = data.get("status") if isinstance(data, dict) else None
+            if not isinstance(status, str) or not status.strip():
+                result = {
+                    "success": False,
+                    "code": "invalid_test_job_response",
+                    "error": "Test job observation did not include a status.",
+                    "data": data,
+                }
+                break
+            if status in ("succeeded", "failed", "cancelled"):
+                exit_code = 0 if status == "succeeded" else 1
+                break
+            time.sleep(min(2.0, remaining))
+        else:
             result = {
                 "success": False,
                 "code": "test_wait_timeout",
                 "error": "Timeout waiting for test job",
-                "data": result.get("data"),
+                "data": last_data,
                 "hint": "Only the CLI wait expired; the Unity job was not cancelled. Poll its status before deciding what to do next.",
             }
             exit_code = 124
-            break
-        data = result.get("data")
-        status = data.get("status") if isinstance(data, dict) else None
-        if not isinstance(status, str) or not status.strip():
-            result = {
-                "success": False,
-                "code": "invalid_test_job_response",
-                "error": "Test job observation did not include a status.",
-                "data": data,
-            }
-            break
-        if status in ("succeeded", "failed", "cancelled"):
-            exit_code = 0 if status == "succeeded" else 1
-            break
-        time.sleep(min(2.0, remaining))
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            continue
-        result = _run_test_job_command(
-            "get_test_job", params, config, timeout=min(config.timeout, remaining)
-        )
     if not result.get("success") and exit_code == 0:
         exit_code = 1
     click.echo(format_output(result, config.format))
