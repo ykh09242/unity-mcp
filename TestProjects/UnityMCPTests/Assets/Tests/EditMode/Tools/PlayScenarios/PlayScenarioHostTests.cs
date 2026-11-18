@@ -681,6 +681,25 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             };
 
         [Test]
+        public void PreflightObservesBoundDefaultCountWithoutChangingAuthoredStep()
+        {
+            CreateTarget();
+            var definition = PreflightDefinition(ObjectStep());
+            definition.Steps[1].Count = 1;
+            definition.Parameters = new JObject
+            {
+                ["expected"] = new JObject { ["type"] = "integer", ["default"] = 2 },
+            };
+            definition.ParameterBindings = new JArray(new JObject { ["path"] = "/steps/1/count", ["parameter"] = "expected" });
+
+            JObject data = (JObject)UnityPlayScenarioHost.Preflight(definition)["data"];
+            Assert.That(data["valid"].Value<bool>(), Is.True);
+            Assert.That((string)data["checks"][1]["status"], Is.EqualTo("deferred"));
+            Assert.That((string)data["checks"][1]["detail"], Does.Contain("Exact path matches: 1; expected: 2"));
+            Assert.That(definition.Steps[1].Count, Is.EqualTo(1));
+        }
+
+        [Test]
         public void PreflightInspectsCurrentCapabilitiesWithoutChangingEditorState()
         {
             var probe = CreateTarget().AddComponent<PlayScenarioConditionProbe>();

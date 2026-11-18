@@ -38,8 +38,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 if (definition == null)
                     throw new ArgumentException("A scenario definition is required.");
-                // Validate a value copy without changing the editor's authored definition.
-                definition = PlayScenarioDefinition.Parse(JObject.FromObject(definition));
+                definition = PlayScenarioParameters.Materialize(definition);
             }
             catch (Exception exception)
             {
