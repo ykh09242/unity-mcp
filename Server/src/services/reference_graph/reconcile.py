@@ -20,7 +20,7 @@ import time
 import threading
 import uuid
 
-from services.reference_graph import analysis_cache
+from services.reference_graph import analysis_cache, serialized_documents
 from services.reference_graph.analysis import (
     ANALYSIS_VERSION,
     Analysis,
@@ -30,7 +30,7 @@ from services.reference_graph.analysis import (
     Facts,
     SerializedScanError,
     parse_csharp,
-    serialized_references,
+    iter_serialized_references,
 )
 from services.reference_graph.compilation import ConditionalScanError
 from services.reference_graph.collection_protocol import (
@@ -1188,6 +1188,18 @@ class Reconciler:
                         check=self._check_thread,
                         _cancel_event=self.stopped,
                     )
+                    if format_ == serialized_documents.FORMAT:
+                        await drained_thread(
+                            serialized_documents.save,
+                            self.workspace,
+                            self.worker,
+                            "asset:" + asset["guid"],
+                            fingerprint,
+                            payload,
+                            self._check_thread,
+                            _cancel_event=self.stopped,
+                        )
+                        return
                 except (SerializedScanError, ConditionalScanError, SourceEncodingError) as error:
                     reason = (
                         "serialized_scan_incomplete"
@@ -1241,19 +1253,9 @@ class Reconciler:
                 asdict(facts),
                 _hash([fingerprint, facts.build, (context or {}).get("defines")]),
             )
-        result = serialized_references(text, Catalog([]), check=check)
-        edges = []
-        for edge in result.edges:
-            check()
-            edges.append(asdict(edge))
-        check()
         return (
-            "summary",
-            {
-                "edges": edges,
-                "coverage": result.coverage,
-                "unresolved": result.unresolved,
-            },
+            serialized_documents.FORMAT,
+            iter_serialized_references(text, check=check),
             fingerprint,
         )
 
@@ -1307,16 +1309,18 @@ class Reconciler:
             selected = [owner for owner in owners if owner not in candidate.blocked]
             if not selected:
                 continue
-            documents = await drained_thread(self.workspace.documents, selected)
-            await drained_thread(
-                self._analyze_batch,
-                documents,
-                candidate.index,
-                candidate.rules_revision,
-                candidate.catalog_revision,
-                document_generation=candidate.document_generation,
-                _cancel_event=self.stopped,
-            )
+            for group in await drained_thread(self.workspace.document_groups, selected):
+                documents = await drained_thread(self.workspace.documents, group)
+                await drained_thread(
+                    self._analyze_batch,
+                    documents,
+                    candidate.index,
+                    candidate.rules_revision,
+                    candidate.catalog_revision,
+                    document_generation=candidate.document_generation,
+                    _cancel_event=self.stopped,
+                )
+                del documents
         await drained_thread(
             self.workspace.finish_analysis,
             self.worker,
@@ -1393,21 +1397,43 @@ class Reconciler:
                     dependencies=index.direct_dependencies(row["owner"]),
                     catalog_lookups=lookups,
                 )
-            else:
-                result = Analysis(
-                    [Edge(**edge) for edge in row["data"]["edges"]],
-                    row["data"]["unresolved"],
+            elif row["format"] == "legacy_summary_stream" or (
+                row["format"] == serialized_documents.FORMAT and "references" not in row["data"]
+            ):
+                read = (
+                    serialized_documents.events
+                    if row["format"] == serialized_documents.FORMAT
+                    else serialized_documents.legacy_events
+                )
+                self.workspace.publish_events(
+                    self.worker,
+                    row["owner"],
+                    generation,
+                    self._serialized_lookups(
+                        read(self.workspace, row["owner"], document_generation, self._check_thread),
+                        lookups,
+                    ),
                     coverage=row["data"]["coverage"],
                     catalog_lookups=lookups,
+                    catalog_revision=catalog_revision,
+                    document_generation=document_generation,
+                    check=self._check_thread,
+                    batch_rows=1024,
                 )
-                # A serialized GUID is lexical, but an excluded target is
-                # suppressed at publication and can later become admitted.
-                for edge in result.edges:
-                    lookups.add(
-                        lookups.key("guid", edge.target[6:])
-                        if edge.target.startswith("asset:")
-                        else lookups.ANY
-                    )
+                continue
+            else:
+                data = row["data"]
+                edges = (
+                    (reference.edge() for reference in data["references"])
+                    if row["format"] == serialized_documents.FORMAT
+                    else (Edge(**edge) for edge in data["edges"])
+                )
+                result = Analysis(
+                    list(self._serialized_lookups(edges, lookups)),
+                    data.get("unresolved", []),
+                    coverage=data["coverage"],
+                    catalog_lookups=lookups,
+                )
             publications.append((row["owner"], "code", generation, result))
         self._check_thread()
         if not all(
@@ -1419,6 +1445,23 @@ class Reconciler:
             )
         ):
             raise RevisionConflict("Analysis inputs changed before publication")
+
+    @staticmethod
+    def _serialized_lookups(events, lookups):
+        previous_target = None
+        for event in events:
+            if (
+                isinstance(event, Edge)
+                and event.target != previous_target
+                and lookups.ANY not in lookups.dependencies
+            ):
+                lookups.add(
+                    lookups.key("guid", event.target[6:])
+                    if event.target.startswith("asset:")
+                    else lookups.ANY
+                )
+                previous_target = event.target
+            yield event
 
     async def _external(self, *, force: bool, external_mode: str = "full") -> None:
         self.progress["external_errors"] = {}

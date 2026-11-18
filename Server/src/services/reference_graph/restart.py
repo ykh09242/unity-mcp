@@ -6,6 +6,7 @@ import re
 import sqlite3
 
 from services.reference_graph.analysis import ANALYSIS_VERSION
+from services.reference_graph import serialized_documents
 from services.reference_graph.collection_protocol import CollectionBudget
 from services.reference_graph.response_budget import GraphResponseTooLarge, PageBudget, bounded_rows
 from services.reference_graph.storage_budget import SIDECARS, _regular
@@ -253,7 +254,7 @@ def reuse_assets(
                    json_extract(a.payload,'$.source_format') AS format,
                    (json_extract(a.payload,'$.source_format')='none' OR (
                 (SELECT value FROM prior.graph_state WHERE key='analysis_version')=?
-                AND ((json_extract(a.payload,'$.source_format')='unity_yaml' AND d.format='summary') OR
+                AND ((json_extract(a.payload,'$.source_format')='unity_yaml' AND d.format IN ('summary',?)) OR
                      (json_extract(a.payload,'$.source_format')='csharp' AND d.format='csharp'
                       AND d.compilation_signature=json_extract(p.value,'$.binding'))))) AS source_ready
             FROM json_each(?) p
@@ -275,7 +276,7 @@ def reuse_assets(
                 AND NOT EXISTS (SELECT 1 FROM main.graph_asset_paths t WHERE t.guid=substr(e.target,7)))
               AND json_extract(a.payload,'$.source_format')=json_extract(old.payload,'$.source_format')
               """,
-            (_json(ANALYSIS_VERSION), _json(proofs)),
+            (_json(ANALYSIS_VERSION), serialized_documents.FORMAT, _json(proofs)),
         )
         reused = {
             row["guid"]: None

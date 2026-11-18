@@ -2941,13 +2941,14 @@ async def test_yaml_stop_interrupts_work_and_releases_lease(setup, monkeypatch, 
 
         monkeypatch.setattr(analysis.yaml, "scan", watched_scan)
     else:
-        convert = reconcile.asdict
+        references = reconcile.iter_serialized_references
 
-        def watched_summary(edge):
-            stop_after_three()
-            return convert(edge)
+        def watched_summary(*args, **kwargs):
+            for reference in references(*args, **kwargs):
+                stop_after_three()
+                yield reference
 
-        monkeypatch.setattr(reconcile, "asdict", watched_summary)
+        monkeypatch.setattr(reconcile, "iter_serialized_references", watched_summary)
 
     with pytest.raises(RuntimeError, match="reconciliation stopped"):
         await engine.reconcile()

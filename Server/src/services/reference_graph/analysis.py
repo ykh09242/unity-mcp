@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, replace
 from heapq import merge
 import re
 import threading
+from typing import NamedTuple
 
 import yaml
 from yaml.tokens import (
@@ -2131,10 +2132,36 @@ class SerializedScanError(ValueError):
     """Serialized source cannot be safely scanned."""
 
 
-def serialized_references(
-    source: str, catalog: Catalog, *, check: Callable[[], None] = lambda: None
-) -> Analysis:
-    result = Analysis(coverage="lexical_serialized_guid_fields_untyped")
+SERIALIZED_COVERAGE = "lexical_serialized_guid_fields_untyped"
+
+
+class SerializedReference(NamedTuple):
+    guid: str
+    line: int
+    file_id: str | None
+    subobject: str = ""
+    subobject_guid: str = ""
+
+    def edge(self) -> Edge:
+        object_reference = self.file_id is not None
+        field = "guid" if object_reference else "m_AssetGUID"
+        return Edge(
+            "asset:" + self.guid,
+            "serialized_object_reference" if object_reference else "serialized_guid_field",
+            self.guid,
+            self.line,
+            "possible",
+            field + "; type_unverified",
+            source_pointer=field,
+            target_file_id=self.file_id or "",
+            subobject=self.subobject,
+            subobject_guid=self.subobject_guid,
+        )
+
+
+def iter_serialized_references(
+    source: str, *, check: Callable[[], None] = lambda: None
+) -> Iterator[SerializedReference]:
     window = deque(maxlen=4)
     mappings = []
     selected = {"guid", "fileID", "m_AssetGUID", "m_SubObjectName", "m_SubObjectGUID"}
@@ -2151,25 +2178,14 @@ def serialized_references(
                 continue
             guid = value[0].lower()
             sub_guid = fields.get("m_SubObjectGUID", ("", 0))[0]
-            result.edges.append(
-                Edge(
-                    "asset:" + guid,
-                    "serialized_guid_field"
-                    if field_name == "m_AssetGUID"
-                    else "serialized_object_reference",
-                    guid,
-                    value[1],
-                    "possible",
-                    field_name + "; type_unverified",
-                    source_pointer=field_name,
-                    target_file_id=file_id if field_name == "guid" else "",
-                    subobject=fields.get("m_SubObjectName", ("", 0))[0]
-                    if field_name == "m_AssetGUID"
-                    else "",
-                    subobject_guid=sub_guid.lower()
-                    if field_name == "m_AssetGUID" and _GUID.fullmatch(sub_guid)
-                    else "",
-                )
+            yield SerializedReference(
+                guid,
+                value[1],
+                file_id if field_name == "guid" else None,
+                fields.get("m_SubObjectName", ("", 0))[0] if field_name == "m_AssetGUID" else "",
+                sub_guid.lower()
+                if field_name == "m_AssetGUID" and _GUID.fullmatch(sub_guid)
+                else "",
             )
 
     # Unity adds an unquoted marker to stripped object document headers.
@@ -2190,7 +2206,7 @@ def serialized_references(
                 mappings.append(None)
             elif isinstance(token, (BlockEndToken, FlowMappingEndToken, FlowSequenceEndToken)):
                 if mappings:
-                    finish(mappings.pop())
+                    yield from finish(mappings.pop())
             window.append(token)
             if len(window) != 4:
                 continue
@@ -2211,4 +2227,12 @@ def serialized_references(
             fields[field_name.value] = (value.value, field_name.start_mark.line + 1)
     except yaml.YAMLError as error:
         raise SerializedScanError("Serialized YAML could not be scanned") from error
-    return result
+
+
+def serialized_references(
+    source: str, catalog: Catalog, *, check: Callable[[], None] = lambda: None
+) -> Analysis:
+    return Analysis(
+        edges=[ref.edge() for ref in iter_serialized_references(source, check=check)],
+        coverage=SERIALIZED_COVERAGE,
+    )

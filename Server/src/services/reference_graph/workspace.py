@@ -12,6 +12,7 @@ import time
 import threading
 
 from services.reference_graph.analysis import Analysis, Catalog, CatalogLookups
+from services.reference_graph import serialized_documents
 from services.reference_graph import catalog_delta, document_delta, external_changes, reclamation
 from services.reference_graph.external import _excluded, _pattern
 from services.reference_graph.ignore import GitIgnoreRules
@@ -1307,15 +1308,10 @@ class GraphWorkspace:
     ) -> bool:
         with self._write(worker) as connection:
             encoded = _json(payload)
-            old = connection.execute(
-                "SELECT fingerprint,format,payload FROM graph_documents WHERE owner=?", (owner,)
-            ).fetchone()
-            if (
-                old is not None
-                and old[0] == fingerprint
-                and old[1] == format_
-                and old[2] == encoded
-            ):
+            if connection.execute(
+                "SELECT 1 FROM graph_documents WHERE owner=? AND fingerprint=? AND format=? AND payload=?",
+                (owner, fingerprint, format_, encoded),
+            ).fetchone():
                 return False
             self._invalidate(connection, [owner])
             connection.execute(
@@ -1342,6 +1338,23 @@ class GraphWorkspace:
                 )
             }
 
+    def document_groups(self, owners: Iterable[str]) -> list[list[str]]:
+        """Bound the pending payloads loaded together, admitting one large C# owner alone."""
+        groups = []
+        size = 0
+        with self.store._connect() as db:
+            for owner, cost in db.execute(
+                "SELECT owner,length(cast(payload AS BLOB)) FROM graph_documents "
+                "WHERE owner IN (SELECT value FROM json_each(?)) ORDER BY owner",
+                (_json(list(owners)),),
+            ):
+                if not groups or size + cost > serialized_documents.PAGE_BYTES:
+                    groups.append([])
+                    size = 0
+                groups[-1].append(owner)
+                size += cost
+        return groups
+
     def documents(self, owners: Iterable[str] | None = None) -> list[dict]:
         with self.store._connect() as connection:
             return [
@@ -1349,18 +1362,31 @@ class GraphWorkspace:
                     "owner": row[0],
                     "format": row[1],
                     "fingerprint": row[2],
-                    "data": json.loads(row[3]),
+                    "data": serialized_documents.data(row[1], row[3]),
                     "state": row["state"],
                 }
                 for row in connection.execute(
-                    "SELECT d.*,o.state FROM graph_documents d LEFT JOIN observations o ON o.owner=d.owner AND o.provider='code'"
+                    "SELECT d.owner,CASE WHEN d.format='summary' AND length(cast(d.payload AS BLOB))>? "
+                    "THEN 'legacy_summary_stream' ELSE d.format END,d.fingerprint,"
+                    "CASE WHEN d.format=? AND length(d.payload)>? THEN NULL "
+                    "WHEN d.format='summary' AND length(cast(d.payload AS BLOB))>? "
+                    "THEN json_object('coverage',json_extract(d.payload,'$.coverage'),"
+                    "'path',coalesce(json_extract(d.payload,'$.path'),''),"
+                    "'kind',coalesce(json_extract(d.payload,'$.kind'),'asset')) ELSE d.payload END,"
+                    "o.state FROM graph_documents d LEFT JOIN observations o ON o.owner=d.owner AND o.provider='code'"
                     + (
                         " WHERE d.owner IN (SELECT value FROM json_each(?))"
                         if owners is not None
                         else ""
                     )
                     + " ORDER BY d.owner",
-                    (_json(list(owners)),) if owners is not None else (),
+                    (
+                        serialized_documents.PAGE_BYTES,
+                        serialized_documents.FORMAT,
+                        serialized_documents.PAGE_BYTES,
+                        serialized_documents.PAGE_BYTES,
+                    )
+                    + ((_json(list(owners)),) if owners is not None else ()),
                 )
             ]
 
@@ -1459,6 +1485,7 @@ class GraphWorkspace:
         catalog_revision: int | None = None,
         document_generation: int | None = None,
         check: Callable[[], None] = lambda: None,
+        batch_rows: int = 256,
     ) -> None:
         """Stage bounded batches outside visible evidence, then promote atomically.
 
@@ -1500,10 +1527,18 @@ class GraphWorkspace:
                     "DELETE FROM graph_staging WHERE worker=? AND owner=?", (worker, owner)
                 )
             batch = []
+            batch_bytes = 0
             for ordinal, event in enumerate(events):
                 check()
                 is_edge = isinstance(event, Edge)
                 payload = _json(asdict(event) if is_edge else event)
+                size = len(payload.encode("utf-8"))
+                # Bound payload bytes as well as tuple overhead. One indivisible
+                # edge/issue may exceed the byte target and gets its own batch.
+                if batch and batch_bytes + size > batch_rows * 256:
+                    stage(batch)
+                    batch.clear()
+                    batch_bytes = 0
                 if is_edge:
                     identity = _hash((owner, provider, payload))
                 else:
@@ -1519,9 +1554,11 @@ class GraphWorkspace:
                         ordinal,
                     )
                 )
-                if len(batch) == 256:
+                batch_bytes += size
+                if len(batch) == batch_rows:
                     stage(batch)
                     batch.clear()
+                    batch_bytes = 0
             if batch:
                 stage(batch)
             resolved_dependencies = dependencies()
