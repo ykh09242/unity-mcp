@@ -95,6 +95,7 @@ on:
       - tools/check_unity_test_results.py
       - tools/check_unity_playmode_evidence.py
       - tools/check_play_scenario_evidence.py
+      - tools/check_play_scenario_player_evidence.py
       - Server/src/cli/main.py
       - Server/pyproject.toml
       - Server/uv.lock

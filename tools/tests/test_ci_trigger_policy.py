@@ -234,6 +234,13 @@ def test_player_qualification_dependencies_select_receiving_and_offline_validati
 
 
 @pytest.mark.parametrize("target", ["main", "beta"])
+@pytest.mark.parametrize("activity", ["opened", "synchronize", "reopened"])
+def test_player_evidence_checker_only_pr_selects_unity_validation(target: str, activity: str):
+    path = "tools/check_play_scenario_player_evidence.py"
+    assert selected("unity-tests.yml", "pull_request", target, path, activity)
+
+
+@pytest.mark.parametrize("target", ["main", "beta"])
 def test_reference_only_pr_executes_resource_uri_contract(target: str) -> None:
     path = "website/docs/reference/tools/get_tests.md"
     assert selected("docs-generate.yml", "pull_request", target, path, "synchronize")
