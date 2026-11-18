@@ -31,6 +31,13 @@ On Windows, uv 0.13.9 produced the server wheel and source distribution. The
 MCPB 2.1.2 bundle was previously generated with Node 26.13.0, now also selected
 by CI. Docker base verification covers the registry index and platform digests.
 
+The Docker build passes `--compile-bytecode` to `uv sync` to move dependency
+compilation into the image build. For a preinstalled stdio server with a tight
+initialization deadline, `uv pip install --compile-bytecode <wheel>` applies the
+same option at installation. A fresh Windows Python 3.15 wheel installation with
+this option completed its first stdio initialization within the 10-second probe
+deadline. [uv bytecode guidance](https://docs.astral.sh/uv/guides/integration/docker/#compiling-bytecode)
+
 These pins prevent top-level drift, but do not promise reproducible artifact bytes.
 The Dockerfile still consumes apt repositories and unpinned apt package versions;
 MCPB's transitive npm dependencies retain upstream ranges. Registries must remain

@@ -144,7 +144,7 @@ def test_precise_container_copy_preserves_install_metadata_and_package_source_lo
     assert metadata["project"]["readme"] == "README.md"
     assert metadata["project"]["license-files"] == ["LICENSE"]
     assert "WORKDIR /app/Server" in lines
-    assert "RUN uv sync --locked --no-dev" in lines
+    assert "RUN uv sync --locked --no-dev --compile-bytecode" in lines
     assert json.loads(
         next(line.removeprefix("ENTRYPOINT ") for line in lines if line.startswith("ENTRYPOINT "))
     ) == ["uv", "run", "mcp-for-unity"]

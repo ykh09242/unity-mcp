@@ -26,7 +26,7 @@ COPY MCPForUnity/package.json /app/MCPForUnity/package.json
 
 WORKDIR /app/Server
 
-RUN uv sync --locked --no-dev
+RUN uv sync --locked --no-dev --compile-bytecode
 
 EXPOSE 8080
 
