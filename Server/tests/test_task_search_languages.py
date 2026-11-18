@@ -84,24 +84,36 @@ def test_caseless_matching_normalizes_composition_after_case_folding(text, query
     assert [entry["name"] for entry in result["results"]] == ["inspect"]
 
 
-def test_unmatched_query_explains_catalog_normalization():
+def test_unmatched_query_offers_direct_navigation():
     from services.registry.task_search import SearchRequest, search_catalog
 
     result = search_catalog(SearchRequest(query="未知の操作"), [])
     assert result["results"] == []
     assert result["catalog_language"] == "en"
     assert result["next_action"] == "provide_catalog_query"
+    assert result["recommended_action"] == "browse_catalog"
     assert "catalog_query" in result["hint"]
 
 
-def test_unmatched_normalized_query_suggests_broadening():
+def test_unmatched_normalized_query_offers_the_same_navigation():
     from services.registry.task_search import SearchRequest, search_catalog
 
     result = search_catalog(SearchRequest(query="未知の操作", catalog_query="unknown task"), [])
     assert result["next_action"] == "broaden_catalog_query"
+    assert result["recommended_action"] == "browse_catalog"
 
 
-def test_ui_action_cards_expose_required_inputs_and_evidence():
+@pytest.mark.parametrize(
+    "query",
+    [
+        "재생 중인지 알려줘",
+        "¿Sigue en marcha?",
+        "هل يعمل الآن؟",
+        "いま動いていますか",
+        "UI が隠れている",
+    ],
+)
+def test_navigation_reaches_live_operations_and_state_without_translating_query(query):
     from cli.main import cli
 
     runner = CliRunner()
@@ -111,6 +123,15 @@ def test_ui_action_cards_expose_required_inputs_and_evidence():
         assert response.exit_code == 0, response.output
         return json.loads(response.stdout)
 
+    navigation = page("search", query)["navigation"]
+    index = page("catalog")
+    assert navigation["resources"] == index["resources"]
+    assert {row["group"] for row in navigation["groups"]} == {
+        row["name"] for row in index["groups"] if row["name"] is not None
+    }
+    scopes = {row["group"]: row["browse"]["group"] for row in navigation["groups"]}
+    ui = page("catalog", "--group", scopes["ui"], "--limit", "20")
+    assert any(tool["name"] == "manage_ugui" for tool in ui["tools"])
     diagnostics = page("catalog", "--tool", "manage_ugui", "--limit", "20")
     raycast = next(card for card in diagnostics["actions"] if card["action"] == "diagnose_raycast")
     assert set(raycast["required_parameters"]) == {"target", "screen_position"}
@@ -122,6 +143,8 @@ def test_ui_action_cards_expose_required_inputs_and_evidence():
     assert click["required_parameters"] == ["target"]
     assert click["purpose"] in cards["tool"]["description"]
     assert click["evidence_limit"] in cards["tool"]["description"]
+    state = page("catalog", "--group", navigation["resources"]["browse"]["group"], "--limit", "20")
+    assert any(row["uri"] == "mcpforunity://editor/state" for row in state["resources"])
 
 
 @pytest.mark.parametrize("catalog_query", ["", "  ", "x" * 513, 12, True, ["shader"]])

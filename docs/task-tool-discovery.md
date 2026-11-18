@@ -1,6 +1,7 @@
 # Action catalog and task discovery
 
-Use `manage_tools(action="catalog")` to read the complete built-in group index.
+Use `manage_tools(action="catalog")` to read the group index and the entry for
+readable Unity state. Follow its resource selector to inspect fixed resource URIs.
 The calling agent interprets the user's request in its original language, selects
 relevant groups/tools, compares action purposes and effects, and obtains the full
 schema with `manage_tools(action="describe", tool="NAME", operation="ACTION")`.
@@ -41,7 +42,8 @@ exact schema, and preview wording alone does not imply a read-only effects hint.
 
 - The live catalog includes selectable built-ins and tools advertised for this
   request, including server utilities. The exact description uses the currently
-  exposed schema when available. Offline discovery uses local declarations.
+  exposed schema when available. The resource branch lists metadata and never
+  reads the resource. Offline discovery uses local declarations.
 - `catalog` with `group="GROUP"` returns tool descriptions. With `tool="NAME"` it
   returns action cards and the enclosing tool description. Select one scope per
   call. Pages accept `limit` 1..20 and nonnegative `offset`. Follow `next_offset`
@@ -68,9 +70,16 @@ exact schema, and preview wording alone does not imply a read-only effects hint.
 and `tool search QUERY --catalog-query "English task terms"` remain available for
 lexical shortcuts and existing callers. Queries accept 1..512 characters and
 limits accept integers 1..20. Search retains the original `query`, reports the
-`matched_query` and declares `matching="lexical"`. Names, source aliases, actions,
-descriptions and retained keyword aliases contribute to deterministic ranking.
-The optional `catalog_query` supplies translated terms. Browse the complete
+`matched_query` and declares `matching="lexical"`. Names, source aliases, actions
+and published descriptions contribute to deterministic ranking. Each matched word
+contributes once per candidate at the weight of its strongest field.
+Every search includes the same navigable group purposes and resource entry for
+this inventory, including when a partial lexical match is irrelevant. The
+agent can follow those selectors directly in any request language. A miss
+returns `recommended_action="browse_catalog"`. The older `next_action` field
+retains its tool-only lexical retry hints for existing clients. `routes`
+reports bounded lexical matches for operations and resources. The optional `catalog_query` supplies
+terms for callers using the lexical shortcut. Browse the complete
 catalog when candidate meanings fail to satisfy the requested outcome.
 
 Tool and action maturity describe support status independently of visibility

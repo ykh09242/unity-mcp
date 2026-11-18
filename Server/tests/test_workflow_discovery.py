@@ -54,6 +54,41 @@ async def test_transport_tool_is_discoverable_from_its_actual_wire_schema():
 
 
 @pytest.mark.asyncio
+async def test_search_and_normalized_resource_branch_stay_within_the_original_request():
+    from fastmcp import Client, FastMCP
+    from fastmcp.server.middleware import Middleware
+
+    class CountResourceLists(Middleware):
+        calls = 0
+
+        async def on_list_resources(self, context, call_next):
+            self.calls += 1
+            return await call_next(context)
+
+    server = FastMCP("readable-state")
+    server.tool(module.manage_tools)
+    counter = CountResourceLists()
+    server.add_middleware(counter)
+
+    @server.resource("mcpforunity://editor/state")
+    def editor_state() -> str:
+        pytest.fail("Discovery read the resource contents")
+
+    async with Client(server) as client:
+        await client.list_resources()
+        external_calls = counter.calls
+        assert external_calls > 0
+        for group in ("resources", " resources "):
+            page = await client.call_tool("manage_tools", {"action": "catalog", "group": group})
+            assert [row["uri"] for row in page.structured_content["resources"]] == [
+                "mcpforunity://editor/state"
+            ]
+        search = await client.call_tool("manage_tools", {"action": "search", "query": "هل يعمل؟"})
+        assert search.structured_content["navigation"]["resources"]["total"] == 1
+        assert counter.calls == external_calls
+
+
+@pytest.mark.asyncio
 async def test_activation_can_return_schema_and_declared_readiness(monkeypatch):
     def feature(action: Literal["capabilities", "edit"]):
         return action

@@ -42,6 +42,12 @@ class SkillLink(TypedDict):
     url: str
 
 
+class CatalogResource(TypedDict):
+    name: str
+    uri: str
+    description: str
+
+
 class CatalogTool(TypedDict):
     name: str
     group: str | None
@@ -66,9 +72,8 @@ class ActionGuidance:
     evidence_limit: str = ""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ToolGuidance:
-    keywords: str = ""
     skills: tuple[str, ...] = ()
     requirements: tuple[str, ...] = ()
     actions: dict[str, ActionGuidance] = field(default_factory=dict)
@@ -81,10 +86,9 @@ _SKILL_BASE: Final = (
     "https://github.com/Unity-Technologies/skills/blob/" + OFFICIAL_SKILLS_REVISION + "/skills/"
 )
 _PHYSICS: Final = ToolGuidance(
-    "collision collide trigger rigidbody raycast 충돌 물리 트리거",
-    ("create-2d-physics", "physics-3d-collision"),
+    skills=("create-2d-physics", "physics-3d-collision"),
 )
-_UITK: Final = ToolGuidance("ui toolkit uxml uss layout text 레이아웃", ("ui-uitk",))
+_UITK: Final = ToolGuidance(skills=("ui-uitk",))
 UI_CLICK_PURPOSE: Final = (
     "ui_click dispatches pointer events directly to a uGUI target such as a button, using its "
     "scene instance ID or exact root hierarchy path, independently of the raw input backend."
@@ -145,16 +149,13 @@ _ASSET_MUTATIONS: Final = {
         ("path",),
     ),
 }
-# Retain existing aliases for query-only callers. Language-independent discovery
-# uses complete catalog traversal and the calling agent's interpretation.
 TOOL_GUIDANCE: Final = {
     **{item.name: _PHYSICS for item in CAPABILITIES if item.group == "physics"},
     **{item.name: _UITK for item in CAPABILITIES if item.group == "ui"},
     "manage_physics": _PHYSICS,
     "manage_ui": _UITK,
     "manage_ugui": ToolGuidance(
-        "canvas recttransform ui layout 캔버스",
-        ("ui-ugui",),
+        skills=("ui-ugui",),
         actions={
             "get_hierarchy": ActionGuidance(
                 "Inspect the existing Canvas hierarchy and UI components.", ("target",)
@@ -176,7 +177,6 @@ TOOL_GUIDANCE: Final = {
         },
     ),
     "manage_shader": ToolGuidance(
-        "shader graph inspect diagnostics compile 셰이더그래프 셰이더 그래프 검사 컴파일",
         actions={
             "read": ActionGuidance(
                 "Read a bounded page of shader source bytes using its name and containing directory.",
@@ -199,7 +199,6 @@ TOOL_GUIDANCE: Final = {
             ),
         },
     ),
-    "capture_prefab": ToolGuidance("prefab capture preview thumbnail 프리팹 캡처 미리보기"),
     "manage_editor": ToolGuidance(
         actions={
             "get_game_view_size": ActionGuidance(
@@ -209,7 +208,6 @@ TOOL_GUIDANCE: Final = {
         },
     ),
     "manage_input": ToolGuidance(
-        "ui button click input pointer 버튼 클릭 입력 포인터",
         actions={
             "ui_click": ActionGuidance(
                 UI_CLICK_PURPOSE,
@@ -308,43 +306,32 @@ TOOL_GUIDANCE: Final = {
             ),
         },
     ),
-    "unity_reflect": ToolGuidance(
-        "type member method api reflection 타입 멤버 조회 메서드 리플렉션"
-    ),
-    "manage_render_volumes": ToolGuidance(
-        "bloom volume postprocessing urp 블룸 후처리", ("urp-postprocessing",)
-    ),
+    "manage_render_volumes": ToolGuidance(skills=("urp-postprocessing",)),
     "manage_renderer_features": ToolGuidance(
-        "urp render graph renderer feature 렌더러",
-        ("validate-urp-render-graph-renderer-feature",),
-        ("com.unity.render-pipelines.universal; renderer features require URP",),
+        skills=("validate-urp-render-graph-renderer-feature",),
+        requirements=("com.unity.render-pipelines.universal; renderer features require URP",),
     ),
     "manage_render_pipeline": ToolGuidance(
-        "render pipeline quality urp hdrp pink magenta rendering diagnostics 파이프라인 분홍 보라",
-        ("validate-urp-render-graph-renderer-feature",),
+        skills=("validate-urp-render-graph-renderer-feature",),
     ),
-    "manage_audio": ToolGuidance("sound mixer routing 소리 오디오 믹서", ("audio-setup-mixers",)),
+    "manage_audio": ToolGuidance(skills=("audio-setup-mixers",)),
     "manage_localization": ToolGuidance(
-        "translate language locale table 번역 언어 현지화",
-        ("localization",),
-        ("com.unity.localization; availability must be inspected in the selected project",),
+        skills=("localization",),
+        requirements=(
+            "com.unity.localization; availability must be inspected in the selected project",
+        ),
     ),
-    "manage_packages": ToolGuidance(
-        "install package upm 패키지 설치", ("unity-package-management",)
-    ),
-    "manage_probuilder": ToolGuidance("model mesh modeling 모델링", (), ("com.unity.probuilder",)),
-    "manage_cinemachine": ToolGuidance(
-        "camera follow blend 카메라", (), ("com.unity.cinemachine",)
-    ),
+    "manage_packages": ToolGuidance(skills=("unity-package-management",)),
+    "manage_probuilder": ToolGuidance(requirements=("com.unity.probuilder",)),
+    "manage_cinemachine": ToolGuidance(requirements=("com.unity.cinemachine",)),
     "manage_project_auditor": ToolGuidance(
-        "project auditor static analysis audit diagnostics 정적 분석 감사",
-        ("project-auditor-fixes",),
-        ("com.unity.project-auditor; reviewed API 1.0.1, Unity >=2021.3; call availability",),
+        skills=("project-auditor-fixes",),
+        requirements=(
+            "com.unity.project-auditor; reviewed API 1.0.1, Unity >=2021.3; call availability",
+        ),
     ),
     "manage_navigation": ToolGuidance(
-        "navmesh navigation pathfinding surface agent obstacle link",
-        (),
-        (
+        requirements=(
             "capabilities: no optional package required; inspect module/package availability first",
             "Native navigation operations require com.unity.modules.ai",
             "surface/link operations, bake and sample_position/calculate_path require com.unity.ai.navigation; "
@@ -357,25 +344,20 @@ TOOL_GUIDANCE: Final = {
         ),
     ),
     "manage_netcode": ToolGuidance(
-        "netcode network multiplayer preflight",
-        (),
-        (
+        requirements=(
             "capabilities: no optional package required; inspect package availability first",
             "preflight requires com.unity.netcode.gameobjects and an explicit loaded scene_handle; "
             "inspects local configuration without starting a network session",
         ),
     ),
     "manage_input_actions": ToolGuidance(
-        "input actions binding inputsystem",
-        (),
-        (
+        requirements=(
             "capabilities: no optional package required; inspect package availability first",
             "read and authoring operations require com.unity.inputsystem >=1.7.0 "
             "and an Assets .inputactions path",
             "Authoring operations require idle Edit Mode; edits to existing assets require expected_revision",
         ),
     ),
-    "read_response": ToolGuidance("large response truncated retrieve page 응답 페이지"),
 }
 _CAPABILITIES: Final = {item.name: item for item in CAPABILITIES}
 
@@ -564,9 +546,54 @@ class CatalogRequest(BaseModel):
             raise ValueError("The complete group index uses offset 0.")
         return self
 
+    @property
+    def includes_resources(self) -> bool:
+        return self.tool is None and self.group in (None, "resources")
+
+
+def concrete_resources(resources: list[CatalogResource]) -> list[CatalogResource]:
+    """Only fixed Unity resource URIs can be read directly."""
+    return sorted(
+        (
+            item
+            for item in resources
+            if item["uri"].startswith("mcpforunity://") and "{" not in item["uri"]
+        ),
+        key=lambda item: item["uri"],
+    )
+
+
+def _resource_branch(total: int) -> dict:
+    return {
+        "purpose": "Read published Unity Editor, project and scene observations.",
+        "total": total,
+        "browse": {"action": "catalog", "group": "resources"},
+    }
+
+
+def catalog_navigation(entries: list[CatalogEntry], resources: list[CatalogResource]) -> dict:
+    """An agent can choose a domain by purpose without translating or matching query words."""
+    groups = sorted({item["group"] for item in entries if item.get("group")})
+    return {
+        "groups": [
+            {
+                "group": group,
+                "purpose": TOOL_GROUPS.get(group, group),
+                "browse": {"action": "catalog", "group": group},
+            }
+            for group in groups
+        ],
+        "server_tools": sorted(item["name"] for item in entries if not item.get("group")),
+        "resources": _resource_branch(len(resources)),
+    }
+
 
 def browse_catalog(
-    request: CatalogRequest, entries: list[CatalogEntry], *, visible_names: set[str] | None = None
+    request: CatalogRequest,
+    entries: list[CatalogEntry],
+    *,
+    visible_names: set[str] | None = None,
+    resources: list[CatalogResource] | None = None,
 ) -> dict:
     """Traverse all declarations without a query, ranking, connection or mutation."""
     ordered = sorted(entries, key=lambda entry: entry["name"])
@@ -578,7 +605,22 @@ def browse_catalog(
         "hint": "Interpret the user's intent in its original language. Compare purposes, targets and effects, then describe the exact tool and operation before calling it. Follow next_offset when the current page does not resolve the task.",
         "note": "Declarations describe capabilities. Advertisement, project readiness and execution permission require their own checks. Identifier-derived purposes use the enclosing tool description as context.",
     }
-    if request.tool is not None:
+    if request.group == "resources":
+        available = concrete_resources(resources or [])
+        response.update(view="resources", group="resources")
+        total = len(available)
+        rows = [
+            {
+                "name": item["name"],
+                "uri": item["uri"],
+                "description": item["description"],
+                "advertised": True if visible_names is not None else None,
+                "readiness": "unobserved",
+            }
+            for item in available[request.offset : request.offset + request.limit]
+        ]
+        key = "resources"
+    elif request.tool is not None:
         entry = next((entry for entry in ordered if entry["name"] == request.tool), None)
         if entry is None:
             raise ValueError(f"Unknown tool {request.tool!r}.")
@@ -606,6 +648,7 @@ def browse_catalog(
         key = "tools"
     else:
         response["view"] = "groups"
+        response["resources"] = _resource_branch(len(concrete_resources(resources or [])))
         groups = sorted({entry.get("group") for entry in ordered}, key=lambda value: value or "")
         response["groups"] = [
             {

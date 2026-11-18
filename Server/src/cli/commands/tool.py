@@ -61,7 +61,7 @@ def _validate_query(_ctx, _param, value):
 @click.option(
     "--catalog-query",
     callback=_validate_query,
-    help="Task intent translated into English catalog terms. Preserve exact tool/API/package identifiers.",
+    help="Optional alternate terms for literal search, such as a known API identifier.",
 )
 def search(query: str, limit: int, catalog_query: str | None) -> None:
     """Search the offline local catalog by task purpose, without a Unity connection.
@@ -70,14 +70,18 @@ def search(query: str, limit: int, catalog_query: str | None) -> None:
     """
     from pathlib import Path
 
+    import services.resources as resources_package
     import services.tools as tools_package
-    from services.registry import get_registered_tools
+    from services.registry import get_registered_resources, get_registered_tools
     from services.registry.task_search import SearchRequest, search_catalog
     from utils.module_discovery import discover_modules
 
     list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
+    list(discover_modules(Path(resources_package.__file__).parent, resources_package.__name__))
     result = search_catalog(
-        SearchRequest(query=query, catalog_query=catalog_query, limit=limit), get_registered_tools()
+        SearchRequest(query=query, catalog_query=catalog_query, limit=limit),
+        get_registered_tools(),
+        resources=get_registered_resources(),
     )
     config = get_config()
     if config.format == "text":
@@ -89,7 +93,9 @@ def search(query: str, limit: int, catalog_query: str | None) -> None:
 
 
 @tool.command("catalog")
-@click.option("--group", help="List tools in one catalog group.")
+@click.option(
+    "--group", help="List tools in one catalog group, or select resources for readable Unity state."
+)
 @click.option("--tool", "tool_name", help="List actions of one exact tool.")
 @click.option("--offset", type=click.IntRange(min=0), default=0, show_default=True)
 @click.option("--limit", type=click.IntRange(1, 20), default=20, show_default=True)
@@ -102,15 +108,24 @@ def catalog(group: str | None, tool_name: str | None, offset: int, limit: int) -
     import json
     from pathlib import Path
 
+    import services.resources as resources_package
     import services.tools as tools_package
-    from services.registry import get_registered_tools
+    from services.registry import get_registered_resources, get_registered_tools
     from services.registry.action_catalog import CatalogRequest, browse_catalog
     from utils.module_discovery import discover_modules
 
     try:
         request = CatalogRequest(group=group, tool=tool_name, offset=offset, limit=limit)
         list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
-        result = browse_catalog(request, get_registered_tools())
+        if request.includes_resources:
+            list(
+                discover_modules(
+                    Path(resources_package.__file__).parent, resources_package.__name__
+                )
+            )
+        result = browse_catalog(
+            request, get_registered_tools(), resources=get_registered_resources()
+        )
     except ValueError as error:
         raise click.UsageError(str(error)) from error
     # Catalog nesting and exact continuation offsets must survive text/table modes.

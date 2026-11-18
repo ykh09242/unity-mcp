@@ -157,14 +157,9 @@ async def test_declared_action_metadata_preserves_legacy_wire_arguments(
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
-        ("셰이더그래프 검사", "manage_shader"),
-        ("셰이더 그래프 검사", "manage_shader"),
         ("shader graph inspect", "manage_shader"),
-        ("프리팹 캡처", "capture_prefab"),
         ("prefab capture", "capture_prefab"),
-        ("버튼 클릭", "manage_input"),
         ("UI button click", "manage_input"),
-        ("타입 멤버 조회", "unity_reflect"),
     ],
 )
 def test_task_phrases_rank_the_dedicated_tool_first(query, expected):
@@ -179,21 +174,35 @@ def test_task_phrases_rank_the_dedicated_tool_first(query, expected):
     assert all(item["readiness"] == "unobserved" for item in payload["results"])
 
 
-def test_korean_intent_finds_official_skill_without_claiming_readiness():
-    # Given: the installed built-in catalog without an editor or MCP connection.
+def test_original_query_can_reach_official_skill_without_claiming_readiness():
     from cli.main import cli
 
-    # When: a Korean collision task is searched through the public CLI.
-    result = CliRunner().invoke(cli, ["--format", "json", "tool", "search", "충돌", "--limit", "2"])
-
-    # Then: bounded, deterministic suggestions are explicitly unobserved.
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--format", "json", "tool", "search", "충돌", "--limit", "2"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    assert payload["scope"] == "local_catalog"
-    assert len(payload["results"]) == 2
-    assert all(item["advertised"] is None for item in payload["results"])
-    assert all(item["readiness"] == "unobserved" for item in payload["results"])
-    assert any(item["official_skills"] for item in payload["results"])
+    group = next(row for row in payload["navigation"]["groups"] if row["group"] == "physics")
+    page = runner.invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "tool",
+            "catalog",
+            "--group",
+            group["browse"]["group"],
+            "--limit",
+            "2",
+        ],
+    )
+    assert page.exit_code == 0, page.output
+    catalog = json.loads(page.stdout)
+    assert catalog["scope"] == "local_catalog" and len(catalog["tools"]) == 2
+    assert all(
+        item["advertised"] is None and item["readiness"] == "unobserved"
+        for item in catalog["tools"]
+    )
+    assert any(item["official_skills"] for item in catalog["tools"])
 
 
 @pytest.mark.parametrize(
@@ -311,3 +320,41 @@ def test_text_search_reports_empty_results():
     assert result.exit_code == 0, result.output
     assert "No matching tools" in result.stdout
     assert "tool catalog" in result.stdout
+
+
+def test_lexical_action_suggestions_distinguish_inputs_from_occlusion():
+    from cli.main import cli
+
+    for terms, name, action in [
+        ("raycast occlusion pointer hit order", "manage_ugui", "diagnose_raycast"),
+        ("shader graph nodes edges", "manage_shader", "inspect_graph"),
+        (
+            "Click the button visible on the game screen and verify its response.",
+            "manage_input",
+            "mouse",
+        ),
+    ]:
+        response = CliRunner().invoke(cli, ["--format", "json", "tool", "search", terms])
+        assert response.exit_code == 0, response.output
+        route = json.loads(response.stdout)["routes"][0]
+        assert (route["kind"], route["tool"], route["operation"]) == ("tool", name, action)
+        assert route["purpose"] and route["advertised"] is None
+
+
+def test_search_can_rank_a_readable_state_resource_before_mutating_actions():
+    from cli.main import cli
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "tool",
+            "search",
+            "current play mode active scene compilation editor readiness",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    route = json.loads(result.stdout)["routes"][0]
+    assert route["kind"] == "resource" and route["uri"] == "mcpforunity://editor/state"
+    assert route["advertised"] is None and route["readiness"] == "unobserved"

@@ -454,7 +454,7 @@ def _enrich_advice_and_staleness(
     uri="mcpforunity://editor/state",
     name="editor_state",
     description=(
-        "Canonical editor readiness snapshot. Includes advice, server-computed staleness, "
+        "Read current Play Mode, active scene, compilation and Editor readiness. Includes advice, server-computed staleness, "
         "and native_coordination from native admission. recovery_required blocks readiness "
         "even when compilation is idle; follow its recovery action instead of polling blindly. "
         "Also includes assets.external_changes_scan_complete/limited coverage. scan_in_progress "

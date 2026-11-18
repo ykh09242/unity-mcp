@@ -4318,7 +4318,7 @@ Browse the complete offline catalog for agent semantic selection. Start with the
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| --group | text | optional | nargs=1 | — | — | List tools in one catalog group. |
+| --group | text | optional | nargs=1 | — | — | List tools in one catalog group, or select resources for readable Unity state. |
 | --tool | text | optional | nargs=1 | — | — | List actions of one exact tool. |
 | --offset | integer range: [0..None] | optional | nargs=1 | 0 | — |  |
 | --limit | integer range: [1..20] | optional | nargs=1 | 20 | — |  |
@@ -4375,7 +4375,7 @@ Search the offline local catalog by task purpose, without a Unity connection. Ad
 | --- | --- | --- | --- | --- | --- | --- |
 | query | text | required | nargs=1 | — | — |  |
 | --limit | integer range: [1..20] | optional | nargs=1 | 5 | — |  |
-| --catalog-query | text | optional | nargs=1 | — | — | Task intent translated into English catalog terms. Preserve exact tool/API/package identifiers. |
+| --catalog-query | text | optional | nargs=1 | — | — | Optional alternate terms for literal search, such as a known API identifier. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp ui`

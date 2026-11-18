@@ -34,13 +34,13 @@ logger = logging.getLogger("mcp-for-unity-server")
     unity_target=None,
     group=None,
     description=(
-        "Manage visible groups or individual feature tools in this session. "
+        "Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups. "
         "Actions: list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore configured profile), describe (full schema for one tool, optionally bind operation), "
-        "catalog (complete group index, paged tools by group or actions by tool), "
-        "search (bounded lexical catalog suggestions, without activation). "
+        "catalog (choose a domain by purpose, then browse tools, actions or readable resources), "
+        "search (literal action and resource matches plus the same domain index for any language). "
         "Selection changes server tools/list; it does not confirm the client's callable inventory. "
         "Use sync after toggling tools in the Unity Editor GUI."
     ),
@@ -69,7 +69,7 @@ async def manage_tools(
     ],
     group: Annotated[
         str | None,
-        "Group name for activate/deactivate/catalog; select a group or a single tool. "
+        "Group name for activate/deactivate/catalog; use resources to browse readable state in catalog. "
         "Valid groups: " + ", ".join(sorted(TOOL_GROUPS.keys())),
     ] = None,
     tool: Annotated[
@@ -92,7 +92,7 @@ async def manage_tools(
     catalog_query: Annotated[
         str | None,
         Field(max_length=512),
-        "For search, translate the user's intent from any language into concise English catalog terms here. Preserve exact tool/API/package identifiers. Omit for an English query or exact identifier. The server performs lexical matching.",
+        "Optional alternate terms for literal search, such as a known API identifier. The complete catalog is available for requests in any language.",
     ] = None,
     offset: Annotated[
         int, Field(strict=True, ge=0), "Catalog page offset for a selected group or tool."
@@ -127,7 +127,10 @@ async def manage_tools(
         try:
             request = CatalogRequest(group=group, tool=tool, offset=offset, limit=limit)
             entries, visible = await _catalog_inventory(ctx, entries, discovery)
-            return browse_catalog(request, list(entries.values()), visible_names=set(visible))
+            resources = await _catalog_resources(ctx) if request.includes_resources else []
+            return browse_catalog(
+                request, list(entries.values()), visible_names=set(visible), resources=resources
+            )
         except ValueError as error:
             return {"success": False, "error": str(error)}
     if action == "search":
@@ -146,7 +149,12 @@ async def manage_tools(
                 "error": "search requires nonempty query/catalog_query strings of at most 512 characters and limit 1..20. catalog_query may be omitted.",
             }
         entries, visible = await _catalog_inventory(ctx, entries, discovery)
-        return search_catalog(request, list(entries.values()), visible_names=set(visible))
+        return search_catalog(
+            request,
+            list(entries.values()),
+            visible_names=set(visible),
+            resources=await _catalog_resources(ctx),
+        )
     if action in ("activate", "deactivate", "reset") and modern:
         if discovery is None or await discovery.scope_key(ctx) is None:
             return {"success": False, "error": UNSCOPED_GUIDANCE}
@@ -320,6 +328,13 @@ async def manage_tools(
         }
 
     return {"success": False, "error": f"Unknown action '{action}'"}
+
+
+async def _catalog_resources(ctx):
+    return [
+        {"uri": str(item.uri), "name": item.name, "description": item.description or ""}
+        for item in await ctx.fastmcp.list_resources(run_middleware=False)
+    ]
 
 
 async def _catalog_inventory(ctx, declarations, discovery):

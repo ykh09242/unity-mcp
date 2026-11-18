@@ -20,9 +20,20 @@ def format_task_search(result: SearchResponse, config: CLIConfig) -> str:
     """Show useful suggestions without implying runtime availability or permission."""
     entries = result["results"]
     lines = [f"Tools: {len(entries)} shown of {result['total_matches']} matches"]
-    if not entries:
+    for route in result["routes"]:
+        target = route.get("uri") or ".".join(
+            value for value in (route.get("tool"), route.get("operation")) if value
+        )
+        lines.append(f"  {route['kind']} {target} — {_summary(route['purpose'])}")
+        if route.get("evidence_limit"):
+            lines.append("    " + _summary(route["evidence_limit"]))
+    if not result["routes"]:
         lines.append("No matching tools. Browse the complete catalog to select by purpose.")
-        lines.append("  " + followup_command(config, ["tool", "catalog"]))
+    for group in result["navigation"]["groups"]:
+        lines.append(f"  {group['group']}: {group['purpose']}")
+    if result["navigation"]["resources"]["total"]:
+        lines.append("  resources: " + result["navigation"]["resources"]["purpose"])
+    lines.append("  " + followup_command(config, ["tool", "catalog"]))
     for entry in entries:
         lines.append(f"\n{entry['name']} [{entry['maturity']}] — {_summary(entry['title'])}")
         if entry["description"]:
