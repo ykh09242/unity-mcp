@@ -532,17 +532,45 @@ def player_run(
                 graphical=graphical,
             )
         )
-        write_player_artifacts(outcome.report, outcome.directory, outcome.client_error)
     except (PlayerLaunchError, PlayerPayloadError, OSError, ValueError) as exc:
-        # Bundle/process errors remain errors; no native success report is invented.
-        raise click.ClickException(str(exc)) from exc
-    click.echo(
-        format_output(
-            {"success": outcome.exit_code == 0, "data": outcome.report}, get_config().format
+        directory = exc.directory if isinstance(exc, PlayerLaunchError) else None
+        exit_code = 1
+        result = {
+            "client_error": str(exc),
+            "output_directory": str(directory) if directory is not None else None,
+            "data": None,
+        }
+    else:
+        exit_code = outcome.exit_code
+        result = {
+            "client_error": outcome.client_error,
+            "output_directory": str(outcome.directory),
+            "data": outcome.report,
+        }
+        try:
+            write_player_artifacts(outcome.report, outcome.directory, outcome.client_error)
+        except (PlayerLaunchError, PlayerPayloadError, OSError, ValueError) as exc:
+            exit_code = exit_code or 1
+            result["artifact_error"] = str(exc)
+
+    result = {"success": exit_code == 0, "launcher_exit_code": exit_code, **result}
+    if exit_code:
+        native = result["data"] or {}
+        result["error"] = (
+            result["client_error"]
+            or result.get("artifact_error")
+            or native.get("report_error")
+            or native.get("error")
+            or f"Player scenario {native.get('status')}"
         )
-    )
-    if outcome.exit_code:
-        raise click.exceptions.Exit(outcome.exit_code)
+    output_format = get_config().format
+    # The standard success text view unwraps data, which would hide the launcher outcome.
+    if output_format == "text" and not exit_code:
+        click.echo(format_output({k: v for k, v in result.items() if k != "success"}, "text"))
+    else:
+        click.echo(format_output(result, output_format))
+    if exit_code:
+        raise click.exceptions.Exit(exit_code)
 
 
 @play_scenario.command("player-soak")

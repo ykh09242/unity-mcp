@@ -81,6 +81,29 @@ def test_large_inventory_and_build_bytes_round_trip(verified_bundle):
     assert parsed.payload.payload_inventory[0].size_bytes == 20 * 1024**3
 
 
+def test_cli_explains_missing_heartbeat_when_native_run_succeeded(verified_bundle, child):
+    build, output, _manifest = verified_bundle
+    child[0][0] = "missing-heartbeat"
+    command = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "play-scenario",
+            "player-run",
+            str(build),
+            "--output-dir",
+            str(output),
+        ],
+    )
+    response = json.loads(command.stdout)
+    assert command.exit_code == response["launcher_exit_code"] == 1
+    assert response["success"] is False and response["client_error"] == "player_heartbeat_missing"
+    report = response["data"]
+    assert report["status"] == "succeeded" and report["exit_code"] == 0
+    assert json.loads((Path(response["output_directory"]) / "run.json").read_text()) == report
+
+
 def test_verified_player_preserves_payload_and_process_proof(verified_bundle, child):
     build, output, manifest = verified_bundle
     outcome = run_player(

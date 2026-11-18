@@ -56,7 +56,7 @@ def child(monkeypatch, tmp_path):
         "manifest=json.loads(pathlib.Path(sys.argv[2]).read_text())\n"
         "mode=sys.argv[3]\n"
         "if mode == 'early-cancel': time.sleep(.25)\n"
-        "if request['schema_version'] == 2:\n"
+        "if request['schema_version'] == 2 and mode != 'missing-heartbeat':\n"
         " import os\n"
         " progress={'schema_version':1,'job_id':request['job_id'],'definition_hash':request['definition_hash'],'build_id':request['build_id'],'payload_hash':request['payload_hash'],'build_source_revision':request['build_source_revision'],'process_id':os.getpid(),'sequence':1,'main_loop_sequence':1,'heartbeat_unix_ms':int(time.time()*1000),'elapsed_ms':1,'phase':'running','iteration':1,'stage':'steps','step_index':0,'status':'running'}\n"
         # Match the native writer: readers must never see a partially published heartbeat.
@@ -223,12 +223,29 @@ def test_ctrl_c_requires_actual_cleanup_report_before_return(
             raise OSError(errno.EOPNOTSUPP, "hard links unavailable")
 
         monkeypatch.setattr(player.os, "link", unsupported)
-    outcome = run_player(PlayerRunOptions(build, output, cleanup_wait_seconds=1))
-    assert outcome.exit_code == 130 and outcome.report["status"] == "cancelled"
-    marker = outcome.directory / ("cancel" if hard_links else "cancel." + outcome.report["job_id"])
-    assert marker.read_bytes() == (
-        (outcome.report["job_id"] + "\n").encode() if hard_links else b""
+    command = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "play-scenario",
+            "player-run",
+            str(build),
+            "--output-dir",
+            str(output),
+            "--cleanup-wait-seconds",
+            "1",
+        ],
     )
+    result = json.loads(command.stdout)
+    assert command.exit_code == result["launcher_exit_code"] == 130
+    assert result["client_error"] == "Player interrupted; native finalization confirmed"
+    report = result["data"]
+    assert report["status"] == "cancelled" and report["exit_code"] == 1
+    marker = Path(result["output_directory"]) / (
+        "cancel" if hard_links else "cancel." + report["job_id"]
+    )
+    assert marker.read_bytes() == ((report["job_id"] + "\n").encode() if hard_links else b"")
     assert child[1][0].poll() == 1
 
 
@@ -296,12 +313,42 @@ def test_cli_exports_actual_native_report_without_editor_connection(bundle, chil
         ],
     )
     assert result.exit_code == 0, result.output
-    report = json.loads(result.stdout)["data"]
+    response = json.loads(result.stdout)
+    assert response["success"] and response["launcher_exit_code"] == 0
+    assert response["client_error"] is None
+    report = response["data"]
     directory = output / report["job_id"]
+    assert Path(response["output_directory"]) == directory
     assert json.loads((directory / "run.json").read_text()) == report
     xml = ElementTree.parse(directory / "junit.xml").getroot()
     assert xml.attrib["tests"] == "1" and xml.attrib["errors"] == "0"
     assert xml.find("testcase").attrib["name"] == report["scenario"]["name"]
+
+
+@pytest.mark.parametrize(
+    "mode, error", [("crash", "player_report_missing"), ("wrong-exit", "player_report_invalid")]
+)
+def test_cli_exposes_unadmitted_run_directory_without_native_result(bundle, child, mode, error):
+    build, output, _manifest = bundle
+    child[0][0] = mode
+    command = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "play-scenario",
+            "player-run",
+            str(build),
+            "--output-dir",
+            str(output),
+        ],
+    )
+    response = json.loads(command.stdout)
+    assert command.exit_code == response["launcher_exit_code"] == 1
+    assert response["data"] is None and response["client_error"] == error
+    directory = Path(response["output_directory"])
+    assert directory.parent == output
+    assert json.loads((directory / "diagnostics.json").read_text())["failure_code"] == error
 
 
 def test_player_output_is_drained_after_retained_log_limit(bundle, child):

@@ -158,6 +158,14 @@ owned directory with `request.json`, launches one child process, waits at paced 
 its actual `run.json` plus `junit.xml`. Repetitions run in the same Player process with the scenario's
 setup/reset/cleanup contract. A new invocation launches a new process.
 
+With `--format json`, `data` contains the accepted native report. The enclosing
+response gives the command's `launcher_exit_code`, its `client_error` (or `null`),
+and the per-run `output_directory`. For example, a missing heartbeat can produce
+launcher exit code 1 with `client_error: "player_heartbeat_missing"` while the native
+report records `status: "succeeded"` and exit code 0. If an artifact export fails,
+`artifact_error` explains the failure. If the launcher cannot accept a native
+report, `data` is `null`. The output directory is included when known.
+
 Cancellation atomically publishes a `cancel` marker containing the request's job ID followed by a
 newline. Where hard links are unavailable, it exclusively creates an empty `cancel.<job_id>` marker
 instead. The Player rejects a marker for another request. A marker present before scenario execution
