@@ -65,7 +65,14 @@ namespace MCPForUnity.Editor.Helpers
         internal static UIComponentAdapter Resolve(GameObject go, string selection) =>
             new UIComponentAdapter(go.GetComponent(ResolveType(go, selection, false)));
 
-        internal static UIComponentAdapter Attach(GameObject go, Type type) => new UIComponentAdapter(go.GetComponent(type) ?? Undo.AddComponent(go, type));
+        internal static UIComponentAdapter Attach(GameObject go, Type type)
+        {
+            var component = go.GetComponent(type);
+            // GetComponent can return a Unity null wrapper for an absent native component.
+            if (component == null)
+                component = Undo.AddComponent(go, type);
+            return new UIComponentAdapter(component);
+        }
 
         internal VisualTreeAsset SourceAsset =>
             Component is UIDocument document ? document.visualTreeAsset : (VisualTreeAsset)Property("visualTreeAsset").GetValue(Component);

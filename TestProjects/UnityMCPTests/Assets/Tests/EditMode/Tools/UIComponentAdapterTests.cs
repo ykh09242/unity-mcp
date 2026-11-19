@@ -9,7 +9,7 @@ using UnityEngine.UIElements;
 
 namespace MCPForUnityTests.Editor.Tools
 {
-    // A contract fake, not a substitute for Unity 6.5 runtime validation.
+    // A test component for exercising the reflection contract on editors of any version.
     public sealed class UIAdapterTestPanel : MonoBehaviour
     {
         public delegate void ReloadCallback(UIAdapterTestPanel renderer, VisualElement root, int version);
@@ -63,6 +63,20 @@ namespace MCPForUnityTests.Editor.Tools
         public void Auto_NewAttachmentPrefersAvailableRenderer()
         {
             Assert.AreEqual(UIComponentAdapter.PanelRendererType ?? typeof(UIDocument), UIComponentAdapter.ResolveType(_go, "auto", true));
+        }
+
+        [Test]
+        public void NativePanelRenderer_AttachAddsAndReusesComponent()
+        {
+            var type = UIComponentAdapter.PanelRendererType;
+            if (type == null)
+                Assert.Ignore("This editor does not provide PanelRenderer.");
+
+            Assert.IsTrue(_go.GetComponent(type) == null);
+            var attached = UIComponentAdapter.Attach(_go, type);
+            Assert.AreSame(attached.Component, _go.GetComponent(type));
+            Assert.AreSame(attached.Component, UIComponentAdapter.Attach(_go, type).Component);
+            Assert.AreEqual(1, _go.GetComponents(type).Length);
         }
 
         [Test]
