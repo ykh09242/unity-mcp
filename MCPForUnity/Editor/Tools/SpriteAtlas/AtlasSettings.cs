@@ -5,11 +5,201 @@ using System.Reflection;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.U2D;
+using UnityEngine.U2D;
+using Object = UnityEngine.Object;
 
 namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
 {
     internal sealed class AtlasSettings
     {
+        internal sealed class ImporterApi
+        {
+            private const BindingFlags PublicInstance = BindingFlags.Public | BindingFlags.Instance | BindingFlags.ExactBinding;
+
+            internal static readonly ImporterApi Native = FindNative();
+
+            internal readonly MethodInfo ReadInclude;
+            internal readonly MethodInfo WriteInclude;
+            internal readonly MethodInfo ReadScale;
+            internal readonly MethodInfo WriteScale;
+            internal readonly MethodInfo ReadPacking;
+            internal readonly MethodInfo WritePacking;
+            internal readonly MethodInfo ReadTexture;
+            internal readonly MethodInfo WriteTexture;
+            internal readonly MethodInfo ReadPlatform;
+            internal readonly MethodInfo WritePlatform;
+            internal readonly bool UsesSource;
+            internal readonly string ReadUnavailableReason;
+
+            internal ImporterApi(Type type, bool usesSource = false)
+            {
+                UsesSource = usesSource;
+                if (UsesSource)
+                {
+                    ReadInclude = FindMethod(type, "IsIncludeInBuild", typeof(bool));
+                    WriteInclude = FindMethod(type, "SetIncludeInBuild", typeof(void), typeof(bool));
+                    WriteScale = FindMethod(type, "SetVariantScale", typeof(void), typeof(float));
+                    ReadPacking = FindMethod(type, "GetPackingSettings", typeof(SpriteAtlasPackingSettings));
+                    WritePacking = FindMethod(type, "SetPackingSettings", typeof(void), typeof(SpriteAtlasPackingSettings));
+                    ReadTexture = FindMethod(type, "GetTextureSettings", typeof(SpriteAtlasTextureSettings));
+                    WriteTexture = FindMethod(type, "SetTextureSettings", typeof(void), typeof(SpriteAtlasTextureSettings));
+                }
+                else
+                {
+                    var include = FindProperty(type, "includeInBuild", typeof(bool));
+                    var scale = FindProperty(type, "variantScale", typeof(float));
+                    var packing = FindProperty(type, "packingSettings", typeof(SpriteAtlasPackingSettings));
+                    var texture = FindProperty(type, "textureSettings", typeof(SpriteAtlasTextureSettings));
+                    ReadInclude = include?.GetGetMethod();
+                    WriteInclude = include?.GetSetMethod();
+                    ReadScale = scale?.GetGetMethod();
+                    WriteScale = scale?.GetSetMethod();
+                    ReadPacking = packing?.GetGetMethod();
+                    WritePacking = packing?.GetSetMethod();
+                    ReadTexture = texture?.GetGetMethod();
+                    WriteTexture = texture?.GetSetMethod();
+                }
+                ReadPlatform = FindMethod(type, "GetPlatformSettings", typeof(TextureImporterPlatformSettings), typeof(string));
+                WritePlatform = FindMethod(type, "SetPlatformSettings", typeof(void), typeof(TextureImporterPlatformSettings));
+
+                var missing = new List<string>();
+                if (ReadInclude == null)
+                    missing.Add(UsesSource ? "IsIncludeInBuild" : "includeInBuild");
+                if (!UsesSource && ReadScale == null)
+                    missing.Add("variantScale");
+                if (ReadPacking == null)
+                    missing.Add(UsesSource ? "GetPackingSettings" : "packingSettings");
+                if (ReadTexture == null)
+                    missing.Add(UsesSource ? "GetTextureSettings" : "textureSettings");
+                if (ReadPlatform == null)
+                    missing.Add("GetPlatformSettings");
+                if (missing.Count > 0)
+                    ReadUnavailableReason = $"SpriteAtlas V2 requires public {type.Name} readback APIs in this Editor: " + string.Join(", ", missing) + ".";
+            }
+
+            private static ImporterApi FindNative()
+            {
+                var importer = new ImporterApi(typeof(SpriteAtlasImporter));
+                if (importer.ReadUnavailableReason == null)
+                    return importer;
+                var source = new ImporterApi(typeof(SpriteAtlasAsset), true);
+                return source.ReadUnavailableReason == null ? source : importer;
+            }
+
+            private static PropertyInfo FindProperty(Type type, string name, Type valueType)
+            {
+                var member = type.GetProperty(name, PublicInstance, null, valueType, Type.EmptyTypes, null);
+                return member?.GetGetMethod() != null && member.PropertyType == valueType ? member : null;
+            }
+
+            private static MethodInfo FindMethod(Type type, string name, Type returnType, params Type[] arguments)
+            {
+                var method = type.GetMethod(name, PublicInstance, null, arguments, null);
+                return
+                    method != null
+                    && !method.ContainsGenericParameters
+                    && method.ReturnType == returnType
+                    && method.GetParameters().Select(parameter => parameter.ParameterType).SequenceEqual(arguments)
+                    // Newer Editors retain obsolete source method stubs which no longer read or write settings.
+                    && !method.IsDefined(typeof(ObsoleteAttribute), true)
+                    ? method
+                    : null;
+            }
+
+            internal string WriteUnavailableReason(string setting)
+            {
+                bool writable = setting switch
+                {
+                    "include_in_build" => WriteInclude != null,
+                    "variant_scale" => WriteScale != null,
+                    "packing" => WritePacking != null,
+                    "texture" => WriteTexture != null,
+                    "platforms" => WritePlatform != null,
+                    _ => throw new ArgumentOutOfRangeException(nameof(setting)),
+                };
+                return ReadUnavailableReason ?? (writable ? null : "SpriteAtlas V2 importer has no supported public writer for " + setting + ".");
+            }
+        }
+
+        internal readonly struct NativeSettings
+        {
+            private readonly Object target;
+            private readonly ImporterApi api;
+
+            internal NativeSettings(Object target, ImporterApi api = null)
+            {
+                this.target = target;
+                this.api = api;
+            }
+
+            internal bool Include => target is SpriteAtlas atlas ? atlas.IsIncludeInBuild() : (bool)api.ReadInclude.Invoke(target, null);
+
+            internal float? Scale
+            {
+                get
+                {
+                    if (api?.ReadScale != null)
+                        return (float)api.ReadScale.Invoke(target, null);
+
+                    // These are the typed scale properties used by Unity's V1 and early V2 inspectors.
+                    using var serialized = new SerializedObject(target);
+                    using var scale = serialized.FindProperty(target is SpriteAtlas ? "m_EditorData.variantMultiplier" : "m_ImporterData.variantMultiplier");
+                    return scale?.propertyType == SerializedPropertyType.Float ? scale.floatValue : (float?)null;
+                }
+            }
+
+            internal SpriteAtlasPackingSettings Packing =>
+                target is SpriteAtlas atlas ? atlas.GetPackingSettings() : (SpriteAtlasPackingSettings)api.ReadPacking.Invoke(target, null);
+
+            internal SpriteAtlasTextureSettings Texture =>
+                target is SpriteAtlas atlas ? atlas.GetTextureSettings() : (SpriteAtlasTextureSettings)api.ReadTexture.Invoke(target, null);
+
+            internal TextureImporterPlatformSettings Platform(string profile) =>
+                target is SpriteAtlas atlas
+                    ? atlas.GetPlatformSettings(profile)
+                    : (TextureImporterPlatformSettings)api.ReadPlatform.Invoke(target, new object[] { profile });
+
+            internal void SetInclude(bool value)
+            {
+                if (target is SpriteAtlas atlas)
+                    atlas.SetIncludeInBuild(value);
+                else
+                    api.WriteInclude.Invoke(target, new object[] { value });
+            }
+
+            internal void SetScale(float value)
+            {
+                if (target is SpriteAtlas atlas)
+                    atlas.SetVariantScale(value);
+                else
+                    api.WriteScale.Invoke(target, new object[] { value });
+            }
+
+            internal void SetPacking(SpriteAtlasPackingSettings value)
+            {
+                if (target is SpriteAtlas atlas)
+                    atlas.SetPackingSettings(value);
+                else
+                    api.WritePacking.Invoke(target, new object[] { value });
+            }
+
+            internal void SetTexture(SpriteAtlasTextureSettings value)
+            {
+                if (target is SpriteAtlas atlas)
+                    atlas.SetTextureSettings(value);
+                else
+                    api.WriteTexture.Invoke(target, new object[] { value });
+            }
+
+            internal void SetPlatform(TextureImporterPlatformSettings value)
+            {
+                if (target is SpriteAtlas atlas)
+                    atlas.SetPlatformSettings(value);
+                else
+                    api.WritePlatform.Invoke(target, new object[] { value });
+            }
+        }
+
         private static readonly string[] PackingFields = { "padding", "enableRotation", "enableTightPacking", "enableAlphaDilation" };
         private static readonly string[] TextureFields = { "anisoLevel", "filterMode", "generateMipMaps", "readable", "sRGB" };
         private static readonly string[] PlatformFields = { "overridden", "maxTextureSize", "format", "textureCompression", "compressionQuality" };
@@ -65,7 +255,7 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
             foreach (JProperty value in values.Properties())
             {
                 PropertyInfo member = type.GetProperty(value.Name);
-                if (!allowed.Contains(value.Name) || member == null || !member.CanRead || !member.CanWrite)
+                if (!allowed.Contains(value.Name) || member?.GetGetMethod() == null || member.GetSetMethod() == null)
                     throw new ArgumentException("Unknown or unavailable native atlas setting: " + value.Name + ".");
                 Type scalar = member.PropertyType;
                 if (scalar == typeof(bool))
@@ -125,12 +315,17 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
             foreach (string field in fields)
             {
                 PropertyInfo member = settings.GetType().GetProperty(field);
-                values[field] = member == null ? (JToken)JValue.CreateNull() : Scalar(member.GetValue(settings));
+                values[field] = member?.GetGetMethod() == null ? (JToken)JValue.CreateNull() : Scalar(member.GetValue(settings));
             }
             return values;
         }
 
-        private static JToken Scalar(object value) => value.GetType().IsEnum ? new JValue(value.ToString()) : JToken.FromObject(value);
+        private static JToken Scalar(object value)
+        {
+            if (value is TextureImporterFormat format && format == TextureImporterFormat.Automatic)
+                return new JValue(nameof(TextureImporterFormat.Automatic));
+            return value.GetType().IsEnum ? new JValue(value.ToString()) : JToken.FromObject(value);
+        }
 
         private static bool Matches(object owner, JObject values)
         {
@@ -139,17 +334,13 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
             return values.Properties().All(value => JToken.DeepEquals(value.Value, Scalar(owner.GetType().GetProperty(value.Name).GetValue(owner))));
         }
 
-        internal bool Matches(SpriteAtlasImporter importer)
+        internal bool Matches(NativeSettings native)
         {
-#if UNITY_2022_1_OR_NEWER
-            return (!Include.HasValue || importer.includeInBuild == Include.Value)
-                && (!Scale.HasValue || importer.variantScale == Scale.Value)
-                && Matches(importer.packingSettings, packing)
-                && Matches(importer.textureSettings, texture)
-                && platforms.All(profile => Matches(importer.GetPlatformSettings(profile.Key), profile.Value));
-#else
-            throw AtlasAccess.ImporterSettingsUnavailable();
-#endif
+            return (!Include.HasValue || native.Include == Include.Value)
+                && (!Scale.HasValue || native.Scale == Scale.Value)
+                && (packing == null || Matches(native.Packing, packing))
+                && (texture == null || Matches(native.Texture, texture))
+                && platforms.All(profile => Matches(native.Platform(profile.Key), profile.Value));
         }
 
         internal void ValidateVariant(bool variant)
@@ -162,28 +353,49 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
                 );
         }
 
-        internal void Apply(SpriteAtlasImporter importer)
+        internal void RequireWritable(ImporterApi api)
         {
-#if UNITY_2022_1_OR_NEWER
+            void Require(string setting)
+            {
+                string reason = api?.WriteUnavailableReason(setting);
+                if (reason != null)
+                    throw new ArgumentException(reason);
+            }
+
             if (Include.HasValue)
-                importer.includeInBuild = Include.Value;
+                Require("include_in_build");
             if (Scale.HasValue)
-                importer.variantScale = Scale.Value;
+                Require("variant_scale");
             if (packing != null)
-                importer.packingSettings = (SpriteAtlasPackingSettings)Patch(importer.packingSettings, packing);
+                Require("packing");
             if (texture != null)
-                importer.textureSettings = (SpriteAtlasTextureSettings)Patch(importer.textureSettings, texture);
+                Require("texture");
+            if (platforms.Count > 0)
+                Require("platforms");
+        }
+
+        internal void RequireScaleReadback(NativeSettings native)
+        {
+            if (Scale.HasValue && !native.Scale.HasValue)
+                throw new ArgumentException("The requested SpriteAtlas variant_scale has no verifiable native readback on this asset.");
+        }
+
+        internal void Apply(NativeSettings native)
+        {
+            if (Include.HasValue)
+                native.SetInclude(Include.Value);
+            if (Scale.HasValue)
+                native.SetScale(Scale.Value);
+            if (packing != null)
+                native.SetPacking((SpriteAtlasPackingSettings)Patch(native.Packing, packing));
+            if (texture != null)
+                native.SetTexture((SpriteAtlasTextureSettings)Patch(native.Texture, texture));
             foreach (var profile in platforms)
             {
-                var settings = (TextureImporterPlatformSettings)Patch(importer.GetPlatformSettings(profile.Key), profile.Value);
+                var settings = (TextureImporterPlatformSettings)Patch(native.Platform(profile.Key), profile.Value);
                 settings.name = profile.Key;
-                importer.SetPlatformSettings(settings);
+                native.SetPlatform(settings);
             }
-            EditorUtility.SetDirty(importer);
-            importer.SaveAndReimport();
-#else
-            throw AtlasAccess.ImporterSettingsUnavailable();
-#endif
         }
     }
 }

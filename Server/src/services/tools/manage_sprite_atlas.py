@@ -1,4 +1,4 @@
-"""Explicit, guarded SpriteAtlas V2 authoring and scoped editor preview packing."""
+"""Guarded Sprite Atlas V1 and V2 authoring and scoped Editor preview packing."""
 
 import json
 import math
@@ -43,10 +43,10 @@ def _error(action: str, values: dict[str, Any]) -> str | None:
     if (
         type(path) is not str
         or not path.startswith("Assets/")
-        or not path.endswith(".spriteatlasv2")
+        or not path.endswith((".spriteatlas", ".spriteatlasv2"))
         or ".." in path.split("/")
     ):
-        return "path must be a contained Assets/*.spriteatlasv2 path."
+        return "path must be a contained Assets/*.spriteatlas or Assets/*.spriteatlasv2 path."
     if action in _WRITES:
         if not _identity({"guid": values.get("guid"), "file_id": values.get("file_id")}):
             return "Existing atlas writes require exact guid/file_id identity from read."
@@ -179,16 +179,22 @@ def _error(action: str, values: dict[str, Any]) -> str | None:
 @mcp_for_unity_tool(
     group="animation",
     description=(
-        "Inspect and explicitly author SpriteAtlas V2 Assets/*.spriteatlasv2 files. "
+        "Inspect and explicitly author Sprite Atlas V1 (.spriteatlas) and V2 (.spriteatlasv2) assets. "
         "Actions: capabilities, create, read, configure, add_packables, remove_packables, pack. "
+        "capabilities reports action availability, setting_writes and membership/preview source types per format under formats.V1 and formats.V2. "
+        "The legacy top-level availability fields describe V2. "
         "create requires properties.include_in_build; no overwrite or implicit folder creation. "
         "Existing writes require guid, file_id and expected_revision from read. "
-        "Direct Sprite packables only, 128 references per request and 256 per atlas; no folders or texture expansion. "
-        "properties supports include_in_build, packing, texture, platforms and exact master/master_revision with variant_scale. "
+        "Membership writes take direct Sprite references only, 128 per request and 256 per atlas. "
+        "properties supports include_in_build, packing, texture, platforms and exact same-format master/master_revision with variant_scale. "
         "Read returns bounded packables pages, settings, master/variant and stored platform profiles; continuation requires revision. "
         "pack is synchronous editor preview for the explicit active build_target; a variant declares its master in the pack scope. "
         "Packing writes native caches/imported output and may unload/reload Sprites. It is not a Player build or proof of runtime delivery. "
-        "Disabled/non-V2 modes refuse packing; no global settings, prebuild hooks or Addressables changes. Asset saves do not promise Undo or arbitrary callback rollback."
+        "Preview requires the format's packer mode and resolves existing Sprite textures or folders within the bounded source scope. "
+        "On importer-backed Editors V1 preview requires Unity's 2D Sprite TextureImporter provider and a completed Editor update after observing the revision. "
+        "Reopen the project before V1 preview if the atlas or its master was created, or its source images were imported or changed, in the current Editor session. "
+        "V1 writes require a packer mode that preserves .spriteatlas files. "
+        "No conversions, global settings, prebuild hooks or Addressables changes. Asset saves do not promise Undo or arbitrary callback rollback."
     ),
     annotations=ToolAnnotations(title="Manage Sprite Atlas", destructiveHint=True),
 )
@@ -196,7 +202,8 @@ async def manage_sprite_atlas(
     ctx: Context,
     action: Annotated[AtlasAction, "Explicit authoring, inspection or preview-pack action."],
     path: Annotated[
-        StrictStr | None, "Existing or new contained Assets/*.spriteatlasv2 asset path."
+        StrictStr | None,
+        "Contained Assets path with a .spriteatlas (V1) or .spriteatlasv2 (V2) extension.",
     ] = None,
     guid: Annotated[StrictStr | None, "Existing writes: exact atlas GUID from read."] = None,
     file_id: Annotated[

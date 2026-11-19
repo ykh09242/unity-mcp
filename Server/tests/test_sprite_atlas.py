@@ -54,10 +54,11 @@ def edit(**changes):
     }
 
 
-def test_guarded_atlas_settings_forward_exact_false_and_identity(wire):
+@pytest.mark.parametrize("extension", [".spriteatlas", ".spriteatlasv2"])
+def test_guarded_atlas_settings_forward_exact_false_and_identity(wire, extension):
     # Given an exact atlas identity and explicit false/zero values.
     module, sender = wire()
-    values = edit()
+    values = edit(path="Assets/UI" + extension)
     # When the public tool dispatches the guarded request.
     response = asyncio.run(module.manage_sprite_atlas(SimpleNamespace(), **values))
     # Then transport preserves values and the new tool route.
@@ -70,6 +71,8 @@ def test_guarded_atlas_settings_forward_exact_false_and_identity(wire):
     "values",
     [
         edit(expected_revision=None),
+        edit(path="Assets/../UI.spriteatlas"),
+        edit(path="Assets/UI.spriteatlas.old"),
         edit(file_id="0"),
         edit(guid="name"),
         edit(properties={"packing": {"padding": True}}),
