@@ -26,6 +26,7 @@ from pydantic import (
 from services.reference_graph.action_options import GRAPH_ACTION_OPTIONS
 from services.registry.action_contracts import ACTION_RULES
 from services.registry.capability_catalog import CAPABILITIES, CapabilityEffects, READ_ONLY_EFFECTS
+from services.registry.observation_predicates import EvidencePredicates
 from services.registry.tool_registry import TOOL_GROUPS, ToolMaturity
 
 
@@ -88,6 +89,7 @@ class Observation(TypedDict):
     # equivalent facts with different response shapes and conditional evidence.
     wire_paths: NotRequired[dict[str, str]]
     conditions: NotRequired[str]
+    predicates: NotRequired[EvidencePredicates]
     required_parameters: NotRequired[list[str]]
     related_values: NotRequired[dict[str, list[ObservationValue]]]
     fixed_arguments: NotRequired[dict[str, bool]]
@@ -122,6 +124,30 @@ POINTER_ORDER_OBSERVATION: Final[Observation] = {
     "wire_paths": {"pointer_hit_order": "hits[].rank"},
     "required_parameters": ["target", "screen_position"],
     "fixed_arguments": {"allow_custom_filters": False, "strict_read": True},
+    "predicates": {
+        "all": [
+            {"op": "equals", "path": "status", "value": "observed"},
+            {"op": "equals", "path": "policy.strict_read", "value": True},
+            {"op": "equals", "path": "policy.native_query_attempted", "value": True},
+            {"op": "equals", "path": "policy.allow_custom_filters", "value": False},
+            {"op": "equals", "path": "policy.custom_filters_present", "value": False},
+            {"op": "equals", "path": "policy.user_code_may_have_run", "value": False},
+            {"op": "equals", "path": "policy.package_explicit_event_dispatch", "value": False},
+            {"op": "equals", "path": "policy.package_explicit_source_edits", "value": False},
+            {"op": "equals", "path": "input.delivery", "value": "not_attempted"},
+        ],
+        "by_value": {
+            "pointer_hit_order": [
+                {
+                    "op": "ordered_hits",
+                    "path": "hits",
+                    "rank_field": "rank",
+                    "total_path": "hits_total",
+                    "truncated_path": "hits_truncated",
+                }
+            ]
+        },
+    },
     "conditions": (
         "Requires a scene RectTransform target, in-bounds bottom-left Game View pixel coordinates, "
         "Unity 6000.0.69f1, supported uGUI 2.0.0 components and one active native EventSystem. "
@@ -135,12 +161,33 @@ ACTIVE_SCENE_OBSERVATION: Final[Observation] = {
     "values": ["active_scene.name", "active_scene.path"],
     "unavailable": [],
     "wire_paths": {"active_scene.name": "name", "active_scene.path": "path"},
+    "predicates": {
+        "all": [],
+        "by_value": {
+            "active_scene.name": [{"op": "type", "path": "name", "type": "string"}],
+            "active_scene.path": [{"op": "type", "path": "path", "type": "string"}],
+        },
+    },
     "conditions": "Requires a valid active scene. An unsaved scene can have an empty path.",
 }
 EDITOR_STATE_OBSERVATION: Final[Observation] = {
     "source": "editor_live",
     "values": ["active_scene.name", "active_scene.path", "compilation.is_compiling"],
     "unavailable": ["compile_job.outcome"],
+    "predicates": {
+        "all": [{"op": "equals", "path": "staleness.is_stale", "value": False}],
+        "by_value": {
+            "active_scene.name": [
+                {"op": "type", "path": "editor.active_scene.name", "type": "string"}
+            ],
+            "active_scene.path": [
+                {"op": "type", "path": "editor.active_scene.path", "type": "string"}
+            ],
+            "compilation.is_compiling": [
+                {"op": "type", "path": "compilation.is_compiling", "type": "boolean"}
+            ],
+        },
+    },
     "wire_paths": {
         "active_scene.name": "editor.active_scene.name",
         "active_scene.path": "editor.active_scene.path",
@@ -156,6 +203,37 @@ COMPILE_JOB_OBSERVATION: Final[Observation] = {
     "values": ["compile_job.outcome"],
     "unavailable": ["compilation.is_compiling"],
     "wire_paths": {"compile_job.outcome": "outcome"},
+    "predicates": {
+        "all": [
+            {"op": "equals", "path": "state", "value": "finished"},
+            {"op": "equals", "path": "attribution", "value": "observed_after_request"},
+            {"op": "equals", "path": "collection_complete", "value": True},
+            {"op": "type", "path": "compile_id", "type": "hex32"},
+            {"op": "type", "path": "session_id", "type": "hex32"},
+            {"op": "type", "path": "generation", "type": "positive_integer"},
+            {"op": "type", "path": "assembly_count", "type": "positive_integer"},
+            {
+                "op": "single_item_equals",
+                "path": "candidate_generations",
+                "other_path": "generation",
+            },
+            {
+                "op": "timestamp_lte",
+                "path": "requested_at_unix_ms",
+                "other_path": "started_at_unix_ms",
+            },
+            {
+                "op": "timestamp_lte",
+                "path": "started_at_unix_ms",
+                "other_path": "finished_at_unix_ms",
+            },
+        ],
+        "by_value": {
+            "compile_job.outcome": [
+                {"op": "one_of", "path": "outcome", "values": ["success", "failed"]}
+            ]
+        },
+    },
     "required_parameters": ["compile_id"],
     "conditions": (
         "Poll the existing compile_id. Only a finished job with validated, complete attributed "

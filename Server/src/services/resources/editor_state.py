@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal, Any
 
 from fastmcp import Context
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from core.config import config
 from models import MCPResponse
@@ -82,7 +82,7 @@ class EditorStateCompileSummary(BaseModel):
 
 class EditorStateCompilation(BaseModel):
     latest_job: EditorStateCompileSummary | None = None
-    is_compiling: bool | None = None
+    is_compiling: StrictBool | None = None
     is_domain_reload_pending: bool | None = None
     last_compile_started_unix_ms: int | None = None
     last_compile_finished_unix_ms: int | None = None

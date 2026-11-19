@@ -75,6 +75,30 @@ async def test_fixed_state_and_pointer_are_routed_reads(command_hub, monkeypatch
         native.return_value = reply
         result = await client.call_tool("inspect_ugui_hit_order", args)
         assert result.structured_content == reply
+        from services.registry.observation_predicates import evaluate_observation
+
+        value = "pointer_hit_order"
+        for query in (
+            "What was hit?",
+            "무엇이 맞았나요?",
+            "何に当たった？",
+            "¿Qué recibió el impacto?",
+            "ما الذي أُصيب؟",
+            "Mihin osui?",
+        ):
+            search = await client.call_tool(
+                "search_unity_tools",
+                {
+                    "query": query,
+                    "required_values": [value],
+                    "route_surfaces": "tools",
+                    "host_tool_names": ["inspect_ugui_hit_order"],
+                },
+            )
+            route = search.structured_content["route_groups"][0]["representative"]
+            assert evaluate_observation(
+                route["observation"], result.structured_content, [value]
+            ) == {value: True}
         assert native.call_args.args[1:3] == ("Fixture@hash", "manage_ugui")
         assert native.call_args.args[3]["strict_read"] is True
         assert native.call_args.args[3]["allow_custom_filters"] is False

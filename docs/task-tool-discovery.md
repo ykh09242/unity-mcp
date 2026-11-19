@@ -67,6 +67,27 @@ For reviewed observations, `observation.source` names the origin of the data.
 result's `data` object unless `wire_paths` maps it to a route-specific field.
 Read `conditions` before claiming evidence. Tool routes include fixed `arguments`
 and input names the caller must supply in `required_parameters`.
+`observation.predicates` tests the returned evidence independently of those
+invocation prerequisites. Evaluate `all` clauses and the requested value's
+`by_value` clauses on one successful reply's `data` object. Without a
+value-specific clause, its declared wire path must exist and be non-null.
+Python consumers can call
+`services.registry.observation_predicates.evaluate_observation(observation, reply, required_values)`
+to receive a boolean for each requested value. A fresh boolean `false` is a
+valid compilation activity observation. A stale snapshot cannot establish it.
+
+Paths are dot-separated object keys. `equals` uses exact type and value,
+`one_of` checks literal strings, and `type` checks the specified JSON type or
+format. `hex32` is a 32-character lowercase hexadecimal identifier.
+`single_item_equals` requires a one-element integer array equal to the integer
+at `other_path`. `timestamp_lte` compares two nonnegative integer timestamps.
+`ordered_hits` checks at most 128 rows, consecutive integer ranks starting
+at zero, the total, and the truncation flag. A truncated positive result
+establishes the returned prefix only. A successful empty query has zero total
+and no truncation. A refused or unattempted query supplies no order.
+Earlier declarations that specify conditions only in prose require manual
+interpretation. The evaluator leaves their conditional facts unconfirmed.
+
 `unavailable` names evidence this operation cannot supply. Catalog cards, exact
 descriptions and matching search routes expose the same observation record.
 Tools-only clients can also inspect `_meta["io.github.ykh09242.unity-mcp/action-observations"]`
@@ -82,9 +103,9 @@ Editor and client selection. The graph tool takes a required `path` and optional
 
 | Requested observation | Operation | Source and scope |
 | --- | --- | --- |
-| Pointer hit order | `manage_ugui.diagnose_raycast` | `editor_live`, `pointer_hit_order`. Bind `allow_custom_filters=false`, a scene RectTransform target and bottom-left Game View pixel position. Require `status=observed` and `policy.native_query_attempted=true`. Read ordered `hits` and truncation. |
+| Pointer hit order | `inspect_ugui_hit_order` or `manage_ugui.diagnose_raycast` | `editor_live`, `pointer_hit_order`. The mixed action binds `allow_custom_filters=false` and `strict_read=true`. Supply a scene RectTransform and bottom-left Game View pixel position. Check the observed policy, ordered hits and truncation. |
 | Active scene name and path | `scene_inspect.get_active`, `manage_scene.get_active` or `mcpforunity://editor/state` | `editor_live`, `active_scene.name` and `active_scene.path`. Use the route's wire paths. For a snapshot, check staleness. |
-| Current compilation activity | `mcpforunity://editor/state` | `editor_live`, `compilation.is_compiling`. Requires a fresh snapshot with a boolean value. |
+| Current compilation activity | `inspect_editor_state` or `mcpforunity://editor/state` | `editor_live`, `compilation.is_compiling`. Requires a fresh snapshot with a boolean value. |
 | Attributed compile outcome | `get_compile_job` | `compile_job`, `compile_job.outcome`. Supply the existing `compile_id`. Check the returned outcome for a finished, attributed result. |
 | Current Game View pixels and preset | `manage_editor.get_game_view_size` or `mcpforunity://editor/game-view-size` | `editor_live`. Use `render_size.width` and `render_size.height` for pixels. `current_size` identifies the preset, which may be an aspect ratio. An existing Game View is required. |
 | Saved Shader Graph structure | `manage_shader.inspect_graph` or the `shader_graph_structure` template | `asset_file`. The selected Editor reads the named file. Counts cover the whole graph. Node types, edge endpoints and property summaries are paged. |
