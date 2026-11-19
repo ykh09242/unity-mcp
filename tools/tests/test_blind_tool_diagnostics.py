@@ -81,9 +81,14 @@ def test_only_parent_bound_children_can_supply_completed_host_items(tmp_path):
     assert events == [{"type": "host.child_linked", "child_actor": thread_digest(child)}]
     assert len(list(tmp_path.glob("child-*.jsonl"))) == 1
     trace = ClientTrace(child_actors={thread_digest(child)})
-    observed = ClientTrace(calls={"1": Call("get_game_view_size", "unity", 1)})
+    observed = ClientTrace(calls={"1": Call("get_game_view_size", "unity", 1, status="returned")})
     assert (
-        role_status("subagent", trace, [[Call("get_game_view_size", "unity", 1)]], observed)[0]
+        role_status(
+            "subagent",
+            trace,
+            [[Call("get_game_view_size", "unity", 1, status="returned")]],
+            observed,
+        )[0]
         == "confirmed"
     )
     assert role_status("subagent", trace, [[Call("other", "unity", 1)]], observed)[0] != "confirmed"
@@ -109,3 +114,40 @@ def test_resource_template_scope_includes_optional_pagination():
     assert search_receipt({"routes": [{"kind": "resource_template", "uri_template": uri}]})[
         "top3"
     ] == [[GRAPH_RESOURCE]]
+
+
+def test_parent_rank_does_not_credit_a_confirmed_child():
+    from tools.experiments.blind_tool_diagnostics import actor_searches
+
+    search = Call(
+        "manage_tools.search", "discovery", 1, actor="parent", evidence={"top3": [["saved"]]}
+    )
+    assert not actor_searches(ClientTrace(), [search], "child", True)
+    result = stage_diagnosis(set(), {}, [], [search], role_confirmed=True, grade="partial")
+    assert result["advertised"] is None and result["first_search_top3_suitable"] is False
+
+
+def test_native_raycast_failure_keeps_reason_without_observation_credit():
+    from tools.experiments.blind_tool_trace import RAYCAST, evidence_grade, observation, unpack
+
+    status, data = unpack(
+        {
+            "result": {
+                "structuredContent": {
+                    "success": False,
+                    "data": {
+                        "kind": "ugui_raycast_diagnostics",
+                        "status": "failed",
+                        "reason": "native_query_threw",
+                    },
+                }
+            }
+        }
+    )
+    failed = Call(RAYCAST, "unity", 1, status=status, evidence=observation(RAYCAST, data))
+    assert failed.evidence == {"status": "failed", "reason": "native_query_threw"}
+    assert evidence_grade("raycast", [failed]) == "none"
+    assert (
+        stage_diagnosis({RAYCAST}, {}, [failed], [], role_confirmed=True, grade="none")["stage"]
+        == "native_failed"
+    )

@@ -192,14 +192,22 @@ def decision(route: str, args: dict[str, Any], graph_asset: str, *, endpoint: bo
 def unpack(response: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Read MCP success separately from the domain payload nested in content."""
     result = mapping(response.get("result"))
-    if response.get("error") or result.get("isError") or result.get("is_error"):
+    if response.get("error"):
         return "error", {}
     value = mapping(result.get("structuredContent") or result.get("structured_content"))
     if not value:
         blocks = result.get("contents") or result.get("content") or []
         if isinstance(blocks, list) and blocks:
             value = json_object(string(mapping(blocks[0]).get("text")))
-    if value.get("success") is False or value.get("error"):
+    if (
+        value.get("success") is False
+        or value.get("error")
+        or result.get("isError")
+        or result.get("is_error")
+    ):
+        data = mapping(value.get("data"))
+        if data.get("kind") == "ugui_raycast_diagnostics" and data.get("status") == "failed":
+            return "error", data
         return "error", {}
     if value.get("success") is True:
         return "returned", mapping(value.get("data"))
@@ -240,6 +248,12 @@ def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
     if route == RAYCAST:
         if data.get("kind") != "ugui_raycast_diagnostics":
             return {}
+        if data.get("status") == "failed":
+            reason = string(data.get("reason"))
+            return {
+                "status": "failed",
+                "reason": reason if re.fullmatch("[a-z_]{1,64}", reason) else None,
+            }
         point = data.get("screen_position")
         status = string(data.get("status"))
         if not (
@@ -739,22 +753,23 @@ def role_status(
     if any(call.actor_binding == "conflict" for call in reads):
         return "mixed", "conflicting-request-actor-metadata"
 
+    def matches(call, request):
+        status = {"completed": "returned", "failed": "error"}.get(call.status, call.status)
+        return (
+            status in {"returned", "error"}
+            and (call.route, call.page, status) == (request.route, request.page, request.status)
+            and not any(
+                key in call.evidence and call.evidence[key] != value
+                for key, value in request.evidence.items()
+            )
+        )
+
     def matched_items(host, unbound):
         remaining = list(host.calls.values())
         for request in unbound:
-
-            def matches(call):
-                status = {"completed": "returned", "failed": "error"}.get(call.status, call.status)
-                return (call.route, call.page, status) == (
-                    request.route,
-                    request.page,
-                    request.status,
-                ) and not any(
-                    key in call.evidence and call.evidence[key] != value
-                    for key, value in request.evidence.items()
-                )
-
-            index = next((i for i, candidate in enumerate(remaining) if matches(candidate)), None)
+            index = next(
+                (i for i, candidate in enumerate(remaining) if matches(candidate, request)), None
+            )
             if index is None:
                 return False
             remaining.pop(index)
@@ -921,7 +936,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     row = json_object((case_dir / "case.json").read_bytes())
     task = string(row["task"])
     routes = ROUTES[task]
-    from tools.experiments.blind_tool_diagnostics import stage_diagnosis
+    from tools.experiments.blind_tool_diagnostics import actor_searches, stage_diagnosis
 
     options = dict(
         endpoint=row.get("backend") == "unity-mcp-loopback",
@@ -983,6 +998,14 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         or (task == "graph-saved" and call.route == SAVED_FILE)
     ]
     first_suitable = next(iter(sequence), None)
+    first_success = next(
+        (
+            call
+            for call in sequence
+            if call.status == "returned" and (call.evidence or call.route == SAVED_FILE)
+        ),
+        None,
+    )
     repeated, retries = repeat_counts(sequence)
     live_observations = []
     for call in relevant:
@@ -1016,13 +1039,17 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         if surface.is_file() and (row["role"] == "main" or len(parent.child_actors) == 1)
         else {}
     )
+    selected_actor = (
+        parent.parent_actor if row["role"] == "main" else next(iter(parent.child_actors), "")
+    )
+    actor_host = parent if row["role"] == "main" else child
     diagnosis = stage_diagnosis(
-        routes,
+        set() if task == "graph-open" else routes,
         inventory,
         business,
-        discovery_sources,
+        actor_searches(actor_host, wire, selected_actor, role == "confirmed"),
         role_confirmed=role == "confirmed",
-        grade=grade,
+        grade=task_evidence,
     )
     return {
         **row,
@@ -1045,6 +1072,12 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         },
         "first_business_call": first.route if first else None,
         "first_suitable_business_call": first_suitable.route if first_suitable else None,
+        "first_successful_suitable_call": first_success.route
+        if first_success and role == "confirmed"
+        else None,
+        "calls_before_first_success": business.index(first_success)
+        if first_success and role == "confirmed"
+        else None,
         "calls_before_first_suitable": business.index(first_suitable) if first_suitable else None,
         "first_business_call_suitable": first is not None and first == first_suitable,
         "suitable_attempts": len(sequence),

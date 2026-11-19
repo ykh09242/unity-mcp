@@ -46,6 +46,16 @@ def search_receipt(data):
     count = data.get("total_route_groups")
     return {
         "matching": "observation" if data.get("matching") == "observation" else "lexical",
+        **(
+            {"observation_source": data["observation_source"]}
+            if data.get("observation_source") in {"editor_live", "asset_file", "imported_asset"}
+            else {}
+        ),
+        **(
+            {"required_values": [v for v in data["required_values"][:32] if _identifier(v)]}
+            if isinstance(data.get("required_values"), list)
+            else {}
+        ),
         "grouped": isinstance(groups, list),
         "top3": ranked,
         "distinct_groups": count if type(count) is int and count >= 0 else None,
@@ -95,6 +105,8 @@ def stage_diagnosis(routes, surface, business, searches, *, role_confirmed, grad
         stage = "actor_unknown"
     elif any(call.status == "approval_blocked" for call in relevant) and grade != "complete":
         stage = "permission_blocked"
+    elif grade != "complete" and any(call.evidence.get("status") == "failed" for call in relevant):
+        stage = "native_failed"
     elif any(
         call.evidence.get("status") in {"unavailable", "unknown", "failed"} for call in relevant
     ):
@@ -110,3 +122,17 @@ def stage_diagnosis(routes, surface, business, searches, *, role_confirmed, grad
     else:
         stage = "unknown"
     return {**result, "stage": stage}
+
+
+def actor_searches(host, wire, actor, role_confirmed):
+    if not role_confirmed or not actor:
+        return []
+    visible = (
+        [call for call in host.calls.values() if call.route == "manage_tools.search"]
+        if host
+        else []
+    )
+    bound = [call for call in wire if call.route == "manage_tools.search" and call.actor == actor]
+    if visible:
+        return visible
+    return bound if len({call.timeline for call in bound}) <= 1 else []

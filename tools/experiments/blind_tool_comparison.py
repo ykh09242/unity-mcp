@@ -27,6 +27,8 @@ METRICS = (
     "first_business_call",
     "first_suitable_business_call",
     "calls_before_first_suitable",
+    "first_successful_suitable_call",
+    "calls_before_first_success",
     "wire_evidence",
     "task_evidence",
     "live_evidence",
