@@ -79,14 +79,16 @@ namespace MCPForUnity.Editor.Tools.InputActions
             UnityEngine.Object asset = null;
             try
             {
-                Type type = ManageInputActions.AssetType;
-                var fromJson = type.GetMethod("FromJson", new[] { typeof(string) });
-                var toJson = type.GetMethod("ToJson", Type.EmptyTypes);
-                if (fromJson == null || toJson == null)
-                    throw new InvalidOperationException("Installed Input System lacks the supported JSON API.");
-                asset = (UnityEngine.Object)fromJson.Invoke(null, new object[] { Utf8.GetString(bytes).TrimStart('\uFEFF') });
+                var arguments = new object[] { Utf8.GetString(bytes).TrimStart('\uFEFF') };
+                if (ManageInputActions.FromJson != null)
+                    asset = (UnityEngine.Object)ManageInputActions.FromJson.Invoke(null, arguments);
+                else
+                {
+                    asset = ScriptableObject.CreateInstance(ManageInputActions.AssetType);
+                    ManageInputActions.LoadFromJson.Invoke(asset, arguments);
+                }
                 asset.hideFlags = HideFlags.HideAndDontSave;
-                var normalized = JObject.Parse((string)toJson.Invoke(asset, null));
+                var normalized = JObject.Parse((string)ManageInputActions.ToJson.Invoke(asset, null));
                 if (!Identities(Parse(bytes)).SequenceEqual(Identities(normalized)))
                     throw new InvalidOperationException("Native JSON loading would regenerate or reorder existing identities.");
             }
@@ -111,19 +113,19 @@ namespace MCPForUnity.Editor.Tools.InputActions
                 Id(map, ids);
                 if (!mapNames.Add(Name(map)))
                     throw new ArgumentException("Duplicate map names are not supported.");
-                var actionIds = new ActionIdentities(map);
                 foreach (JObject action in Objects(Array(map, "actions")))
                 {
                     Id(action, ids);
                     actions++;
                 }
-                foreach (JObject binding in Objects(Array(map, "bindings")))
+                var actionIds = new ActionIdentities(map);
+                foreach (var (binding, reference) in Bindings(map))
                 {
-                    Id(binding, ids);
+                    if (ManageInputActions.BindingIds || binding["id"] != null)
+                        Id(binding, ids);
                     foreach (string flag in new[] { "isComposite", "isPartOfComposite" })
                         if (binding[flag] != null && binding[flag].Type != JTokenType.Boolean)
                             throw new ArgumentException("Binding flags must be JSON booleans.");
-                    string reference = ManageInputActions.Text(binding, "action", true, 128);
                     actionIds.Resolve(reference);
                     bindings++;
                 }
@@ -166,37 +168,50 @@ namespace MCPForUnity.Editor.Tools.InputActions
                 string type = ManageInputActions.Text(request, "action_type", true, 16);
                 if (type != "Button" && type != "Value" && type != "PassThrough")
                     throw new ArgumentException("action_type must be Button, Value or PassThrough.");
+                if (!ManageInputActions.ActionTypes.Contains(type))
+                    throw new InvalidOperationException("The installed Input System cannot represent this action_type. Inspect capabilities.action_types.");
                 string id = Guid.NewGuid().ToString("D");
                 var action = new JObject
                 {
                     ["name"] = name,
                     ["id"] = id,
-                    ["type"] = type,
                     ["initialStateCheck"] = type == "Value",
                 };
-                Copy(request, action, "expected_control_type", "expectedControlType");
+                if (ManageInputActions.HasActionType)
+                    action["type"] = type;
+                else
+                    action["passThrough"] = type == "PassThrough";
+                Copy(request, action, "expected_control_type", ManageInputActions.HasActionType ? "expectedControlType" : "expectedControlLayout");
+                foreach (string field in new[] { "processors", "interactions" })
+                    if (request[field] != null && !ManageInputActions.ActionHasProperty(field, typeof(string)))
+                        throw new InvalidOperationException("The installed Input System does not support action-level " + field + ".");
                 Copy(request, action, "processors", "processors");
                 Copy(request, action, "interactions", "interactions");
                 actions.Add(action);
                 return id;
             }
-            JArray bindings = Array(selectedMap, "bindings");
+            if (!ManageInputActions.BindingIds)
+                throw new InvalidOperationException("The installed Input System does not preserve binding GUIDs required for exact binding edits.");
+            var bindings = Bindings(selectedMap).ToList();
             JObject selected;
+            JObject original = null;
+            string selectedAction;
             if (operation == "add_binding")
             {
                 JObject action = Select(Array(selectedMap, "actions"), ManageInputActions.Text(request, "action_id", true, 36));
+                selectedAction = (string)action["name"];
                 selected = new JObject
                 {
                     ["name"] = "",
                     ["id"] = Guid.NewGuid().ToString("D"),
-                    ["action"] = (string)action["name"],
+                    ["action"] = selectedAction,
                     ["isComposite"] = false,
                     ["isPartOfComposite"] = false,
                 };
             }
             else if (operation == "set_binding" || operation == "remove_binding")
             {
-                selected = Select(bindings, ManageInputActions.Text(request, "binding_id", true, 36));
+                selected = Select(bindings.Select(binding => binding.Row), ManageInputActions.Text(request, "binding_id", true, 36));
                 if ((bool?)selected["isComposite"] == true || (bool?)selected["isPartOfComposite"] == true)
                     throw new ArgumentException("Composite bindings are preserved but cannot be edited or removed by this tool.");
                 if (operation == "remove_binding")
@@ -204,7 +219,9 @@ namespace MCPForUnity.Editor.Tools.InputActions
                     selected.Remove();
                     return null;
                 }
-                selected = (JObject)selected.DeepClone();
+                original = selected;
+                selectedAction = bindings.First(binding => ReferenceEquals(binding.Row, original)).Action;
+                selected = (JObject)original.DeepClone();
             }
             else
                 throw new ArgumentException("Unknown InputAction authoring operation.");
@@ -213,12 +230,20 @@ namespace MCPForUnity.Editor.Tools.InputActions
             Copy(request, selected, "processors", "processors");
             Copy(request, selected, "interactions", "interactions");
             var actionIds = new ActionIdentities(selectedMap);
-            if (Objects(bindings).Any(binding => (string)binding["id"] != (string)selected["id"] && SameBinding(actionIds, binding, selected)))
+            if (
+                bindings.Any(binding =>
+                    !ReferenceEquals(binding.Row, original) && SameBinding(actionIds, binding.Row, binding.Action, selected, selectedAction)
+                )
+            )
                 throw new ArgumentException("An equivalent action/path/group binding already exists.");
             if (operation == "add_binding")
-                bindings.Add(selected);
+            {
+                if (selectedMap["bindings"] == null || selectedMap["bindings"].Type == JTokenType.Null)
+                    selectedMap["bindings"] = new JArray();
+                Array(selectedMap, "bindings").Add(selected);
+            }
             else
-                Select(bindings, (string)selected["id"]).Replace(selected);
+                original.Replace(selected);
             return operation == "add_binding" ? (string)selected["id"] : null;
         }
 
@@ -307,14 +332,20 @@ namespace MCPForUnity.Editor.Tools.InputActions
                             ["map_id"] = map["id"],
                             ["id"] = action["id"],
                             ["name"] = action["name"],
-                            ["type"] = action["type"],
+                            ["type"] = action["type"]
+                                ?? (
+                                    action["passThrough"] is JValue { Value: true } ? "PassThrough"
+                                    : action["initialStateCheck"] is JValue { Value: true } ? "Value"
+                                    : null
+                                ),
                         }
                     );
-                foreach (JObject binding in Objects(Array(map, "bindings")))
+                foreach (var (binding, reference) in Bindings(map))
                 {
                     var row = (JObject)binding.DeepClone();
                     row["kind"] = "binding";
                     row["map_id"] = map["id"];
+                    row["action"] = reference;
                     rows.Add(row);
                 }
             }
@@ -324,29 +355,58 @@ namespace MCPForUnity.Editor.Tools.InputActions
         private static IEnumerable<string> Identities(JObject document)
         {
             // Input System omits empty arrays in its normalized JSON. Source validation remains strict.
-            foreach (JObject map in Objects(NormalizedArray(document, "maps")))
+            foreach (JObject map in OptionalObjects(document, "maps"))
             {
                 yield return Guid.Parse((string)map["id"]).ToString("D");
-                foreach (JObject action in Objects(NormalizedArray(map, "actions")))
+                foreach (JObject action in OptionalObjects(map, "actions"))
                     yield return Guid.Parse((string)action["id"]).ToString("D");
-                foreach (JObject binding in Objects(NormalizedArray(map, "bindings")))
-                    yield return Guid.Parse((string)binding["id"]).ToString("D");
+                foreach (var (binding, reference) in Bindings(map))
+                {
+                    if (ManageInputActions.BindingIds || binding["id"] != null)
+                        yield return Guid.Parse((string)binding["id"]).ToString("D");
+                    else
+                        // Before binding GUIDs, only the ordered native binding contents identify a row.
+                        yield return new JArray(
+                            (string)binding["name"] ?? "",
+                            (string)binding["path"] ?? "",
+                            reference,
+                            (string)binding["groups"] ?? "",
+                            (string)binding["processors"] ?? "",
+                            string.IsNullOrEmpty((string)binding["interactions"]) ? (string)binding["modifiers"] ?? "" : (string)binding["interactions"],
+                            (bool?)binding["chainWithPrevious"] ?? false,
+                            (bool?)binding["isComposite"] ?? false,
+                            (bool?)binding["isPartOfComposite"] ?? false
+                        ).ToString(Formatting.None);
+                }
             }
         }
 
-        private static JArray NormalizedArray(JObject value, string key) =>
-            value[key] == null || value[key].Type == JTokenType.Null ? new JArray() : Array(value, key);
+        private static IEnumerable<JObject> OptionalObjects(JObject value, string key) =>
+            value[key] == null || value[key].Type == JTokenType.Null ? Enumerable.Empty<JObject>() : Objects(Array(value, key));
+
+        // Native JSON imports action-local bindings first, with the parent action's name,
+        // and exports them at map level. Keep the source node so edits stay in place.
+        private static IEnumerable<(JObject Row, string Action)> Bindings(JObject map)
+        {
+            foreach (JObject action in OptionalObjects(map, "actions"))
+            foreach (JObject binding in OptionalObjects(action, "bindings"))
+                yield return (binding, Name(action));
+            foreach (JObject binding in OptionalObjects(map, "bindings"))
+                yield return (binding, ManageInputActions.Text(binding, "action", true, 128));
+        }
 
         private static JArray Array(JObject value, string key) => value[key] as JArray ?? throw new ArgumentException(key + " must be an array.");
 
         private static IEnumerable<JObject> Objects(JArray values) =>
             values.Select(value => value as JObject ?? throw new ArgumentException("Expected a JSON object."));
 
-        private static JObject Select(JArray values, string id)
+        private static JObject Select(JArray values, string id) => Select(Objects(values), id);
+
+        private static JObject Select(IEnumerable<JObject> values, string id)
         {
             if (!Guid.TryParse(id, out Guid parsed))
                 throw new ArgumentException("Selectors must be exact GUIDs returned by read.");
-            return Objects(values).SingleOrDefault(value => Guid.Parse((string)value["id"]) == parsed)
+            return values.SingleOrDefault(value => Guid.Parse((string)value["id"]) == parsed)
                 ?? throw new ArgumentException("The requested GUID was not found.");
         }
 
@@ -403,8 +463,8 @@ namespace MCPForUnity.Editor.Tools.InputActions
             }
         }
 
-        private static bool SameBinding(ActionIdentities actions, JObject first, JObject second) =>
-            actions.Resolve((string)first["action"]) == actions.Resolve((string)second["action"])
+        private static bool SameBinding(ActionIdentities actions, JObject first, string firstAction, JObject second, string secondAction) =>
+            actions.Resolve(firstAction) == actions.Resolve(secondAction)
             && string.Equals((string)first["path"], (string)second["path"], StringComparison.OrdinalIgnoreCase)
             && string.Equals((string)first["groups"] ?? "", (string)second["groups"] ?? "", StringComparison.OrdinalIgnoreCase);
     }

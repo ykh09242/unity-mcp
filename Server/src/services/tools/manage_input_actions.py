@@ -210,8 +210,8 @@ class InputActionRequest(BaseModel):
 @mcp_for_unity_tool(
     group="core",
     description=(
-        "Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read "
-        "are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. "
+        "Author optional Input System .inputactions assets in idle Edit Mode. capabilities/read "
+        "are bounded reads; read returns stored GUIDs and a raw source revision. Legacy binding rows can lack IDs. "
         "create_asset requires an unoccupied Assets path and existing parent. add_map/add_action/"
         "add_binding/set_binding/remove_binding require expected_revision; exact GUID selectors avoid "
         "name ambiguity. edit accepts 1..64 ordered commands, validates the final candidate and imports once. "

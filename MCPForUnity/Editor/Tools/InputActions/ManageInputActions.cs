@@ -13,7 +13,35 @@ namespace MCPForUnity.Editor.Tools.InputActions
     [McpForUnityTool("manage_input_actions", AutoRegister = false, Group = "core")]
     public static class ManageInputActions
     {
-        internal static Type AssetType => Type.GetType("UnityEngine.InputSystem.InputActionAsset, Unity.InputSystem");
+        internal static readonly Type AssetType = Type.GetType("UnityEngine.InputSystem.InputActionAsset, Unity.InputSystem")
+            ?? Type.GetType("UnityEngine.Experimental.Input.InputActionAsset, Unity.InputSystem");
+        internal static readonly MethodInfo FromJson = JsonMethod("FromJson", BindingFlags.Static, AssetType, typeof(string));
+        internal static readonly MethodInfo LoadFromJson = JsonMethod("LoadFromJson", BindingFlags.Instance, typeof(void), typeof(string));
+        internal static readonly MethodInfo ToJson = JsonMethod("ToJson", BindingFlags.Instance, typeof(string));
+
+        private static MethodInfo JsonMethod(string name, BindingFlags scope, Type result, params Type[] parameters)
+        {
+            MethodInfo method = AssetType?.GetMethod(name, scope | BindingFlags.Public, null, parameters, null);
+            return method != null && method.ReturnType == result ? method : null;
+        }
+
+        private static bool CanRead => AssetType != null && typeof(UnityEngine.ScriptableObject).IsAssignableFrom(AssetType);
+        private static bool CanAuthor => CanRead && (FromJson != null || LoadFromJson != null) && ToJson != null;
+        private static readonly Type NativeAction = AssetType?.Assembly.GetType(AssetType.Namespace + ".InputAction");
+        private static readonly Type NativeActionType = NativeAction?.GetProperty("type")?.PropertyType;
+        internal static readonly bool BindingIds =
+            AssetType?.Assembly.GetType(AssetType.Namespace + ".InputBinding")?.GetProperty("id")?.PropertyType == typeof(Guid);
+
+        internal static bool ActionHasProperty(string name, Type type) => NativeAction?.GetProperty(name)?.PropertyType == type;
+
+        internal static bool HasActionType => NativeActionType?.IsEnum == true;
+
+        private static bool SupportsActionType(string name) =>
+            HasActionType ? Enum.IsDefined(NativeActionType, name)
+            : name == "PassThrough" ? ActionHasProperty("passThrough", typeof(bool))
+            : name == "Value" && ActionHasProperty("initialStateCheck", typeof(bool));
+
+        internal static readonly string[] ActionTypes = new[] { "Button", "Value", "PassThrough" }.Where(SupportsActionType).ToArray();
 
         public static object HandleCommand(JObject p)
         {
@@ -28,8 +56,15 @@ namespace MCPForUnity.Editor.Tools.InputActions
                         throw new ArgumentException("capabilities accepts only action.");
                     return new SuccessResponse("InputAction authoring capabilities.", Capabilities());
                 }
-                if (!Available(out _))
-                    return new ErrorResponse("input_system_unavailable", new { required_package = "com.unity.inputsystem", minimum_version = "1.7.0" });
+                if (!(action == "read" ? CanRead : CanAuthor))
+                    return new ErrorResponse(
+                        "input_system_unavailable",
+                        new
+                        {
+                            required_package = "com.unity.inputsystem",
+                            required_api = action == "read" ? "InputActionAsset" : "InputActionAsset JSON import and export",
+                        }
+                    );
                 string path = AssetPathUtility.GetContainedAssetPath(Text(p, "path", true, 2048));
                 if (!path.EndsWith(".inputactions", StringComparison.OrdinalIgnoreCase))
                     throw new ArgumentException("path must be an Assets .inputactions source file.");
@@ -311,14 +346,27 @@ namespace MCPForUnity.Editor.Tools.InputActions
 
         private static object Capabilities()
         {
-            bool available = Available(out string version);
+            var actions = new List<string> { "capabilities" };
+            if (CanRead)
+                actions.Add("read");
+            if (CanAuthor)
+            {
+                actions.AddRange(new[] { "create_asset", "edit", "add_map" });
+                if (ActionTypes.Length != 0)
+                    actions.Add("add_action");
+                if (BindingIds)
+                    actions.AddRange(new[] { "add_binding", "set_binding", "remove_binding" });
+            }
             return new
             {
-                available,
+                available = CanAuthor,
                 package = "com.unity.inputsystem",
-                package_version = version,
-                minimum_version = "1.7.0",
-                actions = new[] { "capabilities", "read", "create_asset", "edit", "add_map", "add_action", "add_binding", "set_binding", "remove_binding" },
+                package_version = AssetType == null ? null : UnityEditor.PackageManager.PackageInfo.FindForAssembly(AssetType.Assembly)?.version,
+                read_available = CanRead,
+                authoring_available = CanAuthor,
+                actions,
+                action_types = CanAuthor ? ActionTypes : Array.Empty<string>(),
+                binding_ids_available = BindingIds,
                 max_edit_commands = 64,
                 local_selector_syntax = "$ref (earlier same-request creation of the matching kind)",
                 max_source_bytes = InputActionDocument.MaxBytes,
@@ -327,19 +375,13 @@ namespace MCPForUnity.Editor.Tools.InputActions
                 max_bindings = 1024,
                 max_page_size = 100,
                 max_domain_undo_edits = 32,
-                simple_binding_authoring = true,
+                simple_binding_authoring = CanAuthor && BindingIds,
                 creation_undo = false,
                 undo_survives_domain_reload = false,
                 installs_packages = false,
                 preserves_existing_player_input_links = true,
                 enables_input_actions = false,
             };
-        }
-
-        private static bool Available(out string version)
-        {
-            version = AssetType == null ? null : UnityEditor.PackageManager.PackageInfo.FindForAssembly(AssetType.Assembly)?.version;
-            return AssetType != null && Version.TryParse(version?.Split('-')[0], out Version parsed) && parsed >= new Version(1, 7, 0);
         }
 
         internal static string Text(JObject p, string key, bool required = false, int max = 512)

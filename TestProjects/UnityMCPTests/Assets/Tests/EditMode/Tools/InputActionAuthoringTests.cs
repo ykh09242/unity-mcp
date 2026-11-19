@@ -15,6 +15,31 @@ using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    public class InputActionCapabilityTests
+    {
+        [Test]
+        public void AdvertisedActionsFollowTheInstalledJsonApi()
+        {
+            Type asset = Type.GetType("UnityEngine.InputSystem.InputActionAsset, Unity.InputSystem")
+                ?? Type.GetType("UnityEngine.Experimental.Input.InputActionAsset, Unity.InputSystem");
+            var reply = JObject.FromObject(MCPForUnity.Editor.Tools.InputActions.ManageInputActions.HandleCommand(new JObject { ["action"] = "capabilities" }));
+            Assert.IsTrue(reply.Value<bool>("success"), reply.ToString());
+            bool read = asset != null && typeof(ScriptableObject).IsAssignableFrom(asset);
+            bool import =
+                asset?.GetMethod("FromJson", new[] { typeof(string) })?.IsStatic == true
+                || asset?.GetMethod("LoadFromJson", new[] { typeof(string) })?.IsStatic == false;
+            bool write = read && import && asset.GetMethod("ToJson", Type.EmptyTypes)?.ReturnType == typeof(string);
+            string[] actions = reply["data"]["actions"].Values<string>().ToArray();
+            Assert.AreEqual(read, reply["data"].Value<bool>("read_available"));
+            Assert.AreEqual(write, reply["data"].Value<bool>("authoring_available"));
+            Assert.AreEqual(read, actions.Contains("read"));
+            Assert.AreEqual(write, actions.Contains("edit"));
+            bool bindingIds = asset?.Assembly.GetType(asset.Namespace + ".InputBinding")?.GetProperty("id")?.PropertyType == typeof(Guid);
+            Assert.AreEqual(bindingIds, reply["data"].Value<bool>("binding_ids_available"));
+            Assert.AreEqual(write && bindingIds, actions.Contains("set_binding"));
+        }
+    }
+
     public class InputActionAuthoringTests
     {
         private string folder,
@@ -26,8 +51,9 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void SetUp()
         {
-            assetType = Type.GetType("UnityEngine.InputSystem.InputActionAsset, Unity.InputSystem");
-            Assert.IsNotNull(assetType, "Controller fixture requires com.unity.inputsystem 1.7+; package absence is not product RED.");
+            assetType = Type.GetType("UnityEngine.InputSystem.InputActionAsset, Unity.InputSystem")
+                ?? Type.GetType("UnityEngine.Experimental.Input.InputActionAsset, Unity.InputSystem");
+            Assert.IsNotNull(assetType, "Controller fixture requires com.unity.inputsystem; package absence is not product RED.");
             folder = "Assets/Play17_" + Guid.NewGuid().ToString("N").Substring(0, 12);
             Directory.CreateDirectory(AssetPathUtility.GetFullAssetPath(folder));
             path = folder + "/Controls.inputactions";
@@ -79,6 +105,70 @@ namespace MCPForUnityTests.Editor.Tools
         {
             values["expected_revision"] = Succeed("read")["revision"];
             return Succeed(action, values);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MapAndActionEditsPreserveBindingsFromPackagesWithoutBindingIds(bool actionLocal)
+        {
+            string map = Guid.NewGuid().ToString("D");
+            var binding = new JObject
+            {
+                ["path"] = "<Keyboard>/space",
+                ["action"] = "Jump",
+                ["groups"] = "keyboard",
+            };
+            var source = new JObject
+            {
+                ["name"] = "Controls",
+                ["maps"] = new JArray(
+                    new JObject
+                    {
+                        ["name"] = "Main",
+                        ["id"] = map,
+                        ["actions"] = new JArray(new JObject { ["name"] = "Jump", ["id"] = Guid.NewGuid().ToString("D") }),
+                        ["bindings"] = new JArray(binding.DeepClone()),
+                    }
+                ),
+                ["controlSchemes"] = new JArray(),
+            };
+            string sourceBinding = "maps[0].bindings[0]";
+            if (actionLocal)
+            {
+                binding.Remove("action");
+                binding["interactions"] = "";
+                binding["modifiers"] = "press";
+                source["maps"][0]["bindings"] = new JArray();
+                source["maps"][0]["actions"][0]["bindings"] = new JArray(binding.DeepClone());
+                sourceBinding = "maps[0].actions[0].bindings[0]";
+            }
+            string full = AssetPathUtility.GetFullAssetPath(path);
+            File.WriteAllText(full, source.ToString());
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            JObject caps = (JObject)
+                JObject.FromObject(MCPForUnity.Editor.Tools.InputActions.ManageInputActions.HandleCommand(new JObject { ["action"] = "capabilities" }))["data"];
+            if (caps.Value<bool>("binding_ids_available"))
+            {
+                Assert.IsFalse(Call("read").Value<bool>("success"), "Modern identity checks require every source binding GUID.");
+                return;
+            }
+            Edit("add_map", new JObject { ["name"] = "Secondary" });
+            if (caps["action_types"].Values<string>().Contains("PassThrough"))
+                Edit(
+                    "add_action",
+                    new JObject
+                    {
+                        ["map_id"] = map,
+                        ["name"] = "Aim",
+                        ["action_type"] = "PassThrough",
+                    }
+                );
+            Assert.IsTrue(JToken.DeepEquals(binding, JObject.Parse(File.ReadAllText(full)).SelectToken(sourceBinding)));
+            Assert.IsNull(
+                JObject.Parse((string)assetType.GetMethod("ToJson", Type.EmptyTypes).Invoke(AssetDatabase.LoadAssetAtPath(path, assetType), null))["maps"][0][
+                    "bindings"
+                ][0]["id"]
+            );
         }
 
         private JObject Batch(string action, JObject values)
@@ -134,6 +224,38 @@ namespace MCPForUnityTests.Editor.Tools
             var asset = AssetDatabase.LoadAssetAtPath(path, assetType);
             Assert.IsNotNull(asset, "The real Input System importer must produce a native asset.");
             return JObject.Parse((string)assetType.GetMethod("ToJson", Type.EmptyTypes).Invoke(asset, null));
+        }
+
+        [Test]
+        public void EditingActionLocalBindingUsesItsGuidAndKeepsTheSourceLocation()
+        {
+            var ids = CreateOneBinding();
+            string full = AssetPathUtility.GetFullAssetPath(path);
+            JObject source = JObject.Parse(File.ReadAllText(full));
+            JToken map = source["maps"][0];
+            var binding = (JObject)map["bindings"][0];
+            binding.Remove();
+            binding.Remove("action");
+            map["actions"][0]["bindings"] = new JArray(binding);
+            File.WriteAllText(full, source.ToString());
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            var row = Succeed("read")["rows"].Children<JObject>().Single(item => (string)item["kind"] == "binding");
+            Assert.AreEqual(ids.binding, (string)row["id"]);
+            Assert.AreEqual("Fire", (string)row["action"]);
+            Edit(
+                "set_binding",
+                new JObject
+                {
+                    ["map_id"] = ids.map,
+                    ["binding_id"] = ids.binding,
+                    ["binding_path"] = "<Keyboard>/y",
+                }
+            );
+            JToken saved = JObject.Parse(File.ReadAllText(full))["maps"][0];
+            Assert.IsEmpty((JArray)saved["bindings"]);
+            Assert.IsNull(saved["actions"][0]["bindings"][0]["action"]);
+            Assert.AreEqual("<Keyboard>/y", (string)saved["actions"][0]["bindings"][0]["path"]);
+            Assert.AreEqual("<Keyboard>/y", (string)NativeJson()["maps"][0]["bindings"][0]["path"]);
         }
 
         [Test]
