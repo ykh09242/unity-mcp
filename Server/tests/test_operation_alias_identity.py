@@ -4,7 +4,9 @@ SDK cases retain real registration/context injection with owned target and peer
 boundaries substituted; they do not claim HTTP authentication or native wire proof.
 """
 
+import importlib
 import inspect
+import sys
 from unittest.mock import AsyncMock
 
 from fastmcp import Client, Context as SdkContext, FastMCP
@@ -30,12 +32,12 @@ async def test_actual_wrapped_alias_admits_only_its_real_canonical_callback_as_s
 
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(tool_registry, "_tool_registry", list(tool_registry._tool_registry))
-    # A previous real SDK registration moves injected ctx after required action.
-    # Preserve that supported signature and restore its metadata after this test.
-    for name in ("__signature__", "__fastmcp__"):
-        monkeypatch.setattr(
-            physics.manage_physics, name, getattr(physics.manage_physics, name, None), raising=False
-        )
+    # FastMCP rewrites the callable signature and caches its injected dependencies.
+    # Give this registration its own real module so later servers see a consistent pair.
+    module_name = physics.__name__
+    monkeypatch.delattr(tools, "manage_physics")
+    monkeypatch.delitem(sys.modules, module_name)
+    physics = importlib.import_module(module_name)
     FastMCP("previous-source-registration").tool()(physics.manage_physics)
     feature = next(item for item in CAPABILITIES if item.name == "query_physics")
     observed, effects = [], []
