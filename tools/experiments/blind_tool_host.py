@@ -357,7 +357,9 @@ def direct_child(record, parent):
     )
 
 
-async def collect_children(client, spawned, received, emit, case_dir, server, asset, project=""):
+async def collect_children(
+    client, spawned, received, emit, case_dir, server, asset, project="", fixture=None
+):
     """Read only direct trial children attested by a spawn receipt or thread-start notification."""
     from tools.experiments.blind_tool_trace import thread_digest
 
@@ -390,7 +392,7 @@ async def collect_children(client, spawned, received, emit, case_dir, server, as
                     {"type": "item.completed", "item": item, "host_actor": digest}
                     for turn in turns
                     for raw in turn.get("items", [])
-                    if (item := project_item(raw, server, asset, project))
+                    if (item := project_item(raw, server, asset, project, fixture))
                 ]
                 rows.append({"type": "turn.completed", "host_actor": digest})
         except (InteropFailure, KeyError, ValueError, TimeoutError):
@@ -407,7 +409,7 @@ def _tool_error(text):
     return "approval blocked" if APPROVAL.search(str(text)) else "tool failed"
 
 
-def project_item(item, server, asset, project=""):
+def project_item(item, server, asset, project="", fixture=None):
     """Convert only evidence needed by the scorer. Discard other tools' arguments and results."""
     from tools.experiments.blind_tool_shell import shell_receipt
 
@@ -456,7 +458,7 @@ def project_item(item, server, asset, project=""):
                 route, arguments = route_name("resources/read", args)
             else:
                 route, arguments = route_name("tools/call", {"name": name, "arguments": args})
-            channel = decision(route, arguments, asset)
+            channel = decision(route, arguments, asset, fixture=fixture)
             # A captured host read is evidence on the installed route, separate from wire evidence.
             if channel in ("unity", "discovery"):
                 clean = {
@@ -464,20 +466,33 @@ def project_item(item, server, asset, project=""):
                 }
                 if asset and args.get("path") == asset:
                     clean["path"] = asset
+                if fixture and name in ("get_compile_job", "inspect_ugui_hit_order", "manage_ugui"):
+                    clean.update(
+                        {
+                            k: v
+                            for k, v in args.items()
+                            if k in ("target", "screen_position", "strict_read", "compile_id")
+                        }
+                    )
                 if name == "read_mcp_resource":
                     clean["uri"] = args.get("uri")
                 projected["arguments"] = clean
                 status, data = unpack({"result": item.get("result")})
                 if route == RAYCAST and data.get("status") == "failed":
                     status = "error"
-                projected["observed_result"] = {"status": status, "facts": observation(route, data)}
+                projected["observed_result"] = {
+                    "status": status,
+                    "facts": observation(route, data, fixture),
+                }
         if item.get("error"):
             projected["error"] = {"message": _tool_error(item["error"])}
         return projected
     if kind == "commandExecution":
         projected.update(type="command_execution", exit_code=item.get("exitCode"))
         command, output = item.get("command") or "", item.get("aggregatedOutput") or ""
-        receipt = shell_receipt(command, output, item.get("exitCode"), asset, project, item.get("cwd"))
+        receipt = shell_receipt(
+            command, output, item.get("exitCode"), asset, project, item.get("cwd")
+        )
         projected["shell_receipt"] = receipt
         if (
             item.get("exitCode") == 0
@@ -667,6 +682,11 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                 if gate:
                     metadata["runner_phase"] = "pair_preflight"
                     arm = metadata["arm"]
+                    from tools.experiments.blind_tool_observations import fixture_availability
+
+                    metadata["fixture_availability"] = fixture_availability(
+                        getattr(args, "observation_fixture", {}), metadata["editor_start_state"]
+                    )
                     if not await anyio.to_thread.run_sync(
                         gate.arrive, arm, thread_digest(thread), surface, metadata
                     ):
@@ -678,6 +698,9 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                         metadata["pair_reasons"] = list(gate.reasons)
                         raise ValueError("Editor state changed before prompt delivery")
                     metadata["prepared_pair"] = receipt
+                    receipt["prepared_actor"] = (
+                        "delegating_parent" if metadata["role"] == "subagent" else "main"
+                    )
                 if metadata["observed_server_commit"]:
                     metadata["backend_identity"] = metadata["observed_server_commit"]
                 metadata["runner_phase"] = "model_turn"
@@ -774,7 +797,11 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                     )
                             if method in ("item/started", "item/completed") and actor:
                                 projected = project_item(
-                                    item, server, args.graph_asset, args.project
+                                    item,
+                                    server,
+                                    args.graph_asset,
+                                    args.project,
+                                    getattr(args, "observation_fixture", None),
                                 )
                                 if not projected:
                                     continue
@@ -784,6 +811,8 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                     "host_actor": thread_digest(actor),
                                 }
                                 if actor == thread and params.get("turnId") == turn:
+                                    if live_child and projected.get("tool") == "spawn_agent":
+                                        projected["receiver_thread_ids"] = []
                                     emit(event)
                                     if (
                                         projected.get("tool") == "spawn_agent"
@@ -812,9 +841,9 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                         parents, metadata["child_lookup"] = await scoped_children(
                                             client, thread
                                         )
+                                    if live_child:
+                                        parents.intersection_update(verified_live)
                                     for linked in parents:
-                                    if live_child and projected.get("tool") == "spawn_agent":
-                                        projected["receiver_thread_ids"] = []
                                         path = case_dir / f"host-child-{thread_digest(linked)}.json"
                                         if path.is_file():
                                             child_surface = json.loads(
@@ -838,13 +867,12 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                             )
                                         child_surface["permissions"] = child_permissions.get(linked)
                                         settings = child_models.get(linked, {})
-                                    if live_child:
-                                        parents.intersection_update(verified_live)
                                         if getattr(args, "study", None) or gate or live_child:
                                             settings = await owned_model_settings(
                                                 client, linked, settings
                                             )
                                         child_surface.update(settings)
+                                        child_surface["actor_controls_observed"] = "child_session"
                                         path.write_text(
                                             json.dumps(child_surface, indent=2) + "\n",
                                             encoding="utf-8",
@@ -858,6 +886,7 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                         server,
                                         args.graph_asset,
                                         args.project,
+                                        getattr(args, "observation_fixture", None),
                                     )
                                 return
                         if client.reader_error:

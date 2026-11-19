@@ -19,6 +19,10 @@ FIELDS = {
     "raycast": ("center", "hit_status", "first_hit"),
     "editor": ("playing", "compiling", "scene"),
     "context": ("project_root", "unity_version", "render_pipeline"),
+    "compile-current": ("compiling",),
+    "active-scene": ("scene",),
+    "compile-outcome": ("outcome",),
+    "pointer-order": ("hit_status", "first_hit"),
 }
 
 CONVENTIONS = {
@@ -28,6 +32,7 @@ CONVENTIONS = {
     "hit_status": 'Use "hit", "empty" or null for the ordered pointer query. first_hit is the exact first name.',
     "scene": "Use the exact active scene name.",
     "preset": "Use the selected preset label.",
+    "outcome": 'Use "success", "failed" or null for the specific request.',
 }
 
 
@@ -116,6 +121,27 @@ def expected_facts(task: str, wire: list[dict], saved: list[dict]) -> tuple[dict
                 expected["first_hit"] = hit["first_hit"]
         return expected, sources
     for row in wire:
+        if task in {"compile-current", "active-scene"}:
+            expected.clear()
+            if (
+                row.get("fresh") is True
+                and type(row.get("compiling")) is bool
+                and task == "compile-current"
+            ):
+                expected["compiling"] = row["compiling"]
+            if task == "active-scene" and row.get("fresh", True) is True and row.get("scene_name"):
+                expected["scene"] = row["scene_name"]
+        if task == "compile-outcome":
+            expected.clear()
+            if row.get("outcome") in ("success", "failed"):
+                expected["outcome"] = row["outcome"]
+        if task == "pointer-order":
+            expected.clear()
+            if observed_center_hit(row):
+                if row.get("hits_total") == 0:
+                    expected.update(hit_status="empty", first_hit=None)
+                elif row.get("first_hit"):
+                    expected.update(hit_status="hit", first_hit=row["first_hit"])
         if task == "editor":
             if "fresh" in row:
                 expected.clear()

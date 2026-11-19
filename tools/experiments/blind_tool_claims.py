@@ -5,7 +5,7 @@ from __future__ import annotations
 from tools.experiments.blind_tool_answers import FIELDS, expected_facts, matches
 
 SAVED_FIELDS = ("nodes", "edges", "node_types")
-SOURCES = ("editor_live", "asset_file", "imported_asset", "unknown")
+SOURCES = ("editor_live", "asset_file", "imported_asset", "compile_job", "unknown")
 CHANNELS = ("editor", "file")
 
 
@@ -23,8 +23,9 @@ def claim_instruction(task: str) -> str:
         "Return one JSON object with the fields "
         + ", ".join(fields)
         + '. For each field use {"value": ..., "source": ..., "channel": ...}. '
-        'Source describes the value itself: "editor_live", "asset_file", "imported_asset" '
-        'or "unknown". Channel describes how you obtained it: "editor", "file" or null. '
+        'Source describes the value itself: "editor_live", "asset_file", "imported_asset"'
+        + (', "compile_job"' if task == "compile-outcome" else "")
+        + ' or "unknown". Channel describes how you obtained it: "editor", "file" or null. '
         'For an unverified value use null, source "unknown" and channel null. '
         "Use JSON numbers and booleans. "
         + " ".join(CONVENTIONS[field] for field in fields if field in CONVENTIONS)
@@ -95,7 +96,13 @@ def score_claims(task, answer, wire, saved, *, explicit_limit=False):
     required = set(fields)
     allowed = required | ({"saved_reference"} if task == "graph-open" else set())
     shape_valid = isinstance(answer, dict) and required <= set(submitted) <= allowed
-    origin = "asset_file" if task in {"graph", "graph-saved"} else "editor_live"
+    origin = (
+        "asset_file"
+        if task in {"graph", "graph-saved"}
+        else "compile_job"
+        if task == "compile-outcome"
+        else "editor_live"
+    )
     graph_evidence = {
         "editor": expected_facts("graph-saved", wire, [])[0],
         "file": expected_facts("graph-saved", [], saved)[0],

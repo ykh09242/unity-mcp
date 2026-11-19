@@ -62,12 +62,18 @@ class ScopedObservation(Middleware):
     """Use the authentic server catalog with each Unity read pinned to the operator's target."""
 
     def __init__(
-        self, client: StatefulProxyClient, instance: str, project: Path, graph_asset: str
+        self,
+        client: StatefulProxyClient,
+        instance: str,
+        project: Path,
+        graph_asset: str,
+        fixture=None,
     ) -> None:
         self.client = client
         self.instance = instance
         self.project = project.resolve()
         self.graph_asset = graph_asset
+        self.fixture = fixture
         self.verified = False
 
     async def verify_target(self, backend: StatefulProxyClient) -> None:
@@ -92,7 +98,7 @@ class ScopedObservation(Middleware):
         name = context.message.name
         args = dict(context.message.arguments or {})
         route, _ = route_name("tools/call", {"name": name, "arguments": args})
-        channel = decision(route, args, self.graph_asset, endpoint=True)
+        channel = decision(route, args, self.graph_asset, endpoint=True, fixture=self.fixture)
         selector = args.pop("unity_instance", self.instance)
         if selector != self.instance or channel == "blocked":
             raise ToolError("Outside this project's permitted observations")
@@ -134,12 +140,12 @@ class ScopedObservation(Middleware):
 
 
 def create_observation_proxy(
-    transport: StreamableHttpTransport, instance: str, project: Path, graph_asset: str
+    transport: StreamableHttpTransport, instance: str, project: Path, graph_asset: str, fixture=None
 ) -> FastMCPProxy:
     """Keep upstream identity and catalog while guarding each forwarded observation."""
     client = StatefulProxyClient(transport, forward_incoming_headers=False, timeout=40.0)
     proxy = FastMCPProxy(client_factory=client.new_stateful, identity="upstream", skills=True)
-    proxy.add_middleware(ScopedObservation(client, instance, project, graph_asset))
+    proxy.add_middleware(ScopedObservation(client, instance, project, graph_asset, fixture))
     return proxy
 
 
@@ -149,6 +155,7 @@ def main() -> None:
     parser.add_argument("instance")
     parser.add_argument("project", type=Path)
     parser.add_argument("graph_asset")
+    parser.add_argument("fixture", nargs="?", default="{}")
     args = parser.parse_args()
     host, port = loopback_port(args.endpoint)
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Server" / "src"))
@@ -160,7 +167,9 @@ def main() -> None:
     transport = StreamableHttpTransport(
         args.endpoint, headers={LOCAL_AUTH_HEADER: token}, httpx_client_factory=local_http_client
     )
-    proxy = create_observation_proxy(transport, args.instance, args.project, args.graph_asset)
+    proxy = create_observation_proxy(
+        transport, args.instance, args.project, args.graph_asset, json_object(args.fixture)
+    )
     proxy.run(transport="stdio", show_banner=False)
 
 

@@ -7,6 +7,38 @@
     "ar": "اقتصر في الاطلاع على الحالة ذات الصلة في المحرر المفتوح لهذا المشروع وعلى ملف الأصل المذكور إن وجد. لا تطّلع على ملفات أو بيانات خدمات أخرى خارج نطاق الطلب.",
     "tr": "Yalnızca bu proje için açık düzenleyicideki ilgili durumu ve belirtilmişse adı verilen varlığı inceleyin. İlgisiz dosyaları veya hizmet verilerini açmayın."
   },
+  "compile-current": {
+    "en": "Is the Unity Editor already open for this project compiling scripts right now? Report what you can verify about its current state.",
+    "ko": "이 프로젝트에 열려 있는 Unity 에디터가 지금 스크립트를 컴파일하고 있는지 확인해 주세요.",
+    "ja": "このプロジェクトで開いている Unity エディターが今スクリプトをコンパイルしているか確認してください。",
+    "es": "¿Está compilando scripts ahora mismo el editor de Unity abierto para este proyecto? Indica lo que puedas verificar.",
+    "ar": "هل يترجم محرر Unity المفتوح لهذا المشروع البرامج النصية في هذه اللحظة؟ اذكر ما أمكنك التحقق منه.",
+    "tr": "Bu proje için açık olan Unity Editörü şu anda betikleri derliyor mu? Doğrulayabildiğin durumu bildir."
+  },
+  "active-scene": {
+    "en": "What is the exact name of the active scene in the Unity Editor currently open for this project?",
+    "ko": "이 프로젝트에 열려 있는 Unity 에디터에서 현재 활성 씬의 정확한 이름을 알려 주세요.",
+    "ja": "このプロジェクトで開いている Unity エディターのアクティブなシーンの正確な名前を教えてください。",
+    "es": "¿Cuál es el nombre exacto de la escena activa en el editor de Unity abierto para este proyecto?",
+    "ar": "ما الاسم الدقيق للمشهد النشط في محرر Unity المفتوح حاليا لهذا المشروع؟",
+    "tr": "Bu proje için açık olan Unity Editörü'nde etkin sahnenin tam adı nedir?"
+  },
+  "compile-outcome": {
+    "en": "An earlier script compilation in this project had reference {compile_id}. Did that specific request succeed or fail? Report only the result attributable to it.",
+    "ko": "이 프로젝트의 이전 스크립트 컴파일 요청 번호는 {compile_id}입니다. 그 요청의 성공 또는 실패 여부를 확인해 주세요.",
+    "ja": "このプロジェクトで以前に行ったスクリプトコンパイルの受付番号は {compile_id} です。その依頼の成否を確認してください。",
+    "es": "La compilación anterior de scripts tenía la referencia {compile_id}. ¿Tuvo éxito o falló esa solicitud concreta?",
+    "ar": "مرجع طلب سابق لترجمة البرامج النصية في هذا المشروع هو {compile_id}. هل نجح ذلك الطلب بعينه أم فشل؟",
+    "tr": "Bu projedeki önceki bir betik derleme isteğinin numarası {compile_id}. Bu belirli isteğin başarılı mı yoksa başarısız mı olduğunu doğrula."
+  },
+  "pointer-order": {
+    "en": "For the interface object {target} in this project, which uGUI element comes first under the pointer at Game View pixel ({x}, {y})? Report an empty result only if the Editor actually checked that point.",
+    "ko": "이 프로젝트의 UI 오브젝트 {target}에 대해 Game View 픽셀 ({x}, {y})에서 포인터에 가장 먼저 걸리는 uGUI 요소를 확인해 주세요. 에디터가 그 위치를 확인한 경우에만 결과가 비었다고 알려 주세요.",
+    "ja": "このプロジェクトの UI オブジェクト {target} について、ゲームビューのピクセル座標 ({x}, {y}) でポインターに最初に当たる uGUI 要素を調べてください。空という回答はその位置を確認できた場合に限ってください。",
+    "es": "Para el objeto de interfaz {target}, ¿qué elemento de uGUI queda primero bajo el puntero en el píxel ({x}, {y}) de la vista de juego? Indica que está vacío solo si el editor comprobó ese punto.",
+    "ar": "لكائن الواجهة {target}، ما أول عنصر uGUI تحت المؤشر عند البكسل ({x}, {y}) في عرض اللعبة؟ أبلغ عن نتيجة فارغة فقط إذا فحص المحرر تلك النقطة فعليا.",
+    "tr": "{target} arayüz nesnesi için Oyun Görünümü'ndeki ({x}, {y}) pikselinde işaretçinin altında ilk sırada hangi uGUI öğesi var? Yalnızca editör o noktayı denetlediyse sonucun boş olduğunu bildir."
+  },
   "raycast": {
     "tr": "Bu proje için açık olan Unity Editörü'nde Oyun Görünümü'nün piksel cinsinden tam merkezini bulun. Canlı gözlemle belirlenebiliyorsa, o noktada işaretçiyi ilk hangi uGUI öğesinin alacağını söyleyin. Koordinatı ve gözlemin sınırlarını bildirin.",
     "en": "In the Unity Editor already open for this project, find the exact center of the current Game View in pixels. Determine which uGUI element would receive a pointer there first, if the available live evidence permits it. Report the coordinate and any limit on the result.",

@@ -56,6 +56,7 @@ METRICS = (
     "role_attribution",
     "prepared_pair",
     "pair_reasons",
+    "fixture_availability",
     "graph_data_state",
     "unsaved_graph_observed",
     "final_answer",
@@ -109,7 +110,18 @@ def study_stratum(pairs):
         observed = [pair[arm] for pair in pairs if pair[arm]]
         answered = [pair[arm] for pair in eligible]
         # The open-window task measures restraint. Its declared readers only observe a saved file.
-        positive = [pair[arm] for pair in eligible if pair["task"] != "graph-open"]
+        positive = [
+            pair[arm]
+            for pair in eligible
+            if pair["task"] != "graph-open"
+            and (
+                pair["task"] not in {"compile-outcome", "pointer-order"}
+                or all(
+                    pair[name].get("fixture_availability") == "positive"
+                    for name in ("baseline", "candidate")
+                )
+            )
+        ]
         captures = Counter(
             (case.get("selection_diagnosis") or {}).get("search_capture", "unknown")
             for case in positive
@@ -149,6 +161,11 @@ def study_stratum(pairs):
                 sum(c["calls_before_first_success"] == 0 for c in direct), len(direct)
             ),
             "natural_search_capture": dict(captures),
+            "fixture_availability": dict(
+                Counter(
+                    c["fixture_availability"] for c in observed if c.get("fixture_availability")
+                )
+            ),
             "suitable_in_first_search_top3": ratio(
                 sum(value is True for value in ranked), sum(value is not None for value in ranked)
             ),

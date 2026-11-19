@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import re
+from copy import copy
 import shutil
 import subprocess
 import sys
@@ -18,27 +21,47 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.experiments.blind_tool_answers import answer_instruction
+from tools.experiments import blind_tool_observations as observations
 from tools.experiments.blind_tool_comparison import compare_directories, paired_schedule
 from tools.experiments.blind_tool_trace import score_case, score_directory
 
-TASKS = ("raycast", "graph", "graph-saved", "graph-open", "game-view", "editor", "context")
+TASKS = (
+    "raycast",
+    "graph",
+    "graph-saved",
+    "graph-open",
+    "game-view",
+    "editor",
+    "context",
+    *observations.TASKS,
+)
 LANGUAGES = ("en", "ko", "ja", "es", "ar", "tr")
 ROLES = ("main", "subagent")
 STUDY_TASKS = ("game-view", "graph-saved", "graph-open")
 STUDY = "consumer-discovery"
 
 
-def task_prompt(task: str, language: str, graph_asset: str) -> str:
+def task_prompt(task: str, language: str, graph_asset: str, fixture=None) -> str:
     """Return the identical user task text for either execution role."""
     with Path(__file__).with_name("blind_tool_tasks.json").open(encoding="utf-8") as stream:
         prompts = json.load(stream)
-    request = prompts[task][language].format(graph_asset=graph_asset)
+    fixture = fixture or {}
+    point = fixture.get("point") or [None, None]
+    request = prompts[task][language].format(
+        graph_asset=graph_asset,
+        compile_id=fixture.get("compile_id"),
+        target=fixture.get("target"),
+        x=point[0],
+        y=point[1],
+    )
     return f"{request}\n\n{prompts['limits'][language]}"
 
 
 def delivery_prompt(args: argparse.Namespace, task: str, language: str, role: str) -> str:
-    prompt = task_prompt(task, language, args.graph_asset)
-    if getattr(args, "study", None) == STUDY:
+    prompt = task_prompt(
+        task, language, args.graph_asset, observations.observation_fixture(args, task)
+    )
+    if getattr(args, "study", None) in (STUDY, observations.STUDY):
         with Path(__file__).with_name("blind_tool_tasks.json").open(encoding="utf-8") as stream:
             prompt += "\n" + json.load(stream)["observation_scope"][language]
     if getattr(args, "answer_format", "prose") == "json":
@@ -80,6 +103,8 @@ def proxy_args(args: argparse.Namespace, case_dir: Path) -> list[str]:
                 args.project.as_posix(),
             ]
         )
+    if getattr(args, "observation_fixture", None):
+        proxy.extend(["--observation-fixture", json.dumps(args.observation_fixture)])
     return proxy
 
 
@@ -127,6 +152,8 @@ def run_case(
 ) -> None:
     case_dir = args.output / f"{task}-{language}-{role}-{repetition:02d}"
     case_dir.mkdir()
+    args = copy(args)
+    args.observation_fixture = observations.observation_fixture(args, task)
     prompt = delivery_prompt(args, task, language, role)
     metadata = {
         "task": task,
@@ -150,10 +177,18 @@ def run_case(
         "answer_format": getattr(args, "answer_format", "prose"),
         "answer_protocol": getattr(args, "answer_protocol", "v1"),
         "prompt_digest": sha256(prompt.encode()).hexdigest(),
+        **({"observation_fixture": args.observation_fixture} if args.observation_fixture else {}),
         **getattr(args, "case_metadata", {}),
     }
     environment = {**os.environ, "PYTHONUTF8": "1"}
     try:
+        if reason := observations.missing_fixture(args.observation_fixture):
+            metadata.update(
+                runner_status="fixture_unavailable",
+                fixture_reason=reason,
+                fixture_availability=reason,
+            )
+            return
         if args.host_mode == "configured":
             import anyio
             from tools.experiments.blind_tool_host import run_configured
@@ -219,6 +254,19 @@ def create_parser() -> argparse.ArgumentParser:
     )
     launch.add_argument("--graph-asset", default="")
     launch.add_argument(
+        "--existing-compile-id", help="Reference of an already issued compilation request"
+    )
+    launch.add_argument(
+        "--pointer-target", help="Previously identified scene UI object in the selected project"
+    )
+    launch.add_argument(
+        "--pointer-position",
+        type=float,
+        nargs=2,
+        metavar=("X", "Y"),
+        help="Selected Game View pixel",
+    )
+    launch.add_argument(
         "--installed-endpoint",
         help="Loopback endpoint for forwarding target-pinned reads to the verified installed server",
     )
@@ -246,6 +294,11 @@ def create_parser() -> argparse.ArgumentParser:
     single = modes.add_parser("run", parents=[launch], help="Run an observation matrix")
     matched = modes.add_parser("matched", parents=[launch], help="Run counterbalanced pairs")
     matched.add_argument(
+        "--disable-plugins",
+        action="store_true",
+        help="Disable dynamic plugins in both ephemeral trial processes for a declared competitor cohort",
+    )
+    matched.add_argument(
         "--prepare-pairs",
         action="store_true",
         help="Prepare both configured trial hosts before delivering either prompt",
@@ -261,7 +314,9 @@ def create_parser() -> argparse.ArgumentParser:
         help="Disable an unselected MCP namespace in the two ephemeral study processes only",
     )
     matched.add_argument(
-        "--study", choices=[STUDY], help="Run the predeclared six-language consumer study"
+        "--study",
+        choices=[STUDY, observations.STUDY],
+        help="Run a predeclared six-language consumer study",
     )
     for command, prefix in [(single, ""), (matched, "baseline-"), (matched, "candidate-")]:
         backend = command.add_mutually_exclusive_group(required=True)
@@ -293,11 +348,6 @@ def validate_backend(parser: argparse.ArgumentParser, args: argparse.Namespace) 
             parser.error(
                 "--installed requires --host-mode configured, --installed-endpoint and the exact --instance"
             )
-    matched.add_argument(
-        "--disable-plugins",
-        action="store_true",
-        help="Disable dynamic plugins in both ephemeral trial processes for a declared competitor cohort",
-    )
         if "raycast" in args.task:
             parser.error("raycast requires a trusted --relay that guarantees read-only raycasts")
         from tools.experiments.blind_tool_http import loopback_port
@@ -357,7 +407,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 parser.error(
                     "--study requires a configured host, a state probe and structured answers"
                 )
-            args.task, args.language, args.role = STUDY_TASKS, LANGUAGES, ROLES
+            args.task = observations.TASKS if study == observations.STUDY else STUDY_TASKS
+            args.language, args.role = LANGUAGES, ROLES
+            if study == observations.STUDY:
+                args.prepare_pairs = True
         elif not all((args.task, args.language, args.role)):
             parser.error("provide --task, --language and --role or select --study")
         prepared = getattr(args, "prepare_pairs", False)
@@ -390,6 +443,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             ):
                 parser.error("declare separate exact competitor namespaces for a prepared pair")
         args.project, args.output = map(Path.resolve, (args.project, args.output))
+        if args.existing_compile_id is not None and not re.fullmatch(
+            r"[a-f0-9]{32}", args.existing_compile_id
+        ):
+            parser.error("existing compilation reference must be 32 lowercase hex characters")
+        if args.pointer_position and any(
+            not math.isfinite(n) or n < 0 or n > 1_000_000 for n in args.pointer_position
+        ):
+            parser.error("pointer pixels must be finite and within the supported coordinate range")
+        if args.pointer_target is not None and (
+            not args.pointer_target.strip()
+            or len(args.pointer_target) > 256
+            or any(ord(c) < 32 for c in args.pointer_target)
+        ):
+            parser.error("pointer target requires a bounded single-line object identifier")
         if args.host_mode == "configured":
             from tools.experiments.blind_tool_host import IDENTIFIER, RECORDED_SERVER
 
@@ -457,7 +524,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for cell in cells:
                 task, language, role, repeat = cell
                 offset = (
-                    STUDY_TASKS.index(task) + LANGUAGES.index(language) + ROLES.index(role) + repeat
+                    args.task.index(task) + LANGUAGES.index(language) + ROLES.index(role) + repeat
                 )
                 order = ("baseline", "candidate") if offset % 2 else ("candidate", "baseline")
                 schedule.extend((arm, cell) for arm in order)

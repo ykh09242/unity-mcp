@@ -31,6 +31,7 @@ from tools.experiments.blind_tool_answers import (
 )
 from tools.experiments.blind_tool_diagnostics import SEARCH_ROUTES
 from tools.experiments.blind_tool_shell import shell_purpose, shell_receipt
+from tools.experiments import blind_tool_observations as choices
 
 EDITOR_STATE = "mcpforunity://editor/state"
 PROJECT_INFO = "mcpforunity://project/info"
@@ -41,7 +42,11 @@ GRAPH_ROUTES = {GRAPH, GRAPH_RESOURCE, "inspect_shader_graph"}
 SAVED_FILE = "shell.read_saved_graph"
 ACTIVE_SCENE = {"scene_inspect.get_active", "manage_scene.get_active"}
 ROUTES = {
-    "editor": {EDITOR_STATE, *ACTIVE_SCENE},
+    "editor": {EDITOR_STATE, choices.STATE, *ACTIVE_SCENE},
+    "compile-current": {EDITOR_STATE, choices.STATE},
+    "active-scene": {EDITOR_STATE, choices.STATE, *ACTIVE_SCENE},
+    "pointer-order": {choices.POINTER, RAYCAST},
+    "compile-outcome": {choices.JOB},
     "context": {PROJECT_INFO},
     "game-view": SIZE_ROUTES,
     "raycast": {*SIZE_ROUTES, RAYCAST},
@@ -84,7 +89,14 @@ OTHER_READS = {
 }
 # These callbacks avoid refresh-capable generic preflight. The HTTP adapter
 # explicitly disables refresh for the one allowlisted exception.
-SAFE_HTTP_READS = {EDITOR_STATE, PROJECT_INFO, *SIZE_ROUTES, *GRAPH_ROUTES, "find_gameobjects"}
+SAFE_HTTP_READS = {
+    EDITOR_STATE,
+    choices.STATE,
+    PROJECT_INFO,
+    *SIZE_ROUTES,
+    *GRAPH_ROUTES,
+    "find_gameobjects",
+}
 APPROVAL = re.compile(
     r"approval[^\n]{0,80}(?:denied|rejected|blocked|never|declined|required)|"
     r"(?:denied|rejected|blocked|declined)[^\n]{0,80}approval",
@@ -149,7 +161,9 @@ def route_name(method: str, params: dict[str, Any]) -> tuple[str, dict[str, Any]
     return method, {}
 
 
-def decision(route: str, args: dict[str, Any], graph_asset: str, *, endpoint: bool = False) -> str:
+def decision(
+    route: str, args: dict[str, Any], graph_asset: str, *, endpoint: bool = False, fixture=None
+) -> str:
     """Keep the bridge limited to observation and connection-local discovery."""
     serialized = unquote(json.dumps(args, ensure_ascii=False)).replace("\\", "/").casefold()
     if any(
@@ -159,6 +173,9 @@ def decision(route: str, args: dict[str, Any], graph_asset: str, *, endpoint: bo
         return "blocked"
     if any(args.get(key) for key in ("allow_custom_filters", "evaluate_getters", "include_values")):
         return "blocked"
+    allowed = choices.permitted(route, args, fixture or {})
+    if allowed is not None:
+        return "unity" if allowed else "blocked"
     if route in GRAPH_ROUTES:
         if not graph_asset or args.get("path") != graph_asset:
             return "blocked"
@@ -227,7 +244,7 @@ def positive_size(value: Any) -> list[int] | None:
     return None
 
 
-def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
+def observation(route: str, data: dict[str, Any], fixture=None) -> dict[str, Any]:
     """Retain the documented evidence fields for the scored read operations."""
     if route in SEARCH_ROUTES:
         from tools.experiments.blind_tool_diagnostics import search_receipt
@@ -243,7 +260,16 @@ def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
         if label := string(selected.get("label")):
             observation_fields["preset_label"] = label
         return observation_fields
-    if route == RAYCAST:
+    if route == choices.JOB:
+        if (
+            not fixture
+            or not fixture.get("compile_id")
+            or data.get("compile_id") != fixture["compile_id"]
+            or not choices.establishes(choices.JOB, data)
+        ):
+            return {}
+        return {"outcome": data["outcome"]}
+    if route in {RAYCAST, choices.POINTER}:
         if data.get("kind") != "ugui_raycast_diagnostics":
             return {}
         if data.get("status") == "failed":
@@ -264,6 +290,9 @@ def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
         hit_count = data.get("hits_total")
         hits = data.get("hits")
         first_hit = mapping(hits[0]) if isinstance(hits, list) and hits else {}
+        if fixture and fixture.get("task") == "pointer-order":
+            if point != fixture.get("point") or not choices.establishes(choices.POINTER, data):
+                return {}
         return {
             "point": point,
             "hits_total": hit_count if type(hit_count) is int else None,
@@ -307,16 +336,20 @@ def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
             "node_types": sorted(types - {""}),
             "data_state": "saved",
         }
-    if route == EDITOR_STATE:
+    if route in {EDITOR_STATE, choices.STATE}:
+        if (
+            fixture
+            and fixture.get("task") in ("active-scene", "compile-current")
+            and not choices.establishes(fixture["task"], data)
+        ):
+            return {}
         editor = mapping(data.get("editor"))
         play = mapping(editor.get("play_mode")).get("is_playing")
         compile_state = mapping(data.get("compilation")).get("is_compiling")
         scene = mapping(editor.get("active_scene"))
-        if type(play) is not bool or type(compile_state) is not bool:
-            return {}
         return {
-            "playing": play,
-            "compiling": compile_state,
+            **({"playing": play} if type(play) is bool else {}),
+            **({"compiling": compile_state} if type(compile_state) is bool else {}),
             "active_scene": bool(string(scene.get("name")) or string(scene.get("path"))),
             "scene_name": string(scene.get("name")) or None,
             "fresh": mapping(data.get("staleness")).get("is_stale") is False,
@@ -353,7 +386,9 @@ def page_number(route: str, args: dict[str, Any]) -> int:
     return 1
 
 
-def relay_stdio(relay: list[str], audit_dir: Path, graph_asset: str, *, endpoint: bool) -> None:
+def relay_stdio(
+    relay: list[str], audit_dir: Path, graph_asset: str, *, endpoint: bool, fixture=None
+) -> None:
     """Audit actual JSON-RPC requests while forwarding bytes through the vetted relay."""
     pending: dict[str | int, tuple[int, str, str]] = {}
     lock = Lock()
@@ -390,7 +425,9 @@ def relay_stdio(relay: list[str], audit_dir: Path, graph_asset: str, *, endpoint
                             continue
                         params = mapping(request.get("params"))
                         route, args = route_name(method, params)
-                        channel = decision(route, args, graph_asset, endpoint=endpoint)
+                        channel = decision(
+                            route, args, graph_asset, endpoint=endpoint, fixture=fixture
+                        )
                         label = route if channel != "blocked" else "unapproved_route"
                         sequence += 1
                         with lock:
@@ -439,7 +476,7 @@ def relay_stdio(relay: list[str], audit_dir: Path, graph_asset: str, *, endpoint
                     if route == RAYCAST and data.get("status") == "failed":
                         outcome = "error"
                     detail = (
-                        observation(route, data)
+                        observation(route, data, fixture)
                         if channel == "unity" or route in SEARCH_ROUTES
                         else {}
                     )
@@ -595,6 +632,7 @@ def client_trace(
     endpoint: bool,
     unity_server: str = "unityMCP",
     expected_actor: str = "",
+    fixture=None,
 ) -> ClientTrace:
     """Use host accounting for calls blocked before the relay and main-role shell activity."""
     trace = ClientTrace()
@@ -622,7 +660,7 @@ def client_trace(
                     args = mapping(item.get("arguments"))
                     if item.get("tool") == "read_mcp_resource":
                         _, args = route_name("resources/read", args)
-                    channel = decision(route, args, asset, endpoint=endpoint)
+                    channel = decision(route, args, asset, endpoint=endpoint, fixture=fixture)
                     call = trace.calls.setdefault(
                         item_id,
                         Call(
@@ -646,7 +684,7 @@ def client_trace(
                                 call.evidence = mapping(receipt.get("facts"))
                             elif result and call.status == "completed":
                                 call.status, data = unpack({"result": result})
-                                call.evidence = observation(route, data)
+                                call.evidence = observation(route, data, fixture)
                                 if route == RAYCAST and data.get("status") == "failed":
                                     call.status = "error"
                 case "item.started" | "item.completed", "mcp_tool_call" | "other_tool":
@@ -844,12 +882,23 @@ def evidence_grade(task: str, calls: list[Call]) -> str:
         for call in calls:
             if call.status != "returned":
                 continue
-            if call.route == EDITOR_STATE:
-                fresh = bool(call.evidence.get("fresh"))
+            if call.route in {EDITOR_STATE, choices.STATE}:
+                fresh = bool(call.evidence.get("fresh")) and all(
+                    k in call.evidence for k in ("playing", "compiling")
+                )
                 scene = fresh and bool(call.evidence.get("active_scene"))
             elif call.route in ACTIVE_SCENE:
                 scene = bool(call.evidence.get("active_scene"))
         return "complete" if fresh and scene else "partial"
+    if task in choices.TASKS:
+        from tools.experiments.blind_tool_answers import expected_facts, FIELDS
+
+        facts, _ = expected_facts(
+            task,
+            [{"route": call.route, **call.evidence} for call in calls if call.status == "returned"],
+            [],
+        )
+        return "complete" if set(FIELDS[task]) <= facts.keys() else "partial"
     if task in {"raycast", "game-view"}:
         size, ray = current_view(
             [{"route": c.route, **c.evidence} for c in calls if c.status == "returned"]
@@ -956,6 +1005,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     options = dict(
         endpoint=row.get("backend") == "unity-mcp-loopback",
         unity_server=string(row.get("unity_server")) or "unityMCP",
+        fixture=row.get("observation_fixture"),
     )
     asset = string(row["graph_asset"])
     parent = client_trace(case_dir / "events.jsonl", asset, **options)
@@ -1034,7 +1084,9 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         (
             call
             for call in sequence
-            if call.status == "returned" and call.evidence
+            if call.status == "returned"
+            and call.evidence
+            and (task not in choices.TASKS or evidence_grade(task, [call]) == "complete")
         ),
         None,
     )
@@ -1060,7 +1112,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             and all(matches[0].evidence.get(k) == v for k, v in detail.items())
         ):
             detail.update(matches[0].evidence)
-        if detail or call.route in SIZE_ROUTES or call.route == RAYCAST:
+        if detail or call.route in SIZE_ROUTES or call.route == RAYCAST or task in choices.TASKS:
             live_observations.append({"route": call.route, **detail})
     redundant, early_rays = timing_metrics(task, sequence)
     surface = case_dir / "host.json"
@@ -1086,6 +1138,13 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         "tool_schema_digest": inventory.get("tool_schema_digest"),
         "competitor_digest": inventory.get("competitor_digest"),
         "inventory_status": inventory.get("status"),
+        "actor_controls_observed": (
+            inventory.get("actor_controls_observed")
+            if row["role"] == "subagent"
+            else "parent_before_prompt"
+            if row.get("prepared_pair")
+            else None
+        ),
     }
     searches = actor_searches(actor_host, wire, selected_actor, role == "confirmed")
     diagnosis = stage_diagnosis(
@@ -1275,6 +1334,7 @@ def proxy_main() -> None:
     parser.add_argument("--project", type=Path)
     parser.add_argument("--audit-dir", type=Path, required=True)
     parser.add_argument("--graph-asset", required=True)
+    parser.add_argument("--observation-fixture", default="{}")
     args = parser.parse_args()
     if args.relay:
         command = [str(args.relay)]
@@ -1285,8 +1345,15 @@ def proxy_main() -> None:
             args.instance,
             str(args.project),
             args.graph_asset,
+            args.observation_fixture,
         ]
-    relay_stdio(command, args.audit_dir, args.graph_asset, endpoint=bool(args.endpoint))
+    relay_stdio(
+        command,
+        args.audit_dir,
+        args.graph_asset,
+        endpoint=bool(args.endpoint),
+        fixture=json_object(args.observation_fixture),
+    )
 
 
 if __name__ == "__main__":

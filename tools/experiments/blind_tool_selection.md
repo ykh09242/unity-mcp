@@ -272,9 +272,14 @@ The report compares the answer against observed results and the journal's exact
 effect sequence. A duplicate click fails the dispatch case. A saved graph count
 cannot establish the contents of the unsaved window. The game-project benchmark
 above supplies separate live observations.
-# Preparing a controlled pair
+
+## Preparing a controlled pair
 
 Use `matched --prepare-pairs --state-probe <script>` with two separately identified backends. Both configured, read-only ephemeral hosts open the same game project, report their inventories, source commits, model, effort, permissions and Editor state, and wait before either receives the prompt. The runner delivers the two prompts in the scheduled AB or BA order and samples the Editor again before delivery and after each turn. A failed preflight keeps its reason and starts no model turn. One retry is available for an observed transient mismatch before either prompt.
 
 For a fixed competitor cohort, pass `--competitor NAME` for every required competing MCP namespace. Use `--disable-competitor NAME` to disable a specific competing namespace in the trial processes. The observed remaining set must match the declaration in both arms. Omitting these options uses the configured competitors and records that cohort separately. Each case retains its shared readiness digest, both readiness timestamps and its own prompt dispatch timestamp. Private `preparation/<cell>/pair.json` records all attempts, including withheld prompts.
+
+`matched --study observation-choices` schedules current compilation, active scene, an existing compilation result and a pointer ordering task in six languages and both roles. The pilot uses the same prepared-host protocol. In delegated cells both parent hosts are prepared before the task. The host captures each newly spawned child's own controls during the turn. A paired child result requires matching child grants and catalogs for competitors, an observable business call and that child's completed answer. The host records connected and lazily advertised MCP namespaces separately. Use `--disable-plugins` with a declared roster to control plugin-provided competitors for that cohort.
+
+Supply `--existing-compile-id` only for a known earlier request. For a pointer trial supply a previously identified `--pointer-target` and `--pointer-position X Y`. Without the corresponding fixture the runner keeps the planned cell and withholds the prompt. For these two conditional tasks the state probe can return `observation_fixtures` keyed by task, each entry containing the scoped read’s `arguments` and decoded `reply`. Both pre-prompt receipts must establish the result to enter the positive selection denominator. Other cases retain their availability and evidence grades. Only searches that returned a captured ranking enter the top-three denominator.
 
