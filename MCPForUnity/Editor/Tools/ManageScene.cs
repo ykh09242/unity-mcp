@@ -953,7 +953,7 @@ namespace MCPForUnity.Editor.Tools
 
                 if (includeImage && Application.isPlaying)
                 {
-                    if (!Application.isBatchMode)
+                    if (ScreenshotUtility.GameViewCaptureFallbackCause == null)
                         EnsureGameView();
                     // A Task<object>, not a response: the capture waits for the end of the frame,
                     // and CommandRegistry awaits a Task<object> that a synchronous handler returns.
@@ -999,36 +999,10 @@ namespace MCPForUnity.Editor.Tools
                         AssetDatabase.ImportAsset(result.ProjectRelativePath, ImportAssetOptions.ForceSynchronousImport);
                     string message = $"Screenshot captured to '{result.ProjectRelativePath}' (camera: {targetCamera.name}).";
 
-                    var data = new Dictionary<string, object>
-                    {
-                        { "path", result.ProjectRelativePath },
-                        { "fullPath", result.FullPath },
-                        { "superSize", result.SuperSize },
-                        { "isAsync", false },
-                        { "camera", targetCamera.name },
-                        { "captureSource", "game_view" },
-                    };
-                    if (includeImage && result.ImageBase64 != null)
-                    {
-                        data["imageBase64"] = result.ImageBase64;
-                        data["imageWidth"] = result.ImageWidth;
-                        data["imageHeight"] = result.ImageHeight;
-                    }
                     return new SuccessResponse(message, BuildScreenshotResponseData(result, targetCamera.name, includeImage));
                 }
 
-                // Default path: ScreenCapture API for 2022.1+, camera fallback required on older versions.
-#if !UNITY_2022_1_OR_NEWER
-                bool hasCameraFallback = Camera.main != null || UnityFindObjectsCompat.FindAll<Camera>().Length > 0;
-                if (!hasCameraFallback)
-                {
-                    return new ErrorResponse(
-                        "No camera found in the scene. Screenshot capture on Unity versions before 2022.1 requires a Camera in the scene."
-                    );
-                }
-#endif
-
-                if (!Application.isBatchMode)
+                if (ScreenshotUtility.GameViewCaptureFallbackCause == null)
                     EnsureGameView();
 
                 string defaultFolderOverride = ScreenshotPreferences.Resolve(cmd.outputFolder);
@@ -1036,6 +1010,7 @@ namespace MCPForUnity.Editor.Tools
                 try
                 {
                     defaultResult = ScreenshotUtility.CaptureToProjectFolder(
+                        cancellationToken,
                         fileName,
                         resolvedSuperSize,
                         ensureUniqueFileName: true,
@@ -1056,17 +1031,10 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 string verb = defaultResult.IsAsync ? "Screenshot requested" : "Screenshot captured";
-                return new SuccessResponse(
-                    $"{verb} to '{defaultResult.ProjectRelativePath}'.",
-                    new
-                    {
-                        path = defaultResult.ProjectRelativePath,
-                        fullPath = defaultResult.FullPath,
-                        superSize = defaultResult.SuperSize,
-                        isAsync = defaultResult.IsAsync,
-                        captureSource = "game_view",
-                    }
-                );
+                string defaultMessage = $"{verb} to '{defaultResult.ProjectRelativePath}'.";
+                if (defaultResult.FallbackReason != null)
+                    defaultMessage += " " + defaultResult.FallbackReason;
+                return new SuccessResponse(defaultMessage, BuildScreenshotResponseData(defaultResult, defaultResult.FallbackCameraName, includeImage: false));
             }
             catch (OperationCanceledException)
             {
@@ -1085,10 +1053,11 @@ namespace MCPForUnity.Editor.Tools
                 { "path", result.ProjectRelativePath },
                 { "fullPath", result.FullPath },
                 { "superSize", result.SuperSize },
-                { "isAsync", false },
-                { "camera", cameraName },
+                { "isAsync", result.IsAsync },
                 { "captureSource", "game_view" },
             };
+            if (cameraName != null)
+                data["camera"] = cameraName;
 
             if (includeImage && result.ImageBase64 != null)
             {

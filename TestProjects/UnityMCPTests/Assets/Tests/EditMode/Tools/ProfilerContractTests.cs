@@ -7,6 +7,8 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Profiler;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using Unity.Profiling;
+using UnityEngine;
 using UnityEngine.Profiling;
 using UnityEngine.TestTools;
 using UProfiler = UnityEngine.Profiling.Profiler;
@@ -15,6 +17,66 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ProfilerContractTests
     {
+        [Test]
+        public void Physics2DCategoryUsesInstalledProfilerCategoryIdentity()
+        {
+            var native = typeof(ProfilerCategory).GetProperty("Physics2D", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            var resolved = CounterOps.ResolveCategory("physics2d", out string error);
+            if (native == null)
+            {
+                Assert.IsFalse(resolved.HasValue);
+                StringAssert.Contains("does not expose the Physics2D category", error);
+                return;
+            }
+
+            Assert.IsNull(error);
+            Assert.IsTrue(resolved.HasValue);
+            Assert.AreEqual((ushort)(ProfilerCategory)native.GetValue(null), (ushort)resolved.Value);
+            Assert.AreNotEqual((ushort)ProfilerCategory.Physics, (ushort)resolved.Value);
+        }
+
+        [TestCase("cpuMainThreadFrameTime", "cpu_main_thread_frame_time_ms")]
+        [TestCase("cpuMainThreadPresentWaitTime", "cpu_main_thread_present_wait_time_ms")]
+        [TestCase("cpuRenderThreadFrameTime", "cpu_render_thread_frame_time_ms")]
+        [TestCase("frameStartTimestamp", "frame_start_timestamp")]
+        [TestCase("firstSubmitTimestamp", "first_submit_timestamp")]
+        public void FrameTimingReturnsOptionalNativeValuesOnlyWhenPresent(string fieldName, string key)
+        {
+            var native = typeof(FrameTiming).GetField(fieldName);
+            object boxed = new FrameTiming { cpuFrameTime = 19.25, gpuFrameTime = 14.5 };
+            object expected = native?.FieldType == typeof(double) ? (object)12.75 : ulong.MaxValue - 3;
+            native?.SetValue(boxed, expected);
+
+            var data = FrameTimingOps.TimingData((FrameTiming)boxed);
+            Assert.AreEqual(19.25, data["cpu_frame_time_ms"]);
+            Assert.AreEqual(14.5, data["gpu_frame_time_ms"]);
+            if (native == null)
+                Assert.IsFalse(data.ContainsKey(key));
+            else
+                Assert.AreEqual(expected, data[key]);
+        }
+
+        [Test]
+        public void FrameTimingRequestUsesInstalledFeatureCheck()
+        {
+            var feature = typeof(FrameTimingManager).GetMethod("IsFeatureEnabled", BindingFlags.Static | BindingFlags.Public);
+            var response = JObject.FromObject(ManageProfiler.HandleCommand(new JObject { ["action"] = "get_frame_timing" }).GetAwaiter().GetResult());
+            if (feature?.Invoke(null, null) is false)
+            {
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("Frame Timing Stats is not enabled", response.Value<string>("error"));
+                return;
+            }
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var data = (JObject)response["data"];
+            Assert.IsNotNull(data["available"]);
+            if (data.Value<bool>("available"))
+                Assert.That(data["cpu_frame_time_ms"].Type, Is.EqualTo(JTokenType.Float));
+            else
+                Assert.IsNull(data["cpu_frame_time_ms"]);
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void InvalidRecordingDirectory_PreservesProfilerState(bool initiallyEnabled)

@@ -353,6 +353,79 @@ namespace MCPForUnityTests.Editor.Helpers
         }
 
         [Test]
+        public void DefaultScreenshotReportsCameraFallbackAndRestoresRenderState()
+        {
+            string cause = ScreenshotUtility.GameViewCaptureFallbackCause;
+            if (cause == null)
+                Assert.Ignore("Requires batch mode or a project without Screen Capture.");
+
+            var cameraObject = new GameObject("__ScreenshotDefaultFallbackCamera");
+            cameraObject.AddComponent<Camera>();
+            var camera = Camera.main ?? UnityFindObjectsCompat.FindAll<Camera>()[0];
+            string folder = "Temp/ScreenshotDefaultFallback-" + System.Guid.NewGuid().ToString("N");
+            string absolute = ScreenshotUtility.ResolveFolderAbsolute(folder);
+            var targetBefore = camera.targetTexture;
+            var activeBefore = RenderTexture.active;
+            try
+            {
+                var response = JObject.FromObject(
+                    ManageScene.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "screenshot",
+                            ["fileName"] = "fallback",
+                            ["outputFolder"] = folder,
+                        }
+                    )
+                );
+                if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
+                {
+                    Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                    StringAssert.Contains(cause, response.Value<string>("error"));
+                    StringAssert.Contains("active graphics device", response.Value<string>("error"));
+                    Assert.IsFalse(Directory.Exists(absolute));
+                }
+                else
+                {
+                    Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                    var data = (JObject)response["data"];
+                    Assert.AreEqual("camera_fallback", data.Value<string>("captureSource"));
+                    Assert.IsFalse(data.Value<bool>("isAsync"));
+                    Assert.AreEqual(camera.name, data.Value<string>("camera"));
+                    StringAssert.Contains(cause, data.Value<string>("fallbackReason"));
+                    string path = data.Value<string>("fullPath");
+                    CollectionAssert.AreEqual(new byte[] { 137, 80, 78, 71 }, System.Linq.Enumerable.Take(File.ReadAllBytes(path), 4));
+                }
+
+                Assert.AreSame(targetBefore, camera.targetTexture);
+                Assert.AreSame(activeBefore, RenderTexture.active);
+                Assert.AreEqual(0, UnityEngine.Resources.FindObjectsOfTypeAll<ScreenshotCapturer>().Length);
+            }
+            finally
+            {
+                Object.DestroyImmediate(cameraObject);
+                if (Directory.Exists(absolute))
+                    Directory.Delete(absolute, true);
+            }
+        }
+
+        [Test]
+        public void DefaultScreenshotWithoutACameraRefusesFallbackWithoutCreatingOutput()
+        {
+            string cause = ScreenshotUtility.GameViewCaptureFallbackCause;
+            if (cause == null || UnityFindObjectsCompat.FindAll<Camera>().Length != 0)
+                Assert.Ignore("Requires a camera-free scene in batch mode or a project without Screen Capture.");
+
+            string folder = "Temp/ScreenshotNoCameraFallback-" + System.Guid.NewGuid().ToString("N");
+            var response = JObject.FromObject(ManageScene.HandleCommand(new JObject { ["action"] = "screenshot", ["outputFolder"] = folder }));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains(cause, response.Value<string>("error"));
+            StringAssert.Contains("there is no camera to render instead", response.Value<string>("error"));
+            Assert.IsFalse(Directory.Exists(ScreenshotUtility.ResolveFolderAbsolute(folder)));
+            Assert.IsEmpty(UnityFindObjectsCompat.FindAll<Camera>());
+        }
+
+        [Test]
         public void CaptureCompositedAsync_InBatchMode_RendersACameraAtOnceAndSaysWhy()
         {
             if (!Application.isBatchMode)
@@ -370,7 +443,7 @@ namespace MCPForUnityTests.Editor.Helpers
                 // Batch mode renders no frames, so waiting for one would only sit out the timeout.
                 Assert.IsTrue(task.IsCompleted, "the call must not wait for an end of frame in batch mode");
                 var result = task.Result;
-                StringAssert.StartsWith("Batch mode renders no frames", result.FallbackReason);
+                StringAssert.StartsWith(ScreenshotUtility.GameViewCaptureFallbackCause, result.FallbackReason);
                 // The camera the response reports must be the one that rendered, as the reason says.
                 Assert.IsNotNull(result.FallbackCameraName);
                 StringAssert.Contains($"render of camera '{result.FallbackCameraName}'", result.FallbackReason);

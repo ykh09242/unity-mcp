@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -12,6 +13,11 @@ namespace MCPForUnity.Editor.Tools.Profiler
 {
     internal static class CounterOps
     {
+        // Unity 2021.3 exposes this same built-in category as an internal property.
+        private static readonly ProfilerCategory? Physics2DCategory =
+            typeof(ProfilerCategory).GetProperty("Physics2D", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(null)
+            as ProfilerCategory?;
+
         internal static async Task<object> GetCountersAsync(JObject @params)
         {
             var p = new ToolParams(@params);
@@ -134,9 +140,6 @@ namespace MCPForUnity.Editor.Tools.Profiler
             "Scripts",
             "Memory",
             "Physics",
-#if UNITY_2022_2_OR_NEWER
-            "Physics2D",
-#endif
             "Animation",
             "Audio",
             "Lighting",
@@ -167,10 +170,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     return ProfilerCategory.Memory;
                 case "physics":
                     return ProfilerCategory.Physics;
-#if UNITY_2022_2_OR_NEWER
                 case "physics2d":
-                    return ProfilerCategory.Physics2D;
-#endif
+                    if (!Physics2DCategory.HasValue)
+                        error = "The installed Unity profiler does not expose the Physics2D category.";
+                    return Physics2DCategory;
                 case "animation":
                     return ProfilerCategory.Animation;
                 case "audio":
@@ -201,7 +204,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 case "virtualtexturing":
                     return ProfilerCategory.VirtualTexturing;
                 default:
-                    error = $"Unknown category '{name}'. Valid: {string.Join(", ", ValidCategories)}";
+                    string categories = string.Join(", ", ValidCategories);
+                    error = $"Unknown category '{name}'. Valid: {categories}{(Physics2DCategory.HasValue ? ", Physics2D" : "")}";
                     return null;
             }
         }

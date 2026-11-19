@@ -134,6 +134,27 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void CubemapWritesAndReadsThroughTheInstalledRenderSettingsApi()
+        {
+            if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
+                Assert.Ignore("Cubemap setup requires an active graphics device.");
+
+            var reflection = Track(new Cubemap(4, TextureFormat.RGBA32, false));
+            string path = PathFor(false, "CustomReflection.cubemap");
+            AssetDatabase.CreateAsset(reflection, path);
+            reflection = AssetDatabase.LoadAssetAtPath<Cubemap>(path);
+            Assert.IsNotNull(reflection);
+
+            var response = Send("skybox_set_reflection", new JObject { ["reflection_mode"] = "Custom", ["path"] = path });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(path, response["data"].Value<string>("customCubemap"));
+            var observed = Send("skybox_get", new JObject());
+            Assert.AreEqual(path, observed["data"]["reflection"].Value<string>("customCubemap"));
+            var native = typeof(RenderSettings).GetProperty("customReflectionTexture") ?? typeof(RenderSettings).GetProperty("customReflection");
+            Assert.IsTrue(reflection == (Texture)native.GetValue(null));
+        }
+
+        [Test]
         public void PackageSkyboxReferenceRemainsAssignableWithoutEditingItsMaterial()
         {
             // Given a writable package material resolved through its persistent GUID.

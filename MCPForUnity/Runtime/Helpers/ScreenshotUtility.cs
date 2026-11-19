@@ -227,8 +227,36 @@ namespace MCPForUnity.Runtime.Helpers
             int superSize = 1,
             bool ensureUniqueFileName = true,
             string folderOverride = null
+        ) => CaptureToProjectFolder(CancellationToken.None, fileName, superSize, ensureUniqueFileName, folderOverride);
+
+        internal static string GameViewCaptureFallbackCause =>
+            !OptionalUnityModules.ScreenCapture ? OptionalUnityModules.ScreenCaptureUnavailableReason
+            : Application.isBatchMode ? "Batch mode renders no frames"
+            : null;
+
+        internal static ScreenshotCaptureResult CaptureToProjectFolder(
+            CancellationToken cancellationToken,
+            string fileName = null,
+            int superSize = 1,
+            bool ensureUniqueFileName = true,
+            string folderOverride = null
         )
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (GameViewCaptureFallbackCause is string cause)
+            {
+                return CaptureWithCameraInstead(
+                    fileName,
+                    superSize,
+                    ensureUniqueFileName,
+                    includeImage: false,
+                    maxResolution: 0,
+                    folderOverride,
+                    cause,
+                    cancellationToken
+                );
+            }
+
             ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
             ScreenshotCaptureResult result = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride, isAsync: true);
             // OptionalUnityModules.CaptureScreenshot accepts paths relative to the project root.
@@ -236,6 +264,7 @@ namespace MCPForUnity.Runtime.Helpers
             {
                 folders.EnsureParentDirectory(result.FullPath);
                 SafePathUtility.ResolveWithinRoot(GetProjectRootPath(), result.FullPath);
+                cancellationToken.ThrowIfCancellationRequested();
                 OptionalUnityModules.CaptureScreenshot(result.ProjectRelativePath, result.SuperSize);
                 folders.Complete();
             }
@@ -390,8 +419,7 @@ namespace MCPForUnity.Runtime.Helpers
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!OptionalUnityModules.ScreenCapture)
-                {
+                if (GameViewCaptureFallbackCause is string cause)
                     return CaptureWithCameraInstead(
                         fileName,
                         superSize,
@@ -399,26 +427,9 @@ namespace MCPForUnity.Runtime.Helpers
                         includeImage,
                         maxResolution,
                         folderOverride,
-                        OptionalUnityModules.ScreenCaptureUnavailableReason,
+                        cause,
                         cancellationToken
                     );
-                }
-
-                // Batch mode renders no frames, so WaitForEndOfFrame never resumes there and every
-                // capture would sit out the timeout before falling back.
-                if (Application.isBatchMode)
-                {
-                    return CaptureWithCameraInstead(
-                        fileName,
-                        superSize,
-                        ensureUniqueFileName,
-                        includeImage,
-                        maxResolution,
-                        folderOverride,
-                        "Batch mode renders no frames",
-                        cancellationToken
-                    );
-                }
 
                 return await CaptureCompositedAsyncUngated(
                         fileName,
@@ -549,6 +560,8 @@ namespace MCPForUnity.Runtime.Helpers
             var cam = FindAvailableCamera();
             if (cam == null)
                 throw new InvalidOperationException(cause + ", and there is no camera to render instead.");
+            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+                throw new InvalidOperationException(cause + ", and rendering a camera requires an active graphics device.");
 
             var r = CaptureFromCameraToProjectFolder(
                 cam,

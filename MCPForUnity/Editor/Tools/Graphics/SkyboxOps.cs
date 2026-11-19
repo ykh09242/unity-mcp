@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -11,22 +12,15 @@ namespace MCPForUnity.Editor.Tools.Graphics
 {
     internal static class SkyboxOps
     {
-        static Texture CustomReflectionTexture
+        private static readonly PropertyInfo ReflectionTextureProperty = FindReflectionTextureProperty("customReflectionTexture")
+            ?? FindReflectionTextureProperty("customReflection");
+
+        private static Texture CustomReflectionTexture => ReflectionTextureProperty?.GetValue(null) as Texture;
+
+        private static PropertyInfo FindReflectionTextureProperty(string name)
         {
-            get =>
-#if UNITY_2022_1_OR_NEWER
-                RenderSettings.customReflectionTexture;
-#else
-                RenderSettings.customReflection;
-#endif
-            set
-            {
-#if UNITY_2022_1_OR_NEWER
-                RenderSettings.customReflectionTexture = value;
-#else
-                RenderSettings.customReflection = value;
-#endif
-            }
+            var property = typeof(RenderSettings).GetProperty(name, BindingFlags.Public | BindingFlags.Static);
+            return property?.GetGetMethod() != null && typeof(Texture).IsAssignableFrom(property.PropertyType) ? property : null;
         }
 
         // ---------------------------------------------------------------
@@ -328,14 +322,19 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var bounces = p.GetInt("bounces");
             var resolution = p.GetInt("resolution");
             string cubemapPath = p.Get("path") ?? p.Get("cubemap_path");
-            Texture cubemap = null;
             if (!string.IsNullOrEmpty(cubemapPath))
             {
-                cubemap = AssetDatabase.LoadAssetAtPath<Texture>(AssetPathUtility.GetAssetReferencePath(cubemapPath, allowPackages: true, allowBuiltIn: true));
+                var cubemap = AssetDatabase.LoadAssetAtPath<Texture>(
+                    AssetPathUtility.GetAssetReferencePath(cubemapPath, allowPackages: true, allowBuiltIn: true)
+                );
                 if (cubemap == null)
                     return new ErrorResponse($"Cubemap not found at '{cubemapPath}'.");
                 if (cubemap.dimension != TextureDimension.Cube)
                     return new ErrorResponse($"Reflection texture at '{cubemapPath}' must have Cube dimension.");
+                if (ReflectionTextureProperty?.GetSetMethod() == null || !ReflectionTextureProperty.PropertyType.IsInstanceOfType(cubemap))
+                    return new ErrorResponse($"The installed Unity reflection API cannot assign a {cubemap.GetType().Name} as the custom reflection texture.");
+
+                ReflectionTextureProperty.SetValue(null, cubemap);
             }
 
             if (intensity.HasValue)
@@ -351,9 +350,6 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             if (resolution.HasValue)
                 RenderSettings.defaultReflectionResolution = resolution.Value;
-
-            if (!string.IsNullOrEmpty(cubemapPath))
-                CustomReflectionTexture = cubemap;
 
             MarkSceneDirty();
 
