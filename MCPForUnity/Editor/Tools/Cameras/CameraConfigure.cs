@@ -184,11 +184,25 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (lensProp == null)
                 return new ErrorResponse("Could not find Lens property on CinemachineCamera.");
 
-            SetFloatSubProp(lensProp, "FieldOfView", props["fieldOfView"]);
-            SetFloatSubProp(lensProp, "NearClipPlane", props["nearClipPlane"]);
-            SetFloatSubProp(lensProp, "FarClipPlane", props["farClipPlane"]);
-            SetFloatSubProp(lensProp, "OrthographicSize", props["orthographicSize"]);
-            SetFloatSubProp(lensProp, "Dutch", props["dutch"]);
+            foreach (
+                var (input, field) in new[]
+                {
+                    ("fieldOfView", "FieldOfView"),
+                    ("nearClipPlane", "NearClipPlane"),
+                    ("farClipPlane", "FarClipPlane"),
+                    ("orthographicSize", "OrthographicSize"),
+                    ("dutch", "Dutch"),
+                }
+            )
+            {
+                var value = props[input];
+                if (value == null || value.Type == JTokenType.Null)
+                    continue;
+                using var sub = lensProp.FindPropertyRelative(field) ?? lensProp.FindPropertyRelative("m_" + field);
+                if (sub?.propertyType != SerializedPropertyType.Float)
+                    return new ErrorResponse($"Could not find Lens.{field} on CinemachineCamera.");
+                sub.floatValue = ParamCoercion.CoerceFloat(value, sub.floatValue);
+            }
 
             so.ApplyModifiedProperties();
             CameraHelpers.MarkDirty(cmCamera.gameObject);
@@ -236,7 +250,13 @@ namespace MCPForUnity.Editor.Tools.Cameras
         {
             // PrioritySettings is a struct with Enabled + m_Value — use SerializedProperty.
             using var so = new SerializedObject(cmCamera);
-            using var priorityProp = so.FindProperty("Priority");
+            using var priorityProp = so.FindProperty("Priority") ?? so.FindProperty("m_Priority");
+            if (priorityProp?.propertyType == SerializedPropertyType.Integer && priorityProp.propertyPath == "m_Priority")
+            {
+                priorityProp.intValue = priority;
+                so.ApplyModifiedProperties();
+                return null;
+            }
             if (priorityProp != null)
             {
                 using var enabledProp = priorityProp.FindPropertyRelative("Enabled");
@@ -281,16 +301,17 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             if (bodyTypeName != null)
             {
-                var bodyType = CameraHelpers.ResolveComponentType(bodyTypeName);
+                var bodyType = CameraHelpers.ResolveComponentType(bodyTypeName, cmCamera);
                 if (bodyType == null || !IsConcreteCinemachineType(bodyType, "CinemachineComponentBase", "Body"))
                     return new ErrorResponse($"Could not resolve body component type '{bodyTypeName}'.");
+                var owner = CameraHelpers.PipelineOwner(cmCamera);
                 propertyError = PrepareComponentPropertiesForTarget(
                     bodyType,
-                    go.GetComponent(bodyType),
+                    owner?.GetComponent(bodyType),
                     props,
                     new[] { "bodyType", "body_type" },
                     out setters,
-                    go
+                    owner
                 );
                 if (propertyError != null)
                     return propertyError;
@@ -309,7 +330,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     props,
                     new[] { "bodyType", "body_type" },
                     out setters,
-                    go
+                    bodyComponent.gameObject
                 );
                 if (propertyError != null)
                     return propertyError;
@@ -350,10 +371,18 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             if (aimTypeName != null)
             {
-                var aimType = CameraHelpers.ResolveComponentType(aimTypeName);
+                var aimType = CameraHelpers.ResolveComponentType(aimTypeName, cmCamera);
                 if (aimType == null || !IsConcreteCinemachineType(aimType, "CinemachineComponentBase", "Aim"))
                     return new ErrorResponse($"Could not resolve aim component type '{aimTypeName}'.");
-                propertyError = PrepareComponentPropertiesForTarget(aimType, go.GetComponent(aimType), props, new[] { "aimType", "aim_type" }, out setters, go);
+                var owner = CameraHelpers.PipelineOwner(cmCamera);
+                propertyError = PrepareComponentPropertiesForTarget(
+                    aimType,
+                    owner?.GetComponent(aimType),
+                    props,
+                    new[] { "aimType", "aim_type" },
+                    out setters,
+                    owner
+                );
                 if (propertyError != null)
                     return propertyError;
                 propertyError = ConfigureComponentAtomically(() => SwapPipelineComponent(go, "Aim", aimType), setters, out aimComponent);
@@ -371,7 +400,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     props,
                     new[] { "aimType", "aim_type" },
                     out setters,
-                    go
+                    aimComponent.gameObject
                 );
                 if (propertyError != null)
                     return propertyError;
@@ -405,22 +434,34 @@ namespace MCPForUnity.Editor.Tools.Cameras
             var go = cmCamera.gameObject;
 
             // Get or add noise component
-            var noiseType = CameraHelpers.ResolveComponentType("CinemachineBasicMultiChannelPerlin");
+            var noiseType = CameraHelpers.ResolveProviderType("CinemachineBasicMultiChannelPerlin");
             if (noiseType == null)
                 return new ErrorResponse("CinemachineBasicMultiChannelPerlin type not found.");
-            var noiseComponent = go.GetComponent(noiseType);
-            var propertyError = PrepareComponentPropertiesForTarget(noiseType, noiseComponent, props, Array.Empty<string>(), out var setters, go);
+            // The public tool accepts the same gains on both package families.
+            if (noiseType.GetField("m_AmplitudeGain") != null)
+            {
+                props = (JObject)props.DeepClone();
+                foreach (var key in new[] { "AmplitudeGain", "FrequencyGain", "NoiseProfile" })
+                {
+                    var input = props.Property(key, StringComparison.OrdinalIgnoreCase);
+                    if (input == null)
+                        continue;
+                    string field = "m_" + key;
+                    if (props.Property(field, StringComparison.OrdinalIgnoreCase) != null)
+                        return new ErrorResponse($"Duplicate noise field '{field}'.");
+                    input.Replace(new JProperty(field, input.Value));
+                }
+            }
+            var owner = CameraHelpers.PipelineOwner(cmCamera);
+            var noiseComponent = owner?.GetComponent(noiseType);
+            var propertyError = PrepareComponentPropertiesForTarget(noiseType, noiseComponent, props, Array.Empty<string>(), out var setters, owner);
             if (propertyError != null)
                 return propertyError;
 
-            bool added = false;
-            if (noiseComponent == null)
-            {
-                noiseComponent = Undo.AddComponent(go, noiseType);
-                added = true;
-            }
-
-            propertyError = ApplyPreparedComponentProperties(noiseComponent, setters);
+            bool added = noiseComponent == null;
+            propertyError = added
+                ? ConfigureComponentAtomically(() => SwapPipelineComponent(go, "Noise", noiseType), setters, out noiseComponent)
+                : ApplyPreparedComponentProperties(noiseComponent, setters);
             if (propertyError != null)
                 return PostEditVerification.Attach(propertyError, RenderingObservation.Properties(noiseComponent, props));
             CameraHelpers.MarkDirty(go);
@@ -449,7 +490,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (string.IsNullOrEmpty(extTypeName))
                 return new ErrorResponse("'extensionType' property is required.");
 
-            var extType = CameraHelpers.ResolveComponentType(extTypeName);
+            var extType = ResolveExtensionType(extTypeName, out string confinerMode);
             if (extType == null)
                 return new ErrorResponse($"Extension type '{extTypeName}' not found.");
             if (!IsConcreteCinemachineType(extType, "CinemachineExtension"))
@@ -457,6 +498,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             var go = cmCamera.gameObject;
             var existing = go.GetComponent(extType);
+            if (existing != null && !MatchesConfinerMode(existing, confinerMode))
+                return new ErrorResponse($"The existing {extType.Name} is configured for another confinement mode.");
             if (existing != null && props.Count > 1)
                 return new ErrorResponse($"Extension '{extTypeName}' already exists; supplied properties were not applied.");
             if (existing != null)
@@ -465,8 +508,16 @@ namespace MCPForUnity.Editor.Tools.Cameras
             var propertyError = PrepareComponentPropertiesForTarget(extType, null, props, new[] { "extensionType", "extension_type" }, out var setters, go);
             if (propertyError != null)
                 return propertyError;
-            var ext = Undo.AddComponent(go, extType);
-            propertyError = ApplyPreparedComponentProperties(ext, setters);
+            if (confinerMode != null)
+            {
+                foreach (var property in props.Properties())
+                    if (property.Name.Equals("m_ConfineMode", StringComparison.OrdinalIgnoreCase))
+                        return new ErrorResponse($"The extension type '{extTypeName}' already selects the confinement mode.");
+                var mode = extType.GetField("m_ConfineMode");
+                if (mode != null)
+                    setters.Insert(0, component => mode.SetValue(component, Enum.Parse(mode.FieldType, confinerMode)));
+            }
+            propertyError = ConfigureComponentAtomically(() => Undo.AddComponent(go, extType), setters, out var ext);
             if (propertyError != null)
                 return propertyError;
             CameraHelpers.MarkDirty(go);
@@ -479,6 +530,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 {
                     instanceID = go.GetInstanceIDCompat(),
                     extensionType = extTypeName,
+                    componentType = ext.GetType().FullName,
                     verification = RenderingObservation.Properties(ext, props),
                 },
             };
@@ -495,7 +547,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (string.IsNullOrEmpty(extTypeName))
                 return new ErrorResponse("'extensionType' property is required.");
 
-            var extType = CameraHelpers.ResolveComponentType(extTypeName);
+            var extType = ResolveExtensionType(extTypeName, out string confinerMode);
             if (extType == null)
                 return new ErrorResponse($"Extension type '{extTypeName}' not found.");
             if (!IsConcreteCinemachineType(extType, "CinemachineExtension"))
@@ -503,7 +555,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             var go = cmCamera.gameObject;
             var ext = go.GetComponent(extType);
-            if (ext == null)
+            if (ext == null || !MatchesConfinerMode(ext, confinerMode))
                 return new ErrorResponse($"Extension '{extTypeName}' not found on '{go.name}'.");
 
             Undo.DestroyObjectImmediate(ext);
@@ -521,13 +573,28 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
         #region Helpers
 
-        private static void SetFloatSubProp(SerializedProperty parent, string subPropName, JToken value)
+        private static Type ResolveExtensionType(string name, out string confinerMode)
         {
-            if (value == null || value.Type == JTokenType.Null)
-                return;
-            using var sub = parent.FindPropertyRelative(subPropName) ?? parent.FindPropertyRelative("m_" + subPropName);
-            if (sub != null && sub.propertyType == SerializedPropertyType.Float)
-                sub.floatValue = ParamCoercion.CoerceFloat(value, sub.floatValue);
+            confinerMode = null;
+            if (name != "CinemachineConfiner2D" && name != "CinemachineConfiner3D")
+                return CameraHelpers.ResolveComponentType(name);
+            var exact = CameraHelpers.ResolveProviderType(name);
+            if (exact != null)
+                return exact;
+            var legacy = CameraHelpers.ResolveProviderType("CinemachineConfiner");
+            bool twoDimensional = name == "CinemachineConfiner2D";
+            if (legacy?.GetField(twoDimensional ? "m_BoundingShape2D" : "m_BoundingVolume") == null)
+                return null;
+            confinerMode = twoDimensional ? "Confine2D" : "Confine3D";
+            var field = legacy.GetField("m_ConfineMode");
+            // A build with only one physics module has its matching bounding field and no mode enum.
+            return field == null || (field.FieldType.IsEnum && Enum.IsDefined(field.FieldType, confinerMode)) ? legacy : null;
+        }
+
+        private static bool MatchesConfinerMode(Component component, string mode)
+        {
+            var field = mode == null ? null : component.GetType().GetField("m_ConfineMode");
+            return field == null || field.GetValue(component)?.ToString() == mode;
         }
 
         private static ErrorResponse ConfigureComponentAtomically(Func<Component> acquire, List<Action<Component>> setters, out Component component)
@@ -559,36 +626,55 @@ namespace MCPForUnity.Editor.Tools.Cameras
             return error;
         }
 
-        private static Component SwapPipelineComponent(GameObject go, string stage, Type newType)
+        internal static Component SwapPipelineComponent(GameObject go, string stage, Type newType)
         {
-            // Remove existing component of same pipeline stage
-            var cmCamera = go.GetComponent(CameraHelpers.CinemachineCameraType);
-            if (cmCamera != null)
-            {
-                var existing = CameraHelpers.GetPipelineComponent(cmCamera, stage);
-                if (existing != null && existing.GetType() != newType)
-                    Undo.DestroyObjectImmediate(existing);
-            }
-
-            // Add new component if not already present
-            var comp = go.GetComponent(newType);
-            if (comp == null)
-                comp = Undo.AddComponent(go, newType);
-
+            var cmCamera = CameraHelpers.FindVirtualCamera(go);
+            var owner = CameraHelpers.PipelineOwner(cmCamera, create: true);
+            if (owner == null)
+                throw new InvalidOperationException("Cinemachine pipeline owner is unavailable.");
+            var existing = CameraHelpers.GetPipelineComponent(cmCamera, stage);
+            if (existing != null && existing.GetType() == newType)
+                return existing;
+            var comp = owner.GetComponent(newType) ?? Undo.AddComponent(owner, newType);
+            if (CameraHelpers.GetReflectionProperty(comp, "Stage")?.ToString() != stage)
+                throw new InvalidOperationException($"{newType.Name} does not implement the {stage} stage.");
+            if (existing != null)
+                Undo.DestroyObjectImmediate(existing);
+            cmCamera.GetType().GetMethod("InvalidateComponentPipeline", Type.EmptyTypes)?.Invoke(cmCamera, null);
             return comp;
         }
 
         private static bool IsConcreteCinemachineType(Type type, string baseTypeName, string stageName = null)
         {
-            var assembly = CameraHelpers.CinemachineCameraType?.Assembly;
-            var baseType = assembly?.GetType("Unity.Cinemachine." + baseTypeName);
+            var baseType = CameraHelpers.ResolveProviderType(baseTypeName);
             if (baseType == null || !baseType.IsAssignableFrom(type) || type.IsAbstract || type.ContainsGenericParameters)
                 return false;
             if (stageName == null)
                 return true;
 
+            // CM2 predates CameraPipelineAttribute. Its built-in components declare a
+            // constant Stage; check it before touching the existing camera or its undo state.
+            if (baseType.Namespace == "Cinemachine" && type.Assembly == baseType.Assembly)
+            {
+                var stage = type.Name switch
+                {
+                    "CinemachineTransposer"
+                    or "CinemachineFramingTransposer"
+                    or "CinemachineOrbitalTransposer"
+                    or "CinemachineTrackedDolly"
+                    or "CinemachineHardLockToTarget"
+                    or "Cinemachine3rdPersonFollow" => "Body",
+                    "CinemachineComposer" or "CinemachineGroupComposer" or "CinemachinePOV" or "CinemachineHardLookAt" or "CinemachineSameAsFollowTarget" =>
+                        "Aim",
+                    "CinemachineBasicMultiChannelPerlin" => "Noise",
+                    _ => null,
+                };
+                if (stage != null)
+                    return stage == stageName;
+            }
+
             // Read declared stages without creating a component or invoking its native-backed Stage getter.
-            var pipelineAttributeType = assembly.GetType("Unity.Cinemachine.CameraPipelineAttribute");
+            var pipelineAttributeType = CameraHelpers.ResolveProviderType("CameraPipelineAttribute");
             foreach (var attribute in type.GetCustomAttributesData())
             {
                 if (attribute.AttributeType != pipelineAttributeType || attribute.ConstructorArguments.Count != 1)

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Graphics;
 using MCPForUnity.Runtime.Helpers;
@@ -96,8 +95,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
             }
 
             var cmType = CameraHelpers.CinemachineCameraType;
-            var bodyType = presetDef.body == null ? null : CameraHelpers.ResolveComponentType(presetDef.body);
-            var aimType = presetDef.aim == null ? null : CameraHelpers.ResolveComponentType(presetDef.aim);
+            var bodyType = presetDef.body == null ? null : CameraHelpers.ResolveProviderType(presetDef.body);
+            var aimType = presetDef.aim == null ? null : CameraHelpers.ResolveProviderType(presetDef.aim);
             if (cmType == null || (presetDef.body != null && bodyType == null) || (presetDef.aim != null && aimType == null))
                 return new ErrorResponse($"Required Cinemachine components for preset '{preset}' are unavailable.");
 
@@ -114,26 +113,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 if (cmCamera == null)
                     return new ErrorResponse("Could not add CinemachineCamera component.");
 
-                // PrioritySettings is a struct with Enabled + m_Value — use SerializedProperty
+                var priorityError = CameraConfigure.SetPriority(cmCamera, priority);
+                if (priorityError != null)
+                    return priorityError;
                 using (var so = new SerializedObject(cmCamera))
                 {
-                    using var priorityProp = so.FindProperty("Priority");
-                    if (priorityProp != null)
-                    {
-                        using var enabledProp = priorityProp.FindPropertyRelative("Enabled");
-                        using var valueProp = priorityProp.FindPropertyRelative("m_Value");
-                        if (enabledProp == null || valueProp == null)
-                            return new ErrorResponse("Could not find supported Priority fields on CinemachineCamera.");
-                        enabledProp.boolValue = true;
-                        valueProp.intValue = priority;
-                        so.ApplyModifiedProperties();
-                    }
-                    else
-                    {
-                        if (!CameraHelpers.SetReflectionProperty(cmCamera, "Priority", priority))
-                            return new ErrorResponse("Could not set Priority on CinemachineCamera.");
-                    }
-
                     if (props["fieldOfView"] != null || props["nearClipPlane"] != null || props["farClipPlane"] != null)
                     {
                         using var lensProp = so.FindProperty("Lens") ?? so.FindProperty("m_Lens");
@@ -159,9 +143,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     }
                 }
 
-                if (bodyType != null && go.AddComponent(bodyType) == null)
+                if (bodyType != null && CameraConfigure.SwapPipelineComponent(go, "Body", bodyType) == null)
                     return new ErrorResponse($"Could not add {presetDef.body} component.");
-                if (aimType != null && go.AddComponent(aimType) == null)
+                if (aimType != null && CameraConfigure.SwapPipelineComponent(go, "Aim", aimType) == null)
                     return new ErrorResponse($"Could not add {presetDef.aim} component.");
 
                 var followToken = props["follow"];
@@ -184,8 +168,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         verification = RenderingObservation.ReadKnown(cmCamera, "Target", "Lens", "m_Lens", "Priority", "m_Priority"),
                         preset,
                         priority,
-                        body = bodyType == null ? null : presetDef.body,
-                        aim = aimType == null ? null : presetDef.aim,
+                        body = bodyType?.Name,
+                        aim = aimType?.Name,
                     },
                 };
             }
@@ -248,28 +232,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 // Configure default blend if provided
                 if (blendStyle != null || blendDuration >= 0)
                 {
-                    using var so = new SerializedObject(brain);
-                    using var defaultBlendProp = so.FindProperty("DefaultBlend") ?? so.FindProperty("m_DefaultBlend");
-                    if (defaultBlendProp != null)
-                    {
-                        if (blendStyle != null)
-                        {
-                            using var styleProp = defaultBlendProp.FindPropertyRelative("Style") ?? defaultBlendProp.FindPropertyRelative("m_Style");
-                            if (styleProp != null)
-                            {
-                                int idx = Array.FindIndex(styleProp.enumNames, n => n.Equals(blendStyle, StringComparison.OrdinalIgnoreCase));
-                                if (idx >= 0)
-                                    styleProp.enumValueIndex = idx;
-                            }
-                        }
-                        if (blendDuration >= 0)
-                        {
-                            using var timeProp = defaultBlendProp.FindPropertyRelative("Time") ?? defaultBlendProp.FindPropertyRelative("m_Time");
-                            if (timeProp != null)
-                                timeProp.floatValue = blendDuration;
-                        }
-                        so.ApplyModifiedProperties();
-                    }
+                    var error = CameraControl.WriteBlend(brain, blendStyle, blendDuration);
+                    if (error != null)
+                        return error;
                 }
 
                 CameraHelpers.MarkDirty(cam.gameObject);

@@ -102,6 +102,8 @@ namespace MCPForUnityTests.Editor.Tools
                 ["properties"] = properties,
             };
 
+        private GameObject Pipeline => CameraHelpers.PipelineOwner(camera, create: true);
+
         private JObject Send(string action, JObject properties) => JObject.FromObject(ManageCamera.HandleCommand(Request(action, properties)));
 
         private Component OwnedBrain()
@@ -109,12 +111,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Owned("Brain");
             go.AddComponent<Camera>().enabled = false;
             var brain = go.AddComponent(CameraHelpers.CinemachineBrainType);
-            if (brain is Behaviour behaviour)
-                behaviour.enabled = false;
             Assert.AreSame(brain, CameraHelpers.FindBrain(), "The public control path must resolve only the owned Brain.");
-            var method = brain.GetType().GetMethod("SetCameraOverride", BindingFlags.Public | BindingFlags.Instance);
-            if (method == null || method.GetParameters().Length != 6)
-                Assert.Ignore("This ownership fixture requires the documented six-argument override API.");
             return brain;
         }
 
@@ -140,7 +137,7 @@ namespace MCPForUnityTests.Editor.Tools
                 int id = (int)OverrideId.GetValue(null);
                 if (owner != null && id >= 0 && objects.Contains(owner.gameObject))
                 {
-                    var release = owner.GetType().GetMethod("ReleaseCameraOverride", BindingFlags.Public | BindingFlags.Instance);
+                    var release = owner.GetType().GetMethod("ReleaseCameraOverride", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                     if (release != null)
                         release.Invoke(owner, new object[] { id });
                 }
@@ -220,10 +217,15 @@ namespace MCPForUnityTests.Editor.Tools
             var response = Send("set_priority", new JObject { ["priority"] = priority });
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             using var serialized = new SerializedObject(camera);
-            var field = serialized.FindProperty("Priority");
-            Assert.IsNotNull(field);
-            Assert.IsTrue(field.FindPropertyRelative("Enabled").boolValue);
-            Assert.AreEqual(priority, field.FindPropertyRelative("m_Value").intValue);
+            var legacy = serialized.FindProperty("m_Priority");
+            if (legacy != null && legacy.propertyType == SerializedPropertyType.Integer)
+                Assert.AreEqual(priority, legacy.intValue);
+            else
+            {
+                var field = serialized.FindProperty("Priority");
+                Assert.IsTrue(field.FindPropertyRelative("Enabled").boolValue);
+                Assert.AreEqual(priority, field.FindPropertyRelative("m_Value").intValue);
+            }
         }
 
         [Test]
@@ -250,7 +252,7 @@ namespace MCPForUnityTests.Editor.Tools
                 target.AddComponent<Camera>().enabled = false;
             if (action == "remove_extension" && typeName == "CinemachineExtension")
             {
-                var extensionType = CameraHelpers.ResolveComponentType("CinemachineRecomposer");
+                var extensionType = CameraHelpers.ResolveComponentType("CinemachineFollowZoom");
                 Assert.IsNotNull(extensionType);
                 target.AddComponent(extensionType);
             }
@@ -269,17 +271,17 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase("set_body", "Body", "bodyType", "Camera")]
         [TestCase("set_body", "Body", "bodyType", "CinemachineCamera")]
-        [TestCase("set_body", "Body", "bodyType", "CinemachineRecomposer")]
+        [TestCase("set_body", "Body", "bodyType", "CinemachineFollowZoom")]
         [TestCase("set_body", "Body", "bodyType", "CinemachineComponentBase")]
         [TestCase("set_aim", "Aim", "aimType", "Camera")]
         [TestCase("set_aim", "Aim", "aimType", "CinemachineCamera")]
-        [TestCase("set_aim", "Aim", "aimType", "CinemachineRecomposer")]
+        [TestCase("set_aim", "Aim", "aimType", "CinemachineFollowZoom")]
         [TestCase("set_aim", "Aim", "aimType", "CinemachineComponentBase")]
         public void PipelineReplacementRejectsNonPipelineAndAbstractTypesWithoutMutation(string action, string stage, string typeKey, string typeName)
         {
             var existingType = CameraHelpers.ResolveComponentType(stage == "Body" ? "CinemachineFollow" : "CinemachineRotationComposer");
             Assert.IsNotNull(existingType);
-            var existing = target.AddComponent(existingType);
+            var existing = Pipeline.AddComponent(existingType);
             Assert.AreSame(existing, CameraHelpers.GetPipelineComponent(camera, stage));
             var components = target.GetComponents<Component>();
             int objectDirty = EditorUtility.GetDirtyCount(target);
@@ -315,9 +317,9 @@ namespace MCPForUnityTests.Editor.Tools
             var wrongType = CameraHelpers.ResolveComponentType(typeName);
             Assert.IsNotNull(existingType);
             Assert.IsNotNull(wrongType);
-            var existing = target.AddComponent(existingType);
+            var existing = Pipeline.AddComponent(existingType);
             if (alreadyPresent)
-                target.AddComponent(wrongType);
+                Pipeline.AddComponent(wrongType);
             Assert.AreSame(existing, CameraHelpers.GetPipelineComponent(camera, stage));
             var components = target.GetComponents<Component>();
             int objectDirty = EditorUtility.GetDirtyCount(target);
@@ -326,7 +328,7 @@ namespace MCPForUnityTests.Editor.Tools
             var response = Send(action, new JObject { [typeKey] = wrongType.FullName });
 
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
-            StringAssert.Contains(typeName, response.ToString());
+            StringAssert.Contains(wrongType.Name, response.ToString());
             Assert.AreSame(existing, CameraHelpers.GetPipelineComponent(camera, stage));
             CollectionAssert.AreEqual(components, target.GetComponents<Component>());
             Assert.AreEqual(objectDirty, EditorUtility.GetDirtyCount(target));
@@ -347,7 +349,7 @@ namespace MCPForUnityTests.Editor.Tools
             bool explicitNull
         )
         {
-            var existing = (Behaviour)target.AddComponent(CameraHelpers.ResolveComponentType(typeName));
+            var existing = (Behaviour)Pipeline.AddComponent(CameraHelpers.ResolveComponentType(typeName));
             existing.enabled = true;
             var components = target.GetComponents<Component>();
             var properties = new JObject
@@ -365,11 +367,11 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(existing.enabled);
         }
 
-        [TestCase("set_body", "Body", "bodyType", "CinemachineFollow", "CinemachineThirdPersonFollow")]
+        [TestCase("set_body", "Body", "bodyType", "CinemachineFollow", "CinemachinePositionComposer")]
         [TestCase("set_aim", "Aim", "aimType", "CinemachineRotationComposer", "CinemachineHardLookAt")]
         public void InvalidLaterPipelinePropertyPreservesExistingStage(string action, string stage, string typeKey, string oldTypeName, string newTypeName)
         {
-            var existing = target.AddComponent(CameraHelpers.ResolveComponentType(oldTypeName));
+            var existing = Pipeline.AddComponent(CameraHelpers.ResolveComponentType(oldTypeName));
             var components = target.GetComponents<Component>();
             int objectDirty = EditorUtility.GetDirtyCount(target);
             int componentDirty = EditorUtility.GetDirtyCount(existing);
@@ -396,7 +398,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("set_aim", "Aim", "CinemachineRotationComposer")]
         public void InvalidLaterExistingPipelinePropertyPreservesEarlierValue(string action, string stage, string typeName)
         {
-            var existing = (Behaviour)target.AddComponent(CameraHelpers.ResolveComponentType(typeName));
+            var existing = (Behaviour)Pipeline.AddComponent(CameraHelpers.ResolveComponentType(typeName));
             existing.enabled = true;
             int componentDirty = EditorUtility.GetDirtyCount(existing);
 
@@ -409,7 +411,7 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [TestCase("set_noise", "CinemachineBasicMultiChannelPerlin")]
-        [TestCase("add_extension", "CinemachineRecomposer")]
+        [TestCase("add_extension", "CinemachineFollowZoom")]
         public void InvalidLaterAddedComponentPropertyDoesNotAddComponent(string action, string typeName)
         {
             var components = target.GetComponents<Component>();
@@ -429,7 +431,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void InvalidLaterNoisePropertyPreservesExistingComponentAndValue()
         {
-            var existing = (Behaviour)target.AddComponent(CameraHelpers.ResolveComponentType("CinemachineBasicMultiChannelPerlin"));
+            var existing = (Behaviour)Pipeline.AddComponent(CameraHelpers.ResolveComponentType("CinemachineBasicMultiChannelPerlin"));
             existing.enabled = true;
             int componentDirty = EditorUtility.GetDirtyCount(existing);
             var response = Send("set_noise", new JObject { ["enabled"] = false, ["NoSuchPipelineProperty"] = 3 });
@@ -444,7 +446,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var noiseType = CameraHelpers.ResolveComponentType("CinemachineBasicMultiChannelPerlin");
             Assert.IsNotNull(noiseType);
-            var existing = existingNoise ? (Behaviour)target.AddComponent(noiseType) : null;
+            var existing = existingNoise ? (Behaviour)Pipeline.AddComponent(noiseType) : null;
             if (existing != null)
                 existing.enabled = true;
             var components = target.GetComponents<Component>();
@@ -465,9 +467,33 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void NamedConfinerUsesCorrectDimensionAndRemovalPreservesOtherModes()
+        {
+            var properties3D = new JObject { ["extensionType"] = "CinemachineConfiner3D" };
+            var properties2D = new JObject { ["extensionType"] = "CinemachineConfiner2D" };
+            var result = Send("add_extension", properties3D);
+            var legacy = CameraHelpers.ResolveProviderType("CinemachineConfiner");
+            if (CameraHelpers.ResolveProviderType("CinemachineConfiner3D") == null && legacy?.GetField("m_BoundingVolume") == null)
+            {
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                return;
+            }
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var type = CameraHelpers.CinemachineCameraType.Assembly.GetType(result["data"].Value<string>("componentType"));
+            var extension = target.GetComponent(type);
+            Assert.IsNotNull(extension);
+            if (type == legacy && type.GetField("m_ConfineMode") != null)
+                Assert.AreEqual("Confine3D", type.GetField("m_ConfineMode").GetValue(extension).ToString());
+            Assert.IsFalse(Send("remove_extension", properties2D).Value<bool>("success"));
+            Assert.AreSame(extension, target.GetComponent(type));
+            Assert.IsTrue(Send("remove_extension", properties3D).Value<bool>("success"));
+            Assert.IsNull(target.GetComponent(type));
+        }
+
+        [Test]
         public void ConcreteExtensionCanBeAdded()
         {
-            var extensionType = CameraHelpers.ResolveComponentType("CinemachineRecomposer");
+            var extensionType = CameraHelpers.ResolveComponentType("CinemachineFollowZoom");
             Assert.IsNotNull(extensionType);
 
             var response = Send("add_extension", new JObject { ["extensionType"] = extensionType.FullName });
@@ -479,7 +505,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void ConcreteExtensionCanBeRemoved()
         {
-            var extensionType = CameraHelpers.ResolveComponentType("CinemachineRecomposer");
+            var extensionType = CameraHelpers.ResolveComponentType("CinemachineFollowZoom");
             Assert.IsNotNull(extensionType);
             target.AddComponent(extensionType);
 
@@ -490,7 +516,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(camera);
         }
 
-        [TestCase("set_body", "Body", "bodyType", "CinemachineFollow", "CinemachineThirdPersonFollow")]
+        [TestCase("set_body", "Body", "bodyType", "CinemachineFollow", "CinemachinePositionComposer")]
         [TestCase("set_aim", "Aim", "aimType", "CinemachineRotationComposer", "CinemachineHardLookAt")]
         public void ConcretePipelineComponentCanReplaceItsStage(string action, string stage, string typeKey, string oldTypeName, string newTypeName)
         {
@@ -498,13 +524,32 @@ namespace MCPForUnityTests.Editor.Tools
             var newType = CameraHelpers.ResolveComponentType(newTypeName);
             Assert.IsNotNull(oldType);
             Assert.IsNotNull(newType);
-            target.AddComponent(oldType);
+            Pipeline.AddComponent(oldType);
 
             var response = Send(action, new JObject { [typeKey] = newType.FullName });
 
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
-            Assert.IsNull(target.GetComponent(oldType));
+            Assert.IsNull(Pipeline.GetComponent(oldType));
             Assert.AreEqual(newType, CameraHelpers.GetPipelineComponent(camera, stage)?.GetType());
+        }
+
+        [Test]
+        public void DisabledBrainOverridePreservesPriorityAndActivation()
+        {
+            var brain = (Behaviour)OwnedBrain();
+            brain.enabled = false;
+            int priority = CameraHelpers.ReadCinemachinePriority(camera);
+            var response = Send("force_camera", new JObject());
+            Assert.AreEqual(priority, CameraHelpers.ReadCinemachinePriority(camera));
+            Assert.IsFalse(brain.enabled);
+            if (response.Value<bool>("success"))
+                Assert.AreEqual("override", response["data"].Value<string>("method"));
+            else
+            {
+                StringAssert.Contains("Enable", response.Value<string>("error"));
+                Assert.AreEqual(-1, OverrideId.GetValue(null));
+                Assert.IsNull(OverrideBrain.GetValue(null));
+            }
         }
 
         [Test]

@@ -23,12 +23,15 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (CameraHelpers.HasCinemachine)
             {
                 var cmType = CameraHelpers.CinemachineCameraType;
-                var allCm = UnityFindObjectsCompat.FindAll(cmType);
+                var allCm = UnityFindObjectsCompat.FindAll(cmType).AsEnumerable();
+                var legacy = CameraHelpers.LegacyCameraType;
+                if (legacy != null && legacy != cmType)
+                    allCm = allCm.Concat(UnityFindObjectsCompat.FindAll(legacy));
                 foreach (Component cm in allCm)
                 {
                     var follow = CameraHelpers.GetReflectionProperty(cm, "Follow") as Transform;
                     var lookAt = CameraHelpers.GetReflectionProperty(cm, "LookAt") as Transform;
-                    var isLive = CameraHelpers.GetReflectionProperty(cm, "IsLive");
+                    var isLive = CameraHelpers.IsLive(cm);
                     var priority = CameraHelpers.ReadCinemachinePriority(cm);
 
                     var body = CameraHelpers.GetPipelineComponent(cm, "Body");
@@ -37,7 +40,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
                     // Collect extensions
                     var extensions = new List<string>();
-                    var cmExtBaseType = cm.GetType().Assembly.GetType("Unity.Cinemachine.CinemachineExtension");
+                    var cmExtBaseType = CameraHelpers.ResolveProviderType("CinemachineExtension");
                     if (cmExtBaseType != null)
                     {
                         foreach (var comp in cm.gameObject.GetComponents(cmExtBaseType))
@@ -52,7 +55,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         {
                             instanceID = cm.gameObject.GetInstanceIDCompat(),
                             name = cm.gameObject.name,
-                            isLive = isLive is bool b && b,
+                            isLive,
                             priority,
                             follow = follow != null ? new { name = follow.gameObject.name, instanceID = follow.gameObject.GetInstanceIDCompat() } : null,
                             lookAt = lookAt != null ? new { name = lookAt.gameObject.name, instanceID = lookAt.gameObject.GetInstanceIDCompat() } : null,
@@ -176,36 +179,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 return new ErrorResponse("No CinemachineBrain found. Use 'ensure_brain' first.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
-            Undo.RecordObject(brain, "Set Camera Blend");
-
-            using var so = new SerializedObject(brain);
-            using var defaultBlendProp = so.FindProperty("DefaultBlend") ?? so.FindProperty("m_DefaultBlend");
-            if (defaultBlendProp == null)
-                return new ErrorResponse("Could not find DefaultBlend property on CinemachineBrain.");
-
-            string style = ParamCoercion.CoerceString(props["style"], null);
-            if (style != null)
-            {
-                using var styleProp = defaultBlendProp.FindPropertyRelative("Style") ?? defaultBlendProp.FindPropertyRelative("m_Style");
-                if (styleProp != null && styleProp.propertyType == SerializedPropertyType.Enum)
-                {
-                    // Try to parse the style enum
-                    var enumNames = styleProp.enumNames;
-                    int idx = Array.FindIndex(enumNames, n => n.Equals(style, StringComparison.OrdinalIgnoreCase));
-                    if (idx >= 0)
-                        styleProp.enumValueIndex = idx;
-                }
-            }
-
-            float duration = ParamCoercion.CoerceFloat(props["duration"], -1f);
-            if (duration >= 0)
-            {
-                using var timeProp = defaultBlendProp.FindPropertyRelative("Time") ?? defaultBlendProp.FindPropertyRelative("m_Time");
-                if (timeProp != null)
-                    timeProp.floatValue = duration;
-            }
-
-            so.ApplyModifiedProperties();
+            var error = WriteBlend(brain, ParamCoercion.CoerceString(props["style"], null), ParamCoercion.CoerceFloat(props["duration"], -1f));
+            if (error != null)
+                return error;
             CameraHelpers.MarkDirty(brain.gameObject);
 
             return new
@@ -220,8 +196,38 @@ namespace MCPForUnity.Editor.Tools.Cameras
             };
         }
 
+        internal static ErrorResponse WriteBlend(Component brain, string style, float duration)
+        {
+            using var serialized = new SerializedObject(brain);
+            using var blend = serialized.FindProperty("DefaultBlend") ?? serialized.FindProperty("m_DefaultBlend");
+            if (blend == null)
+                return new ErrorResponse("Could not find DefaultBlend on CinemachineBrain.");
+            if (style != null)
+            {
+                using var field = blend.FindPropertyRelative("Style") ?? blend.FindPropertyRelative("m_Style");
+                if (field?.propertyType != SerializedPropertyType.Enum)
+                    return new ErrorResponse("Could not find the default blend style on CinemachineBrain.");
+                int index = Array.FindIndex(field.enumNames, name => name.Equals(style, StringComparison.OrdinalIgnoreCase));
+                if (index < 0)
+                    return new ErrorResponse($"Unsupported Cinemachine blend style '{style}'.");
+                field.enumValueIndex = index;
+            }
+            if (duration >= 0)
+            {
+                using var field = blend.FindPropertyRelative("Time") ?? blend.FindPropertyRelative("m_Time");
+                if (field?.propertyType != SerializedPropertyType.Float)
+                    return new ErrorResponse("Could not find the default blend duration on CinemachineBrain.");
+                field.floatValue = duration;
+            }
+            serialized.ApplyModifiedProperties();
+            return null;
+        }
+
         private static int _overrideId = -1;
         private static Component _overrideBrain;
+
+        // Early CM2 releases expose the same Timeline override contract internally.
+        private const BindingFlags OverrideMethods = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
         internal static object ForceCamera(JObject @params)
         {
@@ -237,75 +243,46 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (_overrideId >= 0 && _overrideBrain != brain)
                 return new ErrorResponse("Release the active override before forcing a different CinemachineBrain.");
 
-            // Use SetCameraOverride via reflection
             var brainType = brain.GetType();
-            var method = brainType.GetMethod("SetCameraOverride", BindingFlags.Public | BindingFlags.Instance);
+            var cameraInterface = CameraHelpers.ResolveProviderType("ICinemachineCamera");
+            if (
+                cameraInterface == null
+                || !cameraInterface.IsInstanceOfType(cmCamera)
+                || brainType.GetMethod("ReleaseCameraOverride", OverrideMethods, null, new[] { typeof(int) }, null) == null
+            )
+                return new ErrorResponse("This CinemachineBrain has no compatible, releasable camera override API.");
 
+            var method = brainType.GetMethod(
+                "SetCameraOverride",
+                OverrideMethods,
+                null,
+                new[] { typeof(int), typeof(int), cameraInterface, cameraInterface, typeof(float), typeof(float) },
+                null
+            );
+            object[] arguments = { _overrideId, 999, cmCamera, cmCamera, 1f, -1f };
             if (method == null)
             {
-                // Fallback: just set high priority
-                var error = CameraConfigure.SetPriority(cmCamera, 999);
-                if (error != null)
-                    return error;
-                CameraHelpers.MarkDirty(cmCamera.gameObject);
-                return new
-                {
-                    success = true,
-                    message = $"Set high priority on '{cmCamera.gameObject.name}' (SetCameraOverride not available).",
-                    data = new
-                    {
-                        instanceID = cmCamera.gameObject.GetInstanceIDCompat(),
-                        method = "priority",
-                        verification = RenderingObservation.Pending(
-                            RenderingObservation.ReadKnown(cmCamera, "Priority", "m_Priority"),
-                            "camera_blend_not_observed"
-                        ),
-                    },
-                };
+                method = brainType.GetMethod(
+                    "SetCameraOverride",
+                    OverrideMethods,
+                    null,
+                    new[] { typeof(int), cameraInterface, cameraInterface, typeof(float), typeof(float) },
+                    null
+                );
+                arguments = new object[] { _overrideId, cmCamera, cmCamera, 1f, -1f };
             }
-
+            if (method?.ReturnType != typeof(int))
+                return new ErrorResponse("This CinemachineBrain has no compatible SetCameraOverride API.");
             try
             {
-                // CM3 signature: SetCameraOverride(int overrideId, int priority,
-                //   ICinemachineCamera camA, ICinemachineCamera camB, float weightB, float deltaTime)
-                // -1 for overrideId creates a new override; same cam for A+B with weight=1 = instant switch
-                _overrideId = (int)
-                    method.Invoke(
-                        brain,
-                        new object[]
-                        {
-                            _overrideId >= 0 ? _overrideId : -1,
-                            999, // high priority to win over all others
-                            cmCamera, // camA (at weight=0)
-                            cmCamera, // camB (at weight=1) — same camera = no blend
-                            1f, // weightB = fully on camB
-                            -1f, // deltaTime = use default
-                        }
-                    );
-                _overrideBrain = brain;
+                _overrideId = (int)method.Invoke(brain, arguments);
             }
-            catch (Exception ex)
+            catch (TargetInvocationException ex)
             {
-                // Fallback
-                var error = CameraConfigure.SetPriority(cmCamera, 999);
-                if (error != null)
-                    return error;
-                CameraHelpers.MarkDirty(cmCamera.gameObject);
-                return new
-                {
-                    success = true,
-                    message = $"Forced via priority (override failed: {ex.Message}).",
-                    data = new
-                    {
-                        instanceID = cmCamera.gameObject.GetInstanceIDCompat(),
-                        method = "priority",
-                        verification = RenderingObservation.Pending(
-                            RenderingObservation.ReadKnown(cmCamera, "Priority", "m_Priority"),
-                            "camera_blend_not_observed"
-                        ),
-                    },
-                };
+                string hint = brain is Behaviour behaviour && !behaviour.isActiveAndEnabled ? " Enable the selected brain before retrying." : "";
+                return new ErrorResponse($"CinemachineBrain rejected the override: {ex.InnerException?.Message ?? ex.Message}.{hint}");
             }
+            _overrideBrain = brain;
 
             return new
             {
@@ -339,7 +316,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (brain == null)
                 return new ErrorResponse("The CinemachineBrain owning the active override is unavailable.");
 
-            var method = brain.GetType().GetMethod("ReleaseCameraOverride", BindingFlags.Public | BindingFlags.Instance);
+            var method = brain.GetType().GetMethod("ReleaseCameraOverride", OverrideMethods, null, new[] { typeof(int) }, null);
 
             if (method != null)
             {

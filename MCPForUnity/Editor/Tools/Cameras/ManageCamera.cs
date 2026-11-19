@@ -48,13 +48,19 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         return CameraHelpers.HasCinemachine ? CameraCreate.CreateCinemachineCamera(@params) : CameraCreate.CreateBasicCamera(@params);
 
                     case "set_target":
-                        return CameraHelpers.HasCinemachine ? CameraConfigure.SetCinemachineTarget(@params) : CameraConfigure.SetBasicCameraTarget(@params);
+                        return CameraHelpers.FindCinemachineCamera(@params) != null
+                            ? CameraConfigure.SetCinemachineTarget(@params)
+                            : CameraConfigure.SetBasicCameraTarget(@params);
 
                     case "set_lens":
-                        return CameraHelpers.HasCinemachine ? CameraConfigure.SetCinemachineLens(@params) : CameraConfigure.SetBasicCameraLens(@params);
+                        return CameraHelpers.FindCinemachineCamera(@params) != null
+                            ? CameraConfigure.SetCinemachineLens(@params)
+                            : CameraConfigure.SetBasicCameraLens(@params);
 
                     case "set_priority":
-                        return CameraHelpers.HasCinemachine ? CameraConfigure.SetCinemachinePriority(@params) : CameraConfigure.SetBasicCameraPriority(@params);
+                        return CameraHelpers.FindCinemachineCamera(@params) != null
+                            ? CameraConfigure.SetCinemachinePriority(@params)
+                            : CameraConfigure.SetBasicCameraPriority(@params);
 
                     case "list_cameras":
                         return CameraControl.ListCameras(@params);

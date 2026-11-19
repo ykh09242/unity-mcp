@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
@@ -355,10 +356,59 @@ namespace MCPForUnityTests.Editor.Tools
             var lens = serialized.FindProperty("Lens") ?? serialized.FindProperty("m_Lens");
             Assert.IsNotNull(lens, "Installed Cinemachine Lens layout precondition.");
             Assert.AreEqual(42f, lens.FindPropertyRelative("FieldOfView").floatValue);
-            var priority = serialized.FindProperty("Priority");
-            Assert.IsNotNull(priority, "Installed Cinemachine Priority layout precondition.");
-            Assert.IsTrue(priority.FindPropertyRelative("Enabled").boolValue);
-            Assert.AreEqual(0, priority.FindPropertyRelative("m_Value").intValue);
+            var legacyPriority = serialized.FindProperty("m_Priority");
+            if (legacyPriority != null && legacyPriority.propertyType == SerializedPropertyType.Integer)
+                Assert.AreEqual(0, legacyPriority.intValue);
+            else
+            {
+                var priority = serialized.FindProperty("Priority");
+                Assert.IsTrue(priority.FindPropertyRelative("Enabled").boolValue);
+                Assert.AreEqual(0, priority.FindPropertyRelative("m_Value").intValue);
+            }
+        }
+
+        [TestCase("follow", "CinemachineFollow", "CinemachineRotationComposer")]
+        [TestCase("third_person", "CinemachineThirdPersonFollow", "CinemachineRotationComposer")]
+        [TestCase("freelook", "CinemachineOrbitalFollow", "CinemachineRotationComposer")]
+        [TestCase("dolly", "CinemachineSplineDolly", "CinemachineRotationComposer")]
+        [TestCase("static", null, "CinemachineHardLookAt")]
+        [TestCase("top_down", "CinemachineFollow", null)]
+        [TestCase("side_scroller", "CinemachinePositionComposer", null)]
+        public void PresetUsesInstalledPipelineAndReportsActualComponents(string preset, string bodyName, string aimName)
+        {
+            UseInstalledCinemachine();
+            var body = bodyName == null ? null : CameraHelpers.ResolveProviderType(bodyName);
+            var aim = aimName == null ? null : CameraHelpers.ResolveProviderType(aimName);
+            var response = Send(
+                "create_camera",
+                new JObject
+                {
+                    ["name"] = UniqueName(),
+                    ["preset"] = preset,
+                    ["priority"] = -4,
+                }
+            );
+            if ((bodyName != null && body == null) || (aimName != null && aim == null))
+            {
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(0, ownedScene.rootCount);
+                return;
+            }
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var camera = ReturnedObject(response).GetComponent(CameraHelpers.CinemachineCameraType);
+            Assert.AreEqual(body?.Name, response["data"].Value<string>("body"));
+            Assert.AreEqual(aim?.Name, response["data"].Value<string>("aim"));
+            // Inspect the provider's runtime pipeline, independent of the tool's lookup.
+            var stage = camera.GetType().Assembly.GetType(camera.GetType().Namespace + ".CinemachineCore+Stage");
+            var get = camera.GetType().GetMethod("GetCinemachineComponent", new[] { stage });
+            Assert.AreEqual(body, get.Invoke(camera, new[] { Enum.Parse(stage, "Body") })?.GetType());
+            Assert.AreEqual(aim, get.Invoke(camera, new[] { Enum.Parse(stage, "Aim") })?.GetType());
+            var list = Send("list_cameras", new JObject());
+            var row = ((JArray)list["data"]["cinemachineCameras"]).FirstOrDefault(c => c.Value<int>("instanceID") == camera.gameObject.GetInstanceIDCompat());
+            Assert.IsNotNull(row, list.ToString());
+            Assert.AreEqual(-4, row.Value<int>("priority"));
+            var ping = Send("ping", new JObject());
+            Assert.AreEqual(UnityEditor.PackageManager.PackageInfo.FindForAssembly(camera.GetType().Assembly).version, ping["data"].Value<string>("version"));
         }
 
         [Test]
@@ -380,6 +430,37 @@ namespace MCPForUnityTests.Editor.Tools
             StringAssert.Contains("Priority", response.Value<string>("error"));
             Assert.AreEqual(1, ownedScene.rootCount, "Failed operation retained its newly allocated object.");
             Assert.AreSame(existing, ownedScene.GetRootGameObjects()[0]);
+        }
+
+        [Test]
+        public void ExistingLegacyCameraUsesItsOwnPipelineAndAcceptsPublicNoiseGains()
+        {
+            UseInstalledCinemachine();
+            var legacy = CameraHelpers.LegacyCameraType;
+            if (legacy == null)
+                Assert.Ignore("The installed package omits legacy virtual cameras.");
+            var go = NewObject();
+            var camera = go.AddComponent(legacy);
+            var request = new JObject { ["target"] = go.GetInstanceIDCompat(), ["searchMethod"] = "by_id" };
+            JObject Configure(string action, JObject properties)
+            {
+                request["action"] = action;
+                request["properties"] = properties;
+                return JObject.FromObject(ManageCamera.HandleCommand(request));
+            }
+            var aim = Configure("set_aim", new JObject { ["aimType"] = "CinemachineRotationComposer" });
+            Assert.IsTrue(aim.Value<bool>("success"), aim.ToString());
+            var noise = Configure("set_noise", new JObject { ["amplitudeGain"] = 2.5f, ["frequencyGain"] = 3 });
+            Assert.IsTrue(noise.Value<bool>("success"), noise.ToString());
+            var owner = (Transform)legacy.GetMethod("GetComponentOwner").Invoke(camera, null);
+            Assert.AreSame(go.transform, owner.parent);
+            Assert.IsNotNull(owner.GetComponent(CameraHelpers.ResolveProviderType("CinemachineComposer")));
+            var perlin = owner.GetComponent(CameraHelpers.ResolveProviderType("CinemachineBasicMultiChannelPerlin"));
+            using var serialized = new SerializedObject(perlin);
+            Assert.AreEqual(2.5f, (serialized.FindProperty("AmplitudeGain") ?? serialized.FindProperty("m_AmplitudeGain")).floatValue);
+            Assert.AreEqual(3f, (serialized.FindProperty("FrequencyGain") ?? serialized.FindProperty("m_FrequencyGain")).floatValue);
+            var list = Send("list_cameras", new JObject());
+            Assert.AreEqual(1, ((JArray)list["data"]["cinemachineCameras"]).Count(c => c.Value<int>("instanceID") == go.GetInstanceIDCompat()));
         }
 
         private JObject Send(string action, JToken properties)
@@ -430,14 +511,8 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static void UseInstalledCinemachine()
         {
-            Type camera = UnityTypeResolver.ResolveComponent("CinemachineCamera");
-            Type brain = UnityTypeResolver.ResolveComponent("CinemachineBrain");
-            Type aim = UnityTypeResolver.ResolveComponent("CinemachineHardLookAt");
-            if (camera == null || brain == null || aim == null)
+            if (!CameraHelpers.HasCinemachine || CameraHelpers.ResolveProviderType("CinemachineHardLookAt") == null)
                 Assert.Ignore("Real Cinemachine camera/brain/static preset is unavailable.");
-            Cache("_hasCinemachine").SetValue(null, true);
-            Cache("_cmCameraType").SetValue(null, camera);
-            Cache("_cmBrainType").SetValue(null, brain);
         }
     }
 

@@ -48,8 +48,20 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
         private static void DetectCinemachine()
         {
-            _cmCameraType = UnityTypeResolver.ResolveComponent("CinemachineCamera");
-            _cmBrainType = UnityTypeResolver.ResolveComponent("CinemachineBrain");
+            _cmCameraType = null;
+            _cmBrainType = null;
+            foreach (var identity in new[] { "Unity.Cinemachine.CinemachineCamera, Unity.Cinemachine", "Cinemachine.CinemachineVirtualCamera, Cinemachine" })
+            {
+                var camera = Type.GetType(identity);
+                if (camera == null || UnityEditor.PackageManager.PackageInfo.FindForAssembly(camera.Assembly)?.name != "com.unity.cinemachine")
+                    continue;
+                var brain = camera.Assembly.GetType(camera.Namespace + ".CinemachineBrain");
+                if (!typeof(Component).IsAssignableFrom(camera) || !typeof(Component).IsAssignableFrom(brain))
+                    continue;
+                _cmCameraType = camera;
+                _cmBrainType = brain;
+                break;
+            }
             _hasCinemachine = _cmCameraType != null && _cmBrainType != null;
         }
 
@@ -60,9 +72,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             try
             {
-                var assembly = _cmCameraType.Assembly;
-                var version = assembly.GetName().Version;
-                return version?.ToString();
+                return UnityEditor.PackageManager.PackageInfo.FindForAssembly(_cmCameraType.Assembly)?.version;
             }
             catch
             {
@@ -145,8 +155,21 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (!HasCinemachine)
                 return null;
             var go = FindTargetGameObject(@params);
-            return go != null ? go.GetComponent(CinemachineCameraType) : null;
+            return FindVirtualCamera(go);
         }
+
+        internal static Component FindVirtualCamera(GameObject go)
+        {
+            if (go == null || !HasCinemachine)
+                return null;
+            var camera = go.GetComponent(CinemachineCameraType);
+            var legacy = LegacyCameraType;
+            return camera != null || legacy == null || legacy == CinemachineCameraType ? camera : go.GetComponent(legacy);
+        }
+
+        internal static Type LegacyCameraType => ResolveProviderType("CinemachineVirtualCamera");
+
+        internal static bool UsesLegacyPipeline(Component camera) => camera != null && LegacyCameraType?.IsInstanceOfType(camera) == true;
 
         internal static Component FindBrain()
         {
@@ -202,9 +225,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (cmCamera == null)
                 return 0;
             using var so = new SerializedObject(cmCamera);
-            using var priorityProp = so.FindProperty("Priority");
+            using var priorityProp = so.FindProperty("Priority") ?? so.FindProperty("m_Priority");
             if (priorityProp == null)
                 return 0;
+            if (priorityProp.propertyType == SerializedPropertyType.Integer)
+                return priorityProp.intValue;
             using var enabledProp = priorityProp.FindPropertyRelative("Enabled");
             using var valueProp = priorityProp.FindPropertyRelative("m_Value");
             if (enabledProp != null && !enabledProp.boolValue)
@@ -240,9 +265,62 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 SetReflectionProperty(cmCamera, propertyName, go.transform);
         }
 
-        internal static Type ResolveComponentType(string typeName)
+        internal static Type ResolveComponentType(string typeName, Component camera = null)
         {
-            return UnityTypeResolver.ResolveComponent(typeName);
+            return ResolveProviderType(typeName, camera) ?? UnityTypeResolver.ResolveComponent(typeName);
+        }
+
+        internal static Type ResolveProviderType(string name, Component camera = null)
+        {
+            // The brain and all built-in pipeline stages belong to the same package assembly.
+            var brain = CinemachineBrainType;
+            if (brain == null)
+                return null;
+            if (brain.Namespace == "Cinemachine" || (camera != null && UsesLegacyPipeline(camera)))
+                name = name switch
+                {
+                    "CinemachineFollow" => "CinemachineTransposer",
+                    "CinemachineRotationComposer" => "CinemachineComposer",
+                    "CinemachineThirdPersonFollow" => "Cinemachine3rdPersonFollow",
+                    "CinemachineOrbitalFollow" => "CinemachineOrbitalTransposer",
+                    "CinemachineSplineDolly" => "CinemachineTrackedDolly",
+                    "CinemachinePositionComposer" => "CinemachineFramingTransposer",
+                    "CinemachinePanTilt" => "CinemachinePOV",
+                    "CinemachineThirdPersonAim" => "Cinemachine3rdPersonAim",
+                    "CinemachineDeoccluder" => "CinemachineCollider",
+                    _ => name,
+                };
+            return brain.Assembly.GetType(name.Contains(".") ? name : brain.Namespace + "." + name);
+        }
+
+        internal static GameObject PipelineOwner(Component camera, bool create = false)
+        {
+            if (!UsesLegacyPipeline(camera))
+                return camera?.gameObject;
+
+            // Asking CM2 for GetComponentOwner (including through GetCinemachineComponent)
+            // creates its hidden child. Reads and property preflight must leave the scene intact.
+            var pipelineType = ResolveProviderType("CinemachinePipeline");
+            if (pipelineType == null)
+                return null;
+            foreach (Transform child in camera.transform)
+                if (child.GetComponent(pipelineType) != null)
+                    return child.gameObject;
+            if (!create)
+                return null;
+            var method = camera.GetType().GetMethod("GetComponentOwner", Type.EmptyTypes);
+            return (method?.Invoke(camera, null) as Transform)?.gameObject;
+        }
+
+        internal static bool IsLive(Component camera)
+        {
+            var core = ResolveProviderType("CinemachineCore");
+            var api = ResolveProviderType("ICinemachineCamera");
+            var isLive = api == null ? null : core?.GetMethod("IsLive", new[] { api });
+            if (isLive == null)
+                return false;
+            var receiver = isLive.IsStatic ? null : core.GetProperty("Instance")?.GetValue(null);
+            return (isLive.IsStatic || receiver != null) && (bool)isLive.Invoke(receiver, new object[] { camera });
         }
 
         internal static Component GetPipelineComponent(Component cmCamera, string stageName)
@@ -252,8 +330,15 @@ namespace MCPForUnity.Editor.Tools.Cameras
             var type = cmCamera.GetType();
 
             // CinemachineCamera.GetCinemachineComponent(CinemachineCore.Stage stage)
-            var stageEnumType = type.Assembly.GetType("Unity.Cinemachine.CinemachineCore+Stage")
-                ?? type.Assembly.GetType("Unity.Cinemachine.CinemachineCore")?.GetNestedType("Stage");
+            if (UsesLegacyPipeline(cmCamera))
+            {
+                var owner = PipelineOwner(cmCamera);
+                var baseType = ResolveProviderType("CinemachineComponentBase");
+                return owner == null || baseType == null
+                    ? null
+                    : owner.GetComponents(baseType).FirstOrDefault(c => GetReflectionProperty(c, "Stage")?.ToString() == stageName);
+            }
+            var stageEnumType = ResolveProviderType("CinemachineCore+Stage");
 
             if (stageEnumType == null)
                 return null;

@@ -33,13 +33,13 @@ namespace MCPForUnityTests.Editor.Tools
         {
             if (!CameraHelpers.HasCinemachine)
                 Assert.Ignore("Cinemachine is not installed.");
-            var oldType = CameraHelpers.ResolveComponentType("CinemachineThirdPersonFollow");
+            var oldType = CameraHelpers.ResolveComponentType("CinemachineThirdPersonFollow") ?? CameraHelpers.ResolveComponentType("CinemachineFollow");
             var newType = CameraHelpers.ResolveComponentType("CinemachinePositionComposer");
             Assert.IsNotNull(oldType);
             Assert.IsNotNull(newType);
             var cm = _cameraGo.AddComponent(CameraHelpers.CinemachineCameraType);
-            var old = _cameraGo.AddComponent(oldType);
-            var distance = oldType.GetField("CameraDistance");
+            var old = CameraHelpers.PipelineOwner(cm, create: true).AddComponent(oldType);
+            var distance = oldType.GetField("CameraDistance") ?? oldType.GetField("m_XDamping");
             Assert.IsNotNull(distance);
             distance.SetValue(old, 7f);
             Undo.IncrementCurrentGroup();
@@ -57,7 +57,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(restored);
             Assert.AreEqual(oldType, restored.GetType());
             Assert.AreEqual(7f, distance.GetValue(restored));
-            Assert.IsNull(_cameraGo.GetComponent(newType));
+            Assert.IsNull(CameraHelpers.PipelineOwner(cm).GetComponent(newType));
             Assert.AreEqual(42, _camera.fieldOfView);
             Undo.PerformUndo();
             Assert.AreNotEqual(42, _camera.fieldOfView, "Rollback must not consume the preceding edit.");
@@ -73,7 +73,7 @@ namespace MCPForUnityTests.Editor.Tools
                 )
             );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
-            Assert.IsNotNull(_cameraGo.GetComponent(newType));
+            Assert.IsNotNull(CameraHelpers.PipelineOwner(cm).GetComponent(newType));
             Undo.PerformUndo();
             restored = CameraHelpers.GetPipelineComponent(cm, "Body");
             Assert.IsNotNull(restored);
@@ -91,7 +91,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(oldType);
             Assert.IsNotNull(newType);
             var cm = _cameraGo.AddComponent(CameraHelpers.CinemachineCameraType);
-            _cameraGo.AddComponent(oldType);
+            CameraHelpers.PipelineOwner(cm, create: true).AddComponent(oldType);
             var configure = typeof(CameraConfigure).GetMethod("ConfigureComponentAtomically", BindingFlags.NonPublic | BindingFlags.Static);
             Func<Component> acquire = () =>
             {
@@ -100,8 +100,8 @@ namespace MCPForUnityTests.Editor.Tools
             };
             var arguments = new object[] { acquire, new System.Collections.Generic.List<Action<Component>>(), null };
             Assert.IsNotNull(configure.Invoke(null, arguments));
-            Assert.IsNotNull(_cameraGo.GetComponent(oldType));
-            Assert.IsNull(_cameraGo.GetComponent(newType));
+            Assert.IsNotNull(CameraHelpers.PipelineOwner(cm).GetComponent(oldType));
+            Assert.IsNull(CameraHelpers.PipelineOwner(cm).GetComponent(newType));
         }
 
         [Test]
@@ -110,7 +110,7 @@ namespace MCPForUnityTests.Editor.Tools
             if (!CameraHelpers.HasCinemachine)
                 Assert.Ignore("Cinemachine is not installed.");
             _cameraGo.AddComponent(CameraHelpers.CinemachineCameraType);
-            var type = CameraHelpers.ResolveComponentType("CinemachineImpulseListener");
+            var type = CameraHelpers.ResolveComponentType("CinemachineImpulseListener") ?? CameraHelpers.ResolveComponentType("CinemachineFollowZoom");
             Assert.IsNotNull(type);
             var extension = (Behaviour)_cameraGo.AddComponent(type);
             extension.enabled = true;
@@ -205,8 +205,6 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject SetBasicLens(JToken properties)
         {
-            if (CameraHelpers.HasCinemachine)
-                Assert.Ignore("The public basic Camera fallback requires Cinemachine to be absent.");
             return JObject.FromObject(
                 ManageCamera.HandleCommand(
                     new JObject
@@ -230,7 +228,7 @@ namespace MCPForUnityTests.Editor.Tools
                 if (component is Behaviour behaviour)
                     behaviour.enabled = false;
                 if (pipelineType != null)
-                    _cameraGo.AddComponent(pipelineType);
+                    CameraHelpers.PipelineOwner(component, create: true).AddComponent(pipelineType);
             }
             _assetRoot = "Assets/__McpCameraContract_" + Guid.NewGuid().ToString("N");
             _assetRootGuid = AssetDatabase.CreateFolder("Assets", _assetRoot.Substring("Assets/".Length));
@@ -363,9 +361,21 @@ namespace MCPForUnityTests.Editor.Tools
             if (!CameraHelpers.HasCinemachine)
                 Assert.Ignore("Cinemachine is not installed.");
             var type = CameraHelpers.ResolveComponentType(typeName);
-            Assert.IsNotNull(type, "The Cinemachine 3 test profile must supply " + typeName);
-            CreatePrefabCamera(true, type);
-            var component = _cameraGo.GetComponent(type);
+            if (type == null && typeName == "CinemachineThirdPersonFollow")
+            {
+                type = CameraHelpers.ResolveComponentType("CinemachineFollow");
+                property = "m_XDamping";
+            }
+            Assert.IsNotNull(type);
+            if (type.Namespace == "Cinemachine")
+            {
+                if (property == "PanAxis.Value")
+                    property = "m_HorizontalAxis.Value";
+                if (property == "AmplitudeGain")
+                    property = "m_AmplitudeGain";
+            }
+            var virtualCamera = CreatePrefabCamera(true, type);
+            var component = CameraHelpers.PipelineOwner(virtualCamera).GetComponent(type);
             float original;
             using (var serialized = new SerializedObject(component))
             {
@@ -384,7 +394,7 @@ namespace MCPForUnityTests.Editor.Tools
                 _ => CameraConfigure.SetNoise(request),
             };
             Assert.IsTrue(JObject.FromObject(result).Value<bool>("success"), JObject.FromObject(result).ToString());
-            Assert.AreSame(component, _cameraGo.GetComponent(type), "The existing pipeline component must be reused.");
+            Assert.AreSame(component, CameraHelpers.PipelineOwner(virtualCamera).GetComponent(type), "The existing pipeline component must be reused.");
             Assert.IsTrue(
                 PrefabUtility
                     .GetPropertyModifications(PrefabUtility.GetOutermostPrefabInstanceRoot(_cameraGo))
@@ -399,7 +409,11 @@ namespace MCPForUnityTests.Editor.Tools
             using (var serialized = new SerializedObject(component))
                 Assert.AreEqual(expected, serialized.FindProperty(property).floatValue);
             ReopenPrefabScene();
-            using (var serialized = new SerializedObject(_cameraGo.GetComponent(type)))
+            using (
+                var serialized = new SerializedObject(
+                    CameraHelpers.PipelineOwner(_cameraGo.GetComponent(CameraHelpers.CinemachineCameraType)).GetComponent(type)
+                )
+            )
                 Assert.AreEqual(expected, serialized.FindProperty(property).floatValue);
             CollectionAssert.AreEqual(source, System.IO.File.ReadAllBytes(_assetRoot + "/Camera.prefab"));
         }
@@ -473,8 +487,6 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("orthographicSize", "\"Infinity\"")]
         public void InvalidBasicLensValuePreservesAllLensAndDirtyState(string property, string invalidJson)
         {
-            if (CameraHelpers.HasCinemachine)
-                Assert.Ignore("The public basic Camera fallback requires Cinemachine to be absent.");
             _camera.fieldOfView = 60;
             _camera.nearClipPlane = 0.3f;
             _camera.farClipPlane = 1000;
