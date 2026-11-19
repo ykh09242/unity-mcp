@@ -13,6 +13,7 @@ from models import MCPResponse
 from models.native_recovery import NativeRecovery, parse_coordination
 from models.response_limits import response_limit_error
 from services.registry import mcp_for_unity_resource
+from services.registry.action_catalog import OBSERVATION_META, EDITOR_STATE_OBSERVATION
 from services.tools import get_unity_instance_from_context
 from services.tools.immutable_json import prepare_json_copy
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
@@ -455,6 +456,7 @@ def _enrich_advice_and_staleness(
 @mcp_for_unity_resource(
     uri="mcpforunity://editor/state",
     name="editor_state",
+    meta={OBSERVATION_META: EDITOR_STATE_OBSERVATION},
     description=(
         "Read current Play Mode, active scene, compilation and Editor readiness. Includes advice, server-computed staleness, "
         "and native_coordination from native admission. recovery_required blocks readiness "

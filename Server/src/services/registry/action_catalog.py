@@ -30,7 +30,7 @@ from services.registry.tool_registry import TOOL_GROUPS, ToolMaturity
 
 
 ActionIntent = Literal["observe", "interact", "edit"]
-ObservationSource = Literal["editor_live", "asset_file", "imported_asset"]
+ObservationSource = Literal["editor_live", "asset_file", "imported_asset", "compile_job"]
 ObservationValue = Literal[
     "render_size.width",
     "render_size.height",
@@ -39,6 +39,10 @@ ObservationValue = Literal[
     "presets",
     "rendered_image",
     "pointer_hit_order",
+    "active_scene.name",
+    "active_scene.path",
+    "compilation.is_compiling",
+    "compile_job.outcome",
     "nodeCount",
     "edgeCount",
     "nodes",
@@ -80,6 +84,12 @@ class Observation(TypedDict):
     source: ObservationSource
     values: list[ObservationValue]
     unavailable: list[ObservationValue]
+    # Stable value IDs normally use the same wire path. Explicit mappings describe
+    # equivalent facts with different response shapes and conditional evidence.
+    wire_paths: NotRequired[dict[str, str]]
+    conditions: NotRequired[str]
+    required_parameters: NotRequired[list[str]]
+    fixed_arguments: NotRequired[dict[str, bool]]
     mutually_exclusive_values: NotRequired[list[list[ObservationValue]]]
 
 
@@ -100,6 +110,55 @@ GRAPH_FILE_OBSERVATION: Final[Observation] = {
     "source": "asset_file",
     "values": ["nodeCount", "edgeCount", "nodes", "edges", "properties", "keywords"],
     "unavailable": ["unsaved_graph_structure", "property_values", "shader_source"],
+}
+
+
+POINTER_ORDER_OBSERVATION: Final[Observation] = {
+    "source": "editor_live",
+    "values": ["pointer_hit_order"],
+    "unavailable": [],
+    "wire_paths": {"pointer_hit_order": "hits[].rank"},
+    "required_parameters": ["target", "screen_position"],
+    "fixed_arguments": {"allow_custom_filters": False},
+    "conditions": (
+        "Requires a scene RectTransform target, in-bounds bottom-left Game View pixel coordinates, "
+        "Unity 6000.0.69f1, supported uGUI components and one active native EventSystem. "
+        "Only status=observed with policy.native_query_attempted=true establishes ordered hits. "
+        "Inspect hits_total and hits_truncated. Unknown, failed or missing evidence establishes no "
+        "hit order. This query does not dispatch input or prove event receipt."
+    ),
+}
+ACTIVE_SCENE_OBSERVATION: Final[Observation] = {
+    "source": "editor_live",
+    "values": ["active_scene.name", "active_scene.path"],
+    "unavailable": [],
+    "wire_paths": {"active_scene.name": "name", "active_scene.path": "path"},
+    "conditions": "Requires a valid active scene. An unsaved scene can have an empty path.",
+}
+EDITOR_STATE_OBSERVATION: Final[Observation] = {
+    "source": "editor_live",
+    "values": ["active_scene.name", "active_scene.path", "compilation.is_compiling"],
+    "unavailable": ["compile_job.outcome"],
+    "wire_paths": {
+        "active_scene.name": "editor.active_scene.name",
+        "active_scene.path": "editor.active_scene.path",
+    },
+    "conditions": (
+        "Check staleness.is_stale=false and the requested field in the selected Editor snapshot. "
+        "An absent or null field supplies no observation. An unsaved scene can have an empty path. "
+        "is_compiling reports activity at observation time."
+    ),
+}
+COMPILE_JOB_OBSERVATION: Final[Observation] = {
+    "source": "compile_job",
+    "values": ["compile_job.outcome"],
+    "unavailable": ["compilation.is_compiling"],
+    "wire_paths": {"compile_job.outcome": "outcome"},
+    "required_parameters": ["compile_id"],
+    "conditions": (
+        "Poll the existing compile_id. Only a finished job with validated, complete attributed "
+        "evidence can report success or failed. A pending or unknown outcome supplies no verdict."
+    ),
 }
 
 
@@ -265,6 +324,7 @@ TOOL_GUIDANCE: Final = {
                 UGUI_RAYCAST_PURPOSE,
                 ("target", "screen_position"),
                 evidence_limit=UGUI_RAYCAST_LIMIT,
+                observation=POINTER_ORDER_OBSERVATION,
                 intent="observe",
             ),
             "diagnose_projection": ActionGuidance(
@@ -324,6 +384,7 @@ TOOL_GUIDANCE: Final = {
             ),
             "get_active": ActionGuidance(
                 "Read the active scene's path, build index, root count and loaded/dirty flags.",
+                observation=ACTIVE_SCENE_OBSERVATION,
                 evidence_limit=_SCENE_OBSERVATION_IMPORT,
                 intent="observe",
             ),
@@ -782,6 +843,10 @@ TOOL_GUIDANCE: Final = {
         ),
     ),
 }
+# The focused adapter forwards get_active to the same implementation and preflight.
+TOOL_GUIDANCE["scene_inspect"] = ToolGuidance(
+    actions={"get_active": TOOL_GUIDANCE["manage_scene"].actions["get_active"]}
+)
 _CAPABILITIES: Final = {item.name: item for item in CAPABILITIES}
 
 

@@ -10,6 +10,7 @@ from pydantic import Field
 
 from models.capability_results import BUNDLE_RESULT, validate_bundle_result
 from services.registry.action_contracts import action_input_error
+from services.registry.action_catalog import ACTION_OBSERVATIONS_META, action_observations
 from services.registry.capability_catalog import Capability, CAPABILITIES
 from services.registry.tool_registry import mcp_for_unity_tool
 
@@ -92,7 +93,9 @@ def register_capability(capability: Capability, implementation: Callable) -> Cal
     invoke.__annotations__ = {parameter.name: parameter.annotation for parameter in parameters}
     invoke.__annotations__["return"] = signature.return_annotation
     invoke.__signature__ = narrowed
+    observations = action_observations(capability.name)
     return mcp_for_unity_tool(
+        **({"meta": {ACTION_OBSERVATIONS_META: observations}} if observations else {}),
         name=capability.name,
         description=capability.description,
         group=capability.group,

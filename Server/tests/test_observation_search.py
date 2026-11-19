@@ -34,7 +34,7 @@ async def test_mcp_first_search_exposes_selectors_and_reaches_all_advertised_rea
     async with Client(server) as client:
         before = {t.name: t for t in await client.list_tools()}
         properties = before["manage_tools"].input_schema["properties"]
-        assert {"editor_live", "asset_file", "imported_asset"} == set(
+        assert {"editor_live", "asset_file", "imported_asset", "compile_job"} == set(
             next(t["enum"] for t in properties["observation_source"]["anyOf"] if "enum" in t)
         )
         values = next(t for t in properties["required_values"]["anyOf"] if t.get("type") == "array")
@@ -179,6 +179,9 @@ def test_wire_fact_vocabulary_matches_the_reviewed_observations():
         for guidance in tool.actions.values()
         if guidance.observation
     ]
+    from services.registry.action_catalog import COMPILE_JOB_OBSERVATION, EDITOR_STATE_OBSERVATION
+
+    observations.extend([COMPILE_JOB_OBSERVATION, EDITOR_STATE_OBSERVATION])
     assert set(get_args(ObservationValue)) == {
         value for record in observations for value in [*record["values"], *record["unavailable"]]
     }
@@ -239,3 +242,46 @@ def test_source_only_search_reports_matching_actions_and_respects_intent():
     }
     other = search_catalog(SearchRequest(observation_source="asset_file", intent="edit"), entries)
     assert other["routes"] == other["results"] == []
+
+
+@pytest.mark.asyncio
+async def test_search_reports_wire_evidence_with_its_binding_and_prerequisites(monkeypatch):
+    from services.resources import register_all_resources
+    from services.tools import register_all_tools
+
+    monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", "full")
+    server = FastMCP("conditional-evidence")
+    register_all_tools(server, project_scoped_tools=False)
+    register_all_resources(server, project_scoped_tools=False)
+    async with Client(server) as client:
+
+        async def groups(value, **fields):
+            response = await client.call_tool(
+                "search_unity_tools", {"required_values": [value], **fields}
+            )
+            return response.structured_content["route_groups"]
+
+        (pointer,) = await groups("pointer_hit_order")
+        route = pointer["representative"]
+        assert (route["tool"], route["arguments"]) == (
+            "manage_ugui",
+            {"action": "diagnose_raycast", "allow_custom_filters": False},
+        )
+        assert route["required_parameters"] == ["target", "screen_position"]
+        assert {"status=observed", "policy.native_query_attempted=true"} <= set(
+            route["observation"]["conditions"].split()
+        )
+        assert route["observation"]["wire_paths"]["pointer_hit_order"] == "hits[].rank"
+        (scene,) = await groups("active_scene.name", route_surfaces="tools")
+        assert [r["tool"] for r in [scene["representative"], *scene["alternatives"]]] == [
+            "scene_inspect",
+            "manage_scene",
+        ]
+        assert scene["representative"]["observation"]["wire_paths"]["active_scene.name"] == "name"
+        (state,) = await groups("compilation.is_compiling")
+        assert state["representative"]["uri"] == "mcpforunity://editor/state"
+        assert "staleness.is_stale=false" in state["representative"]["observation"]["conditions"]
+        assert await groups("compile_job.outcome", observation_source="editor_live") == []
+        (job,) = await groups("compile_job.outcome", observation_source="compile_job")
+        assert job["representative"]["tool"] == "get_compile_job"
+        assert job["representative"]["required_parameters"] == ["compile_id"]

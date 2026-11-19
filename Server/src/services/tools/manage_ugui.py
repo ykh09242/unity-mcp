@@ -30,6 +30,7 @@ from models.ugui_projection_diagnostics import validate_ugui_projection_diagnost
 from models.ugui_tmp_layout_diagnostics import validate_ugui_tmp_layout_diagnostics
 from models.ugui_raycast_diagnostics import validate_ugui_raycast_response
 from services.registry import mcp_for_unity_tool
+from services.registry.action_catalog import ACTION_OBSERVATIONS_META, action_observations
 from services.registry.action_catalog import UGUI_RAYCAST_LIMIT, UGUI_RAYCAST_PURPOSE
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
@@ -846,10 +847,11 @@ async def _diagnose_raycast(
 
 
 @mcp_for_unity_tool(
+    meta={ACTION_OBSERVATIONS_META: action_observations("manage_ugui")},
     group="ui",
     description=(
         "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. "
-        "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast, diagnose_device_profiles. Mutating actions: create, set_rect, set_layout, "
+        "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast with allow_custom_filters=false, diagnose_device_profiles. Mutating actions: create, set_rect, set_layout, "
         "set_text, set_canvas, set_image. Optional uGUI and TextMeshPro support is detected in the Editor. "
         "Writes include bounded data.verification for the same target, with retained serialized fields and "
         "current UI observations. Layout remains pending until normal updates; verification never rebuilds or captures. "

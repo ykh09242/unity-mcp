@@ -16,6 +16,7 @@ from pydantic import (
 )
 
 from services.registry.action_catalog import (
+    ACTIVE_SCENE_OBSERVATION,
     ActionGuidance,
     ActionIntent,
     CatalogEntry as SearchEntry,
@@ -117,6 +118,7 @@ class SearchRoute(TypedDict):
     name: NotRequired[str]
     required_parameters: NotRequired[list[str]]
     optional_parameters: NotRequired[list[str]]
+    arguments: NotRequired[dict]
     purpose: str
     evidence_limit: NotRequired[str]
     observation: NotRequired[Observation]
@@ -139,29 +141,45 @@ RankedRoute = tuple[int, str, str, SearchRoute]
 @dataclass(frozen=True, slots=True)
 class EquivalentRead:
     tool: str
-    resource: str
+    resource: str | None
     observation: Observation
     path: str | None = None
     template_path: str | None = None
     pagination: tuple[str, ...] = ()
+    focused_action: tuple[str, str] | None = None
 
     @property
     def parent(self) -> tuple[str, str]:
-        return FIXED_OBSERVATION_ACTIONS[self.tool]
+        return self.focused_action or FIXED_OBSERVATION_ACTIONS[self.tool]
 
     def bindings(self) -> tuple[RouteKey, ...]:
         parent, action = self.parent
-        return (
-            ("tool", self.tool, ""),
+        tools: tuple[RouteKey, ...] = (
+            ("tool", self.tool, action if self.focused_action else ""),
             ("tool", parent, action),
+        )
+        if self.resource is None:
+            return tools
+        return (
+            *tools,
             ("resource_template" if self.template_path else "resource", self.resource, ""),
         )
+
+    def allowed(self, unavailable_parents: set[str]) -> bool:
+        # Fixed tools/resources inherit the parent toggle. A focused tool has its own toggle.
+        return self.focused_action is not None or self.parent[0] not in unavailable_parents
 
 
 # Each resource delegates to the dedicated tool, which binds the same native
 # action as its mixed tool. Name similarity and matching result fields are
 # insufficient to make a new equivalent route.
 _EQUIVALENT_READS: Final = (
+    EquivalentRead(
+        "scene_inspect",
+        None,
+        ACTIVE_SCENE_OBSERVATION,
+        focused_action=("manage_scene", "get_active"),
+    ),
     EquivalentRead(
         "get_game_view_size", "mcpforunity://editor/game-view-size", GAME_VIEW_OBSERVATION
     ),
@@ -214,7 +232,7 @@ def _group_routes(
             continue
         key = _route_key(route)
         read = _READ_BY_ROUTE.get(key)
-        if read and read.parent[0] in unavailable_parents:
+        if read and not read.allowed(unavailable_parents):
             continue
         if read and key in available:
             group_key = read.tool
@@ -302,7 +320,15 @@ def _tool_route(
             guidance.purpose if guidance and guidance.purpose else action.replace("_", " ")
         )
     if guidance and guidance.observation:
-        route["observation"] = guidance.observation
+        observation = guidance.observation
+        route["observation"] = observation
+        route["arguments"] = {
+            **({"action": action} if action else {}),
+            **observation.get("fixed_arguments", {}),
+        }
+        route["required_parameters"] = list(
+            observation.get("required_parameters", guidance.required)
+        )
     if guidance and guidance.evidence_limit:
         route["evidence_limit"] = guidance.evidence_limit
     return route
@@ -354,7 +380,7 @@ def search_catalog(
                 read = _READ_BY_ROUTE[key]
                 route = _tool_route(result, action, action_guidance(entry, action))
                 binding = _equivalent_binding(route, read)
-                if binding and read.parent[0] not in unavailable_parents:
+                if binding and read.allowed(unavailable_parents):
                     available_equivalents[key] = binding
         if structured:
             selected_actions = []
@@ -465,7 +491,7 @@ def search_catalog(
         key = _route_key(route)
         if read := _READ_BY_ROUTE.get(key):
             binding = _equivalent_binding(route, read)
-            if binding and read.parent[0] not in unavailable_parents:
+            if binding and read.allowed(unavailable_parents):
                 available_equivalents[key] = binding
         if structured:
             if _observation_matches(request, route.get("observation")):

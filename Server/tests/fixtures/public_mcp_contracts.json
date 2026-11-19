@@ -21346,7 +21346,8 @@
                     "enum": [
                       "editor_live",
                       "asset_file",
-                      "imported_asset"
+                      "imported_asset",
+                      "compile_job"
                     ],
                     "type": "string"
                   },
@@ -21398,6 +21399,10 @@
                         "presets",
                         "rendered_image",
                         "pointer_hit_order",
+                        "active_scene.name",
+                        "active_scene.path",
+                        "compilation.is_compiling",
+                        "compile_job.outcome",
                         "nodeCount",
                         "edgeCount",
                         "nodes",
@@ -25249,7 +25254,8 @@
                     "enum": [
                       "editor_live",
                       "asset_file",
-                      "imported_asset"
+                      "imported_asset",
+                      "compile_job"
                     ],
                     "type": "string"
                   },
@@ -25283,6 +25289,10 @@
                         "presets",
                         "rendered_image",
                         "pointer_hit_order",
+                        "active_scene.name",
+                        "active_scene.path",
+                        "compilation.is_compiling",
+                        "compile_job.outcome",
                         "nodeCount",
                         "edgeCount",
                         "nodes",
@@ -48122,7 +48132,8 @@
                     "enum": [
                       "editor_live",
                       "asset_file",
-                      "imported_asset"
+                      "imported_asset",
+                      "compile_job"
                     ],
                     "type": "string"
                   },
@@ -48174,6 +48185,10 @@
                         "presets",
                         "rendered_image",
                         "pointer_hit_order",
+                        "active_scene.name",
+                        "active_scene.path",
+                        "compilation.is_compiling",
+                        "compile_job.outcome",
                         "nodeCount",
                         "edgeCount",
                         "nodes",
@@ -52025,7 +52040,8 @@
                     "enum": [
                       "editor_live",
                       "asset_file",
-                      "imported_asset"
+                      "imported_asset",
+                      "compile_job"
                     ],
                     "type": "string"
                   },
@@ -52059,6 +52075,10 @@
                         "presets",
                         "rendered_image",
                         "pointer_hit_order",
+                        "active_scene.name",
+                        "active_scene.path",
+                        "compilation.is_compiling",
+                        "compile_job.outcome",
                         "nodeCount",
                         "edgeCount",
                         "nodes",

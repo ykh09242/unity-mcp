@@ -36,7 +36,10 @@ its name as a short label and the enclosing tool description for context.
 parameters on cards supplement conditional requirements in the full live schema.
 
 For reviewed observations, `observation.source` names the origin of the data.
-`values` lists selected fields relative to a successful result's `data` object.
+`values` lists stable evidence IDs. Each ID names a field relative to a successful
+result's `data` object unless `wire_paths` maps it to a route-specific field.
+Read `conditions` before claiming evidence. Tool routes include fixed `arguments`
+and input names the caller must supply in `required_parameters`.
 `unavailable` names evidence this operation cannot supply. Catalog cards, exact
 descriptions and matching search routes expose the same observation record.
 Tools-only clients can also inspect `_meta["io.github.ykh09242.unity-mcp/action-observations"]`
@@ -52,6 +55,10 @@ Editor and client selection. The graph tool takes a required `path` and optional
 
 | Requested observation | Operation | Source and scope |
 | --- | --- | --- |
+| Pointer hit order | `manage_ugui.diagnose_raycast` | `editor_live`, `pointer_hit_order`. Bind `allow_custom_filters=false`, a scene RectTransform target and bottom-left Game View pixel position. Require `status=observed` and `policy.native_query_attempted=true`. Read ordered `hits` and truncation. |
+| Active scene name and path | `scene_inspect.get_active`, `manage_scene.get_active` or `mcpforunity://editor/state` | `editor_live`, `active_scene.name` and `active_scene.path`. Use the route's wire paths. For a snapshot, check staleness. |
+| Current compilation activity | `mcpforunity://editor/state` | `editor_live`, `compilation.is_compiling`. Requires a fresh snapshot with a boolean value. |
+| Attributed compile outcome | `get_compile_job` | `compile_job`, `compile_job.outcome`. Supply the existing `compile_id`. Check the returned outcome for a finished, attributed result. |
 | Current Game View pixels and preset | `manage_editor.get_game_view_size` or `mcpforunity://editor/game-view-size` | `editor_live`. Use `render_size.width` and `render_size.height` for pixels. `current_size` identifies the preset, which may be an aspect ratio. An existing Game View is required. |
 | Saved Shader Graph structure | `manage_shader.inspect_graph` or the `shader_graph_structure` template | `asset_file`. The selected Editor reads the named file. Counts cover the whole graph. Node types, edge endpoints and property summaries are paged. |
 | Shader source text | `manage_shader.read` | `asset_file`. Reads one source page from a named `.shader` file. |

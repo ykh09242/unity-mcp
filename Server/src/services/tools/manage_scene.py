@@ -5,6 +5,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
+from services.registry.action_catalog import ACTION_OBSERVATIONS_META, action_observations
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_int, coerce_bool
 from transport.unity_transport import send_with_unity_instance
@@ -15,6 +16,7 @@ from services.tools.reference_diagnostics import reference_page, reference_path
 
 
 @mcp_for_unity_tool(
+    meta={ACTION_OBSERVATIONS_META: action_observations("manage_scene")},
     group="legacy",
     description=(
         "Performs CRUD operations on Unity scenes. "

@@ -13,6 +13,7 @@ from models.evidence_diagnostics import EvidenceDiagnostics
 from models.native_recovery import NativeRecovery, RecoveryAction, parse_recovery, recovery_action
 from models.source_freshness import SourceFreshness, parse_freshness
 from services.registry import mcp_for_unity_tool
+from services.registry.action_catalog import OBSERVATION_META, COMPILE_JOB_OBSERVATION
 from services.tools import get_unity_instance_from_context
 import transport.unity_transport as unity_transport
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -372,6 +373,7 @@ class CompileJobResponse(MCPResponse):
 
 
 @mcp_for_unity_tool(
+    meta={OBSERVATION_META: COMPILE_JOB_OBSERVATION},
     description="Read compilation status, bounded diagnostics and the last successful compile by compile_id. Unknown means incomplete evidence; readiness and source-revision proof are separate.",
     annotations=ToolAnnotations(
         title="Get Compile Job", readOnlyHint=True, destructiveHint=False, idempotentHint=True

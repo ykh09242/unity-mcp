@@ -24,8 +24,8 @@ Search Unity tools, actions and readable resources without changing selection or
 | `limit` | `int` | — | Maximum results per page. |
 | `catalog_query` | `str \| None` | — | Optional alternate catalog terms for a lexical query. |
 | `intent` | `Literal['observe', 'interact', 'edit'] \| None` | — | Requested operation purpose. |
-| `observation_source` | `Literal['editor_live', 'asset_file', 'imported_asset'] \| None` | — | Origin of the required evidence. |
-| `required_values` | `list[Literal['render_size.width', 'render_size.height', 'current_size', 'view_instance_id', 'presets', 'rendered_image', 'pointer_hit_order', 'nodeCount', 'edgeCount', 'nodes', 'edges', 'properties', 'keywords', 'unsaved_graph_structure', 'property_values', 'shader_source', 'contents', 'encodedContents', 'nextOffset', 'shader_graph_structure', 'unsaved_source', 'compilation', 'passes', 'subshader_count']] \| None` | — | Select every result field the observation must supply. |
+| `observation_source` | `Literal['editor_live', 'asset_file', 'imported_asset', 'compile_job'] \| None` | — | Origin of the required evidence. |
+| `required_values` | `list[Literal['render_size.width', 'render_size.height', 'current_size', 'view_instance_id', 'presets', 'rendered_image', 'pointer_hit_order', 'active_scene.name', 'active_scene.path', 'compilation.is_compiling', 'compile_job.outcome', 'nodeCount', 'edgeCount', 'nodes', 'edges', 'properties', 'keywords', 'unsaved_graph_structure', 'property_values', 'shader_source', 'contents', 'encodedContents', 'nextOffset', 'shader_graph_structure', 'unsaved_source', 'compilation', 'passes', 'subshader_count']] \| None` | — | Select every result field the observation must supply. |
 | `route_surfaces` | `Literal['both', 'tools', 'resources'] \| None` | — | Group tools, resources or both (default). |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
