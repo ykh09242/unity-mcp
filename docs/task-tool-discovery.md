@@ -14,6 +14,10 @@ schema with `manage_tools(action="describe", tool="NAME", operation="ACTION")`.
 Actionless tools use the tool name alone. The semantic selection runs in the
 calling agent and needs no additional server-side model, embedding service or key.
 
+Use the read-only MCP tool `search_unity_tools` for task search. It accepts the same
+search fields as `manage_tools(action="search")` and requires read access. Discovery
+leaves tool selection and Unity state unchanged.
+
 ## One catalog projection
 
 `Server/src/services/registry/action_catalog.py` projects registered tool signatures,
@@ -100,13 +104,13 @@ exact schema, and preview wording alone does not imply a read-only effects hint.
 ## First search for an observation
 
 Interpret the user's request in its own language and select `observation_source`
-or `required_values` from the advertised `manage_tools` search schema.
+or `required_values` from the advertised `search_unity_tools` schema.
 Use `editor_live` for live Editor state, `asset_file` for saved contents and
 `imported_asset` for Unity's import results. For example, a request for current
 Game View dimensions maps to this first call:
 
 ```json
-{"action":"search","observation_source":"editor_live","required_values":["render_size.width","render_size.height"],"route_surfaces":"tools"}
+{"observation_source":"editor_live","required_values":["render_size.width","render_size.height"],"route_surfaces":"tools"}
 ```
 
 Every returned route declares the selected origin and all requested fields.

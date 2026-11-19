@@ -36,6 +36,70 @@ logger = logging.getLogger("mcp-for-unity-server")
     unity_target=None,
     group=None,
     description=(
+        "Search Unity tools, actions and readable resources without changing selection or invoking "
+        "Unity. Choose observation_source and required_values by meaning in any language, or search "
+        "catalog text. Inspect route_groups for invocations and evidence limits."
+    ),
+    annotations=ToolAnnotations(
+        title="Search Unity Tools",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+async def search_unity_tools(
+    ctx: Context,
+    query: Annotated[
+        str | None, Field(max_length=512), "Optional original task or lexical query."
+    ] = None,
+    limit: Annotated[int, Field(strict=True, ge=1, le=20), "Maximum results per page."] = 5,
+    catalog_query: Annotated[
+        str | None, Field(max_length=512), "Optional alternate catalog terms for a lexical query."
+    ] = None,
+    intent: Annotated[ActionIntent | None, "Requested operation purpose."] = None,
+    observation_source: Annotated[
+        ObservationSource | None, "Origin of the required evidence."
+    ] = None,
+    required_values: Annotated[
+        RequiredValues | None, "Select every result field the observation must supply."
+    ] = None,
+    route_surfaces: Annotated[
+        RouteSurfaces | None, "Group tools, resources or both (default)."
+    ] = None,
+) -> dict[str, Any]:
+    from services.registry.task_search import SearchRequest, search_catalog
+
+    try:
+        request = SearchRequest(
+            query=query,
+            catalog_query=catalog_query,
+            limit=limit,
+            intent=intent,
+            observation_source=observation_source,
+            required_values=required_values,
+            route_surfaces=route_surfaces or "both",
+        )
+    except ValidationError:
+        return {
+            "success": False,
+            "error": "Supply query (1..512 nonblank characters), observation_source or 1..32 required_values. Use a declared source and values, optional catalog_query (1..512 characters), and limit 1..20.",
+        }
+    entries, visible = await _catalog_inventory(
+        ctx, get_registered_tools(), getattr(ctx.fastmcp, "_tool_discovery", None)
+    )
+    return search_catalog(
+        request,
+        list(entries.values()),
+        visible_names=set(visible),
+        resources=await _catalog_resources(ctx),
+    )
+
+
+@mcp_for_unity_tool(
+    unity_target=None,
+    group=None,
+    description=(
         "Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups. "
         "Actions: list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
@@ -169,34 +233,20 @@ async def manage_tools(
         except ValueError as error:
             return {"success": False, "error": str(error)}
     if action == "search":
-        from services.registry.task_search import SearchRequest, search_catalog
-
         if group is not None or tool is not None:
             return {
                 "success": False,
                 "error": "search does not accept a group or tool selector.",
             }
-        try:
-            request = SearchRequest(
-                query=query,
-                catalog_query=catalog_query,
-                limit=limit,
-                intent=intent,
-                observation_source=observation_source,
-                required_values=required_values,
-                route_surfaces=route_surfaces or "both",
-            )
-        except ValidationError:
-            return {
-                "success": False,
-                "error": "Supply query (1..512 nonblank characters), observation_source or 1..32 required_values. Use a declared source and values, optional catalog_query (1..512 characters), and limit 1..20.",
-            }
-        entries, visible = await _catalog_inventory(ctx, entries, discovery)
-        return search_catalog(
-            request,
-            list(entries.values()),
-            visible_names=set(visible),
-            resources=await _catalog_resources(ctx),
+        return await search_unity_tools(
+            ctx,
+            query=query,
+            catalog_query=catalog_query,
+            limit=limit,
+            intent=intent,
+            observation_source=observation_source,
+            required_values=required_values,
+            route_surfaces=route_surfaces,
         )
     if action in ("activate", "deactivate", "reset") and modern:
         if discovery is None or await discovery.scope_key(ctx) is None:
@@ -407,12 +457,9 @@ async def _catalog_resources(ctx: Context) -> list[CatalogResource]:
 
 async def _catalog_inventory(ctx, declarations, discovery):
     """Retain selectable built-ins and add wire descriptors visible to this request only."""
-    entries = {
-        entry["name"]: entry
-        for entry in declarations
-        if discovery is None or entry["name"] in discovery.definitions
-    }
     visible = {item.name: item for item in await _visible_tools(ctx)}
+    registered = discovery.definitions if discovery is not None else visible
+    entries = {entry["name"]: entry for entry in declarations if entry["name"] in registered}
     for name, item in visible.items():
         if name not in entries:
             entries[name] = {

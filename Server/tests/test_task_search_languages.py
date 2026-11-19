@@ -199,6 +199,7 @@ async def test_real_mcp_search_accepts_caller_normalized_intent():
     assert manage_shader
     server = FastMCP("language-search")
     server.tool(manage_tools)
+    server.tool(manage_shader.manage_shader)
     async with Client(server) as client:
         result = await client.call_tool(
             "manage_tools",

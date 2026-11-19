@@ -77,6 +77,7 @@ _LOCAL_TARGET_CONTROL_TOOLS = frozenset(
     {
         "set_active_instance",
         "manage_tools",
+        "search_unity_tools",
         "debug_request_context",
         "manage_script_capabilities",
         "read_response",

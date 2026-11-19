@@ -411,6 +411,10 @@
       "description": "Author bounded Timeline assets and manage owned director preview sessions"
     },
     {
+      "name": "search_unity_tools",
+      "description": "Search scoped Unity capabilities and evidence without changing tool selection"
+    },
+    {
       "name": "manage_tools",
       "description": "Manage which tool groups are visible in this session"
     },

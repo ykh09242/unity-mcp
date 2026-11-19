@@ -129,5 +129,9 @@ def test_snapshot_observes_real_modern_and_legacy_tools_list_in_isolated_process
     for protocol in result["protocols"].values():
         probe = protocol["tools"]["manage_tools"]
         assert "search" in probe["inputSchema"]["properties"]["action"]["enum"]
+        search = protocol["tools"]["search_unity_tools"]
+        assert search["annotations"]["readOnlyHint"] is True
+        assert probe["annotations"]["readOnlyHint"] is False
+        assert "action" not in search["inputSchema"]["properties"]
         assert "outputSchema" in probe
         assert probe["annotations"]["destructiveHint"] is False

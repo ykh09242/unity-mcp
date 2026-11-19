@@ -44,3 +44,39 @@ async def test_unidentified_scope_can_search_but_cannot_gain_availability(discov
         assert result["results"][0]["advertised"] is False
         assert await names(client) == {"manage_tools"}
         assert store.retained_entries == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+async def test_read_only_search_uses_same_scoped_registration(discovery_server, mode, monkeypatch):
+    from services.registry import get_registered_tools
+    from services.operation_permissions import Permission, required_permissions
+    from services.tools.manage_tools import search_unity_tools
+
+    build, _ = discovery_server
+    server, store = build("minimal")
+    before_entries = get_registered_tools()
+    server.tool(search_unity_tools)
+    monkeypatch.setattr(
+        "services.tools.manage_tools.get_registered_tools",
+        lambda: [*before_entries, {"name": "other_server_probe", "group": "core"}],
+    )
+    async with Client(server, mode=mode) as client:
+        before = await names(client)
+        for arguments in (
+            {"query": "effect_probe"},
+            {"required_values": ["nodeCount"]},
+            {"query": " "},
+        ):
+            alias = (await client.call_tool("search_unity_tools", arguments)).structured_content
+            legacy = (
+                await client.call_tool("manage_tools", {"action": "search", **arguments})
+            ).structured_content
+            assert alias == legacy
+        miss = (
+            await client.call_tool("search_unity_tools", {"query": "other_server_probe"})
+        ).structured_content
+        assert all(row["name"] != "other_server_probe" for row in miss["results"])
+        assert await names(client) == before
+        assert store.retained_entries == 0
+    assert required_permissions("search_unity_tools", {}) == {Permission.READ}

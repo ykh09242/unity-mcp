@@ -25199,6 +25199,157 @@
             "type": "object"
           }
         },
+        "search_unity_tools": {
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "catalog_query": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "intent": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "observe",
+                      "interact",
+                      "edit"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "limit": {
+                "default": 5,
+                "maximum": 20,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "observation_source": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "editor_live",
+                      "asset_file",
+                      "imported_asset"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "query": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "required_values": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "render_size.width",
+                        "render_size.height",
+                        "current_size",
+                        "view_instance_id",
+                        "presets",
+                        "rendered_image",
+                        "pointer_hit_order",
+                        "nodeCount",
+                        "edgeCount",
+                        "nodes",
+                        "edges",
+                        "properties",
+                        "keywords",
+                        "unsaved_graph_structure",
+                        "property_values",
+                        "shader_source",
+                        "contents",
+                        "encodedContents",
+                        "nextOffset",
+                        "shader_graph_structure",
+                        "unsaved_source",
+                        "compilation",
+                        "passes",
+                        "subshader_count"
+                      ],
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "route_surfaces": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "both",
+                      "tools",
+                      "resources"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "set_active_instance": {
           "annotations": {
             "destructiveHint": false,
@@ -51821,6 +51972,157 @@
           },
           "outputSchema": {
             "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "search_unity_tools": {
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "catalog_query": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "intent": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "observe",
+                      "interact",
+                      "edit"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "limit": {
+                "default": 5,
+                "maximum": 20,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "observation_source": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "editor_live",
+                      "asset_file",
+                      "imported_asset"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "query": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "required_values": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "render_size.width",
+                        "render_size.height",
+                        "current_size",
+                        "view_instance_id",
+                        "presets",
+                        "rendered_image",
+                        "pointer_hit_order",
+                        "nodeCount",
+                        "edgeCount",
+                        "nodes",
+                        "edges",
+                        "properties",
+                        "keywords",
+                        "unsaved_graph_structure",
+                        "property_values",
+                        "shader_source",
+                        "contents",
+                        "encodedContents",
+                        "nextOffset",
+                        "shader_graph_structure",
+                        "unsaved_source",
+                        "compilation",
+                        "passes",
+                        "subshader_count"
+                      ],
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "route_surfaces": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "both",
+                      "tools",
+                      "resources"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
             "type": "object"
           }
         },
