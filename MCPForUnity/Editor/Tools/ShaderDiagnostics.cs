@@ -78,8 +78,11 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static Shader LoadShader(string path) =>
-            AssetDatabase.LoadAssetAtPath<Shader>(path) ?? throw new ArgumentException("No imported Shader object is available at the selected path.");
+        private static Shader LoadShader(string path)
+        {
+            var shader = AssetDatabase.LoadAssetAtPath<Shader>(path);
+            return shader != null ? shader : throw new ArgumentException("No imported Shader object is available at the selected path.");
+        }
 
         private static object Compile(string path, JObject variant)
         {

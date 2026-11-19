@@ -103,8 +103,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (go == null)
                 return new ErrorResponse($"GameObject '{target}' not found.");
 
-            var probe = go.GetComponent<ReflectionProbe>();
-            if (probe == null)
+            if (!go.TryGetComponent(out ReflectionProbe probe))
                 return new ErrorResponse($"GameObject '{go.name}' does not have a ReflectionProbe component.");
 
             string dir = "Assets/Lightmaps";
@@ -420,8 +419,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (go == null)
                 return new ErrorResponse($"GameObject '{target}' not found.");
 
-            var probeGroup = go.GetComponent<LightProbeGroup>();
-            if (probeGroup == null)
+            if (!go.TryGetComponent(out LightProbeGroup probeGroup))
                 return new ErrorResponse($"GameObject '{go.name}' does not have a LightProbeGroup component.");
 
             var positionsToken = p.GetRaw("positions") as JArray;

@@ -17,7 +17,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
     [InitializeOnLoad]
     internal static class RenderingStatsOps
     {
-        private static readonly int MainThreadId = Thread.CurrentThread.ManagedThreadId;
+        private static readonly int MainThreadId;
+
+        static RenderingStatsOps()
+        {
+            MainThreadId = Thread.CurrentThread.ManagedThreadId;
+        }
+
         internal static int ActiveCaptureCount { get; private set; }
 
         private static readonly (string counterName, string jsonKey)[] COUNTER_MAP = new[]

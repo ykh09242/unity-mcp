@@ -30,7 +30,7 @@ namespace MCPForUnityTests.Editor.Tools
             string guid = Guid.NewGuid().ToString("N");
             _matPath = $"{TempRoot}/StressMat_{guid}.mat";
 
-            var material = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+            var material = new Material(TestUtilities.FindFirstShader("Universal Render Pipeline/Lit", "Standard"));
             material.color = Color.white;
             AssetDatabase.CreateAsset(material, _matPath);
             AssetDatabase.SaveAssets();

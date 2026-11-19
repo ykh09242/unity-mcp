@@ -323,7 +323,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return new ErrorResponse($"Feature not found. Specify 'index' (0-{featuresList.Count - 1}) or 'name'.");
 
             var feature = featuresList[targetIndex] as ScriptableObject;
-            string featureName = feature?.name ?? "Unknown";
+            string featureName = (feature != null ? feature.name : null) ?? "Unknown";
             var rendererOwner = rendererData as UnityEngine.Object;
             bool ownsFeature = false;
 

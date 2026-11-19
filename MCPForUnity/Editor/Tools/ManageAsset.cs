@@ -1401,7 +1401,7 @@ namespace MCPForUnity.Editor.Tools
                 name = Path.GetFileNameWithoutExtension(path),
                 fileName = Path.GetFileName(path),
                 isFolder = AssetDatabase.IsValidFolder(path),
-                instanceID = asset?.GetInstanceIDCompat() ?? 0,
+                instanceID = asset.GetInstanceIDCompat(),
                 lastWriteTimeUtc = AssetPathUtility.GetLastWriteTimeUtc(path)?.ToString("o", CultureInfo.InvariantCulture),
                 // --- Preview Data ---
                 previewBase64 = previewBase64, // PNG data as Base64 string

@@ -249,8 +249,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Could not find target GameObject: {target}");
             }
 
-            Renderer renderer = go.GetComponent<Renderer>();
-            if (renderer == null)
+            if (!go.TryGetComponent(out Renderer renderer))
             {
                 return new ErrorResponse($"GameObject {go.name} has no Renderer component");
             }
@@ -341,8 +340,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Could not find target GameObject: {target}");
             }
 
-            Renderer renderer = go.GetComponent<Renderer>();
-            if (renderer == null)
+            if (!go.TryGetComponent(out Renderer renderer))
             {
                 return new ErrorResponse($"GameObject {go.name} has no Renderer component");
             }
@@ -708,7 +706,8 @@ namespace MCPForUnity.Editor.Tools
                                 currentValue = mat.GetInteger(name);
                                 break;
                             case UnityEngine.Rendering.ShaderPropertyType.Texture:
-                                currentValue = mat.GetTexture(name)?.name ?? "null";
+                                var texture = mat.GetTexture(name);
+                                currentValue = (texture != null ? texture.name : null) ?? "null";
                                 break;
                         }
                     }
@@ -774,7 +773,8 @@ namespace MCPForUnity.Editor.Tools
                                     currentValue = mat.GetFloat(name);
                                     break;
                                 case ShaderUtil.ShaderPropertyType.TexEnv:
-                                    currentValue = mat.GetTexture(name)?.name ?? "null";
+                                    var texture = mat.GetTexture(name);
+                                    currentValue = (texture != null ? texture.name : null) ?? "null";
                                     break;
                             }
                     }

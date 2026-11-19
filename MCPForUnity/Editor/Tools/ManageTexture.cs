@@ -469,6 +469,7 @@ namespace MCPForUnity.Editor.Tools
                     McpLog.Warn($"[ManageTexture] {warning}");
                 }
 
+                var importer = AssetImporter.GetAtPath(fullPath) as TextureImporter;
                 var response = new SuccessResponse(
                     $"Texture created at '{fullPath}' ({width}x{height})"
                         + (asSprite ? " as sprite" : "")
@@ -479,7 +480,7 @@ namespace MCPForUnity.Editor.Tools
                         source_saved = true,
                         width,
                         height,
-                        asSprite = (AssetImporter.GetAtPath(fullPath) as TextureImporter)?.textureType == TextureImporterType.Sprite,
+                        asSprite = importer != null && importer.textureType == TextureImporterType.Sprite,
                         warnings = warnings.Count > 0 ? warnings : null,
                         import_settings = importReport,
                     }

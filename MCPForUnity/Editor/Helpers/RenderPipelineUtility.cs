@@ -75,7 +75,11 @@ namespace MCPForUnity.Editor.Helpers
                 McpLog.Warn($"Shader '{alias}' not found. Falling back to {pipeline} defaults.");
             }
 
-            var fallback = ResolveDefaultLitShader(pipeline) ?? ResolveDefaultLitShader(PipelineKind.BuiltIn) ?? Shader.Find("Unlit/Color");
+            var fallback = ResolveDefaultLitShader(pipeline);
+            if (fallback == null)
+                fallback = ResolveDefaultLitShader(PipelineKind.BuiltIn);
+            if (fallback == null)
+                fallback = Shader.Find("Unlit/Color");
 
             if (fallback != null)
             {
@@ -91,7 +95,9 @@ namespace MCPForUnity.Editor.Helpers
                 return null;
             string request = requestedNameOrAlias.Trim();
             var pipeline = GetActivePipeline();
-            var shader = ResolveAlias(request, pipeline) ?? Shader.Find(request);
+            var shader = ResolveAlias(request, pipeline);
+            if (shader == null)
+                shader = Shader.Find(request);
             if (shader != null)
                 WarnIfPipelineMismatch(shader.name, pipeline);
             return shader;
@@ -99,22 +105,27 @@ namespace MCPForUnity.Editor.Helpers
 
         internal static Shader ResolveDefaultLitShader(PipelineKind pipeline)
         {
-            return pipeline switch
+            switch (pipeline)
             {
-                PipelineKind.HighDefinition => TryFindShader(HdrpLitShaders) ?? TryFindShader(UrpLitShaders),
-                PipelineKind.Universal => TryFindShader(UrpLitShaders) ?? TryFindShader(HdrpLitShaders),
-                PipelineKind.Custom => TryFindShader(BuiltInLitShaders) ?? TryFindShader(UrpLitShaders) ?? TryFindShader(HdrpLitShaders),
-                _ => TryFindShader(BuiltInLitShaders) ?? Shader.Find("Unlit/Color"),
-            };
+                case PipelineKind.HighDefinition:
+                    return TryFindShader(HdrpLitShaders, UrpLitShaders);
+                case PipelineKind.Universal:
+                    return TryFindShader(UrpLitShaders, HdrpLitShaders);
+                case PipelineKind.Custom:
+                    return TryFindShader(BuiltInLitShaders, UrpLitShaders, HdrpLitShaders);
+                default:
+                    var shader = TryFindShader(BuiltInLitShaders);
+                    return shader != null ? shader : Shader.Find("Unlit/Color");
+            }
         }
 
         internal static Shader ResolveDefaultUnlitShader(PipelineKind pipeline)
         {
             return pipeline switch
             {
-                PipelineKind.HighDefinition => TryFindShader(HdrpUnlitShaders) ?? TryFindShader(UrpUnlitShaders) ?? TryFindShader(BuiltInUnlitShaders),
-                PipelineKind.Universal => TryFindShader(UrpUnlitShaders) ?? TryFindShader(HdrpUnlitShaders) ?? TryFindShader(BuiltInUnlitShaders),
-                PipelineKind.Custom => TryFindShader(BuiltInUnlitShaders) ?? TryFindShader(UrpUnlitShaders) ?? TryFindShader(HdrpUnlitShaders),
+                PipelineKind.HighDefinition => TryFindShader(HdrpUnlitShaders, UrpUnlitShaders, BuiltInUnlitShaders),
+                PipelineKind.Universal => TryFindShader(UrpUnlitShaders, HdrpUnlitShaders, BuiltInUnlitShaders),
+                PipelineKind.Custom => TryFindShader(BuiltInUnlitShaders, UrpUnlitShaders, HdrpUnlitShaders),
                 _ => TryFindShader(BuiltInUnlitShaders),
             };
         }
@@ -154,7 +165,15 @@ namespace MCPForUnity.Editor.Helpers
             return null;
         }
 
-        private static Shader TryFindShader(params string[] shaderNames)
+        private static Shader TryFindShader(string[] first, string[] second, string[] third = null)
+        {
+            var shader = TryFindShader(first);
+            if (shader == null)
+                shader = TryFindShader(second);
+            return shader == null && third != null ? TryFindShader(third) : shader;
+        }
+
+        private static Shader TryFindShader(string[] shaderNames)
         {
             foreach (var shaderName in shaderNames)
             {
@@ -368,17 +387,16 @@ namespace MCPForUnity.Editor.Helpers
         {
             if (componentType == VFXComponentType.ParticleSystem)
             {
-                return pipeline switch
+                var shader = pipeline switch
                 {
-                    PipelineKind.Universal => TryFindShader(UrpParticleShaders) ?? ResolveDefaultUnlitShader(pipeline),
-                    PipelineKind.HighDefinition => TryFindShader(HdrpUnlitShaders) ?? ResolveDefaultUnlitShader(pipeline),
-                    PipelineKind.BuiltIn => TryFindShader(BuiltInParticleShaders) ?? ResolveDefaultUnlitShader(pipeline),
-                    PipelineKind.Custom => TryFindShader(UrpParticleShaders)
-                        ?? TryFindShader(BuiltInParticleShaders)
-                        ?? TryFindShader(HdrpUnlitShaders)
-                        ?? ResolveDefaultUnlitShader(pipeline),
-                    _ => ResolveDefaultUnlitShader(pipeline),
+                    PipelineKind.Universal => TryFindShader(UrpParticleShaders),
+                    PipelineKind.HighDefinition => TryFindShader(HdrpUnlitShaders),
+                    PipelineKind.BuiltIn => TryFindShader(BuiltInParticleShaders),
+                    PipelineKind.Custom => TryFindShader(UrpParticleShaders, BuiltInParticleShaders, HdrpUnlitShaders),
+                    _ => null,
                 };
+                if (shader != null)
+                    return shader;
             }
 
             return ResolveDefaultUnlitShader(pipeline);
@@ -419,7 +437,9 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             Material material = null;
-            Shader shader = ResolveDefaultLitShader(pipeline) ?? ResolveDefaultUnlitShader(pipeline);
+            Shader shader = ResolveDefaultLitShader(pipeline);
+            if (shader == null)
+                shader = ResolveDefaultUnlitShader(pipeline);
             if (shader == null)
             {
                 shader = Shader.Find("Unlit/Color");

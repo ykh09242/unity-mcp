@@ -86,10 +86,10 @@ namespace MCPForUnityTests.Editor.Tools
         private static Texture2D CreateSolidTextureAsset(string path, Color color)
         {
             var tex = new Texture2D(4, 4, TextureFormat.RGBA32, false);
-            var pixels = new Color[16];
+            var pixels = new Color32[16];
             for (int i = 0; i < pixels.Length; i++)
                 pixels[i] = color;
-            tex.SetPixels(pixels);
+            tex.SetPixels32(pixels);
             tex.Apply();
             AssetDatabase.CreateAsset(tex, path);
             AssetDatabase.SaveAssets();

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using MCPForUnity.Editor.Tools;
+using MCPForUnityTests.Editor;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -186,7 +187,7 @@ namespace MCPForUnityTests.EditMode.Tools
 
         private Material OwnedMaterial(string path)
         {
-            Shader shader = Shader.Find("Standard") ?? Shader.Find("Unlit/Color");
+            Shader shader = TestUtilities.FindFirstShader("Standard", "Unlit/Color");
             if (shader == null)
                 Assert.Ignore("A fixture shader is required.");
             var material = new Material(shader);

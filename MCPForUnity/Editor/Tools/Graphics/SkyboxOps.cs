@@ -391,8 +391,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (go == null)
                 return new ErrorResponse($"GameObject '{target}' not found.");
 
-            var light = go.GetComponent<Light>();
-            if (light == null)
+            if (!go.TryGetComponent(out Light light))
                 return new ErrorResponse($"'{go.name}' does not have a Light component.");
 
             RenderSettings.sun = light;

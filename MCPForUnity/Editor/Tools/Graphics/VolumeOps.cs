@@ -261,14 +261,15 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 EditorUtility.SetDirty(profileObj);
             GraphicsHelpers.MarkDirty(volume);
 
+            var owner = volume != null ? volume.gameObject : null;
             return new
             {
                 success = true,
-                message = $"Added '{effectName}' to Volume '{(volume as Component)?.gameObject.name}'.",
+                message = $"Added '{effectName}' to Volume '{(owner != null ? owner.name : null)}'.",
                 data = new
                 {
                     effect = effectName,
-                    volumeInstanceID = (volume as Component)?.gameObject.GetInstanceIDCompat(),
+                    volumeInstanceID = owner != null ? (int?)owner.GetInstanceIDCompat() : null,
                     verification = RenderingObservation.Read(component as UnityEngine.Object, "active"),
                 },
             };
@@ -500,7 +501,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             return new
             {
                 success = true,
-                message = $"Volume info for '{(volume as Component)?.gameObject.name}'.",
+                message = $"Volume info for '{(volume != null ? volume.gameObject.name : null)}'.",
                 data = info,
             };
         }
