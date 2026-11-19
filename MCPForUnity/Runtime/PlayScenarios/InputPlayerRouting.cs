@@ -9,4 +9,10 @@ namespace MCPForUnity.Editor.Tools.Input
         object PairPlayer(GameObject target, string device);
         object ReleasePlayer(GameObject target);
     }
+
+    public interface IPlayerInputSimulationCapabilities
+    {
+        bool CanInspectPlayer { get; }
+        bool CanPairPlayer { get; }
+    }
 }

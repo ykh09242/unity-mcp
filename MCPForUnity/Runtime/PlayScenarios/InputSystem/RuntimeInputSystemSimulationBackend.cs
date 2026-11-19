@@ -5,13 +5,18 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
-using InputApi = UnityEngine.InputSystem.InputSystem;
-using InputTouchPhase = UnityEngine.InputSystem.TouchPhase;
+using UnityEngine.Experimental.Input;
+using UnityEngine.Experimental.Input.LowLevel;
+using UnityEngine.Experimental.Input.Controls;
+using UnityEngine.InputSystem.Controls;
 
 namespace MCPForUnity.Editor.Tools.Input
 {
     /// <summary>Queues input only on MCP-owned virtual devices. No physical device state is changed.</summary>
-    public partial class RuntimeInputSystemSimulationBackend : IScenarioInputSimulationBackend, IPlayerInputSimulationBackend
+    public partial class RuntimeInputSystemSimulationBackend
+        : IScenarioInputSimulationBackend,
+            IPlayerInputSimulationBackend,
+            IPlayerInputSimulationCapabilities
     {
         private readonly Dictionary<Key, long> _keys = new Dictionary<Key, long>();
         private readonly Dictionary<int, long> _buttons = new Dictionary<int, long>();
@@ -47,7 +52,7 @@ namespace MCPForUnity.Editor.Tools.Input
             get
             {
 #if ENABLE_INPUT_SYSTEM
-                return InputApi.settings.updateMode != InputSettings.UpdateMode.ProcessEventsManually;
+                return InputSystem.settings.updateMode != InputSettings.UpdateMode.ProcessEventsManually;
 #else
                 return false;
 #endif
@@ -62,24 +67,27 @@ namespace MCPForUnity.Editor.Tools.Input
 #endif
 
         public object Status =>
-            new
+            new Dictionary<string, object>
             {
-                held_keys = _keys.Keys.Select(key => key.ToString()).OrderBy(key => key).ToArray(),
-                held_mouse_buttons = _buttons.Keys.OrderBy(button => button).ToArray(),
-                active_touch_ids = _touches.Keys.OrderBy(id => id).ToArray(),
-                keyboard_device_id = _keyboard?.deviceId,
-                mouse_device_id = _mouse?.deviceId,
-                touchscreen_device_id = _touchscreen?.deviceId,
-                gamepad_device_id = _gamepad?.deviceId,
-                held_gamepad_controls = _gamepadReleases.Keys.OrderBy(control => control).ToArray(),
-                paired_player_index = _pairedPlayer != null ? (int?)_pairedPlayer.playerIndex : null,
-                update_mode = InputApi.settings.updateMode.ToString(),
+                ["held_keys"] = _keys.Keys.Select(key => key.ToString()).OrderBy(key => key).ToArray(),
+                ["held_mouse_buttons"] = _buttons.Keys.OrderBy(button => button).ToArray(),
+                ["active_touch_ids"] = _touches.Keys.OrderBy(id => id).ToArray(),
+                ["keyboard_device_id"] = InputSystemCompatibility.DeviceId(_keyboard),
+                ["mouse_device_id"] = InputSystemCompatibility.DeviceId(_mouse),
+                ["touchscreen_device_id"] = InputSystemCompatibility.DeviceId(_touchscreen),
+                ["gamepad_device_id"] = InputSystemCompatibility.DeviceId(_gamepad),
+                ["held_gamepad_controls"] = _gamepadReleases.Keys.OrderBy(control => control).ToArray(),
+                ["paired_player_index"] = _pairedPlayer != null ? Index(_pairedPlayer) : null,
+                ["player_diagnostics_available"] = CanInspectPlayer,
+                ["player_pairing_available"] = CanPairPlayer,
+                ["update_mode"] = InputSystem.settings.updateMode.ToString(),
 #if UNITY_EDITOR
-                editor_input_behavior = InputApi.settings.editorInputBehaviorInPlayMode.ToString(),
+                ["editor_input_behavior"] = InputSystemCompatibility.Setting("editorInputBehaviorInPlayMode"),
 #endif
-                background_behavior = InputApi.settings.backgroundBehavior.ToString(),
-                focus_note = "Input System project focus/background settings still apply. For unattended input configure Ignore Focus and All Device Input Always Goes To Game View. This tool does not change project settings or focus windows.",
-                cleanup_in_seconds = _subscribed ? Math.Max(0, _deadline - Clock) : 0,
+                ["background_behavior"] = InputSystemCompatibility.Setting("backgroundBehavior"),
+                ["focus_note"] =
+                    "Input System project focus/background settings still apply. Inspect the focus and background options exposed by the installed Input System. This tool does not change project settings or focus windows.",
+                ["cleanup_in_seconds"] = _subscribed ? Math.Max(0, _deadline - Clock) : 0,
             };
 
         public virtual object Apply(InputSimulationRequest request)
@@ -110,14 +118,14 @@ namespace MCPForUnity.Editor.Tools.Input
                     throw new ArgumentException("Unsupported raw input action.");
             }
             EnsureLease();
-            return new
+            return new Dictionary<string, object>
             {
-                action = request.Action,
-                state = request.State,
-                frames = request.Action == "wheel" || request.State == "release" || request.State == "move" ? 0 : request.Frames,
-                auto_cleanup_seconds = InputSimulationRequest.DeviceTimeoutSeconds,
-                maximum_active_seconds = InputSimulationRequest.MaximumActiveSeconds,
-                simulation = Status,
+                ["action"] = request.Action,
+                ["state"] = request.State,
+                ["frames"] = request.Action == "wheel" || request.State == "release" || request.State == "move" ? 0 : request.Frames,
+                ["auto_cleanup_seconds"] = InputSimulationRequest.DeviceTimeoutSeconds,
+                ["maximum_active_seconds"] = InputSimulationRequest.MaximumActiveSeconds,
+                ["simulation"] = Status,
             };
         }
 
@@ -128,7 +136,7 @@ namespace MCPForUnity.Editor.Tools.Input
                 // Commands alone cannot renew the inactivity lease; only actual held-input updates can.
                 _deadline = Clock + InputSimulationRequest.DeviceTimeoutSeconds;
                 _maximumDeadline = Clock + InputSimulationRequest.MaximumActiveSeconds;
-                InputApi.onBeforeUpdate += BeforeInputUpdate;
+                InputSystem.onBeforeUpdate += BeforeInputUpdate;
                 SubscribeLifetime();
                 _subscribed = true;
             }
@@ -147,7 +155,7 @@ namespace MCPForUnity.Editor.Tools.Input
             {
                 _keys.Clear();
                 _previousKeyboard = Keyboard.current;
-                _keyboard = InputApi.AddDevice<Keyboard>("MCPVirtualKeyboard");
+                _keyboard = InputSystem.AddDevice<Keyboard>("MCPVirtualKeyboard");
             }
             if (request.State == "release")
                 _keys.Remove(key);
@@ -163,7 +171,7 @@ namespace MCPForUnity.Editor.Tools.Input
                 _buttons.Clear();
                 _previousMouse = Mouse.current;
                 _mousePosition = _previousMouse?.position.ReadValue() ?? Vector2.zero;
-                _mouse = InputApi.AddDevice<Mouse>("MCPVirtualMouse");
+                _mouse = InputSystem.AddDevice<Mouse>("MCPVirtualMouse");
             }
         }
 
@@ -203,65 +211,71 @@ namespace MCPForUnity.Editor.Tools.Input
                 if (exists)
                     throw new InvalidOperationException("The MCP touchscreen was removed. Press the contact again.");
                 _previousTouchscreen = Touchscreen.current;
-                _touchscreen = InputApi.AddDevice<Touchscreen>("MCPVirtualTouchscreen");
+                _touchscreen = InputSystem.AddDevice<Touchscreen>("MCPVirtualTouchscreen");
             }
             Vector2 position = request.Position ?? contact.Position;
-            InputTouchPhase phase;
+            InputSystemCompatibility.TouchTransition phase;
             switch (request.State)
             {
                 case "press":
-                    phase = InputTouchPhase.Began;
+                    phase = InputSystemCompatibility.TouchTransition.Press;
                     _touches.Add(request.TouchId, new TouchContact { Position = position, ReleaseAt = _tick + request.Frames });
                     break;
                 case "move":
-                    phase = InputTouchPhase.Moved;
+                    phase = InputSystemCompatibility.TouchTransition.Move;
                     contact.Position = position;
                     // Moving does not extend the originally bounded contact duration.
                     break;
                 default:
-                    phase = InputTouchPhase.Ended;
+                    phase = InputSystemCompatibility.TouchTransition.Release;
                     _touches.Remove(request.TouchId);
                     break;
             }
             QueueTouch(request.TouchId, phase, position);
         }
 
-        private void QueueKeyboard() => InputApi.QueueStateEvent(_keyboard, new KeyboardState(_keys.Keys.ToArray()));
+        private void QueueKeyboard()
+        {
+            using (StateEvent.From(_keyboard, out var packet))
+            {
+                foreach (var control in _keyboard.allControls)
+                    if (control is KeyControl key)
+                        key.WriteValueIntoEvent(_keys.ContainsKey(key.keyCode) ? 1f : 0f, packet);
+                InputSystem.QueueEvent(packet);
+            }
+        }
 
         private void QueueMouse(Vector2 delta = default, Vector2 scroll = default)
         {
-            ushort buttons = 0;
-            foreach (int button in _buttons.Keys)
-                buttons |= (ushort)(1 << button);
-            InputApi.QueueStateEvent(
-                _mouse,
-                new MouseState
-                {
-                    position = _mousePosition,
-                    delta = delta,
-                    scroll = scroll,
-                    buttons = buttons,
-                }
-            );
+            using (StateEvent.From(_mouse, out var packet))
+            {
+                _mouse.position.WriteValueIntoEvent(_mousePosition, packet);
+                _mouse.delta.WriteValueIntoEvent(delta, packet);
+                _mouse.scroll.WriteValueIntoEvent(scroll, packet);
+                _mouse.leftButton.WriteValueIntoEvent(_buttons.ContainsKey(0) ? 1f : 0f, packet);
+                _mouse.rightButton.WriteValueIntoEvent(_buttons.ContainsKey(1) ? 1f : 0f, packet);
+                _mouse.middleButton.WriteValueIntoEvent(_buttons.ContainsKey(2) ? 1f : 0f, packet);
+                InputSystem.QueueEvent(packet);
+            }
         }
 
-        private void QueueTouch(int id, InputTouchPhase phase, Vector2 position) =>
-            InputApi.QueueStateEvent(
-                _touchscreen,
-                new TouchState
-                {
-                    touchId = id,
-                    phase = phase,
-                    position = position,
-                    pressure = phase == InputTouchPhase.Ended ? 0 : 1,
-                }
-            );
-
-        private void BeforeInputUpdate()
+        private void QueueTouch(int id, InputSystemCompatibility.TouchTransition phase, Vector2 position)
         {
-            InputUpdateType expected =
-                InputApi.settings.updateMode == InputSettings.UpdateMode.ProcessEventsInFixedUpdate ? InputUpdateType.Fixed : InputUpdateType.Dynamic;
-            if (InputState.currentUpdateType != expected)
+            var state = new TouchState
+            {
+                touchId = id,
+                position = position,
+                pressure = phase == InputSystemCompatibility.TouchTransition.Release ? 0 : 1,
+            };
+            state.phase = InputSystemCompatibility.WriteTouchPhase(state.phase, phase);
+            InputSystem.QueueStateEvent(_touchscreen, state);
+        }
+
+        private void BeforeInputUpdate() => BeforeInputUpdate(InputSystemCompatibility.CurrentUpdateType);
+
+        private void BeforeInputUpdate(InputUpdateType update)
+        {
+            if (!InputSystemCompatibility.IsSimulationUpdate(update))
                 return;
             if (Clock >= _deadline || !Available)
             {
@@ -285,7 +299,7 @@ namespace MCPForUnity.Editor.Tools.Input
             foreach (int id in _touches.Where(pair => pair.Value.ReleaseAt < _tick).Select(pair => pair.Key).ToArray())
             {
                 if (_touchscreen != null && _touchscreen.added)
-                    QueueTouch(id, InputTouchPhase.Ended, _touches[id].Position);
+                    QueueTouch(id, InputSystemCompatibility.TouchTransition.Release, _touches[id].Position);
                 _touches.Remove(id);
             }
             if (_keys.Count > 0 || _buttons.Count > 0 || _touches.Count > 0 || _gamepadReleases.Count > 0)
@@ -304,7 +318,7 @@ namespace MCPForUnity.Editor.Tools.Input
             // Removing owned devices cancels bound actions immediately, even while paused or reloading.
             if (_subscribed)
             {
-                InputApi.onBeforeUpdate -= BeforeInputUpdate;
+                InputSystem.onBeforeUpdate -= BeforeInputUpdate;
                 UnsubscribeLifetime();
                 _subscribed = false;
             }
@@ -314,11 +328,11 @@ namespace MCPForUnity.Editor.Tools.Input
             bool restoreMouse = _mouse != null && Mouse.current == _mouse;
             bool restoreTouchscreen = _touchscreen != null && Touchscreen.current == _touchscreen;
             if (_keyboard != null && _keyboard.added)
-                InputApi.RemoveDevice(_keyboard);
+                InputSystem.RemoveDevice(_keyboard);
             if (_mouse != null && _mouse.added)
-                InputApi.RemoveDevice(_mouse);
+                InputSystem.RemoveDevice(_mouse);
             if (_touchscreen != null && _touchscreen.added)
-                InputApi.RemoveDevice(_touchscreen);
+                InputSystem.RemoveDevice(_touchscreen);
             if (restoreKeyboard && _previousKeyboard != null && _previousKeyboard.added)
                 _previousKeyboard.MakeCurrent();
             if (restoreMouse && _previousMouse != null && _previousMouse.added)

@@ -89,6 +89,26 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             yield return new Vector2(1000001, 20);
         }
 
+        [Test]
+        public void ExternalSingleContactPacketsRecordPressMoveAndRelease()
+        {
+            foreach (var phase in new[] { TouchPhase.Began, TouchPhase.Moved, TouchPhase.Ended })
+            {
+                InputApi.QueueStateEvent(
+                    screen,
+                    new TouchState
+                    {
+                        touchId = 42,
+                        phase = phase,
+                        position = new Vector2(10 + events.Count, 20),
+                    }
+                );
+                InputApi.Update();
+            }
+            CollectionAssert.AreEqual(new[] { "press", "move", "release" }, events.Select(row => (string)row["state"]));
+            Assert.That(events.All(row => (int)row["touch_id"] == 1));
+        }
+
         [TestCaseSource(nameof(InvalidPositions))]
         public void InvalidMouseReleaseUsesLastValidPositionAndDoesNotRepeat(Vector2 invalid)
         {

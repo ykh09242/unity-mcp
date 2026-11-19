@@ -104,8 +104,11 @@ namespace MCPForUnity.Editor.Tools.Input
                     touch = InputBackend?.Available ?? false,
                     gamepad = InputBackend?.Available ?? false,
                     wheel = InputBackend?.Available ?? false,
-                    player_input_diagnostics = InputBackend is IPlayerInputSimulationBackend,
-                    reversible_gamepad_pairing = InputBackend is IPlayerInputSimulationBackend && InputBackend.Available,
+                    player_input_diagnostics = InputBackend is IPlayerInputSimulationBackend
+                        && (InputBackend as IPlayerInputSimulationCapabilities)?.CanInspectPlayer != false,
+                    reversible_gamepad_pairing = InputBackend is IPlayerInputSimulationBackend
+                        && InputBackend.Available
+                        && (InputBackend as IPlayerInputSimulationCapabilities)?.CanPairPlayer != false,
                     multi_touch = InputBackend?.Available ?? false,
                     max_touch_contacts = 10,
                     legacy_raw_input = false,
@@ -125,7 +128,7 @@ namespace MCPForUnity.Editor.Tools.Input
         public static string RawInputUnavailableReason =>
             LegacyInputObservationAvailable
                 ? LegacyInputScenarioRecordingBackend.RawReplayUnavailableReason
-                : "Raw virtual-device replay requires an enabled com.unity.inputsystem 1.7+ backend, Input System Package/Both handling and an Input System consumer. Changing handling alone does not redirect UnityEngine.Input. Use ui_click or scenario click_ui for uGUI targets; a project-defined input adapter requires explicit project-code integration. MCP does not change input settings or send OS input.";
+                : "Raw virtual-device replay requires an enabled com.unity.inputsystem backend, Input System Package/Both handling and an Input System consumer. Changing handling alone does not redirect UnityEngine.Input. Use ui_click or scenario click_ui for uGUI targets; a project-defined input adapter requires explicit project-code integration. MCP does not change input settings or send OS input.";
 
         public static bool LegacyInputObservationAvailable =>
 #if ENABLE_LEGACY_INPUT_MANAGER && !ENABLE_INPUT_SYSTEM

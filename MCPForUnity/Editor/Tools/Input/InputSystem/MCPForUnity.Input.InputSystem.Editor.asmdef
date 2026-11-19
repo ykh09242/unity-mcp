@@ -11,7 +11,7 @@
     "Editor"
   ],
   "excludePlatforms": [],
-  "allowUnsafeCode": false,
+  "allowUnsafeCode": true,
   "overrideReferences": true,
   "precompiledReferences": [
     "Newtonsoft.Json.dll"
@@ -23,7 +23,7 @@
   "versionDefines": [
     {
       "name": "com.unity.inputsystem",
-      "expression": "1.7.0",
+      "expression": "",
       "define": "MCP_INPUT_SYSTEM"
     }
   ],

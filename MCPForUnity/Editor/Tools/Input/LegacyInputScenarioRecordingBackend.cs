@@ -12,7 +12,7 @@ namespace MCPForUnity.Editor.Tools.Input
     public sealed class LegacyInputScenarioRecordingBackend : IPlayScenarioInputRecordingBackend, IPlayScenarioInputRecordingCapabilities
     {
         public const string RawReplayUnavailableReason =
-            "Legacy raw replay into UnityEngine.Input is unavailable. Use ui_click or scenario click_ui for uGUI targets. Raw virtual-device replay requires com.unity.inputsystem 1.7+, Input System Package/Both handling and an Input System consumer; changing handling alone does not redirect UnityEngine.Input. A project-defined input adapter requires explicit project-code integration; MCP provides no legacy raw adapter and does not change input settings or send OS input.";
+            "Legacy raw replay into UnityEngine.Input is unavailable. Use ui_click or scenario click_ui for uGUI targets. Raw virtual-device replay requires com.unity.inputsystem, Input System Package/Both handling and an Input System consumer; changing handling alone does not redirect UnityEngine.Input. A project-defined input adapter requires explicit project-code integration; MCP provides no legacy raw adapter and does not change input settings or send OS input.";
 
         static LegacyInputScenarioRecordingBackend()
         {

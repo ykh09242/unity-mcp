@@ -19,7 +19,7 @@
   "versionDefines": [
     {
       "name": "com.unity.inputsystem",
-      "expression": "1.7.0",
+      "expression": "",
       "define": "MCP_INPUT_SYSTEM"
     }
   ],

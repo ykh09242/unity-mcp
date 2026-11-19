@@ -5,7 +5,8 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
-using InputApi = UnityEngine.InputSystem.InputSystem;
+using UnityEngine.Experimental.Input;
+using UnityEngine.Experimental.Input.LowLevel;
 
 namespace MCPForUnity.Editor.Tools.Input
 {
@@ -13,7 +14,10 @@ namespace MCPForUnity.Editor.Tools.Input
     {
         private Gamepad _gamepad;
         private Gamepad _previousGamepad;
-        private GamepadState _gamepadState;
+        private Vector2 _leftStick;
+        private Vector2 _rightStick;
+        private float _leftTrigger;
+        private float _rightTrigger;
         private readonly Dictionary<string, long> _gamepadReleases = new Dictionary<string, long>();
         private static readonly Dictionary<string, GamepadButton> GamepadButtons = new Dictionary<string, GamepadButton>
         {
@@ -38,9 +42,9 @@ namespace MCPForUnity.Editor.Tools.Input
             if (_gamepad == null || !_gamepad.added)
             {
                 _gamepadReleases.Clear();
-                _gamepadState = default;
+                ResetGamepadValues();
                 _previousGamepad = Gamepad.current;
-                _gamepad = InputApi.AddDevice<Gamepad>("MCPVirtualGamepad");
+                _gamepad = InputSystem.AddDevice<Gamepad>("MCPVirtualGamepad");
             }
             return _gamepad;
         }
@@ -54,7 +58,7 @@ namespace MCPForUnity.Editor.Tools.Input
             else
                 _gamepadReleases.Remove(request.Control);
             SetGamepadControl(request.Control, pressed ? request.ScalarValue ?? 1 : 0, pressed ? request.StickValue ?? Vector2.zero : Vector2.zero);
-            InputApi.QueueStateEvent(_gamepad, _gamepadState);
+            QueueGamepad();
         }
 
         private void SetGamepadControl(string control, float scalar, Vector2 vector)
@@ -62,22 +66,43 @@ namespace MCPForUnity.Editor.Tools.Input
             switch (control)
             {
                 case "leftStick":
-                    _gamepadState.leftStick = vector;
+                    _leftStick = vector;
                     break;
                 case "rightStick":
-                    _gamepadState.rightStick = vector;
+                    _rightStick = vector;
                     break;
                 case "leftTrigger":
-                    _gamepadState.leftTrigger = scalar;
+                    _leftTrigger = scalar;
                     break;
                 case "rightTrigger":
-                    _gamepadState.rightTrigger = scalar;
+                    _rightTrigger = scalar;
                     break;
                 default:
-                    if (!GamepadButtons.TryGetValue(control, out GamepadButton button))
+                    if (!GamepadButtons.ContainsKey(control))
                         throw new ArgumentException("Unsupported gamepad control.");
-                    _gamepadState = _gamepadState.WithButton(button, scalar > 0);
                     break;
+            }
+        }
+
+        private void ResetGamepadValues()
+        {
+            _leftStick = _rightStick = Vector2.zero;
+            _leftTrigger = _rightTrigger = 0;
+        }
+
+        private void QueueGamepad()
+        {
+            // Some packages keep GamepadState internal. Fill the actual device layout,
+            // including pending controls from earlier requests in the same input update.
+            using (StateEvent.From(_gamepad, out var packet))
+            {
+                _gamepad.leftStick.WriteValueIntoEvent(_leftStick, packet);
+                _gamepad.rightStick.WriteValueIntoEvent(_rightStick, packet);
+                _gamepad.leftTrigger.WriteValueIntoEvent(_leftTrigger, packet);
+                _gamepad.rightTrigger.WriteValueIntoEvent(_rightTrigger, packet);
+                foreach (var button in GamepadButtons)
+                    _gamepad[button.Value].WriteValueIntoEvent(_gamepadReleases.ContainsKey(button.Key) ? 1f : 0f, packet);
+                InputSystem.QueueEvent(packet);
             }
         }
 
@@ -90,19 +115,19 @@ namespace MCPForUnity.Editor.Tools.Input
                 SetGamepadControl(control, 0, Vector2.zero);
             }
             if (expired.Length > 0 && _gamepad != null && _gamepad.added)
-                InputApi.QueueStateEvent(_gamepad, _gamepadState);
+                QueueGamepad();
         }
 
         private void ReleaseGamepad()
         {
             bool restore = _gamepad != null && Gamepad.current == _gamepad;
             if (_gamepad != null && _gamepad.added)
-                InputApi.RemoveDevice(_gamepad);
+                InputSystem.RemoveDevice(_gamepad);
             if (restore && _previousGamepad != null && _previousGamepad.added)
                 _previousGamepad.MakeCurrent();
             _gamepad = null;
             _previousGamepad = null;
-            _gamepadState = default;
+            ResetGamepadValues();
             _gamepadReleases.Clear();
         }
     }

@@ -150,7 +150,7 @@ class InputCommand(BaseModel):
     description=(
         "Simulate bounded input in Unity Play Mode. status reports capabilities and held controls. "
         f"{UI_CLICK_PURPOSE} {UI_CLICK_LIMIT} "
-        "key/mouse/touch/gamepad/wheel require com.unity.inputsystem 1.7+ and Input System or Both handling. "
+        "key/mouse/touch/gamepad/wheel require com.unity.inputsystem and Input System or Both handling. "
         "gamepad control is a named stick, trigger or button; sticks use value [x,y] in -1..1, "
         "triggers use scalar value 0..1 and buttons omit value. Release omits value and returns neutral. "
         "wheel delta [x,y] in -10000..10000 is dispatched once, preserving held mouse buttons. "

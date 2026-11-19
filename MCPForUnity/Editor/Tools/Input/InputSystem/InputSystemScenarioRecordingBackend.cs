@@ -8,8 +8,23 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
 using UnityEngine.InputSystem.LowLevel;
-using InputApi = UnityEngine.InputSystem.InputSystem;
-using InputTouchPhase = UnityEngine.InputSystem.TouchPhase;
+using UnityEngine.Experimental.Input;
+using UnityEngine.Experimental.Input.LowLevel;
+using UnityEngine.Experimental.Input.Controls;
+using UnityEngine.Experimental.Input.Utilities;
+using UnityEngine.InputSystem.Utilities;
+
+namespace UnityEngine.Experimental.Input.LowLevel { }
+
+namespace UnityEngine.Experimental.Input.Controls { }
+
+namespace UnityEngine.Experimental.Input.Utilities { }
+
+namespace UnityEngine.InputSystem.LowLevel { }
+
+namespace UnityEngine.InputSystem.Controls { }
+
+namespace UnityEngine.InputSystem.Utilities { }
 
 namespace MCPForUnity.Editor.Tools.Input
 {
@@ -41,7 +56,7 @@ namespace MCPForUnity.Editor.Tools.Input
 
         public IPlayScenarioInputRecordingSession Begin(Action<JObject, long> observed, Action<string> diagnose)
         {
-            if (InputApi.settings.updateMode == InputSettings.UpdateMode.ProcessEventsManually)
+            if (InputSystem.settings.updateMode == InputSettings.UpdateMode.ProcessEventsManually)
                 throw new InvalidOperationException("Raw recording requires game Dynamic/Fixed Input System updates; manual update mode is unsupported.");
             return new Session(observed, diagnose);
         }
@@ -54,7 +69,18 @@ namespace MCPForUnity.Editor.Tools.Input
             private readonly HashSet<InputControl> observedMouseButtons = new HashSet<InputControl>();
             private readonly Dictionary<int, int> touchSlots = new Dictionary<int, int>();
             private readonly Dictionary<int, Vector2> touchPositions = new Dictionary<int, Vector2>();
-            private readonly HashSet<int> described = new HashSet<int>();
+            private readonly HashSet<InputDevice> described = new HashSet<InputDevice>();
+            private static readonly Func<Touchscreen, ReadOnlyArray<TouchControl>> ReadTouches = BindTouches();
+
+            private static Func<Touchscreen, ReadOnlyArray<TouchControl>> BindTouches()
+            {
+                var property = typeof(Touchscreen).GetProperty("touches") ?? typeof(Touchscreen).GetProperty("allTouchControls");
+                return property?.PropertyType == typeof(ReadOnlyArray<TouchControl>)
+                    ? (Func<Touchscreen, ReadOnlyArray<TouchControl>>)
+                        property.GetGetMethod().CreateDelegate(typeof(Func<Touchscreen, ReadOnlyArray<TouchControl>>))
+                    : null;
+            }
+
             private readonly HashSet<int> visitedTouches = new HashSet<int>();
             private bool processingTouches;
             private readonly HashSet<string> deviceLimitNotices = new HashSet<string>();
@@ -70,15 +96,18 @@ namespace MCPForUnity.Editor.Tools.Input
             {
                 this.observed = observed ?? throw new ArgumentNullException(nameof(observed));
                 this.diagnose = diagnose ?? throw new ArgumentNullException(nameof(diagnose));
-                InputApi.onBeforeUpdate += BeforeUpdate;
-                InputApi.onEvent += Event;
+                InputSystem.onBeforeUpdate += BeforeUpdate;
+                InputSystem.onEvent += Event;
             }
 
-            private static bool GameUpdate => InputState.currentUpdateType == InputUpdateType.Dynamic || InputState.currentUpdateType == InputUpdateType.Fixed;
+            private bool gameUpdate;
 
-            private void BeforeUpdate()
+            private void BeforeUpdate() => BeforeUpdate(InputSystemCompatibility.CurrentUpdateType);
+
+            private void BeforeUpdate(InputUpdateType update)
             {
-                if (disposed || !GameUpdate || EditorApplication.isPaused)
+                gameUpdate = update == InputUpdateType.Dynamic || update == InputUpdateType.Fixed;
+                if (disposed || !gameUpdate || EditorApplication.isPaused)
                     return;
                 UpdateCount++;
                 eventsInUpdate = 0;
@@ -108,7 +137,7 @@ namespace MCPForUnity.Editor.Tools.Input
                 }
                 else
                     return false;
-                if (described.Add(device.deviceId))
+                if (described.Add(device))
                     diagnose(
                         device.native
                             ? "Observed native Input System device state events; gameplay outcomes are not inferred."
@@ -147,17 +176,35 @@ namespace MCPForUnity.Editor.Tools.Input
                 return previous != pressed;
             }
 
+            private static unsafe bool MatchesDeviceFormat(InputDevice device, InputEventPtr packet)
+            {
+                if (packet.IsA<StateEvent>())
+                    return packet.sizeInBytes >= sizeof(StateEvent) && StateEvent.From(packet)->stateFormat == device.stateBlock.format;
+                return packet.IsA<DeltaStateEvent>()
+                    && packet.sizeInBytes >= sizeof(DeltaStateEvent)
+                    && DeltaStateEvent.From(packet)->stateFormat == device.stateBlock.format;
+            }
+
+            private void Event(InputEventPtr packet) => Event(packet, InputSystem.GetDeviceById(packet.deviceId));
+
             private void Event(InputEventPtr packet, InputDevice device)
             {
-                if (disposed || EditorApplication.isPaused || !GameUpdate || (!packet.IsA<StateEvent>() && !packet.IsA<DeltaStateEvent>()) || !Select(device))
+                if (
+                    disposed
+                    || EditorApplication.isPaused
+                    || !gameUpdate
+                    || (!packet.IsA<StateEvent>() && !packet.IsA<DeltaStateEvent>())
+                    || device == null
+                    || !Select(device)
+                )
                     return;
-                if (device is Keyboard keys)
+                if (device is Keyboard keys && MatchesDeviceFormat(keys, packet))
                 {
-                    foreach (KeyControl key in keys.allKeys)
+                    foreach (var control in keys.allControls)
                     {
                         if (disposed)
                             return;
-                        if (Changed(key, packet, out bool pressed))
+                        if (control is KeyControl key && Changed(key, packet, out bool pressed))
                             Emit(
                                 new JObject
                                 {
@@ -168,7 +215,7 @@ namespace MCPForUnity.Editor.Tools.Input
                             );
                     }
                 }
-                else if (device is Mouse pointer)
+                else if (device is Mouse pointer && MatchesDeviceFormat(pointer, packet))
                     MouseEvent(pointer, packet);
                 else if (device is Touchscreen touches)
                     TouchEvent(touches, packet);
@@ -269,11 +316,28 @@ namespace MCPForUnity.Editor.Tools.Input
                 }
             }
 
-            private void TouchEvent(Touchscreen device, InputEventPtr packet)
+            private unsafe void TouchEvent(Touchscreen device, InputEventPtr packet)
             {
-                // TouchState packets map public event reads only through primaryTouch (package callback contract).
-                // Full TouchscreenState packets may include both primaryTouch and its slot; deduplicate the actual contact ID.
                 if (disposed)
+                    return;
+                // Single-contact packets use the SDK's TouchState layout. Older packages
+                // throw if asked to read touchscreen controls from this different format.
+                if (packet.IsA<StateEvent>() && packet.sizeInBytes >= sizeof(StateEvent))
+                {
+                    var stateEvent = StateEvent.From(packet);
+                    if (stateEvent->stateFormat == new FourCC('T', 'O', 'U', 'C'))
+                    {
+                        if (stateEvent->stateSizeInBytes >= sizeof(TouchState))
+                        {
+                            TouchState state = *(TouchState*)stateEvent->state;
+                            var transition = InputSystemCompatibility.ReadTouchPhase(state.phase);
+                            if (state.touchId > 0 && transition != InputSystemCompatibility.TouchTransition.Ignore)
+                                ObserveTouch(state.touchId, transition, state.position);
+                        }
+                        return;
+                    }
+                }
+                if (!MatchesDeviceFormat(device, packet))
                     return;
                 // Observers may synchronously re-enter with a packet. Only the
                 // outer handler borrows the session scratch set.
@@ -284,74 +348,25 @@ namespace MCPForUnity.Editor.Tools.Input
                 visited.Clear();
                 try
                 {
-                    for (int index = -1; index < device.touches.Count; index++)
+                    var touches = ReadTouches?.Invoke(device) ?? default;
+                    int count = ReadTouches == null ? device.allControls.Count : touches.Count;
+                    for (int index = -1; index < count; index++)
                     {
-                        TouchControl touch = index < 0 ? device.primaryTouch : device.touches[index];
+                        TouchControl touch =
+                            index < 0 ? device.primaryTouch
+                            : ReadTouches == null ? device.allControls[index] as TouchControl
+                            : touches[index];
                         if (disposed)
                             return;
-                        if (
-                            !touch.touchId.ReadValueFromEvent(packet, out int id)
-                            || id <= 0
-                            || !touch.phase.ReadValueFromEvent(packet, out InputTouchPhase phase)
-                        )
+                        if (touch == null || (index >= 0 && touch == device.primaryTouch))
                             continue;
-                        if (phase == InputTouchPhase.None || phase == InputTouchPhase.Stationary || !visited.Add(id))
+                        if (!touch.touchId.ReadValueFromEvent(packet, out int id) || id <= 0 || !touch.phase.ReadValueFromEvent(packet, out var phase))
                             continue;
-                        bool end = phase == InputTouchPhase.Ended || phase == InputTouchPhase.Canceled;
+                        var transition = InputSystemCompatibility.ReadTouchPhase(phase);
+                        if (transition == InputSystemCompatibility.TouchTransition.Ignore || !visited.Add(id))
+                            continue;
                         Vector2 position = touch.position.ReadValueFromEvent(packet, out Vector2 supplied) ? supplied : touch.position.ReadValue();
-                        if (!ValidPosition(position))
-                        {
-                            diagnose("An observed touch position is outside the executable screen-pixel range and was omitted.");
-                            if (!end)
-                                continue;
-                            // Terminal identity cleanup must not depend on coordinates.
-                            if (!touchPositions.TryGetValue(id, out position))
-                            {
-                                touchSlots.Remove(id);
-                                continue;
-                            }
-                            diagnose("An observed touch release used the last valid position because its supplied position was invalid.");
-                        }
-                        if (phase == InputTouchPhase.Began && !touchSlots.ContainsKey(id))
-                        {
-                            int slot = 1;
-                            while (slot <= 10 && touchSlots.ContainsValue(slot))
-                                slot++;
-                            if (slot > 10)
-                            {
-                                diagnose("Observed touches exceeded ten executable contacts; additional contacts were omitted.");
-                                continue;
-                            }
-                            touchSlots.Add(id, slot);
-                        }
-                        if (!touchSlots.TryGetValue(id, out int selected))
-                        {
-                            diagnose("A touch already active before observation was omitted; no initial press was invented.");
-                            continue;
-                        }
-                        bool changed = !touchPositions.TryGetValue(id, out Vector2 previous) || position != previous;
-                        // Update ownership before notifying a consumer, which may dispose
-                        // the session synchronously. Never repopulate state after disposal.
-                        if (end)
-                        {
-                            touchSlots.Remove(id);
-                            touchPositions.Remove(id);
-                        }
-                        else
-                            touchPositions[id] = position;
-                        if (end || changed)
-                            Emit(
-                                new JObject
-                                {
-                                    ["action"] = "touch",
-                                    ["touch_id"] = selected,
-                                    ["state"] =
-                                        end ? "release"
-                                        : phase == InputTouchPhase.Began ? "press"
-                                        : "move",
-                                    ["position"] = Position(position),
-                                }
-                            );
+                        ObserveTouch(id, transition, position);
                     }
                 }
                 finally
@@ -362,13 +377,71 @@ namespace MCPForUnity.Editor.Tools.Input
                 }
             }
 
+            private void ObserveTouch(int id, InputSystemCompatibility.TouchTransition transition, Vector2 position)
+            {
+                bool end = transition == InputSystemCompatibility.TouchTransition.Release;
+                if (!ValidPosition(position))
+                {
+                    diagnose("An observed touch position is outside the executable screen-pixel range and was omitted.");
+                    if (!end)
+                        return;
+                    // Terminal identity cleanup must not depend on coordinates.
+                    if (!touchPositions.TryGetValue(id, out position))
+                    {
+                        touchSlots.Remove(id);
+                        return;
+                    }
+                    diagnose("An observed touch release used the last valid position because its supplied position was invalid.");
+                }
+                if (transition == InputSystemCompatibility.TouchTransition.Press && !touchSlots.ContainsKey(id))
+                {
+                    int slot = 1;
+                    while (slot <= 10 && touchSlots.ContainsValue(slot))
+                        slot++;
+                    if (slot > 10)
+                    {
+                        diagnose("Observed touches exceeded ten executable contacts; additional contacts were omitted.");
+                        return;
+                    }
+                    touchSlots.Add(id, slot);
+                }
+                if (!touchSlots.TryGetValue(id, out int selected))
+                {
+                    diagnose("A touch already active before observation was omitted; no initial press was invented.");
+                    return;
+                }
+                bool changed = !touchPositions.TryGetValue(id, out Vector2 previous) || position != previous;
+                // Update ownership before notifying a consumer, which may dispose
+                // the session synchronously. Never repopulate state after disposal.
+                if (end)
+                {
+                    touchSlots.Remove(id);
+                    touchPositions.Remove(id);
+                }
+                else
+                    touchPositions[id] = position;
+                if (end || changed)
+                    Emit(
+                        new JObject
+                        {
+                            ["action"] = "touch",
+                            ["touch_id"] = selected,
+                            ["state"] =
+                                end ? "release"
+                                : transition == InputSystemCompatibility.TouchTransition.Press ? "press"
+                                : "move",
+                            ["position"] = Position(position),
+                        }
+                    );
+            }
+
             public void Dispose()
             {
                 if (disposed)
                     return;
                 disposed = true;
-                InputApi.onBeforeUpdate -= BeforeUpdate;
-                InputApi.onEvent -= Event;
+                InputSystem.onBeforeUpdate -= BeforeUpdate;
+                InputSystem.onEvent -= Event;
                 buttons.Clear();
                 observedMouseButtons.Clear();
                 mousePosition = null;

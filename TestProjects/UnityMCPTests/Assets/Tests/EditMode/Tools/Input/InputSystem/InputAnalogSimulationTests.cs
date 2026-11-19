@@ -56,9 +56,9 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             Apply("{\"action\":\"gamepad\",\"control\":\"buttonSouth\",\"frames\":1}");
             InputApi.Update();
             Assert.That(trigger.ReadValue<float>(), Is.EqualTo(0.6f).Within(0.001f));
-            Assert.IsTrue(button.IsPressed());
+            Assert.AreEqual(1f, button.ReadValue<float>());
             InputApi.Update();
-            Assert.IsFalse(button.IsPressed());
+            Assert.AreEqual(0f, button.ReadValue<float>());
             Assert.Greater(trigger.ReadValue<float>(), 0.5f);
             InputApi.Update();
             InputApi.Update();
