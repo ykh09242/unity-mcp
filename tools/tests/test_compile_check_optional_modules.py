@@ -64,7 +64,7 @@ def test_module_matrix_rejects_unknown_module_before_compiling(
     assert not harness.calls.exists()
 
 
-def test_optional_module_defines_match_runtime_and_editor_package_versions() -> None:
+def test_optional_module_defines_require_only_installed_modules() -> None:
     for name in ("Runtime", "Editor"):
         definition = json.loads(
             (ROOT / f"MCPForUnity/{name}/MCPForUnity.{name}.asmdef").read_text(encoding="utf-8")
@@ -73,7 +73,7 @@ def test_optional_module_defines_match_runtime_and_editor_package_versions() -> 
         for module, (_, symbol) in MODULES.items():
             assert defines[f"com.unity.modules.{module}"] == {
                 "name": f"com.unity.modules.{module}",
-                "expression": "1.0.0",
+                "expression": "",
                 "define": symbol,
             }
 

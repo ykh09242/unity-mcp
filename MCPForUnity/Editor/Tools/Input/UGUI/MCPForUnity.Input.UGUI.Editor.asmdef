@@ -23,7 +23,7 @@
   "versionDefines": [
     {
       "name": "com.unity.ugui",
-      "expression": "1.0.0",
+      "expression": "",
       "define": "MCP_INPUT_UGUI"
     }
   ],

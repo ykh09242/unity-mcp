@@ -26,7 +26,7 @@
   "versionDefines": [
     {
       "name": "com.unity.modules.ai",
-      "expression": "0.0.0",
+      "expression": "",
       "define": "MCP_FOR_UNITY_AI_MODULE"
     }
   ],

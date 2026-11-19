@@ -5,7 +5,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-#if UNITY_VFX_GRAPH //Please enable the symbol in the project settings for VisualEffectGraph to work
+#if UNITY_VFX_GRAPH
 using UnityEngine.VFX;
 #endif
 
@@ -14,7 +14,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
     /// <summary>
     /// Tool for managing Unity VFX components:
     /// - ParticleSystem (legacy particle effects)
-    /// - Visual Effect Graph (modern GPU particles, currently only support HDRP, other SRPs may not work)
+    /// - Visual Effect Graph (GPU effects with the installed package and a compatible render pipeline)
     /// - LineRenderer (lines, bezier curves, shapes)
     /// - TrailRenderer (motion trails)
     ///

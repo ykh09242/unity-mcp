@@ -33,7 +33,7 @@ namespace MCPForUnity.Editor.Tools.Terrain
                 return new ErrorResponse("terrain_operation_failed", new { message = "Native Terrain operation failed; no automatic retry was performed." });
             }
 #else
-            return new ErrorResponse("terrain_unavailable", new { message = "The built-in Terrain module and its supported version define are required." });
+            return new ErrorResponse("terrain_unavailable", new { message = "The built-in Terrain module is required." });
 #endif
         }
     }

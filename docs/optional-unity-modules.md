@@ -11,7 +11,7 @@ installation is introduced.
 | --- | --- | --- |
 | `com.unity.modules.physics` | `MCP_FOR_UNITY_PHYSICS` in Runtime and Editor | Physics tools return `physics_modules_unavailable`; physics material creation returns `physics_module_unavailable`. Ordinary assets, components, scenes and profiling remain available. |
 | `com.unity.modules.physics2d` | `MCP_FOR_UNITY_PHYSICS2D` in Runtime and Editor | Physics tools return `physics_modules_unavailable`. Core component/scene operations and available simulation-profile domains remain available. |
-| `com.unity.modules.screencapture` | `MCP_FOR_UNITY_SCREEN_CAPTURE` in Runtime and Editor | Direct Game View capture returns `screen_capture_module_unavailable`; composited screenshots report a camera fallback without waiting for a frame. Camera and Scene View rendering remain available. Recording capabilities omit the unavailable Game View source. |
+| `com.unity.modules.screencapture` | `MCP_FOR_UNITY_SCREEN_CAPTURE` in Runtime and Editor | File-only and composited Play mode Game View screenshots use an existing camera and report `camera_fallback` with `screen_capture_module_unavailable` in the reason. Without a usable camera render, they return an error. Camera and Scene View capture remain available with their usual prerequisites. Recording capabilities omit the unavailable Game View source. |
 
 The existing physics implementations share 2D and 3D types. Their dispatcher and
 generated capability wrappers remain registered, but require **both** physics
@@ -21,9 +21,9 @@ collider module remains installed; cross-dimension conflict checks are needed
 only when both dimensions exist. Simulation settings resolve each dimension
 independently and retain explicit unavailable entries.
 
-The Runtime and Editor asmdefs each derive their symbols from the installed
-module package version, starting at `1.0.0`. These are assembly-local package
-version defines, not user scripting symbols or inferred Unity version flags.
+The Runtime and Editor assembly definitions enable each module's symbol when
+Unity registers the package. An empty version expression accepts every registered
+version, including prereleases.
 See Unity's [assembly inclusion documentation](https://docs.unity3d.com/Manual/assembly-definition-includes.html).
 
 ## Required boundaries
@@ -34,8 +34,8 @@ Toolkit backs the main Editor windows, settings and UI tools. Those dependencies
 are not described as optional. Image Conversion remains required for PNG/image
 processing, and UnityWebRequest remains required for supported download paths.
 Editor Coroutines, Test Framework, NUnit and Newtonsoft remain automatic UPM
-dependencies. Existing separate Input System and uGUI adapters keep their own
-package version constraints.
+dependencies. The separate Input System and uGUI adapters check their own package
+and API requirements.
 
 ## Availability evidence
 

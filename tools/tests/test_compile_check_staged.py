@@ -410,7 +410,7 @@ def test_test_assembly_inventory_matches_declared_graph() -> None:
     assert addressables["versionDefines"] == [
         {
             "name": "com.unity.addressables",
-            "expression": "0.0.0",
+            "expression": "",
             "define": "MCP_ADDRESSABLES_FIXTURE",
         }
     ]
@@ -523,32 +523,32 @@ def test_staged_assembly_contract_matches_owned_asmdefs() -> None:
     assert tests["defineConstraints"] == ["UNITY_INCLUDE_TESTS"]
     ai_module = {
         "name": "com.unity.modules.ai",
-        "expression": "0.0.0",
+        "expression": "",
         "define": "MCP_FOR_UNITY_AI_MODULE",
     }
     terrain_module = {
         "name": "com.unity.modules.terrain",
-        "expression": "0.0.0",
+        "expression": "",
         "define": "MCP_FOR_UNITY_TERRAIN",
     }
     assert tests["versionDefines"] == [ai_module]
     assert editor["versionDefines"] == [
-        {"name": "com.unity.visualeffectgraph", "expression": "0.0.0", "define": "UNITY_VFX_GRAPH"},
+        {"name": "com.unity.visualeffectgraph", "expression": "", "define": "UNITY_VFX_GRAPH"},
         ai_module,
         terrain_module,
         {
             "name": "com.unity.modules.physics",
-            "expression": "1.0.0",
+            "expression": "",
             "define": "MCP_FOR_UNITY_PHYSICS",
         },
         {
             "name": "com.unity.modules.physics2d",
-            "expression": "1.0.0",
+            "expression": "",
             "define": "MCP_FOR_UNITY_PHYSICS2D",
         },
         {
             "name": "com.unity.modules.screencapture",
-            "expression": "1.0.0",
+            "expression": "",
             "define": "MCP_FOR_UNITY_SCREEN_CAPTURE",
         },
     ]
