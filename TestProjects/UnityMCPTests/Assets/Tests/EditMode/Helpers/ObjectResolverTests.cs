@@ -15,6 +15,21 @@ namespace MCPForUnityTests.Editor.Helpers
         private string _assetRoot;
         private readonly List<GameObject> _objects = new List<GameObject>();
 
+        [Test]
+        public void GameObjectIdentityAndComponentLookupRespectTheRequestedType()
+        {
+            var ui = new GameObject("ResolverUi", typeof(RectTransform), typeof(CanvasRenderer));
+            _objects.Add(ui);
+            var request = new JObject { ["find"] = ui.GetInstanceIDCompat(), ["method"] = "by_id" };
+            Assert.AreSame(ui, ObjectResolver.Resolve<GameObject>(request));
+            Assert.AreSame(ui.transform, ObjectResolver.Resolve<RectTransform>(request));
+            var renderer = ui.GetComponent<CanvasRenderer>();
+            Assert.IsNull(GameObjectLookup.FindById(renderer.GetInstanceIDCompat()));
+            request["component"] = nameof(CanvasRenderer);
+            Assert.AreSame(renderer, ObjectResolver.Resolve(request, typeof(Component)));
+            Assert.IsNull(ObjectResolver.Resolve(request, typeof(RectTransform)));
+        }
+
         [SetUp]
         public void SetUp()
         {
@@ -44,7 +59,7 @@ namespace MCPForUnityTests.Editor.Helpers
 
         private Material CreateMaterial(string name, string folder = null)
         {
-            Shader shader = Shader.Find("Standard") ?? Shader.Find("Universal Render Pipeline/Lit");
+            Shader shader = TestUtilities.FindFirstShader("Standard", "Universal Render Pipeline/Lit");
             Assert.IsNotNull(shader, "A standard material shader is required by this fixture.");
             var material = new Material(shader) { name = name };
             AssetDatabase.CreateAsset(material, $"{folder ?? _assetRoot}/{name}.mat");
