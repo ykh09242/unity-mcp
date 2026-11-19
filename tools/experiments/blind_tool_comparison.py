@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 from pathlib import Path
 
 from tools.experiments.blind_tool_trace import score_directory
@@ -46,6 +47,7 @@ METRICS = (
     "evidence_transport",
     "selection_diagnosis",
     "actor_receipt",
+    "actor_conditions",
     "role_attribution",
     "graph_data_state",
     "unsaved_graph_observed",
@@ -87,6 +89,64 @@ def summarize(cases: list[dict]) -> dict:
     }
 
 
+def study_stratum(pairs):
+    eligible = [pair for pair in pairs if pair["eligible"]]
+    result = {"planned_pairs": len(pairs), "eligible_pairs": len(eligible), "arms": {}}
+    for arm in ("baseline", "candidate"):
+        observed = [pair[arm] for pair in pairs if pair[arm]]
+        answered = [pair[arm] for pair in eligible]
+        # The open-window task measures restraint. Its declared readers only observe a saved file.
+        positive = [pair[arm] for pair in eligible if pair["task"] != "graph-open"]
+        captures = Counter(
+            (case.get("selection_diagnosis") or {}).get("search_capture", "unknown")
+            for case in positive
+        )
+        ranked = [
+            case["selection_diagnosis"]["first_search_top3_suitable"]
+            for case in positive
+            if (case.get("selection_diagnosis") or {}).get("search_capture") == "ranked"
+        ]
+        direct = [
+            case
+            for case in positive
+            if (case.get("selection_diagnosis") or {}).get("search_capture") == "no_search"
+        ]
+
+        def ratio(hits, total):
+            return {"numerator": hits, "denominator": total}
+
+        result["arms"][arm] = {
+            "observed_turns": len(observed),
+            "confirmed_actors": sum(c["role_status"] == "confirmed" for c in observed),
+            "complete_wire": ratio(
+                sum(c["wire_evidence"] == "complete" for c in positive), len(positive)
+            ),
+            "first_success_on_first_business_call": ratio(
+                sum(c["calls_before_first_success"] == 0 for c in positive), len(positive)
+            ),
+            "first_success_without_search": ratio(
+                sum(c["calls_before_first_success"] == 0 for c in direct), len(direct)
+            ),
+            "natural_search_capture": dict(captures),
+            "suitable_in_first_search_top3": ratio(
+                sum(value is True for value in ranked), sum(value is not None for value in ranked)
+            ),
+            "answer_status": dict(Counter(c["final_answer"]["status"] for c in answered)),
+            "valid_answer_format": ratio(
+                sum(c["final_answer"].get("format_valid") is True for c in answered),
+                sum("format_valid" in c["final_answer"] for c in answered),
+            ),
+            **{
+                key: ratio(
+                    sum(c["final_answer"].get(key, {}).get("matched", 0) for c in answered),
+                    sum(c["final_answer"].get(key, {}).get("measured", 0) for c in answered),
+                )
+                for key in ("fact_accuracy", "provenance_accuracy")
+            },
+        }
+    return result
+
+
 def compare_directories(baseline: Path, candidate: Path) -> dict:
     reports = [
         score_directory(path) if path.is_dir() else {"cases": [], "unrun_cases": []}
@@ -102,12 +162,21 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
         planned.update(map(tuple, report["unrun_cases"]))
         indices.append(index)
     pairs = []
+    pilot_path = baseline.parent / "preflight.json"
+    pilots = (
+        json.loads(pilot_path.read_text(encoding="utf-8"))
+        if baseline.parent == candidate.parent and pilot_path.is_file()
+        else {}
+    )
     for key in sorted(planned):
         left, right = (index.get(key) for index in indices)
         reasons = []
         order = None
         if left is None or right is None:
             reasons.append("missing_arm")
+            pilot = pilots.get(key[2], {})
+            if pilot.get("supported") is False and pilot.get("attempts"):
+                reasons.extend("preflight:" + why for why in pilot["attempts"][-1]["reasons"])
         else:
             host_modes = [c.get("host_mode", "isolated") for c in (left, right)]
             if host_modes[0] != host_modes[1]:
@@ -121,6 +190,22 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
                     reasons.append("unverified:competing_tools")
                 elif left["competitor_digest"] != right["competitor_digest"]:
                     reasons.append("different:competing_tools")
+            if left.get("study") or right.get("study"):
+                from tools.experiments.blind_tool_preflight import pair_controls
+
+                if left.get("study") != right.get("study"):
+                    reasons.append("different:study")
+                reasons.extend(pair_controls(left, right))
+                for arm, case in (("baseline", left), ("candidate", right)):
+                    actor = case.get("actor_conditions") or {}
+                    if actor.get("inventory_status") != "observed" or not actor.get(
+                        "tool_schema_digest"
+                    ):
+                        reasons.append("unverified:" + arm + "_actor_inventory")
+                    if not case.get("editor_end_state"):
+                        reasons.append("unverified:" + arm + "_editor_end_state")
+                    elif case["editor_end_state"] != case.get("editor_start_state"):
+                        reasons.append("changed:" + arm + "_editor_state")
             for name in CONDITIONS:
                 if (
                     name not in left
@@ -154,7 +239,7 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
         pair = {
             **dict(zip(AXES, key, strict=True)),
             "eligible": not reasons,
-            "reasons": reasons,
+            "reasons": list(dict.fromkeys(reasons)),
             "order": order,
         }
         for arm, case in (("baseline", left), ("candidate", right)):
@@ -176,5 +261,15 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
         "eligible_order_counts": dict(Counter(p["order"] for p in eligible)),
         "eligible_summary": summaries,
         "observed_by_requested_role": observed_by_role,
+        "coverage": {
+            "overall": study_stratum(pairs),
+            **{
+                axis: {
+                    value: study_stratum([pair for pair in pairs if pair[axis] == value])
+                    for value in sorted({pair[axis] for pair in pairs})
+                }
+                for axis in ("task", "language", "role")
+            },
+        },
         "pairs": pairs,
     }

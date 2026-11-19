@@ -94,3 +94,17 @@ def test_unknown_additional_keys_and_bad_values_do_not_crash():
     answer = empty("game-view") | {"extra": {}}
     answer["height"] = {"value": {}, "source": [], "channel": {}}
     assert not score_claims("game-view", answer, [], [])["format_valid"]
+
+
+def test_child_report_cannot_be_supplied_or_corrected_by_parent(tmp_path):
+    parent = json.dumps(empty("game-view"))
+    (tmp_path / "answer.txt").write_text(parent)
+    assert (
+        final_answer(tmp_path, "game-view", [], [], parent, protocol="v3", actor_answer="")[
+            "status"
+        ]
+        == "missing"
+    )
+    assert not final_answer(
+        tmp_path, "game-view", [], [], parent, protocol="v3", actor_answer="child prose"
+    )["format_valid"]

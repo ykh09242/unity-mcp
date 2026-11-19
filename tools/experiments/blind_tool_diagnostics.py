@@ -46,6 +46,7 @@ def search_receipt(data):
     else:
         ranked = [[name] if (name := _route(row)) else [] for row in routes[:3]]
     count = data.get("total_route_groups")
+    limitation = data.get("no_match")
     return {
         "matching": "observation" if data.get("matching") == "observation" else "lexical",
         **(
@@ -61,6 +62,30 @@ def search_receipt(data):
         "grouped": isinstance(groups, list),
         "top3": ranked,
         "distinct_groups": count if type(count) is int and count >= 0 else None,
+        **(
+            {
+                "no_match_reason": limitation["reason"],
+                "excluded_values": [
+                    value
+                    for value in (limitation.get("excluded_values") or [])[:32]
+                    if _identifier(value)
+                ]
+                if isinstance(limitation.get("excluded_values"), list)
+                else [],
+            }
+            if not routes
+            and isinstance(limitation, dict)
+            and limitation.get("reason")
+            in (
+                "explicitly_unavailable",
+                "undeclared_evidence",
+                "wrong_source",
+                "incompatible_combination",
+                "lexical_miss",
+                "no_visible_route",
+            )
+            else {}
+        ),
     }
 
 

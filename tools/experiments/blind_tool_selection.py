@@ -19,11 +19,13 @@ if not __package__:
 
 from tools.experiments.blind_tool_answers import answer_instruction
 from tools.experiments.blind_tool_comparison import compare_directories, paired_schedule
-from tools.experiments.blind_tool_trace import score_directory
+from tools.experiments.blind_tool_trace import score_case, score_directory
 
 TASKS = ("raycast", "graph", "graph-saved", "graph-open", "game-view", "editor", "context")
 LANGUAGES = ("en", "ko", "ja", "es", "ar", "tr")
 ROLES = ("main", "subagent")
+STUDY_TASKS = ("game-view", "graph-saved", "graph-open")
+STUDY = "consumer-discovery"
 
 
 def task_prompt(task: str, language: str, graph_asset: str) -> str:
@@ -36,6 +38,9 @@ def task_prompt(task: str, language: str, graph_asset: str) -> str:
 
 def delivery_prompt(args: argparse.Namespace, task: str, language: str, role: str) -> str:
     prompt = task_prompt(task, language, args.graph_asset)
+    if getattr(args, "study", None) == STUDY:
+        with Path(__file__).with_name("blind_tool_tasks.json").open(encoding="utf-8") as stream:
+            prompt += "\n" + json.load(stream)["observation_scope"][language]
     if getattr(args, "answer_format", "prose") == "json":
         prompt += "\n\n" + answer_instruction(task, getattr(args, "answer_protocol", "v1"))
     if role == "main":
@@ -182,6 +187,8 @@ def run_case(
         metadata["runner_status"] = "launch_failed"
         metadata["failure_type"] = type(error).__name__
     finally:
+        if getattr(args, "study", None) and metadata.get("runner_phase") == "model_turn":
+            metadata["editor_end_state"] = probe_state(args)
         (case_dir / "case.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
 
@@ -195,13 +202,12 @@ def create_parser() -> argparse.ArgumentParser:
     launch.add_argument("--codex", default=shutil.which("codex.exe") or shutil.which("codex"))
     launch.add_argument("--model", required=True)
     launch.add_argument("--effort", required=True)
-    launch.add_argument("--task", choices=TASKS, action="append", required=True)
-    launch.add_argument("--language", choices=LANGUAGES, action="append", required=True)
-    launch.add_argument("--role", choices=ROLES, action="append", required=True)
+    launch.add_argument("--task", choices=TASKS, action="append")
+    launch.add_argument("--language", choices=LANGUAGES, action="append")
+    launch.add_argument("--role", choices=ROLES, action="append")
     launch.add_argument(
         "--host-mode",
         choices=("isolated", "configured"),
-        default="isolated",
         help="Use the normal Codex host and competing tools, or the isolated control",
     )
     launch.add_argument(
@@ -221,7 +227,6 @@ def create_parser() -> argparse.ArgumentParser:
     launch.add_argument(
         "--answer-protocol",
         choices=("v1", "v2", "v3"),
-        default="v2",
         help="JSON answer schema (v1 reproduces the earlier prompt)",
     )
     launch.add_argument("--state-probe", type=Path, help="Trusted read-only Python state probe")
@@ -233,6 +238,9 @@ def create_parser() -> argparse.ArgumentParser:
     )
     single = modes.add_parser("run", parents=[launch], help="Run an observation matrix")
     matched = modes.add_parser("matched", parents=[launch], help="Run counterbalanced pairs")
+    matched.add_argument(
+        "--study", choices=[STUDY], help="Run the predeclared six-language consumer study"
+    )
     for command, prefix in [(single, ""), (matched, "baseline-"), (matched, "candidate-")]:
         backend = command.add_mutually_exclusive_group(required=True)
         backend.add_argument(
@@ -310,6 +318,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
     if args.mode in {"run", "matched"}:
+        study = getattr(args, "study", None)
+        if study:
+            if any((args.task, args.language, args.role)):
+                parser.error("--study supplies its task, language and role axes")
+            if (
+                args.host_mode == "isolated"
+                or not args.state_probe
+                or args.answer_format == "prose"
+            ):
+                parser.error(
+                    "--study requires a configured host, a state probe and structured answers"
+                )
+            args.task, args.language, args.role = STUDY_TASKS, LANGUAGES, ROLES
+        elif not all((args.task, args.language, args.role)):
+            parser.error("provide --task, --language and --role or select --study")
+        args.host_mode = args.host_mode or ("configured" if study else "isolated")
+        args.answer_protocol = args.answer_protocol or ("v3" if study else "v2")
         args.project, args.output = map(Path.resolve, (args.project, args.output))
         if args.host_mode == "configured":
             from tools.experiments.blind_tool_host import IDENTIFIER, RECORDED_SERVER
@@ -373,15 +398,49 @@ def main(argv: Sequence[str] | None = None) -> int:
         schedule = (
             paired_schedule(cells) if args.mode == "matched" else [("single", c) for c in cells]
         )
+        if study:
+            schedule = []
+            for cell in cells:
+                task, language, role, repeat = cell
+                offset = (
+                    STUDY_TASKS.index(task) + LANGUAGES.index(language) + ROLES.index(role) + repeat
+                )
+                order = ("baseline", "candidate") if offset % 2 else ("candidate", "baseline")
+                schedule.extend((arm, cell) for arm in order)
+            manifest = {
+                "study": study,
+                "tasks": args.task,
+                "languages": LANGUAGES,
+                "held_out_language": "tr",
+                "roles": ROLES,
+                "repeats": args.repeat,
+                "answer_protocol": args.answer_protocol,
+                "planned_pairs": len(cells),
+                "scheduled_turns": len(schedule),
+                "pilot_task": "game-view",
+                "pilot_language": "en",
+                "pilot_included_in_score": False,
+            }
+            (args.output / "study.json").write_text(
+                json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+            )
         schedule_id = str(uuid4())
         (args.output / "schedule.json").write_text(json.dumps(schedule) + "\n", encoding="utf-8")
+        pilots = {}
+        if study:
+            from tools.experiments.blind_tool_preflight import run_pilots
+
+            pilots = run_pilots(arms, args.output, args.role, run_case, score_case)
         for index, (arm, cell) in enumerate(schedule, 1):
+            if study and not pilots[cell[2]]["supported"]:
+                continue
             selected = arms[arm]
             selected.case_metadata = {
                 "arm": arm,
                 "schedule_id": schedule_id,
                 "execution_order": index,
-                "editor_start_state": probe_state(selected),
+                "editor_start_state": None if study else probe_state(selected),
+                **({"study": study} if study else {}),
                 "backend_identity": sha256(selected.relay.read_bytes()).hexdigest()
                 if selected.relay
                 else selected.endpoint,

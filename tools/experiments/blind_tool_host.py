@@ -511,7 +511,7 @@ async def run_configured(args, case_dir, prompt, metadata):
 
 async def _configured_session(args, case_dir, prompt, metadata, expected=None):
     """Use the app-server protocol to observe the exact ephemeral thread before its model turn."""
-    from tools.experiments.blind_tool_trace import thread_digest
+    from tools.experiments.blind_tool_trace import thread_digest, wire_checkpoint
 
     command, server = launch_settings(args, case_dir)
     metadata["unity_server"] = server
@@ -586,6 +586,7 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                 if metadata["observed_server_commit"]:
                     metadata["backend_identity"] = metadata["observed_server_commit"]
                 metadata["runner_phase"] = "model_turn"
+                metadata["wire_before_turn"] = wire_checkpoint(case_dir)
                 reply = await client.request(
                     "turn/start",
                     {
@@ -673,6 +674,7 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                 if status != "completed":
                                     raise ValueError("Configured model turn did not complete")
                                 emit({"type": "turn.completed"})
+                                metadata["wire_at_completion"] = wire_checkpoint(case_dir)
                                 if metadata["role"] == "subagent" or parents:
                                     if not parents and supports_parent_lookup(args.codex):
                                         parents, metadata["child_lookup"] = await scoped_children(

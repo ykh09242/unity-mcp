@@ -2,6 +2,7 @@
 
 import asyncio
 from copy import deepcopy
+import json
 from pathlib import Path
 import sys
 from uuid import uuid4
@@ -10,6 +11,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.experiments.blind_tool_host import observed_permissions, scoped_children
 from tools.experiments.blind_tool_preflight import pair_controls, pilot_reasons
+from tools.experiments.blind_tool_trace import wire_checkpoint, wire_trace
+
+
+def test_evaluator_and_actor_can_read_the_same_resource(tmp_path):
+    wire = tmp_path / "mcp-01.jsonl"
+
+    def read(number):
+        with wire.open("a", encoding="utf-8") as stream:
+            for item in (
+                {"event": "request", "route": "mcpforunity://project/info", "channel": "unity"},
+                {
+                    "event": "response",
+                    "outcome": "returned",
+                    "observation": {"project_fields": True},
+                },
+            ):
+                stream.write(json.dumps({**item, "sequence": number}) + "\n")
+
+    read(1)
+    start = wire_checkpoint(tmp_path)
+    read(2)
+    end = wire_checkpoint(tmp_path)
+    read(3)
+    assert [
+        call.order for call in wire_trace(wire, after=start[wire.name], through=end[wire.name])
+    ] == [2]
 
 
 def test_fallback_only_queries_and_accepts_exact_direct_children():

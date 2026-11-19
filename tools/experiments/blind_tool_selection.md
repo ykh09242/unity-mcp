@@ -229,6 +229,32 @@ reported in an open-window answer belongs in the optional `saved_reference`
 object. A limited receipt can support an honest unknown about the open window.
 A number without an actor-owned receipt receives no accuracy credit.
 
+## Balanced consumer study
+
+Use `matched --study consumer-discovery` with a project, exact instance,
+graph asset, model, effort, trusted baseline and candidate relays, state probe
+and a new private output directory. It defaults to a configured host and V3.
+Each repetition schedules 36 pairs. Game View, the saved graph and the open
+graph window are requested in English, Korean, Japanese, Spanish, Arabic and
+held-out Turkish, in both roles. Keep prompts and model settings identical
+between arms. The order alternates within each role across locales.
+
+The runner writes the manifest, both matrices and the complete schedule first.
+Separate game-view pilots establish business-call ownership without grading
+which tool the actor selected. Each arm needs its own actor census, permissions,
+namespace, binary identity, product receipt and Editor state. A scoped host
+lookup requires schema support for a direct parent filter and validates each
+returned parent link. If a role lacks evidence, its planned cells remain in
+the comparison with the pilot reasons. A transient control difference permits
+one pilot retry. The model does not see the pilot or a suggested route.
+
+The coverage report retains planned, observed and eligible denominators by
+task, language and role. The open-window task evaluates the answer's limits.
+Wire and first-business success use the eligible observable tasks. The direct
+score requires confirmed absence of a catalog search. Top-three retrieval
+uses only captured natural searches. Zero searches yields a denominator of
+zero. Scripted discovery probes are reported separately.
+
 ## Contrast observation with action
 
 Run the disconnected fixture to compare observing compilation with starting

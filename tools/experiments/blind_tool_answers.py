@@ -159,12 +159,16 @@ def final_answer(
     *,
     protocol: str = "v1",
     explicit_limit: bool = False,
+    actor_answer: str | None = None,
 ) -> dict:
     """Bind optional human reviews to the actual answer and evidence."""
     answer_path = case / "answer.txt"
-    text = (
-        answer_path.read_text(encoding="utf-8-sig") if answer_path.is_file() else host_answer
-    ).strip()
+    if actor_answer is not None:
+        text = actor_answer.strip()
+    else:
+        text = (
+            answer_path.read_text(encoding="utf-8-sig") if answer_path.is_file() else host_answer
+        ).strip()
     if not text:
         if protocol == "v3":
             from tools.experiments.blind_tool_claims import score_claims

@@ -58,9 +58,6 @@ DISCOVERY = {
     "manage_tools.describe",
     "manage_tools.list_groups",
     *SEARCH_ROUTES,
-    "manage_tools.activate",
-    "manage_tools.deactivate",
-    "manage_tools.reset",
     "mcpforunity://capabilities",
     "mcpforunity://capabilities/scoped",
     "mcpforunity://instances",
@@ -472,13 +469,17 @@ class Call:
     response_at: int = 0
 
 
-def wire_trace(path: Path) -> list[Call]:
+def wire_trace(path: Path, *, after: int = 0, through: int | None = None) -> list[Call]:
     """Join request and response records by connection-local sequence number."""
     calls: dict[int, Call] = {}
     with path.open(encoding="utf-8") as stream:
         for ordinal, row in enumerate(load_lines(stream), 1):
             number = row.get("sequence")
-            if type(number) is not int:
+            if (
+                type(number) is not int
+                or number <= after
+                or (through is not None and number > through)
+            ):
                 continue
             match row.get("event"):
                 case "request":
@@ -501,6 +502,14 @@ def wire_trace(path: Path) -> list[Call]:
                 case _:
                     continue
     return list(calls.values())
+
+
+def wire_checkpoint(directory: Path) -> dict[str, int]:
+    """Record per-connection request bounds before or after a host-owned model turn."""
+    return {
+        path.name: max((call.order for call in wire_trace(path)), default=0)
+        for path in directory.glob("mcp-*.jsonl")
+    }
 
 
 def event_route(item: dict[str, Any]) -> str:
@@ -959,7 +968,16 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         child = client_trace(
             case_dir / f"child-{actor}.jsonl", asset, expected_actor=actor, **options
         )
-    connections = [wire_trace(path) for path in sorted(case_dir.glob("mcp-*.jsonl"))]
+    starts = row.get("wire_before_turn") or {}
+    ends = row.get("wire_at_completion")
+    connections = [
+        wire_trace(
+            path,
+            after=starts.get(path.name, 0),
+            through=ends.get(path.name, 0) if isinstance(ends, dict) else None,
+        )
+        for path in sorted(case_dir.glob("mcp-*.jsonl"))
+    ]
     role, attribution = role_status(
         string(row["role"]),
         parent,
@@ -1048,14 +1066,39 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         parent.parent_actor if row["role"] == "main" else next(iter(parent.child_actors), "")
     )
     actor_host = parent if row["role"] == "main" else child
+    actor_conditions = {
+        "host_binary_digest": row.get("host_binary_digest"),
+        "project_verified": inventory.get("project_verified"),
+        "namespace": inventory.get("namespace"),
+        "permissions": inventory.get("permissions"),
+        "server_commit": mapping(inventory.get("source")).get("server_commit"),
+        "tool_schema_digest": inventory.get("tool_schema_digest"),
+        "competitor_digest": inventory.get("competitor_digest"),
+        "inventory_status": inventory.get("status"),
+    }
+    searches = actor_searches(actor_host, wire, selected_actor, role == "confirmed")
     diagnosis = stage_diagnosis(
         set() if task == "graph-open" else routes,
         inventory,
         business,
-        actor_searches(actor_host, wire, selected_actor, role == "confirmed"),
+        searches,
         role_confirmed=role == "confirmed",
         grade=task_evidence,
     )
+    if searches:
+        diagnosis["search_capture"] = (
+            "ranked" if diagnosis["first_search"] else "attempt_without_rank"
+        )
+    elif (
+        role == "confirmed"
+        and actor_host
+        and actor_host.completed
+        and selected_actor
+        and not any(call.route in SEARCH_ROUTES and not call.actor for call in wire)
+    ):
+        diagnosis["search_capture"] = "no_search"
+    else:
+        diagnosis["search_capture"] = "unknown"
     diagnosis["actor_discovery"] = actor_discovery(
         actor_host, wire, selected_actor, role == "confirmed"
     )
@@ -1070,6 +1113,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             else {}
         ),
         "answer_protocol": string(row.get("answer_protocol")) or "v1",
+        "actor_conditions": actor_conditions,
         "role_status": role,
         "role_attribution": attribution,
         "turn_completed": parent.completed,
@@ -1133,6 +1177,19 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             else [],
             parent.final_message if parent.completed else "",
             protocol=string(row.get("answer_protocol")) or "v1",
+            actor_answer=(
+                child.final_message if child and child.completed and role == "confirmed" else ""
+            )
+            if row.get("answer_protocol") == "v3" and row["role"] == "subagent"
+            else None,
+            explicit_limit=task == "graph-open"
+            and any(
+                call.status in {"returned", "completed"}
+                and call.evidence.get("no_match_reason") == "explicitly_unavailable"
+                and call.evidence.get("observation_source") == "editor_live"
+                and "unsaved_graph_structure" in call.evidence.get("excluded_values", [])
+                for call in searches
+            ),
         ),
     }
 

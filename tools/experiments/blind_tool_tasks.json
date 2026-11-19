@@ -1,4 +1,12 @@
 {
+  "observation_scope": {
+    "en": "Limit data access to relevant observations in this project’s open Editor and to the named asset, if any. Leave unrelated files and service data untouched.",
+    "ko": "자료 조회는 이 프로젝트에 열린 에디터의 관련 상태와 요청에서 지정한 에셋으로 한정해 주세요. 그 밖의 파일이나 서비스 데이터는 열지 마세요.",
+    "ja": "参照するデータは、このプロジェクトで開いているエディターの関連状態と、指定されたアセットがあればその内容に限ってください。無関係なファイルやサービスのデータは開かないでください。",
+    "es": "Limita la consulta al estado pertinente del editor abierto para este proyecto y al recurso indicado, si lo hay. No consultes otros archivos ni datos de servicios ajenos a la solicitud.",
+    "ar": "اقتصر في الاطلاع على الحالة ذات الصلة في المحرر المفتوح لهذا المشروع وعلى ملف الأصل المذكور إن وجد. لا تطّلع على ملفات أو بيانات خدمات أخرى خارج نطاق الطلب.",
+    "tr": "Yalnızca bu proje için açık düzenleyicideki ilgili durumu ve belirtilmişse adı verilen varlığı inceleyin. İlgisiz dosyaları veya hizmet verilerini açmayın."
+  },
   "raycast": {
     "tr": "Bu proje için açık olan Unity Editörü'nde Oyun Görünümü'nün piksel cinsinden tam merkezini bulun. Canlı gözlemle belirlenebiliyorsa, o noktada işaretçiyi ilk hangi uGUI öğesinin alacağını söyleyin. Koordinatı ve gözlemin sınırlarını bildirin.",
     "en": "In the Unity Editor already open for this project, find the exact center of the current Game View in pixels. Determine which uGUI element would receive a pointer there first, if the available live evidence permits it. Report the coordinate and any limit on the result.",
