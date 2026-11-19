@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -18,6 +19,24 @@ namespace MCPForUnity.Editor.Tools.Build
     /// <summary>Bounded versioned build snapshots, independent of the heavy native report and domain-static jobs.</summary>
     internal static partial class BuildReportStore
     {
+        internal static readonly Func<BuildReport> GetLatestReport = BindReportMethod<Func<BuildReport>>(
+            "GetLatestReport",
+            BindingFlags.Static,
+            typeof(BuildReport)
+        );
+        internal static readonly Func<BuildReport, string> SummarizeErrors = BindReportMethod<Func<BuildReport, string>>(
+            "SummarizeErrors",
+            BindingFlags.Instance,
+            typeof(string)
+        );
+
+        private static T BindReportMethod<T>(string name, BindingFlags binding, Type returnType)
+            where T : Delegate
+        {
+            var method = typeof(BuildReport).GetMethod(name, binding | BindingFlags.Public, null, Type.EmptyTypes, null);
+            return method?.ReturnType == returnType ? (T)method.CreateDelegate(typeof(T)) : null;
+        }
+
         internal const int MaxRecords = 64;
         internal const int MaxFileBytes = 512 * 1024;
         internal const int MaxSteps = 512;

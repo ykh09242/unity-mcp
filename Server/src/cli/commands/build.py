@@ -121,7 +121,7 @@ def plan_build(target, output_path, development, scripting_backend, subtarget, c
     help="Scripting backend",
 )
 @click.option("--subtarget", type=click.Choice(["player", "server"]), help="Build subtarget")
-@click.option("--profile", help="Build Profile asset path (Unity 6+)")
+@click.option("--profile", help="Build Profile asset path, when the Editor supports building with a profile")
 @click.option("--clean", is_flag=True, help="Clean build cache")
 @click.option("--auto-run", is_flag=True, help="Auto-run after build")
 @click.option(
@@ -281,7 +281,7 @@ def scenes(scene_paths: Optional[str]):
 @click.option("--activate", is_flag=True, help="Activate the specified profile")
 @handle_unity_errors
 def profiles_cmd(profile: Optional[str], activate: bool):
-    """List, inspect, or activate build profiles (Unity 6+).
+    """List, inspect, or activate Build Profiles supported by the connected Editor.
 
     \b
     Examples:
@@ -301,7 +301,7 @@ def profiles_cmd(profile: Optional[str], activate: bool):
 
 @build.command("batch")
 @click.option("--targets", "-t", help="Comma-separated targets: windows64,linux64,webgl")
-@click.option("--profiles", "-p", "profile_paths", help="Comma-separated profile paths (Unity 6+)")
+@click.option("--profiles", "-p", "profile_paths", help="Comma-separated Build Profile asset paths")
 @click.option("--output-dir", "-o", help="Base output directory")
 @click.option("--development", "-d", is_flag=True, help="Development build for all")
 @handle_unity_errors

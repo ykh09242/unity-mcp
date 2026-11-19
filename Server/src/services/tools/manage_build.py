@@ -119,7 +119,9 @@ async def manage_build(
     scripting_backend: Annotated[
         Optional[str], "Scripting backend: mono or il2cpp (persistent change)"
     ] = None,
-    profile: Annotated[Optional[str], "Build Profile asset path (Unity 6+ only)"] = None,
+    profile: Annotated[
+        Optional[str], "Build Profile asset path (requires the Editor's Build Profile API)"
+    ] = None,
     property: Annotated[
         Optional[str],
         "Settings property: product_name, company_name, version, bundle_id, scripting_backend, defines, architecture",
@@ -128,7 +130,8 @@ async def manage_build(
     activate: Annotated[Optional[str], "Activate a build profile (true/false)"] = None,
     targets: Annotated[Optional[str], "JSON array of targets for batch build"] = None,
     profiles: Annotated[
-        Optional[str], "JSON array of profile paths for batch build (Unity 6+)"
+        Optional[str],
+        "JSON array of profile paths for batch build (requires the Editor's profile build API)",
     ] = None,
     output_dir: Annotated[Optional[str], "Base output directory for batch builds"] = None,
     job_id: Annotated[Optional[str], "Job ID for status/cancel"] = None,

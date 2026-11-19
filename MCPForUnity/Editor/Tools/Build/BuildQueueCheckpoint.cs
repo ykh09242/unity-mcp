@@ -554,33 +554,30 @@ namespace MCPForUnity.Editor.Tools.Build
         {
             if (child.ProfilePath == null)
                 return;
-            if (child.ProfileSceneSettings != null && !JToken.DeepEquals(child.ProfileSceneSettings, CaptureCurrentProfileSceneSettings(child)))
-                throw new InvalidOperationException("Build profile scene settings changed while queued. Request a new build.");
+            var api = BuildProfileApi.Installed;
+            api.RequireBuild(child.Options.assetBundleManifestPath);
+            var profile = api.Load(child.ProfilePath);
             if (
-                AssetDatabase.GUIDToAssetPath(child.ProfileGuid) != child.ProfilePath
+                profile == null
+                || AssetDatabase.GUIDToAssetPath(child.ProfileGuid) != child.ProfilePath
                 || AssetDatabase.AssetPathToGUID(child.ProfilePath) != child.ProfileGuid
                 || AssetDatabase.GetAssetDependencyHash(child.ProfilePath).ToString() != child.ProfileHash
             )
                 throw new InvalidOperationException("Build profile changed or disappeared while queued. Request a new build.");
+            var effectiveScenes = api.EffectiveScenes(profile, out bool overridesGlobal);
+            if (
+                child.ProfileSceneSettings != null
+                && (
+                    child.ProfileOverridesGlobalScenes != overridesGlobal
+                    || !JToken.DeepEquals(child.ProfileSceneSettings, CaptureProfileSceneSettings(effectiveScenes))
+                )
+            )
+                throw new InvalidOperationException("Build profile scene settings changed while queued. Request a new build.");
         }
 
-        private static JArray CaptureCurrentProfileSceneSettings(BuildQueueChild child)
-        {
-#if UNITY_6000_0_OR_NEWER
-            if (child.ProfileOverridesGlobalScenes)
-            {
-                var profile = AssetDatabase.LoadAssetAtPath<UnityEditor.Build.Profile.BuildProfile>(child.ProfilePath);
-                if (profile == null || !profile.overrideGlobalScenes)
-                    throw new InvalidOperationException("Build profile changed or disappeared while queued. Request a new build.");
-                return CaptureProfileSceneSettings(profile.scenes);
-            }
-#endif
-            return CaptureProfileSceneSettings();
-        }
-
-        internal static JArray CaptureProfileSceneSettings(EditorBuildSettingsScene[] scenes = null) =>
+        internal static JArray CaptureProfileSceneSettings(EditorBuildSettingsScene[] scenes) =>
             new JArray(
-                (scenes ?? EditorBuildSettings.scenes).Select(scene => new JObject
+                scenes.Select(scene => new JObject
                 {
                     ["path"] = scene.path,
                     ["guid"] = AssetDatabase.AssetPathToGUID(scene.path),

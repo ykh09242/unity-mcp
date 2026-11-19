@@ -101,7 +101,46 @@ namespace MCPForUnityTests.EditMode.Tools
             StringAssert.Contains("Unknown scripting_backend", response.Value<string>("error"));
         }
 
+        [TestCase("{action:'build',profiles:['Assets/Profile.asset']}")]
+        [TestCase("{action:'batch',targets:['windows64'],profile:'Assets/Profile.asset'}")]
+        [TestCase("{action:'batch',targets:['windows64'],profiles:{path:'Assets/Profile.asset'}}")]
+        public void MisplacedProfileArgumentCannotScheduleAnOrdinaryBuild(string json)
+        {
+            string checkpoint = SessionState.GetString(BuildQueueCheckpoint.StorageKey, "");
+            var response = JObject.FromObject(ManageBuild.HandleCommand(JObject.Parse(json)));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("profile", response.Value<string>("error"));
+            Assert.AreEqual(checkpoint, SessionState.GetString(BuildQueueCheckpoint.StorageKey, ""));
+        }
+
 #if UNITY_6000_0_OR_NEWER
+        [Test]
+        public void ProfileInspectionWorksWithoutTheBuildOverload()
+        {
+            var installed = BuildProfileApi.Installed;
+            string path = "Assets/__ProfileInspection_" + Guid.NewGuid().ToString("N") + ".asset";
+            var profile = UnityEngine.ScriptableObject.CreateInstance<UnityEditor.Build.Profile.BuildProfile>();
+            try
+            {
+                AssetDatabase.CreateAsset(profile, path);
+                BuildProfileApi.Installed = new BuildProfileApi(profile.GetType(), null);
+                var listing = JObject.FromObject(ManageBuild.HandleCommand(new JObject { ["action"] = "profiles" }));
+                Assert.IsTrue(listing.Value<bool>("success"), listing.ToString());
+                Assert.That(listing["data"]["profiles"].SelectTokens("$[*].path").Values<string>(), Does.Contain(path));
+                var details = JObject.FromObject(ManageBuild.HandleCommand(new JObject { ["action"] = "profiles", ["profile"] = path }));
+                Assert.IsTrue(details.Value<bool>("success"), details.ToString());
+                var rejected = JObject.FromObject(ManageBuild.HandleCommand(new JObject { ["action"] = "build", ["profile"] = path }));
+                StringAssert.Contains("Build Profile API unavailable", rejected.Value<string>("error"));
+            }
+            finally
+            {
+                BuildProfileApi.Installed = installed;
+                AssetDatabase.DeleteAsset(path);
+                if (profile != null)
+                    UnityEngine.Object.DestroyImmediate(profile);
+            }
+        }
+
         [Test]
         public void Batch_EqualProfileNamesRejectBeforeQueueOrStoreChanges()
         {

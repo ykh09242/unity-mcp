@@ -6,7 +6,6 @@ using MCPForUnity.Editor.Tools.Build;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Build;
-using UnityEditor.Build.Reporting;
 
 namespace MCPForUnity.Editor.Tools
 {
@@ -109,16 +108,17 @@ namespace MCPForUnity.Editor.Tools
         {
             if (BuildPipeline.isBuildingPlayer)
                 return new ErrorResponse("A build is already in progress.");
+            if (p.GetStringArray("profiles", strict: true)?.Length > 0)
+                return new ErrorResponse("Use 'profile' for a single build or 'batch' with 'profiles'.");
 
             string targetName = p.Get("target");
             if (!BuildTargetMapping.TryResolveBuildTarget(targetName, out var target))
                 return new ErrorResponse(BuildTargetMapping.GetUnknownBuildTargetMessage(targetName));
 
             string profilePath = p.Get("profile");
-            bool useProfile = false;
-#if UNITY_6000_0_OR_NEWER
-            useProfile = !string.IsNullOrEmpty(profilePath);
-#endif
+            bool useProfile = !string.IsNullOrEmpty(profilePath);
+            if (useProfile)
+                BuildProfileApi.Installed.RequireBuild();
             var group = BuildTargetMapping.GetTargetGroup(target);
             if (!useProfile && !BuildPipeline.IsBuildTargetSupported(group, target))
                 return new ErrorResponse($"Platform '{target}' is not installed. Install it via Unity Hub.");
@@ -144,13 +144,8 @@ namespace MCPForUnity.Editor.Tools
                 scriptingImplementation = backendLower == "il2cpp" ? ScriptingImplementation.IL2CPP : ScriptingImplementation.Mono2x;
             }
 
-#if UNITY_6000_0_OR_NEWER
             if (useProfile)
                 return HandleProfileBuild(profilePath, outputPath, buildOptions, scriptingImplementation);
-#else
-            if (!string.IsNullOrEmpty(profilePath))
-                McpLog.Warn($"Build Profile param ignored — requires Unity 6+. Current: {UnityEngine.Application.unityVersion}");
-#endif
 
             var options = BuildRunner.CreateBuildOptions(target, outputPath, scenes, buildOptions, subtarget);
 
@@ -279,7 +274,6 @@ namespace MCPForUnity.Editor.Tools
                     throw new ArgumentException("'scenes' must contain non-empty scene asset paths.");
         }
 
-#if UNITY_6000_0_OR_NEWER
         private static object HandleProfileBuild(
             string profilePath,
             string outputPath,
@@ -288,7 +282,7 @@ namespace MCPForUnity.Editor.Tools
         )
         {
             profilePath = AssetPathUtility.GetContainedAssetPath(profilePath);
-            var profile = UnityEditor.AssetDatabase.LoadAssetAtPath<UnityEditor.Build.Profile.BuildProfile>(profilePath);
+            var profile = BuildProfileApi.Installed.Load(profilePath);
             if (profile == null)
                 return new ErrorResponse($"Build profile not found at: {profilePath}");
 
@@ -300,20 +294,21 @@ namespace MCPForUnity.Editor.Tools
             outputPath ??= BuildTargetMapping.GetDefaultOutputPath(target, PlayerSettings.productName);
             BuildRunner.ValidateOutputPath(outputPath);
 
-            var options = new BuildPlayerWithProfileOptions
+            var options = new BuildPlayerOptions
             {
-                buildProfile = profile,
+                target = target,
+                subtarget = (int)subtarget,
                 locationPathName = outputPath,
                 options = buildOptions,
             };
 
             string jobId = BuildJobStore.CreateJobId();
             var job = new BuildJob(jobId, target, outputPath);
-            return BuildRunner.SchedulePreparedProfileBuild(job, options, scriptingImplementation, (int)subtarget);
+            return BuildRunner.SchedulePreparedProfileBuild(job, profile, options, scriptingImplementation);
         }
 
         private static bool TryGetProfileBuildTarget(
-            UnityEditor.Build.Profile.BuildProfile profile,
+            UnityEngine.Object profile,
             out BuildTarget target,
             out StandaloneBuildSubtarget subtarget,
             out string error
@@ -330,10 +325,17 @@ namespace MCPForUnity.Editor.Tools
                 error = "Build profile does not contain a supported build target.";
                 return false;
             }
+            if (
+                BuildPipeline.GetBuildTargetGroup(target) == BuildTargetGroup.Standalone
+                && (subtargetProperty == null || !Enum.IsDefined(typeof(StandaloneBuildSubtarget), subtarget))
+            )
+            {
+                error = "Build profile does not contain a supported standalone subtarget.";
+                return false;
+            }
             error = null;
             return true;
         }
-#endif
 
         // ── status ─────────────────────────────────────────────────────
 
@@ -352,8 +354,7 @@ namespace MCPForUnity.Editor.Tools
                 var persisted = BuildReportStore.FindStatus();
                 if (persisted != null)
                     return new SuccessResponse("Last retained completed build observation.", persisted);
-#if UNITY_6000_0_OR_NEWER
-                var latestReport = BuildReport.GetLatestReport();
+                var latestReport = BuildReportStore.GetLatestReport?.Invoke();
                 if (latestReport != null)
                 {
                     var s = latestReport.summary;
@@ -371,7 +372,6 @@ namespace MCPForUnity.Editor.Tools
                         }
                     );
                 }
-#endif
                 return new ErrorResponse("No build jobs found.");
             }
 
@@ -576,23 +576,20 @@ namespace MCPForUnity.Editor.Tools
 
         private static object HandleProfiles(ToolParams p)
         {
-#if UNITY_6000_0_OR_NEWER
             string profilePath = p.Get("profile");
             bool activate = p.GetBool("activate");
+            var api = BuildProfileApi.Installed;
 
             if (string.IsNullOrEmpty(profilePath))
             {
-                // List all profiles
-                var guids = AssetDatabase.FindAssets("t:BuildProfile");
+                var active = api.GetActive();
+                var guids = AssetDatabase.FindAssets("t:BuildProfile", new[] { "Assets" });
                 var profiles = guids
-                    .Select(guid =>
-                    {
-                        string path = AssetPathUtility.GetAssetPathFromGuid(guid);
-                        return new { path, name = System.IO.Path.GetFileNameWithoutExtension(path) };
-                    })
+                    .Select(guid => AssetPathUtility.GetAssetPathFromGuid(guid))
+                    .Where(path => api.Load(path) != null)
+                    .Select(path => new { path, name = System.IO.Path.GetFileNameWithoutExtension(path) })
                     .ToArray();
 
-                var active = UnityEditor.Build.Profile.BuildProfile.GetActiveBuildProfile();
                 return new SuccessResponse(
                     $"Found {profiles.Length} build profiles.",
                     new { profiles, active_profile = active != null ? AssetDatabase.GetAssetPath(active) : null }
@@ -600,24 +597,18 @@ namespace MCPForUnity.Editor.Tools
             }
 
             profilePath = AssetPathUtility.GetContainedAssetPath(profilePath);
-            var loadedProfile = AssetDatabase.LoadAssetAtPath<UnityEditor.Build.Profile.BuildProfile>(profilePath);
+            var loadedProfile = api.Load(profilePath);
             if (loadedProfile == null)
                 return new ErrorResponse($"Build profile not found at: {profilePath}");
 
             if (activate)
             {
-                UnityEditor.Build.Profile.BuildProfile.SetActiveBuildProfile(loadedProfile);
+                api.SetActive(loadedProfile);
                 return new SuccessResponse($"Activated build profile: {profilePath}", new { profile = profilePath, activated = true });
             }
 
-            // Get profile details — use .scenes (available since Unity 6000.0.0)
-            // instead of .GetScenesForBuild() which was added in 6000.0.36
-            var profileScenes = loadedProfile.scenes.Select(s => s.path).ToArray();
+            var profileScenes = api.Scenes(loadedProfile).Select(s => s.path).ToArray();
             return new SuccessResponse($"Profile: {profilePath}", new { profile = profilePath, scenes = profileScenes });
-#else
-            string version = UnityEngine.Application.unityVersion;
-            return new ErrorResponse($"Build Profiles require Unity 6 (6000.0+). Current version: {version}");
-#endif
         }
 
         // ── batch ──────────────────────────────────────────────────────
@@ -628,7 +619,9 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("A build is already in progress.");
 
             string[] targets = p.GetStringArray("targets");
-            string[] profiles = p.GetStringArray("profiles");
+            string[] profiles = p.GetStringArray("profiles", strict: true);
+            if (!string.IsNullOrEmpty(p.Get("profile")))
+                return new ErrorResponse("Use 'profiles' for a batch or 'build' with 'profile'.");
             string outputDir = p.Get("output_dir") ?? "Builds";
             bool development = p.GetBool("development");
             var buildOpts = BuildRunner.ParseBuildOptions(ReadBuildOptionNames(p.GetRaw("options")), development);
@@ -688,17 +681,16 @@ namespace MCPForUnity.Editor.Tools
                     data: new { job_id = batchId, total = batch.Children.Count }
                 );
             }
-#if UNITY_6000_0_OR_NEWER
             if (profiles != null && profiles.Length > 0)
             {
+                BuildProfileApi.Installed.RequireBuild();
                 // Validate all profiles exist before creating any store entries
-                var loadedProfiles = new List<UnityEditor.Build.Profile.BuildProfile>();
+                var loadedProfiles = new List<UnityEngine.Object>();
                 var profileTargets = new List<BuildTarget>();
                 var profilePaths = new List<string>();
                 foreach (var profilePath in profiles)
                 {
-                    AssetPathUtility.GetContainedAssetPath(profilePath);
-                    var profile = AssetDatabase.LoadAssetAtPath<UnityEditor.Build.Profile.BuildProfile>(profilePath);
+                    var profile = BuildProfileApi.Installed.Load(AssetPathUtility.GetContainedAssetPath(profilePath));
                     if (profile == null)
                         return new ErrorResponse($"Profile not found: {profilePath}");
                     if (!TryGetProfileBuildTarget(profile, out var target, out _, out var targetError))
@@ -706,7 +698,8 @@ namespace MCPForUnity.Editor.Tools
                     if (!BuildPipeline.IsBuildTargetSupported(BuildPipeline.GetBuildTargetGroup(target), target))
                         return new ErrorResponse($"Platform '{target}' is not installed. Install it via Unity Hub.");
                     string name = System.IO.Path.GetFileNameWithoutExtension(profilePath);
-                    string path = $"{outputDir}/{name}/{PlayerSettings.productName}";
+                    string fileName = System.IO.Path.GetFileName(BuildTargetMapping.GetDefaultOutputPath(target, PlayerSettings.productName));
+                    string path = $"{outputDir}/{name}/{fileName}";
                     BuildRunner.ValidateOutputPath(path);
                     profilePaths.Add(path);
                     loadedProfiles.Add(profile);
@@ -733,12 +726,6 @@ namespace MCPForUnity.Editor.Tools
                     string path = profilePaths[i];
                     var child = new BuildJob(BuildJobStore.CreateJobId(), target, path);
                     batch.Children.Add(child);
-                    var options = new BuildPlayerWithProfileOptions
-                    {
-                        buildProfile = loadedProfiles[i],
-                        locationPathName = path,
-                        options = buildOpts,
-                    };
                     BuildQueueChild frozen = BuildQueueChild.Capture(
                         child,
                         new BuildPlayerOptions
@@ -748,7 +735,7 @@ namespace MCPForUnity.Editor.Tools
                             options = buildOpts,
                         }
                     );
-                    BuildRunner.CaptureProfile(frozen, options);
+                    BuildRunner.CaptureProfile(frozen, loadedProfiles[i]);
                     checkpoint.Children.Add(frozen);
                 }
 
@@ -760,12 +747,6 @@ namespace MCPForUnity.Editor.Tools
                     data: new { job_id = batchId, total = batch.Children.Count }
                 );
             }
-#else
-            if (profiles != null && profiles.Length > 0)
-            {
-                return new ErrorResponse($"Profile-based batch requires Unity 6+. Current: {UnityEngine.Application.unityVersion}");
-            }
-#endif
 
             return new ErrorResponse("'targets' or 'profiles' is required for batch builds.");
         }

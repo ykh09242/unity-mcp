@@ -76,30 +76,33 @@ namespace MCPForUnity.Editor.Tools.Build
         }
 
 #if UNITY_6000_0_OR_NEWER
+        // Keep the public, strongly typed entry point for callers compiled against Unity 6.
         public static object ScheduleProfileBuild(BuildJob job, BuildPlayerWithProfileOptions options)
         {
-            return SchedulePreparedProfileBuild(job, options, null, 0);
-        }
-
-        internal static object SchedulePreparedProfileBuild(
-            BuildJob job,
-            BuildPlayerWithProfileOptions options,
-            ScriptingImplementation? backend,
-            int subtarget
-        )
-        {
-            BuildQueueEntry entry = BuildQueueEntry.Single(
+            return SchedulePreparedProfileBuild(
                 job,
+                options.buildProfile,
                 new BuildPlayerOptions
                 {
                     target = job.Target,
                     locationPathName = options.locationPathName,
                     assetBundleManifestPath = options.assetBundleManifestPath,
                     options = options.options,
-                    subtarget = subtarget,
-                }
+                },
+                null
             );
-            CaptureProfile(entry.Children[0], options);
+        }
+#endif
+
+        internal static object SchedulePreparedProfileBuild(
+            BuildJob job,
+            UnityEngine.Object profile,
+            BuildPlayerOptions options,
+            ScriptingImplementation? backend
+        )
+        {
+            BuildQueueEntry entry = BuildQueueEntry.Single(job, options);
+            CaptureProfile(entry.Children[0], profile);
             entry.Children[0].Backend = backend.HasValue ? (int)backend.Value : null;
             job.State = BuildJobState.Pending;
             BuildQueueCheckpoint.Enqueue(entry, jobs: new[] { job });
@@ -111,45 +114,37 @@ namespace MCPForUnity.Editor.Tools.Build
             );
         }
 
-        internal static void CaptureProfile(BuildQueueChild child, BuildPlayerWithProfileOptions options)
+        internal static void CaptureProfile(BuildQueueChild child, UnityEngine.Object profile)
         {
-            string path = AssetDatabase.GetAssetPath(options.buildProfile);
+            var api = BuildProfileApi.Installed;
+            api.RequireBuild(child.Options.assetBundleManifestPath);
+            string path = AssetDatabase.GetAssetPath(profile);
             if (string.IsNullOrEmpty(path))
                 throw new ArgumentException("A persistent build profile asset is required for a queued profile build.");
             child.ProfilePath = path;
             child.ProfileGuid = AssetDatabase.AssetPathToGUID(path);
             child.ProfileHash = AssetDatabase.GetAssetDependencyHash(path).ToString();
-            child.ProfileOverridesGlobalScenes = options.buildProfile.overrideGlobalScenes;
-            var scenes = child.ProfileOverridesGlobalScenes ? options.buildProfile.scenes : EditorBuildSettings.scenes;
+            var scenes = api.EffectiveScenes(profile, out child.ProfileOverridesGlobalScenes);
             child.ProfileSceneSettings = BuildQueueCheckpoint.CaptureProfileSceneSettings(scenes);
             child.Options.scenes = scenes.Where(scene => scene.enabled).Select(scene => scene.path).ToArray();
-            child.Options.assetBundleManifestPath = options.assetBundleManifestPath;
         }
-#endif
 
         internal static void ScheduleCheckpointBuild(BuildJob job, BuildQueueChild child)
         {
             ReserveNative(job.JobId);
             BuildReport InvokeNative()
             {
-                BuildQueueCheckpoint.MarkNativeStarted(child);
-#if UNITY_6000_0_OR_NEWER
                 if (child.ProfilePath != null)
                 {
-                    var profile = AssetDatabase.LoadAssetAtPath<UnityEditor.Build.Profile.BuildProfile>(child.ProfilePath);
+                    var api = BuildProfileApi.Installed;
+                    var profile = api.Load(child.ProfilePath);
                     if (profile == null)
                         throw new InvalidOperationException("Queued build profile is unavailable.");
-                    return BuildProfileForQueuedBuild(
-                        new BuildPlayerWithProfileOptions
-                        {
-                            buildProfile = profile,
-                            locationPathName = child.Options.locationPathName,
-                            assetBundleManifestPath = child.Options.assetBundleManifestPath,
-                            options = child.Options.options,
-                        }
-                    );
+                    object options = api.CreateOptions(profile, child.Options);
+                    BuildQueueCheckpoint.MarkNativeStarted(child);
+                    return BuildProfileForQueuedBuild(options);
                 }
-#endif
+                BuildQueueCheckpoint.MarkNativeStarted(child);
                 return BuildPlayerForQueuedBuild(child.Options);
             }
             ScheduleOnNextUpdate(() =>
@@ -190,9 +185,7 @@ namespace MCPForUnity.Editor.Tools.Build
         // The seam allows disposable-Editor reload fixtures to count native admission
         // without creating a Player. Production always uses BuildPipeline.BuildPlayer.
         internal static Func<BuildPlayerOptions, BuildReport> BuildPlayerForQueuedBuild = options => BuildPipeline.BuildPlayer(options);
-#if UNITY_6000_0_OR_NEWER
-        internal static Func<BuildPlayerWithProfileOptions, BuildReport> BuildProfileForQueuedBuild = options => BuildPipeline.BuildPlayer(options);
-#endif
+        internal static Func<object, BuildReport> BuildProfileForQueuedBuild = options => BuildProfileApi.Installed.Build(options);
 
         public static BuildPlayerOptions CreateBuildOptions(BuildTarget target, string outputPath, string[] scenes, BuildOptions buildOptions, int subtarget)
         {
@@ -371,11 +364,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 else
                 {
                     job.State = BuildJobState.Failed;
-#if UNITY_2023_1_OR_NEWER
-                    job.ErrorMessage = report.SummarizeErrors();
-#else
-                    job.ErrorMessage = $"Build failed with result: {summary.result}";
-#endif
+                    job.ErrorMessage = BuildReportStore.SummarizeErrors?.Invoke(report) ?? $"Build failed with result: {summary.result}";
                 }
             }
             catch (Exception ex)

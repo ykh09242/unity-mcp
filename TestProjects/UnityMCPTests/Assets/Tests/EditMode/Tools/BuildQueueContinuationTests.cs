@@ -190,6 +190,10 @@ namespace MCPForUnityTests.EditMode.Tools
         [Test]
         public void ChangedProfileIdentityIsRefusedBeforeNativeInvocation()
         {
+            string reason =
+                typeof(BuildPipeline).Assembly.GetType("UnityEditor.BuildPlayerWithProfileOptions") == null
+                    ? "Build Profile API unavailable"
+                    : "Build profile changed or disappeared";
             BuildJob job = Job();
             BuildQueueEntry entry = BuildQueueEntry.Single(job, Options(job));
             entry.Children[0].ProfilePath = "Assets/__MissingQueuedProfile.asset";
@@ -198,11 +202,11 @@ namespace MCPForUnityTests.EditMode.Tools
             BuildQueueCheckpoint.Enqueue(entry, jobs: new[] { job });
             SimulateDomainLoss();
             Restore();
-            LogAssert.Expect(LogType.Error, new Regex("Build profile changed or disappeared"));
+            LogAssert.Expect(LogType.Error, new Regex(reason));
             Advance();
             Advance();
             Assert.AreEqual(0, invocations);
-            StringAssert.Contains("Build profile changed", BuildJobStore.GetBuildJob(job.JobId).ErrorMessage);
+            StringAssert.Contains(reason, BuildJobStore.GetBuildJob(job.JobId).ErrorMessage);
         }
 
         [Test]
@@ -219,27 +223,42 @@ namespace MCPForUnityTests.EditMode.Tools
         [Test]
         public void ChangedProfileSceneSettingsAreRefusedAfterDomainLoss()
         {
-            BuildJob job = Job();
-            BuildQueueEntry entry = BuildQueueEntry.Single(job, Options(job));
-            BuildQueueChild child = entry.Children[0];
-            child.ProfilePath = "Assets/__QueuedProfile.asset";
-            child.ProfileSceneSettings = BuildQueueCheckpoint.CaptureProfileSceneSettings();
-            child.ProfileSceneSettings.Add(
-                new JObject
-                {
-                    ["path"] = "Assets/__FormerBuildScene.unity",
-                    ["guid"] = "old",
-                    ["enabled"] = true,
-                }
-            );
-            BuildQueueCheckpoint.Enqueue(entry, jobs: new[] { job });
-            SimulateDomainLoss();
-            Restore();
-            LogAssert.Expect(LogType.Error, new Regex("Build profile scene settings changed"));
-            Advance();
-            Advance();
-            Assert.AreEqual(0, invocations);
-            StringAssert.Contains("Build profile scene settings changed", BuildJobStore.GetBuildJob(job.JobId).ErrorMessage);
+            var profileType = typeof(BuildPipeline).Assembly.GetType("UnityEditor.Build.Profile.BuildProfile");
+            if (profileType == null)
+                Assert.Ignore("This Editor does not expose Build Profiles.");
+            string profilePath = "Assets/__QueuedDrift_" + Guid.NewGuid().ToString("N") + ".asset";
+            var profile = ScriptableObject.CreateInstance(profileType);
+            try
+            {
+                AssetDatabase.CreateAsset(profile, profilePath);
+                AssetDatabase.SaveAssets();
+                BuildJob job = Job();
+                BuildQueueEntry entry = BuildQueueEntry.Single(job, Options(job));
+                BuildQueueChild child = entry.Children[0];
+                BuildRunner.CaptureProfile(child, profile);
+                child.ProfileSceneSettings.Add(
+                    new JObject
+                    {
+                        ["path"] = "Assets/__FormerBuildScene.unity",
+                        ["guid"] = "old",
+                        ["enabled"] = true,
+                    }
+                );
+                BuildQueueCheckpoint.Enqueue(entry, jobs: new[] { job });
+                SimulateDomainLoss();
+                Restore();
+                LogAssert.Expect(LogType.Error, new Regex("Build profile scene settings changed"));
+                Advance();
+                Advance();
+                Assert.AreEqual(0, invocations);
+                StringAssert.Contains("Build profile scene settings changed", BuildJobStore.GetBuildJob(job.JobId).ErrorMessage);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(profilePath);
+                if (profile != null)
+                    UnityEngine.Object.DestroyImmediate(profile);
+            }
         }
 
         [Test]
@@ -452,7 +471,100 @@ namespace MCPForUnityTests.EditMode.Tools
             return batch;
         }
 
+        [Test]
+        public void UnavailableProfileApiRefusesProfileRequestsAndQueuedRecovery()
+        {
+            var installed = BuildProfileApi.Installed;
+            var target = BuildTargetMapping.GetNamedBuildTarget(EditorUserBuildSettings.activeBuildTarget);
+            var originalBackend = PlayerSettings.GetScriptingBackend(target);
+            var otherBackend = originalBackend == ScriptingImplementation.IL2CPP ? ScriptingImplementation.Mono2x : ScriptingImplementation.IL2CPP;
+            const string path = "Assets/__MissingBuildProfile.asset";
+            try
+            {
+                BuildProfileApi.Installed = new BuildProfileApi(null, null);
+                foreach (
+                    JObject request in new[]
+                    {
+                        new JObject { ["action"] = "profiles" },
+                        new JObject
+                        {
+                            ["action"] = "profiles",
+                            ["profile"] = path,
+                            ["activate"] = true,
+                        },
+                        new JObject
+                        {
+                            ["action"] = "build",
+                            ["profile"] = path,
+                            ["scripting_backend"] = otherBackend == ScriptingImplementation.IL2CPP ? "il2cpp" : "mono",
+                        },
+                        new JObject { ["action"] = "batch", ["profiles"] = new JArray(path) },
+                    }
+                )
+                {
+                    var result = JObject.FromObject(ManageBuild.HandleCommand(request));
+                    Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                    StringAssert.Contains("Build Profile API unavailable", result.Value<string>("error"));
+                }
+                Assert.AreEqual("", SessionState.GetString(BuildQueueCheckpoint.StorageKey, ""));
+                Assert.AreEqual(0, Jobs.Count + Batches.Count);
+                Assert.IsFalse(BuildRunner.HasNativeOwner);
+
+                BuildJob job = Job();
+                BuildQueueEntry entry = BuildQueueEntry.Single(job, Options(job));
+                entry.Children[0].ProfilePath = path;
+                entry.Children[0].Backend = (int)otherBackend;
+                BuildQueueCheckpoint.Enqueue(entry, jobs: new[] { job });
+                SimulateDomainLoss();
+                Restore();
+                LogAssert.Expect(LogType.Error, new Regex("Build Profile API unavailable"));
+                Advance();
+                Advance();
+                Assert.AreEqual(BuildJobState.Failed, BuildJobStore.GetBuildJob(job.JobId).State);
+                Assert.AreEqual(originalBackend, PlayerSettings.GetScriptingBackend(target));
+                Assert.AreEqual(0, invocations);
+
+                var ordinary = Job();
+                BuildRunner.ScheduleBuild(ordinary, Options(ordinary));
+                ExpectInvocationFailure();
+                Advance();
+                Advance();
+                Advance();
+                Assert.AreEqual(1, invocations);
+            }
+            finally
+            {
+                BuildProfileApi.Installed = installed;
+            }
+        }
+
 #if UNITY_6000_0_OR_NEWER
+        [Test]
+        public void BatchProfileUsesTheTargetSpecificPlayerFilename()
+        {
+            var target = EditorUserBuildSettings.activeBuildTarget;
+            string profilePath = "Assets/__BatchOutput_" + Guid.NewGuid().ToString("N") + ".asset";
+            var profile = ScriptableObject.CreateInstance<UnityEditor.Build.Profile.BuildProfile>();
+            try
+            {
+                using var serialized = new SerializedObject(profile);
+                serialized.FindProperty("m_BuildTarget").intValue = (int)target;
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+                AssetDatabase.CreateAsset(profile, profilePath);
+                var result = JObject.FromObject(ManageBuild.HandleCommand(new JObject { ["action"] = "batch", ["profiles"] = new JArray(profilePath) }));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                var child = BuildJobStore.GetBatchJob((string)result["data"]["job_id"]).Children.Single();
+                string name = Path.GetFileName(BuildTargetMapping.GetDefaultOutputPath(target, PlayerSettings.productName));
+                Assert.AreEqual("Builds/" + Path.GetFileNameWithoutExtension(profilePath) + "/" + name, child.OutputPath);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(profilePath);
+                if (profile != null)
+                    UnityEngine.Object.DestroyImmediate(profile);
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void ProfileCheckpointFreezesOnlyItsEffectiveScenes(bool overridesGlobal)
@@ -469,7 +581,7 @@ namespace MCPForUnityTests.EditMode.Tools
             string changedGlobalScene = prefix + "_ChangedGlobal.unity";
             var ownedScenes = new List<string>();
             bool ownsProfilePath = false;
-            EditorBuildSettingsScene[] originalScenes = EditorBuildSettings.scenes;
+            EditorBuildSettingsScene[] originalScenes = EditorBuildSettings.globalScenes;
             var profile = ScriptableObject.CreateInstance<UnityEditor.Build.Profile.BuildProfile>();
             try
             {
@@ -482,16 +594,16 @@ namespace MCPForUnityTests.EditMode.Tools
                 }
                 profile.overrideGlobalScenes = overridesGlobal;
                 profile.scenes = new[] { new EditorBuildSettingsScene(profileScene, true) };
-                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(globalScene, true) };
+                EditorBuildSettings.globalScenes = new[] { new EditorBuildSettingsScene(globalScene, true) };
                 Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(profilePath), "Preserve any preexisting profile asset.");
                 ownsProfilePath = true;
                 AssetDatabase.CreateAsset(profile, profilePath);
                 AssetDatabase.SaveAssets();
                 BuildJob job = Job();
                 BuildQueueChild child = BuildQueueChild.Capture(job, Options(job));
-                BuildRunner.CaptureProfile(child, new BuildPlayerWithProfileOptions { buildProfile = profile });
+                BuildRunner.CaptureProfile(child, profile);
                 CollectionAssert.AreEqual(new[] { overridesGlobal ? profileScene : globalScene }, child.Options.scenes);
-                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(changedGlobalScene, true) };
+                EditorBuildSettings.globalScenes = new[] { new EditorBuildSettingsScene(changedGlobalScene, true) };
                 if (overridesGlobal)
                     Assert.DoesNotThrow(() => BuildQueueCheckpoint.ValidateProfile(child));
                 else
@@ -502,7 +614,7 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             finally
             {
-                EditorBuildSettings.scenes = originalScenes;
+                EditorBuildSettings.globalScenes = originalScenes;
                 if (ownsProfilePath)
                     AssetDatabase.DeleteAsset(profilePath);
                 if (profile != null)
@@ -520,18 +632,19 @@ namespace MCPForUnityTests.EditMode.Tools
                 .Select(AssetDatabase.GUIDToAssetPath)
                 .First(path => path.StartsWith("Assets/", StringComparison.Ordinal));
             string profilePath = "Assets/__QueuedProfile_" + Guid.NewGuid().ToString("N") + ".asset";
-            EditorBuildSettingsScene[] originalScenes = EditorBuildSettings.scenes;
+            EditorBuildSettingsScene[] originalScenes = EditorBuildSettings.globalScenes;
             var profile = ScriptableObject.CreateInstance<UnityEditor.Build.Profile.BuildProfile>();
-            Func<BuildPlayerWithProfileOptions, BuildReport> originalBuilder = BuildRunner.BuildProfileForQueuedBuild;
+            var originalBuilder = BuildRunner.BuildProfileForQueuedBuild;
             try
             {
                 profile.overrideGlobalScenes = true;
                 profile.scenes = new[] { new EditorBuildSettingsScene(scene, true) };
-                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene("Assets/__MissingUnrelatedGlobalScene.unity", true) };
+                EditorBuildSettings.globalScenes = new[] { new EditorBuildSettingsScene("Assets/__MissingUnrelatedGlobalScene.unity", true) };
                 AssetDatabase.CreateAsset(profile, profilePath);
                 AssetDatabase.SaveAssets();
-                BuildRunner.BuildProfileForQueuedBuild = options =>
+                BuildRunner.BuildProfileForQueuedBuild = boxed =>
                 {
+                    var options = (BuildPlayerWithProfileOptions)boxed;
                     invocations++;
                     Assert.AreEqual("Builds/bundles.manifest", options.assetBundleManifestPath);
                     Assert.AreEqual(profilePath, AssetDatabase.GetAssetPath(options.buildProfile));
@@ -560,7 +673,7 @@ namespace MCPForUnityTests.EditMode.Tools
             finally
             {
                 BuildRunner.BuildProfileForQueuedBuild = originalBuilder;
-                EditorBuildSettings.scenes = originalScenes;
+                EditorBuildSettings.globalScenes = originalScenes;
                 AssetDatabase.DeleteAsset(profilePath);
                 if (profile != null)
                     UnityEngine.Object.DestroyImmediate(profile);
