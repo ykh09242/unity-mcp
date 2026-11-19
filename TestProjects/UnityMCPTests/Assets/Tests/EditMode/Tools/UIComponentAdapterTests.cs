@@ -80,7 +80,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ManageUI.HandleCommand(
                     new JObject
                     {
-                        ["action"] = "get_visual_tree",
+                        ["action"] = "detach_ui_document",
                         ["target"] = _go.name,
                         ["componentType"] = "panel_renderer",
                     }
@@ -88,6 +88,7 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             Assert.That(result.Value<string>("error"), Does.Contain("unavailable"));
+            Assert.That(result.Value<string>("error"), Does.Contain("ui_document").And.Not.Contain("6.5"));
             Assert.AreEqual(1, _go.GetComponents<Component>().Length);
         }
 

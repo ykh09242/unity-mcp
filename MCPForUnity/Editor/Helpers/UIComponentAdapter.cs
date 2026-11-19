@@ -40,7 +40,7 @@ namespace MCPForUnity.Editor.Helpers
                     type = PanelRendererType;
                     if (type == null)
                         throw new ArgumentException(
-                            "PanelRenderer is unavailable in this Unity editor. Use component_type='ui_document' or Unity 6.5 or newer."
+                            "PanelRenderer is unavailable in this Unity Editor. Select component_type='ui_document' to use UIDocument."
                         );
                     break;
                 case "auto":

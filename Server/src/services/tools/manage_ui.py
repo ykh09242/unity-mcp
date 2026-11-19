@@ -46,7 +46,7 @@ def _canonical_ui_path(path: str) -> str:
 @mcp_for_unity_tool(
     group="legacy",
     description=(
-        "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer "
+        "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and supported PanelRenderer "
         "components). Read actions: ping, read, diagnose, list. get_visual_tree can invoke "
         "project-defined getters and requires read, edit and run authority. Modifying "
         "actions: create, update, delete, attach_ui_document, detach_ui_document, "
@@ -61,8 +61,8 @@ def _canonical_ui_path(path: str) -> str:
         "choosing source edits or runtime changes. Create, attach, detach or delete only when "
         "required by the requested change; preserve unrelated UI. For attach_ui_document, "
         "component_type=auto preserves existing UIDocument and prefers available PanelRenderer for "
-        "new objects; ui_document selects UIDocument, while panel_renderer requires Unity 6.5+ "
-        "support. modify_visual_element changes live text/classes/styles, not persisted source. "
+        "new objects; ui_document selects UIDocument. Explicit panel_renderer selection requires "
+        "the Editor's native PanelRenderer API. modify_visual_element changes live text/classes/styles, not persisted source. "
         "Legacy element_name selects the first match; strict_name=true requires uniqueness. "
         "Writes include bounded data.verification from the resolved target; current layout can remain pending. "
         "Source writes only inspect live UI when verify_target explicitly selects a document before the write. "
@@ -151,7 +151,7 @@ async def manage_ui(
         "UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. "
         "Default auto preserves an existing UIDocument, otherwise resolves PanelRenderer; "
         "new attachments prefer PanelRenderer when available and fall back to UIDocument. "
-        "panel_renderer requires Unity 6.5+ API support.",
+        "Explicit panel_renderer selection requires the Editor's native PanelRenderer API.",
     ]
     | None = None,
     source_asset: Annotated[str, "Path to UXML VisualTreeAsset (e.g., 'Assets/UI/MainMenu.uxml')."]
