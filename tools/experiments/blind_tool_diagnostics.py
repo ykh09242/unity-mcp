@@ -121,7 +121,20 @@ def stage_diagnosis(routes, surface, business, searches, *, role_confirmed, grad
         stage = "unadvertised"
     else:
         stage = "unknown"
-    return {**result, "stage": stage}
+    native = (
+        [
+            {
+                "route": call.route,
+                "status": call.evidence["status"],
+                "reason": call.evidence.get("reason"),
+            }
+            for call in relevant
+            if call.evidence.get("status") in {"unavailable", "unknown", "failed"}
+        ]
+        if role_confirmed
+        else []
+    )
+    return {**result, "stage": stage, "native_results": native[:3]}
 
 
 def actor_searches(host, wire, actor, role_confirmed):
@@ -136,3 +149,22 @@ def actor_searches(host, wire, actor, role_confirmed):
     if visible:
         return visible
     return bound if len({call.timeline for call in bound}) <= 1 else []
+
+
+def actor_discovery(host, wire, actor, confirmed):
+    """Count only verified actor-owned discovery. Unknown capture is distinct from zero."""
+    if not confirmed or not actor:
+        return None
+    if host and host.completed:
+        calls = [call for call in host.calls.values() if call.channel == "discovery"]
+        source = "host"
+    else:
+        calls = [call for call in wire if call.channel == "discovery" and call.actor == actor]
+        if not calls:
+            return None
+        source = "actor_bound_wire"
+    return {
+        "source": source,
+        "observed_calls": len(calls),
+        "observed_successes": sum(call.status in {"returned", "completed"} for call in calls),
+    }

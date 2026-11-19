@@ -214,6 +214,9 @@ items and unmatched wire observations. The first search receipt keeps up to thre
 ranked results or groups and the declared distinct-group count. An unavailable
 rank, approval decision, native result or requested actor is reported separately.
 Only a complete inventory for the relevant actor establishes absence.
+The legacy `discovery_calls` and `discovery_successes` counters cover the
+whole trial. `selection_diagnosis.actor_discovery` counts the selected
+actor's receipts and remains null when its capture is unknown.
 
 ## Contrast observation with action
 

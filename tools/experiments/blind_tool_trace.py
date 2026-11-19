@@ -936,7 +936,11 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     row = json_object((case_dir / "case.json").read_bytes())
     task = string(row["task"])
     routes = ROUTES[task]
-    from tools.experiments.blind_tool_diagnostics import actor_searches, stage_diagnosis
+    from tools.experiments.blind_tool_diagnostics import (
+        actor_discovery,
+        actor_searches,
+        stage_diagnosis,
+    )
 
     options = dict(
         endpoint=row.get("backend") == "unity-mcp-loopback",
@@ -1051,6 +1055,9 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         role_confirmed=role == "confirmed",
         grade=task_evidence,
     )
+    diagnosis["actor_discovery"] = actor_discovery(
+        actor_host, wire, selected_actor, role == "confirmed"
+    )
     return {
         **row,
         **(
@@ -1086,6 +1093,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         "repeats_after_complete_evidence": redundant,
         "raycast_before_size": early_rays if task == "raycast" else None,
         "discovery_calls": len(discovery_sources),
+        "discovery_scope": "trial_host" if host_only else "all_trial_wire_connections",
         "discovery_successes": sum(call.status == "returned" for call in discovery_sources),
         "unity_call_errors": sum(call.status == "error" for call in unity),
         "observation_guard_blocks": sum(call.channel == "blocked" for call in wire),

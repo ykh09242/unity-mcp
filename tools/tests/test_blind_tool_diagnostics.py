@@ -117,12 +117,16 @@ def test_resource_template_scope_includes_optional_pagination():
 
 
 def test_parent_rank_does_not_credit_a_confirmed_child():
-    from tools.experiments.blind_tool_diagnostics import actor_searches
+    from tools.experiments.blind_tool_diagnostics import actor_discovery, actor_searches
 
     search = Call(
         "manage_tools.search", "discovery", 1, actor="parent", evidence={"top3": [["saved"]]}
     )
     assert not actor_searches(ClientTrace(), [search], "child", True)
+    assert actor_discovery(None, [search], "child", True) is None
+    assert (
+        actor_discovery(ClientTrace(completed=True), [search], "child", True)["observed_calls"] == 0
+    )
     result = stage_diagnosis(set(), {}, [], [search], role_confirmed=True, grade="partial")
     assert result["advertised"] is None and result["first_search_top3_suitable"] is False
 
@@ -147,7 +151,8 @@ def test_native_raycast_failure_keeps_reason_without_observation_credit():
     failed = Call(RAYCAST, "unity", 1, status=status, evidence=observation(RAYCAST, data))
     assert failed.evidence == {"status": "failed", "reason": "native_query_threw"}
     assert evidence_grade("raycast", [failed]) == "none"
-    assert (
-        stage_diagnosis({RAYCAST}, {}, [failed], [], role_confirmed=True, grade="none")["stage"]
-        == "native_failed"
-    )
+    diagnosis = stage_diagnosis({RAYCAST}, {}, [failed], [], role_confirmed=True, grade="none")
+    assert diagnosis["stage"] == "native_failed"
+    assert diagnosis["native_results"] == [
+        {"route": RAYCAST, "status": "failed", "reason": "native_query_threw"}
+    ]
