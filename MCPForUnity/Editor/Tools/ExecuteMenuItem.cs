@@ -309,6 +309,7 @@ namespace MCPForUnity.Editor.Tools
                     availability = "not_evaluated";
             }
             var selected = Selection.objects;
+            EditorWindow focusedWindow = EditorWindow.focusedWindow;
             var data = new JObject
             {
                 ["menu_path"] = path,
@@ -338,7 +339,7 @@ namespace MCPForUnity.Editor.Tools
                     ["selected_ids"] = new JArray(selected.Take(32).Select(item => item.GetInstanceIDCompat())),
                     ["selected_count"] = selected.Length,
                     ["selection_truncated"] = selected.Length > 32,
-                    ["focused_window_type"] = Bounded(EditorWindow.focusedWindow?.GetType().FullName),
+                    ["focused_window_type"] = Bounded(focusedWindow != null ? focusedWindow.GetType().FullName : null),
                     ["observed_at_unix_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 },
             };

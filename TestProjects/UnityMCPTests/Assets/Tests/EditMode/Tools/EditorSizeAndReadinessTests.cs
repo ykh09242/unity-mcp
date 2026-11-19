@@ -45,7 +45,7 @@ namespace MCPForUnityTests.EditMode.Tools
             // Given an open Game View with its selection captured.
             Type viewType = typeof(UnityEditor.Editor).Assembly.GetType("UnityEditor.GameView", true);
             var existing = UnityEngine.Resources.FindObjectsOfTypeAll(viewType).OfType<EditorWindow>().FirstOrDefault();
-            EditorWindow window = existing ?? EditorWindow.GetWindow(viewType, false, "Game", false);
+            EditorWindow window = existing != null ? existing : EditorWindow.GetWindow(viewType, false, "Game", false);
             var original = Invoke(new JObject { ["action"] = "get_game_view_size" });
             string savedRestores = SessionState.GetString("MCPForUnity.GameViewRestoreV1", "{}");
             Type apiType = typeof(ManageEditor)
@@ -103,7 +103,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Assembly editorAssembly = typeof(UnityEditor.Editor).Assembly;
             Type viewType = editorAssembly.GetType("UnityEditor.GameView", true);
             var existing = UnityEngine.Resources.FindObjectsOfTypeAll(viewType).OfType<EditorWindow>().FirstOrDefault();
-            EditorWindow window = existing ?? EditorWindow.GetWindow(viewType, false, "Game", false);
+            EditorWindow window = existing != null ? existing : EditorWindow.GetWindow(viewType, false, "Game", false);
             Type apiType = typeof(ManageEditor)
                 .Assembly.GetType("MCPForUnity.Editor.Helpers.GameViewSizeControl", true)
                 .GetNestedType("Api", BindingFlags.NonPublic);

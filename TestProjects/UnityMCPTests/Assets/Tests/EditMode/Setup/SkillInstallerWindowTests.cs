@@ -22,11 +22,11 @@ namespace MCPForUnityTests.Editor.Setup
 
         private sealed class EvidenceInstaller : McpForUnitySkillInstaller
         {
-            private void OnEnable() { }
+            internal bool WindowEnabled { get; private set; }
 
-            private void OnDisable() { }
+            protected override void OnEnable() => WindowEnabled = true;
 
-            private void OnGUI() => typeof(McpForUnitySkillInstaller).GetMethod("OnGUI", PrivateInstance).Invoke(this, null);
+            protected override void OnDisable() => WindowEnabled = false;
         }
 
         [TestCase(true)]
@@ -185,6 +185,7 @@ namespace MCPForUnityTests.Editor.Setup
                         window.Repaint();
                         yield return null;
                     }
+                    Assert.IsTrue(window.WindowEnabled);
                     Assert.IsNotNull(window.rootVisualElement.panel);
                     string path = Path.Combine(directory, state + ".png");
                     typeof(MCPForUnityTests.EditMode.Windows.OperationActivityTests)

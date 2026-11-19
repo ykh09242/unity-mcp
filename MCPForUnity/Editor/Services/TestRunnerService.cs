@@ -459,7 +459,8 @@ namespace MCPForUnity.Editor.Services
                 PreserveNativeOwnership(_trackedJobId);
             try
             {
-                _testRunnerApi?.UnregisterCallbacks(this);
+                if (_testRunnerApi != null)
+                    _testRunnerApi.UnregisterCallbacks(this);
             }
             catch
             {

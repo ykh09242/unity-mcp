@@ -170,7 +170,8 @@ namespace MCPForUnity.Editor.Windows
             {
                 try
                 {
-                    window?.Close();
+                    if (window != null)
+                        window.Close();
                 }
                 catch (Exception ex)
                 {
@@ -179,6 +180,11 @@ namespace MCPForUnity.Editor.Windows
             }
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "Correctness",
+            "UNT0021",
+            Justification = "External editor extensions can call this public UI rebuild entry point."
+        )]
         public void CreateGUI()
         {
             // Guard against repeated CreateGUI calls (e.g., domain reloads)
@@ -614,14 +620,14 @@ namespace MCPForUnity.Editor.Windows
         private double _lastEditorUpdateTime;
         private const double EditorUpdateIntervalSeconds = 2.0;
 
-        private void OnEnable()
+        protected void OnEnable()
         {
             EditorApplication.update -= OnEditorUpdate;
             EditorApplication.update += OnEditorUpdate;
             OpenWindows.Add(this);
         }
 
-        private void OnDisable()
+        protected void OnDisable()
         {
             EditorApplication.update -= OnEditorUpdate;
             EditorApplication.delayCall -= CheckForPackageUpdates;
@@ -639,7 +645,7 @@ namespace MCPForUnity.Editor.Windows
             resourcesLoaded = false;
         }
 
-        private void OnFocus()
+        protected void OnFocus()
         {
             // Only refresh data if UI is built
             if (rootVisualElement == null || rootVisualElement.childCount == 0)
@@ -800,7 +806,8 @@ namespace MCPForUnity.Editor.Windows
         {
             foreach (var window in OpenWindows)
             {
-                window?.ScheduleHealthCheck();
+                if (window != null)
+                    window.ScheduleHealthCheck();
             }
         }
 
@@ -1323,7 +1330,7 @@ namespace MCPForUnity.Editor.Windows
             dependencyOperationStatus = message;
             foreach (var window in OpenWindows)
             {
-                var label = window?.dependencySection?.Q<Label>("dependencies-operation-status");
+                var label = window != null ? window.dependencySection?.Q<Label>("dependencies-operation-status") : null;
                 if (label != null)
                 {
                     label.text = message;

@@ -106,6 +106,11 @@ namespace MCPForUnity.Editor.Windows
                 UpdateUI();
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "Correctness",
+            "UNT0021",
+            Justification = "External editor extensions can call this public UI rebuild entry point."
+        )]
         public void CreateGUI()
         {
             string basePath = AssetPathUtility.GetMcpPackageRootPath();
@@ -183,7 +188,7 @@ namespace MCPForUnity.Editor.Windows
             UpdateUI();
         }
 
-        private void OnEnable()
+        protected void OnEnable()
         {
             if (configurationLifetime.IsCancellationRequested)
                 configurationLifetime = new CancellationTokenSource();
@@ -720,7 +725,7 @@ namespace MCPForUnity.Editor.Windows
                 BeginDependencyCheck(true);
         }
 
-        private void OnDisable()
+        protected void OnDisable()
         {
             configurationLifetime.Cancel();
             if (configuringClient != null)

@@ -632,13 +632,18 @@ namespace MCPForUnity.Editor.Services.Transport
     internal static class CommandResumeState
     {
         private const string Key = "MCPForUnity.CommandResume.v1";
-        internal static readonly CommandResumeJournal Journal = new CommandResumeJournal(
-            () => SessionState.GetString(Key, null),
-            value => SessionState.SetString(Key, value),
-            () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            CanContinue
-        );
+        internal static readonly CommandResumeJournal Journal;
         internal static string SessionId => Journal.SessionId;
+
+        static CommandResumeState()
+        {
+            Journal = new CommandResumeJournal(
+                () => SessionState.GetString(Key, null),
+                value => SessionState.SetString(Key, value),
+                () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                CanContinue
+            );
+        }
 
         [MenuItem(MCPForUnity.Editor.Constants.ProductInfo.MenuRoot + "/Recovery/Retry Command Resume Persistence")]
         private static void RetryPersistenceFromMenu()

@@ -114,6 +114,11 @@ namespace MCPForUnity.Editor.Windows
             window.Show();
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "Correctness",
+            "UNT0021",
+            Justification = "External editor extensions can call this public UI rebuild entry point."
+        )]
         public void CreateGUI()
         {
             // Clear search filter on GUI recreation to avoid stale filtered results

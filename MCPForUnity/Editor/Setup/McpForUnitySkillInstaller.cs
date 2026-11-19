@@ -47,7 +47,7 @@ namespace MCPForUnity.Editor.Setup
             GetWindow<McpForUnitySkillInstaller>("Unity MCP Skill Install(Sync)");
         }
 
-        private void OnEnable()
+        protected virtual void OnEnable()
         {
             var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             _codexHome = CodexHome.Resolve();
@@ -68,7 +68,7 @@ namespace MCPForUnity.Editor.Setup
             EditorApplication.update += OnEditorUpdate;
         }
 
-        private void OnDisable()
+        protected virtual void OnDisable()
         {
             EditorApplication.update -= OnEditorUpdate;
             _operation.Dispose();
@@ -78,7 +78,7 @@ namespace MCPForUnity.Editor.Setup
             EditorPrefs.SetString(InstallDirKey, _installDir);
         }
 
-        private void OnGUI()
+        protected void OnGUI()
         {
             FlushPendingLogs();
             _formScroll = EditorGUILayout.BeginScrollView(_formScroll);

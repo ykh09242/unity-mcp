@@ -17,6 +17,14 @@ namespace MCPForUnityTests.EditMode.Windows
     [Parallelizable(ParallelScope.None)]
     public sealed class EditorWindowUxTests
     {
+        [TestCase(typeof(MCPForUnityEditorWindow))]
+        [TestCase(typeof(MCPSetupWindow))]
+        [TestCase(typeof(EditorPrefsWindow))]
+        public void ExtensionsCanRebuildTheWindow(Type windowType)
+        {
+            Assert.That(windowType.GetMethod("CreateGUI", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null), Is.Not.Null);
+        }
+
         private const string BasePath = "Packages/com.ykh09242.unity-mcp/Editor/Windows/";
         private const BindingFlags PrivateInstance = BindingFlags.NonPublic | BindingFlags.Instance;
         private static readonly string[] Pages = { "clients", "tools", "resources", "assetgen", "graph", "activity", "deps", "advanced" };
