@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -30,15 +31,15 @@ namespace MCPForUnity.Editor.Tools.Netcode
             return true;
         }
 
-        internal static JArray Inspect(object config, JArray issues, ref int total, int limit)
+        private static IEnumerable<(IEnumerable entries, string location, string path)> Lists(object config, JArray issues)
         {
-            var rows = new JArray();
-            var sources = new HashSet<uint>();
+            if (!NetcodeAccess.TryGet(config, "Prefabs", out object prefabs))
+            {
+                yield return (NetcodeAccess.Sequence(config, "NetworkPrefabs"), "NetworkPrefabs", null);
+                yield break;
+            }
+
             var listIds = new HashSet<int>();
-            GameObject player = NetcodeAccess.Get(config, "PlayerPrefab") as GameObject;
-            if (player != null)
-                Prefab(player, issues, "PlayerPrefab");
-            object prefabs = NetcodeAccess.Get(config, "Prefabs");
             int listIndex = 0;
             foreach (object list in NetcodeAccess.Sequence(prefabs, "NetworkPrefabsLists"))
             {
@@ -51,13 +52,41 @@ namespace MCPForUnity.Editor.Tools.Netcode
                 }
                 if (!listIds.Add(asset.GetInstanceIDCompat()))
                     NetcodeAccess.Issue(issues, "duplicate_prefab_list", "The same NetworkPrefabsList is registered more than once.");
+                yield return (NetcodeAccess.Sequence(list, "PrefabList"), "NetworkPrefabsLists[" + (listIndex - 1) + "]", AssetDatabase.GetAssetPath(asset));
+            }
+
+            // NGO can retain legacy entries until it initializes or migrates an upgraded configuration.
+            if (NetcodeAccess.TryGet(config, "OldPrefabList", out object pending) && pending != null)
+                yield return (
+                    pending as IEnumerable ?? throw new InvalidOperationException("netcode_api_unsupported: OldPrefabList is not a collection."),
+                    "OldPrefabList",
+                    null
+                );
+        }
+
+        private static uint SourceHash(object entry, GameObject source)
+        {
+            if (!NetcodeAccess.TryGet(entry, "SourcePrefabGlobalObjectIdHash", out object value))
+                value = NetcodeAccess.Get(source.GetComponent(NetcodeAccess.Type("NetworkObject")), "GlobalObjectIdHash");
+            return value is uint hash ? hash : throw new InvalidOperationException("netcode_api_unsupported: expected a uint prefab source hash.");
+        }
+
+        internal static JArray Inspect(object config, JArray issues, ref int total, int limit)
+        {
+            var rows = new JArray();
+            var sources = new HashSet<uint>();
+            GameObject player = NetcodeAccess.Get(config, "PlayerPrefab") as GameObject;
+            if (player != null)
+                Prefab(player, issues, "PlayerPrefab");
+            foreach (var list in Lists(config, issues))
+            {
                 int index = 0;
-                foreach (object entry in NetcodeAccess.Sequence(list, "PrefabList"))
+                foreach (object entry in list.entries)
                 {
                     if (++total > limit)
                         throw new InvalidOperationException("preflight_budget_exceeded: prefab registrations exceed max_prefabs; inspection is incomplete.");
-                    string location = "NetworkPrefabsLists[" + (listIndex - 1) + "][" + index++ + "]";
-                    var row = new JObject { ["location"] = location, ["list_path"] = AssetDatabase.GetAssetPath(asset) };
+                    string location = list.location + "[" + index++ + "]";
+                    var row = new JObject { ["location"] = location, ["list_path"] = list.path };
                     rows.Add(row);
                     if (entry == null)
                     {
@@ -74,7 +103,7 @@ namespace MCPForUnity.Editor.Tools.Netcode
                             source = NetcodeAccess.Get(entry, "Prefab") as GameObject;
                             if (!Prefab(source, issues, location))
                                 continue;
-                            hash = Convert.ToUInt32(NetcodeAccess.Get(entry, "SourcePrefabGlobalObjectIdHash"));
+                            hash = SourceHash(entry, source);
                             break;
                         case "Prefab":
                             source = NetcodeAccess.Get(entry, "SourcePrefabToOverride") as GameObject;
@@ -83,7 +112,7 @@ namespace MCPForUnity.Editor.Tools.Netcode
                                 || !Prefab(NetcodeAccess.Get(entry, "OverridingTargetPrefab") as GameObject, issues, location + " target")
                             )
                                 continue;
-                            hash = Convert.ToUInt32(NetcodeAccess.Get(entry, "SourcePrefabGlobalObjectIdHash"));
+                            hash = SourceHash(entry, source);
                             break;
                         case "Hash":
                             source = null;

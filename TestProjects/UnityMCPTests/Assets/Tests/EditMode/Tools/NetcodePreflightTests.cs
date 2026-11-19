@@ -1,6 +1,5 @@
 using System;
 using System.Collections;
-using System.Linq;
 using System.Reflection;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
@@ -21,8 +20,7 @@ namespace MCPForUnityTests.EditMode.Tools
         private string folder;
         private readonly System.Collections.Generic.List<UnityEngine.Object> temporary = new();
 
-        private static Type Ngo(string name) =>
-            AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("Unity.Netcode." + name)).FirstOrDefault(t => t != null);
+        private static Type Ngo(string name) => Type.GetType("Unity.Netcode." + name + ", Unity.Netcode.Runtime", false);
 
         private static object Get(object target, string name) =>
             target.GetType().GetField(name)?.GetValue(target) ?? target.GetType().GetProperty(name)?.GetValue(target);
@@ -77,6 +75,8 @@ namespace MCPForUnityTests.EditMode.Tools
             var go = new GameObject("OwnedNgoManager");
             SceneManager.MoveGameObjectToScene(go, scene);
             var manager = go.AddComponent(Ngo("NetworkManager"));
+            if (Get(manager, "NetworkConfig") == null)
+                Set(manager, "NetworkConfig", Activator.CreateInstance(Ngo("NetworkConfig")));
             if (transport)
             {
                 Type type = Ngo("Transports.UTP.UnityTransport");
@@ -95,6 +95,11 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsTrue((bool)result["success"], result.ToString());
             Assert.AreEqual(Ngo("NetworkManager") != null, (bool)result["data"]["package_available"]);
             Assert.AreEqual(true, (bool)result["data"]["read_only"]);
+            if (Ngo("NetworkManager") != null)
+            {
+                var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(Ngo("NetworkManager").Assembly);
+                Assert.AreEqual(package.version, (string)result["data"]["package_version"]);
+            }
             if (Ngo("NetworkManager") == null)
             {
                 JObject absent = Call(Request());
@@ -156,8 +161,10 @@ namespace MCPForUnityTests.EditMode.Tools
             StringAssert.Contains("transport_scene_mismatch", result["data"]["diagnostics"].ToString());
         }
 
-        [Test]
-        public void DuplicateSerializedPrefabRegistrationIsReportedAndPreserved()
+        [TestCase("None")]
+        [TestCase("Prefab")]
+        [TestCase("Hash")]
+        public void DuplicateSerializedPrefabRegistrationIsReportedAndPreserved(string mode)
         {
             Component manager = Manager();
             AssetDatabase.CreateFolder("Assets", folder.Substring("Assets/".Length));
@@ -172,23 +179,80 @@ namespace MCPForUnityTests.EditMode.Tools
             {
                 UnityEngine.Object.DestroyImmediate(source);
             }
-            var list = ScriptableObject.CreateInstance(Ngo("NetworkPrefabsList"));
-            temporary.Add(list);
+            uint prefabHash;
+            using (var serialized = new SerializedObject(prefab.GetComponent(Ngo("NetworkObject"))))
+                prefabHash = (uint)serialized.FindProperty("GlobalObjectIdHash").longValue;
+            Assert.AreNotEqual(0u, prefabHash);
             object entry = Activator.CreateInstance(Ngo("NetworkPrefab"));
             Set(entry, "Prefab", prefab);
-            MethodInfo add = list.GetType().GetMethod("Add");
-            add.Invoke(list, new[] { entry });
-            add.Invoke(list, new[] { entry });
-            object prefabs = Get(Get(manager, "NetworkConfig"), "Prefabs");
-            IList lists = (IList)Get(prefabs, "NetworkPrefabsLists");
-            lists.Clear();
-            lists.Add(list);
-            string before = EditorJsonUtility.ToJson(list);
+            Set(entry, "Override", Enum.Parse(Ngo("NetworkPrefabOverride"), mode));
+            Set(entry, "SourceHashToOverride", prefabHash);
+            Set(entry, "SourcePrefabToOverride", prefab);
+            Set(entry, "OverridingTargetPrefab", prefab);
+            object config = Get(manager, "NetworkConfig");
+            UnityEngine.Object owner = manager;
+            string location;
+            if (Get(config, "Prefabs") is object prefabs)
+            {
+                var list = ScriptableObject.CreateInstance(Ngo("NetworkPrefabsList"));
+                temporary.Add(list);
+                MethodInfo add = list.GetType().GetMethod("Add");
+                add.Invoke(list, new[] { entry });
+                add.Invoke(list, new[] { entry });
+                IList lists = (IList)Get(prefabs, "NetworkPrefabsLists");
+                lists.Clear();
+                lists.Add(list);
+                owner = list;
+                location = "NetworkPrefabsLists[0]";
+            }
+            else
+            {
+                var entries = (IList)config.GetType().GetField("NetworkPrefabs", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(config);
+                entries.Add(entry);
+                entries.Add(entry);
+                location = "NetworkPrefabs";
+            }
+            string before = EditorJsonUtility.ToJson(owner);
             JObject result = Call(Request());
             Assert.IsTrue((bool)result["success"], result.ToString());
             Assert.IsFalse((bool)result["data"]["ready"]);
             StringAssert.Contains("duplicate_prefab", result["data"]["diagnostics"].ToString());
-            Assert.AreEqual(before, EditorJsonUtility.ToJson(list), "Raw duplicate registrations must not be cleaned up by inspection.");
+            Assert.AreEqual(2, (int)result["data"]["prefab_registration_count"]);
+            var row = result["data"]["managers"][0]["prefabs"][1];
+            Assert.AreEqual(prefabHash, (uint)row["source_hash"]);
+            Assert.AreEqual(mode, (string)row["override"]);
+            Assert.AreEqual(location + "[1]", (string)row["location"]);
+            JObject limited = Request();
+            limited["max_prefabs"] = 1;
+            JObject incomplete = Call(limited);
+            Assert.IsFalse((bool)incomplete["success"], incomplete.ToString());
+            StringAssert.Contains("preflight_budget_exceeded", incomplete.ToString());
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(owner), "Raw duplicate registrations must not be cleaned up by inspection.");
+        }
+
+        [Test]
+        public void InlineOverrideWithMissingTargetIsReportedWithoutMigratingIt()
+        {
+            Component manager = Manager();
+            object config = Get(manager, "NetworkConfig");
+            FieldInfo field = config.GetType().GetField("NetworkPrefabs", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? config.GetType().GetField("OldPrefabList", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(field);
+            var entries = (IList)Activator.CreateInstance(field.FieldType);
+            object entry = Activator.CreateInstance(Ngo("NetworkPrefab"));
+            Set(entry, "Override", Enum.Parse(Ngo("NetworkPrefabOverride"), "Hash"));
+            Set(entry, "SourceHashToOverride", 123u);
+            entries.Add(entry);
+            field.SetValue(config, entries);
+            string before = EditorJsonUtility.ToJson(manager);
+            JObject result = Call(Request());
+            Assert.IsTrue((bool)result["success"], result.ToString());
+            Assert.IsFalse((bool)result["data"]["ready"], result.ToString());
+            Assert.AreEqual(1, (int)result["data"]["prefab_registration_count"]);
+            StringAssert.Contains("prefab_missing", result["data"]["diagnostics"].ToString());
+            StringAssert.Contains(field.Name + "[0] target", result["data"]["diagnostics"].ToString());
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(manager));
+            Assert.AreSame(entries, field.GetValue(config));
         }
 
         [Test]

@@ -16,21 +16,32 @@ namespace MCPForUnity.Editor.Tools.Netcode
         internal const string PackageName = "com.unity.netcode.gameobjects";
         internal static readonly string[] Settings = { "ProtocolVersion", "TickRate", "EnableSceneManagement", "ForceSamePrefabs", "ConnectionApproval" };
 
-        internal static Type Type(string name) =>
-            AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("Unity.Netcode." + name)).FirstOrDefault(t => t != null);
+        internal static Type Type(string name) => System.Type.GetType("Unity.Netcode." + name + ", Unity.Netcode.Runtime", false);
 
-        internal static object Get(object target, string name)
+        internal static bool TryGet(object target, string name, out object value)
         {
             if (target == null)
                 throw new InvalidOperationException("netcode_api_unsupported: null owner for " + name + ".");
-            var field = target.GetType().GetField(name, BindingFlags.Public | BindingFlags.Instance);
-            if (field != null)
-                return field.GetValue(target);
+            var field = target.GetType().GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (field != null && (field.IsPublic || field.IsDefined(typeof(SerializeField), false)))
+            {
+                value = field.GetValue(target);
+                return true;
+            }
             var property = target.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
-            if (property?.CanRead == true)
-                return property.GetValue(target);
-            throw new InvalidOperationException("netcode_api_unsupported: missing public member " + name + ".");
+            if (property?.GetGetMethod() != null)
+            {
+                value = property.GetValue(target);
+                return true;
+            }
+            value = null;
+            return false;
         }
+
+        internal static object Get(object target, string name) =>
+            TryGet(target, name, out object value)
+                ? value
+                : throw new InvalidOperationException("netcode_api_unsupported: missing readable member " + name + ".");
 
         internal static IEnumerable Sequence(object target, string name) =>
             Get(target, name) as IEnumerable ?? throw new InvalidOperationException("netcode_api_unsupported: " + name + " is not a collection.");
@@ -38,10 +49,7 @@ namespace MCPForUnity.Editor.Tools.Netcode
         internal static JObject Capabilities()
         {
             Type manager = Type("NetworkManager");
-            PackageInfo package =
-                manager == null
-                    ? PackageInfo.GetAllRegisteredPackages().FirstOrDefault(p => p.name == PackageName)
-                    : PackageInfo.FindForAssembly(manager.Assembly);
+            PackageInfo package = PackageInfo.GetAllRegisteredPackages().FirstOrDefault(p => p.name == PackageName);
             return new JObject
             {
                 ["package_name"] = PackageName,
@@ -49,7 +57,6 @@ namespace MCPForUnity.Editor.Tools.Netcode
                 ["package_installed"] = package != null,
                 ["package_version"] = package?.version,
                 ["read_only"] = true,
-                ["verified_api_version"] = "2.7.0",
                 ["actions"] = new JArray("capabilities", "preflight"),
                 ["settings"] = new JArray(Settings),
                 ["scope"] = "Explicit loaded main-stage scene, at most 16 managers, 10000 scene objects and 1000 total prefab registrations.",
