@@ -239,8 +239,7 @@ namespace MCPForUnityTests.Editor.Tools
             var prefab = PrefabUtility.SaveAsPrefabAsset(prefabSource, _assetRoot + "/Camera.prefab");
             Assert.IsNotNull(prefab);
             Object.DestroyImmediate(prefabSource);
-            var prefabInstance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, _ownedScene);
-            prefabInstance.transform.SetParent(_rig.transform, false);
+            var prefabInstance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, _rig.transform);
             _cameraGo = prefabInstance.transform.GetChild(0).gameObject;
             _camera = _cameraGo.GetComponent<Camera>();
             return cinemachine ? _cameraGo.GetComponent(CameraHelpers.CinemachineCameraType) : _camera;
