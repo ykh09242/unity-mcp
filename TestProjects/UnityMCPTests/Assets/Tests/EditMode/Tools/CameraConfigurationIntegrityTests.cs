@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.Cameras;
 using MCPForUnity.Runtime.Helpers;
@@ -531,6 +532,77 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.IsNull(Pipeline.GetComponent(oldType));
             Assert.AreEqual(newType, CameraHelpers.GetPipelineComponent(camera, stage)?.GetType());
+        }
+
+        [Test]
+        public void FreeLookAndItsRigsAreDiscoveredAtTheCorrectOwnershipLevel()
+        {
+            var freeLook = CameraHelpers.ResolveProviderType("CinemachineFreeLook");
+            if (freeLook == null)
+                Assert.Ignore("The installed provider omits the FreeLook camera.");
+            var owner = Owned("FreeLook").AddComponent(freeLook);
+            var getRig = freeLook.GetMethod("GetRig", new[] { typeof(int) });
+            var rigs = Enumerable.Range(0, 3).Select(i => (Component)getRig.Invoke(owner, new object[] { i })).ToArray();
+            Assert.IsTrue(rigs.All(r => r != null && r.transform.parent == owner.transform));
+            var cameras = ListCameras();
+            Assert.AreEqual(1, cameras.Count(c => c.Value<int>("instanceID") == owner.gameObject.GetInstanceIDCompat()));
+            foreach (var rig in rigs)
+                Assert.IsFalse(cameras.Any(c => c.Value<int>("instanceID") == rig.gameObject.GetInstanceIDCompat()));
+            AssertManagerActions(owner);
+        }
+
+        [Test]
+        public void ClearShotAndItsAuthoredChildAreIndependentlySelectable()
+        {
+            var clearShot = CameraHelpers.ResolveProviderType("CinemachineClearShot");
+            Assert.IsNotNull(clearShot);
+            var manager = Owned("ClearShot").AddComponent(clearShot);
+            var child = Owned("Child");
+            child.transform.SetParent(manager.transform);
+            child.AddComponent(CameraHelpers.CinemachineCameraType);
+            var cameras = ListCameras();
+            Assert.AreEqual(1, cameras.Count(c => c.Value<int>("instanceID") == manager.gameObject.GetInstanceIDCompat()));
+            var row = cameras.Single(c => c.Value<int>("instanceID") == child.GetInstanceIDCompat());
+            Assert.AreEqual(manager.gameObject.GetInstanceIDCompat(), row.Value<int>("parentCameraID"));
+            AssertManagerActions(manager);
+        }
+
+        private static JArray ListCameras()
+        {
+            var response = JObject.FromObject(ManageCamera.HandleCommand(new JObject { ["action"] = "list_cameras" }));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            return (JArray)response["data"]["cinemachineCameras"];
+        }
+
+        private void AssertManagerActions(Component manager)
+        {
+            if (UnityFindObjectsCompat.FindAll(CameraHelpers.VirtualCameraBaseType).OfType<Component>().Any(c => c.gameObject.scene != ownedScene))
+                Assert.Ignore("The native brain update requires a scene with fixture-owned cameras only.");
+            target = manager.gameObject;
+            Assert.AreSame(manager, CameraHelpers.FindCinemachineCamera(Request("set_priority", new JObject())));
+            var priority = Send("set_priority", new JObject { ["priority"] = 37 });
+            Assert.IsTrue(priority.Value<bool>("success"), priority.ToString());
+            var row = ListCameras().Single(c => c.Value<int>("instanceID") == target.GetInstanceIDCompat());
+            Assert.AreEqual(37, row.Value<int>("priority"));
+            var originalComponents = target.GetComponents<Component>();
+            var stage = Send("set_body", new JObject { ["bodyType"] = "CinemachineFollow" });
+            Assert.IsFalse(stage.Value<bool>("success"), stage.ToString());
+            CollectionAssert.AreEqual(originalComponents, target.GetComponents<Component>());
+            var competing = Owned("HigherPriority").AddComponent(CameraHelpers.CinemachineCameraType);
+            Assert.IsNull(CameraConfigure.SetPriority(competing, 90));
+            var brain = OwnedBrain();
+            var force = Force(brain);
+            Assert.AreEqual(target.GetInstanceIDCompat(), force["data"].Value<int>("instanceID"));
+            var updateMode = brain.GetType().GetField("UpdateMethod") ?? brain.GetType().GetField("m_UpdateMethod");
+            if (updateMode != null && Enum.IsDefined(updateMode.FieldType, "ManualUpdate"))
+                updateMode.SetValue(brain, Enum.Parse(updateMode.FieldType, "ManualUpdate"));
+            var update = brain.GetType().GetMethod("ManualUpdate", Type.EmptyTypes)
+                ?? brain.GetType().GetMethod("LateUpdate", BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+            Assert.IsNotNull(update);
+            update.Invoke(brain, null);
+            Assert.AreSame(manager, CameraHelpers.GetReflectionProperty(brain, "ActiveVirtualCamera"));
+            Assert.IsTrue(Send("release_override", new JObject()).Value<bool>("success"));
+            Assert.AreEqual(37, CameraHelpers.ReadCinemachinePriority(manager));
         }
 
         [Test]

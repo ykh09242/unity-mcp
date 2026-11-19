@@ -162,14 +162,40 @@ namespace MCPForUnity.Editor.Tools.Cameras
         {
             if (go == null || !HasCinemachine)
                 return null;
-            var camera = go.GetComponent(CinemachineCameraType);
-            var legacy = LegacyCameraType;
-            return camera != null || legacy == null || legacy == CinemachineCameraType ? camera : go.GetComponent(legacy);
+            return go.GetComponent(VirtualCameraBaseType);
         }
+
+        internal static Type VirtualCameraBaseType => ResolveProviderType("CinemachineVirtualCameraBase") ?? CinemachineCameraType;
 
         internal static Type LegacyCameraType => ResolveProviderType("CinemachineVirtualCamera");
 
         internal static bool UsesLegacyPipeline(Component camera) => camera != null && LegacyCameraType?.IsInstanceOfType(camera) == true;
+
+        internal static bool HasEditablePipeline(Component camera) =>
+            camera != null && (CinemachineCameraType.IsInstanceOfType(camera) || UsesLegacyPipeline(camera));
+
+        internal static bool IsFreeLookRig(Component camera)
+        {
+            if (!UsesLegacyPipeline(camera) || camera.transform.parent == null)
+                return false;
+            var freeLook = ResolveProviderType("CinemachineFreeLook");
+            var parent = freeLook == null ? null : camera.transform.parent.GetComponent(freeLook);
+            if (parent == null)
+                return false;
+
+            // GetRig() populates the pipeline on demand. Inspect the existing ownership
+            // references without materializing any rigs while listing cameras.
+            using var serialized = new SerializedObject(parent);
+            using var rigs = serialized.FindProperty("m_Rigs");
+            if (rigs != null && rigs.isArray)
+                for (int index = 0; index < rigs.arraySize; index++)
+                {
+                    using var rig = rigs.GetArrayElementAtIndex(index);
+                    if (rig.objectReferenceValue == camera)
+                        return true;
+                }
+            return false;
+        }
 
         internal static Component FindBrain()
         {
@@ -295,8 +321,10 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
         internal static GameObject PipelineOwner(Component camera, bool create = false)
         {
+            if (!HasEditablePipeline(camera))
+                return null;
             if (!UsesLegacyPipeline(camera))
-                return camera?.gameObject;
+                return camera.gameObject;
 
             // Asking CM2 for GetComponentOwner (including through GetCinemachineComponent)
             // creates its hidden child. Reads and property preflight must leave the scene intact.
@@ -325,7 +353,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
         internal static Component GetPipelineComponent(Component cmCamera, string stageName)
         {
-            if (cmCamera == null)
+            if (!HasEditablePipeline(cmCamera))
                 return null;
             var type = cmCamera.GetType();
 

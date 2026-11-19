@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Graphics;
@@ -22,13 +21,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
             // Cinemachine cameras
             if (CameraHelpers.HasCinemachine)
             {
-                var cmType = CameraHelpers.CinemachineCameraType;
-                var allCm = UnityFindObjectsCompat.FindAll(cmType).AsEnumerable();
-                var legacy = CameraHelpers.LegacyCameraType;
-                if (legacy != null && legacy != cmType)
-                    allCm = allCm.Concat(UnityFindObjectsCompat.FindAll(legacy));
-                foreach (Component cm in allCm)
+                foreach (Component cm in UnityFindObjectsCompat.FindAll(CameraHelpers.VirtualCameraBaseType))
                 {
+                    if (CameraHelpers.IsFreeLookRig(cm))
+                        continue;
+                    var parent = CameraHelpers.GetReflectionProperty(cm, "ParentCamera") as Component;
                     var follow = CameraHelpers.GetReflectionProperty(cm, "Follow") as Transform;
                     var lookAt = CameraHelpers.GetReflectionProperty(cm, "LookAt") as Transform;
                     var isLive = CameraHelpers.IsLive(cm);
@@ -55,6 +52,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         {
                             instanceID = cm.gameObject.GetInstanceIDCompat(),
                             name = cm.gameObject.name,
+                            cameraType = cm.GetType().Name,
+                            parentCameraID = parent == null ? (int?)null : parent.gameObject.GetInstanceIDCompat(),
                             isLive,
                             priority,
                             follow = follow != null ? new { name = follow.gameObject.name, instanceID = follow.gameObject.GetInstanceIDCompat() } : null,

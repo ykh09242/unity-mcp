@@ -180,6 +180,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             // Lens is a struct field — use SerializedProperty for reliable setting
             using var so = new SerializedObject(cmCamera);
+            using var commonLens = so.FindProperty("m_CommonLens");
+            if (commonLens?.propertyType == SerializedPropertyType.Boolean && !commonLens.boolValue)
+                return new ErrorResponse("This FreeLook camera uses individual rig lenses. Select the rig that owns the lens.");
             using var lensProp = so.FindProperty("Lens") ?? so.FindProperty("m_Lens");
             if (lensProp == null)
                 return new ErrorResponse("Could not find Lens property on CinemachineCamera.");
@@ -290,6 +293,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (cmCamera == null)
                 return new ErrorResponse("Target CinemachineCamera not found.");
 
+            if (!CameraHelpers.HasEditablePipeline(cmCamera))
+                return new ErrorResponse($"{cmCamera.GetType().Name} has no single editable pipeline. Select the camera that owns the stage.");
+
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             var go = cmCamera.gameObject;
 
@@ -361,6 +367,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (cmCamera == null)
                 return new ErrorResponse("Target CinemachineCamera not found.");
 
+            if (!CameraHelpers.HasEditablePipeline(cmCamera))
+                return new ErrorResponse($"{cmCamera.GetType().Name} has no single editable pipeline. Select the camera that owns the stage.");
+
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             var go = cmCamera.gameObject;
 
@@ -429,6 +438,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
             var cmCamera = CameraHelpers.FindCinemachineCamera(@params);
             if (cmCamera == null)
                 return new ErrorResponse("Target CinemachineCamera not found.");
+
+            if (!CameraHelpers.HasEditablePipeline(cmCamera))
+                return new ErrorResponse($"{cmCamera.GetType().Name} has no single editable pipeline. Select the camera that owns the stage.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             var go = cmCamera.gameObject;
