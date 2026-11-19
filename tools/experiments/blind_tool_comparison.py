@@ -69,7 +69,10 @@ def paired_schedule(cells):
 
 
 def summarize(cases: list[dict]) -> dict:
+    attempted = len(cases)
+    cases = [case for case in cases if case.get("turn_completed") is True]
     return {
+        "attempted_cases": attempted,
         "observed": len(cases),
         "role_status": dict(Counter(c["role_status"] for c in cases)),
         "first_suitable_on_first_business_call": sum(

@@ -120,6 +120,32 @@ def test_matched_cli_runs_adjacent_pairs_and_preserves_missing_and_unverified_ar
     assert missing_arm["eligible_pairs"] == 0 and missing_arm["planned_pairs"] == 4
 
 
+def test_public_role_summary_does_not_count_pre_model_failures_as_observations(tmp_path):
+    for arm in ("baseline", "candidate"):
+        case = tmp_path / arm / "game-view-en-main-01"
+        case.mkdir(parents=True)
+        (case / "case.json").write_text(
+            json.dumps(
+                {
+                    "task": "game-view",
+                    "language": "en",
+                    "role": "main",
+                    "repetition": 1,
+                    "graph_asset": "",
+                    "runner_status": "launch_failed",
+                    "runner_phase": "configured_preflight",
+                }
+            )
+        )
+    report = compare_directories(tmp_path / "baseline", tmp_path / "candidate")
+    for arm in ("baseline", "candidate"):
+        role = report["observed_by_requested_role"][arm]["main"]
+        coverage = report["coverage"]["role"]["main"]["arms"][arm]
+        assert role["attempted_cases"] == coverage["attempted_cases"] == 1
+        assert role["observed"] == coverage["observed_turns"] == 0
+        assert role["final_answers"] == {}
+
+
 @pytest.mark.parametrize(
     ("task", "wire", "answer", "result"),
     [
