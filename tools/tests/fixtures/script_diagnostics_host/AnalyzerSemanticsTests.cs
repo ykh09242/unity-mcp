@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using NUnit.Framework;
@@ -204,19 +205,42 @@ public class AnalyzerSemanticsTests
     }
 
     [Test]
+    public void RepositoryPolicyEnforcesEveryRuleInTheLockedUnityAnalyzer()
+    {
+        var rules = AnalyzerRunner
+            .LoadPinnedAnalyzers()
+            .Where(analyzer => analyzer is not DiagnosticSuppressor)
+            .SelectMany(analyzer => analyzer.SupportedDiagnostics)
+            .Select(rule => rule.Id)
+            .Where(id => id.StartsWith("UNT", StringComparison.Ordinal))
+            .Distinct();
+        var config = Path.Combine(AppContext.BaseDirectory, "unity-analyzers.globalconfig");
+        var enforced = File.ReadLines(config)
+            .Where(line => line.StartsWith("dotnet_diagnostic.UNT", StringComparison.Ordinal) && line.EndsWith(".severity = error", StringComparison.Ordinal))
+            .Select(line => line.Split('.')[1]);
+        Assert.That(enforced, Is.EquivalentTo(rules));
+    }
+
+    [Test]
     public async Task AnalyzerCrashCannotProduceACompleteResult()
     {
         var result = await AnalyzerRunner.AnalyzeWithAsync(Request("class C {}"), ImmutableArray.Create<DiagnosticAnalyzer>(new BrokenAnalyzer()));
         Assert.That(result.Complete, Is.False);
-        Assert.That(result.AnalyzerErrors, Is.Not.Empty);
+        Assert.That(result.AnalyzerErrors, Has.Some.EndsWith(": fixture failure"));
     }
 
+    [SuppressMessage("MicrosoftCodeAnalysisCorrectness", "RS1001", Justification = "The test supplies this fixture directly to the analysis driver.")]
     private sealed class BrokenAnalyzer : DiagnosticAnalyzer
     {
         public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
             [new("QA0001", "Fixture", "Fixture", "QA", DiagnosticSeverity.Warning, true)];
 
-        public override void Initialize(AnalysisContext context) => throw new InvalidOperationException("fixture failure");
+        public override void Initialize(AnalysisContext context)
+        {
+            context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
+            context.EnableConcurrentExecution();
+            context.RegisterCompilationAction(_ => throw new InvalidOperationException("fixture failure"));
+        }
     }
 
     [Test]

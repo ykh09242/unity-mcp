@@ -8,15 +8,22 @@ public class InstallationTests
     [Test]
     public async Task GitPackageShapeInstallsAndInterruptedReplacementPreservesWorkingHost()
     {
-        string repository = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "../../../../../../.."));
-        string source = Path.Combine(repository, "MCPForUnity/Editor/ScriptDiagnosticsHost~");
+        string source = Path.Combine(TestContext.CurrentContext.TestDirectory, "host-source");
         Assert.That(Directory.Exists(source), Is.True, source);
-        string root = Path.Combine(
-            repository,
-            ".superpowers/sdd/2026-11-11-source-freshness-and-script-diagnostics",
-            "host-install-" + Guid.NewGuid().ToString("N")
-        );
-        string package = Path.Combine(root, "Packages/com.coplaydev.unity-mcp/Editor/ScriptDiagnosticsHost~");
+        var temp = Directory.CreateTempSubdirectory("unity-mcp-host-");
+        try
+        {
+            await VerifyInstallation(source, temp.FullName);
+        }
+        finally
+        {
+            temp.Delete(recursive: true);
+        }
+    }
+
+    private static async Task VerifyInstallation(string source, string root)
+    {
+        string package = Path.Combine(root, "Packages/com.ykh09242.unity-mcp/Editor/ScriptDiagnosticsHost~");
         Directory.CreateDirectory(package);
         foreach (string name in AnalysisHostInstallation.SourceFiles)
             File.Copy(Path.Combine(source, name), Path.Combine(package, name));
@@ -36,14 +43,14 @@ public class InstallationTests
         Assert.That(File.ReadAllText(Path.Combine(cache, "unowned.txt")), Is.EqualTo("preserve"));
         Assert.That(AnalysisHostInstallation.ResolveVerifiedHost(cache), Is.EqualTo(host));
         // Ordinary execution uses the published runtime files without a restore/build.
-        var result = await owner.RunAsync("dotnet", [host, "--capabilities"], Path.GetDirectoryName(host)!, null!, true, CancellationToken.None);
+        var result = await owner.RunAsync("dotnet", [host, "--capabilities"], Path.GetDirectoryName(host)!, null, true, CancellationToken.None);
         Assert.That(System.Text.Encoding.UTF8.GetString(result), Does.Contain("\"protocol\":1"));
         string installedSource = AnalysisHostInstallation.SourceSignature(package);
         Assert.That(AnalysisHostInstallation.ResolveVerifiedHost(cache, installedSource), Is.EqualTo(host));
         File.AppendAllText(Path.Combine(package, "Protocol.cs"), "\n// newer shipped host\n");
         string changedSource = AnalysisHostInstallation.SourceSignature(package);
         Assert.That(changedSource, Is.Not.EqualTo(installedSource));
-        Assert.That(AnalysisHostInstallation.Inspect(cache, out string reason, changedSource), Is.Null);
+        Assert.That(AnalysisHostInstallation.Inspect(cache, out string? reason, changedSource), Is.Null);
         Assert.That(reason, Is.EqualTo("analysis_host_update_required"));
         Assert.Throws<IOException>(() => AnalysisHostInstallation.ResolveVerifiedHost(cache, changedSource));
         Assert.That(File.ReadAllBytes(Path.Combine(cache, "current.json")), Is.EqualTo(pointer));

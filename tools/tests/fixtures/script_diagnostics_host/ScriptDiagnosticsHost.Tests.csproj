@@ -8,6 +8,8 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
+    <None Include="../../../../tools/compile-refs/unity-analyzers.globalconfig" Link="unity-analyzers.globalconfig" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../../MCPForUnity/Editor/ScriptDiagnosticsHost~/*.*" Link="host-source/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../../../MCPForUnity/Editor/Services/ScriptQuality/AnalysisHostProcess.cs" Link="AnalysisHostProcess.cs" />
     <Compile Include="../../../../MCPForUnity/Editor/Services/ScriptQuality/AnalysisHostInstallation.cs" Link="AnalysisHostInstallation.cs" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
