@@ -29,8 +29,7 @@ def test_skill_installer_menu_exposes_latest_without_changing_package_default() 
         r"public static void OpenWindow\(\)",
         source,
     )
-    on_enable = source.split("private void OnEnable()", 1)[1].split("private void OnDisable()", 1)[
-        0
-    ]
-    assert "_latest = false;" in on_enable
+    on_enable = re.search(r"\bvoid OnEnable\(\)(.*?)\bvoid OnDisable\(\)", source, re.DOTALL)
+    assert on_enable is not None
+    assert "_latest = false;" in on_enable[1]
     assert '"Installed package", "Latest from branch"' in source
