@@ -352,12 +352,14 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.AreEqual(0, UnityEngine.Resources.FindObjectsOfTypeAll<ScreenshotCapturer>().Length);
         }
 
-        [Test]
-        public void DefaultScreenshotReportsCameraFallbackAndRestoresRenderState()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DefaultScreenshotReportsCameraFallbackAndRestoresRenderState(bool includeImage)
         {
             string cause = ScreenshotUtility.GameViewCaptureFallbackCause;
-            if (cause == null)
+            if (cause == null && !includeImage)
                 Assert.Ignore("Requires batch mode or a project without Screen Capture.");
+            cause ??= "Edit mode";
 
             var cameraObject = new GameObject("__ScreenshotDefaultFallbackCamera");
             cameraObject.AddComponent<Camera>();
@@ -375,6 +377,8 @@ namespace MCPForUnityTests.Editor.Helpers
                             ["action"] = "screenshot",
                             ["fileName"] = "fallback",
                             ["outputFolder"] = folder,
+                            ["includeImage"] = includeImage,
+                            ["maxResolution"] = 32,
                         }
                     )
                 );
@@ -395,6 +399,15 @@ namespace MCPForUnityTests.Editor.Helpers
                     StringAssert.Contains(cause, data.Value<string>("fallbackReason"));
                     string path = data.Value<string>("fullPath");
                     CollectionAssert.AreEqual(new byte[] { 137, 80, 78, 71 }, System.Linq.Enumerable.Take(File.ReadAllBytes(path), 4));
+                    if (includeImage)
+                    {
+                        byte[] inline = System.Convert.FromBase64String(data.Value<string>("imageBase64"));
+                        CollectionAssert.AreEqual(new byte[] { 137, 80, 78, 71 }, System.Linq.Enumerable.Take(inline, 4));
+                        Assert.That(data.Value<int>("imageWidth"), Is.InRange(1, 32));
+                        Assert.That(data.Value<int>("imageHeight"), Is.InRange(1, 32));
+                    }
+                    else
+                        Assert.IsNull(data["imageBase64"]);
                 }
 
                 Assert.AreSame(targetBefore, camera.targetTexture);
@@ -409,15 +422,26 @@ namespace MCPForUnityTests.Editor.Helpers
             }
         }
 
-        [Test]
-        public void DefaultScreenshotWithoutACameraRefusesFallbackWithoutCreatingOutput()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DefaultScreenshotWithoutACameraRefusesFallbackWithoutCreatingOutput(bool includeImage)
         {
             string cause = ScreenshotUtility.GameViewCaptureFallbackCause;
-            if (cause == null || UnityFindObjectsCompat.FindAll<Camera>().Length != 0)
-                Assert.Ignore("Requires a camera-free scene in batch mode or a project without Screen Capture.");
+            if ((cause == null && !includeImage) || UnityFindObjectsCompat.FindAll<Camera>().Length != 0)
+                Assert.Ignore("Requires a camera-free scene and a request that needs a fallback.");
+            cause ??= "Edit mode";
 
             string folder = "Temp/ScreenshotNoCameraFallback-" + System.Guid.NewGuid().ToString("N");
-            var response = JObject.FromObject(ManageScene.HandleCommand(new JObject { ["action"] = "screenshot", ["outputFolder"] = folder }));
+            var response = JObject.FromObject(
+                ManageScene.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "screenshot",
+                        ["outputFolder"] = folder,
+                        ["includeImage"] = includeImage,
+                    }
+                )
+            );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             StringAssert.Contains(cause, response.Value<string>("error"));
             StringAssert.Contains("there is no camera to render instead", response.Value<string>("error"));

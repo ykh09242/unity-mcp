@@ -545,7 +545,7 @@ namespace MCPForUnity.Runtime.Helpers
         }
 
         /// <summary>Renders a scene camera in place of a composited capture; <paramref name="cause"/> says why.</summary>
-        private static ScreenshotCaptureResult CaptureWithCameraInstead(
+        internal static ScreenshotCaptureResult CaptureWithCameraInstead(
             string fileName,
             int superSize,
             bool ensureUniqueFileName,

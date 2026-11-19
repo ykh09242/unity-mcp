@@ -926,9 +926,6 @@ namespace MCPForUnity.Editor.Tools
                     }
                 }
 
-                // When include_image is requested but no specific camera, use composited capture
-                // (ScreenCapture.CaptureScreenshotAsTexture) which captures UI Toolkit overlays.
-                // When a specific camera IS requested, use camera-based capture.
                 if (targetCamera != null)
                 {
                     if (!Application.isBatchMode)
@@ -951,71 +948,41 @@ namespace MCPForUnity.Editor.Tools
                     return new SuccessResponse(message, BuildScreenshotResponseData(result, targetCamera.name, includeImage));
                 }
 
+                string captureFallback = ScreenshotUtility.GameViewCaptureFallbackCause;
                 if (includeImage && Application.isPlaying)
                 {
-                    if (ScreenshotUtility.GameViewCaptureFallbackCause == null)
+                    if (captureFallback == null)
                         EnsureGameView();
                     // A Task<object>, not a response: the capture waits for the end of the frame,
                     // and CommandRegistry awaits a Task<object> that a synchronous handler returns.
                     return CaptureCompositedScreenshotAsync(cmd, fileName, resolvedSuperSize, maxResolution, cancellationToken);
                 }
 
-                if (includeImage)
-                {
-                    // Not in play mode — fall back to camera-based capture
-                    targetCamera = Camera.main;
-                    if (targetCamera == null)
-                    {
-                        var allCams = UnityFindObjectsCompat.FindAll<Camera>();
-                        targetCamera = allCams.Length > 0 ? allCams[0] : null;
-                    }
-                    if (targetCamera == null)
-                    {
-                        return new ErrorResponse("No camera found in the scene. Add a Camera to use screenshot with include_image outside of Play mode.");
-                    }
-
-                    if (!Application.isBatchMode)
-                        EnsureGameView();
-
-                    string folderOverride = ScreenshotPreferences.Resolve(cmd.outputFolder);
-                    ScreenshotCaptureResult result;
-                    try
-                    {
-                        result = ScreenshotUtility.CaptureFromCameraToProjectFolder(
-                            targetCamera,
-                            fileName,
-                            resolvedSuperSize,
-                            ensureUniqueFileName: true,
-                            includeImage: includeImage,
-                            maxResolution: maxResolution,
-                            folderOverride: folderOverride
-                        );
-                    }
-                    catch (InvalidOperationException ex)
-                    {
-                        return new ErrorResponse(ex.Message);
-                    }
-                    if (ScreenshotUtility.IsUnderAssets(result.ProjectRelativePath))
-                        AssetDatabase.ImportAsset(result.ProjectRelativePath, ImportAssetOptions.ForceSynchronousImport);
-                    string message = $"Screenshot captured to '{result.ProjectRelativePath}' (camera: {targetCamera.name}).";
-
-                    return new SuccessResponse(message, BuildScreenshotResponseData(result, targetCamera.name, includeImage));
-                }
-
-                if (ScreenshotUtility.GameViewCaptureFallbackCause == null)
+                if (!includeImage && captureFallback == null)
                     EnsureGameView();
 
                 string defaultFolderOverride = ScreenshotPreferences.Resolve(cmd.outputFolder);
                 ScreenshotCaptureResult defaultResult;
                 try
                 {
-                    defaultResult = ScreenshotUtility.CaptureToProjectFolder(
-                        cancellationToken,
-                        fileName,
-                        resolvedSuperSize,
-                        ensureUniqueFileName: true,
-                        folderOverride: defaultFolderOverride
-                    );
+                    defaultResult = includeImage
+                        ? ScreenshotUtility.CaptureWithCameraInstead(
+                            fileName,
+                            resolvedSuperSize,
+                            ensureUniqueFileName: true,
+                            includeImage: true,
+                            maxResolution: maxResolution,
+                            folderOverride: defaultFolderOverride,
+                            cause: captureFallback ?? "Edit mode has no composited frame available for an inline screenshot",
+                            cancellationToken: cancellationToken
+                        )
+                        : ScreenshotUtility.CaptureToProjectFolder(
+                            cancellationToken,
+                            fileName,
+                            resolvedSuperSize,
+                            ensureUniqueFileName: true,
+                            folderOverride: defaultFolderOverride
+                        );
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -1034,7 +1001,7 @@ namespace MCPForUnity.Editor.Tools
                 string defaultMessage = $"{verb} to '{defaultResult.ProjectRelativePath}'.";
                 if (defaultResult.FallbackReason != null)
                     defaultMessage += " " + defaultResult.FallbackReason;
-                return new SuccessResponse(defaultMessage, BuildScreenshotResponseData(defaultResult, defaultResult.FallbackCameraName, includeImage: false));
+                return new SuccessResponse(defaultMessage, BuildScreenshotResponseData(defaultResult, defaultResult.FallbackCameraName, includeImage));
             }
             catch (OperationCanceledException)
             {

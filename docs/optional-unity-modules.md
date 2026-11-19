@@ -11,7 +11,7 @@ installation is introduced.
 | --- | --- | --- |
 | `com.unity.modules.physics` | `MCP_FOR_UNITY_PHYSICS` in Runtime and Editor | Physics tools return `physics_modules_unavailable`; physics material creation returns `physics_module_unavailable`. Ordinary assets, components, scenes and profiling remain available. |
 | `com.unity.modules.physics2d` | `MCP_FOR_UNITY_PHYSICS2D` in Runtime and Editor | Physics tools return `physics_modules_unavailable`. Core component/scene operations and available simulation-profile domains remain available. |
-| `com.unity.modules.screencapture` | `MCP_FOR_UNITY_SCREEN_CAPTURE` in Runtime and Editor | File-only and composited Play mode Game View screenshots use an existing camera and report `camera_fallback` with `screen_capture_module_unavailable` in the reason. Without a usable camera render, they return an error. Camera and Scene View capture remain available with their usual prerequisites. Recording capabilities omit the unavailable Game View source. |
+| `com.unity.modules.screencapture` | `MCP_FOR_UNITY_SCREEN_CAPTURE` in Runtime and Editor | Game View screenshots requested without a camera use an existing camera and report `camera_fallback` with `screen_capture_module_unavailable` in the reason. Without a usable camera render, they return an error. Camera and Scene View capture remain available with their usual prerequisites. Recording capabilities omit the unavailable Game View source. |
 
 The existing physics implementations share 2D and 3D types. Their dispatcher and
 generated capability wrappers remain registered, but require **both** physics
