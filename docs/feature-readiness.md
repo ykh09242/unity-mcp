@@ -14,21 +14,22 @@ checks and response limits remain unchanged. Older peers yield unknown evidence.
 | --- | --- | --- |
 | Build | Active platform module and configured Player backend | Preview the requested build; verify backend/SDK/license/subtarget toolchain |
 | Render pipeline | Current Built-in/URP/HDRP/custom pipeline | Inspect settings and the operation's selected target |
-| Cinemachine | Registered package version and the existing CinemachineCamera/Brain API detector | Inspect camera targets; CM2 lacks the required CM3 camera API |
+| Cinemachine | Loaded camera and brain APIs from either Cinemachine namespace, with the registered package version when available | Inspect the selected camera, brain and components required by the requested preset |
 | ProBuilder | Registered version and loaded ProBuilderMesh type | Inspect mesh topology and requested operation compatibility |
 | Netcode for GameObjects | Registered version and NetworkManager type | Explicit scene preflight; transport/peers/hosting remain unverified |
 | Physics | Compiled Physics and Physics2D module boundaries | Both modules are required by the shared physics tools; inspect requested settings or targets |
 | Screen Capture | Compiled Screen Capture module boundary | Inspect the capture source; camera and Scene View rendering remain available without Game View capture |
 
-Missing package, unsupported package version, missing platform module, disabled
+Missing package, unavailable package API, missing platform module, disabled
 tool, busy Editor and unavailable evidence have distinct reasons. Known package
 or module support never produces `ready: true` for an unspecified operation.
 `missing_engine_module` is distinct from an unobserved package or platform SDK.
 See [optional Unity modules](optional-unity-modules.md) for required dependencies,
 per-tool behavior and compilation coverage.
-Multiple blockers remain visible. API absence with an installed package remains
-unknown, since assembly loading/compilation may be incomplete. Versions outside
-an explicitly known incompatibility are not automatically rejected.
+Multiple blockers remain visible. A loaded API can establish support even when
+package metadata is unavailable. An idle Editor with an installed package and a
+missing required API reports `package_api_unavailable`. While the Editor is busy,
+missing API evidence leaves support unknown until the next observation.
 
 Only small package-version strings are cached. Package registration start/end
 invalidates them, and domain reload replaces the cache. Failed metadata reads are

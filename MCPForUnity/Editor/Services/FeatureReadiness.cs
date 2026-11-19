@@ -119,10 +119,9 @@ namespace MCPForUnity.Editor.Services
                 "com.unity.cinemachine",
                 "manage_cinemachine",
                 CameraHelpers.HasCinemachine,
-                "CinemachineCamera API (3.x or compatible)",
+                "Cinemachine camera and brain APIs",
                 "inspect_camera_targets",
-                busy,
-                true
+                busy
             );
             result["probuilder"] = Package(
                 "com.unity.probuilder",
@@ -136,7 +135,7 @@ namespace MCPForUnity.Editor.Services
                 NetcodeAccess.PackageName,
                 "manage_netcode",
                 NetcodeAccess.Type("NetworkManager") != null,
-                "NetworkManager API; preflight verified with NGO 2.7.0",
+                "NetworkManager API; preflight checks the selected scene",
                 "run_explicit_scene_netcode_preflight",
                 busy
             );
@@ -161,12 +160,10 @@ namespace MCPForUnity.Editor.Services
             return result;
         }
 
-        private static JObject Package(string name, string tool, bool api, string required, string next, bool busy, bool cm = false)
+        private static JObject Package(string name, string tool, bool api, string required, string next, bool busy)
         {
             bool observed = Packages.TryRead(name, out string version);
-            bool incompatible = cm && version != null && int.TryParse(version.Split('.')[0], out int major) && major < 3;
-            var result = DescribePackage(name, version, observed, api, incompatible, Enabled(tool), busy, required, next);
-            return result;
+            return DescribePackage(name, version, observed, api, Enabled(tool), busy, required, next);
         }
 
         internal static JObject DescribePackage(
@@ -174,7 +171,6 @@ namespace MCPForUnity.Editor.Services
             string version,
             bool observed,
             bool api,
-            bool incompatible,
             bool enabled,
             bool busy,
             string required,
@@ -182,23 +178,18 @@ namespace MCPForUnity.Editor.Services
         )
         {
             string reason =
-                !observed ? "package_metadata_unknown"
+                api ? "preflight_required"
+                : !observed ? "package_metadata_unknown"
                 : version == null ? "missing_package"
-                : incompatible ? "unsupported_package_version"
-                : !api ? "package_api_unavailable"
-                : "preflight_required";
-            bool? supported =
-                !observed ? (bool?)null
-                : version == null || incompatible ? false
-                : api ? true
-                : (bool?)null;
+                : "package_api_unavailable";
+            bool? supported = api ? true : !observed || (busy && version != null) ? (bool?)null : false;
             var result = Describe(
                 supported,
                 reason,
                 enabled,
                 busy,
                 reason == "missing_package" ? "inspect_package_requirement"
-                    : incompatible ? "inspect_package_compatibility"
+                    : reason == "package_api_unavailable" ? "inspect_package_compatibility"
                     : next
             );
             result["package_name"] = name;

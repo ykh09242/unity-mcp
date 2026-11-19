@@ -11,16 +11,16 @@ namespace MCPForUnityTests.Editor.Services
 {
     public class FeatureReadinessTests
     {
-        [TestCase(false, null, false, false, "package_metadata_unknown", "unknown")]
-        [TestCase(true, null, false, false, "missing_package", "unsupported")]
-        [TestCase(true, "2.10.1", false, true, "unsupported_package_version", "unsupported")]
-        [TestCase(true, "3.1.0", false, false, "package_api_unavailable", "unknown")]
-        [TestCase(true, "3.1.0", true, false, "preflight_required", "unknown")]
+        [TestCase(false, null, false, "package_metadata_unknown", "unknown")]
+        [TestCase(true, null, false, "missing_package", "unsupported")]
+        [TestCase(true, "2.10.1", true, "preflight_required", "unknown")]
+        [TestCase(true, "4.0.0-preview.2", false, "package_api_unavailable", "unsupported")]
+        [TestCase(false, null, true, "preflight_required", "unknown")]
+        [TestCase(true, "3.1.0", true, "preflight_required", "unknown")]
         public void PackageEvidenceNeverTreatsInstallationAsTargetReadiness(
             bool observed,
             string version,
             bool api,
-            bool incompatible,
             string reason,
             string status
         )
@@ -30,7 +30,6 @@ namespace MCPForUnityTests.Editor.Services
                 version,
                 observed,
                 api,
-                incompatible,
                 true,
                 false,
                 "CinemachineCamera API",
@@ -39,8 +38,16 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(reason, result["reason"].Value<string>());
             Assert.AreEqual(status, result["status"].Value<string>());
             Assert.AreNotEqual(true, result["ready"].Value<bool?>());
-            if (!observed || (version != null && !incompatible && !api))
-                Assert.AreEqual(JTokenType.Null, result["supported"].Type);
+            Assert.AreEqual(api ? true : observed ? false : (bool?)null, result["supported"].Value<bool?>());
+        }
+
+        [Test]
+        public void InstalledPackageWithoutLoadedApiRemainsUnknownWhileEditorIsBusy()
+        {
+            JObject result = FeatureReadiness.DescribePackage("package", "2.0", true, false, true, true, "camera API", "inspect_camera_targets");
+            Assert.IsNull(result["supported"].Value<bool?>());
+            Assert.IsFalse(result["ready"].Value<bool>());
+            CollectionAssert.Contains(result["blocking_reasons"].ToObject<string[]>(), "editor_busy");
         }
 
         [Test]
