@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.Prefabs;
@@ -476,19 +477,85 @@ namespace MCPForUnity.Tests.EditMode.Tools
             Assert.IsNull(AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath).GetComponent<ParticleSystem>());
         }
 
-#if UNITY_2022_2_OR_NEWER
-        [Test]
-        public void StructuralOverrides_ListAndRevertRemovedGameObject()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void StructuralOverrides_ListAndChangeRemovedGameObject(bool apply)
         {
-            Object.DestroyImmediate(instance.transform.Find("Child").gameObject);
             var listed = Command("list_overrides");
-            Assert.IsTrue(listed["data"].Value<bool>("removedGameObjectsSupported"));
+            var capabilities = listed["data"]["removedGameObjectCapabilities"];
+            bool canList = typeof(PrefabUtility).GetMethod("GetRemovedGameObjects", new[] { typeof(GameObject) }) != null;
+            Assert.AreEqual(canList, capabilities.Value<bool>("list"));
+            string method = apply ? "ApplyRemovedGameObject" : "RevertRemovedGameObject";
+            bool canWrite =
+                canList && typeof(PrefabUtility).GetMethod(method, new[] { typeof(GameObject), typeof(GameObject), typeof(InteractionMode) }) != null;
+            Assert.AreEqual(canWrite, capabilities.Value<bool>(apply ? "apply" : "revert"));
+            string action = apply ? "apply_overrides" : "revert_overrides";
+            if (!canWrite)
+            {
+                var rejected = Command(action, new JArray("removed_gameobject:stale:id"), apply ? PrefabPath : null);
+                Assert.IsFalse(rejected.Value<bool>("success"));
+                StringAssert.Contains("active Editor", rejected.Value<string>("error"));
+                Assert.IsNotNull(instance.transform.Find("Child"));
+                return;
+            }
+            Object.DestroyImmediate(instance.transform.Find("Child").gameObject);
+            listed = Command("list_overrides");
             var entry = listed["data"]["entries"].Single(e => e.Value<string>("kind") == "removed_gameobject");
-            var result = Command("revert_overrides", new JArray(entry.Value<string>("overrideId")));
+            var result = Command(action, new JArray(entry.Value<string>("overrideId")), apply ? PrefabPath : null);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-            Assert.IsNotNull(instance.transform.Find("Child"));
+            Assert.AreEqual(!apply, instance.transform.Find("Child") != null);
+            Assert.AreEqual(!apply, AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath).transform.Find("Child") != null);
         }
-#endif
+
+        private sealed class RemovedItem
+        {
+            public GameObject parentOfRemovedGameObjectInInstance { get; set; }
+            public GameObject assetGameObject { get; set; }
+        }
+
+        private static class ReadOnlyRemovedObjects
+        {
+            public static List<RemovedItem> GetRemovedGameObjects(GameObject root)
+            {
+                var source = PrefabUtility.GetCorrespondingObjectFromSource(root);
+                return new List<RemovedItem>
+                {
+                    new RemovedItem { parentOfRemovedGameObjectInInstance = root, assetGameObject = source.transform.Find("Child").gameObject },
+                };
+            }
+        }
+
+        [TestCase(typeof(object), false)]
+        [TestCase(typeof(ReadOnlyRemovedObjects), true)]
+        public void StructuralOverrides_AbsentOrReadOnlyApiKeepsOtherOverridesAndRejectsWrites(Type provider, bool canList)
+        {
+            var api = new PrefabInstanceOverrides.RemovedGameObjectApi(provider);
+            var collider = OverrideCollider();
+            var listed = JObject.FromObject(PrefabInstanceOverrides.Handle(instance, "list_overrides", new JObject(), api));
+            Assert.IsTrue(listed.Value<bool>("success"), listed.ToString());
+            var capabilities = listed["data"]["removedGameObjectCapabilities"];
+            Assert.AreEqual(canList, capabilities.Value<bool>("list"));
+            Assert.IsFalse(capabilities.Value<bool>("apply"));
+            Assert.IsFalse(capabilities.Value<bool>("revert"));
+            Assert.IsFalse(listed["data"].Value<bool>("removedGameObjectsSupported"));
+            var rows = (JArray)listed["data"]["entries"];
+            Assert.IsTrue(rows.Any(row => row.Value<string>("kind") == "property"));
+            string removed = rows.SingleOrDefault(row => row.Value<string>("kind") == "removed_gameobject")?.Value<string>("overrideId");
+            Assert.AreEqual(canList, removed != null);
+            foreach (string action in new[] { "apply_overrides", "revert_overrides" })
+            {
+                var args = new JObject
+                {
+                    ["prefabPath"] = PrefabPath,
+                    ["overrideIds"] = new JArray(PropertyId("m_IsTrigger"), removed ?? "removed_gameobject:stale:id"),
+                };
+                var rejected = JObject.FromObject(PrefabInstanceOverrides.Handle(instance, action, args, api));
+                Assert.IsFalse(rejected.Value<bool>("success"), rejected.ToString());
+                StringAssert.Contains("active Editor", rejected.Value<string>("error"));
+                Assert.IsTrue(collider.isTrigger);
+                Assert.IsFalse(AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath).GetComponentInChildren<BoxCollider>().isTrigger);
+            }
+        }
 
         [Test]
         public void NestedInstance_RequiresItsOwnDestinationAsset()

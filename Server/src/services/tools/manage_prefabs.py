@@ -69,7 +69,8 @@ REQUIRED_PARAMS = {
         "apply also requires the returned prefab_path. The nearest nested instance root defines the"
         " scope. Select one structural override per call or up to 100 properties. Array/compound "
         "properties and non-Transform RequireComponent structural dependencies are rejected before "
-        "mutation. Removed GameObject overrides require Unity 2022.2+. Override IDs are "
+        "mutation. Check removedGameObjectCapabilities in list_overrides for the active "
+        "Editor's removed GameObject list, apply and revert support. Override IDs are "
         "editor-session identifiers; list again after structural edits."
     ),
     annotations=ToolAnnotations(

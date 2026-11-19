@@ -1,6 +1,8 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -18,6 +20,51 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         private const int MaxProperties = 4000000;
         private const int MaxRows = 250000;
         internal static Action DetailMaterializedForTests;
+        private static readonly RemovedGameObjectApi NativeRemovedObjects = new RemovedGameObjectApi(typeof(PrefabUtility));
+
+        internal sealed class RemovedGameObjectApi
+        {
+            private readonly Func<GameObject, IEnumerable> read;
+            private readonly PropertyInfo parent;
+            private readonly PropertyInfo asset;
+            internal readonly Action<GameObject, GameObject, InteractionMode> Apply;
+            internal readonly Action<GameObject, GameObject, InteractionMode> Revert;
+            internal bool CanList => read != null;
+
+            internal RemovedGameObjectApi(Type prefabUtility)
+            {
+                const BindingFlags flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.ExactBinding;
+                var list = prefabUtility.GetMethod("GetRemovedGameObjects", flags, null, new[] { typeof(GameObject) }, null);
+                Type result = list?.ReturnType;
+                if (result == null || list.ContainsGenericParameters || !result.IsGenericType || result.GetGenericTypeDefinition() != typeof(List<>))
+                    return;
+                Type item = result.GetGenericArguments()[0];
+                PropertyInfo GameObjectProperty(string name) =>
+                    item.GetProperty(name, BindingFlags.Public | BindingFlags.Instance, null, typeof(GameObject), Type.EmptyTypes, null);
+                parent = GameObjectProperty("parentOfRemovedGameObjectInInstance");
+                asset = GameObjectProperty("assetGameObject");
+                if (parent?.GetGetMethod() == null || asset?.GetGetMethod() == null)
+                    return;
+                read = (Func<GameObject, IEnumerable>)Delegate.CreateDelegate(typeof(Func<GameObject, IEnumerable>), list);
+                Action<GameObject, GameObject, InteractionMode> Writer(string name)
+                {
+                    var method = prefabUtility.GetMethod(name, flags, null, new[] { typeof(GameObject), typeof(GameObject), typeof(InteractionMode) }, null);
+                    return method?.ReturnType == typeof(void) && !method.ContainsGenericParameters
+                        ? (Action<GameObject, GameObject, InteractionMode>)
+                            Delegate.CreateDelegate(typeof(Action<GameObject, GameObject, InteractionMode>), method)
+                        : null;
+                }
+                Apply = Writer("ApplyRemovedGameObject");
+                Revert = Writer("RevertRemovedGameObject");
+            }
+
+            internal IEnumerable<(GameObject parent, GameObject asset)> Read(GameObject root)
+            {
+                if (CanList)
+                    foreach (object item in read(root))
+                        yield return ((GameObject)parent.GetValue(item), (GameObject)asset.GetValue(item));
+            }
+        }
 
         private sealed class Entry
         {
@@ -30,7 +77,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             public GameObject Owner => Instance is Component c ? c.gameObject : (GameObject)Instance;
         }
 
-        public static object Handle(GameObject target, string action, JObject args)
+        public static object Handle(GameObject target, string action, JObject args) => Handle(target, action, args, NativeRemovedObjects);
+
+        internal static object Handle(GameObject target, string action, JObject args, RemovedGameObjectApi removedObjects)
         {
             try
             {
@@ -59,7 +108,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 int pageSize = Integer(args, "pageSize", 100);
                 if (offset < 0 || pageSize < 1 || pageSize > 500)
                     return new ErrorResponse("offset must be nonnegative and pageSize between 1 and 500.");
-                List<Entry> entries = Collect(root, assetPath);
                 if (action == "list_overrides")
                 {
                     int? objectId = args["objectId"] == null ? (int?)null : Integer(args, "objectId", 0);
@@ -69,7 +117,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     )
                         return new ErrorResponse("propertyFilter must be a string of at most 512 characters.");
                     string filter = args["propertyFilter"]?.Value<string>();
-                    var filtered = entries
+                    var filtered = Collect(root, assetPath, removedObjects)
                         .Where(e =>
                             (!objectId.HasValue || e.Instance.GetInstanceIDCompat() == objectId || e.Owner.GetInstanceIDCompat() == objectId)
                             && (
@@ -89,7 +137,13 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                             offset,
                             pageSize,
                             nextOffset = offset + page.Count < filtered.Count ? (int?)(offset + page.Count) : null,
-                            removedGameObjectsSupported = RemovedGameObjectsSupported,
+                            removedGameObjectsSupported = removedObjects.CanList && removedObjects.Apply != null && removedObjects.Revert != null,
+                            removedGameObjectCapabilities = new
+                            {
+                                list = removedObjects.CanList,
+                                apply = removedObjects.Apply != null,
+                                revert = removedObjects.Revert != null,
+                            },
                             entries = page.Select(Materialize).ToArray(),
                             groups = page.GroupBy(e => e.Instance.GetInstanceIDCompat())
                                 .Select(g => new { target = Describe(g.First().Instance), overrideIds = g.Select(e => e.Id).ToArray() })
@@ -109,6 +163,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 var selectedIds = ids.Values<string>().ToArray();
                 if (selectedIds.Distinct(StringComparer.Ordinal).Count() != selectedIds.Length)
                     return new ErrorResponse("overrideIds must be unique.");
+                bool apply = action == "apply_overrides";
+                var removedWriter = apply ? removedObjects.Apply : removedObjects.Revert;
+                if (removedWriter == null && selectedIds.Any(id => id.StartsWith("removed_gameobject:", StringComparison.Ordinal)))
+                    return new ErrorResponse($"The active Editor does not expose the removed GameObject APIs required for {action}.");
+                List<Entry> entries = Collect(root, assetPath, removedObjects);
                 var selected = new List<Entry>();
                 foreach (string id in selectedIds)
                 {
@@ -117,7 +176,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         return new ErrorResponse($"Override '{id}' no longer exists on this instance. List overrides again.");
                     selected.Add(entry);
                 }
-                bool apply = action == "apply_overrides";
                 if (apply)
                 {
                     string requested = args["prefabPath"]?.Value<string>();
@@ -151,7 +209,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 try
                 {
                     foreach (Entry entry in selected)
-                        Mutate(entry, assetPath, apply);
+                        Mutate(entry, assetPath, apply, removedWriter);
                     EditorSceneManager.MarkSceneDirty(root.scene);
                     Undo.CollapseUndoOperations(group);
                 }
@@ -288,7 +346,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
         }
 
-        private static List<Entry> Collect(GameObject root, string assetPath)
+        private static List<Entry> Collect(GameObject root, string assetPath, RemovedGameObjectApi removedObjects)
         {
             var entries = new List<Entry>();
             int visited = 0;
@@ -350,17 +408,15 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 );
             foreach (var item in PrefabUtility.GetAddedGameObjects(root))
                 Add(new Entry { Kind = "added_gameobject", Instance = item.instanceGameObject });
-#if UNITY_2022_2_OR_NEWER
-            foreach (var item in PrefabUtility.GetRemovedGameObjects(root))
+            foreach (var item in removedObjects.Read(root))
                 Add(
                     new Entry
                     {
                         Kind = "removed_gameobject",
-                        Instance = item.parentOfRemovedGameObjectInInstance,
-                        Asset = item.assetGameObject,
+                        Instance = item.parent,
+                        Asset = item.asset,
                     }
                 );
-#endif
             return entries.OrderBy(e => e.Id, StringComparer.Ordinal).ToList();
         }
 
@@ -387,18 +443,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 data["applySupported"] = IsSelectiveProperty(property);
             }
             return data;
-        }
-
-        private static bool RemovedGameObjectsSupported
-        {
-            get
-            {
-#if UNITY_2022_2_OR_NEWER
-                return true;
-#else
-                return false;
-#endif
-            }
         }
 
         private static JObject Describe(Object obj)
@@ -533,7 +577,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
         }
 
-        private static void Mutate(Entry entry, string path, bool apply)
+        private static void Mutate(Entry entry, string path, bool apply, Action<GameObject, GameObject, InteractionMode> removedWriter)
         {
             const InteractionMode mode = InteractionMode.UserAction;
             switch (entry.Kind)
@@ -566,14 +610,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     else
                         PrefabUtility.RevertAddedGameObject(entry.Owner, mode);
                     break;
-#if UNITY_2022_2_OR_NEWER
                 case "removed_gameobject":
-                    if (apply)
-                        PrefabUtility.ApplyRemovedGameObject(entry.Owner, (GameObject)entry.Asset, mode);
-                    else
-                        PrefabUtility.RevertRemovedGameObject(entry.Owner, (GameObject)entry.Asset, mode);
+                    removedWriter(entry.Owner, (GameObject)entry.Asset, mode);
                     break;
-#endif
             }
         }
     }
