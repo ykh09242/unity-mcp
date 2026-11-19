@@ -1766,8 +1766,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             Undo.RegisterCompleteObjectUndo(meshFilter, "Convert to ProBuilder");
             if (renderer != null)
                 Undo.RegisterCompleteObjectUndo(renderer, "Convert to ProBuilder");
+#if MCP_FOR_UNITY_PHYSICS
             if (go.TryGetComponent(out MeshCollider collider))
                 Undo.RegisterCompleteObjectUndo(collider, "Convert to ProBuilder");
+#endif
 
             Component pbMesh = null;
             bool completed = false;
