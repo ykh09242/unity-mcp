@@ -124,8 +124,11 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
                 );
         }
 
-        internal static SpriteAtlasAsset LoadSource(string path) =>
-            SpriteAtlasAsset.Load(path) ?? throw new ArgumentException("V2 authoring source could not be loaded.");
+        internal static SpriteAtlasAsset LoadSource(string path)
+        {
+            var source = SpriteAtlasAsset.Load(path);
+            return source != null ? source : throw new ArgumentException("V2 authoring source could not be loaded.");
+        }
 
         internal static TResult WithSettings<TResult>(
             string path,

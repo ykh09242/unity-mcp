@@ -316,7 +316,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 // neither, the default is another one-shot, and exiting into it would
                 // just chain one stuck state into the next. A death gets no exit and holds
                 // its last frame; a trigger the game fires still leaves it, from Any State.
-                var exitTarget = idleState ?? locomotionState;
+                var exitTarget = idleState != null ? idleState : locomotionState;
                 if (exitTarget != null && !pair.entry.Loop && !pair.entry.Terminal)
                 {
                     var exitTr = state.AddTransition(exitTarget);

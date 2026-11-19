@@ -87,7 +87,7 @@ namespace MCPForUnityTests.Editor.Tools
         private Sprite CreateSprite(string name, Color color)
         {
             var image = new Texture2D(16, 16, TextureFormat.RGBA32, false);
-            image.SetPixels(Enumerable.Repeat(color, 256).ToArray());
+            image.SetPixels32(Enumerable.Repeat<Color32>(color, 256).ToArray());
             image.Apply();
             string path = folder + "/" + name + ".png";
             File.WriteAllBytes(Full(path), image.EncodeToPNG());

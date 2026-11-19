@@ -27,7 +27,7 @@ namespace MCPForUnityTests.Editor.Tools
             path = folder + "/Sheet.png";
             clipPath = folder + "/Motion.anim";
             var texture = new Texture2D(64, 32, TextureFormat.RGBA32, false);
-            texture.SetPixels(Enumerable.Repeat(Color.white, 64 * 32).ToArray());
+            texture.SetPixels32(Enumerable.Repeat<Color32>(Color.white, 64 * 32).ToArray());
             texture.Apply();
             File.WriteAllBytes(Full(path), texture.EncodeToPNG());
             UnityEngine.Object.DestroyImmediate(texture);

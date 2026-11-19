@@ -143,11 +143,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     var asset = AssetDatabase.LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(controller.path);
                     if (asset != null)
                     {
-                        // `??` compares references and never sees Unity's overloaded ==, so
-                        // AddComponent was skipped and the next line threw. Measured: this path
-                        // never once worked.
-                        var animator = go.GetComponent<UnityEngine.Animator>();
-                        if (animator == null)
+                        if (!go.TryGetComponent(out UnityEngine.Animator animator))
                         {
                             UnityEditor.Undo.RecordObject(go, "Add Animator Component");
                             animator = UnityEditor.Undo.AddComponent<UnityEngine.Animator>(go);

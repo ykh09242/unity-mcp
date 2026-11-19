@@ -1090,7 +1090,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             internal static string ArmedPath;
 
-            private void OnPreprocessTexture()
+            protected void OnPreprocessTexture()
             {
                 if (assetPath != ArmedPath)
                     return;
@@ -1105,7 +1105,7 @@ namespace MCPForUnityTests.Editor.Tools
             internal static string ArmedPath;
             internal static int Count;
 
-            private void OnPreprocessTexture()
+            protected void OnPreprocessTexture()
             {
                 if (assetPath == ArmedPath)
                     Count++;
@@ -1943,7 +1943,7 @@ namespace MCPForUnityTests.Editor.Tools
                         + "after it cannot be interrupted by it ('attack' could not interrupt 'hurt')"
                 );
             Assert.That(
-                sm.anyStateTransitions.Where(t => !t.canTransitionToSelf).Select(t => t.destinationState?.name),
+                sm.anyStateTransitions.Where(t => !t.canTransitionToSelf).Select(t => t.destinationState != null ? t.destinationState.name : null),
                 Is.Empty,
                 "a repeated trigger must restart its clip; with canTransitionToSelf off, Unity keeps " + "the trigger set and replays the state after it ends"
             );
@@ -1952,7 +1952,7 @@ namespace MCPForUnityTests.Editor.Tools
                 .states.SelectMany(s => s.state.transitions.Select(t => (source: s.state.name, t)))
                 .Concat(sm.anyStateTransitions.Select(t => (source: "Any State", t)))
                 .Where(x => x.t.duration != 0f)
-                .Select(x => $"{x.source} -> {x.t.destinationState?.name} ({x.t.duration})")
+                .Select(x => $"{x.source} -> {(x.t.destinationState != null ? x.t.destinationState.name : null)} ({x.t.duration})")
                 .ToArray();
             Assert.That(blended, Is.Empty, "sprite keys cannot blend, so any blend time only delays the frame change");
         }
