@@ -14,7 +14,7 @@ description: "Search Unity tools, actions and readable resources without changin
 
 ## Description
 
-Search Unity tools, actions and readable resources without changing selection or invoking Unity. Choose observation_source and required_values by meaning in any language, or search catalog text. Inspect route_groups for invocations and evidence limits.
+Search Unity tools, actions and readable resources without changing selection or invoking Unity. Choose observation_source and required_values by meaning in any language, or search catalog text. Inspect route_groups for invocations and evidence limits, or no_match for scoped alternatives.
 
 ## Parameters
 

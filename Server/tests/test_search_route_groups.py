@@ -256,3 +256,101 @@ async def test_live_search_requires_an_advertised_route_and_can_execute_its_read
         assert result["route_groups"] == []
         assert route_key(result["routes"][0]) == GRAPH_TEMPLATE
         assert command_hub.sent == []
+
+
+@pytest.mark.parametrize(
+    ("selectors", "reason"),
+    [
+        ({"required_values": ["contents", "encodedContents"]}, "incompatible_combination"),
+        ({"required_values": ["nodeCount", "contents"]}, "incompatible_combination"),
+        ({"required_values": ["nodeCount"], "observation_source": "editor_live"}, "wrong_source"),
+        ({"required_values": ["active_scene.path"]}, "undeclared_evidence"),
+        (
+            {"observation_source": "imported_asset", "route_surfaces": "resources"},
+            "no_visible_route",
+        ),
+        ({"query": "검색결과없는어휘"}, "lexical_miss"),
+    ],
+)
+def test_no_match_separates_coverage_source_encoding_and_text(
+    observation_inventory, selectors, reason
+):
+    tools, resources = observation_inventory
+    result = search_catalog(SearchRequest(**selectors), tools, resources=resources)
+    assert result["route_groups"] == []
+    assert result["no_match"]["reason"] == reason
+
+
+@pytest.mark.parametrize(
+    ("surfaces", "binding", "path"),
+    [
+        ("tools", ("inspect_shader_graph", None), "path"),
+        ("resources", GRAPH_TEMPLATE, "encoded_path"),
+    ],
+)
+def test_declared_exclusion_has_bounded_scoped_alternatives(
+    observation_inventory, surfaces, binding, path
+):
+    tools, resources = observation_inventory
+    search = SearchRequest(
+        required_values=["unsaved_graph_structure"],
+        observation_source="editor_live",
+        route_surfaces=surfaces,
+        limit=1,
+    )
+    names = {t["name"] for t in tools}
+    diagnosis = search_catalog(search, tools, resources=resources, visible_names=names)["no_match"]
+    assert diagnosis["reason"] == "explicitly_unavailable"
+    assert diagnosis["excluded_values"] == ["unsaved_graph_structure"]
+    assert diagnosis["undeclared_values"] == []
+    (alternative,) = diagnosis["alternatives"]
+    assert route_key(alternative) == binding
+    assert alternative["required_parameters"] == [path]
+    assert alternative["observation"]["source"] == "asset_file"
+    assert {"nodes", "edges"} <= set(alternative["observation"]["values"])
+    assert alternative["readiness"] == "unobserved" and alternative["advertised"] is True
+    assert diagnosis["alternatives_truncated"] is (surfaces == "tools")
+    hidden = search_catalog(search, tools, resources=resources, visible_names=set())["no_match"]
+    assert hidden["reason"] == "undeclared_evidence"
+    assert hidden["alternatives"] == []
+    assert hidden["excluded_values"] == []
+
+
+@pytest.mark.asyncio
+async def test_no_match_wire_and_cli_text_preserve_alternative_source_and_binding(monkeypatch):
+    args = {
+        "required_values": ["unsaved_graph_structure"],
+        "observation_source": "editor_live",
+        "limit": 1,
+        "route_surfaces": "tools",
+    }
+    async with Client(observation_server(monkeypatch), mode="legacy") as client:
+        wire = (await client.call_tool("search_unity_tools", args)).structured_content
+        assert wire["no_match"]["reason"] == "explicitly_unavailable"
+    flags = [
+        "tool",
+        "search",
+        "--required-value",
+        "unsaved_graph_structure",
+        "--observation-source",
+        "editor_live",
+        "--limit",
+        "1",
+        "--route-surfaces",
+        "tools",
+    ]
+    result = CliRunner().invoke(cli, ["--format", "json", *flags])
+    assert result.exit_code == 0, result.output
+    diagnosis = json.loads(result.stdout)["no_match"]
+    assert diagnosis["reason"] == wire["no_match"]["reason"]
+    assert (
+        diagnosis["alternatives"][0]["observation"]
+        == wire["no_match"]["alternatives"][0]["observation"]
+    )
+    assert diagnosis["alternatives"][0]["advertised"] is None
+    text = CliRunner().invoke(cli, ["--format", "text", *flags])
+    assert text.exit_code == 0, text.output
+    assert "explicitly_unavailable" in text.output
+    assert "inspect_shader_graph [asset_file]" in text.output
+    assert "nodeCount" in text.output and "Requires: path" in text.output
+    assert "Readiness: unobserved" in text.output

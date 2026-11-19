@@ -141,6 +141,27 @@ unity-mcp tool search --observation-source editor_live --required-value render_s
 The calling agent chooses the fields. CLI and SDK tests exercise that boundary
 with the same field selections across request languages.
 
+## When no route supplies the evidence
+
+An empty `route_groups` includes `no_match.reason` and a bounded list of
+`alternatives`. These alternatives describe what the available route can actually
+return. Their source, observed fields, required inputs and unobserved readiness
+remain explicit. They do not fulfill the original request.
+
+| Search selectors | Reason | Interpretation |
+| --- | --- | --- |
+| `editor_live`, `unsaved_graph_structure` with the saved graph reader visible | `explicitly_unavailable` | The saved graph reader explicitly excludes unsaved edits. Its `asset_file` structure is a possible separate observation. |
+| `editor_live`, `nodeCount` with only saved-file graph counts declared | `wrong_source` | The available counts describe the saved asset. |
+| `contents` and `encodedContents` | `incompatible_combination` | The source reader supports one encoding per invocation. |
+| A valid evidence ID with no applicable declaration | `undeclared_evidence` | The current inventory cannot establish support. |
+| Unmatched catalog text | `lexical_miss` | Text matching did not establish support or its absence. |
+| A matching route only on another invocation surface | `no_visible_route` | The requested client surface has no matching group. |
+
+Alternatives use the same registration, advertisement, intent and surface scope.
+`limit` applies after grouping equivalent reads. JSON includes
+`undeclared_values`, `excluded_values` and `alternatives_truncated`.
+The text CLI prints each alternative's source, actual values and binding.
+
 ## Distinct route choices
 
 Read `route_groups` in structured and lexical search. Each group contains a

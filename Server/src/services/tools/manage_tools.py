@@ -38,7 +38,7 @@ logger = logging.getLogger("mcp-for-unity-server")
     description=(
         "Search Unity tools, actions and readable resources without changing selection or invoking "
         "Unity. Choose observation_source and required_values by meaning in any language, or search "
-        "catalog text. Inspect route_groups for invocations and evidence limits."
+        "catalog text. Inspect route_groups for invocations and evidence limits, or no_match for scoped alternatives."
     ),
     annotations=ToolAnnotations(
         title="Search Unity Tools",
@@ -176,7 +176,7 @@ async def manage_tools(
     observation_source: Annotated[
         ObservationSource | None,
         Field(
-            description="For search, interpret the request in its own language. Select where the evidence must originate: current Editor state (editor_live), saved file contents (asset_file), or Unity import results (imported_asset)."
+            description="For search, interpret the request in its own language. Select where the evidence must originate: current Editor state (editor_live), saved file contents (asset_file), Unity import results (imported_asset), or a retained compilation request (compile_job)."
         ),
     ] = None,
     required_values: Annotated[

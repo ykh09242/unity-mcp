@@ -104,6 +104,7 @@ class SearchResponse(TypedDict):
     total_route_groups: int
     route_groups_truncated: bool
     navigation: dict
+    no_match: NotRequired["NoMatch"]
     total_matches: int
     truncated: bool
     note: str
@@ -132,6 +133,25 @@ class SearchRoute(TypedDict):
 class SearchRouteGroup(TypedDict):
     representative: SearchRoute
     alternatives: list[SearchRoute]
+
+
+NoMatchReason = Literal[
+    "explicitly_unavailable",
+    "undeclared_evidence",
+    "wrong_source",
+    "incompatible_combination",
+    "lexical_miss",
+    "no_visible_route",
+]
+
+
+class NoMatch(TypedDict):
+    reason: NoMatchReason
+    explanation: str
+    undeclared_values: list[ObservationValue]
+    excluded_values: list[ObservationValue]
+    alternatives: list[SearchRoute]
+    alternatives_truncated: bool
 
 
 RouteKey = tuple[str, str, str]
@@ -348,6 +368,78 @@ def _observation_matches(request: SearchRequest, observation: Observation | None
     )
 
 
+_NO_MATCH_EXPLANATIONS: Final[dict[NoMatchReason, str]] = {
+    "explicitly_unavailable": "Visible declarations explicitly exclude requested evidence. No eligible route declares it.",
+    "undeclared_evidence": "No eligible declaration establishes the requested evidence in this scope. Support is unknown.",
+    "wrong_source": "A visible route declares all required values only from a different source.",
+    "incompatible_combination": "The values are individually declared, but no eligible route supplies this combination in one observation.",
+    "lexical_miss": "No catalog text matched. Evidence support is unknown.",
+    "no_visible_route": "No matching route is available on the selected invocation surfaces in this scope.",
+}
+
+
+def _diagnose_miss(
+    request: SearchRequest,
+    structured: bool,
+    has_flat_match: bool,
+    observations: list[RankedRoute],
+    equivalents: dict[RouteKey, SearchRoute],
+    unavailable_parents: set[str],
+) -> NoMatch:
+    # Group only declarations surviving the same intent, surface, registration and parent caps
+    # as the normal results. Never introspect other clients or the full local registry here.
+    groups = _group_routes(request.route_surfaces, observations, equivalents, unavailable_parents)
+    needed = set(request.required_values or ())
+    offered: set[ObservationValue] = set()
+    excluded: set[ObservationValue] = set()
+    candidates = []
+    different_source = False
+    for group in groups:
+        route = group["representative"]
+        observation = route["observation"]
+        values = needed.intersection(observation["values"])
+        unavailable = needed.intersection(observation["unavailable"])
+        offered.update(values)
+        excluded.update(unavailable)
+        if not values and not unavailable:
+            continue
+        compatible = not any(
+            len(needed.intersection(pair)) > 1
+            for pair in observation.get("mutually_exclusive_values", ())
+        )
+        complete = bool(needed and values == needed and compatible and not unavailable)
+        different_source |= complete and observation["source"] != request.observation_source
+        # Prefer routes supplying actual requested fields, then a declared related observation.
+        related = any(value in observation.get("related_values", {}) for value in unavailable)
+        candidates.append(
+            (not complete, -len(values), not related, -len(unavailable), _route_key(route), route)
+        )
+
+    undeclared = needed - offered - excluded
+    reason: NoMatchReason
+    if has_flat_match:
+        reason = "no_visible_route"
+    elif not structured:
+        reason = "lexical_miss"
+    elif different_source:
+        reason = "wrong_source"
+    elif undeclared or not needed:
+        reason = "undeclared_evidence"
+    elif needed - offered:
+        reason = "explicitly_unavailable"
+    else:
+        reason = "incompatible_combination"
+    candidates.sort(key=lambda item: item[:-1])
+    return {
+        "reason": reason,
+        "explanation": _NO_MATCH_EXPLANATIONS[reason],
+        "undeclared_values": sorted(undeclared),
+        "excluded_values": sorted(excluded - offered),
+        "alternatives": [item[-1] for item in candidates[: request.limit]],
+        "alternatives_truncated": len(candidates) > request.limit,
+    }
+
+
 def search_catalog(
     request: SearchRequest,
     entries: list[SearchEntry],
@@ -359,6 +451,7 @@ def search_catalog(
     matches: list[tuple[int, str, SearchResult]] = []
     routes: list[RankedRoute] = []
     additional_routes: list[RankedRoute] = []
+    observations: list[RankedRoute] = []
     available_equivalents: dict[RouteKey, SearchRoute] = {}
     structured = request.observation_source is not None or request.required_values is not None
     unavailable_parents = (
@@ -386,12 +479,16 @@ def search_catalog(
             selected_actions = []
             for action in result["actions"] or [None]:
                 guidance = action_guidance(entry, action)
-                if not guidance or not _observation_matches(request, guidance.observation):
+                if not guidance or not guidance.observation:
                     continue
                 route = _tool_route(result, action, guidance)
                 if request.intent and route["intent"] != request.intent:
                     continue
-                routes.append((0, name, action or "", route))
+                item = (0, name, action or "", route)
+                observations.append(item)
+                if not _observation_matches(request, guidance.observation):
+                    continue
+                routes.append(item)
                 selected_actions.append(action)
             if selected_actions:
                 result["actions"] = [action for action in selected_actions if action]
@@ -494,8 +591,11 @@ def search_catalog(
             if binding and read.allowed(unavailable_parents):
                 available_equivalents[key] = binding
         if structured:
-            if _observation_matches(request, route.get("observation")):
-                routes.append((0, identifier, "", route))
+            if route.get("observation") and (not request.intent or request.intent == "observe"):
+                item = (0, identifier, "", route)
+                observations.append(item)
+                if _observation_matches(request, route["observation"]):
+                    routes.append(item)
             continue
         occurrences.update(evidence.keys())
         weight = sum(evidence.values())
@@ -549,6 +649,20 @@ def search_catalog(
                 "required_values": request.required_values or [],
             }
             if structured
+            else {}
+        ),
+        **(
+            {
+                "no_match": _diagnose_miss(
+                    request,
+                    structured,
+                    bool(routes),
+                    observations,
+                    available_equivalents,
+                    unavailable_parents,
+                )
+            }
+            if not groups
             else {}
         ),
         "catalog_language": "en",

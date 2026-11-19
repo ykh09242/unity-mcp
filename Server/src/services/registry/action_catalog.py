@@ -89,6 +89,7 @@ class Observation(TypedDict):
     wire_paths: NotRequired[dict[str, str]]
     conditions: NotRequired[str]
     required_parameters: NotRequired[list[str]]
+    related_values: NotRequired[dict[str, list[ObservationValue]]]
     fixed_arguments: NotRequired[dict[str, bool]]
     mutually_exclusive_values: NotRequired[list[list[ObservationValue]]]
 
@@ -110,6 +111,7 @@ GRAPH_FILE_OBSERVATION: Final[Observation] = {
     "source": "asset_file",
     "values": ["nodeCount", "edgeCount", "nodes", "edges", "properties", "keywords"],
     "unavailable": ["unsaved_graph_structure", "property_values", "shader_source"],
+    "related_values": {"unsaved_graph_structure": ["nodeCount", "edgeCount", "nodes", "edges"]},
 }
 
 

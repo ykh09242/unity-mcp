@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from typing import TYPE_CHECKING
 
 from cli.utils.followup import followup_command
@@ -38,7 +40,28 @@ def format_task_search(result: SearchResponse, config: CLIConfig) -> str:
             lines.append("    " + _summary(route["evidence_limit"]))
         for alternative in group["alternatives"]:
             lines.append(f"    Alternative {alternative['kind']} {_route_target(alternative)}")
-    if not groups:
+    if diagnosis := result.get("no_match"):
+        lines.append(
+            f"No matching tools or resources ({diagnosis['reason']}). {diagnosis['explanation']}"
+        )
+        for alternative in diagnosis["alternatives"]:
+            obs = alternative["observation"]
+            lines.append(
+                f"  Alternative {_route_target(alternative)} [{obs['source']}]: "
+                + ", ".join(obs["values"])
+            )
+            if alternative.get("arguments"):
+                lines.append(
+                    "    Arguments: " + json.dumps(alternative["arguments"], sort_keys=True)
+                )
+            if alternative.get("required_parameters"):
+                lines.append("    Requires: " + ", ".join(alternative["required_parameters"]))
+            if obs.get("conditions"):
+                lines.append("    " + obs["conditions"])
+            lines.append("    Readiness: " + alternative["readiness"])
+        if diagnosis["alternatives_truncated"]:
+            lines.append("  More declared alternatives exist within this scope.")
+    elif not groups:
         lines.append("No matching tools or resources. Browse the catalog to select by purpose.")
     for group in result["navigation"]["groups"]:
         lines.append(f"  {group['group']}: {group['purpose']}")
