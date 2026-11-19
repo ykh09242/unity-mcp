@@ -112,10 +112,9 @@ namespace MCPForUnity.Editor.Tools.Physics
                 ["isSleeping"] = rb.IsSleeping(),
                 ["centerOfMass"] = ToArray(rb.centerOfMass),
                 ["maxAngularVelocity"] = rb.maxAngularVelocity,
-#if UNITY_6000_0_OR_NEWER
-                ["maxLinearVelocity"] = rb.maxLinearVelocity,
-#endif
             };
+            if (PhysicsProperty.Read<float>(typeof(Rigidbody), rb, "maxLinearVelocity") is float maximum)
+                data["maxLinearVelocity"] = maximum;
 
             return new
             {

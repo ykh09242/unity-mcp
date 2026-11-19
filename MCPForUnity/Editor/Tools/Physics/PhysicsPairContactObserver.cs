@@ -1,8 +1,10 @@
 #if MCP_FOR_UNITY_PHYSICS && MCP_FOR_UNITY_PHYSICS2D
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
+using Unity.Collections;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -13,8 +15,10 @@ using ColliderId = UnityEngine.EntityId;
 #else
 using ColliderId = System.Int32;
 #endif
-#if UNITY_6000_0_OR_NEWER || UNITY_2022_3
-using Unity.Collections;
+#if UNITY_6000_3_OR_NEWER
+using ContactId = UnityEngine.EntityId;
+#else
+using ContactId = System.Int32;
 #endif
 
 namespace MCPForUnity.Editor.Tools.Physics
@@ -24,7 +28,8 @@ namespace MCPForUnity.Editor.Tools.Physics
     {
         internal static JObject Read(Collider first, Collider second, bool? observe, bool sameScene, bool trigger)
         {
-#if UNITY_6000_0_OR_NEWER || UNITY_2022_3
+            if (contactBinding.Handler == null)
+                return Missing(contactBinding.Reason, false, false);
             Prune();
             var key = Key(first.gameObject.scene.GetPhysicsScene(), Identity(first), Identity(second));
             if (observe == false || !sameScene || trigger)
@@ -40,10 +45,11 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     if (watches.Count >= MaximumPairs)
                         return Missing("observer_capacity_reached", false);
+                    if (!TrySubscribe(out string reason))
+                        return Missing(reason, false, false);
                     watches.Add(key, watch = new Watch { First = first, Second = second });
                 }
                 watch.Expires = EditorApplication.timeSinceStartup + LifetimeSeconds;
-                Subscribe();
             }
             if (!watches.TryGetValue(key, out Watch active))
                 return Missing("No active opt-in observation. This is not evidence of zero contacts.", false);
@@ -58,17 +64,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             result["contact_generation_requirement"] =
                 "Collider.providesContacts or an existing OnCollisionStay receiver is required; this tool enables neither.";
             return result;
-#else
-            var result = PhysicsPairDiagnostics.Unavailable(
-                "The passive ContactEvent backend is verified for Unity2022.3 and Unity6; unavailable on this editor version."
-            );
-            result["watching"] = false;
-            result["observer_supported"] = false;
-            return result;
-#endif
         }
 
-#if UNITY_6000_0_OR_NEWER || UNITY_2022_3
         private const int MaximumPairs = 32;
         private const int MaximumScannedPairsPerEvent = 4096;
         private const double LifetimeSeconds = 60;
@@ -99,6 +96,12 @@ namespace MCPForUnity.Editor.Tools.Physics
         private static readonly List<(PhysicsScene, ColliderId, ColliderId)> expired = new(MaximumPairs);
         private static bool subscribed;
         private static long eventSequence;
+        private static readonly EventInfo contactEvent = typeof(Physics3D).GetEvent("ContactEvent", BindingFlags.Public | BindingFlags.Static);
+        private static readonly (Delegate Handler, string Reason) contactBinding = BindContactEvent(
+            contactEvent,
+            typeof(Physics3D).Assembly.GetType("UnityEngine.ContactPairHeader"),
+            typeof(Physics3D).Assembly.GetType("UnityEngine.ContactPair")
+        );
 
         private static (PhysicsScene, ColliderId, ColliderId) Key(PhysicsScene scene, ColliderId first, ColliderId second) =>
             first.CompareTo(second) < 0 ? (scene, first, second) : (scene, second, first);
@@ -121,32 +124,42 @@ namespace MCPForUnity.Editor.Tools.Physics
 #endif
         }
 
-        private static JObject Missing(string reason, bool watching)
+        private static JObject Missing(string reason, bool watching, bool supported = true)
         {
             var result = PhysicsPairDiagnostics.Unavailable(reason);
             result["watching"] = watching;
-            result["observer_supported"] = true;
+            result["observer_supported"] = supported;
             return result;
         }
 
-        private static void Subscribe()
+        private static bool TrySubscribe(out string reason)
         {
+            reason = null;
             if (subscribed)
-                return;
-            Physics3D.ContactEvent += OnContactEvent;
+                return true;
+            try
+            {
+                contactEvent.AddEventHandler(null, contactBinding.Handler);
+            }
+            catch (Exception e)
+            {
+                reason = "Could not subscribe to Physics.ContactEvent: " + e.GetBaseException().Message;
+                return false;
+            }
             EditorApplication.update += Prune;
             EditorApplication.playModeStateChanged += OnPlayMode;
             AssemblyReloadEvents.beforeAssemblyReload += Clear;
             EditorApplication.quitting += Clear;
             EditorSceneManager.sceneClosed += OnSceneClosed;
             subscribed = true;
+            return true;
         }
 
         private static void UnsubscribeIfEmpty()
         {
             if (!subscribed || watches.Count != 0)
                 return;
-            Physics3D.ContactEvent -= OnContactEvent;
+            contactEvent.RemoveEventHandler(null, contactBinding.Handler);
             EditorApplication.update -= Prune;
             EditorApplication.playModeStateChanged -= OnPlayMode;
             AssemblyReloadEvents.beforeAssemblyReload -= Clear;
@@ -216,60 +229,103 @@ namespace MCPForUnity.Editor.Tools.Physics
                 ["scan_limit_per_event"] = MaximumScannedPairsPerEvent,
             };
 
-        private static void OnContactEvent(PhysicsScene scene, NativeArray<ContactPairHeader>.ReadOnly headers)
+        internal static (Delegate Handler, string Reason) BindContactEvent(EventInfo source, Type header, Type pair)
         {
-            int scanned = 0;
-            long sequence = ++eventSequence;
-            for (int i = 0; i < headers.Length; i++)
+            if (source?.GetAddMethod()?.IsStatic != true || source.GetRemoveMethod()?.IsStatic != true)
+                return (null, "Physics.ContactEvent does not expose public static subscription and removal.");
+            if (header?.IsValueType != true || pair?.IsValueType != true)
+                return (null, "Physics.ContactEvent does not expose the required contact header and pair types.");
+            try
             {
-                ContactPairHeader header = headers[i];
-#if UNITY_6000_0_OR_NEWER
-                int pairCount = header.pairCount;
-#else
-                int pairCount = header.PairCount;
-#endif
-                for (int j = 0; j < pairCount; j++)
-                {
-                    if (++scanned > MaximumScannedPairsPerEvent)
-                        return;
-                    ref readonly ContactPair pair = ref header.GetContactPair(j);
-#if UNITY_6000_0_OR_NEWER
+                var reader = typeof(ContactReader<,>).MakeGenericType(header, pair);
+                var handler = reader.GetMethod(nameof(ContactReader<int, int>.OnContactEvent));
+                var invoke = source.EventHandlerType.GetMethod("Invoke");
+                var parameters = invoke.GetParameters();
+                if (
+                    invoke.ReturnType != typeof(void)
+                    || parameters.Length != 2
+                    || parameters[0].ParameterType != typeof(PhysicsScene)
+                    || parameters[1].ParameterType != handler.GetParameters()[1].ParameterType
+                )
+                    return (null, "Physics.ContactEvent has an incompatible scene or read-only header array signature.");
+                var getPair = header.GetMethod("GetContactPair", BindingFlags.Instance | BindingFlags.Public, null, new[] { typeof(int) }, null);
+                if (getPair?.ReturnType != pair.MakeByRefType())
+                    return (null, "The contact header does not expose GetContactPair(int) returning the native pair by reference.");
+                return (Delegate.CreateDelegate(source.EventHandlerType, Activator.CreateInstance(reader, getPair), handler), null);
+            }
+            catch (Exception e)
+            {
+                return (null, "Could not bind the Physics.ContactEvent reader: " + e.GetBaseException().Message);
+            }
+        }
+
+        // Bind once. The native arrays and ref-returned pairs are valid only during this callback.
+        private sealed class ContactReader<THeader, TPair>
+            where THeader : unmanaged
+            where TPair : unmanaged
+        {
+            private delegate TValue Getter<TStruct, TValue>(ref TStruct value);
+            private delegate ref readonly TPair GetPair(ref THeader header, int index);
+
+            private readonly GetPair getPair;
+            private readonly Getter<THeader, int> pairCount = BindGetter<THeader, int>("pairCount", "PairCount");
+            private readonly Getter<TPair, int> contactCount = BindGetter<TPair, int>("contactCount", "ContactCount");
+            private readonly Getter<TPair, bool> isExit = BindGetter<TPair, bool>("isCollisionExit", "IsCollisionExit");
+            private readonly Getter<TPair, bool> isEnter = BindGetter<TPair, bool>("isCollisionEnter", "IsCollisionEnter");
 #if UNITY_6000_3_OR_NEWER
-                    // Unity 6000.3 EntityId is an Int32 wrapper; the implicit conversion is lossless. 6000.4+ retains the full EntityId alias.
-                    ColliderId first = pair.colliderEntityId;
-                    ColliderId second = pair.otherColliderEntityId;
+            private readonly Getter<TPair, ContactId> firstId = BindGetter<TPair, ContactId>("colliderEntityId");
+            private readonly Getter<TPair, ContactId> secondId = BindGetter<TPair, ContactId>("otherColliderEntityId");
 #else
-                    int first = pair.colliderInstanceID;
-                    int second = pair.otherColliderInstanceID;
+            private readonly Getter<TPair, ContactId> firstId = BindGetter<TPair, ContactId>("colliderInstanceID", "ColliderInstanceID");
+            private readonly Getter<TPair, ContactId> secondId = BindGetter<TPair, ContactId>("otherColliderInstanceID", "OtherColliderInstanceID");
 #endif
-                    int count = pair.contactCount;
-                    bool exit = pair.isCollisionExit;
-                    bool enter = pair.isCollisionEnter;
-#else
-                    int first = pair.ColliderInstanceID;
-                    int second = pair.OtherColliderInstanceID;
-                    int count = pair.ContactCount;
-                    bool exit = pair.IsCollisionExit;
-                    bool enter = pair.IsCollisionEnter;
-#endif
-                    if (watches.TryGetValue(Key(scene, first, second), out Watch watch) && EditorApplication.timeSinceStartup < watch.Expires)
+
+            public ContactReader(MethodInfo getPairMethod) => getPair = (GetPair)getPairMethod.CreateDelegate(typeof(GetPair));
+
+            private static Getter<TStruct, TValue> BindGetter<TStruct, TValue>(params string[] names)
+            {
+                foreach (string name in names)
+                {
+                    var getter = typeof(TStruct).GetProperty(name, BindingFlags.Public | BindingFlags.Instance)?.GetGetMethod();
+                    if (getter?.ReturnType == typeof(TValue) && getter.GetParameters().Length == 0)
+                        return (Getter<TStruct, TValue>)getter.CreateDelegate(typeof(Getter<TStruct, TValue>));
+                }
+                throw new MissingMemberException(typeof(TStruct).FullName, string.Join("/", names));
+            }
+
+            public void OnContactEvent(PhysicsScene scene, NativeArray<THeader>.ReadOnly headers)
+            {
+                int scanned = 0;
+                long sequence = ++eventSequence;
+                for (int i = 0; i < headers.Length; i++)
+                {
+                    THeader header = headers[i];
+                    int pairs = pairCount(ref header);
+                    for (int j = 0; j < pairs; j++)
                     {
-                        watch.Evidence = new ContactEvidence
+                        if (++scanned > MaximumScannedPairsPerEvent)
+                            return;
+                        TPair pair = getPair(ref header, j);
+                        ColliderId first = firstId(ref pair);
+                        ColliderId second = secondId(ref pair);
+                        if (watches.TryGetValue(Key(scene, first, second), out Watch watch) && EditorApplication.timeSinceStartup < watch.Expires)
                         {
-                            Count = count,
-                            First = first,
-                            Second = second,
-                            Exit = exit,
-                            Enter = enter,
-                            EditorTime = EditorApplication.timeSinceStartup,
-                            FixedTime = Time.fixedTimeAsDouble,
-                            Sequence = sequence,
-                        };
+                            watch.Evidence = new ContactEvidence
+                            {
+                                Count = contactCount(ref pair),
+                                First = first,
+                                Second = second,
+                                Exit = isExit(ref pair),
+                                Enter = isEnter(ref pair),
+                                EditorTime = EditorApplication.timeSinceStartup,
+                                FixedTime = Time.fixedTimeAsDouble,
+                                Sequence = sequence,
+                            };
+                        }
                     }
                 }
             }
         }
-#endif
     }
 }
 

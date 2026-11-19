@@ -258,9 +258,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     : "none",
             };
             result["physics_scene"] = collider.gameObject.scene.GetPhysicsScene().ToString();
-#if UNITY_2022_2_OR_NEWER
-            result["provides_contacts"] = collider.providesContacts;
-#endif
+            if (PhysicsProperty.Read<bool>(typeof(Collider), collider, "providesContacts") is bool providesContacts)
+                result["provides_contacts"] = providesContacts;
             return result;
         }
 
@@ -373,34 +372,29 @@ namespace MCPForUnity.Editor.Tools.Physics
         private static bool LayerPolicyUnknown(JObject collider, int otherLayer)
         {
             JToken overrides = collider["layer_overrides"];
-            return overrides.Value<string>("status") == "unavailable" || (overrides.Value<int?>("combined_mask").GetValueOrDefault() & (1 << otherLayer)) != 0;
+            return overrides.Value<string>("status") != "available" || (overrides.Value<int>("combined_mask") & (1 << otherLayer)) != 0;
         }
 
         private static JObject LayerOverrides(Component collider)
         {
-#if UNITY_6000_0_OR_NEWER
-            int include;
-            int exclude;
-            int priority;
-            int bodyInclude;
-            int bodyExclude;
-            if (collider is Collider a)
-            {
-                include = a.includeLayers.value;
-                exclude = a.excludeLayers.value;
-                priority = a.layerOverridePriority;
-                bodyInclude = a.attachedRigidbody == null ? 0 : a.attachedRigidbody.includeLayers.value;
-                bodyExclude = a.attachedRigidbody == null ? 0 : a.attachedRigidbody.excludeLayers.value;
-            }
-            else
-            {
-                var a2D = (Collider2D)collider;
-                include = a2D.includeLayers.value;
-                exclude = a2D.excludeLayers.value;
-                priority = a2D.layerOverridePriority;
-                bodyInclude = a2D.attachedRigidbody == null ? 0 : a2D.attachedRigidbody.includeLayers.value;
-                bodyExclude = a2D.attachedRigidbody == null ? 0 : a2D.attachedRigidbody.excludeLayers.value;
-            }
+            return collider is Collider a
+                ? ReadLayerOverrides(typeof(Collider), a, typeof(Rigidbody), a.attachedRigidbody)
+                : ReadLayerOverrides(typeof(Collider2D), collider, typeof(Rigidbody2D), ((Collider2D)collider).attachedRigidbody);
+        }
+
+        internal static JObject ReadLayerOverrides(Type colliderType, object collider, Type bodyType, object body)
+        {
+            int? include = PhysicsProperty.Read<LayerMask>(colliderType, collider, "includeLayers")?.value;
+            int? exclude = PhysicsProperty.Read<LayerMask>(colliderType, collider, "excludeLayers")?.value;
+            int? priority = PhysicsProperty.Read<int>(colliderType, collider, "layerOverridePriority");
+            int? bodyInclude = body == null ? 0 : PhysicsProperty.Read<LayerMask>(bodyType, body, "includeLayers")?.value;
+            int? bodyExclude = body == null ? 0 : PhysicsProperty.Read<LayerMask>(bodyType, body, "excludeLayers")?.value;
+            if (!include.HasValue || !exclude.HasValue || !priority.HasValue || !bodyInclude.HasValue || !bodyExclude.HasValue)
+                return new JObject
+                {
+                    ["status"] = "unavailable",
+                    ["reason"] = "The collider or attached body does not expose the required readable layer override properties.",
+                };
             return new JObject
             {
                 ["status"] = "available",
@@ -411,11 +405,6 @@ namespace MCPForUnity.Editor.Tools.Physics
                 ["priority"] = priority,
                 ["combined_mask"] = include | exclude | bodyInclude | bodyExclude,
             };
-#elif UNITY_2022_2_OR_NEWER
-            return new JObject { ["status"] = "unavailable", ["reason"] = "Layer-override inspection is not verified on this editor version." };
-#else
-            return new JObject { ["status"] = "not_supported", ["reason"] = "This editor predates per-collider layer overrides." };
-#endif
         }
 
         internal static JObject Unavailable(string reason, bool? touching = null) =>

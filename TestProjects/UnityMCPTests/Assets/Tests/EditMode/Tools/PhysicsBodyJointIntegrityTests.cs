@@ -28,6 +28,19 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void RigidbodySnapshotReadsTheInstalledMaximumVelocityProperty()
+        {
+            var go = Body();
+            var property = typeof(Rigidbody).GetProperty("maxLinearVelocity");
+            var state = Send(go, "get_rigidbody", new JObject());
+            Assert.IsTrue(state.Value<bool>("success"), state.ToString());
+            if (property?.PropertyType == typeof(float) && property.GetGetMethod() != null)
+                Assert.AreEqual((float)property.GetValue(go.GetComponent<Rigidbody>()), state["data"].Value<float>("maxLinearVelocity"));
+            else
+                Assert.IsNull(state["data"]["maxLinearVelocity"]);
+        }
+
+        [Test]
         public void BodyWrite_ObservesExactBodyAndBoundsComponentDiagnostics()
         {
             var go = Body();

@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Tools.Physics;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using Unity.Collections;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -147,7 +149,13 @@ namespace MCPForUnityTests.Editor.Tools
             var response = Call(Request(dimension));
             Success(response);
             Assert.IsTrue(response["data"]["configuration"].Value<bool>("layer_ignored"));
-            CollectionAssert.Contains(Blockers(response), "layer_collision_disabled");
+            if (response["data"]["first"]["layer_overrides"].Value<string>("status") == "available")
+                CollectionAssert.Contains(Blockers(response), "layer_collision_disabled");
+            else
+            {
+                CollectionAssert.DoesNotContain(Blockers(response), "layer_collision_disabled");
+                Assert.AreEqual(JTokenType.Null, response["data"]["configuration_allows_interaction"].Type);
+            }
             Assert.AreEqual(before, second.transform.position);
             Assert.IsFalse(scene.isDirty);
             Assert.IsTrue(dimension == "2d" ? Physics2D.GetIgnoreLayerCollision(30, 31) : Physics3D.GetIgnoreLayerCollision(30, 31));
@@ -296,21 +304,26 @@ namespace MCPForUnityTests.Editor.Tools
             CollectionAssert.DoesNotContain(Blockers(response), "static_static_pair");
         }
 
-#if UNITY_6000_0_OR_NEWER
         [TestCase("3d")]
         [TestCase("2d")]
         public void LayerOverrides_DoNotTreatGlobalIgnoreAsDefinitiveEligibility(string dimension)
         {
             AddPair(dimension);
             int mask = 1 << second.layer;
+            Component collider = dimension == "2d" ? first.GetComponent<Collider2D>() : (Component)first.GetComponent<Collider>();
+            PropertyInfo include = collider.GetType().GetProperty("includeLayers");
+            if (include == null)
+            {
+                Assert.AreEqual("unavailable", Call(Request(dimension))["data"]["first"]["layer_overrides"].Value<string>("status"));
+                return;
+            }
+            include.SetValue(collider, (LayerMask)mask);
             if (dimension == "2d")
             {
-                first.GetComponent<Collider2D>().includeLayers = mask;
                 Physics2D.IgnoreLayerCollision(30, 31, true);
             }
             else
             {
-                first.GetComponent<Collider>().includeLayers = mask;
                 Physics3D.IgnoreLayerCollision(30, 31, true);
             }
             var response = Call(Request(dimension));
@@ -320,12 +333,75 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(mask, response["data"]["first"]["layer_overrides"].Value<int>("collider_include_mask"));
             Assert.AreEqual(JTokenType.Null, response["data"]["configuration_allows_interaction"].Type);
             CollectionAssert.DoesNotContain(Blockers(response), "layer_collision_disabled");
-            Assert.AreEqual(
-                mask,
-                dimension == "2d" ? first.GetComponent<Collider2D>().includeLayers.value : first.GetComponent<Collider>().includeLayers.value
-            );
+            Assert.AreEqual(mask, ((LayerMask)include.GetValue(collider)).value);
         }
+
+        private sealed class PartialLayerOverrides
+        {
+            public LayerMask includeLayers => 1;
+            public string excludeLayers => "invalid";
+            public int layerOverridePriority => 1;
+        }
+
+        [Test]
+        public void MissingOrMalformedOverridePropertiesLeavePolicyUnknown()
+        {
+            foreach (var value in new object[] { new object(), new PartialLayerOverrides() })
+            {
+                var overrides = PhysicsPairDiagnostics.ReadLayerOverrides(value.GetType(), value, typeof(object), null);
+                Assert.AreEqual("unavailable", overrides.Value<string>("status"));
+                Assert.IsNull(overrides["combined_mask"]);
+            }
+        }
+
+        private readonly struct LegacyPair
+        {
+            public int ContactCount => 0;
+            public bool IsCollisionEnter => false;
+            public bool IsCollisionExit => false;
+#if UNITY_6000_3_OR_NEWER
+            public EntityId colliderEntityId => default;
+            public EntityId otherColliderEntityId => default;
+#else
+            public int ColliderInstanceID => 0;
+            public int OtherColliderInstanceID => 0;
 #endif
+        }
+
+        private readonly struct LegacyHeader<TPair>
+            where TPair : unmanaged
+        {
+            public int PairCount => 0;
+
+            public ref readonly TPair GetContactPair(int index) => throw new IndexOutOfRangeException();
+        }
+
+        private static class Probe<TPair>
+            where TPair : unmanaged
+        {
+            public static event Action<PhysicsScene, NativeArray<LegacyHeader<TPair>>.ReadOnly> ContactEvent
+            {
+                add => throw new InvalidOperationException("Probing must never subscribe.");
+                remove => throw new InvalidOperationException("Probing must never unsubscribe.");
+            }
+        }
+
+        [Test]
+        public void ContactBindingQualifiesTheEventAndRefReturnWithoutSubscribing()
+        {
+            var source = typeof(Probe<LegacyPair>).GetEvent("ContactEvent");
+            var header = typeof(LegacyHeader<LegacyPair>);
+            var pair = typeof(LegacyPair);
+            var legacy = PhysicsPairContactObserver.BindContactEvent(source, header, pair);
+            Assert.IsNotNull(legacy.Handler, legacy.Reason);
+            Assert.IsNull(PhysicsPairContactObserver.BindContactEvent(null, header, pair).Handler);
+            Assert.IsNull(PhysicsPairContactObserver.BindContactEvent(source, null, pair).Handler);
+            Assert.IsNull(PhysicsPairContactObserver.BindContactEvent(source, typeof(int), pair).Handler);
+            Assert.IsNull(PhysicsPairContactObserver.BindContactEvent(source, header, typeof(int)).Handler);
+            var incomplete = PhysicsPairContactObserver.BindContactEvent(typeof(Probe<int>).GetEvent("ContactEvent"), typeof(LegacyHeader<int>), typeof(int));
+            Assert.IsNull(incomplete.Handler);
+            StringAssert.Contains("contactCount", incomplete.Reason);
+        }
 
         [TestCase("3d")]
         [TestCase("2d")]
@@ -456,12 +532,24 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.Greater(after.Value<long>("observed_event_sequence"), sequence, "Real contact callbacks must occur during the measurement.");
             Assert.LessOrEqual(withObservation, withoutObservation + 2, "Opt-in contact recording must not allocate JSON per callback.");
         }
+#endif
 
         [Test]
         public void Contact3D_IsExplicitlyOptInAndLastObservedRatherThanCurrentTruth()
         {
             AddPair("3d");
-            first.GetComponent<Collider>().providesContacts = true;
+            var provides = typeof(Collider).GetProperty("providesContacts");
+            if (typeof(Physics3D).GetEvent("ContactEvent") == null)
+            {
+                var request = Request();
+                request["observe_contacts"] = true;
+                var evidence = Call(request)["data"]["contact_observation"];
+                Assert.IsFalse(evidence.Value<bool>("observer_supported"));
+                Assert.IsFalse(evidence.Value<bool>("watching"));
+                return;
+            }
+            Assert.IsNotNull(provides, "The contact fixture requires a source of native contacts.");
+            provides.SetValue(first.GetComponent<Collider>(), true);
             var extra = CreateIsolatedPreview("3d");
             SceneManager.MoveGameObjectToScene(first, extra);
             SceneManager.MoveGameObjectToScene(second, extra);
@@ -470,6 +558,7 @@ namespace MCPForUnityTests.Editor.Tools
             var options = Request();
             var before = Call(options);
             Success(before);
+            Assert.IsTrue(before["data"]["first"].Value<bool>("provides_contacts"));
             Assert.AreEqual("unavailable", before["data"]["contact_observation"].Value<string>("status"));
             options["observe_contacts"] = true;
             Success(Call(options));
@@ -511,6 +600,5 @@ namespace MCPForUnityTests.Editor.Tools
             Success(stopped);
             Assert.IsFalse(stopped["data"]["contact_observation"].Value<bool>("watching"));
         }
-#endif
     }
 }
