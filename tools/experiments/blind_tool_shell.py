@@ -70,9 +70,10 @@ def shell_receipt(command, output, exit_code, asset, project="", cwd=None):
 
     purpose = shell_purpose(command, asset, project, cwd)
     receipt = {"purpose": purpose}
+    if purpose == "named_asset_read":
+        receipt["asset_digest"] = sha256(asset.encode()).hexdigest()
     if purpose == "named_asset_read" and exit_code == 0 and isinstance(output, str):
         facts = saved_graph_facts(output[:2_000_000], allow_partial=True)
         if facts:
-            receipt["asset_digest"] = sha256(asset.encode()).hexdigest()
             receipt["facts"] = facts
     return receipt

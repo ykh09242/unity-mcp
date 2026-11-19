@@ -221,6 +221,12 @@ def unpack(response: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         or result.get("is_error")
     ):
         data = mapping(value.get("data"))
+        if value.get("message") == "strict_raycast_unavailable":
+            return "error", {
+                "kind": "ugui_raycast_diagnostics",
+                "status": "unavailable",
+                "reason": "strict_raycast_unavailable",
+            }
         if data.get("kind") == "ugui_raycast_diagnostics" and data.get("status") == "failed":
             return "error", data
         return "error", {}
@@ -277,6 +283,18 @@ def observation(route: str, data: dict[str, Any], fixture=None) -> dict[str, Any
             return {
                 "status": "failed",
                 "reason": reason if re.fullmatch("[a-z_]{1,64}", reason) else None,
+            }
+        if (
+            fixture
+            and fixture.get("task") == "pointer-order"
+            and data.get("status") in ("unknown", "unavailable")
+        ):
+            reason = string(data.get("reason"))
+            attempted = mapping(data.get("policy")).get("native_query_attempted")
+            return {
+                "status": data["status"],
+                "reason": reason if re.fullmatch("[a-z_]{1,64}", reason) else None,
+                **({"native_query_attempted": attempted} if type(attempted) is bool else {}),
             }
         point = data.get("screen_position")
         status = string(data.get("status"))
@@ -633,6 +651,7 @@ def client_trace(
     unity_server: str = "unityMCP",
     expected_actor: str = "",
     fixture=None,
+    project="",
 ) -> ClientTrace:
     """Use host accounting for calls blocked before the relay and main-role shell activity."""
     trace = ClientTrace()
@@ -714,10 +733,18 @@ def client_trace(
                         item_id, Call("shell.command", "shell", len(trace.calls) + 1)
                     )
                     receipt = mapping(item.get("shell_receipt")) or shell_receipt(
-                        command, string(item.get("aggregated_output")), item.get("exit_code"), asset
+                        command,
+                        string(item.get("aggregated_output")),
+                        item.get("exit_code"),
+                        asset,
+                        project,
+                        item.get("cwd"),
                     )
                     call.shell_purpose = string(receipt.get("purpose")) or "unknown"
-                    if call.shell_purpose == "named_asset_read":
+                    bound = bool(
+                        asset and receipt.get("asset_digest") == sha256(asset.encode()).hexdigest()
+                    )
+                    if call.shell_purpose == "named_asset_read" and bound:
                         call.route = SAVED_FILE
                     if event.get("type") != "item.completed":
                         continue
@@ -726,32 +753,26 @@ def client_trace(
                     output = string(item.get("aggregated_output"))
                     if item.get("exit_code") == 0:
                         recorded = mapping(item.get("saved_read"))
-                        grade = recorded.get("grade") or (
-                            saved_read_grade(command, output, asset) if exact_path else "none"
-                        )
-                        if (
-                            item.get("shell_receipt")
-                            and grade == "observed"
-                            and (
-                                not asset
-                                or receipt.get("asset_digest") != sha256(asset.encode()).hexdigest()
+                        facts = mapping(receipt.get("facts")) if bound else {}
+                        if command or item.get("shell_receipt"):
+                            grade = (
+                                "observed"
+                                if len(facts.get("node_types", [])) >= 2
+                                else "review"
+                                if bound
+                                or exact_path
+                                or recorded.get("grade") in ("observed", "review")
+                                else "none"
                             )
-                        ):
-                            grade = "review"
+                        else:
+                            # Legacy projected events retained the grade and facts without command text.
+                            grade = recorded.get("grade")
+                            facts = mapping(recorded.get("facts")) if grade == "observed" else {}
                         trace.saved_reads += int(grade == "observed")
                         trace.saved_reads_to_review += int(grade == "review")
                         if grade == "observed":
                             call.route = SAVED_FILE
-                            call.evidence = mapping(recorded.get("facts")) or saved_graph_facts(
-                                output
-                            )
-                            trace.saved_observations.append(call.evidence)
-                        elif (
-                            asset
-                            and call.shell_purpose == "named_asset_read"
-                            and receipt.get("asset_digest") == sha256(asset.encode()).hexdigest()
-                            and (facts := mapping(receipt.get("facts")))
-                        ):
+                        if facts:
                             call.evidence = facts
                             trace.saved_observations.append(facts)
                     elif APPROVAL.search(output):
@@ -1006,6 +1027,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         endpoint=row.get("backend") == "unity-mcp-loopback",
         unity_server=string(row.get("unity_server")) or "unityMCP",
         fixture=row.get("observation_fixture"),
+        project=string(row.get("project")),
     )
     asset = string(row["graph_asset"])
     parent = client_trace(case_dir / "events.jsonl", asset, **options)
@@ -1036,6 +1058,18 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         child,
         configured=row.get("host_mode") == "configured",
     )
+    surface = case_dir / "host.json"
+    if row["role"] == "subagent" and len(parent.child_actors) == 1:
+        surface = case_dir / f"host-child-{next(iter(parent.child_actors))}.json"
+    inventory = (
+        json_object(surface.read_bytes())
+        if surface.is_file() and (row["role"] == "main" or len(parent.child_actors) == 1)
+        else {}
+    )
+    if task == "pointer-order" and not mapping(inventory.get("unity")).get(
+        "strict_raycast_arguments"
+    ):
+        routes = routes - {RAYCAST}
     host = child if child and attribution == "host-linked-child-items" else parent
     wire = [call for calls in connections for call in calls]
     unity = [call for call in wire if call.channel == "unity"]
@@ -1115,14 +1149,6 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         if detail or call.route in SIZE_ROUTES or call.route == RAYCAST or task in choices.TASKS:
             live_observations.append({"route": call.route, **detail})
     redundant, early_rays = timing_metrics(task, sequence)
-    surface = case_dir / "host.json"
-    if row["role"] == "subagent" and len(parent.child_actors) == 1:
-        surface = case_dir / f"host-child-{next(iter(parent.child_actors))}.json"
-    inventory = (
-        json_object(surface.read_bytes())
-        if surface.is_file() and (row["role"] == "main" or len(parent.child_actors) == 1)
-        else {}
-    )
     selected_actor = (
         parent.parent_actor if row["role"] == "main" else next(iter(parent.child_actors), "")
     )

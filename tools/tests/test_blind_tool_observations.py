@@ -118,8 +118,23 @@ def test_pointer_needs_scoped_target_position_and_native_safe_order():
         "hit_status": "empty",
         "first_hit": None,
     }
+    diagnostic = observation(
+        choices.POINTER,
+        {
+            **data,
+            "status": "unknown",
+            "reason": "missing_event_system",
+            "policy": {"native_query_attempted": False},
+        },
+        POINTER,
+    )
+    assert diagnostic == {
+        "status": "unknown",
+        "reason": "missing_event_system",
+        "native_query_attempted": False,
+    }
+    assert expected_facts("pointer-order", [diagnostic], [])[0] == {}
     for invalid in (
-        {"status": "unknown"},
         {"screen_position": [32, 32]},
         {"hits": [{"rank": 2}], "hits_total": 1},
     ):

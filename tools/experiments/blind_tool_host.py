@@ -255,6 +255,15 @@ async def observe_host(client, thread_id, unity_server, instance, *, installed):
                 actions = {}
                 for name_, tool in tools.items():
                     schema = tool.get("inputSchema") or tool.get("input_schema") or {}
+                    if name_ == "manage_ugui":
+                        properties = schema.get("properties") or {}
+                        strict = properties.get("strict_read") or {}
+                        result["unity"]["strict_raycast_arguments"] = (
+                            {"target", "screen_position", "allow_custom_filters"}
+                            <= properties.keys()
+                            and strict.get("type") == "boolean"
+                            and strict.get("const", True) is True
+                        )
                     action = schema.get("properties", {}).get("action") or {}
                     choices = action.get("enum", [action.get("const")])
                     if (
@@ -497,7 +506,10 @@ def project_item(item, server, asset, project="", fixture=None):
         if (
             item.get("exitCode") == 0
             and asset
-            and asset.casefold() in command.replace("\\", "/").casefold()
+            and (
+                receipt["purpose"] == "named_asset_read"
+                or asset.casefold() in command.replace("\\", "/").casefold()
+            )
         ):
             facts = receipt.get("facts", {})
             observed = len(facts.get("node_types", [])) >= 2

@@ -60,3 +60,57 @@ def test_project_only_returned_fields_and_bind_to_named_asset_and_actor(tmp_path
     assert not client_trace(
         path, "Assets/B.shadergraph", endpoint=False, expected_actor="child"
     ).saved_observations
+
+
+@pytest.mark.parametrize("projected", [True, False])
+@pytest.mark.parametrize(
+    ("cwd", "operand", "complete"),
+    [
+        ("E:/Game/Assets", "A.shadergraph", 1),
+        ("E:/Other", ASSET, 0),
+        (None, ASSET, 0),
+    ],
+)
+def test_host_and_raw_traces_agree_on_resolved_file_identity(
+    tmp_path, projected, cwd, operand, complete
+):
+    output = "\n".join(
+        map(
+            json.dumps,
+            [
+                {"m_Nodes": [{"m_Id": "a"}, {"m_Id": "b"}], "m_Edges": []},
+                {"m_ObjectId": "a", "m_Type": "First"},
+                {"m_ObjectId": "b", "m_Type": "Second"},
+            ],
+        )
+    )
+    command = "cat " + operand
+    item = (
+        project_item(
+            {
+                "id": "x",
+                "type": "commandExecution",
+                "command": command,
+                "cwd": cwd,
+                "exitCode": 0,
+                "aggregatedOutput": output,
+            },
+            "trial",
+            ASSET,
+            "E:/Game",
+        )
+        if projected
+        else {
+            "id": "x",
+            "type": "command_execution",
+            "command": command,
+            "cwd": cwd,
+            "exit_code": 0,
+            "aggregated_output": output,
+        }
+    )
+    path = tmp_path / "events.jsonl"
+    path.write_text(json.dumps({"type": "item.completed", "item": item}))
+    result = client_trace(path, ASSET, endpoint=False, project="E:/Game")
+    assert result.saved_reads == complete
+    assert len(result.saved_observations) == complete

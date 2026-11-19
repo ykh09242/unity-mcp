@@ -183,3 +183,65 @@ def test_observed_actor_search_on_two_connections_never_counts_as_direct(tmp_pat
     assert case["role_status"] == "confirmed" and case["calls_before_first_success"] == 0
     assert case["selection_diagnosis"]["search_capture"] == "attempt_without_rank"
     assert case["selection_diagnosis"]["first_search_top3_suitable"] is None
+
+
+def test_mixed_pointer_route_requires_the_actual_actor_to_have_the_strict_input(tmp_path):
+    actor = "01800000-0000-4000-8100-000000000002"
+    route = "manage_ugui.diagnose_raycast"
+    (tmp_path / "case.json").write_text(
+        json.dumps(
+            {
+                "role": "main",
+                "task": "pointer-order",
+                "graph_asset": "",
+                "host_mode": "configured",
+                "runner_status": "finished",
+            }
+        )
+    )
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join(
+            map(
+                json.dumps,
+                [{"type": "thread.started", "thread_id": actor}, {"type": "turn.completed"}],
+            )
+        )
+    )
+    (tmp_path / "mcp-1.jsonl").write_text(
+        "\n".join(
+            map(
+                json.dumps,
+                [
+                    {
+                        "event": "request",
+                        "route": "search_unity_tools",
+                        "channel": "discovery",
+                        "sequence": 1,
+                        "actor": thread_digest(actor),
+                    },
+                    {
+                        "event": "response",
+                        "sequence": 1,
+                        "outcome": "returned",
+                        "observation": {"top3": [[route]]},
+                    },
+                ],
+            )
+        )
+    )
+    for strict in (False, True):
+        (tmp_path / "host.json").write_text(
+            json.dumps(
+                {
+                    "status": "observed",
+                    "unity": {
+                        "tools": ["manage_ugui"],
+                        "actions": {"manage_ugui": ["diagnose_raycast"]},
+                        "strict_raycast_arguments": strict,
+                    },
+                }
+            )
+        )
+        diagnosis = score_case(tmp_path)["selection_diagnosis"]
+        assert diagnosis["advertised"] is strict
+        assert diagnosis["first_search_top3_suitable"] is strict
