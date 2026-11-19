@@ -283,3 +283,4 @@ For a fixed competitor cohort, pass `--competitor NAME` for every required compe
 
 Supply `--existing-compile-id` only for a known earlier request. For a pointer trial supply a previously identified `--pointer-target` and `--pointer-position X Y`. Without the corresponding fixture the runner keeps the planned cell and withholds the prompt. For these two conditional tasks the state probe can return `observation_fixtures` keyed by task, each entry containing the scoped read’s `arguments` and decoded `reply`. Both pre-prompt receipts must establish the result to enter the positive selection denominator. Other cases retain their availability and evidence grades. Only searches that returned a captured ranking enter the top-three denominator.
 
+Report the actor's first business call and its first verified observation separately. For example, a shell command can precede the MCP call that supplies the answer.
