@@ -281,8 +281,13 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                 }
             }
 
-            internal ScriptableObject Select(string id) =>
-                Tracks.SingleOrDefault(x => Id(x) == id) ?? throw new ArgumentException("Exact track_id is stale or does not belong to this Timeline.");
+            internal ScriptableObject Select(string id)
+            {
+                var track = Tracks.SingleOrDefault(x => Id(x) == id);
+                if (track == null)
+                    throw new ArgumentException("Exact track_id is stale or does not belong to this Timeline.");
+                return track;
+            }
 
             internal string Revision() => Revision(out _, out _);
 
@@ -582,7 +587,9 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
         internal static Object Source(object clip)
         {
             var playable = Get(clip, "asset") as Object;
-            PropertyInfo source = playable?.GetType().GetProperty("clip");
+            if (playable == null)
+                return null;
+            PropertyInfo source = playable.GetType().GetProperty("clip");
             return source?.GetValue(playable) as Object;
         }
 
@@ -600,7 +607,7 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                 ["duration"] = (double)Get(clip, "duration"),
                 ["clip_in"] = (double)Get(clip, "clipIn"),
                 ["time_scale"] = (double)Get(clip, "timeScale"),
-                ["playable_type"] = Bounded(playable?.GetType().FullName),
+                ["playable_type"] = Bounded(playable != null ? playable.GetType().FullName : null),
                 ["source"] = source != null ? Reference(source) : (JToken)JValue.CreateNull(),
             };
         }

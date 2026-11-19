@@ -86,8 +86,7 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"Target GameObject '{target}' was not found.");
                 if (EditorUtility.IsPersistent(gameObject) || !gameObject.scene.IsValid() || !gameObject.scene.isLoaded)
                     return new ErrorResponse("'target' must be a GameObject in a loaded scene.");
-                AudioSource source = gameObject.GetComponent<AudioSource>();
-                if (source == null)
+                if (!gameObject.TryGetComponent(out AudioSource source))
                     return new ErrorResponse($"GameObject '{gameObject.name}' has no AudioSource.");
 
                 if (action == "play")

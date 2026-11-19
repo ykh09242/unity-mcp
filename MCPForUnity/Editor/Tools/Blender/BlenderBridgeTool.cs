@@ -645,7 +645,9 @@ print(json.dumps(result))
             if (legacy)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                UnityEngine.Animation animation = go.GetComponentInChildren<UnityEngine.Animation>(true) ?? go.AddComponent<UnityEngine.Animation>();
+                var animation = go.GetComponentInChildren<UnityEngine.Animation>(true);
+                if (animation == null)
+                    animation = go.AddComponent<UnityEngine.Animation>();
                 AnimationClip defaultClip = clips.Contains(animation.clip) ? animation.clip : clips[0];
                 foreach (AnimationClip clip in clips)
                 {
@@ -682,7 +684,9 @@ print(json.dumps(result))
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            Animator animator = go.GetComponentInChildren<Animator>(true) ?? go.AddComponent<Animator>();
+            var animator = go.GetComponentInChildren<Animator>(true);
+            if (animator == null)
+                animator = go.AddComponent<Animator>();
             string controllerPath = AssetDatabase.GenerateUniqueAssetPath(
                 Path.Combine(Path.GetDirectoryName(assetPath) ?? "Assets", $"{name}_Controller.controller").Replace('\\', '/')
             );
@@ -793,7 +797,8 @@ print(json.dumps(result))
             if (cam != null && camDataType != null)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                Component camData = cam.GetComponent(camDataType) ?? cam.gameObject.AddComponent(camDataType);
+                if (!cam.TryGetComponent(camDataType, out Component camData))
+                    camData = cam.gameObject.AddComponent(camDataType);
                 System.Reflection.PropertyInfo post = camDataType.GetProperty("renderPostProcessing");
                 if (post != null && !(bool)post.GetValue(camData))
                 {
@@ -813,7 +818,8 @@ print(json.dumps(result))
                 var comp = v as Component;
                 if (comp == null || (isGlobal != null && !(bool)isGlobal.GetValue(comp)))
                     continue;
-                globalVolume ??= comp;
+                if (globalVolume == null)
+                    globalVolume = comp;
                 object profile = sharedProfile?.GetValue(comp);
                 var components = profile?.GetType().GetField("components")?.GetValue(profile) as System.Collections.IEnumerable;
                 if (components != null && components.Cast<object>().Any(c => c != null && c.GetType().Name == "Bloom"))

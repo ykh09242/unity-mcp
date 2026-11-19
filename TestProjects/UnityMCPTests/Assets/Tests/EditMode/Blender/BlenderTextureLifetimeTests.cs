@@ -24,11 +24,9 @@ namespace MCPForUnityTests.Editor.Blender
                     sourceColors[i] = new Color32((byte)i, (byte)(i / 512), 97, (byte)(i % 233));
                 source.SetPixels32(sourceColors);
                 source.Apply();
-                var reference = new Color[256 * 256];
                 for (int y = 0; y < 256; y++)
                 for (int x = 0; x < 256; x++)
-                    reference[y * 256 + x] = source.GetPixelBilinear((x + 0.5f) / 256, (y + 0.5f) / 256);
-                expected.SetPixels(reference);
+                    expected.SetPixel(x, y, source.GetPixelBilinear((x + 0.5f) / 256, (y + 0.5f) / 256));
                 expected.Apply();
                 destination = Scale(source, 256);
                 Object.DestroyImmediate(destination);
