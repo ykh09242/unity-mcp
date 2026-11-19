@@ -150,7 +150,7 @@ POINTER_ORDER_OBSERVATION: Final[Observation] = {
     },
     "conditions": (
         "Requires a scene RectTransform target, in-bounds bottom-left Game View pixel coordinates, "
-        "Unity 6000.0.69f1, supported uGUI 2.0.0 components and one active native EventSystem. "
+        "compatible official uGUI raycast and registry APIs, supported components and one active native EventSystem. "
         "Only status=observed with policy.native_query_attempted=true establishes ordered hits. "
         "Inspect hits_total and hits_truncated. Unknown, failed or missing evidence establishes no "
         "hit order. This query does not dispatch input or prove event receipt."

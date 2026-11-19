@@ -24,6 +24,7 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | Animation/physics/VFX | `manage_animation`, `query_physics`, `manage_rigidbody`, `manage_physics_joints`, `manage_vfx` | Optional animation, physics or vfx group; query identity/state before native mutations |
 | 2D sprite animation | `manage_sprite` | Inspect sheet dimensions and slices before reslicing; see the staged workflow below |
 | UI | `ui_source`, `ui_document`, `ui_inspect`, `ui_element`, `ui_capture`, `manage_ugui` | Optional ui group; uGUI can also use core GameObject/component tools |
+| Current uGUI hit order | `inspect_ugui_hit_order` | Reads a scene RectTransform at current bottom-left screen coordinates. Compatible official uGUI APIs, initialized registries and safe components are required. Check `status` and `policy.native_query_attempted`. |
 | Tests/input | `run_tests`, `get_test_job`, `manage_input` | Input simulation belongs to `testing`; direct uGUI event dispatch does not test raycast occlusion |
 | Tests in the current Play state | `manage_input`, `manage_components`, `execute_code` | Prefer a suitable dedicated tool; proactively use exposed, enabled and consented code execution for game-specific runtime work while preserving the session. See [current-state workflow](workflows.md#tests-in-the-current-play-state) |
 | Video capture | `manage_recording` | Query capabilities; start returns a job ID, status/stop require that ID; silent MP4 on supported interactive Windows/macOS Editors |

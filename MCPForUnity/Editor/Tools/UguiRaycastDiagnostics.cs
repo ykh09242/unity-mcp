@@ -202,8 +202,6 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (EditorUtility.IsPersistent(target) || !target.scene.IsValid() || EditorSceneManager.IsPreviewScene(target.scene))
                     throw new Unavailable("invalid_scene_target");
-                if (!Application.unityVersion.Equals("6000.0.69f1", StringComparison.Ordinal))
-                    throw new Unavailable("unsupported_native_version");
                 if (
                     Screen.width <= 0
                     || Screen.height <= 0
@@ -216,7 +214,7 @@ namespace MCPForUnity.Editor.Tools
                 var ui = AppDomain.CurrentDomain.GetAssemblies().SingleOrDefault(a => a.GetName().Name == "UnityEngine.UI");
                 if (ui == null)
                     throw new Unavailable("ugui_unavailable");
-                if (query.StrictRead && !ReviewedPackage(ui))
+                if (!OfficialPackage(ui, "com.unity.ugui"))
                     throw new Unavailable("unsupported_read_policy");
                 Type eventType = NativeType(ui, "UnityEngine.EventSystems.EventSystem");
                 var systems = Field(eventType, null, "m_EventSystems", query) as IList;
@@ -229,7 +227,7 @@ namespace MCPForUnity.Editor.Tools
                 if (events == null || events.GetType() != eventType || !events.isActiveAndEnabled)
                     throw new Unavailable("unsupported_event_system");
                 query.EventId = events.gameObject.GetInstanceIDCompat();
-                var module = Field(eventType, events, "m_CurrentInputModule", query) as Behaviour;
+                var module = Field(eventType, events, "m_CurrentInputModule", query, NativeType(ui, "UnityEngine.EventSystems.BaseInputModule")) as Behaviour;
                 if (module != null)
                 {
                     query.Reserve(256);
@@ -242,15 +240,28 @@ namespace MCPForUnity.Editor.Tools
                 query.Reserve(query.Slots * 256);
                 Type pointerType = NativeType(ui, "UnityEngine.EventSystems.PointerEventData");
                 Type resultType = NativeType(ui, "UnityEngine.EventSystems.RaycastResult");
-                var pointer = Activator.CreateInstance(pointerType, new object[] { events });
-                var positionProperty = pointerType.GetProperty("position");
-                if (positionProperty == null || !positionProperty.CanWrite)
+                Type resultList = typeof(List<>).MakeGenericType(resultType);
+                var constructor = pointerType.GetConstructor(new[] { eventType });
+                var positionProperty = pointerType.GetProperty("position", typeof(Vector2));
+                var method = eventType.GetMethod("RaycastAll", new[] { pointerType, resultList });
+                if (
+                    constructor == null
+                    || constructor.GetParameters()[0].ParameterType != eventType
+                    || positionProperty?.SetMethod == null
+                    || positionProperty.SetMethod.IsStatic
+                    || positionProperty.GetIndexParameters().Length != 0
+                    || method == null
+                    || method.IsStatic
+                    || method.ContainsGenericParameters
+                    || method.ReturnType != typeof(void)
+                    || method.GetParameters()[0].ParameterType != pointerType
+                    || method.GetParameters()[1].ParameterType != resultList
+                )
                     throw new Unavailable("unsupported_native_shape");
+                string objectField = ValidateHitFields(ui, resultType);
+                var pointer = constructor.Invoke(new object[] { events });
                 positionProperty.SetValue(pointer, query.Position);
-                var results = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(resultType));
-                MethodInfo method = eventType.GetMethod("RaycastAll", new[] { pointerType, results.GetType() });
-                if (method == null)
-                    throw new Unavailable("unsupported_native_shape");
+                var results = (IList)Activator.CreateInstance(resultList);
                 query.Attempted = true;
                 try
                 {
@@ -263,13 +274,13 @@ namespace MCPForUnity.Editor.Tools
                 query.Total = results.Count;
                 int take = Math.Min(query.Slots, results.Count);
                 for (int index = 0; index < take; index++)
-                    query.Hits.Add(Hit(ui, resultType, results[index], index, query));
+                    query.Hits.Add(Hit(ui, resultType, objectField, results[index], index, query));
                 query.Truncated = take < results.Count;
                 if (results.Count == 0)
                     query.FirstTargetsHandler = false;
                 else if (take > 0 && target != null)
                 {
-                    var first = Field(resultType, results[0], "m_GameObject", query) as GameObject;
+                    var first = Field(resultType, results[0], objectField, query) as GameObject;
                     if (
                         TryHandler(ui, target, query, out var targetHandler)
                         && TryHandler(ui, first, query, out var hitHandler)
@@ -289,6 +300,10 @@ namespace MCPForUnity.Editor.Tools
                 return query.Reply("unknown", "unsupported_native_shape");
             }
             catch (MemberAccessException)
+            {
+                return query.Reply("unknown", "unsupported_native_shape");
+            }
+            catch (AmbiguousMatchException)
             {
                 return query.Reply("unknown", "unsupported_native_shape");
             }
@@ -362,24 +377,24 @@ namespace MCPForUnity.Editor.Tools
             if (rays.Count > RaycasterLimit)
                 throw new Unavailable("raycaster_limit");
             var registryType = NativeType(ui, "UnityEngine.UI.GraphicRegistry");
-            var registry = Field(registryType, null, "s_Instance", query);
+            var registry = Field(registryType, null, "s_Instance", query, registryType);
             if (registry == null)
                 throw new Unavailable("registry_uninitialized");
-            var dictionary = Field(registryType, registry, "m_RaycastableGraphics", query) as IDictionary;
             Type graphicType = NativeType(ui, "UnityEngine.UI.Graphic");
+            MethodInfo graphicsForCanvas = GraphicsAccessor(registryType, graphicType);
+            Type listType = typeof(List<>).MakeGenericType(graphicType);
+            Type setType = ui.GetType("UnityEngine.UI.Collections.IndexedSet\u00601", false)?.MakeGenericType(graphicType);
+            Type arrayType = graphicType.MakeArrayType();
+            var countProperty = typeof(ICollection<>).MakeGenericType(graphicType).GetProperty("Count");
+            var itemProperty = typeof(IList<>).MakeGenericType(graphicType).GetProperty("Item");
             if (query.StrictRead)
             {
                 // A previous throwing project filter can leave foreign graphics in native sort scratch.
                 var scratch = Field(raycaster, null, "s_SortedGraphics", query) as IList;
-                var empty = Field(registryType, null, "s_EmptyList", query) as IList;
-                var listType = typeof(List<>).MakeGenericType(graphicType);
-                if (scratch == null || scratch.GetType() != listType || scratch.Count != 0 || empty == null || empty.GetType() != listType || empty.Count != 0)
+                if (scratch == null || scratch.GetType() != listType || scratch.Count != 0)
                     throw new Unavailable("unsupported_read_policy");
             }
             Type maskableGraphicType = NativeType(ui, "UnityEngine.UI.MaskableGraphic");
-            Type setType = NativeType(ui, "UnityEngine.UI.Collections.IndexedSet").MakeGenericType(graphicType);
-            if (dictionary == null || dictionary.GetType() != typeof(Dictionary<,>).MakeGenericType(typeof(Canvas), setType))
-                throw new Unavailable("unsupported_native_shape");
             Type filterType = typeof(CanvasGroup).GetInterfaces().SingleOrDefault(t => t.FullName == "UnityEngine.ICanvasRaycastFilter");
             if (filterType == null)
                 throw new Unavailable("unsupported_native_shape");
@@ -394,19 +409,20 @@ namespace MCPForUnity.Editor.Tools
                     continue;
                 query.Spend(4);
                 var canvas = ray.GetComponent<Canvas>();
-                var camera = Property(raycaster, ray, "eventCamera", query) as Camera;
+                var camera = Property(raycaster, ray, "eventCamera", query, typeof(Camera)) as Camera;
                 if (canvas == null || canvas.targetDisplay != 0 || (camera != null && (camera.targetDisplay != 0 || camera.targetTexture != null)))
                     throw new Unavailable("unsupported_display_route");
-                if (Convert.ToInt32(Property(raycaster, ray, "blockingObjects", query)) != 0)
+                var blocking = NativeType(ui, "UnityEngine.UI.GraphicRaycaster+BlockingObjects");
+                if (!blocking.IsEnum || Enum.GetName(blocking, Property(raycaster, ray, "blockingObjects", query, blocking)) != "None")
                     throw new Unavailable("unsupported_blocking_objects");
-                if (!dictionary.Contains(canvas))
-                    continue;
-                var set = dictionary[canvas];
-                if (set == null || set.GetType() != setType)
+                // Both official accessors can lazily create the registry. Its existing
+                // singleton was checked above. Only the package's own collections may run.
+                query.Spend(2);
+                var entries = graphicsForCanvas.Invoke(null, new object[] { canvas });
+                if (entries == null || (entries.GetType() != listType && entries.GetType() != setType && entries.GetType() != arrayType))
                     throw new Unavailable("unsupported_native_shape");
-                int count = (int)Field(setType, set, "m_EnabledObjectCount", query);
-                var list = Field(setType, set, "m_List", query) as IList;
-                if (list == null || list.GetType() != typeof(List<>).MakeGenericType(graphicType) || count < 0 || count > list.Count)
+                int count = (int)countProperty.GetValue(entries);
+                if (count < 0)
                     throw new Unavailable("unsupported_native_shape");
                 if (count > query.MaxNodes - query.Graphics)
                     throw new Unavailable("max_nodes");
@@ -414,7 +430,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     query.Spend(1);
                     query.Graphics++;
-                    var graphic = list[item] as Component;
+                    var graphic = itemProperty.GetValue(entries, new object[] { item }) as Component;
                     if (graphic == null)
                         throw new Unavailable("unsupported_native_shape");
                     Type actual = graphic.GetType();
@@ -430,7 +446,8 @@ namespace MCPForUnity.Editor.Tools
                         Type raycastOwner = actual.GetMethod("Raycast", new[] { typeof(Vector2), typeof(Camera) })?.DeclaringType;
                         tmp =
                             (raycastOwner == graphicType || raycastOwner == maskableGraphicType)
-                            && actual.GetProperty("raycastTarget")?.GetMethod?.DeclaringType == graphicType;
+                            && actual.GetProperty("raycastTarget")?.GetMethod?.DeclaringType == graphicType
+                            && (OfficialPackage(actual.Assembly, "com.unity.ugui") || OfficialPackage(actual.Assembly, "com.unity.textmeshpro"));
                     }
                     if (!knownGraphic && !tmp)
                     {
@@ -438,21 +455,16 @@ namespace MCPForUnity.Editor.Tools
                         query.UnsupportedComponent = DescribeComponent(graphic, query);
                         throw new Unavailable("unsupported_graphic");
                     }
-                    // Match the native early rejection only after proving the getter is built-in.
-                    if (!(bool)Property(graphicType, graphic, "raycastTarget", query))
-                        continue;
                     // Graphic.canvasRenderer can AddComponent on a missing renderer.
                     // The fixed read accepts only existing native components.
                     if (query.StrictRead)
                     {
                         query.Spend(2);
-                        if (
-                            (!knownGraphic && !ReviewedPackage(actual.Assembly))
-                            || !(graphic.transform is RectTransform)
-                            || graphic.GetComponent<CanvasRenderer>() == null
-                        )
+                        if (!(graphic.transform is RectTransform) || graphic.GetComponent<CanvasRenderer>() == null)
                             throw new Unavailable("unsupported_read_policy");
                     }
+                    if (!(bool)Property(graphicType, graphic, "raycastTarget", query, typeof(bool)))
+                        continue;
                     int depth = 0;
                     for (Transform current = graphic.transform; current != null; current = current.parent, depth++)
                     {
@@ -484,7 +496,7 @@ namespace MCPForUnity.Editor.Tools
                             if (
                                 query.StrictRead
                                 && component.GetType() == NativeType(ui, "UnityEngine.UI.Image")
-                                && !((float)Property(component.GetType(), component, "alphaHitTestMinimumThreshold", query) <= 0f)
+                                && !((float)Property(component.GetType(), component, "alphaHitTestMinimumThreshold", query, typeof(float)) <= 0f)
                             )
                                 throw new Unavailable("unsupported_read_policy");
                         }
@@ -524,16 +536,51 @@ namespace MCPForUnity.Editor.Tools
             };
         }
 
-        private static JObject Hit(Assembly ui, Type resultType, object result, int rank, Query query)
+        private static string ValidateHitFields(Assembly ui, Type result)
         {
-            var go = Field(resultType, result, "m_GameObject", query) as GameObject;
+            const BindingFlags fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            string objectField = result.GetField("m_GameObject", fields) != null ? "m_GameObject" : "gameObject";
+            if (
+                !result.IsValueType
+                || result.GetField(objectField, fields)?.FieldType != typeof(GameObject)
+                || result.GetField("module", fields)?.FieldType != NativeType(ui, "UnityEngine.EventSystems.BaseRaycaster")
+                || result.GetField("distance", fields)?.FieldType != typeof(float)
+                || result.GetField("index", fields)?.FieldType != typeof(float)
+                || result.GetField("screenPosition", fields)?.FieldType != typeof(Vector2)
+            )
+                throw new Unavailable("unsupported_native_shape");
+            foreach (string name in new[] { "sortingLayer", "sortingOrder", "depth", "displayIndex" })
+                if (result.GetField(name, fields)?.FieldType != typeof(int))
+                    throw new Unavailable("unsupported_native_shape");
+            return objectField;
+        }
+
+        private static MethodInfo GraphicsAccessor(Type registry, Type graphic)
+        {
+            var parameters = new[] { typeof(Canvas) };
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly;
+            var method = registry.GetMethod("GetRaycastableGraphicsForCanvas", flags, null, parameters, null)
+                ?? registry.GetMethod("GetGraphicsForCanvas", flags, null, parameters, null);
+            if (
+                method == null
+                || method.IsGenericMethod
+                || method.GetParameters()[0].ParameterType != typeof(Canvas)
+                || method.ReturnType != typeof(IList<>).MakeGenericType(graphic)
+            )
+                throw new Unavailable("unsupported_native_shape");
+            return method;
+        }
+
+        private static JObject Hit(Assembly ui, Type resultType, string objectField, object result, int rank, Query query)
+        {
+            var go = Field(resultType, result, objectField, query) as GameObject;
             var ray = Field(resultType, result, "module", query) as Component;
             if (go == null || ray == null || ray.GetType() != NativeType(ui, "UnityEngine.UI.GraphicRaycaster"))
                 throw new Unavailable("query_inventory_changed");
             string name = Metadata(go.name);
             query.Spend(3);
-            var root = Property(ray.GetType(), ray, "rootRaycaster", query) as Component;
-            var camera = Property(ray.GetType(), ray, "eventCamera", query) as Camera;
+            var root = Property(ray.GetType(), ray, "rootRaycaster", query, NativeType(ui, "UnityEngine.EventSystems.BaseRaycaster")) as Component;
+            var camera = Property(ray.GetType(), ray, "eventCamera", query, typeof(Camera)) as Camera;
             int layer = (int)Field(resultType, result, "sortingLayer", query);
             float distance = (float)Field(resultType, result, "distance", query);
             float index = (float)Field(resultType, result, "index", query);
@@ -609,12 +656,11 @@ namespace MCPForUnity.Editor.Tools
             return true;
         }
 
-        private static bool ReviewedPackage(Assembly assembly)
+        private static bool OfficialPackage(Assembly assembly, string packageName)
         {
             var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(assembly);
             return package != null
-                && package.name == "com.unity.ugui"
-                && package.version == "2.0.0"
+                && package.name == packageName
                 && (
                     package.source == UnityEditor.PackageManager.PackageSource.BuiltIn
                     || (
@@ -627,27 +673,26 @@ namespace MCPForUnity.Editor.Tools
         private static Type NativeType(Assembly ui, string name)
         {
             Type type = ui.GetType(name, false);
-            if (type == null && name == "UnityEngine.UI.Collections.IndexedSet")
-                type = ui.GetType(name + "\u0060" + "1", false);
             if (type == null)
                 throw new Unavailable("unsupported_native_shape");
             return type;
         }
 
-        private static object Field(Type type, object source, string name, Query query)
+        private static object Field(Type type, object source, string name, Query query, Type expected = null)
         {
             query.Spend(1);
-            FieldInfo field = type.GetField(name, BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (field == null)
+            var flags = (source == null ? BindingFlags.Static : BindingFlags.Instance) | BindingFlags.Public | BindingFlags.NonPublic;
+            FieldInfo field = type.GetField(name, flags);
+            if (field == null || (expected != null && field.FieldType != expected))
                 throw new Unavailable("unsupported_native_shape");
             return field.GetValue(source);
         }
 
-        private static object Property(Type type, object source, string name, Query query)
+        private static object Property(Type type, object source, string name, Query query, Type expected)
         {
             query.Spend(1);
-            PropertyInfo property = type.GetProperty(name);
-            if (property == null || !property.CanRead)
+            PropertyInfo property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance, null, expected, Type.EmptyTypes, null);
+            if (property?.GetMethod == null)
                 throw new Unavailable("unsupported_native_shape");
             return property.GetValue(source);
         }

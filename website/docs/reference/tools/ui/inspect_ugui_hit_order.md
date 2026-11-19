@@ -14,7 +14,7 @@ description: "Read ordered native uGUI hits for a scene RectTransform and curren
 
 ## Description
 
-Read ordered native uGUI hits for a scene RectTransform and current bottom-left screen pixel coordinates. Refuses unsupported queries before dispatch; never sends input, refreshes layout or opts into project callbacks. Requires manage_ugui.
+Read ordered native uGUI hits for a scene RectTransform and current bottom-left screen pixel coordinates. Requires manage_ugui, compatible official uGUI APIs and supported registered components. Reports unknown when safety checks fail. Sends no input, requests no layout refresh and never opts into project callbacks.
 
 ## Parameters
 

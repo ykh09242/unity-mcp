@@ -84,6 +84,11 @@ For instance selection, see [Multiple Unity instances](./multi-instance.md). For
 
 ## Inspect current raycast evidence
 
+Use `inspect_ugui_hit_order(target, screen_position)` for a strictly read-only
+query. The Editor checks the installed official uGUI APIs, the existing registry,
+graphic renderers and filters before attempting the native query. A missing
+capability returns `unknown`. An observed empty hit list has `hits_total=0`.
+
 ```text
 manage_ugui(action="diagnose_raycast", target=12345, screen_position=[640,360])
 ```

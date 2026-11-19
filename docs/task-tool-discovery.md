@@ -23,9 +23,9 @@ leaves tool selection and Unity state unchanged.
 compilation field. `inspect_ugui_hit_order(target, screen_position)` binds the
 strict read of `manage_ugui.diagnose_raycast` and requires its parent selection
 and read grant. The fixed tool has no callback or input switches. Its native
-guard requires the reviewed Unity 6000.0.69f1 uGUI 2.0.0 package, supported
-registered participants, existing graphic renderers and safe filters. Older
-packages reject the strict request. An unsupported query establishes no hit
+guard checks the installed official uGUI assembly, required API signatures,
+initialized registries, registered participants, existing renderers and safe
+filters. An unsupported query establishes no hit
 order. `hits_total=0` is an empty order only when the native query was observed.
 
 A host that knows the complete callable tool names for its current connection

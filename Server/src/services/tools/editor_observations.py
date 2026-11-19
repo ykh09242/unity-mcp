@@ -48,7 +48,12 @@ async def inspect_editor_state(ctx: Context) -> dict:
 @mcp_for_unity_tool(
     group="ui",
     unity_target="manage_ugui",
-    description="Read ordered native uGUI hits for a scene RectTransform and current bottom-left screen pixel coordinates. Refuses unsupported queries before dispatch; never sends input, refreshes layout or opts into project callbacks. Requires manage_ugui.",
+    description=(
+        "Read ordered native uGUI hits for a scene RectTransform and current bottom-left screen "
+        "pixel coordinates. Requires manage_ugui, compatible official uGUI APIs and supported "
+        "registered components. Reports unknown when safety checks fail. Sends no input, "
+        "requests no layout refresh and never opts into project callbacks."
+    ),
     meta={OBSERVATION_META: POINTER_ORDER_OBSERVATION},
     annotations=ToolAnnotations(
         title="Inspect uGUI Hit Order",
