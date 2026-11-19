@@ -8,6 +8,8 @@ using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Windows.Components.AssetGen;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
@@ -188,8 +190,11 @@ namespace MCPForUnityTests.Editor.Blender
                     try
                     {
                         NetworkStream stream = client.GetStream();
-                        await stream.ReadAsync(new byte[4096], 0, 4096);
-                        await stream.WriteAsync(reply, 0, reply.Length);
+                        using var text = new StreamReader(stream, Encoding.UTF8, false, 1024, leaveOpen: true);
+                        using var reader = new JsonTextReader(text);
+                        var request = await JObject.LoadAsync(reader);
+                        if ((string)request["type"] == "get_scene_info")
+                            await stream.WriteAsync(reply, 0, reply.Length);
                     }
                     catch (Exception) { /* client went away; keep serving */ }
                 }

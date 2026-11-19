@@ -198,12 +198,15 @@ namespace MCPForUnityTests
             var observations = new JArray();
             journal.Position = 0;
             using (var reader = new StreamReader(journal, Encoding.UTF8, false, 4096, leaveOpen: true))
-                while (!reader.EndOfStream)
+            {
+                string line;
+                while ((line = await reader.ReadLineAsync()) != null)
                 {
-                    var row = JObject.Parse(reader.ReadLine());
+                    var row = JObject.Parse(line);
                     samples.Add(row["sample"]);
                     observations.Add(row["observation"]);
                 }
+            }
             Directory.CreateDirectory(output);
             File.WriteAllText(
                 Path.Combine(output, scenario + "-" + variant + ".json"),
