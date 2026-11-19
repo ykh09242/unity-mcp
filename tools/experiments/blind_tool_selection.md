@@ -214,3 +214,21 @@ items and unmatched wire observations. The first search receipt keeps up to thre
 ranked results or groups and the declared distinct-group count. An unavailable
 rank, approval decision, native result or requested actor is reported separately.
 Only a complete inventory for the relevant actor establishes absence.
+
+## Contrast observation with action
+
+Run the disconnected fixture to compare observing compilation with starting
+it, reading a saved graph with observing unsaved window contents, and inspecting
+a uGUI hit with dispatching a click. Each request has its own disposable
+directory and SQLite journal. The fixture advertises the repository's tool
+schemas and intercepts all Editor calls. Its simulated work never reaches Unity.
+
+```sh
+python tools/experiments/blind_tool_contrasts.py run --output .work/contrasts-01 \
+  --model gpt-6.2-sol --effort medium --language en
+```
+
+The report compares the answer against observed results and the journal's exact
+effect sequence. A duplicate click fails the dispatch case. A saved graph count
+cannot establish the contents of the unsaved window. The game-project benchmark
+above supplies separate live observations.
