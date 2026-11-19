@@ -82,6 +82,24 @@ async def read_capabilities(client):
     return json.loads(result[0].text)["data"]
 
 
+def observe_capability_scopes(capabilities, monkeypatch):
+    """Expose the resource's real cancel scopes without changing transport or SDK timers."""
+    scopes = {}
+
+    class ObservedAnyio:
+        @staticmethod
+        def move_on_at(deadline):
+            scope = anyio.move_on_at(deadline)
+            scopes[deadline] = scope
+            return scope
+
+        def __getattr__(self, name):
+            return getattr(anyio, name)
+
+    monkeypatch.setattr(capabilities, "anyio", ObservedAnyio())
+    return scopes
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
 async def test_sdk_capabilities_separates_backend_support_from_scene_readiness(command_hub, mode):
@@ -232,16 +250,39 @@ async def test_reconnect_discards_mixed_generation_observations(command_hub):
 async def test_slow_probe_spends_one_bounded_budget_and_keeps_verified_partial_results(
     command_hub, monkeypatch
 ):
-    # Given: four status sources reply while one never completes within the read budget.
+    # Given: expire the shared probe budget after one source is verified and another stalls.
     import services.capabilities as capabilities
 
-    monkeypatch.setattr(capabilities, "_QUERY_TIMEOUT_SECONDS", 0.15)
+    query_timeout = watchdog_timeout()
+    monkeypatch.setattr(capabilities, "_QUERY_TIMEOUT_SECONDS", query_timeout)
+    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", query_timeout)
     await install_native_replies(command_hub, native_observations())
     reply = command_hub.websocket.send_json
+    scopes = observe_capability_scopes(capabilities, monkeypatch)
+    read_source = capabilities._read_source
+    deadlines = set()
+    input_observed = anyio.Event()
+
+    async def observe_source(name, ctx, connection, user_id, deadline, observations):
+        read_deadline = capabilities._read_deadline.get()
+        assert (
+            math.isfinite(deadline)
+            and deadline <= read_deadline <= anyio.current_time() + query_timeout
+        )
+        deadlines.add(deadline)
+        if name == "manage_recording":
+            await input_observed.wait()
+        await read_source(name, ctx, connection, user_id, deadline, observations)
+        if name == "manage_input" and observations[name].evidence.status == "observed":
+            input_observed.set()
+
+    monkeypatch.setattr(capabilities, "_read_source", observe_source)
 
     async def slow_recording(message):
         if message["type"] == "execute" and message["name"] == "manage_recording":
             command_hub.sent.append(message)
+            assert len(deadlines) == 1
+            scopes[next(iter(deadlines))].deadline = anyio.current_time()
             await anyio.sleep_forever()
         else:
             await reply(message)
@@ -249,12 +290,12 @@ async def test_slow_probe_spends_one_bounded_budget_and_keeps_verified_partial_r
     command_hub.websocket.send_json = slow_recording
     async with Client(capability_server(), mode="legacy") as client:
         # When: the aggregate resource reaches its single deadline.
-        started = anyio.current_time()
-        data = await read_capabilities(client)
-        elapsed = anyio.current_time() - started
+        with anyio.fail_after(query_timeout):
+            data = await read_capabilities(client)
 
     # Then: verified completed sources survive and only the blocked source stays unknown.
-    assert elapsed < 0.5
+    assert len(deadlines) == 1
+    assert scopes[next(iter(deadlines))].cancel_called
     assert data["connection"]["status"] == "connected"
     assert data["partial"] is True
     assert data["features"]["input"]["supported"] is True
@@ -483,7 +524,7 @@ async def test_stalled_cancel_has_explicit_grace_and_keeps_verified_partial_evid
     await install_native_replies(command_hub, native_observations())
     reply = command_hub.websocket.send_json
     read_source = capabilities._read_source
-    scopes = {}
+    scopes = observe_capability_scopes(capabilities, monkeypatch)
     probe_deadlines = set()
     read_deadlines = set()
     completed_sources = set()
@@ -491,20 +532,6 @@ async def test_stalled_cancel_has_explicit_grace_and_keeps_verified_partial_evid
     observed = anyio.Event()
     recording_entered = anyio.Event()
     cancellation_budgets = []
-
-    def observe_scope(deadline):
-        scope = anyio.move_on_at(deadline)
-        scopes[deadline] = scope
-        return scope
-
-    class ObservedAnyio:
-        move_on_at = staticmethod(observe_scope)
-
-        def __getattr__(self, name):
-            return getattr(anyio, name)
-
-    # Observe real scopes only in this module; transport and SDK timers stay real.
-    monkeypatch.setattr(capabilities, "anyio", ObservedAnyio())
 
     async def observe_source(name, ctx, connection, user_id, deadline, observations):
         # Establish the verified prefix before holding the conservative writer;
@@ -626,7 +653,7 @@ async def test_final_revalidation_lock_clears_identity_within_disclosed_maximum(
     reply = command_hub.websocket.send_json
     read_source = capabilities._read_source
     connection = capabilities._connection
-    scopes = {}
+    scopes = observe_capability_scopes(capabilities, monkeypatch)
     probe_deadlines = set()
     read_deadlines = set()
     completed_sources = set()
@@ -638,19 +665,6 @@ async def test_final_revalidation_lock_clears_identity_within_disclosed_maximum(
     revalidation_deadlines = []
     cancellation_budgets = []
     connection_reads = 0
-
-    def observe_scope(deadline):
-        scope = anyio.move_on_at(deadline)
-        scopes[deadline] = scope
-        return scope
-
-    class ObservedAnyio:
-        move_on_at = staticmethod(observe_scope)
-
-        def __getattr__(self, name):
-            return getattr(anyio, name)
-
-    monkeypatch.setattr(capabilities, "anyio", ObservedAnyio())
 
     async def observe_source(name, ctx, owner, user_id, deadline, observations):
         if name == "manage_recording":
