@@ -256,10 +256,16 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                 cleanupError = cleanupError == null ? error : new AggregateException(cleanupError, error);
             }
             if (unload != null)
-                yield return unload;
+            {
+                // Edit Mode test runners can resume after yielding the operation
+                // before Unity retires the unloaded scene from its scene list.
+                double deadline = EditorApplication.timeSinceStartup + 5;
+                while ((!unload.isDone || SceneManager.GetSceneByName(ownedSceneName).IsValid()) && EditorApplication.timeSinceStartup < deadline)
+                    yield return null;
+            }
             try
             {
-                Assert.IsFalse(SceneManager.GetSceneByName(ownedSceneName).IsValid());
+                Assert.IsFalse(SceneManager.GetSceneByName(ownedSceneName).IsValid(), "The owned scene must finish unloading before the next test.");
                 AssertPreservedScenes();
             }
             catch (Exception error)
@@ -456,6 +462,53 @@ namespace MCPForUnityTests.EditMode.Tools.Input
 
         [Test]
         public void StrictReadReportsOrderedHitsAndMissingEventSystem() => CheckPublicOrderAndMissingEvents(true);
+
+        private sealed class AllGraphicsRegistry
+        {
+            public static IList<UnityEngine.UI.Graphic> GetGraphicsForCanvas(Canvas canvas) => throw new NotSupportedException();
+        }
+
+        private sealed class InvalidGraphicsRegistry
+        {
+            public static object GetRaycastableGraphicsForCanvas(Canvas canvas) => throw new NotSupportedException();
+        }
+
+        [Test]
+        public void CompatibleRegistryAccessorRequiresTypedCanvasQuery()
+        {
+            var diagnostics = typeof(ManageUGUI).Assembly.GetType("MCPForUnity.Editor.Tools.UguiRaycastDiagnostics", true);
+            var bind = diagnostics.GetMethod("GraphicsAccessor", BindingFlags.NonPublic | BindingFlags.Static);
+            var fallback = (MethodInfo)bind.Invoke(null, new object[] { typeof(AllGraphicsRegistry), typeof(UnityEngine.UI.Graphic) });
+            Assert.AreEqual("GetGraphicsForCanvas", fallback.Name);
+            var rejected = Assert.Throws<TargetInvocationException>(() =>
+                bind.Invoke(null, new object[] { typeof(InvalidGraphicsRegistry), typeof(UnityEngine.UI.Graphic) })
+            );
+            Assert.AreEqual("unsupported_native_shape", rejected.InnerException.GetType().GetField("Code").GetValue(rejected.InnerException));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UninitializedRegistryStaysUnknownWithoutConstruction(bool strict)
+        {
+            var registry = typeof(GraphicRegistry).GetField("s_Instance", BindingFlags.NonPublic | BindingFlags.Static);
+            var initialized = registry.GetValue(null);
+            Assert.IsNotNull(initialized);
+            var request = Request();
+            request["strict_read"] = strict;
+            try
+            {
+                registry.SetValue(null, null);
+                var reply = JObject.FromObject(ManageUGUI.HandleCommand(request));
+                Assert.IsNull(registry.GetValue(null));
+                Assert.AreEqual("unknown", (string)reply["data"]["status"]);
+                Assert.AreEqual("registry_uninitialized", (string)reply["data"]["reason"]);
+                Assert.IsFalse(reply["data"]["policy"].Value<bool>("native_query_attempted"));
+            }
+            finally
+            {
+                registry.SetValue(null, initialized);
+            }
+        }
 
         [Test]
         public void StrictReadResolvesLoadedSceneIdsWithoutLoadingPersistentIds()
