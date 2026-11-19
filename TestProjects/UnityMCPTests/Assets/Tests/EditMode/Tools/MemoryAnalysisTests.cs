@@ -342,7 +342,7 @@ namespace MCPForUnityTests.Editor.Tools
             using (var writer = new BinaryWriter(File.Create(path)))
             {
                 writer.Write(0xAEABCDCDu);
-                writer.Write(18u);
+                writer.Write(11u);
                 long block = writer.BaseStream.Position;
                 writer.Write(4UL);
                 writer.Write(4UL);
@@ -447,11 +447,11 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 if (virtualLength > 8L * 1024 * 1024 * 1024)
                 {
-                    var error = Assert.Throws<TargetInvocationException>(() => preflight.Invoke(null, new object[] { input, entryType }));
+                    var error = Assert.Throws<TargetInvocationException>(() => preflight.Invoke(null, new object[] { input, entryType, 18u }));
                     StringAssert.Contains("input budget", error.InnerException.Message);
                 }
                 else
-                    Assert.DoesNotThrow(() => preflight.Invoke(null, new object[] { input, entryType }));
+                    Assert.DoesNotThrow(() => preflight.Invoke(null, new object[] { input, entryType, 18u }));
                 Assert.Less(input.ReadBytes, 1024, "Preflight reads metadata, never the padded capture body.");
             }
             using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
@@ -590,6 +590,162 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(Marshal.SizeOf(target), response["data"].Value<int>("profile_target_info_bytes"), response.ToString());
             Assert.AreEqual(Marshal.OffsetOf(target, "SessionGUID").ToInt32(), response["data"].Value<int>("profile_target_session_offset"));
             Assert.AreEqual(0, response["data"].Value<int>("profile_target_session_offset"));
+            Assert.AreEqual(8, response["data"].Value<int>("minimum_format"));
+            Assert.AreEqual(11, response["data"].Value<int>("session_info_minimum_format"));
+            var versions = target.Assembly.GetType("Unity.MemoryProfiler.Editor.Format.FormatVersion", true);
+            if (Enum.IsDefined(versions, "StaticFieldAndNonGCHeapVersion"))
+                Assert.AreEqual(20, response["data"].Value<int>("maximum_format"), response.ToString());
+        }
+
+        [Test]
+        public void ReaderStatusAndAnalysisUseTheSameInstalledContractBeforeOpeningAFile()
+        {
+            var status = Call(new JObject { ["action"] = "memory_snapshot_reader_status" });
+            Success(status);
+            var capability = status["data"];
+            Assert.AreEqual("com.unity.memoryprofiler", (string)capability["required_package"]);
+            string path = Path.Combine(folder, "malformed.snap");
+            File.WriteAllBytes(path, new byte[32]);
+            var comparison = Call(
+                new JObject
+                {
+                    ["action"] = "memory_analyze_snapshots",
+                    ["snapshot_a"] = path,
+                    ["snapshot_b"] = path,
+                }
+            );
+            if ((bool)capability["reader_supported"])
+                Assert.AreEqual("snapshot_format_unsupported", (string)comparison["code"], comparison.ToString());
+            else
+            {
+                Assert.AreEqual("snapshot_reader_unavailable", (string)comparison["code"], comparison.ToString());
+                Assert.AreEqual((string)capability["reason"], (string)comparison["data"]["reason"]);
+                Assert.AreEqual((string)capability["missing_contract"], (string)comparison["data"]["missing_contract"]);
+            }
+            using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+        }
+
+        // This deterministic queried-snapshot fixture contains only the selected native columns and
+        // representative optional chapters. RealSnapshots_ exercises actual Editor captures separately.
+        private static void WriteNativeColumnFixture(string path, uint format, ulong bytes, bool invalidIdWidth = false)
+        {
+            using var writer = new BinaryWriter(File.Create(path));
+            writer.Write(0xAEABCDCDu);
+            var chapters = new ulong[
+                format >= 20 ? 105
+                : format == 19 ? 102
+                : format >= 11 ? 60
+                : 59
+            ];
+            var blocks = new List<ulong>();
+            void Column(int id, ushort kind, byte[] payload)
+            {
+                ulong data = (ulong)writer.BaseStream.Position;
+                writer.Write(payload);
+                blocks.Add((ulong)writer.BaseStream.Position);
+                writer.Write(1024UL);
+                writer.Write((ulong)payload.Length);
+                writer.Write(data);
+                chapters[id] = (ulong)writer.BaseStream.Position;
+                writer.Write(kind);
+                writer.Write((uint)blocks.Count - 1);
+                writer.Write(kind == 3 ? 1u : (uint)payload.Length);
+                writer.Write(kind == 2 ? 1UL : 0UL);
+                if (kind == 3)
+                    writer.Write((ulong)payload.Length);
+            }
+            Column(0, 1, BitConverter.GetBytes(format));
+            Column(3, 1, BitConverter.GetBytes(2u));
+            Column(5, 3, System.Text.Encoding.UTF8.GetBytes("FixtureTexture"));
+            Column(7, 2, BitConverter.GetBytes(0));
+            Column(10, 2, format >= 18 && !invalidIdWidth ? BitConverter.GetBytes(0xfedcba9876543210UL) : BitConverter.GetBytes(-42));
+            Column(11, 3, System.Text.Encoding.UTF8.GetBytes("FixtureObject"));
+            Column(12, 2, BitConverter.GetBytes(0x123456789abcdef0UL));
+            Column(13, 2, BitConverter.GetBytes(bytes));
+            if (format >= 11)
+            {
+                var target = new byte[520];
+                BitConverter.GetBytes(1234u).CopyTo(target, 0);
+                Column(59, 1, target);
+            }
+            if (format >= 19)
+                Column(101, 2, BitConverter.GetBytes(0UL)); // NativeObjects_GCHandle
+            if (format >= 20)
+                Column(103, 2, BitConverter.GetBytes(0u)); // FieldDescriptions_Flags
+            ulong blockDirectory = (ulong)writer.BaseStream.Position;
+            writer.Write(0x20170724u);
+            writer.Write((uint)blocks.Count);
+            foreach (ulong block in blocks)
+                writer.Write(block);
+            ulong directory = (ulong)writer.BaseStream.Position;
+            writer.Write(0xCDCDAEABu);
+            writer.Write(0x20170724u);
+            writer.Write(blockDirectory);
+            writer.Write((uint)chapters.Length);
+            foreach (ulong chapter in chapters)
+                writer.Write(chapter);
+            writer.Write(directory);
+            writer.Write(0xABCDCDAEu);
+        }
+
+        [TestCase(7u)]
+        [TestCase(8u)]
+        [TestCase(9u)]
+        [TestCase(10u)]
+        [TestCase(19u)]
+        [TestCase(20u)]
+        [TestCase(21u)]
+        [TestCase(19u, true)]
+        [TestCase(20u, true)]
+        public void QueriedSnapshotWireVersionsPreserveTypedDeltasAndIdentityAvailability(uint version, bool invalidIdWidth = false)
+        {
+            var status = Call(new JObject { ["action"] = "memory_snapshot_reader_status" });
+            Success(status);
+            var capability = status["data"];
+            Assert.IsTrue((bool)capability["reader_supported"], status.ToString());
+            string a = Path.Combine(folder, "wire-before.snap");
+            string b = Path.Combine(folder, "wire-after.snap");
+            WriteNativeColumnFixture(a, version, 100, invalidIdWidth);
+            WriteNativeColumnFixture(b, version, 163, invalidIdWidth);
+            var response = Call(
+                new JObject
+                {
+                    ["action"] = "memory_analyze_snapshots",
+                    ["snapshot_a"] = a,
+                    ["snapshot_b"] = b,
+                }
+            );
+            if (version < 8 || version > (uint)capability["maximum_format"])
+                Assert.AreEqual("snapshot_format_unsupported", (string)response["code"], response.ToString());
+            else if (invalidIdWidth)
+                Assert.AreEqual("snapshot_column_invalid", (string)response["code"], response.ToString());
+            else
+            {
+                Success(response);
+                var data = response["data"];
+                Assert.AreEqual(version, (uint)data["snapshot_a"]["format_version"]);
+                Assert.AreEqual("FixtureTexture", (string)data["types"][0]["type"]);
+                Assert.AreEqual(1, (int)data["types"][0]["count_a"]);
+                Assert.AreEqual(1, (int)data["types"][0]["count_b"]);
+                Assert.AreEqual(63L, (long)data["native_object_bytes_delta"]);
+                if (version < 11)
+                {
+                    Assert.AreEqual(JTokenType.Null, data["snapshot_a"]["session_id"].Type);
+                    Assert.AreEqual(JTokenType.Null, data["object_delta"]["changed_count"].Type);
+                    Assert.AreEqual(JTokenType.Null, data["object_delta"]["added"].Type);
+                    Assert.AreEqual(JTokenType.Null, data["object_delta"]["removed"].Type);
+                }
+                else
+                {
+                    Assert.AreEqual(1234u, (uint)data["snapshot_a"]["session_id"]);
+                    Assert.AreEqual(1, (int)data["object_delta"]["changed_count"]);
+                    var row = data["object_delta"]["changed"][0];
+                    Assert.AreEqual("18364758544493064720", (string)row["native_id"]);
+                    Assert.AreEqual("18364758544493064720:123456789abcdef0:FixtureTexture", (string)row["snapshot_identity"]);
+                }
+            }
+            using (File.Open(a, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+            using (File.Open(b, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
         }
 
         [Test, Explicit("Requires MCP_MEMORY_RETAINED_PAIR_RECEIPT for an exact owned failed-capture receipt; never captures new snapshots.")]

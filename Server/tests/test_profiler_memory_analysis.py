@@ -145,7 +145,7 @@ def test_memory_analysis_actual_sdk_schema_and_native_failure_shape():
         async def instance(ctx): return None
         async def send(fn, instance, command, params):
             sent.append(params)
-            return {"success":False,"code":"snapshot_reader_unavailable","data":{"required_package_version":"1.1.12"}}
+            return {"success":False,"code":"snapshot_reader_unavailable","data":{"reason":"unsupported_reader_abi"}}
         module.get_unity_instance_from_context=instance
         module.send_with_unity_instance=send
         server=FastMCP("profiler-memory-analysis")
@@ -161,7 +161,7 @@ def test_memory_analysis_actual_sdk_schema_and_native_failure_shape():
                                  {"action":"memory_snapshot_reader_status"}):
                         result=await client.call_tool("manage_profiler",args)
                         assert sent[-1]==args
-                        assert result.structured_content=={"success":False,"code":"snapshot_reader_unavailable","data":{"required_package_version":"1.1.12"}}
+                        assert result.structured_content=={"success":False,"code":"snapshot_reader_unavailable","data":{"reason":"unsupported_reader_abi"}}
                     before=len(sent)
                     for args in ({"action":"memory_aggregate","targets":["-71"],"include_references":0},
                                  {"action":"memory_aggregate","targets":["-71"],"max_objects":1000001},
