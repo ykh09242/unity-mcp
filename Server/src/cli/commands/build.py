@@ -121,7 +121,9 @@ def plan_build(target, output_path, development, scripting_backend, subtarget, c
     help="Scripting backend",
 )
 @click.option("--subtarget", type=click.Choice(["player", "server"]), help="Build subtarget")
-@click.option("--profile", help="Build Profile asset path, when the Editor supports building with a profile")
+@click.option(
+    "--profile", help="Build Profile asset path, when the Editor supports building with a profile"
+)
 @click.option("--clean", is_flag=True, help="Clean build cache")
 @click.option("--auto-run", is_flag=True, help="Auto-run after build")
 @click.option(

@@ -17,13 +17,7 @@ namespace MCPForUnityTests.Editor.Services
         [TestCase(true, "4.0.0-preview.2", false, "package_api_unavailable", "unsupported")]
         [TestCase(false, null, true, "preflight_required", "unknown")]
         [TestCase(true, "3.1.0", true, "preflight_required", "unknown")]
-        public void PackageEvidenceNeverTreatsInstallationAsTargetReadiness(
-            bool observed,
-            string version,
-            bool api,
-            string reason,
-            string status
-        )
+        public void PackageEvidenceNeverTreatsInstallationAsTargetReadiness(bool observed, string version, bool api, string reason, string status)
         {
             JObject result = FeatureReadiness.DescribePackage(
                 "com.unity.cinemachine",
@@ -38,7 +32,12 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(reason, result["reason"].Value<string>());
             Assert.AreEqual(status, result["status"].Value<string>());
             Assert.AreNotEqual(true, result["ready"].Value<bool?>());
-            Assert.AreEqual(api ? true : observed ? false : (bool?)null, result["supported"].Value<bool?>());
+            Assert.AreEqual(
+                api ? true
+                    : observed ? false
+                    : (bool?)null,
+                result["supported"].Value<bool?>()
+            );
         }
 
         [Test]
