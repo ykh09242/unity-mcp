@@ -41,7 +41,7 @@ host_tool_names=[...])` with that host's own complete callable list. The result
 distinguishes `server_unavailable`, `host_filtered`, `host_advertised`, and
 `host_unknown`. Server absence does not reveal whether a declaration is hidden,
 denied, or missing. This caller-reported comparison cannot attest another host.
-`unity-mcp-cli --instance PROJECT@HASH doctor --inspect-tool NAME` checks source
+`unity-mcp --instance PROJECT@HASH doctor --inspect-tool NAME` checks source
 and the actual SDK tools/list in the same diagnostic connection. An incomplete
 list produces `received: null`. A desktop host must inspect its own connection.
 

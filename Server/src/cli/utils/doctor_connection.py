@@ -553,6 +553,7 @@ async def diagnose(
         return _failure(config, protocol, reason, 4, "install_declared_dependencies")
     except (UnityConnectionError, OSError, UnicodeError):
         return _failure(config, protocol, "auth_required", 1, "use_authenticated_client")
+    completed = None
     try:
         with anyio.fail_after(max(0.001, deadline + 1 - anyio.current_time())):
             async with client:
@@ -561,6 +562,15 @@ async def diagnose(
                     if inspect_tool and receipt.connection_verified:
                         from cli.utils.tool_description import _listing
 
+                        # Preserve the completed source/target receipt across an optional
+                        # inventory timeout, malformed page or SDK teardown failure.
+                        completed = receipt.model_copy(
+                            update={
+                                "tool_inventory": DoctorToolInventory(
+                                    tool=inspect_tool, received=None
+                                )
+                            }
+                        )
                         listing = {"advertised": None, "tool": None}
                         await _listing(
                             client,
@@ -572,11 +582,17 @@ async def diagnose(
                         inventory = DoctorToolInventory(
                             tool=inspect_tool, received=listing["advertised"]
                         )
-                        receipt = receipt.model_copy(update={"tool_inventory": inventory})
+                        completed = receipt = receipt.model_copy(
+                            update={"tool_inventory": inventory}
+                        )
                     return receipt
     except (ValidationError, ValueError, RecursionError) as error:
+        if completed is not None:
+            return completed
         reason = "diagnostic_limit" if isinstance(error, DiagnosticLimit) else "invalid_receipt"
         return _failure(config, protocol, reason, 3, "update_selected_server")
     except Exception as error:  # noqa: BROAD_EXCEPT_OK -- CLI boundary; only typed classifications escape.
+        if completed is not None:
+            return completed
         reason, code, action = factory.failure or _cause(error)
         return _failure(config, protocol, reason, code, action)

@@ -113,6 +113,42 @@ async def test_discovery_missing_doctor_is_incomplete_not_native_success(monkeyp
     assert receipt.connection_verified is False
 
 
+@pytest.mark.asyncio
+async def test_optional_inventory_deadline_preserves_completed_source_mismatch(
+    command_hub, monkeypatch
+):
+    import anyio
+    from fastmcp import Client
+    from core.server_build import ServerBuild
+    from cli.utils.config import CLIConfig
+    import cli.utils.doctor_connection as connection
+    import services.doctor as doctor
+    from tests.http.test_doctor import doctor_server, observations, install_native_replies
+
+    await command_hub.registry.unregister("session")
+    await command_hub.registry.register("session", "Fixture", "aaaa1111", "6000")
+    values = observations()
+    values["get_editor_state"]["unity"]["instance_id"] = "Fixture@aaaa1111"
+    await install_native_replies(command_hub, values)
+    monkeypatch.setattr(doctor, "RUNNING_SERVER", ServerBuild("1.2.0", "d" * 40, "c" * 32))
+    client = Client(doctor_server(), mode="legacy", cache=False)
+    entered = anyio.Event()
+
+    async def slow_listing(**kwargs):
+        entered.set()
+        await anyio.sleep_forever()
+
+    monkeypatch.setattr(client, "list_tools_mcp", slow_listing)
+    monkeypatch.setattr(connection, "DiagnosticClient", lambda *_: client)
+    receipt = await connection.diagnose(
+        CLIConfig(unity_instance="Fixture@aaaa1111", timeout=1), "legacy", "inspect_editor_state"
+    )
+    assert entered.is_set() and not client.is_connected()
+    assert receipt.connection_verified and receipt.reason == "source_mismatch"
+    assert receipt.data.source_comparison == "mismatch"
+    assert receipt.tool_inventory.received is None
+
+
 @pytest.mark.parametrize("follow_redirects", [True, False])
 def test_factory_overrides_sdk_redirect_request(follow_redirects):
     from cli.utils.doctor_connection import DoctorHttpFactory
