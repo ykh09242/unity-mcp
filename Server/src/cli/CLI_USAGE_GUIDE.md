@@ -684,7 +684,7 @@ unity-mcp editor custom-tool "Deploy" --params '{"target": "Android"}'
 
 ### VFX Commands
 
-VFX Graph tooling is tested against com.unity.visualeffectgraph 12.1.13 with URP/HDRP; other versions may be unsupported.
+VFX Graph actions use the installed Visual Effect Graph package and require a target with a `VisualEffect` component. The active render pipeline must support the effect.
 
 ```bash
 # Particle systems
@@ -1343,7 +1343,7 @@ On Windows, test-result storage applies a portable Unity/Mono compatibility budg
 
 `unity-mcp editor tests --async --run-timeout-ms 120000` opts the native job into a 120-second deadline covering its queue, setup and execution. The allowed range is 1 through 86400000 milliseconds (24 hours). Omit the option for the existing behavior. `--wait` and `poll-test --wait` only limit observation: ending a wait or losing the connection does not cancel Unity. `--clear-stuck` retains its separate caller-abandonment behavior and does not stop native execution.
 
-Initial native cancellation/deadline support is restricted to exactly Test Framework 1.6.0 with the required observer binding. Unsupported versions reject explicit cancellation/deadline before native mutation with `unsupported_native_test_control`; ordinary runs with no deadline retain the existing path. This is not a claim of support for every 1.6 release or repository-pinned 1.4.6. Cancellation is cooperative: a blocked test/native call can prevent Editor updates, and a deadline cannot forcibly interrupt it.
+Native cancellation and deadlines use the installed Test Framework's run GUID, targeted cancellation method, post-disposal completion event and scheduler state. If those APIs are unavailable, an explicit cancellation or deadline returns `unsupported_native_test_control` before starting or interrupting native work. Ordinary test runs remain available. Cancellation is cooperative and requires the Editor to continue updating.
 
 The native control record distinguishes request acceptance from termination. `confirmed` requires a matching native run's final progress after framework task-disposal attempts plus a later coherent scheduler-idle observation. It describes framework execution ownership, not successful user cleanup; cleanup hooks may be skipped by native cancellation. Missing final events, observer failures or ambiguous foreign Test Runner activity remain `unknown` and block replacement for an already observer-managed run. No result callback, empty task stack, elapsed frame or accepted cancellation alone is treated as completion. The product does not terminate the Editor or cancel a foreign/manual run to force recovery.
 

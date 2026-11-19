@@ -80,7 +80,7 @@ def test_real_imported_catalog_keeps_matching_action_beyond_description_clip():
         (
             "manage_input_actions",
             [
-                "read and authoring operations require com.unity.inputsystem >=1.7.0",
+                "read and authoring operations require the installed Input System asset API",
                 "Edit Mode",
                 "expected_revision",
             ],

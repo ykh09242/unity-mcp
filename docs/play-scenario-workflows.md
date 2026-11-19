@@ -275,7 +275,7 @@ interruption and iteration completion, and on Editor pause, domain reload or Pla
 30-second inactivity lease prevents a stalled host from retaining injected state; actual held-input updates
 can renew it up to one hour.
 
-Input steps require the optional Input System package 1.7 or newer and Input System Package/Both
+Raw input steps require the installed Input System's virtual-device and event APIs and Input System Package/Both
 active handling. Manual-update or legacy-only injection is explicitly unavailable. Each host owns
 dedicated virtual devices; focus/settings still apply and device-paired `PlayerInput` bindings may
 require pairing. Injection is not a claim of OS hardware input or a universal controller setup.

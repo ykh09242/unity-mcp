@@ -775,10 +775,10 @@ TOOL_GUIDANCE: Final = {
                 "Read the current build scene list when scenes is omitted. Providing scenes replaces the list; a JSON empty array clears it."
             ),
             "profiles": ActionGuidance(
-                "List Unity 6 Build Profiles when profile is omitted, or load the selected profile's scene details. With profile and activate=true, change the active Build Profile."
+                "List Build Profiles when profile is omitted, or load the selected profile's scene details. With profile and activate=true, change the active Build Profile when the Editor exposes activation."
             ),
             "batch": ActionGuidance(
-                "Queue player builds using targets or Unity 6 profiles, with optional output_dir. "
+                "Queue player builds using targets or supported Build Profile assets, with optional output_dir. "
                 "Queued target builds can switch the active build target and reimport assets. "
                 "Build preparation saves assets and dirty scenes that have a path. "
                 "Unity can run callbacks during each build.",
@@ -917,7 +917,7 @@ TOOL_GUIDANCE: Final = {
     "manage_input_actions": ToolGuidance(
         requirements=(
             "capabilities: no optional package required; inspect package availability first",
-            "read and authoring operations require com.unity.inputsystem >=1.7.0 "
+            "read and authoring operations require the installed Input System asset API "
             "and an Assets .inputactions path",
             "Authoring operations require idle Edit Mode; edits to existing assets require expected_revision",
         ),
