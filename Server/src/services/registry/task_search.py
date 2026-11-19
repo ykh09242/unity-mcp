@@ -501,7 +501,7 @@ def search_catalog(
         ]
         basis = bases[0] if bases else "none"
     if structured:
-        next_action = "inspect_candidates" if selected_routes else "browse_catalog"
+        next_action = "inspect_candidates" if groups else "browse_catalog"
     elif matches:
         next_action = "inspect_candidates"
     elif request.catalog_query is None:
@@ -528,7 +528,7 @@ def search_catalog(
         "catalog_language": "en",
         "next_action": next_action,
         "recommended_action": "inspect_candidates"
-        if basis in {"multiple_terms", "exact_identifier", "declared_observation"}
+        if groups and basis in {"multiple_terms", "exact_identifier", "declared_observation"}
         else "browse_catalog",
         "match_basis": basis,
         "intent": request.intent,

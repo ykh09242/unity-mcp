@@ -205,6 +205,17 @@ def test_grouping_does_not_widen_evidence_scope(observation_inventory, selectors
     assert result["total_route_groups"] == 0
 
 
+def test_recommendation_accounts_for_callers_visible_surface(observation_inventory):
+    tools, resources = observation_inventory
+    result = search_catalog(
+        SearchRequest(observation_source="imported_asset", route_surfaces="resources"),
+        tools,
+        resources=resources,
+    )
+    assert result["routes"] and not result["route_groups"]
+    assert result["next_action"] == result["recommended_action"] == "browse_catalog"
+
+
 @pytest.mark.asyncio
 async def test_live_search_requires_an_advertised_route_and_can_execute_its_read(
     command_hub, monkeypatch
