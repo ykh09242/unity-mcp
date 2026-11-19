@@ -50,6 +50,31 @@ def observed_permissions(settings):
     }
 
 
+def model_settings(settings):
+    thread = settings.get("thread") or {}
+    model = settings.get("model") or thread.get("model")
+    effort = (
+        settings.get("reasoningEffort") or settings.get("effort") or thread.get("reasoningEffort")
+    )
+    return {
+        k: v
+        for k, v in (("model", model), ("effort", effort))
+        if isinstance(v, str) and IDENTIFIER.fullmatch(v)
+    }
+
+
+async def owned_model_settings(client, actor, known):
+    if {"model", "effort"} <= known.keys() or not _host_id(actor):
+        return known
+    try:
+        reply = await client.request("thread/read", {"threadId": actor, "includeTurns": False})
+        if (reply.get("thread") or {}).get("id") == actor:
+            return {**model_settings(reply), **known}
+    except (InteropFailure, TimeoutError, ValueError, TypeError, AttributeError):
+        pass
+    return known
+
+
 @lru_cache(maxsize=8)
 def executable_digest(codex):
     path = shutil.which(codex)
@@ -543,6 +568,9 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                 }
                 if args.approval == "auto-review":
                     options["approvalsReviewer"] = "auto_review"
+                if getattr(args, "study", None):
+                    options["config"] = {"model_reasoning_effort": args.effort}
+                    options["allowProviderModelFallback"] = False
                 started = await client.request("thread/start", options)
                 thread = _host_id(started["thread"]["id"])
                 if not thread:
@@ -555,6 +583,10 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                     installed=args.installed or expected is not None,
                 )
                 surface["permissions"] = observed_permissions(started)
+                settings = model_settings(started)
+                if getattr(args, "study", None):
+                    settings = await owned_model_settings(client, thread, settings)
+                surface.update(settings)
                 if args.installed or expected is not None or getattr(args, "study", None):
                     surface["project_verified"] = await _project_verified(
                         client, thread, server, args.instance, args.project
@@ -599,6 +631,7 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                 parents = set()
                 children = {}
                 child_permissions = {}
+                child_models = {}
                 offset = 0
                 with (case_dir / "events.jsonl").open("x", encoding="utf-8") as stream:
 
@@ -618,6 +651,9 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                             actor = _host_id(params.get("threadId"))
                             item = params.get("item") or {}
                             if method == "thread/settings/updated" and actor and actor != thread:
+                                child_models.setdefault(actor, {}).update(
+                                    model_settings(params.get("threadSettings") or {})
+                                )
                                 child_permissions[actor] = observed_permissions(
                                     params.get("threadSettings") or {}
                                 )
@@ -625,6 +661,9 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                 linked = direct_child(params.get("thread", {}), thread)
                                 if linked:
                                     parents.add(linked)
+                                    child_models.setdefault(linked, {}).update(
+                                        model_settings(params.get("thread") or {})
+                                    )
                                     if not children.get(linked):
                                         child_surface = await observe_host(
                                             client,
@@ -701,6 +740,12 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                                 client, linked, server, args.instance, args.project
                                             )
                                         child_surface["permissions"] = child_permissions.get(linked)
+                                        settings = child_models.get(linked, {})
+                                        if getattr(args, "study", None):
+                                            settings = await owned_model_settings(
+                                                client, linked, settings
+                                            )
+                                        child_surface.update(settings)
                                         path.write_text(
                                             json.dumps(child_surface, indent=2) + "\n",
                                             encoding="utf-8",

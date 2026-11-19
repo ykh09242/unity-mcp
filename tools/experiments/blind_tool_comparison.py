@@ -24,6 +24,7 @@ CONDITIONS = (
 )
 METRICS = (
     "runner_status",
+    "turn_completed",
     "role_status",
     "first_business_call",
     "first_suitable_business_call",
@@ -116,8 +117,12 @@ def study_stratum(pairs):
             return {"numerator": hits, "denominator": total}
 
         result["arms"][arm] = {
-            "observed_turns": len(observed),
-            "confirmed_actors": sum(c["role_status"] == "confirmed" for c in observed),
+            "attempted_cases": len(observed),
+            "observed_turns": sum(c.get("turn_completed") is True for c in observed),
+            "confirmed_actors": sum(
+                c.get("turn_completed") is True and c["role_status"] == "confirmed"
+                for c in observed
+            ),
             "complete_wire": ratio(
                 sum(c["wire_evidence"] == "complete" for c in positive), len(positive)
             ),
@@ -141,7 +146,12 @@ def study_stratum(pairs):
                     sum(c["final_answer"].get(key, {}).get("matched", 0) for c in answered),
                     sum(c["final_answer"].get(key, {}).get("measured", 0) for c in answered),
                 )
-                for key in ("fact_accuracy", "provenance_accuracy")
+                for key in (
+                    "fact_accuracy",
+                    "source_accuracy",
+                    "channel_accuracy",
+                    "provenance_accuracy",
+                )
             },
         }
     return result

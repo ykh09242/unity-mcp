@@ -16,6 +16,10 @@ def pilot_reasons(case):
         reasons.append("actor_business_not_verified")
     if case["role"] == "subagent" and len(case.get("actor_receipt", {}).get("children", [])) != 1:
         reasons.append("child_link_not_verified")
+    if case.get("competition_observed") is not True:
+        reasons.append("competition_not_verified")
+    if any(not actor.get(key) or actor[key] != case.get(key) for key in ("model", "effort")):
+        reasons.append("actor_settings_not_verified")
     if (
         not actor.get("project_verified")
         or actor.get("inventory_status") != "observed"
@@ -47,12 +51,21 @@ def pilot_reasons(case):
         reasons.append("editor_start_state_not_verified")
     if not case.get("editor_end_state"):
         reasons.append("editor_end_state_not_verified")
+    elif case.get("editor_start_state") and case["editor_end_state"] != case["editor_start_state"]:
+        reasons.append("different:editor_state_during_pilot")
     return reasons
 
 
 def pair_controls(left, right):
     issues = []
-    for key in ("namespace", "permissions", "host_binary_digest", "competitor_digest"):
+    for key in (
+        "namespace",
+        "permissions",
+        "model",
+        "effort",
+        "host_binary_digest",
+        "competitor_digest",
+    ):
         values = [(case.get("actor_conditions") or {}).get(key) for case in (left, right)]
         if not all(values):
             issues.append("unverified:actor_" + key)
@@ -67,6 +80,10 @@ def pair_controls(left, right):
         (case.get("actor_conditions") or {}).get("project_verified") for case in (left, right)
     ):
         issues.append("unverified:actor_project")
+    for arm, case in (("baseline", left), ("candidate", right)):
+        actor = case.get("actor_conditions") or {}
+        if any(actor.get(key) != case.get(key) for key in ("model", "effort")):
+            issues.append("different:" + arm + "_requested_settings")
     if not left.get("editor_start_state") or not right.get("editor_start_state"):
         issues.append("unverified:editor_start_state")
     elif left["editor_start_state"] != right["editor_start_state"]:
@@ -112,10 +129,9 @@ def run_pilots(arms, output, roles, run_case, score_case):
                     },
                 }
             )
-            if (
-                reasons
-                or not controls
-                or any(not reason.startswith("different:") for reason in controls)
+            transient = [reason.split(":", 1)[-1] for reason in reasons]
+            if not (reasons or controls) or any(
+                not reason.startswith("different:") for reason in transient + controls
             ):
                 break
         results[role] = {"supported": not attempts[-1]["reasons"], "attempts": attempts}

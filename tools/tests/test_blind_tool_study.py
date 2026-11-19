@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.experiments import blind_tool_preflight, blind_tool_selection as selection
 from tools.experiments.blind_tool_comparison import study_stratum
 from tools.experiments.blind_tool_diagnostics import search_receipt
-from tools.experiments.blind_tool_trace import decision
+from tools.experiments.blind_tool_trace import decision, score_case, thread_digest
 
 
 def test_named_study_preserves_planned_cells_when_a_host_cannot_measure_roles(
@@ -101,6 +101,8 @@ def test_scores_split_no_search_unrecorded_and_naturally_ranked():
     assert arm["first_success_without_search"] == {"numerator": 1, "denominator": 1}
     assert arm["first_success_on_first_business_call"]["denominator"] == 3
     assert arm["answer_status"] == {"correct": 2, "limited": 2}
+    assert arm["observed_turns"] == 0
+    assert arm["attempted_cases"] == 4
 
 
 def test_study_prompts_exclude_tool_oracle_and_implementation_hints():
@@ -136,3 +138,48 @@ def test_study_prompts_exclude_tool_oracle_and_implementation_hints():
         ]
         == "explicitly_unavailable"
     )
+
+
+def test_observed_actor_search_on_two_connections_never_counts_as_direct(tmp_path):
+    actor_id = "01800000-0000-4000-8100-000000000001"
+    (tmp_path / "case.json").write_text(
+        json.dumps(
+            {
+                "role": "main",
+                "task": "game-view",
+                "host_mode": "configured",
+                "graph_asset": "",
+                "runner_status": "finished",
+            }
+        )
+    )
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join(
+            map(
+                json.dumps,
+                [{"type": "thread.started", "thread_id": actor_id}, {"type": "turn.completed"}],
+            )
+        )
+    )
+    for index, (route, channel, detail) in enumerate(
+        (
+            ("search_unity_tools", "discovery", {"top3": [["get_game_view_size"]]}),
+            ("manage_tools.search", "discovery", {"top3": [["get_game_view_size"]]}),
+            ("get_game_view_size", "unity", {"render_size": [800, 600]}),
+        )
+    ):
+        events = [
+            {
+                "event": "request",
+                "route": route,
+                "channel": channel,
+                "sequence": 1,
+                "actor": thread_digest(actor_id),
+            },
+            {"event": "response", "outcome": "returned", "sequence": 1, "observation": detail},
+        ]
+        (tmp_path / f"mcp-{index}.jsonl").write_text("\n".join(map(json.dumps, events)))
+    case = score_case(tmp_path)
+    assert case["role_status"] == "confirmed" and case["calls_before_first_success"] == 0
+    assert case["selection_diagnosis"]["search_capture"] == "attempt_without_rank"
+    assert case["selection_diagnosis"]["first_search_top3_suitable"] is None

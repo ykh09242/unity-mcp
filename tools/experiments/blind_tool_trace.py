@@ -1068,6 +1068,8 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     actor_host = parent if row["role"] == "main" else child
     actor_conditions = {
         "host_binary_digest": row.get("host_binary_digest"),
+        "model": inventory.get("model"),
+        "effort": inventory.get("effort"),
         "project_verified": inventory.get("project_verified"),
         "namespace": inventory.get("namespace"),
         "permissions": inventory.get("permissions"),
@@ -1089,6 +1091,12 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         diagnosis["search_capture"] = (
             "ranked" if diagnosis["first_search"] else "attempt_without_rank"
         )
+    elif (
+        role == "confirmed"
+        and selected_actor
+        and any(call.route in SEARCH_ROUTES and call.actor == selected_actor for call in wire)
+    ):
+        diagnosis["search_capture"] = "attempt_without_rank"
     elif (
         role == "confirmed"
         and actor_host

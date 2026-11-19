@@ -72,12 +72,17 @@ def test_pilot_grades_capture_independently_of_tool_choice_and_rejects_parent_or
         "role_status": "confirmed",
         "turn_completed": True,
         "runner_status": "finished",
+        "competition_observed": True,
+        "model": "fixture",
+        "effort": "medium",
         "first_business_call": "unrelated.tool",
         "actor_receipt": {"children": ["abc"]},
         "approval_policy": "never",
         "editor_start_state": {"scene": "A"},
         "editor_end_state": {"scene": "A"},
         "actor_conditions": {
+            "model": "fixture",
+            "effort": "medium",
             "host_binary_digest": "executable",
             "namespace": "trial",
             "permissions": permissions,
@@ -92,6 +97,18 @@ def test_pilot_grades_capture_independently_of_tool_choice_and_rejects_parent_or
     right["actor_conditions"]["server_commit"] = "b"
     assert not pilot_reasons(left)
     assert not pair_controls(left, right)
+    no_competitors = {**left, "competition_observed": False, "editor_end_state": {"scene": "B"}}
+    assert set(pilot_reasons(no_competitors)) >= {
+        "competition_not_verified",
+        "different:editor_state_during_pilot",
+    }
+    different_model = deepcopy(right)
+    different_model["actor_conditions"].update(model="other", effort="low")
+    assert set(pair_controls(left, different_model)) >= {
+        "different:actor_model",
+        "different:actor_effort",
+        "different:candidate_requested_settings",
+    }
     right["actor_receipt"]["children"] = []
     right["actor_conditions"]["permissions"] = None
     right["editor_start_state"] = {"scene": "B"}
