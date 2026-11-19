@@ -87,9 +87,14 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
         internal static bool LegacyMesh => _proBuilderMeshType?.FullName == "ProBuilder.Core.pb_Object";
 
-        internal static Material LegacyFaceMaterial(PropertyInfo material, object face) =>
-            (Material)material.GetValue(face)
-            ?? (Material)_proBuilderMeshType.Assembly.GetType("ProBuilder.Core.pb_Constant")?.GetProperty("DefaultMaterial")?.GetValue(null);
+        internal static Material LegacyFaceMaterial(PropertyInfo material, object face)
+        {
+            var faceMaterial = (Material)material.GetValue(face);
+            // ProBuilder 3.0's native submesh builder retains destroyed material wrappers as distinct slots.
+            return ReferenceEquals(faceMaterial, null)
+                ? (Material)_proBuilderMeshType.Assembly.GetType("ProBuilder.Core.pb_Constant")?.GetProperty("DefaultMaterial")?.GetValue(null)
+                : faceMaterial;
+        }
 
         internal static Type InstalledMeshType =>
             Type.GetType("UnityEngine.ProBuilder.ProBuilderMesh, Unity.ProBuilder") ?? Type.GetType("ProBuilder.Core.pb_Object, ProBuilderCore");
@@ -1510,7 +1515,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             try
             {
                 Undo.RegisterCompleteObjectUndo(mesh, undoName);
-                var output = mesh.GetComponent<MeshFilter>()?.sharedMesh;
+                var output = mesh.TryGetComponent(out MeshFilter meshFilter) ? meshFilter.sharedMesh : null;
                 if (output != null && !AssetDatabase.Contains(output))
                     Undo.RegisterCompleteObjectUndo(output, undoName);
                 object[] arguments = LegacyMesh ? new[] { mesh, selection, null } : new[] { mesh, selection };
@@ -1761,8 +1766,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             Undo.RegisterCompleteObjectUndo(meshFilter, "Convert to ProBuilder");
             if (renderer != null)
                 Undo.RegisterCompleteObjectUndo(renderer, "Convert to ProBuilder");
-            var collider = go.GetComponent<MeshCollider>();
-            if (collider != null)
+            if (go.TryGetComponent(out MeshCollider collider))
                 Undo.RegisterCompleteObjectUndo(collider, "Convert to ProBuilder");
 
             Component pbMesh = null;
@@ -2610,8 +2614,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("SetMaterial method not found on ProBuilderMesh.");
 
             Undo.RegisterCompleteObjectUndo(pbMesh, "Set Face Material");
-            var meshRenderer = pbMesh.gameObject.GetComponent<MeshRenderer>();
-            if (meshRenderer != null)
+            if (pbMesh.gameObject.TryGetComponent(out MeshRenderer meshRenderer))
                 Undo.RegisterCompleteObjectUndo(meshRenderer, "Set Face Material");
             setMaterialMethod.Invoke(pbMesh, new object[] { faces, material });
 
@@ -2728,7 +2731,11 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
         {
             if (current == null || current.shader == null || !current.shader.name.Contains("Standard"))
                 return null;
-            var shader = Shader.Find("ProBuilder/Standard Vertex Color") ?? Shader.Find("ProBuilder/Diffuse Vertex Color") ?? Shader.Find("Sprites/Default");
+            var shader = Shader.Find("ProBuilder/Standard Vertex Color");
+            if (shader == null)
+                shader = Shader.Find("ProBuilder/Diffuse Vertex Color");
+            if (shader == null)
+                shader = Shader.Find("Sprites/Default");
             return shader != current.shader ? shader : null;
         }
 

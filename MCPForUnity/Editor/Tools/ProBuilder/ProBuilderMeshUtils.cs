@@ -168,8 +168,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 worldPositions[i] = pbMesh.transform.TransformPoint((Vector3)positions[i]);
 
             // Reset transform
-            pbMesh.transform.position = Vector3.zero;
-            pbMesh.transform.rotation = Quaternion.identity;
+            pbMesh.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
             pbMesh.transform.localScale = Vector3.one;
 
             // A parent can leave the reset transform's world matrix nonidentity.

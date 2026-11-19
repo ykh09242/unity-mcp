@@ -142,7 +142,7 @@ namespace MCPForUnityTests.Editor.Tools
             if (_legacyMaterialFailure == null)
                 Assert.Ignore("Requires a legacy package with an incompatible native material getter.");
             int undo = Undo.GetCurrentGroup();
-            int before = Resources.FindObjectsOfTypeAll(ManageProBuilder.InstalledMeshType).Length;
+            int before = UnityEngine.Resources.FindObjectsOfTypeAll(ManageProBuilder.InstalledMeshType).Length;
             var result = ToJObject(
                 ManageProBuilder.HandleCommand(
                     new JObject
@@ -154,7 +154,7 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains(_legacyMaterialFailure, result.Value<string>("error"));
-            Assert.AreEqual(before, Resources.FindObjectsOfTypeAll(ManageProBuilder.InstalledMeshType).Length);
+            Assert.AreEqual(before, UnityEngine.Resources.FindObjectsOfTypeAll(ManageProBuilder.InstalledMeshType).Length);
             Assert.AreEqual(undo, Undo.GetCurrentGroup());
         }
 

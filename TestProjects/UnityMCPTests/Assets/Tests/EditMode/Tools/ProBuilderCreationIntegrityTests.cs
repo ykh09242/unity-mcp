@@ -292,7 +292,7 @@ namespace MCPForUnityTests.Editor.Tools
             var mesh = new Mesh { vertices = new[] { Vector3.zero, Vector3.right, Vector3.up }, triangles = new[] { 0, 1, 2 } };
             ownedMeshes.Add(mesh);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
-            var shader = Shader.Find("Standard") ?? Shader.Find("Hidden/InternalErrorShader");
+            var shader = TestUtilities.FindFirstShader("Standard", "Hidden/InternalErrorShader");
             Assert.IsNotNull(shader, "Owned importer fixture requires an available shader.");
             var material = new Material(shader);
             ownedMaterials.Add(material);

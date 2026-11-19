@@ -296,7 +296,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             var submeshProperty = ManageProBuilder._faceType.GetProperty("submeshIndex");
             var manualField = ManageProBuilder._faceType.GetField("manualUV");
             var materialProperty = ManageProBuilder._faceType.GetProperty("material");
-            var materials = ManageProBuilder.LegacyMesh ? mesh.GetComponent<Renderer>()?.sharedMaterials : null;
+            var materials = ManageProBuilder.LegacyMesh && mesh.TryGetComponent(out Renderer renderer) ? renderer.sharedMaterials : null;
             if (
                 indicesProperty == null
                 || smoothingProperty == null

@@ -425,9 +425,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(true)]
         public void SetFaceColor_ReusesCompatibleMaterialAcrossRepeatedRequests(bool alreadyCompatible)
         {
-            var vertexShader = Shader.Find("ProBuilder/Standard Vertex Color")
-                ?? Shader.Find("ProBuilder/Diffuse Vertex Color")
-                ?? Shader.Find("Sprites/Default");
+            var vertexShader = TestUtilities.FindFirstShader("ProBuilder/Standard Vertex Color", "ProBuilder/Diffuse Vertex Color", "Sprites/Default");
             var standardShader = Shader.Find("Standard");
             Assert.IsNotNull(vertexShader, "A supported vertex-color shader fallback must be available.");
             Assert.IsNotNull(standardShader, "The Standard conversion-source shader must be available.");
@@ -560,24 +558,21 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(4)]
         public void FreezeKeepsEveryWorldVertexAndExistingResetSemantics(int hierarchy)
         {
+            mesh.transform.SetPositionAndRotation(new Vector3(3, 2, -4), Quaternion.Euler(31, -17, 23));
             if (hierarchy > 0)
             {
                 GameObject parent = Parent("Parent_");
-                parent.transform.position = new Vector3(4, -2, 3);
-                parent.transform.rotation = Quaternion.Euler(20, 37, -11);
+                parent.transform.SetPositionAndRotation(new Vector3(4, -2, 3), Quaternion.Euler(20, 37, -11));
                 parent.transform.localScale = hierarchy == 1 ? Vector3.one : new Vector3(2, 3, .5f);
                 mesh.transform.SetParent(parent.transform, false);
                 if (hierarchy >= 3)
                 {
                     GameObject ancestor = Parent("Ancestor_");
-                    ancestor.transform.position = new Vector3(-3, 5, 1);
-                    ancestor.transform.rotation = Quaternion.Euler(-13, 29, 41);
+                    ancestor.transform.SetPositionAndRotation(new Vector3(-3, 5, 1), Quaternion.Euler(-13, 29, 41));
                     ancestor.transform.localScale = hierarchy == 4 ? new Vector3(-1.5f, 2, .75f) : new Vector3(1.5f, 2, .75f);
                     parent.transform.SetParent(ancestor.transform, false);
                 }
             }
-            mesh.transform.localPosition = new Vector3(3, 2, -4);
-            mesh.transform.localRotation = Quaternion.Euler(31, -17, 23);
             mesh.transform.localScale = new Vector3(1.25f, .7f, 2);
             Transform parentBefore = mesh.transform.parent;
             Vector3[] before = WorldVertices();
