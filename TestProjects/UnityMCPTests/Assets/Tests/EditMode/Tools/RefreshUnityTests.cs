@@ -57,19 +57,17 @@ namespace MCPForUnityTests.Editor.Tools
                     if (refreshThrows)
                         throw new InvalidOperationException("controlled refresh failure after native start");
                 };
-                var response = ToJObject(
-                    RefreshUnity
-                        .HandleCommand(
-                            new JObject
-                            {
-                                ["scope"] = scope,
-                                ["compile"] = "request",
-                                ["compile_id"] = id,
-                            }
-                        )
-                        .GetAwaiter()
-                        .GetResult()
+                var acknowledgement = RefreshUnity.HandleCommand(
+                    new JObject
+                    {
+                        ["scope"] = scope,
+                        ["compile"] = "request",
+                        ["compile_id"] = id,
+                        ["wait_for_ready"] = true,
+                    }
                 );
+                Assert.IsTrue(acknowledgement.IsCompleted, "Return the observed compile before a domain reload can unload the native readiness waiter.");
+                var response = ToJObject(acknowledgement.Result);
                 Assert.AreEqual(!refreshThrows, (bool)response["success"]);
                 if (!refreshThrows)
                 {

@@ -218,7 +218,6 @@ namespace MCPForUnity.Editor.Tools
             //
             // Unlike WaitForUnityReadyAsync this cannot span a domain reload: it
             // resolves the moment compilation *starts*, long before assemblies swap.
-            // That is why it is safe on Unity 6+ where waiting for readiness is not.
             //
             // Gated on wait_for_ready: that flag is documented as the non-blocking
             // switch, and this wait is a wait — cheap when the pipeline starts on the
@@ -234,16 +233,9 @@ namespace MCPForUnity.Editor.Tools
                 compileStarted = await WaitForCompilationToStartAsync(compileCountBefore, Remaining()).ConfigureAwait(true);
             }
 
-            // Unity 6+ fix: Skip wait_for_ready when compile was requested.
-            // The EditorApplication.update polling in WaitForUnityReadyAsync doesn't survive
-            // domain reloads properly in Unity 6+, causing infinite compilation loops.
-            // When compilation is requested, return immediately and let client poll editor_state.
-            // Earlier Unity versions retain the original behavior.
-#if UNITY_6000_0_OR_NEWER
+            // A compilation can unload this command's update callback. The server follows
+            // editor_state across reloads once the native request or observed cycle is acknowledged.
             bool shouldWaitForReady = waitForReady && !compileRequested && !refreshCycleObserved;
-#else
-            bool shouldWaitForReady = waitForReady;
-#endif
             if (shouldWaitForReady)
             {
                 try
