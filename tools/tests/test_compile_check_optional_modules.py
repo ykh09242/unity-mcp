@@ -64,6 +64,24 @@ def test_module_matrix_rejects_unknown_module_before_compiling(
     assert not harness.calls.exists()
 
 
+@pytest.mark.parametrize(
+    ("assembly", "package", "symbol"),
+    [
+        ("MCPForUnity.Editor", "com.unity.visualeffectgraph", "UNITY_VFX_GRAPH"),
+        ("MCPForUnity.Input.UGUI.Editor", "com.unity.ugui", "MCP_INPUT_UGUI"),
+        ("MCPForUnity.Input.UGUI.Runtime", "com.unity.ugui", "MCP_INPUT_UGUI"),
+        ("MCPForUnity.Input.InputSystem.Editor", "com.unity.inputsystem", "MCP_INPUT_SYSTEM"),
+        ("MCPForUnity.Input.InputSystem.Runtime", "com.unity.inputsystem", "MCP_INPUT_SYSTEM"),
+    ],
+)
+def test_shipped_adapters_include_registered_prereleases(
+    assembly: str, package: str, symbol: str
+) -> None:
+    (path,) = (ROOT / "MCPForUnity").rglob(f"{assembly}.asmdef")
+    definition = json.loads(path.read_text(encoding="utf-8"))
+    assert {"name": package, "define": symbol, "expression": ""} in definition["versionDefines"]
+
+
 def test_optional_module_defines_require_only_installed_modules() -> None:
     for name in ("Runtime", "Editor"):
         definition = json.loads(
