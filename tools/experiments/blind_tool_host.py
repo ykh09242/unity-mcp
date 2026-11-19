@@ -386,9 +386,9 @@ def _tool_error(text):
     return "approval blocked" if APPROVAL.search(str(text)) else "tool failed"
 
 
-def project_item(item, server, asset):
+def project_item(item, server, asset, project=""):
     """Convert only evidence needed by the scorer. Discard other tools' arguments and results."""
-    from tools.experiments.blind_tool_trace import saved_read_grade, saved_graph_facts
+    from tools.experiments.blind_tool_shell import shell_receipt
 
     kind = item.get("type")
     projected = {"id": item.get("id"), "status": item.get("status")}
@@ -456,15 +456,19 @@ def project_item(item, server, asset):
     if kind == "commandExecution":
         projected.update(type="command_execution", exit_code=item.get("exitCode"))
         command, output = item.get("command") or "", item.get("aggregatedOutput") or ""
-        if asset and asset.casefold() in command.replace("\\", "/").casefold():
-            grade = (
-                saved_read_grade(command, output, asset) if item.get("exitCode") == 0 else "none"
-            )
-            if grade in ("observed", "review"):
-                projected["saved_read"] = {
-                    "grade": grade,
-                    "facts": saved_graph_facts(output) if grade == "observed" else {},
-                }
+        receipt = shell_receipt(command, output, item.get("exitCode"), asset, project)
+        projected["shell_receipt"] = receipt
+        if (
+            item.get("exitCode") == 0
+            and asset
+            and asset.casefold() in command.replace("\\", "/").casefold()
+        ):
+            facts = receipt.get("facts", {})
+            observed = len(facts.get("node_types", [])) >= 2
+            projected["saved_read"] = {
+                "grade": "observed" if observed else "review",
+                "facts": facts if observed else {},
+            }
         if item.get("exitCode") and _tool_error(output) == "approval blocked":
             projected["aggregated_output"] = "approval blocked"
         return projected
@@ -687,7 +691,9 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                         }
                                     )
                             if method in ("item/started", "item/completed") and actor:
-                                projected = project_item(item, server, args.graph_asset)
+                                projected = project_item(
+                                    item, server, args.graph_asset, args.project
+                                )
                                 if not projected:
                                     continue
                                 event = {

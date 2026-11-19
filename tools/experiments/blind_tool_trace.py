@@ -6,7 +6,6 @@ import argparse
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -31,6 +30,7 @@ from tools.experiments.blind_tool_answers import (
     observed_center_hit,
 )
 from tools.experiments.blind_tool_diagnostics import SEARCH_ROUTES
+from tools.experiments.blind_tool_shell import shell_purpose, shell_receipt
 
 EDITOR_STATE = "mcpforunity://editor/state"
 PROJECT_INFO = "mcpforunity://project/info"
@@ -467,6 +467,7 @@ class Call:
     timeline: str = ""
     request_at: int = 0
     response_at: int = 0
+    shell_purpose: str = ""
 
 
 def wire_trace(path: Path, *, after: int = 0, through: int | None = None) -> list[Call]:
@@ -526,36 +527,12 @@ def saved_read_grade(command: str, output: str, asset: str) -> str:
     """Credit a direct exact-path read with serialized graph structure in the output."""
     if not asset or asset.casefold() not in command.casefold().replace("\\", "/"):
         return "none"
-    try:
-        tokens = shlex.split(command)
-        if len(tokens) == 3 and tokens[1].casefold() in {"-command", "-lc"}:
-            executable = tokens[0].replace("\\", "/").rsplit("/", maxsplit=1)[-1].casefold()
-            if executable in {"pwsh", "pwsh.exe", "powershell", "powershell.exe", "bash"}:
-                tokens = shlex.split(tokens[-1])
-    except ValueError:
+    if shell_purpose(command, asset) != "named_asset_read":
         return "review"
-    if not tokens:
-        return "review"
-    command_name, *args = tokens
-    command_name = command_name.casefold()
-    flags = {"-raw", "-literalpath", "-path"} if command_name == "get-content" else {"--"}
-    paths = [
-        arg.replace("\\", "/").removeprefix("./") for arg in args if arg.casefold() not in flags
-    ]
-    if command_name not in {"get-content", "cat"} or paths != [asset]:
-        return "review"
-    options = {argument.casefold() for argument in args}
-    literal_path = (
-        command_name == "get-content" and "-literalpath" in options and "-path" not in options
-    )
-    if any(character in asset for character in "$`") or (
-        any(character in asset for character in "*?[]{}") and not literal_path
-    ):
-        return "review"
-    return "observed" if saved_graph_facts(output) else "review"
+    return "observed" if saved_graph_facts(output[:2_000_000]) else "review"
 
 
-def saved_graph_facts(output: str) -> dict[str, Any]:
+def saved_graph_facts(output: str, *, allow_partial: bool = False) -> dict[str, Any]:
     """Use types of objects referenced by the root graph's actual node list."""
     decoder = json.JSONDecoder()
     try:
@@ -587,7 +564,7 @@ def saved_graph_facts(output: str) -> dict[str, Any]:
             "node_types": sorted(node_types),
             "data_state": "saved",
         }
-        if len(node_types) >= 2
+        if allow_partial or len(node_types) >= 2
         else {}
     )
 
@@ -698,6 +675,10 @@ def client_trace(
                     call = trace.calls.setdefault(
                         item_id, Call("shell.command", "shell", len(trace.calls) + 1)
                     )
+                    receipt = mapping(item.get("shell_receipt")) or shell_receipt(
+                        command, string(item.get("aggregated_output")), item.get("exit_code"), asset
+                    )
+                    call.shell_purpose = string(receipt.get("purpose")) or "unknown"
                     if event.get("type") != "item.completed":
                         continue
                     trace.shell_calls += 1
@@ -708,6 +689,15 @@ def client_trace(
                         grade = recorded.get("grade") or (
                             saved_read_grade(command, output, asset) if exact_path else "none"
                         )
+                        if (
+                            item.get("shell_receipt")
+                            and grade == "observed"
+                            and (
+                                not asset
+                                or receipt.get("asset_digest") != sha256(asset.encode()).hexdigest()
+                            )
+                        ):
+                            grade = "review"
                         trace.saved_reads += int(grade == "observed")
                         trace.saved_reads_to_review += int(grade == "review")
                         if grade == "observed":
@@ -715,6 +705,14 @@ def client_trace(
                             trace.saved_observations.append(
                                 mapping(recorded.get("facts")) or saved_graph_facts(output)
                             )
+                        elif (
+                            asset
+                            and call.shell_purpose == "named_asset_read"
+                            and receipt.get("asset_digest") == sha256(asset.encode()).hexdigest()
+                            and (facts := mapping(receipt.get("facts")))
+                        ):
+                            call.evidence = facts
+                            trace.saved_observations.append(facts)
                     elif APPROVAL.search(output):
                         trace.approval_blocks += 1
                 case (
@@ -1003,6 +1001,8 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     task_evidence = attributed
     if task == "graph-saved" and host.saved_reads:
         task_evidence = "complete" if role == "confirmed" else "unattributed"
+    elif task == "graph-saved" and host.saved_observations and task_evidence == "none":
+        task_evidence = "partial" if role == "confirmed" else "unattributed"
     discovery_sources = [
         call for call in (host.calls.values() if host_only else wire) if call.channel == "discovery"
     ]
@@ -1012,6 +1012,12 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         host_business, [call for call in wire if call.channel != "discovery"]
     )
     first = business[0] if business else None
+    observation_attempts = [
+        call
+        for call in business
+        if call.shell_purpose not in {"instruction_read", "working_directory"}
+    ]
+    first_observation = next(iter(observation_attempts), None)
     # The registered graph readers cannot inspect an unsaved window. Their responses
     # can document that limitation but are not a suitable business read of its contents.
     sequence = [
@@ -1131,6 +1137,25 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             "children": sorted(parent.child_actors),
         },
         "first_business_call": first.route if first else None,
+        "first_shell_purpose": next(
+            (call.shell_purpose for call in business if call.channel == "shell"), None
+        )
+        if role == "confirmed"
+        else None,
+        "first_observation_attempt": (
+            first_observation.route
+            if first_observation
+            and role == "confirmed"
+            and first_observation.shell_purpose != "unknown"
+            else None
+        ),
+        "preparatory_calls_before_observation": (
+            business.index(first_observation)
+            if first_observation
+            and role == "confirmed"
+            and first_observation.shell_purpose != "unknown"
+            else None
+        ),
         "first_suitable_business_call": first_suitable.route if first_suitable else None,
         "first_successful_suitable_call": first_success.route
         if first_success and role == "confirmed"
@@ -1163,6 +1188,8 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             if host.saved_reads and role == "confirmed"
             else "unattributed"
             if host.saved_reads
+            else "partial"
+            if host.saved_observations and role == "confirmed"
             else "manual-review"
             if host.saved_reads_to_review
             else "none"

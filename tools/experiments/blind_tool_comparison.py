@@ -27,6 +27,9 @@ METRICS = (
     "turn_completed",
     "role_status",
     "first_business_call",
+    "first_shell_purpose",
+    "first_observation_attempt",
+    "preparatory_calls_before_observation",
     "first_suitable_business_call",
     "calls_before_first_suitable",
     "first_successful_suitable_call",
@@ -75,6 +78,9 @@ def summarize(cases: list[dict]) -> dict:
         "attempted_cases": attempted,
         "observed": len(cases),
         "role_status": dict(Counter(c["role_status"] for c in cases)),
+        "first_shell_purpose": dict(
+            Counter(c["first_shell_purpose"] for c in cases if c.get("first_shell_purpose"))
+        ),
         "first_suitable_on_first_business_call": sum(
             c["calls_before_first_suitable"] == 0 for c in cases
         ),
