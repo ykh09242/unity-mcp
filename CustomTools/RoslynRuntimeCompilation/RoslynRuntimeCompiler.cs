@@ -513,7 +513,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
             // Coroutine invocation
             if (entryMethod != null && typeof(System.Collections.IEnumerator).IsAssignableFrom(entryMethod.ReturnType))
             {
-                var host = target.GetComponent<MonoBehaviour>() ?? this;
+                MonoBehaviour host = target.TryGetComponent(out MonoBehaviour component) ? component : this;
                 if (!InvokeCoroutine(host, target, out string coroutineError))
                 {
                     errorMessage = $"Failed to start coroutine:\n{coroutineError}";
@@ -906,7 +906,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
         w.minSize = new Vector2(600, 400);
     }
 
-    void OnEnable()
+    protected void OnEnable()
     {
         // Preserve the same helper across repeated enables and script reloads.
         if (helperInScene == null || helperInScene.gameObject == null)
@@ -933,7 +933,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
         }
     }
 
-    void OnDisable()
+    protected void OnDisable()
     {
         // keep editor text back to helper if it still exists
         if (helperInScene != null && helperInScene.gameObject != null)
@@ -946,7 +946,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
         }
     }
 
-    void OnDestroy()
+    protected void OnDestroy()
     {
         // Only helpers created by this window belong to its cleanup lifecycle.
         if (ownedHelper != null && ownedHelper.gameObject != null)
@@ -957,7 +957,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
         helperInScene = null;
     }
 
-    void OnGUI()
+    protected void OnGUI()
     {
         // Ensure helper exists before drawing GUI - recreate if needed
         if (helperInScene == null || helperInScene.gameObject == null)
