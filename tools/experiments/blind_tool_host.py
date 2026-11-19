@@ -140,6 +140,8 @@ def launch_settings(args, case_dir):
     """CLI overrides never merge a stdio command into an installed HTTP transport."""
     server = args.unity_server
     command = [args.codex, "app-server"]
+    for competitor in getattr(args, "disable_competitor", None) or ():
+        command.extend(["-c", f"mcp_servers.{competitor}.enabled=false"])
     if not args.installed:
         from tools.experiments.blind_tool_selection import proxy_args
 
@@ -554,7 +556,8 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
         client = AppServer(process)
         workers.start_soon(client.read_messages)
         try:
-            with anyio.fail_after(args.timeout):
+            gate = getattr(args, "pair_gate", None)
+            with anyio.fail_after(args.timeout * (4 if gate else 1)):
                 await client.request(
                     "initialize",
                     {
@@ -572,7 +575,7 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                 }
                 if args.approval == "auto-review":
                     options["approvalsReviewer"] = "auto_review"
-                if getattr(args, "study", None):
+                if getattr(args, "study", None) or gate:
                     options["config"] = {"model_reasoning_effort": args.effort}
                     options["allowProviderModelFallback"] = False
                 started = await client.request("thread/start", options)
@@ -586,12 +589,24 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                     args.instance,
                     installed=args.installed or expected is not None,
                 )
+                if gate and surface["status"] != "observed":
+                    for delay in (1, 3):
+                        await anyio.sleep(delay)
+                        surface = await observe_host(
+                            client,
+                            thread,
+                            server,
+                            args.instance,
+                            installed=args.installed or expected is not None,
+                        )
+                        if surface["status"] == "observed":
+                            break
                 surface["permissions"] = observed_permissions(started)
                 settings = model_settings(started)
-                if getattr(args, "study", None):
+                if getattr(args, "study", None) or gate:
                     settings = await owned_model_settings(client, thread, settings)
                 surface.update(settings)
-                if args.installed or expected is not None or getattr(args, "study", None):
+                if args.installed or expected is not None or getattr(args, "study", None) or gate:
                     surface["project_verified"] = await _project_verified(
                         client, thread, server, args.instance, args.project
                     )
@@ -612,13 +627,29 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                 metadata["competitor_digest"] = surface["competitor_digest"]
                 metadata["competition_observed"] = surface.get("competition_observed")
                 metadata["observed_server_commit"] = surface["source"]["server_commit"]
-                if getattr(args, "study", None):
+                if getattr(args, "study", None) or gate:
                     from tools.experiments.blind_tool_selection import probe_state
 
                     if not surface.get("project_verified"):
                         raise ValueError("Study host could not verify the selected project")
                     metadata["host_binary_digest"] = executable_digest(args.codex)
-                    metadata["editor_start_state"] = probe_state(args)
+                    metadata["editor_start_state"] = await anyio.to_thread.run_sync(
+                        probe_state, args
+                    )
+                if gate:
+                    metadata["runner_phase"] = "pair_preflight"
+                    arm = metadata["arm"]
+                    if not await anyio.to_thread.run_sync(
+                        gate.arrive, arm, thread_digest(thread), surface, metadata
+                    ):
+                        metadata["pair_reasons"] = list(gate.reasons)
+                        raise ValueError("Prepared hosts did not pass paired controls")
+                    current = await anyio.to_thread.run_sync(probe_state, args)
+                    receipt = gate.start(arm, current)
+                    if receipt is None:
+                        metadata["pair_reasons"] = list(gate.reasons)
+                        raise ValueError("Editor state changed before prompt delivery")
+                    metadata["prepared_pair"] = receipt
                 if metadata["observed_server_commit"]:
                     metadata["backend_identity"] = metadata["observed_server_commit"]
                 metadata["runner_phase"] = "model_turn"

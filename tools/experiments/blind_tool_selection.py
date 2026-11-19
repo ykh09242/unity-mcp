@@ -187,7 +187,9 @@ def run_case(
         metadata["runner_status"] = "launch_failed"
         metadata["failure_type"] = type(error).__name__
     finally:
-        if getattr(args, "study", None) and metadata.get("runner_phase") == "model_turn":
+        if (getattr(args, "study", None) or getattr(args, "pair_gate", None)) and metadata.get(
+            "runner_phase"
+        ) == "model_turn":
             metadata["editor_end_state"] = probe_state(args)
         (case_dir / "case.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
@@ -238,6 +240,21 @@ def create_parser() -> argparse.ArgumentParser:
     )
     single = modes.add_parser("run", parents=[launch], help="Run an observation matrix")
     matched = modes.add_parser("matched", parents=[launch], help="Run counterbalanced pairs")
+    matched.add_argument(
+        "--prepare-pairs",
+        action="store_true",
+        help="Prepare both configured trial hosts before delivering either prompt",
+    )
+    matched.add_argument(
+        "--competitor",
+        action="append",
+        help="Require this exact set of competing MCP namespaces in both prepared hosts (repeatable)",
+    )
+    matched.add_argument(
+        "--disable-competitor",
+        action="append",
+        help="Disable an unselected MCP namespace in the two ephemeral study processes only",
+    )
     matched.add_argument(
         "--study", choices=[STUDY], help="Run the predeclared six-language consumer study"
     )
@@ -333,8 +350,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.task, args.language, args.role = STUDY_TASKS, LANGUAGES, ROLES
         elif not all((args.task, args.language, args.role)):
             parser.error("provide --task, --language and --role or select --study")
-        args.host_mode = args.host_mode or ("configured" if study else "isolated")
-        args.answer_protocol = args.answer_protocol or ("v3" if study else "v2")
+        prepared = getattr(args, "prepare_pairs", False)
+        args.host_mode = args.host_mode or ("configured" if study or prepared else "isolated")
+        args.answer_protocol = args.answer_protocol or ("v3" if study or prepared else "v2")
+        if prepared and (
+            args.host_mode != "configured"
+            or not args.state_probe
+            or args.answer_format == "prose"
+            or args.answer_protocol != "v3"
+        ):
+            parser.error(
+                "prepared pairs require a configured host, a state probe and V3 JSON answers"
+            )
+        allowed = set(getattr(args, "competitor", None) or ())
+        disabled = set(getattr(args, "disable_competitor", None) or ())
+        if allowed or disabled:
+            from tools.experiments.blind_tool_host import IDENTIFIER, RECORDED_SERVER
+
+            if (
+                not prepared
+                or not allowed
+                or allowed & disabled
+                or any(
+                    not IDENTIFIER.fullmatch(n)
+                    or "." in n
+                    or n in (args.unity_server, RECORDED_SERVER)
+                    for n in allowed | disabled
+                )
+            ):
+                parser.error("declare separate exact competitor namespaces for a prepared pair")
         args.project, args.output = map(Path.resolve, (args.project, args.output))
         if args.host_mode == "configured":
             from tools.experiments.blind_tool_host import IDENTIFIER, RECORDED_SERVER
@@ -439,14 +483,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "arm": arm,
                 "schedule_id": schedule_id,
                 "execution_order": index,
-                "editor_start_state": None if study else probe_state(selected),
+                "editor_start_state": None if study or prepared else probe_state(selected),
+                **({"pair_mode": "prepared"} if prepared else {}),
                 **({"study": study} if study else {}),
                 "backend_identity": sha256(selected.relay.read_bytes()).hexdigest()
                 if selected.relay
                 else selected.endpoint,
             }
             print(f"{arm}/{cell}", file=sys.stderr, flush=True)
-            run_case(selected, *cell)
+            if not prepared:
+                run_case(selected, *cell)
+            elif index % 2 == 0:
+                from tools.experiments.blind_tool_pair import prepared_pair
+
+                prepared_pair(arms, [schedule[index - 2][0], arm], cell, args.output, run_case)
         if args.mode == "matched":
             args.baseline, args.candidate = arms["baseline"].output, arms["candidate"].output
     if args.mode in {"matched", "compare"}:

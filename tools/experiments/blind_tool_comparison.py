@@ -53,6 +53,8 @@ METRICS = (
     "actor_receipt",
     "actor_conditions",
     "role_attribution",
+    "prepared_pair",
+    "pair_reasons",
     "graph_data_state",
     "unsaved_graph_observed",
     "final_answer",
@@ -197,6 +199,12 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
             if pilot.get("supported") is False and pilot.get("attempts"):
                 reasons.extend("preflight:" + why for why in pilot["attempts"][-1]["reasons"])
         else:
+            if left.get("pair_mode") == "prepared" or right.get("pair_mode") == "prepared":
+                from tools.experiments.blind_tool_pair import preparation_issues
+
+                reasons.extend(preparation_issues(left, right))
+                for arm, case in (("baseline", left), ("candidate", right)):
+                    reasons.extend(arm + ":" + issue for issue in case.get("pair_reasons", []))
             host_modes = [c.get("host_mode", "isolated") for c in (left, right)]
             if host_modes[0] != host_modes[1]:
                 reasons.append("different:host_mode")
@@ -209,7 +217,7 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
                     reasons.append("unverified:competing_tools")
                 elif left["competitor_digest"] != right["competitor_digest"]:
                     reasons.append("different:competing_tools")
-            if left.get("study") or right.get("study"):
+            if left.get("study") or right.get("study") or left.get("pair_mode") == "prepared":
                 from tools.experiments.blind_tool_preflight import pair_controls
 
                 if left.get("study") != right.get("study"):

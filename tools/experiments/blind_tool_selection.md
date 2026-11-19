@@ -272,3 +272,9 @@ The report compares the answer against observed results and the journal's exact
 effect sequence. A duplicate click fails the dispatch case. A saved graph count
 cannot establish the contents of the unsaved window. The game-project benchmark
 above supplies separate live observations.
+# Preparing a controlled pair
+
+Use `matched --prepare-pairs --state-probe <script>` with two separately identified backends. Both configured, read-only ephemeral hosts open the same game project, report their inventories, source commits, model, effort, permissions and Editor state, and wait before either receives the prompt. The runner delivers the two prompts in the scheduled AB or BA order and samples the Editor again before delivery and after each turn. A failed preflight keeps its reason and starts no model turn. One retry is available for an observed transient mismatch before either prompt.
+
+For a fixed competitor cohort, pass `--competitor NAME` for every required competing MCP namespace. Use `--disable-competitor NAME` to disable a specific competing namespace in the trial processes. The observed remaining set must match the declaration in both arms. Omitting these options uses the configured competitors and records that cohort separately. Each case retains its shared readiness digest, both readiness timestamps and its own prompt dispatch timestamp. Private `preparation/<cell>/pair.json` records all attempts, including withheld prompts.
+
