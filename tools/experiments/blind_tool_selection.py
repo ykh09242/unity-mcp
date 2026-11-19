@@ -293,6 +293,11 @@ def validate_backend(parser: argparse.ArgumentParser, args: argparse.Namespace) 
             parser.error(
                 "--installed requires --host-mode configured, --installed-endpoint and the exact --instance"
             )
+    matched.add_argument(
+        "--disable-plugins",
+        action="store_true",
+        help="Disable dynamic plugins in both ephemeral trial processes for a declared competitor cohort",
+    )
         if "raycast" in args.task:
             parser.error("raycast requires a trusted --relay that guarantees read-only raycasts")
         from tools.experiments.blind_tool_http import loopback_port
@@ -369,7 +374,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         allowed = set(getattr(args, "competitor", None) or ())
         disabled = set(getattr(args, "disable_competitor", None) or ())
-        if allowed or disabled:
+        if allowed or disabled or getattr(args, "disable_plugins", False):
             from tools.experiments.blind_tool_host import IDENTIFIER, RECORDED_SERVER
 
             if (
@@ -477,9 +482,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         (args.output / "schedule.json").write_text(json.dumps(schedule) + "\n", encoding="utf-8")
         pilots = {}
         if study:
-            from tools.experiments.blind_tool_preflight import run_pilots
+            from tools.experiments.blind_tool_preflight import prepared_pilots, run_pilots
 
-            pilots = run_pilots(arms, args.output, args.role, run_case, score_case)
+            pilots = (prepared_pilots if prepared else run_pilots)(
+                arms, args.output, args.role, run_case, score_case
+            )
         for index, (arm, cell) in enumerate(schedule, 1):
             if study and not pilots[cell[2]]["supported"]:
                 continue

@@ -130,6 +130,17 @@ def test_archive_source_is_attested_for_recorded_treatment():
     }
 
 
+def test_lazily_advertised_names_remain_distinct_from_a_live_connection():
+    competitor = {**server("codegraph", ["explore"]), "runtimeStatus": "notStarted"}
+    for errored, expected in ((None, "observed"), ("failed", "incomplete")):
+        client = Catalog(
+            [{"data": [server("unityMCP", ["viewer"]), {**competitor, "toolsError": errored}]}]
+        )
+        result = asyncio.run(host.observe_host(client, "thread", "unityMCP", None, installed=False))
+        assert result["status"] == expected
+        assert result["service_runtime_status"]["codegraph"] == "notStarted"
+
+
 def test_guarded_installed_turn_requires_matching_target_catalog_and_source():
     normal = {
         "status": "observed",

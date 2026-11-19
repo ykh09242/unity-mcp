@@ -140,6 +140,8 @@ def launch_settings(args, case_dir):
     """CLI overrides never merge a stdio command into an installed HTTP transport."""
     server = args.unity_server
     command = [args.codex, "app-server"]
+    if getattr(args, "disable_plugins", False):
+        command.extend(["--disable", "plugins"])
     for competitor in getattr(args, "disable_competitor", None) or ():
         if competitor == "codex_apps":
             command.extend(["--disable", "apps"])
@@ -189,6 +191,7 @@ async def observe_host(client, thread_id, unity_server, instance, *, installed):
         "namespace": unity_server,
         "unity": {"tools": [], "resources": [], "templates": []},
         "competing_servers": {},
+        "service_runtime_status": {},
         "competitor_digest": None,
         "source": source,
     }
@@ -209,9 +212,18 @@ async def observe_host(client, thread_id, unity_server, instance, *, installed):
                 if len(tools) > 4096 or not all(IDENTIFIER.fullmatch(tool) for tool in tools):
                     return result
                 # Disabled configuration entries are not selectable competitors.
-                if item.get("runtimeStatus") == "disabled":
+                runtime = item.get("runtimeStatus")
+                if runtime == "disabled":
                     continue
-                if item.get("toolsError") or item.get("runtimeStatus") != "connected":
+                result["service_runtime_status"][name] = (
+                    runtime if runtime in ("connected", "notStarted") else "unknown"
+                )
+                descriptors_present = bool(
+                    tools or item.get("resources") or item.get("resourceTemplates")
+                )
+                if item.get("toolsError") or not (
+                    runtime == "connected" or (runtime == "notStarted" and descriptors_present)
+                ):
                     healthy = False
                 if name != unity_server:
                     resources = item.get("resources")
@@ -733,7 +745,7 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                     child_permissions[actor] = permission
                             if method == "thread/started":
                                 linked = direct_child(params.get("thread", {}), thread)
-                                if linked:
+                                if linked and (not live_child or linked in verified_live):
                                     parents.add(linked)
                                     child_models.setdefault(linked, {}).update(
                                         model_settings(params.get("thread") or {})
@@ -777,8 +789,9 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                         projected.get("tool") == "spawn_agent"
                                         and projected["status"] == "completed"
                                     ):
-                                        parents.update(projected["receiver_thread_ids"])
-                                elif actor != thread:
+                                        if not live_child:
+                                            parents.update(projected["receiver_thread_ids"])
+                                elif actor != thread and (not live_child or actor in verified_live):
                                     children.setdefault(actor, []).append(event)
                             if (
                                 method == "turn/completed"
@@ -791,11 +804,17 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                 emit({"type": "turn.completed"})
                                 metadata["wire_at_completion"] = wire_checkpoint(case_dir)
                                 if metadata["role"] == "subagent" or parents:
-                                    if not parents and supports_parent_lookup(args.codex):
+                                    if (
+                                        not parents
+                                        and not live_child
+                                        and supports_parent_lookup(args.codex)
+                                    ):
                                         parents, metadata["child_lookup"] = await scoped_children(
                                             client, thread
                                         )
                                     for linked in parents:
+                                    if live_child and projected.get("tool") == "spawn_agent":
+                                        projected["receiver_thread_ids"] = []
                                         path = case_dir / f"host-child-{thread_digest(linked)}.json"
                                         if path.is_file():
                                             child_surface = json.loads(
@@ -819,6 +838,8 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                             )
                                         child_surface["permissions"] = child_permissions.get(linked)
                                         settings = child_models.get(linked, {})
+                                    if live_child:
+                                        parents.intersection_update(verified_live)
                                         if getattr(args, "study", None) or gate or live_child:
                                             settings = await owned_model_settings(
                                                 client, linked, settings

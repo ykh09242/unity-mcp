@@ -82,6 +82,19 @@ def pair_controls(left, right):
         issues.append("unverified:actor_project")
     for arm, case in (("baseline", left), ("candidate", right)):
         actor = case.get("actor_conditions") or {}
+        if case.get("pair_mode") == "prepared":
+            permissions = actor.get("permissions") or {}
+            approval = (
+                "on-request"
+                if case.get("approval_policy") == "auto-review"
+                else case.get("approval_policy")
+            )
+            if (
+                not permissions.get("digest")
+                or permissions.get("sandbox") not in ("readOnly", "read-only")
+                or permissions.get("approval") != approval
+            ):
+                issues.append("unverified:" + arm + "_actor_grant")
         if any(actor.get(key) != case.get(key) for key in ("model", "effort")):
             issues.append("different:" + arm + "_requested_settings")
     if not left.get("editor_start_state") or not right.get("editor_start_state"):
@@ -89,6 +102,47 @@ def pair_controls(left, right):
     elif left["editor_start_state"] != right["editor_start_state"]:
         issues.append("different:editor_start_state")
     return issues
+
+
+def prepared_pilots(arms, output, roles, run_case, score_case):
+    from tools.experiments.blind_tool_pair import prepared_pair, preparation_issues
+
+    results = {}
+    for role in roles:
+        root = output / "preflight" / role
+        candidates = {}
+        cell = ("game-view", "en", role, 1)
+        for arm, selected in arms.items():
+            pilot = copy(selected)
+            pilot.output = root / arm
+            pilot.output.mkdir(parents=True)
+            pilot.case_metadata = {
+                "study": selected.study,
+                "phase": "pilot",
+                "pair_mode": "prepared",
+                "arm": arm,
+            }
+            candidates[arm] = pilot
+        prepared_pair(candidates, ("baseline", "candidate"), cell, root, run_case)
+        cases = [
+            score_case(candidates[arm].output / f"game-view-en-{role}-01")
+            for arm in ("baseline", "candidate")
+        ]
+        reasons = preparation_issues(*cases) + pair_controls(*cases)
+        for arm, case in zip(("baseline", "candidate"), cases, strict=True):
+            reasons.extend(
+                arm + ":" + why for why in (*pilot_reasons(case), *case.get("pair_reasons", []))
+            )
+            if role == "subagent" and not all(
+                case["actor_receipt"].get(k)
+                for k in ("child_final_observed", "child_business_observed")
+            ):
+                reasons.append(arm + ":child_turn_not_verified")
+        results[role] = {"supported": not reasons, "attempts": [{"attempt": 1, "reasons": reasons}]}
+        (output / "preflight.json").write_text(
+            json.dumps(results, indent=2) + "\n", encoding="utf-8"
+        )
+    return results
 
 
 def run_pilots(arms, output, roles, run_case, score_case):

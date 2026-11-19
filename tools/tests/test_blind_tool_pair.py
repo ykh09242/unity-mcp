@@ -89,3 +89,31 @@ def test_drift_before_second_prompt_and_missing_peer():
 def test_extra_competitor_blocks_fixed_cohort():
     pair, result = run(("baseline", "candidate"), competitors=["other"])
     assert not result and "different:declared_competitors" in pair.reasons
+
+
+def test_matching_child_grants_must_also_match_the_requested_profile():
+    from tools.experiments.blind_tool_preflight import pair_controls
+
+    def case(arm):
+        return {
+            "actor_conditions": {
+                **surface(arm),
+                "server_commit": arm,
+                "host_binary_digest": "binary",
+                "permissions": {
+                    "digest": "matching",
+                    "sandbox": "workspaceWrite",
+                    "approval": "on-request",
+                },
+            },
+            "model": "model",
+            "effort": "medium",
+            "editor_start_state": "same",
+            "pair_mode": "prepared",
+            "approval_policy": "never",
+        }
+
+    assert set(pair_controls(case("baseline"), case("candidate"))) == {
+        "unverified:baseline_actor_grant",
+        "unverified:candidate_actor_grant",
+    }
