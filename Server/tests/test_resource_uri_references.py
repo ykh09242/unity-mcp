@@ -67,6 +67,19 @@ def _offenders(
     groups = "|".join(re.escape(group) for group in TOOL_GROUPS)
     found = []
     for line in str(text).splitlines():
+        # Parameter types in generated tool tables list wire values literally.
+        # Keep checking the prose cells, even when they repeat the same token.
+        typed_row = (
+            re.match(r"^\|\s*`\w+`\s*\|\s*`(?P<annotation>[^`]+)`\s*\|", line)
+            if tool_document in tool_names
+            else None
+        )
+        enum_positions = set()
+        if typed_row:
+            for literal in re.finditer(r"\bLiteral\[([^\]]+)\]", typed_row["annotation"]):
+                base = typed_row.start("annotation") + literal.start(1)
+                for value in re.finditer(r"""(['"])(\w+)\1""", literal[1]):
+                    enum_positions.add((base + value.start(2), base + value.end(2)))
         for name, uri in uris_by_name.items():
             if uri in line:
                 continue
@@ -89,6 +102,8 @@ def _offenders(
                         for match in re.finditer(rf"`services\.tools\.{re.escape(name)}`", line)
                     ]
             for match in re.finditer(rf"\b{re.escape(name)}\b", line):
+                if match.span() in enum_positions:
+                    continue
                 if any(start <= match.start() and match.end() <= end for start, end in tool_spans):
                     continue
                 if name in tool_names and (
@@ -225,6 +240,18 @@ def test_same_name_registered_tool_mentions_do_not_require_resource_uri(text):
 )
 def test_same_name_tool_does_not_hide_bad_resource_references(text):
     assert _offenders(text, "test", {"get_tests": "mcpforunity://tests"}, tool_names={"get_tests"})
+
+
+def test_literal_wire_value_does_not_hide_bare_resource_in_the_description():
+    mapping = {
+        "shader_graph_structure": "mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}"
+    }
+    row = "| `required_values` | `list[Literal['shader_graph_structure']] \\| None` | — | "
+    options = {"tool_names": {"manage_tools"}, "tool_document": "manage_tools"}
+    assert not _offenders(row + "Select fields. |", "tool doc", mapping, **options)
+    assert _offenders(
+        row + "Read the shader_graph_structure resource. |", "tool doc", mapping, **options
+    )
 
 
 def test_only_registered_tool_page_metadata_and_links_are_exempt():
