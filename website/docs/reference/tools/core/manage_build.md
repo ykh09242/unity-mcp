@@ -28,12 +28,12 @@ Manage Unity player builds — trigger builds, switch platforms, configure setti
 | `options` | `str \| None` | — | JSON array of BuildOptions: clean_build, auto_run, deep_profiling, compress_lz4, strict_mode, detailed_report |
 | `subtarget` | `str \| None` | — | Build subtarget: player or server |
 | `scripting_backend` | `str \| None` | — | Scripting backend: mono or il2cpp (persistent change) |
-| `profile` | `str \| None` | — | Build Profile asset path (Unity 6+ only) |
+| `profile` | `str \| None` | — | Build Profile asset path (requires the Editor's Build Profile API) |
 | `property` | `str \| None` | — | Settings property: product_name, company_name, version, bundle_id, scripting_backend, defines, architecture |
 | `value` | `str \| None` | — | Value to set for the property (omit to read) |
 | `activate` | `str \| None` | — | Activate a build profile (true/false) |
 | `targets` | `str \| None` | — | JSON array of targets for batch build |
-| `profiles` | `str \| None` | — | JSON array of profile paths for batch build (Unity 6+) |
+| `profiles` | `str \| None` | — | JSON array of profile paths for batch build (requires the Editor's profile build API) |
 | `output_dir` | `str \| None` | — | Base output directory for batch builds |
 | `job_id` | `str \| None` | — | Job ID for status/cancel |
 | `expected_plan_sha256` | `str \| None` | — | build_from_plan only: 64-hex SHA256 from a fresh ordinary build plan |

@@ -1,7 +1,7 @@
 ---
 title: manage_ui
 sidebar_label: manage_ui
-description: "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components)."
+description: "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and supported PanelRenderer components)."
 ---
 
 # `manage_ui`
@@ -14,13 +14,13 @@ description: "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity
 
 ## Description
 
-Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components). Read actions: ping, read, diagnose, list. get_visual_tree can invoke project-defined getters and requires read, edit and run authority. Modifying actions: create, update, delete, attach_ui_document, detach_ui_document, create_panel_settings, update_panel_settings, modify_visual_element.
+Manages Unity UI Toolkit elements (UXML, USS, UIDocument and supported PanelRenderer components). Read actions: ping, read, diagnose, list. get_visual_tree can invoke project-defined getters and requires read, edit and run authority. Modifying actions: create, update, delete, attach_ui_document, detach_ui_document, create_panel_settings, update_panel_settings, modify_visual_element.
 diagnose observes bounded current-panel physical geometry/clipping/overflow/sibling-overlap candidates without text or layout updates. Unknown/partial results are not a clean-layout assertion; diagnostic paths are not mutation/snapshot selectors.
 Visual actions: render_ui (captures UI panel to a PNG screenshot for self-evaluation).
 Structural actions: link_stylesheet (adds a Style src reference to a UXML file).
 patch_source previews narrow existing source attribute/declaration edits; preview=false requires expected_source_hash and persists source separately from live UI.
 
-Inspect existing assets and the live visual tree before choosing source edits or runtime changes. Create, attach, detach or delete only when required by the requested change; preserve unrelated UI. For attach_ui_document, component_type=auto preserves existing UIDocument and prefers available PanelRenderer for new objects; ui_document selects UIDocument, while panel_renderer requires Unity 6.5+ support. modify_visual_element changes live text/classes/styles, not persisted source. Legacy element_name selects the first match; strict_name=true requires uniqueness. Writes include bounded data.verification from the resolved target; current layout can remain pending. Source writes only inspect live UI when verify_target explicitly selects a document before the write. element_path selects current child indices; element_id selects a snapshot identity. Explicit selectors do not fall back to names.
+Inspect existing assets and the live visual tree before choosing source edits or runtime changes. Create, attach, detach or delete only when required by the requested change; preserve unrelated UI. For attach_ui_document, component_type=auto preserves existing UIDocument and prefers available PanelRenderer for new objects; ui_document selects UIDocument. Explicit panel_renderer selection requires the Editor's native PanelRenderer API. modify_visual_element changes live text/classes/styles, not persisted source. Legacy element_name selects the first match; strict_name=true requires uniqueness. Writes include bounded data.verification from the resolved target; current layout can remain pending. Source writes only inspect live UI when verify_target explicitly selects a document before the write. element_path selects current child indices; element_id selects a snapshot identity. Explicit selectors do not fall back to names.
 For render_ui, Play Mode queues end-of-frame capture and returns pending=true. Resume with its capture_id; cancel with that ID and cancel_capture=true. ID-less calls start new requests; another live owner is rejected. Edit-mode readback is best-effort; warmup_updates=1..4 enables bounded deferred readback with capture_id. Inspect returned images and readiness; full-image alpha occupancy does not establish UI presence. Use namespace-qualified ui:Style elements for stylesheet links so UI Builder can read the UXML.
 
 ## Parameters
@@ -36,7 +36,7 @@ For render_ui, Play Mode queues end-of-frame capture and returns pending=true. R
 | `expected_source_hash` | `str \| None` | — | patch_source apply requires source_hash from preview. Detects changed source before write. UTF8 files <=1 MiB; preserves BOM, surrounding bytes and .meta. |
 | `target` | `str \| None` | — | Target GameObject name or path for attach_ui_document / get_visual_tree / render_ui. |
 | `verify_target` | `str \| None` | — | Optional exact live document target for create/update/link_stylesheet/patch_source writes. Resolved before saving; adds bounded current diagnostics without forcing layout or capture. Source-to-live application remains pending until normal UI updates. |
-| `component_type` | `Literal['auto', 'ui_document', 'panel_renderer'] \| None` | — | UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. Default auto preserves an existing UIDocument, otherwise resolves PanelRenderer; new attachments prefer PanelRenderer when available and fall back to UIDocument. panel_renderer requires Unity 6.5+ API support. |
+| `component_type` | `Literal['auto', 'ui_document', 'panel_renderer'] \| None` | — | UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. Default auto preserves an existing UIDocument, otherwise resolves PanelRenderer; new attachments prefer PanelRenderer when available and fall back to UIDocument. Explicit panel_renderer selection requires the Editor's native PanelRenderer API. |
 | `source_asset` | `str \| None` | — | Path to UXML VisualTreeAsset (e.g., 'Assets/UI/MainMenu.uxml'). |
 | `panel_settings` | `str \| None` | — | Path to PanelSettings asset. Auto-creates default if omitted. |
 | `sort_order` | `int \| None` | — | UI component sort order (default 0). |

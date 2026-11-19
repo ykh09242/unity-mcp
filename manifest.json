@@ -404,7 +404,7 @@
     },
     {
       "name": "manage_sprite_atlas",
-      "description": "Inspect, author and explicitly pack bounded SpriteAtlas V2 assets with identity and revision guards"
+      "description": "Inspect, author and preview-pack Sprite Atlas V1 and V2 assets with identity and revision guards"
     },
     {
       "name": "manage_terrain",
@@ -432,7 +432,7 @@
     },
     {
       "name": "manage_ui",
-      "description": "Manage UI Toolkit UXML, USS and UIDocument or optional Unity 6.5+ PanelRenderer components (group: ui)"
+      "description": "Manage UI Toolkit UXML, USS and UIDocument or compatible PanelRenderer components (group: ui)"
     },
     {
       "name": "manage_verification",

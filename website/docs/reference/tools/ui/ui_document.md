@@ -23,7 +23,7 @@ Attach UI documents and configure Panel Settings.
 | `action` | `Literal['attach_ui_document', 'detach_ui_document', 'create_panel_settings', 'update_panel_settings']` | yes | Feature action to perform. |
 | `path` | `str \| None` | — | Assets-relative path (e.g., 'Assets/UI/MainMenu.uxml' or 'Assets/UI/Styles.uss'). For render_ui: optional UXML path to render directly without a scene GameObject. |
 | `target` | `str \| None` | — | Target GameObject name or path for attach_ui_document / get_visual_tree / render_ui. |
-| `component_type` | `Literal['auto', 'ui_document', 'panel_renderer'] \| None` | — | UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. Default auto preserves an existing UIDocument, otherwise resolves PanelRenderer; new attachments prefer PanelRenderer when available and fall back to UIDocument. panel_renderer requires Unity 6.5+ API support. |
+| `component_type` | `Literal['auto', 'ui_document', 'panel_renderer'] \| None` | — | UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. Default auto preserves an existing UIDocument, otherwise resolves PanelRenderer; new attachments prefer PanelRenderer when available and fall back to UIDocument. Explicit panel_renderer selection requires the Editor's native PanelRenderer API. |
 | `source_asset` | `str \| None` | — | Path to UXML VisualTreeAsset (e.g., 'Assets/UI/MainMenu.uxml'). |
 | `panel_settings` | `str \| None` | — | Path to PanelSettings asset. Auto-creates default if omitted. |
 | `sort_order` | `int \| None` | — | UI component sort order (default 0). |

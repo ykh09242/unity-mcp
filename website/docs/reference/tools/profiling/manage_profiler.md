@@ -23,7 +23,7 @@ SESSION:
 - profiler_set_areas: Toggle ProfilerAreas on/off (areas dict)
 
 COUNTERS:
-- get_frame_timing: FrameTimingManager data (12 fields, synchronous)
+- get_frame_timing: Synchronous FrameTimingManager data with the optional fields available in this Editor
 - get_counters: Generic counter read by category + optional counter names (async, 1-frame wait)
 - get_object_memory: Memory size of a specific object by path
 
@@ -39,8 +39,8 @@ MEMORY SNAPSHOT (requires com.unity.memoryprofiler):
 
 MEMORY ANALYSIS (native bytes are distinct from managed/retained size):
 - memory_aggregate: Bounded hierarchy/shared runtime-resource sums with object deduplication
-- memory_snapshot_reader_status: Exact supported reader package/format capability
-- memory_analyze_snapshots: Actual typed native-object count/byte/identity deltas; requires Memory Profiler 1.1.12
+- memory_snapshot_reader_status: Installed Memory Profiler reader ABI and supported snapshot formats
+- memory_analyze_snapshots: Typed native-object count/byte/identity deltas. Check memory_snapshot_reader_status for installed reader compatibility.
 
 FRAME DEBUGGER:
 - frame_debugger_enable: Turn on Frame Debugger, report event count

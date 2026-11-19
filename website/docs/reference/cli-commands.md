@@ -890,7 +890,7 @@ Run batch builds across multiple platforms or profiles. Examples: unity-mcp buil
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | --targets / -t | text | optional | nargs=1 | — | — | Comma-separated targets: windows64,linux64,webgl |
-| --profiles / -p | text | optional | nargs=1 | — | — | Comma-separated profile paths (Unity 6+) |
+| --profiles / -p | text | optional | nargs=1 | — | — | Comma-separated Build Profile asset paths |
 | --output-dir / -o | text | optional | nargs=1 | — | — | Base output directory |
 | --development / -d | boolean | optional | nargs=1, flag | — | — | Development build for all |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
@@ -941,7 +941,7 @@ Read or switch the active build platform. Examples: unity-mcp build platform uni
 
 ## `unity-mcp build profiles`
 
-List, inspect, or activate build profiles (Unity 6+). Examples: unity-mcp build profiles unity-mcp build profiles "Assets/Settings/Build Profiles/iOS.asset" unity-mcp build profiles "Assets/Settings/Build Profiles/iOS.asset" --activate
+List, inspect, or activate Build Profiles supported by the connected Editor. Examples: unity-mcp build profiles unity-mcp build profiles "Assets/Settings/Build Profiles/iOS.asset" unity-mcp build profiles "Assets/Settings/Build Profiles/iOS.asset" --activate
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -960,7 +960,7 @@ Trigger a player build. Examples: unity-mcp build run --target windows64 --devel
 | --development / -d | boolean | optional | nargs=1, flag | — | — | Development build |
 | --backend | choice: mono, il2cpp | optional | nargs=1 | — | — | Scripting backend |
 | --subtarget | choice: player, server | optional | nargs=1 | — | — | Build subtarget |
-| --profile | text | optional | nargs=1 | — | — | Build Profile asset path (Unity 6+) |
+| --profile | text | optional | nargs=1 | — | — | Build Profile asset path, when the Editor supports building with a profile |
 | --clean | boolean | optional | nargs=1, flag | — | — | Clean build cache |
 | --auto-run | boolean | optional | nargs=1, flag | — | — | Auto-run after build |
 | --expected-plan | text | optional | nargs=1 | — | — | Require the 64-hex fingerprint from build plan; no fallback |

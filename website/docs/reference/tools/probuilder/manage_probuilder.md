@@ -1,7 +1,7 @@
 ---
 title: manage_probuilder
 sidebar_label: manage_probuilder
-description: "Manage ProBuilder meshes for in-editor 3D modeling."
+description: "Manage native ProBuilder meshes (3.x pb_Object or 4.x+ ProBuilderMesh)."
 ---
 
 # `manage_probuilder`
@@ -14,7 +14,7 @@ description: "Manage ProBuilder meshes for in-editor 3D modeling."
 
 ## Description
 
-Manage ProBuilder meshes for in-editor 3D modeling. Requires com.unity.probuilder package.
+Manage native ProBuilder meshes (3.x pb_Object or 4.x+ ProBuilderMesh). Requires com.unity.probuilder and compatible native APIs for the requested operation.
 
 Geometry edits include bounded post-edit health observations (8192 vertices, 512 faces, 16384 index entries per mesh); larger or unsupported data remains incomplete, with no automatic repair.
 SHAPE CREATION:

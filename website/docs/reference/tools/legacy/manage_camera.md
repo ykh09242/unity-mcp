@@ -43,7 +43,7 @@ CAMERA CONTROL:
 - list_cameras: List all cameras with status
 
 CAPTURE:
-- screenshot: Capture a screenshot. By default (no camera specified) uses ScreenCapture API, which captures all render layers including Screen Space - Overlay UI canvases. Specifying a camera uses direct camera rendering, which EXCLUDES Screen Space - Overlay canvases (use only when you need a specific viewpoint without UI). Supports include_image=true for inline base64 PNG, batch='surround' for 6-angle contact sheet, batch='orbit' for configurable grid, view_target/view_position for positioned capture, and capture_source='scene_view' to capture the active Unity Scene View viewport.
+- screenshot: Capture a screenshot. When no camera is specified, file-only requests use native Game View capture when available, and inline images use a composited Play mode frame when available. An automatic camera render reports camera_fallback and its reason. Specifying a camera renders that viewpoint directly. Camera renders omit Screen Space - Overlay canvases and UI Toolkit panels. Supports include_image=true for inline base64 PNG, batch='surround' for 6-angle contact sheet, batch='orbit' for configurable grid, view_target/view_position for positioned capture, and capture_source='scene_view' to capture the active Unity Scene View viewport.
 - screenshot_multiview: Shorthand for screenshot with batch='surround' and include_image=true.
 
 ## Parameters
@@ -56,7 +56,7 @@ CAPTURE:
 | `properties` | `dict[str, Any] \| str \| None` | — | Action-specific parameters (dict or JSON string). |
 | `screenshot_file_name` | `str \| None` | — | Screenshot file name (optional). Defaults to timestamp. |
 | `screenshot_super_size` | `int \| str \| None` | — | Screenshot supersize multiplier (integer 1 to 4). |
-| `camera` | `str \| None` | — | Camera to capture from (name, path, or instance ID). Omit to use ScreenCapture API (captures all layers including Screen Space Overlay UI). Specify only when you need a particular camera viewpoint; note that Screen Space - Overlay canvases will NOT appear in camera-rendered captures. |
+| `camera` | `str \| None` | — | Camera to capture from (name, path, or instance ID). Omit for default Game View capture, which can fall back to an existing camera. Camera renders omit Screen Space - Overlay canvases and UI Toolkit panels. |
 | `include_image` | `bool \| str \| None` | — | If true, return screenshot as inline base64 PNG. Default false. |
 | `max_resolution` | `int \| str \| None` | — | Max resolution (longest edge px) for inline image, 1 to 8192. Default 640. The Editor also enforces frame and aggregate pixel budgets. |
 | `capture_source` | `Literal['game_view', 'scene_view'] \| None` | — | Screenshot source. 'game_view' (default) captures the game/camera path; 'scene_view' captures the active Unity Scene View viewport. |

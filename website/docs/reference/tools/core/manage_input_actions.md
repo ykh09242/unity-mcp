@@ -1,7 +1,7 @@
 ---
 title: manage_input_actions
 sidebar_label: manage_input_actions
-description: "Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and exis…"
+description: "Author optional Input System .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns stored GUIDs and a raw source revision."
 ---
 
 # `manage_input_actions`
@@ -14,7 +14,7 @@ description: "Author optional Input System1.7+ .inputactions assets in idle Edit
 
 ## Description
 
-Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and existing parent. add_map/add_action/add_binding/set_binding/remove_binding require expected_revision; exact GUID selectors avoid name ambiguity. edit accepts 1..64 ordered commands, validates the final candidate and imports once. Use ref on creation commands and $ref selectors for subsequent commands. Start with create_asset for a new file; existing edits require expected_revision. Commands share the 8 KiB request limit. Simple bindings only; existing composite/control-scheme data and PlayerInput asset linkage are preserved. Edits save/import immediately; configured importer wrapper generation may compile scripts. Conditional file-backed Undo/Redo is limited to32 edits in the current Editor domain, refuses external drift and does not survive domain reload. Asset creation is not Undoable. Does not simulate input, pair devices, enable actions or install packages.
+Author optional Input System .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns stored GUIDs and a raw source revision. Legacy binding rows can lack IDs. create_asset requires an unoccupied Assets path and existing parent. add_map/add_action/add_binding/set_binding/remove_binding require expected_revision; exact GUID selectors avoid name ambiguity. edit accepts 1..64 ordered commands, validates the final candidate and imports once. Use ref on creation commands and $ref selectors for subsequent commands. Start with create_asset for a new file; existing edits require expected_revision. Commands share the 8 KiB request limit. Simple bindings only; existing composite/control-scheme data and PlayerInput asset linkage are preserved. Edits save/import immediately; configured importer wrapper generation may compile scripts. Conditional file-backed Undo/Redo is limited to32 edits in the current Editor domain, refuses external drift and does not survive domain reload. Asset creation is not Undoable. Does not simulate input, pair devices, enable actions or install packages.
 
 ## Parameters
 

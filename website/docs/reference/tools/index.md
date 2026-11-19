@@ -16,7 +16,7 @@ Every tool MCP for Unity exposes, generated directly from the Python `@mcp_for_u
 Animator control, AnimationClip creation & 2D sprite-sheet animation
 - **[`manage_animation`](./animation/manage_animation.md)** — Manage Unity animation: Animator control and AnimationClip creation.
 - **[`manage_sprite`](./animation/manage_sprite.md)** — Slice 2D sprite sheets and build AnimationClips and an AnimatorController from the frames.
-- **[`manage_sprite_atlas`](./animation/manage_sprite_atlas.md)** — Inspect and explicitly author SpriteAtlas V2 Assets/*.spriteatlasv2 files.
+- **[`manage_sprite_atlas`](./animation/manage_sprite_atlas.md)** — Inspect and explicitly author Sprite Atlas V1 (.spriteatlas) and V2 (.spriteatlasv2) assets.
 - **[`manage_timeline`](./animation/manage_timeline.md)** — Inspect/create optional Timeline Assets/*.playable assets and explicitly add built-in animation/audio tracks and clips.
 
 ## `asset_gen` &nbsp; (6 tools)
@@ -65,7 +65,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_build`](./core/manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
 - **[`manage_components`](./core/manage_components.md)** — Add, remove, or set properties on components attached to GameObjects.
 - **[`manage_editor`](./core/manage_editor.md)** — Controls Unity editor state and settings.
-- **[`manage_input_actions`](./core/manage_input_actions.md)** — Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and exis…
+- **[`manage_input_actions`](./core/manage_input_actions.md)** — Author optional Input System .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns stored GUIDs and a raw source revision.
 - **[`manage_localization`](./core/manage_localization.md)** — Inspect optional Unity Localization locale/table identities, shared keys, missing translations, static Smart String selectors and asset GUID references.
 - **[`manage_material`](./core/manage_material.md)** — Manages Unity materials (properties, colors, shaders, render state).
 - **[`manage_navigation`](./core/manage_navigation.md)** — Read and explicitly author navigation surfaces, agents, obstacles and links.
@@ -116,7 +116,7 @@ Compatibility: full combined schemas for existing clients; prefer focused tools
 - **[`manage_physics`](./legacy/manage_physics.md)** — Manage physics settings, collision matrix, materials, joints, queries, and validation.
 - **[`manage_prefabs`](./legacy/manage_prefabs.md)** — Manages Unity Prefab assets. get_hierarchy returns bounded sibling-index depth-first pages: page_size defaults to 50 (1-500), max_depth defaults to 64 (0-128, root depth 0), and cursor continues the identical revision/options.
 - **[`manage_scene`](./legacy/manage_scene.md)** — Performs CRUD operations on Unity scenes.
-- **[`manage_ui`](./legacy/manage_ui.md)** — Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components).
+- **[`manage_ui`](./legacy/manage_ui.md)** — Manages Unity UI Toolkit elements (UXML, USS, UIDocument and supported PanelRenderer components).
 
 ## `physics` &nbsp; (8 tools)
 2D and 3D physics settings, queries and simulation
@@ -139,7 +139,7 @@ Prefab creation, contents, stages and overrides
 
 ## `probuilder` &nbsp; (1 tool)
 ProBuilder 3D modeling – requires com.unity.probuilder package
-- **[`manage_probuilder`](./probuilder/manage_probuilder.md)** — Manage ProBuilder meshes for in-editor 3D modeling.
+- **[`manage_probuilder`](./probuilder/manage_probuilder.md)** — Manage native ProBuilder meshes (3.x pb_Object or 4.x+ ProBuilderMesh).
 
 ## `profiling` &nbsp; (2 tools)
 Unity Profiler session control, counters, memory snapshots & Frame Debugger

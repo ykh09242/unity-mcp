@@ -29,7 +29,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_build`](./manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
 - **[`manage_components`](./manage_components.md)** — Add, remove, or set properties on components attached to GameObjects.
 - **[`manage_editor`](./manage_editor.md)** — Controls Unity editor state and settings.
-- **[`manage_input_actions`](./manage_input_actions.md)** — Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and exis…
+- **[`manage_input_actions`](./manage_input_actions.md)** — Author optional Input System .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns stored GUIDs and a raw source revision.
 - **[`manage_localization`](./manage_localization.md)** — Inspect optional Unity Localization locale/table identities, shared keys, missing translations, static Smart String selectors and asset GUID references.
 - **[`manage_material`](./manage_material.md)** — Manages Unity materials (properties, colors, shaders, render state).
 - **[`manage_navigation`](./manage_navigation.md)** — Read and explicitly author navigation surfaces, agents, obstacles and links.

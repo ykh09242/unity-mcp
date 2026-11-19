@@ -22,7 +22,7 @@ Inspect the visual tree or diagnose UI Toolkit layout and text. Inspection may l
 |------|------|----------|-------------|
 | `action` | `Literal['ping', 'get_visual_tree', 'diagnose']` | yes | Feature action to perform. |
 | `target` | `str \| None` | — | Target GameObject name or path for attach_ui_document / get_visual_tree / render_ui. |
-| `component_type` | `Literal['auto', 'ui_document', 'panel_renderer'] \| None` | — | UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. Default auto preserves an existing UIDocument, otherwise resolves PanelRenderer; new attachments prefer PanelRenderer when available and fall back to UIDocument. panel_renderer requires Unity 6.5+ API support. |
+| `component_type` | `Literal['auto', 'ui_document', 'panel_renderer'] \| None` | — | UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. Default auto preserves an existing UIDocument, otherwise resolves PanelRenderer; new attachments prefer PanelRenderer when available and fall back to UIDocument. Explicit panel_renderer selection requires the Editor's native PanelRenderer API. |
 | `max_depth` | `int \| None` | — | get_visual_tree / diagnose inclusive depth: root is 0; default 10, maximum 24. |
 | `max_nodes` | `int \| None` | — | get_visual_tree / diagnose emitted node budget, including root (default 200). |
 | `max_evaluations` | `int \| None` | — | get_visual_tree operation budget: node admissions, child fetches and class probes; diagnose charges ancestors, admissions, child fetches, fixed style probes and pairs (default 5000). Not a time or scene-lookup bound. |
