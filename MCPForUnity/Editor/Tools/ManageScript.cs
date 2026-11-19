@@ -3279,10 +3279,7 @@ namespace MCPForUnity.Editor.Tools
 
                 if (!string.IsNullOrEmpty(ns))
                 {
-                    classes = classes.Where(c =>
-                        (c.FirstAncestorOrSelf<Microsoft.CodeAnalysis.CSharp.Syntax.NamespaceDeclarationSyntax>()?.Name?.ToString() ?? "") == ns
-                        || (c.FirstAncestorOrSelf<Microsoft.CodeAnalysis.CSharp.Syntax.FileScopedNamespaceDeclarationSyntax>()?.Name?.ToString() ?? "") == ns
-                    );
+                    classes = classes.Where(c => GetDeclaringNamespace(c) == ns);
                 }
 
                 var list = classes.ToList();
@@ -3313,6 +3310,19 @@ namespace MCPForUnity.Editor.Tools
 #endif
             return TryComputeClassSpanBalanced(source, className, ns, out start, out length, out why);
         }
+
+#if USE_ROSLYN
+        private static string GetDeclaringNamespace(SyntaxNode declaration)
+        {
+            // Block and file-scoped declarations both own a namespace token and a name node.
+            var names = declaration
+                .Ancestors()
+                .Where(node => node.ChildTokens().Any(token => token.IsKind(SyntaxKind.NamespaceKeyword)))
+                .SelectMany(node => node.ChildNodes().OfType<Microsoft.CodeAnalysis.CSharp.Syntax.NameSyntax>())
+                .Reverse();
+            return string.Join(".", names);
+        }
+#endif
 
         private static bool TryComputeClassSpanBalanced(string source, string className, string ns, out int start, out int length, out string why)
         {
