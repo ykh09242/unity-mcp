@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.IO;
 using System.Linq;
@@ -29,7 +31,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
         internal static void RequireUnlinked(string path)
         {
             for (
-                var item = new FileInfo(Path.GetFullPath(path)) as FileSystemInfo;
+                FileSystemInfo? item = new FileInfo(Path.GetFullPath(path));
                 item != null;
                 item = item is FileInfo file ? file.Directory : ((DirectoryInfo)item).Parent
             )
@@ -61,7 +63,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(entries.ToString()))).Replace("-", "").ToLowerInvariant();
         }
 
-        internal static JObject Inspect(string root, out string reason, string expectedSource = null)
+        internal static JObject? Inspect(string root, out string? reason, string? expectedSource = null)
         {
             reason = "analyzer_unavailable";
             try
@@ -74,14 +76,14 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 if (new FileInfo(path).Length > 128 * 1024)
                     throw new IOException("installation_manifest_limit");
                 var manifest = JObject.Parse(File.ReadAllText(path));
-                string id = (string)manifest["directory"];
-                if ((string)manifest["schema"] != Schema || id == null || id.Length != 32 || !id.All(Uri.IsHexDigit))
+                string? id = (string?)manifest["directory"];
+                if ((string?)manifest["schema"] != Schema || id == null || id.Length != 32 || !id.All(Uri.IsHexDigit))
                     throw new IOException("unowned_host_manifest");
                 string host = Path.Combine(root, id, "publish", "ScriptDiagnosticsHost.dll");
                 RequireUnlinked(host);
                 if (!File.Exists(host))
                     throw new IOException("host_files_missing");
-                if (expectedSource != null && (string)manifest["source_signature"] != expectedSource)
+                if (expectedSource != null && (string?)manifest["source_signature"] != expectedSource)
                     throw new IOException("analysis_host_update_required");
                 reason = null;
                 return manifest;
@@ -93,10 +95,12 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             }
         }
 
-        internal static string ResolveVerifiedHost(string root, string expectedSource = null)
+        internal static string ResolveVerifiedHost(string root, string? expectedSource = null)
         {
-            JObject manifest = Inspect(root, out string reason, expectedSource) ?? throw new IOException(reason);
-            string publish = Path.GetFullPath(Path.Combine(root, (string)manifest["directory"], "publish"));
+            JObject manifest = Inspect(root, out string? reason, expectedSource) ?? throw new IOException(reason);
+            // Inspect verifies the directory before returning the manifest.
+            string directory = ((string?)manifest["directory"])!;
+            string publish = Path.GetFullPath(Path.Combine(root, directory, "publish"));
             var hashes = manifest["hashes"] as JObject ?? throw new IOException("host_integrity_unavailable");
             if (hashes.Count == 0 || hashes.Count > 512)
                 throw new IOException("host_integrity_limit");
@@ -108,7 +112,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                     throw new IOException("invalid_host_manifest_path");
                 RequireUnlinked(path);
                 bytes += new FileInfo(IoPath(path)).Length;
-                if (bytes > 128L * 1024 * 1024 || Hash(path) != (string)entry.Value)
+                if (bytes > 128L * 1024 * 1024 || Hash(path) != (string?)entry.Value)
                     throw new IOException("host_integrity_changed");
             }
             var actual = Directory
@@ -126,7 +130,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             RequireUnlinked(root);
             string sourceSignature = SourceSignature(source);
             string pointer = Path.Combine(root, "current.json");
-            string expected = File.Exists(pointer) ? Hash(pointer) : null;
+            string? expected = File.Exists(pointer) ? Hash(pointer) : null;
             if (expected != null && Inspect(root, out _) == null)
                 throw new IOException("unowned_host_manifest");
             string id = Guid.NewGuid().ToString("N");

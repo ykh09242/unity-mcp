@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -15,8 +17,8 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
         private readonly SemaphoreSlim _slot = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
         private readonly object _gate = new object();
-        private Process _active;
-        private string _activeJobId;
+        private Process? _active;
+        private string? _activeJobId;
         private int _occupied;
         internal int Occupied => Volatile.Read(ref _occupied);
         internal int ActiveProcessId
@@ -28,7 +30,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             }
         }
 
-        internal bool HasActiveChild(string jobId)
+        internal bool HasActiveChild(string? jobId)
         {
             lock (_gate)
                 return jobId != null && _active != null && _activeJobId == jobId;
@@ -38,11 +40,11 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             string executable,
             string[] arguments,
             string directory,
-            Stream input,
+            Stream? input,
             bool framed,
             CancellationToken cancellation,
-            Func<Task> beforeStart = null,
-            string jobId = null
+            Func<Task>? beforeStart = null,
+            string? jobId = null
         )
         {
             if (Interlocked.Increment(ref _occupied) > 3)
@@ -53,7 +55,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             bool acquired = false,
                 started = false,
                 reaped = true;
-            Process process = null;
+            Process? process = null;
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, _shutdown.Token);
             try
             {
@@ -112,7 +114,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 var pipeFailure = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
                 foreach (var task in new Task[] { output, errors, write })
                     _ = task.ContinueWith(
-                        failed => pipeFailure.TrySetResult(failed.Exception.GetBaseException()),
+                        failed => pipeFailure.TrySetResult(failed.Exception!.GetBaseException()),
                         CancellationToken.None,
                         TaskContinuationOptions.OnlyOnFaulted,
                         TaskScheduler.Default
@@ -122,7 +124,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 _shutdown.Token.ThrowIfCancellationRequested();
                 if (pipeFailure.Task.IsCompleted || io.IsFaulted)
                 {
-                    var failure = pipeFailure.Task.IsCompleted ? pipeFailure.Task.Result : io.Exception.GetBaseException();
+                    var failure = pipeFailure.Task.IsCompleted ? pipeFailure.Task.Result : io.Exception!.GetBaseException();
                     TerminateAndReap(process);
                     await Task.WhenAny(errors, Task.Delay(100)).ConfigureAwait(false);
                     string detail = errors.Status == TaskStatus.RanToCompletion ? Encoding.UTF8.GetString(errors.Result) : "";
@@ -149,7 +151,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             {
                 linked.Cancel();
                 if (started)
-                    reaped = TerminateAndReap(process);
+                    reaped = TerminateAndReap(process!);
                 if (reaped)
                 {
                     lock (_gate)
@@ -238,7 +240,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             return result.Append('\\', slashes * 2).Append('"').ToString();
         }
 
-        private static async Task<byte[]> WriteAsync(Stream output, Stream input, CancellationToken cancellation)
+        private static async Task<byte[]> WriteAsync(Stream output, Stream? input, CancellationToken cancellation)
         {
             if (input != null)
                 await input.CopyToAsync(output, 65536, cancellation).ConfigureAwait(false);
