@@ -5,6 +5,7 @@ from typing import get_args
 import click
 
 from services.registry.action_catalog import ObservationSource, ObservationValue
+from services.registry.task_search import RouteSurfaces
 
 from cli.commands.custom_tool_scaffold import scaffold_command
 
@@ -83,6 +84,13 @@ def _validate_query(_ctx, _param, value):
     type=click.Choice(get_args(ObservationValue)),
     help="Require a declared result field. Repeat to require every field.",
 )
+@click.option(
+    "--route-surfaces",
+    type=click.Choice(get_args(RouteSurfaces)),
+    default="both",
+    show_default=True,
+    help="Select which invocation surfaces can appear in grouped routes.",
+)
 def search(
     query: str | None,
     limit: int,
@@ -90,6 +98,7 @@ def search(
     intent: str | None,
     observation_source: str | None,
     required_value: tuple[str, ...],
+    route_surfaces: RouteSurfaces,
 ) -> None:
     """Search the offline local catalog by task purpose, without a Unity connection.
 
@@ -111,6 +120,7 @@ def search(
             intent=intent,
             observation_source=observation_source,
             required_values=list(required_value) or None,
+            route_surfaces=route_surfaces,
         )
     except ValueError as error:
         raise click.UsageError(str(error)) from error

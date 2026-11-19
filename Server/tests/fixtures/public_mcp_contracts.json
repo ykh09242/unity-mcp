@@ -21428,6 +21428,22 @@
                 ],
                 "default": null
               },
+              "route_surfaces": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "both",
+                      "tools",
+                      "resources"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "tool": {
                 "anyOf": [
                   {
@@ -48030,6 +48046,22 @@
                     "maxItems": 32,
                     "minItems": 1,
                     "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "route_surfaces": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "both",
+                      "tools",
+                      "resources"
+                    ],
+                    "type": "string"
                   },
                   {
                     "type": "null"

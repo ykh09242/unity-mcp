@@ -27,7 +27,7 @@ from services.registry import (
     get_registered_tools,
 )
 from services.registry.action_catalog import ActionIntent, CatalogResource, ObservationSource
-from services.registry.task_search import RequiredValues
+from services.registry.task_search import RequiredValues, RouteSurfaces
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -121,6 +121,11 @@ async def manage_tools(
             description="For search, select every result field the request needs. Game View pixels use render_size.width and render_size.height; saved graph totals use nodeCount and edgeCount. A route must declare all selected values. No query or translation is needed."
         ),
     ] = None,
+    route_surfaces: Annotated[
+        RouteSurfaces | None,
+        "For search, choose both (default), tools, or resources for route_groups. Use tools for a "
+        "tools-only client. Each group offers a representative and available alternatives.",
+    ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
@@ -133,6 +138,8 @@ async def manage_tools(
             "success": False,
             "error": "observation_source and required_values are supported only for search.",
         }
+    if route_surfaces is not None and action != "search":
+        return {"success": False, "error": "route_surfaces is supported only for search."}
     if catalog_query is not None and action != "search":
         return {"success": False, "error": "catalog_query is supported only for search."}
     if offset and action != "catalog":
@@ -177,6 +184,7 @@ async def manage_tools(
                 intent=intent,
                 observation_source=observation_source,
                 required_values=required_values,
+                route_surfaces=route_surfaces or "both",
             )
         except ValidationError:
             return {

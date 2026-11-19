@@ -106,7 +106,7 @@ Use `editor_live` for live Editor state, `asset_file` for saved contents and
 Game View dimensions maps to this first call:
 
 ```json
-{"action":"search","observation_source":"editor_live","required_values":["render_size.width","render_size.height"]}
+{"action":"search","observation_source":"editor_live","required_values":["render_size.width","render_size.height"],"route_surfaces":"tools"}
 ```
 
 Every returned route declares the selected origin and all requested fields.
@@ -124,11 +124,39 @@ representations in one call yields no match. Inspect the returned values after a
 Offline CLI equivalent:
 
 ```sh
-unity-mcp tool search --observation-source editor_live --required-value render_size.width --required-value render_size.height
+unity-mcp tool search --observation-source editor_live --required-value render_size.width --required-value render_size.height --route-surfaces tools
 ```
 
 The calling agent chooses the fields. CLI and SDK tests exercise that boundary
 with the same field selections across request languages.
+
+## Distinct route choices
+
+Read `route_groups` in structured and lexical search. Each group contains a
+`representative` and any `alternatives` usable through the requested surfaces.
+Choose `route_surfaces="tools"` for clients that can only call tools,
+`"resources"` for fixed URIs and resource templates, or `"both"` for both
+surfaces. The default is `"both"`. The strongest matching route ranks the
+group. Within the group, prefer the advertised dedicated read-only tool,
+then the bound operation on its parent tool, then the resource.
+
+Search groups the declared equivalent Game View and saved Shader Graph reads
+before applying `limit`. `total_route_groups` and `route_groups_truncated`
+describe the bounded group page. A live search omits unadvertised tools from
+groups and omits an equivalent resource when its registered parent tool is
+known to be unavailable. Searches use catalog metadata and do not test or
+change the selected Editor. All routes retain their normal admission checks.
+
+Use the binding on the chosen route. For Shader Graph, the tool takes a
+full `Assets/*.shadergraph` path as `path`. The resource template uses the
+same path encoded as one URI segment in `encoded_path`. Both take
+`page_size` and `page_number`, and both return whole-graph counts alongside
+paged collections. The mixed tool also takes the bound `operation` as its
+`action` argument. Game View size needs an existing Game View. Each
+observation is scoped to the selected Editor.
+
+The legacy `routes`, `results`, counts and ranking are independent of the
+group surface selector. Existing clients can continue consuming those fields.
 
 ## Lexical compatibility
 

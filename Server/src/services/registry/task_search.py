@@ -2,7 +2,8 @@
 
 import unicodedata
 from collections import Counter
-from typing import Annotated, Literal, NotRequired, TypedDict
+from dataclasses import dataclass
+from typing import Annotated, Final, Literal, NotRequired, TypedDict
 
 from pydantic import (
     BaseModel,
@@ -19,6 +20,8 @@ from services.registry.action_catalog import (
     ActionIntent,
     CatalogEntry as SearchEntry,
     CatalogResource,
+    GAME_VIEW_OBSERVATION,
+    GRAPH_FILE_OBSERVATION,
     Observation,
     ObservationSource,
     ObservationValue,
@@ -33,9 +36,11 @@ from services.registry.action_catalog import (
     tool_capability,
     tool_description,
 )
+from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
+RouteSurfaces = Literal["both", "tools", "resources"]
 
 
 class SearchRequest(BaseModel):
@@ -47,6 +52,7 @@ class SearchRequest(BaseModel):
 
     observation_source: ObservationSource | None = None
     required_values: RequiredValues | None = None
+    route_surfaces: RouteSurfaces = "both"
 
     @model_validator(mode="after")
     def has_search_input(self):
@@ -93,6 +99,9 @@ class SearchResponse(TypedDict):
     hint: str
     results: list[SearchResult]
     routes: list["SearchRoute"]
+    route_groups: list["SearchRouteGroup"]
+    total_route_groups: int
+    route_groups_truncated: bool
     navigation: dict
     total_matches: int
     truncated: bool
@@ -116,6 +125,115 @@ class SearchRoute(TypedDict):
     intent: NotRequired[ActionIntent | None]
     matched_terms: NotRequired[list[str]]
     distinctive_terms: NotRequired[list[str]]
+
+
+class SearchRouteGroup(TypedDict):
+    representative: SearchRoute
+    alternatives: list[SearchRoute]
+
+
+RouteKey = tuple[str, str, str]
+RankedRoute = tuple[int, str, str, SearchRoute]
+
+
+@dataclass(frozen=True, slots=True)
+class EquivalentRead:
+    tool: str
+    resource: str
+    observation: Observation
+    path: str | None = None
+    template_path: str | None = None
+    pagination: tuple[str, ...] = ()
+
+    @property
+    def parent(self) -> tuple[str, str]:
+        return FIXED_OBSERVATION_ACTIONS[self.tool]
+
+    def bindings(self) -> tuple[RouteKey, ...]:
+        parent, action = self.parent
+        return (
+            ("tool", self.tool, ""),
+            ("tool", parent, action),
+            ("resource_template" if self.template_path else "resource", self.resource, ""),
+        )
+
+
+# Each resource delegates to the dedicated tool, which binds the same native
+# action as its mixed tool. Name similarity and matching result fields are
+# insufficient to make a new equivalent route.
+_EQUIVALENT_READS: Final = (
+    EquivalentRead(
+        "get_game_view_size", "mcpforunity://editor/game-view-size", GAME_VIEW_OBSERVATION
+    ),
+    EquivalentRead(
+        "inspect_shader_graph",
+        "mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}",
+        GRAPH_FILE_OBSERVATION,
+        path="path",
+        template_path="encoded_path",
+        pagination=("page_size", "page_number"),
+    ),
+)
+_READ_BY_ROUTE: Final = {key: read for read in _EQUIVALENT_READS for key in read.bindings()}
+_REVIEWED_ACTIONS: Final = {
+    name: action or None for kind, name, action in _READ_BY_ROUTE if kind == "tool"
+}
+
+
+def _route_key(route: SearchRoute) -> RouteKey:
+    return (
+        route["kind"],
+        route.get("tool") or route.get("uri") or route["uri_template"],
+        route.get("operation", ""),
+    )
+
+
+def _equivalent_binding(route: SearchRoute, read: EquivalentRead) -> SearchRoute | None:
+    if route.get("observation") != read.observation or route.get("intent") != "observe":
+        return None
+    path = read.path if route["kind"] == "tool" else read.template_path
+    required = [path] if path else []
+    optional = list(read.pagination)
+    if route["kind"] == "resource_template" and (
+        route.get("required_parameters") != required or route.get("optional_parameters") != optional
+    ):
+        return None
+    return {**route, "required_parameters": required, "optional_parameters": optional}
+
+
+def _group_routes(
+    surfaces: RouteSurfaces,
+    ranked: list[RankedRoute],
+    available: dict[RouteKey, SearchRoute],
+    unavailable_parents: set[str],
+) -> list[SearchRouteGroup]:
+    """Order a group by its strongest visible match, then choose a usable binding."""
+    grouped: dict[RouteKey | str, SearchRouteGroup] = {}
+    for _, _, _, route in ranked:
+        if route["advertised"] is False:
+            continue
+        key = _route_key(route)
+        read = _READ_BY_ROUTE.get(key)
+        if read and read.parent[0] in unavailable_parents:
+            continue
+        if read and key in available:
+            group_key = read.tool
+            if group_key in grouped:
+                continue
+            bindings = [available[key] for key in read.bindings() if key in available]
+        else:
+            group_key = key
+            bindings = [route.copy()]
+        bindings = [
+            binding
+            for binding in bindings
+            if surfaces == "both" or (binding["kind"] == "tool") == (surfaces == "tools")
+        ]
+        if bindings:
+            grouped.setdefault(
+                group_key, {"representative": bindings[0], "alternatives": bindings[1:]}
+            )
+    return list(grouped.values())
 
 
 def _normalized(value: str) -> str:
@@ -213,8 +331,13 @@ def search_catalog(
 ) -> SearchResponse:
     """Rank actions and readable resources while retaining the tool-level result contract."""
     matches: list[tuple[int, str, SearchResult]] = []
-    routes: list[tuple[int, str, str, SearchRoute]] = []
+    routes: list[RankedRoute] = []
+    additional_routes: list[RankedRoute] = []
+    available_equivalents: dict[RouteKey, SearchRoute] = {}
     structured = request.observation_source is not None or request.required_values is not None
+    unavailable_parents = (
+        {entry["name"] for entry in entries} - visible_names if visible_names is not None else set()
+    )
     if structured and visible_names is not None:
         entries = [entry for entry in entries if entry["name"] in visible_names]
     matched_query = None if structured else request.catalog_query or request.query
@@ -224,6 +347,15 @@ def search_catalog(
     for entry in entries:
         name = entry["name"]
         result = tool_capability(entry, visible_names=visible_names)
+        if name in _REVIEWED_ACTIONS and result["advertised"] is not False:
+            action = _REVIEWED_ACTIONS[name]
+            if action in (result["actions"] or [None]):
+                key: RouteKey = ("tool", name, action or "")
+                read = _READ_BY_ROUTE[key]
+                route = _tool_route(result, action, action_guidance(entry, action))
+                binding = _equivalent_binding(route, read)
+                if binding and read.parent[0] not in unavailable_parents:
+                    available_equivalents[key] = binding
         if structured:
             selected_actions = []
             for action in result["actions"] or [None]:
@@ -287,8 +419,9 @@ def search_catalog(
             suggested_actions = [
                 item for item in action_matches if action_intent(item[2], result) == request.intent
             ]
-        for weight, action, guidance in suggested_actions[:3]:
-            routes.append((-(weight + score), name, action, _tool_route(result, action, guidance)))
+        for index, (weight, action, guidance) in enumerate(suggested_actions):
+            ranked = routes if index < 3 else additional_routes
+            ranked.append((-(weight + score), name, action, _tool_route(result, action, guidance)))
         if not action_matches:
             routes.append(
                 (-score, name, "", _tool_route(result, None, action_guidance(entry, None)))
@@ -329,6 +462,11 @@ def search_catalog(
             route["uri"] = identifier
             evidence = _term_evidence(query_words, (resource["name"], 8), (purpose, 6))
         route["name"] = resource["name"]
+        key = _route_key(route)
+        if read := _READ_BY_ROUTE.get(key):
+            binding = _equivalent_binding(route, read)
+            if binding and read.parent[0] not in unavailable_parents:
+                available_equivalents[key] = binding
         if structured:
             if _observation_matches(request, route.get("observation")):
                 routes.append((0, identifier, "", route))
@@ -344,6 +482,12 @@ def search_catalog(
         routes = [item for item in routes if item[3].get("intent") == request.intent]
     routes.sort(key=lambda item: item[:3])
     selected_routes = [item[3] for item in routes[: request.limit]]
+    groups = _group_routes(
+        request.route_surfaces,
+        sorted([*routes, *additional_routes], key=lambda item: item[:3]),
+        available_equivalents,
+        unavailable_parents,
+    )
     # Words shared by more than a quarter of this inventory cannot independently
     # corroborate a route. This derives common vocabulary from the catalog itself.
     documents = len(entries) + len(available_resources) + len(available_templates)
@@ -402,6 +546,9 @@ def search_catalog(
         "navigation": navigation,
         "results": [item[2] for item in matches[: request.limit]],
         "routes": selected_routes,
+        "route_groups": groups[: request.limit],
+        "total_route_groups": len(groups),
+        "route_groups_truncated": len(groups) > request.limit,
         "total_matches": len(matches),
         "truncated": (len(routes) if structured else len(matches)) > request.limit,
         "note": (

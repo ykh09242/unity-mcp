@@ -8,7 +8,7 @@ from cli.utils.followup import followup_command
 
 if TYPE_CHECKING:
     from cli.utils.config import CLIConfig
-    from services.registry.task_search import SearchResponse
+    from services.registry.task_search import SearchResponse, SearchRoute
 
 
 def _summary(value: str, limit: int = 240) -> str:
@@ -16,23 +16,30 @@ def _summary(value: str, limit: int = 240) -> str:
     return compact if len(compact) <= limit else compact[:limit] + "..."
 
 
+def _route_target(route: SearchRoute) -> str:
+    return (
+        route.get("uri")
+        or route.get("uri_template")
+        or ".".join(value for value in (route.get("tool"), route.get("operation")) if value)
+    )
+
+
 def format_task_search(result: SearchResponse, config: CLIConfig) -> str:
     """Show useful suggestions without implying runtime availability or permission."""
     entries = result["results"]
-    lines = [f"Tools: {len(entries)} shown of {result['total_matches']} matches"]
-    if result["routes"] and result["recommended_action"] == "browse_catalog":
+    groups = result["route_groups"]
+    lines = [f"Route groups: {len(groups)} shown of {result['total_route_groups']} matches"]
+    if groups and result["recommended_action"] == "browse_catalog":
         lines.append("Weak lexical evidence. Browse by purpose before choosing an action.")
-    for route in result["routes"]:
-        target = (
-            route.get("uri")
-            or route.get("uri_template")
-            or ".".join(value for value in (route.get("tool"), route.get("operation")) if value)
-        )
-        lines.append(f"  {route['kind']} {target} — {_summary(route['purpose'])}")
+    for group in groups:
+        route = group["representative"]
+        lines.append(f"  {route['kind']} {_route_target(route)} — {_summary(route['purpose'])}")
         if route.get("evidence_limit"):
             lines.append("    " + _summary(route["evidence_limit"]))
-    if not result["routes"]:
-        lines.append("No matching tools. Browse the complete catalog to select by purpose.")
+        for alternative in group["alternatives"]:
+            lines.append(f"    Alternative {alternative['kind']} {_route_target(alternative)}")
+    if not groups:
+        lines.append("No matching tools or resources. Browse the catalog to select by purpose.")
     for group in result["navigation"]["groups"]:
         lines.append(f"  {group['group']}: {group['purpose']}")
     if result["navigation"]["resources"]["total"]:
@@ -77,7 +84,7 @@ def format_task_search(result: SearchResponse, config: CLIConfig) -> str:
             lines.append("  More skill links omitted; use --format json for all details.")
         lines.append("  Readiness: unobserved; inspect the selected Editor before execution.")
         lines.append("  Inspect: " + followup_command(config, ["tool", "describe", entry["name"]]))
-    if result["truncated"]:
+    if result["route_groups_truncated"] or result["truncated"]:
         lines.append("\nMore matches exist; narrow the query or increase --limit (maximum 20).")
     lines.append("\n" + result["note"])
     return "\n".join(lines)

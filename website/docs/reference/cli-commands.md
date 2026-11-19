@@ -4380,6 +4380,7 @@ Search the offline local catalog by task purpose, without a Unity connection. Ad
 | --intent | choice: observe, interact, edit | optional | nargs=1 | — | — | Filter routes by the requested outcome. |
 | --observation-source | choice: editor_live, asset_file, imported_asset | optional | nargs=1 | — | — | Select the origin of the requested evidence. A text query is optional. |
 | --required-value | choice: render_size.width, render_size.height, current_size, view_instance_id, presets, rendered_image, pointer_hit_order, nodeCount, edgeCount, nodes, edges, properties, keywords, unsaved_graph_structure, property_values, shader_source, contents, encodedContents, nextOffset, shader_graph_structure, unsaved_source, compilation, passes, subshader_count | optional | nargs=1, repeatable | — | — | Require a declared result field. Repeat to require every field. |
+| --route-surfaces | choice: both, tools, resources | optional | nargs=1 | "both" | — | Select which invocation surfaces can appear in grouped routes. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp ui`
