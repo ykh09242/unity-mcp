@@ -54,6 +54,15 @@ def test_fact_correct_and_claimed_source_or_channel_wrong():
     result = score_claims("graph-saved", answer, [], file)
     assert result["fact_accuracy"]["matched"] == 4
     assert result["provenance_accuracy"]["matched"] == 2
+    assert result["source_accuracy"]["matched"] == result["channel_accuracy"]["matched"] == 3
+    assert (result["claims"]["nodes"]["source"], result["claims"]["nodes"]["channel"]) == (
+        "match",
+        "mismatch",
+    )
+    assert (result["claims"]["edges"]["source"], result["claims"]["edges"]["channel"]) == (
+        "mismatch",
+        "match",
+    )
     assert result["status"] == "incorrect"
 
 

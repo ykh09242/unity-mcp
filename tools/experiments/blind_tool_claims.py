@@ -39,25 +39,43 @@ def _check(field, claim, evidence, origin):
         or claim["source"] not in SOURCES
         or claim["channel"] not in (*CHANNELS, None)
     ):
-        return {"format_valid": False, "fact": "unscored", "provenance": "unscored"}
+        return {
+            "format_valid": False,
+            **dict.fromkeys(("fact", "source", "channel", "provenance"), "unscored"),
+        }
     value, source, channel = (claim[key] for key in ("value", "source", "channel"))
     available = {name: facts[field] for name, facts in evidence.items() if field in facts}
     matching = {name for name, observed in available.items() if matches(field, value, observed)}
     unknown = value is None and source == "unknown" and channel is None
     if unknown:
         fact = "match" if matching else "omitted" if available else "unknown"
-        provenance = "unknown" if not available else "omitted"
+        source_score = channel_score = provenance = "unknown" if not available else "omitted"
     else:
         fact = "match" if matching else "mismatch" if available else "unverified"
-        if source != origin or channel is None:
-            provenance = "mismatch"
+        source_score = "mismatch" if source != origin else "match" if available else "unverified"
+        if channel is None:
+            channel_score = "mismatch"
         elif channel in matching or (channel in available and not matching):
-            provenance = "match"
-        elif matching:
-            provenance = "mismatch"
+            channel_score = "match"
+        elif available:
+            channel_score = "mismatch"
         else:
-            provenance = "unverified"
-    return {"format_valid": True, "fact": fact, "provenance": provenance}
+            channel_score = "unverified"
+        grades = (source_score, channel_score)
+        provenance = (
+            "mismatch"
+            if "mismatch" in grades
+            else "unverified"
+            if "unverified" in grades
+            else "match"
+        )
+    return {
+        "format_valid": True,
+        "fact": fact,
+        "source": source_score,
+        "channel": channel_score,
+        "provenance": provenance,
+    }
 
 
 def _accuracy(results):
@@ -124,5 +142,7 @@ def score_claims(task, answer, wire, saved, *, explicit_limit=False):
         "format_valid": valid,
         "fact_accuracy": _accuracy(facts),
         "provenance_accuracy": _accuracy(origins),
+        "source_accuracy": _accuracy([result["source"] for result in claims.values()]),
+        "channel_accuracy": _accuracy([result["channel"] for result in claims.values()]),
         "claims": claims,
     }
