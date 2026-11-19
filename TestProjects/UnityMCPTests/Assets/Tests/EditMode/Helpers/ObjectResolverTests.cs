@@ -25,6 +25,8 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.AreSame(ui.transform, ObjectResolver.Resolve<RectTransform>(request));
             var renderer = ui.GetComponent<CanvasRenderer>();
             Assert.IsNull(GameObjectLookup.FindById(renderer.GetInstanceIDCompat()));
+            request["component"] = nameof(Transform);
+            Assert.AreSame(ui.transform, ObjectResolver.Resolve<RectTransform>(request));
             request["component"] = nameof(CanvasRenderer);
             Assert.AreSame(renderer, ObjectResolver.Resolve(request, typeof(Component)));
             Assert.IsNull(ObjectResolver.Resolve(request, typeof(RectTransform)));
@@ -57,13 +59,14 @@ namespace MCPForUnityTests.Editor.Helpers
             return go;
         }
 
-        private Material CreateMaterial(string name, string folder = null)
+        private string CreateMaterial(string name, string folder = null)
         {
             Shader shader = TestUtilities.FindFirstShader("Standard", "Universal Render Pipeline/Lit");
             Assert.IsNotNull(shader, "A standard material shader is required by this fixture.");
             var material = new Material(shader) { name = name };
-            AssetDatabase.CreateAsset(material, $"{folder ?? _assetRoot}/{name}.mat");
-            return material;
+            string path = $"{folder ?? _assetRoot}/{name}.mat";
+            AssetDatabase.CreateAsset(material, path);
+            return path;
         }
 
         [TestCase(false)]
@@ -71,14 +74,14 @@ namespace MCPForUnityTests.Editor.Helpers
         public void MissingMaterialPath_DoesNotResolveSameNameAssetElsewhere(bool backslashes)
         {
             string name = "ResolverMaterial_" + Guid.NewGuid().ToString("N");
-            Material material = CreateMaterial(name);
+            string path = CreateMaterial(name);
             string missingPath = $"{_assetRoot}/Missing/{name}.mat";
             if (backslashes)
                 missingPath = missingPath.Replace('/', '\\');
 
             Assert.IsNull(ObjectResolver.ResolveMaterial(missingPath));
-            Assert.AreSame(material, ObjectResolver.ResolveMaterial(name));
-            Assert.AreSame(material, ObjectResolver.ResolveMaterial($"{_assetRoot}/{name}.mat"));
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(ObjectResolver.ResolveMaterial(name)));
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(ObjectResolver.ResolveMaterial(path)));
         }
 
         [Test]
@@ -93,12 +96,12 @@ namespace MCPForUnityTests.Editor.Helpers
         public void AmbiguousMaterialName_StillRequiresAnExactPath()
         {
             string name = "ResolverDuplicate_" + Guid.NewGuid().ToString("N");
-            Material first = CreateMaterial(name);
+            string first = CreateMaterial(name);
             AssetDatabase.CreateFolder(_assetRoot, "Duplicate");
             CreateMaterial(name, _assetRoot + "/Duplicate");
 
             Assert.IsNull(ObjectResolver.ResolveMaterial(name));
-            Assert.AreSame(first, ObjectResolver.ResolveMaterial($"{_assetRoot}/{name}.mat"));
+            Assert.AreEqual(first, AssetDatabase.GetAssetPath(ObjectResolver.ResolveMaterial(first)));
         }
 
         [Test]
@@ -110,8 +113,8 @@ namespace MCPForUnityTests.Editor.Helpers
             AssetDatabase.CreateAsset(texture, path);
 
             Assert.IsNull(ObjectResolver.ResolveTexture($"{_assetRoot}/Missing/{name}.asset"));
-            Assert.AreSame(texture, ObjectResolver.ResolveTexture(name));
-            Assert.AreSame(texture, ObjectResolver.ResolveTexture(path));
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(ObjectResolver.ResolveTexture(name)));
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(ObjectResolver.ResolveTexture(path)));
         }
 
         [Test]

@@ -76,11 +76,6 @@ namespace MCPForUnity.Editor.Helpers
                     Type specificCompType = GameObjectLookup.FindComponentType(componentName);
                     if (specificCompType != null && typeof(Component).IsAssignableFrom(specificCompType))
                     {
-                        if (!targetType.IsAssignableFrom(specificCompType))
-                        {
-                            McpLog.Warn($"[ObjectResolver] Component '{componentName}' cannot be returned as '{targetType.Name}'.");
-                            return null;
-                        }
                         componentToGetType = specificCompType;
                     }
                     else
@@ -90,7 +85,12 @@ namespace MCPForUnity.Editor.Helpers
                 }
 
                 if (foundGo.TryGetComponent(componentToGetType, out Component foundComp))
-                    return foundComp;
+                {
+                    if (targetType.IsInstanceOfType(foundComp))
+                        return foundComp;
+                    McpLog.Warn($"[ObjectResolver] Component '{foundComp.GetType().Name}' cannot be returned as '{targetType.Name}'.");
+                    return null;
+                }
                 McpLog.Warn($"[ObjectResolver] Found GameObject '{foundGo.name}' but could not find component of type '{componentToGetType.Name}'.");
                 return null;
             }
