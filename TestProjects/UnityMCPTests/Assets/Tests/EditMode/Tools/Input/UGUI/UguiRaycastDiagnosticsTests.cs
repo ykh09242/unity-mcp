@@ -122,6 +122,8 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             "ui09-public-action.json",
             "ui09-public-ordered-hits.json",
             "ui09-public-disabled-events.json",
+            "ui09-strict-ordered-hits.json",
+            "ui09-strict-disabled-events.json",
             "ui09-sorting.json",
             "ui09-transparent-graphic.json",
             "ui09-transparent-group.json",
@@ -450,12 +452,19 @@ namespace MCPForUnityTests.EditMode.Tools.Input
         }
 
         [Test]
-        public void PublicActionReportsOrderedHitsAndThenMissingDisabledEventSystem()
+        public void PublicActionReportsOrderedHitsAndThenMissingDisabledEventSystem() => CheckPublicOrderAndMissingEvents(false);
+
+        [Test]
+        public void StrictReadReportsOrderedHitsAndMissingEventSystem() => CheckPublicOrderAndMissingEvents(true);
+
+        private void CheckPublicOrderAndMissingEvents(bool strict)
         {
             var coverProbe = cover.AddComponent<Ui09EventProbe>();
             var eventSystem = events.GetComponent<EventSystem>();
             Assert.AreSame(eventSystem, EventSystem.current);
             var request = Request();
+            if (strict)
+                request["strict_read"] = true;
             var observed = JObject.Parse(JsonConvert.SerializeObject(ManageUGUI.HandleCommand(request)));
             EqualNativeOrder(observed);
             var data = (JObject)observed["data"];
@@ -470,6 +479,7 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             Assert.AreEqual(events.GetInstanceIDCompat(), data["input"].Value<int>("event_system_id"));
             Assert.AreEqual(false, data.Value<bool?>("first_hit_targets_handler"));
             Assert.IsTrue(data["policy"].Value<bool>("native_query_attempted"));
+            Assert.AreEqual(strict, data["policy"].Value<bool>("strict_read"));
             Assert.AreEqual("not_attempted", (string)data["input"]["delivery"]);
             Assert.IsNull(eventSystem.currentSelectedGameObject);
             Assert.AreEqual(0, eventProbe.Calls);
@@ -497,8 +507,8 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             Assert.IsNull(eventSystem.currentSelectedGameObject);
             Assert.AreEqual(0, eventProbe.Calls);
             Assert.AreEqual(0, coverProbe.Calls);
-            Export("ui09-public-ordered-hits.json", observed);
-            Export("ui09-public-disabled-events.json", unavailable);
+            Export(strict ? "ui09-strict-ordered-hits.json" : "ui09-public-ordered-hits.json", observed);
+            Export(strict ? "ui09-strict-disabled-events.json" : "ui09-public-disabled-events.json", unavailable);
         }
 
         [UnityTest]
