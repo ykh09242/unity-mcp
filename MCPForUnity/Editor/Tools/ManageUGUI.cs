@@ -173,7 +173,7 @@ namespace MCPForUnity.Editor.Tools
                 ReadInt(raw["max_nodes"], 200, 1, 1000, "max_nodes");
                 ReadInt(raw["max_depth"], 10, 0, 24, "max_depth");
                 ReadInt(raw["max_characters"], 65536, 1, 262144, "max_characters");
-                target = ResolveRaycastTarget(raw["target"], maximum, ref spent);
+                target = ResolveRaycastTarget(raw["target"], raw.Value<bool>("strict_read"), maximum, ref spent);
             }
             catch (ArgumentException)
             {
@@ -214,7 +214,7 @@ namespace MCPForUnity.Editor.Tools
             internal int NextChild;
         }
 
-        private static GameObject ResolveRaycastTarget(JToken token, int maximum, ref int spent)
+        private static GameObject ResolveRaycastTarget(JToken token, bool strictRead, int maximum, ref int spent)
         {
             if (token == null || (token.Type != JTokenType.Integer && token.Type != JTokenType.String))
                 throw new ArgumentException();
@@ -222,7 +222,10 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrWhiteSpace(selector) || selector.Length > 4096)
                 throw new ArgumentException();
             new UTF8Encoding(false, true).GetByteCount(selector);
-            if (int.TryParse(selector, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id))
+            bool byId = int.TryParse(selector, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id);
+            // Reverse ID resolution can load assets and run their OnEnable. Strict IDs
+            // share the bounded loaded-scene traversal used by name and path selectors.
+            if (byId && !strictRead)
             {
                 ChargeRaycastSelector(ref spent, maximum, 1);
                 var direct = GameObjectLookup.FindById(id);
@@ -230,7 +233,7 @@ namespace MCPForUnity.Editor.Tools
                 RequireSceneObject(direct, false);
                 return direct;
             }
-            if (token.Type == JTokenType.Integer)
+            if (!byId && token.Type == JTokenType.Integer)
                 throw new ArgumentException();
             bool pathSelector = selector.Contains("/");
             selector = selector.TrimStart('/');
@@ -276,12 +279,19 @@ namespace MCPForUnity.Editor.Tools
                                 stack.Pop();
                                 continue;
                             }
-                            string name = go.name;
-                            if (name.Length > 4096 || (frame.ParentPath.Length == 0 ? name.Length : frame.ParentPath.Length + name.Length + 1) > 4096)
-                                throw new ArgumentException();
-                            frame.Path = frame.ParentPath.Length == 0 ? name : frame.ParentPath + "/" + name;
+                            bool matches;
+                            if (byId)
+                                matches = go.GetInstanceIDCompat() == id;
+                            else
+                            {
+                                string name = go.name;
+                                if (name.Length > 4096 || (frame.ParentPath.Length == 0 ? name.Length : frame.ParentPath.Length + name.Length + 1) > 4096)
+                                    throw new ArgumentException();
+                                frame.Path = frame.ParentPath.Length == 0 ? name : frame.ParentPath + "/" + name;
+                                matches = string.Equals(pathSelector ? frame.Path : name, selector, StringComparison.Ordinal);
+                            }
                             frame.Entered = true;
-                            if (string.Equals(pathSelector ? frame.Path : name, selector, StringComparison.Ordinal))
+                            if (matches)
                             {
                                 if (found != null)
                                     throw new ArgumentException();

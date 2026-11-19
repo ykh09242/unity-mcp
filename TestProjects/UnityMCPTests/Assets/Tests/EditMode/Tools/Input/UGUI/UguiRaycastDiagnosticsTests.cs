@@ -457,6 +457,44 @@ namespace MCPForUnityTests.EditMode.Tools.Input
         [Test]
         public void StrictReadReportsOrderedHitsAndMissingEventSystem() => CheckPublicOrderAndMissingEvents(true);
 
+        [Test]
+        public void StrictReadResolvesLoadedSceneIdsWithoutLoadingPersistentIds()
+        {
+            var request = Request();
+            request["strict_read"] = true;
+            int sceneId = button.GetInstanceIDCompat();
+            foreach (JToken selector in new JToken[] { sceneId, sceneId.ToString(System.Globalization.CultureInfo.InvariantCulture) })
+            {
+                request["target"] = selector;
+                var reply = JObject.FromObject(ManageUGUI.HandleCommand(request));
+                EqualNativeOrder(reply);
+                Assert.AreEqual(sceneId, reply["data"].Value<int>("target_id"));
+            }
+
+            string path = AssetDatabase.GenerateUniqueAssetPath("Assets/UI09OwnedStrictId.asset");
+            var asset = new Texture2D(1, 1);
+            AssetDatabase.CreateAsset(asset, path);
+            try
+            {
+                int assetId = asset.GetInstanceIDCompat();
+                Assert.IsTrue(AssetDatabase.IsMainAssetAtPathLoaded(path));
+                UnityEngine.Resources.UnloadAsset(asset);
+                Assert.IsFalse(AssetDatabase.IsMainAssetAtPathLoaded(path));
+                foreach (JToken selector in new JToken[] { assetId, assetId.ToString(System.Globalization.CultureInfo.InvariantCulture) })
+                {
+                    request["target"] = selector;
+                    var rejected = JObject.FromObject(ManageUGUI.HandleCommand(request));
+                    Assert.IsFalse(rejected.Value<bool>("success"), rejected.ToString());
+                    Assert.AreEqual("invalid_raycast_request", (string)rejected["message"]);
+                    Assert.IsFalse(AssetDatabase.IsMainAssetAtPathLoaded(path), "Strict selection loaded an asset by ID.");
+                }
+            }
+            finally
+            {
+                Assert.IsTrue(AssetDatabase.DeleteAsset(path));
+            }
+        }
+
         private void CheckPublicOrderAndMissingEvents(bool strict)
         {
             var coverProbe = cover.AddComponent<Ui09EventProbe>();
