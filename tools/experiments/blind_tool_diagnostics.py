@@ -2,6 +2,8 @@
 
 import re
 
+SEARCH_ROUTES = {"manage_tools.search", "search_unity_tools"}
+
 
 def _identifier(value):
     return isinstance(value, str) and bool(re.fullmatch(r"[\w.-]{1,128}", value, re.ASCII))
@@ -90,7 +92,7 @@ def stage_diagnosis(routes, surface, business, searches, *, role_confirmed, grad
         else (False if roster and all(value is False for value in roster) else None)
     )
     relevant = [call for call in business if call.route in routes]
-    first = next((call for call in searches if call.route == "manage_tools.search"), None)
+    first = next((call for call in searches if call.route in SEARCH_ROUTES), None)
     result = {
         "advertised": available,
         "first_search": first.evidence if first and first.evidence else None,
@@ -140,12 +142,8 @@ def stage_diagnosis(routes, surface, business, searches, *, role_confirmed, grad
 def actor_searches(host, wire, actor, role_confirmed):
     if not role_confirmed or not actor:
         return []
-    visible = (
-        [call for call in host.calls.values() if call.route == "manage_tools.search"]
-        if host
-        else []
-    )
-    bound = [call for call in wire if call.route == "manage_tools.search" and call.actor == actor]
+    visible = [call for call in host.calls.values() if call.route in SEARCH_ROUTES] if host else []
+    bound = [call for call in wire if call.route in SEARCH_ROUTES and call.actor == actor]
     if visible:
         return visible
     return bound if len({call.timeline for call in bound}) <= 1 else []

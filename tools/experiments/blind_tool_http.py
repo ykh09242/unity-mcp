@@ -98,9 +98,9 @@ class ScopedObservation(Middleware):
             raise ToolError("Outside this project's permitted observations")
         if name == "find_gameobjects":
             args["refresh_if_dirty"] = False
-        if channel == "unity" or name == "manage_tools":
+        if channel == "unity" or name in {"manage_tools", "search_unity_tools"}:
             async with self.client.new_stateful() as backend:
-                if channel == "unity":
+                if channel == "unity" or name == "search_unity_tools":
                     await self.verify_target(backend)
                 result = await backend.call_tool_mcp(
                     name, {**args, "unity_instance": self.instance}

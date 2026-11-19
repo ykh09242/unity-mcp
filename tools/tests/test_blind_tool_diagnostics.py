@@ -57,6 +57,32 @@ def test_failure_stage_requires_known_advertisement_and_observed_actor():
     assert stage(surface, fallback, False) == "actor_unknown"
 
 
+def test_pure_search_is_discovery_and_its_rank_belongs_to_the_calling_actor():
+    from tools.experiments.blind_tool_diagnostics import actor_searches
+    from tools.experiments.blind_tool_trace import decision, observation
+
+    route = "search_unity_tools"
+    assert decision(route, {}, "", endpoint=True) == "discovery"
+    assert decision(route + ".activate", {}, "", endpoint=True) == "blocked"
+    call = Call(
+        route,
+        "discovery",
+        1,
+        actor="child",
+        evidence=observation(route, {"routes": [{"kind": "tool", "tool": "get_game_view_size"}]}),
+    )
+    assert not actor_searches(None, [call], "parent", True)
+    result = stage_diagnosis(
+        {"get_game_view_size"},
+        {},
+        [],
+        actor_searches(None, [call], "child", True),
+        role_confirmed=True,
+        grade="none",
+    )
+    assert result["first_search_top3_suitable"] is True
+
+
 def test_only_parent_bound_children_can_supply_completed_host_items(tmp_path):
     parent, child, unrelated = [str(uuid4()) for _ in range(3)]
     assert direct_child({"id": child, "parentThreadId": parent}, parent) == child

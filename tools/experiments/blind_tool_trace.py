@@ -30,6 +30,7 @@ from tools.experiments.blind_tool_answers import (
     final_answer,
     observed_center_hit,
 )
+from tools.experiments.blind_tool_diagnostics import SEARCH_ROUTES
 
 EDITOR_STATE = "mcpforunity://editor/state"
 PROJECT_INFO = "mcpforunity://project/info"
@@ -56,7 +57,7 @@ DISCOVERY = {
     "manage_tools.catalog",
     "manage_tools.describe",
     "manage_tools.list_groups",
-    "manage_tools.search",
+    *SEARCH_ROUTES,
     "manage_tools.activate",
     "manage_tools.deactivate",
     "manage_tools.reset",
@@ -231,7 +232,7 @@ def positive_size(value: Any) -> list[int] | None:
 
 def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
     """Retain the documented evidence fields for the scored read operations."""
-    if route == "manage_tools.search":
+    if route in SEARCH_ROUTES:
         from tools.experiments.blind_tool_diagnostics import search_receipt
 
         return search_receipt(data)
@@ -442,7 +443,7 @@ def relay_stdio(relay: list[str], audit_dir: Path, graph_asset: str, *, endpoint
                         outcome = "error"
                     detail = (
                         observation(route, data)
-                        if channel == "unity" or route == "manage_tools.search"
+                        if channel == "unity" or route in SEARCH_ROUTES
                         else {}
                     )
                     record(event="response", sequence=sequence, outcome=outcome, observation=detail)
