@@ -201,3 +201,10 @@ case that ran without finding evidence remains a measured case. The report
 identifies process failures and missing cells, and either yields a nonzero exit
 status. Avoid publishing `events.jsonl`, `stderr.txt`, and `answer.txt` because
 they can contain project data. The JSON score contains summarized observations.
+
+Configured trials can also establish a direct child from a parent-linked host
+notification and its completed tool items. The scorer rejects unrelated child
+items and unmatched wire observations. The first search receipt keeps up to three
+ranked results or groups and the declared distinct-group count. An unavailable
+rank, approval decision, native result or requested actor is reported separately.
+Only a complete inventory for the relevant actor establishes absence.

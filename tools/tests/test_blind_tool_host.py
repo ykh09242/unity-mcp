@@ -180,7 +180,8 @@ def test_installed_host_scores_result_and_retains_competing_first_call(tmp_path)
         "",
     )
     assert "secret" not in json.dumps(external)
-    events = [{"type": "item.completed", "item": item} for item in (external, view)]
+    events = [{"type": "thread.started", "thread_id": "aabbccdd-1234-1234-1234-123456789012"}]
+    events.extend({"type": "item.completed", "item": item} for item in (external, view))
     events.append({"type": "turn.completed"})
     (tmp_path / "events.jsonl").write_text("\n".join(map(json.dumps, events)), encoding="utf-8")
     score = score_case(tmp_path)

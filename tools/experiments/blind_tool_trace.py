@@ -202,6 +202,11 @@ def unpack(response: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         return "error", {}
     if value.get("success") is True:
         return "returned", mapping(value.get("data"))
+    if isinstance(value.get("routes"), list) and value.get("scope") in {
+        "mcp_context",
+        "local_catalog",
+    }:
+        return "returned", value
     if result:
         return "returned", {}
     return "missing", {}
@@ -217,6 +222,10 @@ def positive_size(value: Any) -> list[int] | None:
 
 def observation(route: str, data: dict[str, Any]) -> dict[str, Any]:
     """Retain the documented evidence fields for the scored read operations."""
+    if route == "manage_tools.search":
+        from tools.experiments.blind_tool_diagnostics import search_receipt
+
+        return search_receipt(data)
     if route in SIZE_ROUTES:
         size = positive_size(data.get("render_size"))
         selected = mapping(data.get("current_size"))
@@ -416,7 +425,11 @@ def relay_stdio(relay: list[str], audit_dir: Path, graph_asset: str, *, endpoint
                     outcome, data = unpack(response)
                     if route == RAYCAST and data.get("status") == "failed":
                         outcome = "error"
-                    detail = observation(route, data) if channel == "unity" else {}
+                    detail = (
+                        observation(route, data)
+                        if channel == "unity" or route == "manage_tools.search"
+                        else {}
+                    )
                     record(event="response", sequence=sequence, outcome=outcome, observation=detail)
                 send_to_host(payload)
 
@@ -574,7 +587,12 @@ class ClientTrace:
 
 
 def client_trace(
-    path: Path, asset: str, *, endpoint: bool, unity_server: str = "unityMCP"
+    path: Path,
+    asset: str,
+    *,
+    endpoint: bool,
+    unity_server: str = "unityMCP",
+    expected_actor: str = "",
 ) -> ClientTrace:
     """Use host accounting for calls blocked before the relay and main-role shell activity."""
     trace = ClientTrace()
@@ -582,6 +600,8 @@ def client_trace(
         return trace
     with path.open(encoding="utf-8") as stream:
         for event in load_lines(stream):
+            if expected_actor and event.get("host_actor") != expected_actor:
+                continue
             item = mapping(event.get("item"))
             item_id = string(item.get("id"))
             if event.get("type") in {"item.started", "turn.started"}:
@@ -589,6 +609,10 @@ def client_trace(
             match event.get("type"), item.get("type"):
                 case "thread.started", _:
                     trace.parent_actor = thread_digest(event.get("thread_id"))
+                case "host.child_linked", _:
+                    digest = string(event.get("child_actor"))
+                    if re.fullmatch("[a-f0-9]{64}", digest):
+                        trace.child_actors.add(digest)
                 case "item.started" | "item.completed", "mcp_tool_call" if (
                     item.get("server") == unity_server
                 ):
@@ -691,7 +715,14 @@ def client_trace(
     return trace
 
 
-def role_status(role: str, trace: ClientTrace, connections: list[list[Call]]) -> tuple[str, str]:
+def role_status(
+    role: str,
+    trace: ClientTrace,
+    connections: list[list[Call]],
+    child: ClientTrace | None = None,
+    *,
+    configured=False,
+) -> tuple[str, str]:
     """Join native role events with distinct observed business connections."""
     observing = [
         calls for calls in connections if any(call.channel != "discovery" for call in calls)
@@ -706,6 +737,28 @@ def role_status(role: str, trace: ClientTrace, connections: list[list[Call]]) ->
     reads = [call for calls in observing for call in calls if call.channel != "discovery"]
     if any(call.actor_binding == "conflict" for call in reads):
         return "mixed", "conflicting-request-actor-metadata"
+
+    def matched_items(host, unbound):
+        remaining = list(host.calls.values())
+        for request in unbound:
+
+            def matches(call):
+                status = {"completed": "returned", "failed": "error"}.get(call.status, call.status)
+                return (call.route, call.page, status) == (
+                    request.route,
+                    request.page,
+                    request.status,
+                ) and not any(
+                    key in call.evidence and call.evidence[key] != value
+                    for key, value in request.evidence.items()
+                )
+
+            index = next((i for i, candidate in enumerate(remaining) if matches(candidate)), None)
+            if index is None:
+                return False
+            remaining.pop(index)
+        return True
+
     if role == "main":
         if trace.waits:
             return "mixed", "native-wait-in-direct-main-trial"
@@ -715,9 +768,20 @@ def role_status(role: str, trace: ClientTrace, connections: list[list[Call]]) ->
             or (actors and trace.parent_actor and actors != {trace.parent_actor})
         ):
             return "mixed", "competing-actors"
+        if configured and (
+            not trace.parent_actor or not matched_items(trace, [c for c in reads if not c.actor])
+        ):
+            return "unverified", "missing-main-request-receipt"
         return "confirmed", "host-main"
     if host_business or trace.shell_calls or trace.parent_actor in actors:
         return "mixed", "parent-business-activity"
+    if len(trace.child_actors) == 1 and child and (child.calls or child.completed):
+        if actors - trace.child_actors or len(observing) > 1:
+            return "mixed", "competing-actors"
+        # An unattributed wire call must also be independently visible on this
+        # child's host timeline before it can contribute evidence to that actor.
+        if matched_items(child, [c for c in reads if not c.actor]):
+            return "confirmed", "host-linked-child-items"
     if len(trace.child_actors) == 1 and len(observing) == 1:
         if actors - trace.child_actors:
             return "mixed", "unrelated-request-actor"
@@ -856,13 +920,33 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     row = json_object((case_dir / "case.json").read_bytes())
     task = string(row["task"])
     routes = ROUTES[task]
-    host = client_trace(
-        case_dir / "events.jsonl",
-        string(row["graph_asset"]),
+    from tools.experiments.blind_tool_diagnostics import stage_diagnosis
+
+    options = dict(
         endpoint=row.get("backend") == "unity-mcp-loopback",
         unity_server=string(row.get("unity_server")) or "unityMCP",
     )
+    asset = string(row["graph_asset"])
+    parent = client_trace(case_dir / "events.jsonl", asset, **options)
+    child = None
+    if (
+        row.get("host_mode") == "configured"
+        and row["role"] == "subagent"
+        and len(parent.child_actors) == 1
+    ):
+        actor = next(iter(parent.child_actors))
+        child = client_trace(
+            case_dir / f"child-{actor}.jsonl", asset, expected_actor=actor, **options
+        )
     connections = [wire_trace(path) for path in sorted(case_dir.glob("mcp-*.jsonl"))]
+    role, attribution = role_status(
+        string(row["role"]),
+        parent,
+        connections,
+        child,
+        configured=row.get("host_mode") == "configured",
+    )
+    host = child if child and attribution == "host-linked-child-items" else parent
     wire = [call for calls in connections for call in calls]
     unity = [call for call in wire if call.channel == "unity"]
     relevant = [call for call in unity if call.route in routes]
@@ -876,7 +960,6 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             call for call in host_business if call.channel == "unity" and call.route in routes
         ]
     grade = evidence_grade(task, relevant)
-    role, attribution = role_status(string(row["role"]), host, connections)
     attributed = grade if role == "confirmed" or grade == "none" else "unattributed"
     task_evidence = attributed
     if task == "graph-saved" and host.saved_reads:
@@ -924,12 +1007,41 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         if detail or call.route in SIZE_ROUTES or call.route == RAYCAST:
             live_observations.append({"route": call.route, **detail})
     redundant, early_rays = timing_metrics(task, sequence)
+    surface = case_dir / "host.json"
+    if row["role"] == "subagent" and len(parent.child_actors) == 1:
+        surface = case_dir / f"host-child-{next(iter(parent.child_actors))}.json"
+    inventory = (
+        json_object(surface.read_bytes())
+        if surface.is_file() and (row["role"] == "main" or len(parent.child_actors) == 1)
+        else {}
+    )
+    diagnosis = stage_diagnosis(
+        routes,
+        inventory,
+        business,
+        discovery_sources,
+        role_confirmed=role == "confirmed",
+        grade=grade,
+    )
     return {
         **row,
+        **(
+            {
+                "competitor_digest": inventory.get("competitor_digest"),
+                "competition_observed": inventory.get("competition_observed"),
+            }
+            if row.get("host_mode") == "configured" and row["role"] == "subagent"
+            else {}
+        ),
         "answer_protocol": string(row.get("answer_protocol")) or "v1",
         "role_status": role,
         "role_attribution": attribution,
-        "turn_completed": host.completed,
+        "turn_completed": parent.completed,
+        "selection_diagnosis": diagnosis,
+        "actor_receipt": {
+            "parent": parent.parent_actor or None,
+            "children": sorted(parent.child_actors),
+        },
         "first_business_call": first.route if first else None,
         "first_suitable_business_call": first_suitable.route if first_suitable else None,
         "calls_before_first_suitable": business.index(first_suitable) if first_suitable else None,
@@ -944,7 +1056,11 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         "unity_call_errors": sum(call.status == "error" for call in unity),
         "observation_guard_blocks": sum(call.channel == "blocked" for call in wire),
         "approval_blocks": host.approval_blocks,
-        "approval_visibility": "parent-host-events" if row["role"] == "subagent" else "host-events",
+        "approval_visibility": "child-host-events"
+        if host is child
+        else "parent-host-events"
+        if row["role"] == "subagent"
+        else "host-events",
         "shell_calls_visible_to_host": host.shell_calls,
         "saved_graph_file_reads_visible_to_host": host.saved_reads,
         "saved_graph_evidence": (
@@ -970,7 +1086,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             task,
             live_observations,
             host.saved_observations,
-            host.final_message if host.completed else "",
+            parent.final_message if parent.completed else "",
             protocol=string(row.get("answer_protocol")) or "v1",
         ),
     }

@@ -42,6 +42,8 @@ METRICS = (
     "competitor_digest",
     "observed_server_commit",
     "evidence_transport",
+    "selection_diagnosis",
+    "actor_receipt",
     "role_attribution",
     "graph_data_state",
     "unsaved_graph_observed",
@@ -109,6 +111,8 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
             if host_modes[0] != host_modes[1]:
                 reasons.append("different:host_mode")
             if "configured" in host_modes:
+                if any(c.get("competition_observed") is not True for c in (left, right)):
+                    reasons.append("unverified:real_competition")
                 if not all(c.get("observed_server_commit") for c in (left, right)):
                     reasons.append("unverified:server_source")
                 if not all(c.get("competitor_digest") for c in (left, right)):

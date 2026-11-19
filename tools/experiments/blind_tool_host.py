@@ -68,6 +68,7 @@ async def observe_host(client, thread_id, unity_server, instance, *, installed):
         "source": source,
     }
     params = {"threadId": thread_id, "limit": 64}
+    competitor_signatures = {}
     seen = set()
     names = set()
     healthy = True
@@ -88,10 +89,46 @@ async def observe_host(client, thread_id, unity_server, instance, *, installed):
                 if item.get("toolsError") or item.get("runtimeStatus") != "connected":
                     healthy = False
                 if name != unity_server:
-                    if tools:
+                    resources = item.get("resources")
+                    templates = item.get("resourceTemplates")
+                    if not isinstance(resources, list) or not isinstance(templates, list):
+                        healthy = False
+                    if tools or resources or templates:
                         result["competing_servers"][name] = sorted(tools)
+                        # Hash capabilities rather than persisting another service's URIs or schemas.
+                        descriptors = {
+                            "tools": tools,
+                            "resources": sorted(
+                                resources or [], key=lambda row: row.get("uri", "")
+                            ),
+                            "templates": sorted(
+                                templates or [], key=lambda row: row.get("uriTemplate", "")
+                            ),
+                        }
+                        competitor_signatures[name] = hashlib.sha256(
+                            json.dumps(descriptors, sort_keys=True, separators=(",", ":")).encode()
+                        ).hexdigest()
                     continue
                 result["unity"]["tools"] = sorted(tools)
+                if not isinstance(item.get("resources"), list) or not isinstance(
+                    item.get("resourceTemplates"), list
+                ):
+                    healthy = False
+                actions = {}
+                for name_, tool in tools.items():
+                    schema = tool.get("inputSchema") or tool.get("input_schema") or {}
+                    action = schema.get("properties", {}).get("action") or {}
+                    choices = action.get("enum", [action.get("const")])
+                    if (
+                        isinstance(choices, list)
+                        and choices
+                        and all(
+                            isinstance(value, str) and IDENTIFIER.fullmatch(value)
+                            for value in choices
+                        )
+                    ):
+                        actions[name_] = sorted(choices)
+                result["unity"]["actions"] = actions
                 for field, source_key, key in (
                     ("resources", "resources", "uri"),
                     ("templates", "resourceTemplates", "uriTemplate"),
@@ -110,8 +147,9 @@ async def observe_host(client, thread_id, unity_server, instance, *, installed):
             if cursor is None:
                 if result["unity"]["tools"] and healthy:
                     result["status"] = "observed"
+                    result["competition_observed"] = bool(competitor_signatures)
                     result["competitor_digest"] = hashlib.sha256(
-                        json.dumps(result["competing_servers"], sort_keys=True).encode()
+                        json.dumps(competitor_signatures, sort_keys=True).encode()
                     ).hexdigest()
                 break
             if not isinstance(cursor, str) or not cursor or cursor in seen:
@@ -165,6 +203,64 @@ def _host_id(value):
         return str(UUID(value)) if isinstance(value, str) else None
     except ValueError:
         return None
+
+
+def direct_child(record, parent):
+    """Only a documented host parent link establishes ownership."""
+    from tools.experiments.blind_tool_trace import mapping
+
+    source = mapping(mapping(mapping(record.get("source")).get("subAgent")).get("thread_spawn"))
+    declared = [p for p in (record.get("parentThreadId"), source.get("parent_thread_id")) if p]
+    child = _host_id(record.get("id"))
+    return (
+        child
+        if child and child != parent and declared and all(p == parent for p in declared)
+        else None
+    )
+
+
+async def collect_children(client, spawned, received, emit, case_dir, server, asset):
+    """Read only direct trial children attested by a spawn receipt or thread-start notification."""
+    from tools.experiments.blind_tool_trace import thread_digest
+
+    for child in sorted(spawned):
+        digest = thread_digest(child)
+        emit({"type": "host.child_linked", "child_actor": digest})
+        rows = received.get(child, [])
+        # Hydrate only the known child's own turn. Hosts can send wait receipts
+        # while omitting nested tool calls from the parent's notification stream.
+        try:
+            response = await client.request(
+                "thread/turns/list",
+                {
+                    "threadId": child,
+                    "itemsView": "full",
+                    "limit": 8,
+                    "sortDirection": "asc",
+                },
+            )
+            turns = response["data"]
+            if (
+                not response.get("nextCursor")
+                and turns
+                and all(
+                    turn.get("status") == "completed" and turn.get("itemsView") == "full"
+                    for turn in turns
+                )
+            ):
+                rows = [
+                    {"type": "item.completed", "item": item, "host_actor": digest}
+                    for turn in turns
+                    for raw in turn.get("items", [])
+                    if (item := project_item(raw, server, asset))
+                ]
+                rows.append({"type": "turn.completed", "host_actor": digest})
+        except (InteropFailure, KeyError, ValueError, TimeoutError):
+            pass
+        if rows:
+            (case_dir / f"child-{digest}.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+            )
 
 
 def _tool_error(text):
@@ -309,6 +405,7 @@ async def run_configured(args, case_dir, prompt, metadata):
                     json.dumps(surface, indent=2) + "\n", encoding="utf-8"
                 )
                 metadata["competitor_digest"] = surface["competitor_digest"]
+                metadata["competition_observed"] = surface.get("competition_observed")
                 metadata["observed_server_commit"] = surface["source"]["server_commit"]
                 if metadata["observed_server_commit"]:
                     metadata["backend_identity"] = metadata["observed_server_commit"]
@@ -341,6 +438,28 @@ async def run_configured(args, case_dir, prompt, metadata):
                             )
                             actor = _host_id(params.get("threadId"))
                             item = params.get("item") or {}
+                            if method == "thread/started":
+                                linked = direct_child(params.get("thread", {}), thread)
+                                if linked:
+                                    parents.add(linked)
+                                    if not children.get(linked):
+                                        child_surface = await observe_host(
+                                            client, linked, server, args.instance, installed=False
+                                        )
+                                        (
+                                            case_dir / f"host-child-{thread_digest(linked)}.json"
+                                        ).write_text(
+                                            json.dumps(child_surface, indent=2) + "\n",
+                                            encoding="utf-8",
+                                        )
+                            if method == "turn/completed" and actor and actor != thread:
+                                if params.get("turn", {}).get("status") == "completed":
+                                    children.setdefault(actor, []).append(
+                                        {
+                                            "type": "turn.completed",
+                                            "host_actor": thread_digest(actor),
+                                        }
+                                    )
                             if method in ("item/started", "item/completed") and actor:
                                 projected = project_item(item, server, args.graph_asset)
                                 if not projected:
@@ -368,15 +487,16 @@ async def run_configured(args, case_dir, prompt, metadata):
                                 if status != "completed":
                                     raise ValueError("Configured model turn did not complete")
                                 emit({"type": "turn.completed"})
-                                for child in parents:
-                                    rows = children.get(child, [])
-                                    if rows:
-                                        (
-                                            case_dir / f"child-{thread_digest(child)}.jsonl"
-                                        ).write_text(
-                                            "".join(json.dumps(row) + "\n" for row in rows),
-                                            encoding="utf-8",
-                                        )
+                                if metadata["role"] == "subagent" or parents:
+                                    await collect_children(
+                                        client,
+                                        parents,
+                                        children,
+                                        emit,
+                                        case_dir,
+                                        server,
+                                        args.graph_asset,
+                                    )
                                 return
                         if client.reader_error:
                             raise client.reader_error
