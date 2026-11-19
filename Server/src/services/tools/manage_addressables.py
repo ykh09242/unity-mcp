@@ -117,9 +117,9 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
     description=(
         "Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), "
         "run bounded preflight for duplicate addresses/missing references/profile issues, or analyze "
-        "an existing native build-layout report for duplicated content. Stable Addressables 1.x, 2.x, 3.x and 4.x require "
-        "compatible action APIs and stored profile schema 1. Layout reports must match the installed "
-        "package version and actual native schema. Content Directory coverage is unsupported: reports "
+        "an existing native build-layout report for duplicated content. Settings actions require compatible "
+        "installed APIs and stored profile schema 1. Layout reports must declare their Addressables producer "
+        "and match the installed serialized schema. Content Directory coverage is unsupported: reports "
         "whose native schema declares ContentDirectories require an empty array, and nonempty or malformed group ContentDirectoryName "
         "values are refused, including managed-reference data. Reads never create "
         "settings, evaluate arbitrary static profile properties or start content builds. "
@@ -127,7 +127,7 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
         "Supply explicit settings_path and exact expected_revision for edits/continuation pages. "
         "No group/asset creation, content-build action or remote deployment. "
         "Caps128groups/4096entries/32profiles/64variables,256preflightentries,100rows/256KiB per response. "
-        "Native layout files are bounded to16MiB; unsupported versions are explicit."
+        "Native layout files are bounded to16MiB."
     ),
     annotations=ToolAnnotations(
         title="Manage Addressables", destructiveHint=True, readOnlyHint=False

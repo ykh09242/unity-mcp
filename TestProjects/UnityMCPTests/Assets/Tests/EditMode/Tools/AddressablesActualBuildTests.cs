@@ -426,9 +426,9 @@ namespace MCPForUnityTests.Editor.Tools
                     string declaration in new[]
                     {
                         "2.7.6",
-                        "com.unity.addressables: 2.7.5",
+                        "com.unity.addressables: ",
                         "com.other.package: 2.7.6",
-                        "com.unity.addressables: 2.7.6-extra",
+                        "com.unity.addressables: 2.7.6: unspecified",
                         null,
                     }
                 )

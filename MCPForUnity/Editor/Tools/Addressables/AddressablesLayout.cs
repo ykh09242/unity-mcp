@@ -4,8 +4,10 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.Serialization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
@@ -116,6 +118,216 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     );
         }
 
+        // EditorJsonUtility silently ignores unknown members and supplies defaults for missing ones.
+        // Derive the wire fields from trusted empty native instances (Unity also omits unsupported CLR fields).
+        // Inspect each managed-reference declaration and edge before giving the bytes to Unity.
+        private sealed class WireSchema
+        {
+            private readonly Type layout;
+            private readonly Dictionary<Type, JObject> samples = new Dictionary<Type, JObject>();
+            private readonly Dictionary<long, (Type Type, JObject Data)> references = new Dictionary<long, (Type, JObject)>();
+            private readonly HashSet<long> reached = new HashSet<long>();
+            private readonly Queue<long> pending = new Queue<long>();
+            private readonly Dictionary<(Type, string), FieldInfo> fields = new Dictionary<(Type, string), FieldInfo>();
+
+            internal WireSchema(Type layout) => this.layout = layout;
+
+            private static void Require(bool condition, string member)
+            {
+                if (!condition)
+                    AddressablesState.Fail(
+                        "addressables_layout_schema_unsupported",
+                        "The report does not match the installed serialized layout at " + member + "."
+                    );
+            }
+
+            private JObject Sample(Type type)
+            {
+                if (!samples.TryGetValue(type, out JObject sample))
+                {
+                    object instance =
+                        type.IsValueType || type.GetConstructor(Type.EmptyTypes) != null
+                            ? Activator.CreateInstance(type)
+                            : FormatterServices.GetUninitializedObject(type);
+                    sample = JObject.Parse(EditorJsonUtility.ToJson(instance));
+                    samples.Add(type, sample);
+                }
+                return sample;
+            }
+
+            internal void Check(JObject report)
+            {
+                JToken nativeTable = Sample(layout)["references"];
+                if (nativeTable != null || report["references"] != null)
+                {
+                    var table = report["references"] as JObject;
+                    Require(
+                        table?.Count == 2
+                            && nativeTable?["version"]?.Type == JTokenType.Integer
+                            && JToken.DeepEquals(nativeTable["version"], table["version"])
+                            && table["RefIds"] is JArray,
+                        "references"
+                    );
+                    var rows = (JArray)table["RefIds"];
+                    var nativeTypes = layout.GetNestedTypes(BindingFlags.Public).ToDictionary(t => layout.Name + "/" + t.Name, StringComparer.Ordinal);
+                    JToken nullRecord = ((JArray)nativeTable["RefIds"]).FirstOrDefault(r => r.Value<long>("rid") == -2);
+                    bool hasNullRecord = false;
+                    foreach (JToken row in rows)
+                    {
+                        Require(row is JObject, "references.RefIds");
+                        long id = ReferenceId(row["rid"]);
+                        if (id == -2 && nullRecord != null)
+                        {
+                            Require(!hasNullRecord && JToken.DeepEquals(row, nullRecord), "references.RefIds.null");
+                            hasNullRecord = true;
+                            continue;
+                        }
+                        Require(
+                            row is JObject record
+                                && record.Count == 3
+                                && row["data"] is JObject
+                                && row["type"] is JObject declaration
+                                && declaration.Count == 3
+                                && declaration["asm"]?.Type == JTokenType.String
+                                && (string)declaration["asm"] == layout.Assembly.GetName().Name
+                                && declaration["ns"]?.Type == JTokenType.String
+                                && (string)declaration["ns"] == layout.Namespace
+                                && declaration["class"]?.Type == JTokenType.String,
+                            "references.RefIds.type"
+                        );
+                        Require(id >= 0 && !references.ContainsKey(id), "references.RefIds.rid");
+                        Require(nativeTypes.TryGetValue((string)row["type"]["class"], out Type type) && type.IsSerializable, "references.RefIds.type.class");
+                        references.Add(id, (type, (JObject)row["data"]));
+                    }
+                }
+                CheckObject(report, layout);
+                while (pending.Count != 0)
+                {
+                    var record = references[pending.Dequeue()];
+                    CheckObject(record.Data, record.Type);
+                }
+                Require(reached.Count == references.Count, "unreachable references.RefIds");
+            }
+
+            private static long ReferenceId(JToken token)
+            {
+                if (token?.Type == JTokenType.Integer && long.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long id))
+                    return id;
+                throw new AddressablesException("addressables_layout_schema_unsupported", "The report contains an invalid managed reference ID.");
+            }
+
+            private void CheckObject(JObject data, Type type)
+            {
+                JObject sample = Sample(type);
+                // A nested object serialized alone has its own reference table; its inline data has none.
+                Require(data != null && data.Count == sample.Count - (type != layout && sample["references"] != null ? 1 : 0), type.Name);
+                foreach (JProperty property in sample.Properties())
+                {
+                    if (property.Name == "references")
+                        continue;
+                    JToken value = data[property.Name];
+                    // The package's pretty writer emits the private header's name for this field.
+                    if (
+                        value == null
+                        && type == layout
+                        && property.Name == "AddressablesBuildSessionGUID"
+                        && layout.GetNestedType("BuildLayoutHeader", BindingFlags.NonPublic)?.GetField("BuildSessionGUID")?.FieldType == typeof(GUID)
+                    )
+                        value = data["BuildSessionGUID"];
+                    Require(value != null, type.Name + "." + property.Name);
+                    var key = (type, property.Name);
+                    if (!fields.TryGetValue(key, out FieldInfo field))
+                    {
+                        field = type.GetField(property.Name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        Require(field != null, property.Name);
+                        fields.Add(key, field);
+                    }
+                    Type declared = field.FieldType;
+                    if (
+                        type.DeclaringType == layout
+                        && type.Name == "Group"
+                        && property.Name == "ContentDirectoryName"
+                        && declared == typeof(string)
+                        && value.Type == JTokenType.Null
+                    )
+                        continue;
+                    bool managed = field.IsDefined(typeof(SerializeReference), false);
+                    Type element =
+                        declared.IsArray ? declared.GetElementType()
+                        : declared.IsGenericType && declared.GetGenericTypeDefinition() == typeof(List<>) ? declared.GetGenericArguments()[0]
+                        : null;
+                    bool requiredReference =
+                        property.Name == "IncludedInBundleFiles" || property.Name == "OtherAssets" || type.Name == "File" && property.Name == "Bundle";
+                    if (element == null)
+                        CheckValue(value, declared, managed, requiredReference, property.Value);
+                    else
+                    {
+                        Require(value is JArray, property.Name);
+                        foreach (JToken item in (JArray)value)
+                            CheckValue(item, element, managed, requiredReference, null);
+                    }
+                }
+            }
+
+            private void CheckValue(JToken value, Type type, bool managed, bool requiredReference, JToken sample)
+            {
+                if (managed)
+                {
+                    Require(value is JObject link && link.Count == 1, type.Name);
+                    long id = ReferenceId(value["rid"]);
+                    if (id == -2)
+                        Require(!requiredReference, type.Name);
+                    else
+                    {
+                        Require(references.TryGetValue(id, out var record) && record.Type == type, type.Name);
+                        if (reached.Add(id))
+                            pending.Enqueue(id);
+                    }
+                }
+                else if (type == typeof(string))
+                    Require(value.Type == JTokenType.String, type.Name);
+                else if (type == typeof(bool))
+                    Require(value.Type == JTokenType.Boolean, type.Name);
+                else if (type == typeof(float) || type == typeof(double))
+                {
+                    Require(value.Type == JTokenType.Float || value.Type == JTokenType.Integer, type.Name);
+                    double number = (double)value;
+                    Require(!double.IsNaN(number) && !double.IsInfinity(number) && (type != typeof(float) || Math.Abs(number) <= float.MaxValue), type.Name);
+                }
+                else if (type.IsEnum || type.IsPrimitive)
+                {
+                    Require(value.Type == JTokenType.Integer, type.Name);
+                    try
+                    {
+                        Convert.ChangeType(value.ToString(), type.IsEnum ? Enum.GetUnderlyingType(type) : type, CultureInfo.InvariantCulture);
+                    }
+                    catch (OverflowException)
+                    {
+                        Require(false, type.Name);
+                    }
+                }
+                else if (type == typeof(GUID))
+                    Require(sample is JObject empty && empty.Count == 0 && JToken.DeepEquals(value, empty), type.Name);
+                else if (type == typeof(Hash128))
+                {
+                    var hash = value as JObject;
+                    Require(
+                        sample is JObject example
+                            && hash?.Count == example.Count
+                            && JToken.DeepEquals(hash["serializedVersion"], example["serializedVersion"])
+                            && hash["Hash"]?.Type == JTokenType.String
+                            && Regex.IsMatch((string)hash["Hash"], @"\A[0-9a-fA-F]{32}\z"),
+                        type.Name
+                    );
+                }
+                else
+                {
+                    Require(type.Assembly == layout.Assembly && type.FullName.StartsWith(layout.FullName + "+", StringComparison.Ordinal), type.Name);
+                    CheckObject(value as JObject, type);
+                }
+            }
+        }
+
         internal static object Read(JObject request)
         {
             AddressablesState.RequirePackage(out Type settingsType, out string version);
@@ -157,22 +369,38 @@ namespace MCPForUnity.Editor.Tools.Addressables
             }
             string json = Utf8.GetString(bytes).TrimStart('\uFEFF');
             JObject header;
-            using (var text = new StringReader(json))
-            using (var reader = new JsonTextReader(text) { MaxDepth = 64 })
-                header = JObject.Load(reader);
-            // Audited families' BuildLayoutGenerationTask declares package identity and version.
-            // Do not substitute the installed package version for missing or different report metadata.
+            try
+            {
+                using (var text = new StringReader(json))
+                using (var reader = new JsonTextReader(text) { MaxDepth = 64, DateParseHandling = DateParseHandling.None })
+                {
+                    header = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
+                    if (reader.Read())
+                        AddressablesState.Fail("addressables_layout_invalid", "Unexpected trailing report data.");
+                }
+            }
+            catch (JsonException)
+            {
+                throw new AddressablesException("addressables_layout_invalid", "The report must contain one unambiguous JSON object.");
+            }
+            const string producer = "com.unity.addressables: ";
             JToken declaration = header["PackageVersion"];
-            if (declaration?.Type != JTokenType.String || declaration.Value<string>() != "com.unity.addressables: " + version)
+            string declared = declaration?.Type == JTokenType.String ? (string)declaration : null;
+            if (
+                declared == null
+                || !declared.StartsWith(producer, StringComparison.Ordinal)
+                || declared.Length > producer.Length + 128
+                || !Regex.IsMatch(declared.Substring(producer.Length), @"\A[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?(?:\+[a-zA-Z0-9.-]+)?\z")
+            )
                 AddressablesState.Fail(
                     "addressables_layout_version_unsupported",
-                    "The native report must declare com.unity.addressables: " + version + ", matching the installed package."
+                    "The report must declare its com.unity.addressables producer and package version."
                 );
             RequireSupportedReportShape(header, modern);
+            new WireSchema(layoutType).Check(header);
             object layout = Activator.CreateInstance(layoutType);
-            // Audited families' BuildLayout.ReadFull use this native deserializer; apply it to the bounded immutable bytes.
-            // Avoid reopening a changing report or writing a temporary file during this read action.
-            EditorJsonUtility.FromJsonOverwrite(json, layout);
+            // Give the native reader exactly the checked tokens. The revision still identifies the original file bytes.
+            EditorJsonUtility.FromJsonOverwrite(header.ToString(Formatting.None), layout);
             string revision;
             using (var sha = SHA256.Create())
                 revision = "addr-layout1:" + BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
@@ -273,6 +501,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     {
                         ["revision"] = revision,
                         ["package_version"] = version,
+                        ["report_package_version"] = declared.Substring(producer.Length),
                         ["build_target"] = AddressablesState.Get(layout, "BuildTarget").ToString(),
                         ["unity_version"] = BoundedText(AddressablesState.Get(layout, "UnityVersion"), 64),
                         ["analysis_complete"] = string.IsNullOrEmpty(AddressablesState.Get(layout, "BuildError") as string),

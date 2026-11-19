@@ -1,11 +1,9 @@
 # Addressables compatibility
 
-`manage_addressables` recognizes stable Addressables **1.x, 2.x, 3.x and 4.x**
-package families. Family admission permits capability checks; it does not promise
-that every action exists in every minor version. Prereleases, malformed versions
-and unknown major versions return `addressables_version_unsupported`.
-The adapter's Unity 2021.3 floor and optional-package behavior are unchanged.
-Each package retains its own Editor requirement. No tool installs or upgrades it.
+`manage_addressables` resolves the installed `com.unity.addressables` provider and
+checks the members needed by each action. Package versions identify observations.
+A new release or prerelease can use the same API and serialized report format.
+Each package retains its own Unity Editor requirement.
 
 | Family | Official source audit representatives | Latest stable in the audited registry |
 | --- | --- | --- |
@@ -16,18 +14,16 @@ Each package retains its own Editor requirement. No tool installs or upgrades it
 
 The registry/source audit was performed on 2026-10-27. Package release notes can
 cover unrelated API changes; the adapter checks the exact members it consumes.
-For example, the audited 3.0.0 and 4.0.0 sources retain the three authoring
-signatures below. Version 1.1.5 lacks `GetLabels()` and the consumed `BuildLayout`
-type, so affected actions refuse their missing capabilities rather than rejecting
-the entire 1.x family. Later versions must satisfy the same runtime checks.
+The early 1.1.5 provider exposes the stored label table and explicit-entry lookup.
+It lacks the native JSON BuildLayout type required by report analysis.
 
 | Action | Required capability |
 | --- | --- |
-| `inspect`, `preflight` | Existing explicit settings asset, required native snapshot members, public `List<string> GetLabels()` and stored profile schema version 1. |
+| `inspect`, `preflight` | Existing explicit settings asset, required native snapshot members, public `List<string> GetLabels()` or the stored `LabelTable.m_LabelNames` list and stored profile schema version 1. |
 | `set_address` | Snapshot capabilities and public `void SetAddress(string, bool)`. |
 | `move_entry` | Snapshot capabilities and public `AddressableAssetEntry CreateOrMoveEntry(string, AddressableAssetGroup, bool, bool)`. |
 | `set_profile_value` | Snapshot capabilities and public `void SetValue(string, string, string)`. |
-| `analyze_layout` | Complete consumed native layout field schema, an existing bounded JSON report, and report package identity/version matching the installed package. |
+| `analyze_layout` | Required native duplication fields, an existing bounded JSON report declaring its Addressables producer, and compatible serialized fields and managed references. |
 
 The edit signature, fresh snapshot and applicable Undo capability are checked
 before registering Undo or invoking a mutation. An unavailable edit API therefore
@@ -36,19 +32,17 @@ incompatible API members return `addressables_api_unsupported` with the affected
 action/member. Unsupported stored profile versions return
 `addressables_profile_schema_unsupported` with the requested action.
 
-Addressables 1.x, 3.x and 4.x edits additionally require the exact native internal
-`AddressableAssetSettings.ClearFindAssetEntryCache()` hook, including its verified
-assembly, declaring type and signature. After native Undo/Redo restores group
-collections, this hook clears only the nonserialized settings lookup cache that
-can retain stale entry instances. Native hash resets and group deserialization
-alone do not replace this lookup-cache reset. The existing 2.x path uses native
-hash-aware cache invalidation and is unchanged.
+For cached entry lookups, the adapter binds the internal
+`AddressableAssetSettings.ClearFindAssetEntryCache()` hook by assembly, declaring
+type, visibility, parameters and return type. Native Undo/Redo can replace
+in-memory entries in group collections. Older cached providers expose only the
+private, nonserialized `Cache<string, AddressableAssetEntry> m_FindAssetEntryCache`.
+The adapter clears that specific field when the provider has no reset hook.
+Earlier uncached providers search the group's live entry map directly.
 
-The adapter keeps weak references to settings actually edited through the tool,
-prunes destroyed owners and releases its event subscription on domain reload or
-Editor shutdown. It does not rewrite assets, hashes or unrelated settings.
-A missing hook refuses affected authoring before Undo registration; inspection
-remains available when its own capabilities are present.
+The adapter keeps weak references to edited settings and releases the Undo event
+on assembly reload or Editor shutdown. Unknown lookup APIs refuse authoring
+before Undo registration. Inspection remains available when its own APIs exist.
 
 ## Existing layout reports
 
@@ -72,7 +66,14 @@ so new coverage cannot be silently omitted while returning
 Content Directory analysis is outside this adapter's scope. Report bytes remain
 unchanged, and no content build or conversion is started. Compatible empty and
 legacy reports retain the existing duplication analysis, size/depth/work bounds
-and matching-package revision guards.
+and content-hash revision guards.
+
+The producer declaration identifies the report's package. The reader checks the
+installed native serializer's fields, value types and managed-reference graph
+before decoding the report, including the source assembly, namespace, nested
+type, reference ID and target type. Reports with missing, added or incompatible
+fields refuse analysis. The response includes the installed `package_version`
+and the declared `report_package_version`.
 
 Inspection reads stored active-profile and profile fields directly. It does not
 call getters that create defaults or migrate stored data. Existing bounded scans,
@@ -81,21 +82,22 @@ of global `SaveAssets` remain part of the authoring contract.
 
 ## Verification evidence
 
-The versions above are source audit representatives. They are not a claim of
-native execution in every Editor/package combination. Record native test results
-separately with the exact package version, Editor version and source identity.
-Source compatibility on another OS is not native OS validation.
+Windows native tests ran on Unity 6000.0.69f1 with official Addressables packages.
+On 1.1.5, 1.19.19 and 1.21.17 the focused fixtures exercised settings inspection,
+group ownership, guarded edits, label preservation and Undo/Redo with Scriptable
+Build Pipeline 1.23.4. The original 1.1.5 dependency on Build Pipeline 1.5.1
+uses a Sprite Packer API removed from that Editor.
 
-Run the complete `AddressablesCompatibilityTests` and `AddressablesAuthoringTests`
-cohorts for 1.29.0, 2.11.2, 3.0.0, 3.1.0, 4.0.0 and 4.1.1, then restore and run
-the warm project's 2.7.6 baseline. Retain each executed row's original result,
-exact package/Editor versions and source identity in the corresponding release
-verification records; source audit and compilation are not native execution.
-The first suite covers strict family admission, exact action signatures,
-stored/layout schemas and report coverage refusal. The second uses package-created
-temporary settings for inspection, preflight, address/group/profile edits,
-Undo/Redo, refusal without migration and preservation of existing asset/report
-bytes. Early 1.1.5 missing capabilities are covered by source inspection and
-controlled refusal tests; no blanket native support is implied.
+On 1.29.0, 2.7.6 and 4.1.1 the `AddressablesCompatibilityTests` and
+`AddressablesAuthoringTests` suites also exercised stored profiles, bounded
+preflight, native layout serialization, compatible producer declarations and
+malformed reference graphs. The tests use package-created temporary settings and
+check preservation of existing asset and report bytes.
+
+The 1.21.20 build report shipped in Unity's 2.7.6 package fixtures decoded with
+duplication evidence under 1.21.17. Under 2.7.6 the same file failed the schema
+check. Its editor settings omit `EnableJsonCatalog` and its runtime settings
+include `ProfilerEvents`.
+
 `AddressablesActualBuildTests` remains a separately authorized explicit
 content-build fixture; a build is unnecessary to inspect existing reports.

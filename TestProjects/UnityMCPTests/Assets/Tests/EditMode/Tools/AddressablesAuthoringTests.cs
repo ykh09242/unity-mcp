@@ -21,52 +21,6 @@ namespace MCPForUnityTests.Editor.Tools
             return type.GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, args);
         }
 
-        [TestCase("1.0.0", true)]
-        [TestCase("1.1.5", true)]
-        [TestCase("1.28.2", true)]
-        [TestCase("1.29.0", true)]
-        [TestCase("1.28.3", true)]
-        [TestCase("2.0.0", true)]
-        [TestCase("2.7.6", true)]
-        [TestCase("2.8.0", true)]
-        [TestCase("2.11.2", true)]
-        [TestCase("4.0.0", true)]
-        [TestCase("0.9.0", false)]
-        [TestCase("3.1.0", true)]
-        [TestCase("3.2.0", true)]
-        [TestCase("4.1.1", true)]
-        [TestCase("4.1.2", true)]
-        [TestCase("4.2.0", true)]
-        [TestCase("3.0.9", true)]
-        [TestCase("4.0.9", true)]
-        [TestCase("4.1.0", true)]
-        [TestCase("5.0.0", false)]
-        [TestCase("3.1.0-pre.1", false)]
-        [TestCase("4.1.1+metadata", false)]
-        [TestCase("3.01.0", false)]
-        [TestCase("4.1.01", false)]
-        [TestCase("1.27.0", true)]
-        [TestCase("3.0.0", true)]
-        [TestCase("2.7.6-pre.1", false)]
-        [TestCase("2.7", false)]
-        [TestCase("2.7.6.1", false)]
-        [TestCase(" 2.7.6", false)]
-        [TestCase("2.-7.6", false)]
-        [TestCase("02.7.6", false)]
-        [TestCase("2.7.2147483648", false)]
-        [TestCase(null, false)]
-        public void StableFamiliesRequireStrictPackageVersions(string version, bool expected) => Assert.AreEqual(expected, Policy("SupportsVersion", version));
-
-        [TestCase("1.28.2", true)]
-        [TestCase("2.7.6", false)]
-        [TestCase("3.1.0", true)]
-        [TestCase("4.1.1", true)]
-        [TestCase("3.0.0", true)]
-        [TestCase("4.1.0", true)]
-        [TestCase("5.0.0", false)]
-        public void LookupCacheResetIsRequiredOnlyForCompatibleAffectedFamilies(string version, bool expected) =>
-            Assert.AreEqual(expected, Policy("RequiresLookupCacheReset", version));
-
         private static void ReportShape(JObject report, bool modern)
         {
             Type type = Type.GetType("MCPForUnity.Editor.Tools.Addressables.AddressablesLayout, MCPForUnity.Editor", true);
@@ -510,7 +464,35 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void ExistingNativeLayoutUsesInstalledVersionAndRejectsMismatchedReportMetadata()
+        public void InspectionPreservesMissingGroupIdentityAndRejectsForeignOwnership()
+        {
+            var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+            FieldInfo id = first.GetType().GetField("m_GUID", flags);
+            FieldInfo owner = first.GetType().GetField("m_Settings", flags);
+            object originalId = id.GetValue(first);
+            int undo = Undo.GetCurrentGroup();
+            try
+            {
+                id.SetValue(first, "");
+                JObject error = Call("inspect");
+                Assert.AreEqual("addressables_settings_invalid", error.Value<string>("code"), error.ToString());
+                Assert.AreEqual("", id.GetValue(first), "Inspection must never synthesize a group GUID.");
+                id.SetValue(first, originalId);
+                owner.SetValue(first, null);
+                error = Call("inspect");
+                Assert.AreEqual("addressables_settings_invalid", error.Value<string>("code"), error.ToString());
+                Assert.IsNull(owner.GetValue(first), "Inspection must not attach a foreign group to the default settings.");
+                Assert.AreEqual(undo, Undo.GetCurrentGroup());
+            }
+            finally
+            {
+                id.SetValue(first, originalId);
+                owner.SetValue(first, settings);
+            }
+        }
+
+        [Test]
+        public void ExistingNativeLayoutChecksProducerAndCompleteSerializedSchemaBeforeDecode()
         {
             string version = UnityEditor.PackageManager.PackageInfo.FindForAssembly(settingsType.Assembly).version;
             Type layoutType = settingsType.Assembly.GetType("UnityEditor.AddressableAssets.Build.Layout.BuildLayout", true);
@@ -536,11 +518,77 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsFalse(response["data"].Value<bool>("content_build_started"));
                 Assert.AreEqual(json, File.ReadAllText(path), "Existing reports are read-only.");
 
-                layoutType.GetField("PackageVersion").SetValue(layout, "com.unity.addressables: 0.0.0");
-                json = EditorJsonUtility.ToJson(layout);
-                File.WriteAllText(path, json);
+                // Use native serialization for a nonempty managed-reference graph.
+                object group = Activator.CreateInstance(layoutType.GetNestedType("Group"));
+                ((IList)layoutType.GetField("Groups").GetValue(layout)).Add(group);
+                object schema = Activator.CreateInstance(layoutType.GetNestedType("SchemaData"));
+                ((IList)group.GetType().GetField("Schemas").GetValue(group)).Add(schema);
+                ((IList)schema.GetType().GetField("KvpDetails").GetValue(schema)).Add(Tuple.Create("example", "value"));
+                object bundle = Activator.CreateInstance(layoutType.GetNestedType("Bundle"));
+                ((IList)group.GetType().GetField("Bundles").GetValue(group)).Add(bundle);
+                bundle.GetType().GetField("Group").SetValue(bundle, group);
+                object file = Activator.CreateInstance(layoutType.GetNestedType("File"));
+                ((IList)bundle.GetType().GetField("Files").GetValue(bundle)).Add(file);
+                file.GetType().GetField("Bundle").SetValue(file, bundle);
+                object duplicateAsset = Activator.CreateInstance(layoutType.GetNestedType("AssetDuplicationData"));
+                ((IList)layoutType.GetField("DuplicatedAssets").GetValue(layout)).Add(duplicateAsset);
+                object duplicateObject = Activator.CreateInstance(layoutType.GetNestedType("ObjectDuplicationData"));
+                ((IList)duplicateAsset.GetType().GetField("DuplicatedObjects").GetValue(duplicateAsset)).Add(duplicateObject);
+                ((IList)duplicateObject.GetType().GetField("IncludedInBundleFiles").GetValue(duplicateObject)).Add(file);
+                layoutType.GetField("PackageVersion").SetValue(layout, "com.unity.addressables: 12.0.0-preview.2+fixture");
+                JObject report = JObject.Parse(EditorJsonUtility.ToJson(layout));
+                JObject Analyze(JObject input)
+                {
+                    File.WriteAllText(path, input.ToString());
+                    return JObject.FromObject(handler.GetMethod("HandleCommand").Invoke(null, new object[] { request }));
+                }
+                response = Analyze(report);
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(1, response["data"].Value<int>("total"));
+                Assert.AreEqual(1, response["data"]["items"][0].Value<int>("file_count"));
+                Assert.AreEqual(version, response["data"].Value<string>("package_version"));
+                Assert.AreEqual("12.0.0-preview.2+fixture", response["data"].Value<string>("report_package_version"));
+                layoutType.GetMethod("WriteToFile").Invoke(layout, new object[] { path, true });
                 response = JObject.FromObject(handler.GetMethod("HandleCommand").Invoke(null, new object[] { request }));
-                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                JToken GroupRecord(JObject input) => input["references"]["RefIds"].Single(r => (string)r["type"]["class"] == "BuildLayout/Group");
+                if (GroupRecord(report)["data"]["ContentDirectoryName"] != null)
+                {
+                    var noDirectory = (JObject)report.DeepClone();
+                    GroupRecord(noDirectory)["data"]["ContentDirectoryName"] = JValue.CreateNull();
+                    response = Analyze(noDirectory);
+                    Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                }
+                foreach (
+                    Action<JObject> damage in new Action<JObject>[]
+                    {
+                        r => r.Remove("BuildError"),
+                        r => r["Duration"] = "12",
+                        r => r["Groups"][0]["rid"] = 98765432,
+                        r => r["DuplicatedAssets"][0]["DuplicatedObjects"][0]["IncludedInBundleFiles"][0]["rid"] = -2,
+                        r =>
+                        {
+                            var orphan = (JObject)GroupRecord(r).DeepClone();
+                            orphan["rid"] = 98765432;
+                            ((JArray)r["references"]["RefIds"]).Add(orphan);
+                        },
+                        r => ((JObject)GroupRecord(r)["data"]).Remove("Name"),
+                        r => GroupRecord(r)["data"]["UnknownField"] = "uncovered",
+                        r => GroupRecord(r)["type"]["asm"] = "Assembly-CSharp",
+                        r => GroupRecord(r)["type"]["class"] = "BuildLayout/File",
+                    }
+                )
+                {
+                    var invalid = (JObject)report.DeepClone();
+                    damage(invalid);
+                    response = Analyze(invalid);
+                    Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                    Assert.AreEqual("addressables_layout_schema_unsupported", response.Value<string>("code"), response.ToString());
+                    Assert.AreEqual(invalid.ToString(), File.ReadAllText(path));
+                }
+                report["PackageVersion"] = "other.package: 2.7.6";
+                json = report.ToString();
+                response = Analyze(report);
                 Assert.AreEqual("addressables_layout_version_unsupported", response.Value<string>("code"));
                 Assert.AreEqual(json, File.ReadAllText(path));
             }
@@ -648,6 +696,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(257, 256)]
         public void PreflightFindsArrayBoundaryReferenceOrSpecifiesTheSkippedField(int length, int brokenIndex)
         {
+            Invoke(profiles, "SetValue", activeProfile, "Remote.LoadPath", "fixture/remote");
             var fixture = AssetDatabase.LoadAssetAtPath<AddressablesReferenceFixture>(root + "/Reference.asset");
             fixture.Reference = null;
             fixture.References = new object[length];
@@ -692,6 +741,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void PreflightPagesSkippedArraysAndRejectsContinuationAfterCoverageChanges()
         {
+            Invoke(profiles, "SetValue", activeProfile, "Remote.LoadPath", "fixture/remote");
             var fixture = AssetDatabase.LoadAssetAtPath<AddressablesReferenceFixture>(root + "/Reference.asset");
             fixture.Reference = null;
             fixture.References = new object[257];

@@ -11,7 +11,6 @@ using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
-using UnityEditor.PackageManager;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.Addressables
@@ -26,27 +25,64 @@ namespace MCPForUnity.Editor.Tools.Addressables
 
     internal static class AddressablesCompatibility
     {
-        // Audited stable families retain the stored profile schema and public authoring APIs.
-        // Membership permits probing; it does not replace the per-action API and stored-schema checks.
-        internal static bool SupportsVersion(string version)
+        private static Type checkedSettings;
+
+        internal static void RequireSnapshot(Type settings, string action)
         {
-            if (version == null || version.Length > 64)
-                return false;
-            string[] parts = version.Split('.');
-            if (parts.Length != 3)
-                return false;
-            var numbers = new int[3];
-            for (int i = 0; i < parts.Length; i++)
-                if (
-                    parts[i].Length == 0
-                    || (parts[i].Length > 1 && parts[i][0] == '0')
-                    || !int.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out numbers[i])
-                )
-                    return false;
-            return numbers[0] >= 1 && numbers[0] <= 4;
+            if (settings == checkedSettings && settings != null)
+                return;
+            const string ns = "UnityEditor.AddressableAssets.Settings.";
+            Type Native(string name) =>
+                settings.Assembly.GetType(ns + name) ?? throw new AddressablesException("addressables_api_unsupported", action + " requires " + name + ".");
+            Type group = Native("AddressableAssetGroup"),
+                entry = Native("AddressableAssetEntry"),
+                schema = Native("AddressableAssetGroupSchema");
+            Type profiles = Native("AddressableAssetProfileSettings"),
+                profile = Native("AddressableAssetProfileSettings+BuildProfile"),
+                variable = Native("AddressableAssetProfileSettings+ProfileIdData"),
+                value = Native("AddressableAssetProfileSettings+BuildProfile+ProfileEntry");
+            void Stored(Type owner, string name, Type expected) => RequireField(owner, action, name, expected, true);
+            void Property(Type owner, string name, Type expected) => RequireProperty(owner, action, name, expected);
+            Stored(settings, "m_ActiveProfileId", typeof(string));
+            Stored(settings, "m_ProfileSettings", profiles);
+            Property(settings, "groups", typeof(IEnumerable<>).MakeGenericType(group));
+            Stored(group, "m_GUID", typeof(string));
+            Stored(group, "m_GroupName", typeof(string));
+            Stored(group, "m_Settings", settings);
+            Property(group, "Schemas", typeof(IEnumerable<>).MakeGenericType(schema));
+            Property(group, "ReadOnly", typeof(bool));
+            Property(group, "entries", typeof(IEnumerable<>).MakeGenericType(entry));
+            Property(entry, "parentGroup", group);
+            Property(entry, "guid", typeof(string));
+            Property(entry, "address", typeof(string));
+            Property(entry, "ReadOnly", typeof(bool));
+            Property(entry, "labels", typeof(IEnumerable<string>));
+            Stored(profiles, "m_ProfileVersion", typeof(int));
+            Stored(profiles, "m_Profiles", typeof(List<>).MakeGenericType(profile));
+            Stored(profiles, "m_ProfileEntryNames", typeof(List<>).MakeGenericType(variable));
+            Stored(profile, "m_Id", typeof(string));
+            Stored(profile, "m_ProfileName", typeof(string));
+            Stored(profile, "m_InheritedParent", typeof(string));
+            Stored(profile, "m_Values", typeof(List<>).MakeGenericType(value));
+            Stored(variable, "m_Id", typeof(string));
+            Stored(variable, "m_Name", typeof(string));
+            Stored(value, "m_Id", typeof(string));
+            Stored(value, "m_Value", typeof(string));
+            checkedSettings = settings;
         }
 
-        internal static bool RequiresLookupCacheReset(string version) => SupportsVersion(version) && !version.StartsWith("2.", StringComparison.Ordinal);
+        internal static void RequireProperty(Type owner, string action, string name, Type expected)
+        {
+            PropertyInfo property = owner.GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
+            if (
+                expected == null
+                || property == null
+                || !expected.IsAssignableFrom(property.PropertyType)
+                || property.GetGetMethod() == null
+                || property.GetIndexParameters().Length != 0
+            )
+                throw new AddressablesException("addressables_api_unsupported", action + " requires the native property: " + name + ".");
+        }
 
         internal static MethodInfo RequireMethod(object target, string action, string name, Type result, params Type[] parameters)
         {
@@ -66,6 +102,17 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     action + " requires the native public API signature: " + name + ". No edit was started."
                 );
             return methods[0];
+        }
+
+        internal static object Labels(object settings, string action)
+        {
+            if (settings.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public).Any(m => m.Name == "GetLabels"))
+                return RequireMethod(settings, action, "GetLabels", typeof(List<string>)).Invoke(settings, null);
+            Type tableType = settings.GetType().Assembly.GetType("UnityEditor.AddressableAssets.Settings.LabelTable");
+            object table = RequireField(settings.GetType(), action, "m_LabelTable", tableType, true).GetValue(settings);
+            if (table == null)
+                throw new AddressablesException("addressables_settings_invalid", "Stored Addressables labels are missing.");
+            return RequireField(tableType, action, "m_LabelNames", typeof(List<string>), true).GetValue(table);
         }
 
         internal static FieldInfo RequireField(Type type, string action, string name, Type expected, bool nonPublic = false)
@@ -234,12 +281,10 @@ namespace MCPForUnity.Editor.Tools.Addressables
             type = Type.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettings, Unity.Addressables.Editor");
             if (type == null)
                 throw new AddressablesException("addressables_unavailable", "Addressables package is not installed.");
-            version = UnityEditor.PackageManager.PackageInfo.FindForAssembly(type.Assembly)?.version;
-            if (!AddressablesCompatibility.SupportsVersion(version))
-                Fail(
-                    "addressables_version_unsupported",
-                    "This adapter requires stable Addressables 1.x, 2.x, 3.x or 4.x, compatible action APIs and stored profile schema 1."
-                );
+            var provider = UnityEditor.PackageManager.PackageInfo.FindForAssembly(type.Assembly);
+            if (provider?.name != "com.unity.addressables" || !typeof(ScriptableObject).IsAssignableFrom(type))
+                Fail("addressables_api_unsupported", "The settings type must be provided by com.unity.addressables.");
+            version = provider.version;
         }
 
         internal static AddressablesState Capture(JObject request)
@@ -263,6 +308,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             if (Encoding.UTF8.GetByteCount(request.ToString(Formatting.None)) > 262144)
                 Fail("addressables_budget_exceeded", "Request exceeds256KiB.");
             RequirePackage(out Type type, out string version);
+            AddressablesCompatibility.RequireSnapshot(type, action);
             string path = Path(request["settings_path"]);
             UnityEngine.Object settings = AssetDatabase.LoadAssetAtPath(path, type);
             if (settings == null)
@@ -281,7 +327,13 @@ namespace MCPForUnity.Editor.Tools.Addressables
             };
             foreach (object group in List(Get(settings, "groups"), 128).Where(g => g != null))
             {
-                string groupId = state.String(Get(group, "Guid"), 64);
+                if (Get(group, "m_Settings") as UnityEngine.Object != settings)
+                    Fail("addressables_settings_invalid", "A listed group does not belong to the selected settings.");
+                // The public Guid and Name getters can write defaults into persisted groups.
+                string groupId = state.String(Get(group, "m_GUID"), 64);
+                if (groupId.Length == 0)
+                    Fail("addressables_settings_invalid", "A listed group has no stored identity.");
+                string groupName = state.String(Get(group, "m_GroupName"), 512);
                 if (state.Groups.ContainsKey(groupId))
                     Fail("addressables_settings_invalid", "Duplicate native group identity.");
                 state.Groups.Add(groupId, group);
@@ -289,8 +341,12 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 foreach (object schema in List(Get(group, "Schemas"), 32).Where(s => s != null))
                 {
                     var row = new JObject { ["type"] = schema.GetType().FullName, ["asset"] = Identity(schema as UnityEngine.Object) };
-                    if (schema.GetType().FullName == "UnityEditor.AddressableAssets.Settings.GroupSchemas.BundledAssetGroupSchema")
+                    if (schema.GetType() == type.Assembly.GetType("UnityEditor.AddressableAssets.Settings.GroupSchemas.BundledAssetGroupSchema"))
                     {
+                        Type reference = type.Assembly.GetType("UnityEditor.AddressableAssets.Settings.ProfileValueReference");
+                        AddressablesCompatibility.RequireProperty(schema.GetType(), action, "BuildPath", reference);
+                        AddressablesCompatibility.RequireProperty(schema.GetType(), action, "LoadPath", reference);
+                        AddressablesCompatibility.RequireProperty(reference, action, "Id", typeof(string));
                         row["build_path_id"] = state.String(Get(Get(schema, "BuildPath"), "Id"), 64);
                         row["load_path_id"] = state.String(Get(Get(schema, "LoadPath"), "Id"), 64);
                     }
@@ -300,7 +356,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 var groupRow = new JObject
                 {
                     ["guid"] = groupId,
-                    ["name"] = state.String(Get(group, "Name"), 512),
+                    ["name"] = groupName.Length == 0 ? groupId : groupName,
                     ["asset"] = Identity(group as UnityEngine.Object),
                     ["read_only"] = (bool)Get(group, "ReadOnly"),
                     ["schemas"] = schemas,
@@ -309,6 +365,8 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 ((JArray)state.Document["groups"]).Add(groupRow);
                 foreach (object entry in List(Get(group, "entries"), 4096))
                 {
+                    if (!ReferenceEquals(Get(entry, "parentGroup"), group))
+                        Fail("addressables_settings_invalid", "An explicit entry does not belong to its listed group.");
                     if (state.Entries.Count >= 4096)
                         Fail("addressables_budget_exceeded", "Settings exceed4096 explicit entries.");
                     string guid = state.String(Get(entry, "guid"), 64);
@@ -336,9 +394,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 groupRow["entry_guids"] = new JArray(((JArray)groupRow["entry_guids"]).Values<string>().OrderBy(x => x, StringComparer.Ordinal));
             }
             state.Document["labels"] = new JArray(
-                List(AddressablesCompatibility.RequireMethod(settings, action, "GetLabels", typeof(List<string>)).Invoke(settings, null), 256)
-                    .Select(x => state.String(x, 128))
-                    .OrderBy(x => x, StringComparer.Ordinal)
+                List(AddressablesCompatibility.Labels(settings, action), 256).Select(x => state.String(x, 128)).OrderBy(x => x, StringComparer.Ordinal)
             );
             state.ProfilesObject = Get(settings, "m_ProfileSettings");
             // Public profile getters can create defaults or migrate data. Compatible snapshots require stored schema 1.

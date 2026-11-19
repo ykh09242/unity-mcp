@@ -134,7 +134,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             AddressablesState fresh = AddressablesState.Capture(request);
             if (fresh.Revision != expected || fresh.Settings != before.Settings)
                 AddressablesState.Fail("stale_addressables_revision", "Settings or native identity changed before Undo.");
-            AddressablesUndoCache.Prepare(before.Settings, before.Version, action);
+            AddressablesUndoCache.Prepare(before.Settings, action);
             int undo = Undo.GetCurrentGroup();
             try
             {
@@ -180,7 +180,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
         private sealed class Record
         {
             internal WeakReference<UnityEngine.Object> Settings;
-            internal MethodInfo Clear;
+            internal Action<UnityEngine.Object> Clear;
         }
 
         private static readonly List<Record> Records = new List<Record>();
@@ -192,29 +192,58 @@ namespace MCPForUnity.Editor.Tools.Addressables
             EditorApplication.quitting += Release;
         }
 
-        internal static void Prepare(UnityEngine.Object settings, string version, string action)
+        internal static void Prepare(UnityEngine.Object settings, string action)
         {
-            if (!AddressablesCompatibility.RequiresLookupCacheReset(version))
-                return;
-            Type type = settings.GetType();
-            MethodInfo clear = type.GetMethod("ClearFindAssetEntryCache", BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
-            if (
-                type.FullName != "UnityEditor.AddressableAssets.Settings.AddressableAssetSettings"
-                || type.Assembly.GetName().Name != "Unity.Addressables.Editor"
-                || clear == null
-                || clear.DeclaringType != type
-                || !clear.IsAssembly
-                || clear.ContainsGenericParameters
-                || clear.ReturnType != typeof(void)
-            )
-                AddressablesState.Fail(
-                    "addressables_api_unsupported",
-                    action + " requires the Addressables 1.x, 3.x or 4.x native transient lookup-cache reset API for Undo/Redo."
-                );
             Prune();
             if (Records.Any(record => record.Settings.TryGetTarget(out UnityEngine.Object owner) && owner == settings))
                 return;
-            Records.Add(new Record { Settings = new WeakReference<UnityEngine.Object>(settings), Clear = clear });
+            Action<UnityEngine.Object> clear = BindReset(settings.GetType(), action);
+            if (clear != null)
+                Records.Add(new Record { Settings = new WeakReference<UnityEngine.Object>(settings), Clear = clear });
+        }
+
+        private static Action<UnityEngine.Object> BindReset(Type settings, string action)
+        {
+            const BindingFlags instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            var assembly = settings.Assembly;
+            Type entry = assembly.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetEntry");
+            Type group = assembly.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetGroup");
+            if (
+                settings.FullName != "UnityEditor.AddressableAssets.Settings.AddressableAssetSettings"
+                || assembly.GetName().Name != "Unity.Addressables.Editor"
+                || entry == null
+                || group == null
+            )
+                throw new AddressablesException("addressables_api_unsupported", action + " requires the native Addressables settings, group and entry types.");
+            var clear = settings.GetMethod("ClearFindAssetEntryCache", instance, null, Type.EmptyTypes, null);
+            if (clear?.DeclaringType == settings && clear.IsAssembly && !clear.ContainsGenericParameters && clear.ReturnType == typeof(void))
+                return owner => clear.Invoke(owner, null);
+            Type cache = settings.GetNestedType("Cache`2", BindingFlags.NonPublic);
+            var field = settings.GetField("m_FindAssetEntryCache", instance);
+            if (
+                clear == null
+                && cache != null
+                && field?.DeclaringType == settings
+                && field.IsPrivate
+                && !field.IsInitOnly
+                && !field.IsDefined(typeof(SerializeField), false)
+                && !field.IsDefined(typeof(SerializeReference), false)
+                && field.FieldType.IsGenericType
+                && field.FieldType.GetGenericTypeDefinition() == cache
+                && field.FieldType.GetGenericArguments().SequenceEqual(new[] { typeof(string), entry })
+            )
+                return owner => field.SetValue(owner, null);
+            // Earlier lookups search the group's live entry map. Some also expose an includeImplicit overload.
+            if (
+                clear == null
+                && cache == null
+                && field == null
+                && settings.GetMethod("FindAssetEntry", new[] { typeof(string) })?.ReturnType == entry
+                && group.GetMethod("GetAssetEntry", new[] { typeof(string) })?.ReturnType == entry
+                && group.GetField("m_EntryMap", instance)?.FieldType == typeof(Dictionary<,>).MakeGenericType(typeof(string), entry)
+            )
+                return null;
+            throw new AddressablesException("addressables_api_unsupported", action + " requires a compatible explicit-entry lookup and Undo cache contract.");
         }
 
         private static void Prune() => Records.RemoveAll(record => !record.Settings.TryGetTarget(out UnityEngine.Object owner) || owner == null);
@@ -226,9 +255,8 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 if (record.Settings.TryGetTarget(out UnityEngine.Object owner) && owner != null)
                     try
                     {
-                        // Affected families restore group maps but can retain entries referring to their pre-Undo instances.
-                        // Its native hook clears only this nonserialized lookup cache; no asset or hash is rewritten.
-                        record.Clear.Invoke(owner, null);
+                        // Group maps are restored by Undo. Discard only the transient lookup into their old entries.
+                        record.Clear(owner);
                     }
                     catch (TargetInvocationException)
                     {
