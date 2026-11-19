@@ -118,7 +118,6 @@ async def test_optional_inventory_deadline_preserves_completed_source_mismatch(
     command_hub, monkeypatch
 ):
     import anyio
-    from fastmcp import Client
     from core.server_build import ServerBuild
     from cli.utils.config import CLIConfig
     import cli.utils.doctor_connection as connection
@@ -131,19 +130,22 @@ async def test_optional_inventory_deadline_preserves_completed_source_mismatch(
     values["get_editor_state"]["unity"]["instance_id"] = "Fixture@aaaa1111"
     await install_native_replies(command_hub, values)
     monkeypatch.setattr(doctor, "RUNNING_SERVER", ServerBuild("1.2.0", "d" * 40, "c" * 32))
-    client = Client(doctor_server(), mode="legacy", cache=False)
-    entered = anyio.Event()
+    clients = []
 
-    async def slow_listing(**kwargs):
-        entered.set()
+    async def slow_listing(client, **_kwargs):
+        clients.append(client)
         await anyio.sleep_forever()
 
-    monkeypatch.setattr(client, "list_tools_mcp", slow_listing)
-    monkeypatch.setattr(connection, "DiagnosticClient", lambda *_: client)
-    receipt = await connection.diagnose(
-        CLIConfig(unity_instance="Fixture@aaaa1111", timeout=1), "legacy", "inspect_editor_state"
-    )
-    assert entered.is_set() and not client.is_connected()
+    monkeypatch.setattr(connection.DiagnosticClient, "list_tools_mcp", slow_listing)
+    trace = []
+    async with live_mcp(doctor_server(), trace) as port:
+        receipt = await connection.diagnose(
+            CLIConfig(port=port, unity_instance="Fixture@aaaa1111", timeout=1),
+            "legacy",
+            "inspect_editor_state",
+        )
+    assert "resources/read" in trace
+    assert len(clients) == 1 and not clients[0].is_connected()
     assert receipt.connection_verified and receipt.reason == "source_mismatch"
     assert receipt.data.source_comparison == "mismatch"
     assert receipt.tool_inventory.received is None
