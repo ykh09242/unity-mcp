@@ -276,7 +276,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
         private static Snapshot Capture(Component mesh)
         {
-            var positions = ManageProBuilder._proBuilderMeshType.GetProperty("positions")?.GetValue(mesh) as IList<Vector3>;
+            var positions = ManageProBuilder.PositionsProperty?.GetValue(mesh) as IList<Vector3>;
             var faces = ManageProBuilder.GetFacesArray(mesh) as IList;
             if (positions == null || faces == null)
                 Refuse("topology_unavailable", "The installed ProBuilder package does not expose required topology collections.");
@@ -290,11 +290,19 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     Refuse("topology_unavailable", "Mesh contains non-finite vertex positions.");
                 snapshot.Positions[i] = p;
             }
-            var indicesProperty = ManageProBuilder._faceType.GetProperty("indexes");
+            var indicesProperty = ManageProBuilder.IndicesProperty;
             var smoothingProperty = ManageProBuilder._faceType.GetProperty("smoothingGroup");
             var manualProperty = ManageProBuilder._faceType.GetProperty("manualUV");
             var submeshProperty = ManageProBuilder._faceType.GetProperty("submeshIndex");
-            if (indicesProperty == null || smoothingProperty == null || manualProperty == null || submeshProperty == null)
+            var manualField = ManageProBuilder._faceType.GetField("manualUV");
+            var materialProperty = ManageProBuilder._faceType.GetProperty("material");
+            var materials = ManageProBuilder.LegacyMesh ? mesh.GetComponent<Renderer>()?.sharedMaterials : null;
+            if (
+                indicesProperty == null
+                || smoothingProperty == null
+                || (manualProperty == null && manualField == null)
+                || (submeshProperty == null && (materialProperty == null || materials == null))
+            )
                 Refuse("topology_unavailable", "The installed ProBuilder face API lacks required attributes.");
             int count = 0;
             for (int i = 0; i < faces.Count; i++)
@@ -314,16 +322,22 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                         Refuse("topology_unavailable", "Mesh contains an invalid vertex index.");
                     copied[j] = index;
                 }
+                int submeshIndex =
+                    submeshProperty != null
+                        ? (int)submeshProperty.GetValue(face)
+                        : Array.IndexOf(materials, ManageProBuilder.LegacyFaceMaterial(materialProperty, face));
+                if (submeshIndex < 0)
+                    Refuse("topology_unavailable", "The native face material is not bound to a renderer submesh.");
                 snapshot.Faces[i] = new FaceSnapshot
                 {
                     Indices = copied,
                     SmoothingGroup = (int)smoothingProperty.GetValue(face),
-                    ManualUV = (bool)manualProperty.GetValue(face),
-                    SubmeshIndex = (int)submeshProperty.GetValue(face),
+                    ManualUV = (bool)(manualProperty?.GetValue(face) ?? manualField.GetValue(face)),
+                    SubmeshIndex = submeshIndex,
                 };
             }
             // Validate shared-group work before invoking the existing native edge-order provider.
-            var shared = ManageProBuilder._proBuilderMeshType.GetProperty("sharedVertices")?.GetValue(mesh) as IList;
+            var shared = ManageProBuilder.SharedProperty?.GetValue(mesh) as IList;
             if (shared == null)
                 Refuse("topology_unavailable", "Could not read native shared vertex groups.");
             if (shared.Count > MaxVertices)
@@ -332,7 +346,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             int sharedCount = 0;
             foreach (object group in shared)
             {
-                var members = group as IEnumerable;
+                var members = ManageProBuilder.SharedMembers(group);
                 if (members == null)
                     Refuse("topology_unavailable", "Could not read shared vertex membership.");
                 var copied = new List<int>();
@@ -365,7 +379,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
         private static int ReadEdgeVertex(object edge, string name)
         {
-            var field = edge.GetType().GetField(name);
+            var field = edge.GetType().GetField(ManageProBuilder.LegacyMesh ? (name == "a" ? "x" : "y") : name);
             if (field != null)
                 return (int)field.GetValue(edge);
             var property = edge.GetType().GetProperty(name);

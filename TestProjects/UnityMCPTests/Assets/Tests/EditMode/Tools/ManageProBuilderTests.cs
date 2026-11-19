@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.ProBuilder;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -13,12 +14,40 @@ namespace MCPForUnityTests.Editor.Tools
     public class ManageProBuilderTests
     {
         private readonly List<GameObject> _createdObjects = new List<GameObject>();
+        private readonly PrefabTestSceneFixture _scenes = new PrefabTestSceneFixture();
         private bool _proBuilderInstalled;
+        private string _legacyMaterialFailure;
 
         [OneTimeSetUp]
         public void OneTimeSetUp()
         {
-            _proBuilderInstalled = Type.GetType("UnityEngine.ProBuilder.ProBuilderMesh, Unity.ProBuilder") != null;
+            _scenes.PrepareRunnerBootstrap();
+            _proBuilderInstalled = ManageProBuilder.InstalledMeshType != null;
+            try
+            {
+                Type.GetType("ProBuilder.Core.pb_Material, ProBuilderCore")?.GetProperty("DefaultMaterial")?.GetValue(null);
+            }
+            catch (TargetInvocationException ex)
+            {
+                _legacyMaterialFailure = ex.GetBaseException().Message;
+            }
+        }
+
+        [OneTimeTearDown]
+        public void RestoreRunnerScene() => _scenes.RestoreRunnerBootstrap();
+
+        [SetUp]
+        public void RequireUsableNativeGeometry()
+        {
+            string test = TestContext.CurrentContext.Test.MethodName;
+            if (
+                _legacyMaterialFailure != null
+                && !test.StartsWith("HandleCommand_")
+                && test != nameof(ReadinessReflectsInstalledMeshGeneration)
+                && test != nameof(UnusableLegacyMaterialRefusesCreationBeforeUndo)
+            )
+                Assert.Ignore("The installed ProBuilder DLL cannot build geometry on this Editor: " + _legacyMaterialFailure);
+            _scenes.Create("McpProBuilderGeneration_", Guid.NewGuid().ToString("N"));
         }
 
         [TearDown]
@@ -30,6 +59,7 @@ namespace MCPForUnityTests.Editor.Tools
                     UnityEngine.Object.DestroyImmediate(go);
             }
             _createdObjects.Clear();
+            _scenes.Close();
         }
 
         // =====================================================================
@@ -97,6 +127,318 @@ namespace MCPForUnityTests.Editor.Tools
             }
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+        }
+
+        [Test]
+        public void ReadinessReflectsInstalledMeshGeneration()
+        {
+            var result = ToJObject(MCPForUnity.Editor.Resources.Project.ProjectInfo.HandleCommand(new JObject { ["include_readiness"] = true }));
+            Assert.AreEqual(_proBuilderInstalled, result.SelectToken("data.featureReadiness.probuilder.supported")?.Value<bool?>(), result.ToString());
+        }
+
+        [Test]
+        public void UnusableLegacyMaterialRefusesCreationBeforeUndo()
+        {
+            if (_legacyMaterialFailure == null)
+                Assert.Ignore("Requires a legacy package with an incompatible native material getter.");
+            int undo = Undo.GetCurrentGroup();
+            int before = Resources.FindObjectsOfTypeAll(ManageProBuilder.InstalledMeshType).Length;
+            var result = ToJObject(
+                ManageProBuilder.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create_shape",
+                        ["properties"] = new JObject { ["shapeType"] = "Cube" },
+                    }
+                )
+            );
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains(_legacyMaterialFailure, result.Value<string>("error"));
+            Assert.AreEqual(before, Resources.FindObjectsOfTypeAll(ManageProBuilder.InstalledMeshType).Length);
+            Assert.AreEqual(undo, Undo.GetCurrentGroup());
+        }
+
+        [Test]
+        public void ConversionUndoRestoresBorrowedMesh()
+        {
+            if (!_proBuilderInstalled)
+                Assert.Ignore("Requires a native ProBuilder package.");
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = "PBUndo_" + Guid.NewGuid().ToString("N");
+            _createdObjects.Add(go);
+            var filter = go.GetComponent<MeshFilter>();
+            var original = filter.sharedMesh;
+            var materials = go.GetComponent<Renderer>().sharedMaterials;
+            Undo.IncrementCurrentGroup();
+            var result = ToJObject(ManageProBuilder.HandleCommand(new JObject { ["action"] = "convert_to_probuilder", ["target"] = go.name }));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsNotNull(go.GetComponent(ManageProBuilder.InstalledMeshType));
+            Assert.AreNotSame(original, filter.sharedMesh);
+            Undo.FlushUndoRecordObjects();
+            Undo.PerformUndo();
+            Assert.IsNull(go.GetComponent(ManageProBuilder.InstalledMeshType));
+            Assert.IsTrue(original != null);
+            Assert.AreSame(original, filter.sharedMesh);
+            CollectionAssert.AreEqual(materials, go.GetComponent<Renderer>().sharedMaterials);
+        }
+
+        [Test]
+        public void RepairCountsTrianglesAcrossNativeGenerations()
+        {
+            if (!_proBuilderInstalled)
+                Assert.Ignore("Requires a native ProBuilder package.");
+            var meshType = ManageProBuilder.InstalledMeshType;
+            bool legacy = meshType.FullName == "ProBuilder.Core.pb_Object";
+            var faceType = meshType.Assembly.GetType(legacy ? "ProBuilder.Core.pb_Face" : "UnityEngine.ProBuilder.Face", true);
+            var faces = Array.CreateInstance(faceType, 2);
+            faces.SetValue(Activator.CreateInstance(faceType, new object[] { new[] { 0, 1, 2 } }), 0);
+            faces.SetValue(Activator.CreateInstance(faceType, new object[] { new[] { 3, 4, 5 } }), 1);
+            var points = new[]
+            {
+                Vector3.zero,
+                Vector3.right,
+                Vector3.up,
+                Vector3.forward,
+                Vector3.forward + Vector3.right,
+                Vector3.forward + Vector3.right * 2,
+            };
+            var factory = meshType.GetMethod(legacy ? "CreateInstanceWithVerticesFaces" : "Create", new[] { typeof(Vector3[]), faces.GetType() });
+            var mesh = (Component)factory.Invoke(null, new object[] { points, faces });
+            mesh.gameObject.name = "PBRepair_" + Guid.NewGuid().ToString("N");
+            _createdObjects.Add(mesh.gameObject);
+            var result = ToJObject(ManageProBuilder.HandleCommand(new JObject { ["action"] = "repair_mesh", ["target"] = mesh.gameObject.name }));
+            Assert.AreEqual(1, result.SelectToken("data.degenerateTrianglesRemoved")?.Value<int>(), result.ToString());
+            Assert.AreEqual(1, mesh.GetComponent<MeshFilter>().sharedMesh.triangles.Length / 3);
+        }
+
+        [Test]
+        public void MergeUndoRestoresBothConvertedTargets()
+        {
+            if (Type.GetType("UnityEngine.ProBuilder.MeshOperations.CombineMeshes, Unity.ProBuilder") == null)
+                Assert.Ignore("Requires the native in-place mesh combination API.");
+            var first = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            var second = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            _createdObjects.Add(first);
+            _createdObjects.Add(second);
+            string firstName = first.name = "PBFirst_" + Guid.NewGuid().ToString("N");
+            second.name = "PBSecond_" + Guid.NewGuid().ToString("N");
+            second.transform.position = Vector3.right * 3f;
+            Mesh firstSource = first.GetComponent<MeshFilter>().sharedMesh,
+                secondSource = second.GetComponent<MeshFilter>().sharedMesh;
+            var request = new JObject
+            {
+                ["action"] = "merge_objects",
+                ["properties"] = new JObject { ["targets"] = new JArray(first.name, second.name), ["name"] = "PBCombined" },
+            };
+            var result = ToJObject(ManageProBuilder.HandleCommand(request));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(24, first.GetComponent<MeshFilter>().sharedMesh.triangles.Length / 3);
+            Undo.FlushUndoRecordObjects();
+            Undo.PerformUndo();
+            Assert.AreEqual(firstName, first.name);
+            Assert.IsNull(first.GetComponent(ManageProBuilder.InstalledMeshType));
+            Assert.IsNull(second.GetComponent(ManageProBuilder.InstalledMeshType));
+            Assert.AreSame(firstSource, first.GetComponent<MeshFilter>().sharedMesh);
+            Assert.AreSame(secondSource, second.GetComponent<MeshFilter>().sharedMesh);
+        }
+
+        [Test]
+        public void NativeCubeTopologyGuardsEditsAcrossMeshGenerations()
+        {
+            if (!_proBuilderInstalled)
+                Assert.Ignore("Requires a native ProBuilder package.");
+            string name = "PBTopology_" + Guid.NewGuid().ToString("N");
+            JObject Send(string action, JObject properties) =>
+                ToJObject(
+                    ManageProBuilder.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = action,
+                            ["target"] = name,
+                            ["properties"] = properties,
+                        }
+                    )
+                );
+            var created = Send(
+                "create_shape",
+                new JObject
+                {
+                    ["name"] = name,
+                    ["shapeType"] = "Cube",
+                    ["width"] = 3,
+                }
+            );
+            Assert.IsTrue(created.Value<bool>("success"), created.ToString());
+            var go = GameObject.Find(name);
+            _createdObjects.Add(go);
+            Assert.AreEqual(3f, go.GetComponent<MeshFilter>().sharedMesh.bounds.size.x, 0.001f);
+            foreach (var page in new[] { ("faces", 6), ("edges", 12), ("vertices", 24) })
+            {
+                var topology = Send("get_topology", new JObject { ["kind"] = page.Item1 });
+                Assert.AreEqual(page.Item2, topology.SelectToken("data.total")?.Value<int>(), topology.ToString());
+            }
+            var revision = Send("get_topology", new JObject()).SelectToken("data.mesh_revision")?.Value<string>();
+            var indices = new JArray();
+            for (int i = 0; i < 24; i++)
+                indices.Add(i);
+            var move = new JObject
+            {
+                ["vertexIndices"] = indices,
+                ["offset"] = new JArray(0, 1, 0),
+                ["mesh_revision"] = revision,
+            };
+            var moved = Send("move_vertices", move);
+            Assert.IsTrue(moved.Value<bool>("success"), moved.ToString());
+            Assert.AreEqual("stale_mesh_revision", Send("move_vertices", move).Value<string>("error"));
+            var subdivide = Send("subdivide", new JObject { ["faceIndices"] = new JArray(0) });
+            Assert.IsTrue(subdivide.Value<bool>("success"), subdivide.ToString());
+            Assert.Greater(subdivide.SelectToken("data.faceCount").Value<int>(), 6);
+        }
+
+        [Test]
+        public void FailedNativeFaceConnectPreservesTopology()
+        {
+            if (!_proBuilderInstalled)
+                Assert.Ignore("Requires a native ProBuilder package.");
+            string name = "PBBadFace_" + Guid.NewGuid().ToString("N");
+            JObject Send(string action, JObject properties) =>
+                ToJObject(
+                    ManageProBuilder.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = action,
+                            ["target"] = name,
+                            ["properties"] = properties,
+                        }
+                    )
+                );
+            var created = Send(
+                "create_shape",
+                new JObject
+                {
+                    ["name"] = name,
+                    ["shapeType"] = "Cube",
+                    ["width"] = 3,
+                }
+            );
+            Assert.IsTrue(created.Value<bool>("success"), created.ToString());
+            _createdObjects.Add(GameObject.Find(name));
+            var moved = Send("move_vertices", new JObject { ["vertexIndices"] = new JArray(0), ["offset"] = new JArray(0, 1, 0) });
+            Assert.IsTrue(moved.Value<bool>("success"), moved.ToString());
+            var before = Send("get_topology", new JObject());
+            var rejected = Send("subdivide", new JObject { ["faceIndices"] = new JArray(0) });
+            Assert.IsFalse(rejected.Value<bool>("success"), rejected.ToString());
+            var after = Send("get_topology", new JObject());
+            Assert.IsTrue(before.Value<bool>("success") && after.Value<bool>("success"));
+            Assert.AreEqual(before.SelectToken("data.mesh_revision").Value<string>(), after.SelectToken("data.mesh_revision").Value<string>());
+        }
+
+        [Test]
+        public void NativeBridgeHonorsNonManifoldPolicy()
+        {
+            if (!_proBuilderInstalled)
+                Assert.Ignore("Requires a native ProBuilder package.");
+            string name = "PBBridge_" + Guid.NewGuid().ToString("N");
+            JObject Send(string action, JObject properties) =>
+                ToJObject(
+                    ManageProBuilder.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = action,
+                            ["target"] = name,
+                            ["properties"] = properties,
+                        }
+                    )
+                );
+            var created = Send("create_shape", new JObject { ["name"] = name, ["shapeType"] = "Cube" });
+            Assert.IsTrue(created.Value<bool>("success"), created.ToString());
+            _createdObjects.Add(GameObject.Find(name));
+            var page = Send("get_topology", new JObject { ["kind"] = "edges" });
+            var edges = (JArray)page.SelectToken("data.items");
+            Vector3 Center(JToken edge)
+            {
+                var a = edge["positionA"].ToObject<float[]>();
+                var b = edge["positionB"].ToObject<float[]>();
+                return new Vector3(a[0] + b[0], a[1] + b[1], a[2] + b[2]) * .5f;
+            }
+            JToken first = edges[0],
+                opposite = null;
+            foreach (var edge in edges)
+                if ((Center(edge) + Center(first)).sqrMagnitude < .000001f)
+                    opposite = edge;
+            Assert.IsNotNull(opposite);
+            JObject Pair(JToken edge) => new JObject { ["a"] = edge["vertexA"], ["b"] = edge["vertexB"] };
+            var args = new JObject { ["edgeA"] = Pair(first), ["edgeB"] = Pair(opposite) };
+            var perimeterOnly = Send("bridge_edges", args);
+            Assert.AreEqual(false, perimeterOnly.SelectToken("data.bridgeCreated")?.Value<bool>(), perimeterOnly.ToString());
+            args["allowNonManifold"] = true;
+            var allowed = Send("bridge_edges", args);
+            Assert.AreEqual(true, allowed.SelectToken("data.bridgeCreated")?.Value<bool>(), allowed.ToString());
+        }
+
+        [Test]
+        public void LegacyFaceColorKeepsNativeMaterialSlotsThroughRebuildAndUndo()
+        {
+            var native = Type.GetType("ProBuilder.Core.pb_Object, ProBuilderCore");
+            if (native == null)
+                Assert.Ignore("Requires a native legacy mesh with per-face materials.");
+            string name = "PBColored_" + Guid.NewGuid().ToString("N");
+            JObject Send(string action, JObject properties) =>
+                ToJObject(
+                    ManageProBuilder.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = action,
+                            ["target"] = name,
+                            ["properties"] = properties,
+                        }
+                    )
+                );
+            var created = Send("create_shape", new JObject { ["name"] = name, ["shapeType"] = "Cube" });
+            Assert.IsTrue(created.Value<bool>("success"), created.ToString());
+            var go = GameObject.Find(name);
+            _createdObjects.Add(go);
+            var mesh = go.GetComponent(native);
+            var renderer = go.GetComponent<Renderer>();
+            var faces = (Array)native.GetProperty("faces").GetValue(mesh);
+            var material = faces.GetType().GetElementType().GetProperty("material");
+            var original = AssetDatabase.GetBuiltinExtraResource<Material>("Default-Material.mat");
+            var other = new Material(original);
+            try
+            {
+                for (int i = 0; i < faces.Length; i++)
+                    material.SetValue(faces.GetValue(i), i == faces.Length - 1 ? other : original);
+                ManageProBuilder.RefreshMesh(mesh);
+                Assert.AreSame(original, renderer.sharedMaterial);
+                var originalShader = original.shader;
+                Undo.IncrementCurrentGroup();
+                var colored = Send("set_face_color", new JObject { ["faceIndices"] = new JArray(0), ["color"] = new JArray(1, 0, 0, 1) });
+                Assert.IsTrue(colored.Value<bool>("success"), colored.ToString());
+                var replacement = renderer.sharedMaterial;
+                Assert.AreNotSame(original, replacement);
+                Assert.AreSame(originalShader, original.shader);
+                ManageProBuilder.RefreshMesh(mesh);
+                Assert.AreSame(replacement, renderer.sharedMaterial);
+                CheckBindings(replacement);
+                var topology = Send("get_topology", new JObject { ["kind"] = "faces" });
+                Assert.AreEqual(6, topology.SelectToken("data.total")?.Value<int>(), topology.ToString());
+                Undo.FlushUndoRecordObjects();
+                Undo.PerformUndo();
+                CheckBindings(original);
+                Assert.AreSame(original, renderer.sharedMaterial);
+                Assert.AreEqual(other, renderer.sharedMaterials[1]);
+
+                void CheckBindings(Material expected)
+                {
+                    var actual = (Array)native.GetProperty("faces").GetValue(mesh);
+                    for (int i = 0; i < actual.Length; i++)
+                        Assert.AreSame(i == actual.Length - 1 ? other : expected, material.GetValue(actual.GetValue(i)));
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(other);
+            }
         }
 
         // =====================================================================
@@ -375,7 +717,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = GameObject.Find("PBTestUVSettings");
             Assert.IsNotNull(go);
             _createdObjects.Add(go);
-            var meshType = Type.GetType("UnityEngine.ProBuilder.ProBuilderMesh, Unity.ProBuilder");
+            var meshType = ManageProBuilder.InstalledMeshType;
             var mesh = go.GetComponent(meshType);
             var faces = (System.Collections.IList)meshType.GetProperty("faces").GetValue(mesh);
             var uvProperty = faces[0].GetType().GetProperty("uv");
@@ -394,11 +736,12 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var uv = uvProperty.GetValue(faces[0]);
             var settingsType = uv.GetType();
-            Assert.AreEqual(new Vector2(2, 3), settingsType.GetProperty("scale").GetValue(uv));
-            Assert.AreEqual(new Vector2(4, 5), settingsType.GetProperty("offset").GetValue(uv));
-            Assert.AreEqual(45f, settingsType.GetProperty("rotation").GetValue(uv));
-            Assert.AreEqual(true, settingsType.GetProperty("flipU").GetValue(uv));
-            Assert.AreEqual(true, settingsType.GetProperty("flipV").GetValue(uv));
+            object Read(string name) => settingsType.GetProperty(name)?.GetValue(uv) ?? settingsType.GetField(name).GetValue(uv);
+            Assert.AreEqual(new Vector2(2, 3), Read("scale"));
+            Assert.AreEqual(new Vector2(4, 5), Read("offset"));
+            Assert.AreEqual(45f, Read("rotation"));
+            Assert.AreEqual(true, Read("flipU"));
+            Assert.AreEqual(true, Read("flipV"));
             Assert.AreEqual(untouched, uvProperty.GetValue(faces[1]));
         }
 

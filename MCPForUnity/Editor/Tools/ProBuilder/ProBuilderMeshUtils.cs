@@ -15,16 +15,16 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
         {
             try
             {
-                var values = new JObject
-                {
-                    ["instance_id"] = mesh.GetInstanceIDCompat(),
-                    ["vertex_count"] = ManageProBuilder.GetVertexCount(mesh),
-                    ["face_count"] = ManageProBuilder.GetFaceCount(mesh),
-                };
+                var values = new JObject { ["instance_id"] = mesh.GetInstanceIDCompat() };
                 using var serialized = new SerializedObject(mesh);
-                using var positions = serialized.FindProperty("m_Positions");
-                using var faces = serialized.FindProperty("m_Faces");
+                using var positions = serialized.FindProperty(ManageProBuilder.LegacyMesh ? "_vertices" : "m_Positions");
+                using var faces = serialized.FindProperty(ManageProBuilder.LegacyMesh ? "_quads" : "m_Faces");
                 bool complete = positions != null && positions.isArray && faces != null && faces.isArray;
+                if (complete)
+                {
+                    values["vertex_count"] = positions.arraySize;
+                    values["face_count"] = faces.arraySize;
+                }
                 var findings = new JArray();
                 int invalid = 0,
                     degenerate = 0,
@@ -44,7 +44,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     for (int face = 0; face < faces.arraySize; face++)
                     {
                         using var entry = faces.GetArrayElementAtIndex(face);
-                        using var indices = entry.FindPropertyRelative("m_Indexes");
+                        using var indices = entry.FindPropertyRelative(ManageProBuilder.LegacyMesh ? "_indices" : "m_Indexes");
                         if (indices == null || !indices.isArray || indices.arraySize > 16384 - work)
                         {
                             complete = false;
@@ -105,7 +105,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
         {
             var pbMesh = ManageProBuilder.RequireProBuilderMesh(@params);
 
-            var positionsProp = ManageProBuilder._proBuilderMeshType.GetProperty("positions");
+            var positionsProp = ManageProBuilder.PositionsProperty;
             var positions = positionsProp?.GetValue(pbMesh) as System.Collections.IList;
             if (positions == null || positions.Count == 0)
                 return new ErrorResponse("Could not read vertex positions.");
@@ -154,7 +154,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
         {
             var pbMesh = ManageProBuilder.RequireProBuilderMesh(@params);
 
-            var positionsProp = ManageProBuilder._proBuilderMeshType.GetProperty("positions");
+            var positionsProp = ManageProBuilder.PositionsProperty;
             var positions = positionsProp?.GetValue(pbMesh) as System.Collections.IList;
             if (positions == null || positions.Count == 0)
                 return new ErrorResponse("Could not read vertex positions.");
@@ -187,13 +187,13 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
         {
             var pbMesh = ManageProBuilder.RequireProBuilderMesh(@params);
 
-            var positionsProp = ManageProBuilder._proBuilderMeshType.GetProperty("positions");
+            var positionsProp = ManageProBuilder.PositionsProperty;
             var positions = positionsProp?.GetValue(pbMesh) as System.Collections.IList;
             var allFaces = ManageProBuilder.GetFacesArray(pbMesh);
             var facesList = (System.Collections.IList)allFaces;
 
             int degenerateCount = 0;
-            var indexesProp = ManageProBuilder._faceType.GetProperty("indexes");
+            var indexesProp = ManageProBuilder.IndicesProperty;
 
             var usedVertices = new HashSet<int>();
             if (indexesProp != null)
@@ -263,7 +263,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             // SetPivot moves the transform without moving the geometry visually.
             // We need to offset vertex positions by the inverse of the transform change.
-            var positionsProp = ManageProBuilder._proBuilderMeshType.GetProperty("positions");
+            var positionsProp = ManageProBuilder.PositionsProperty;
             var positions = positionsProp?.GetValue(pbMesh) as System.Collections.IList;
             if (positions == null || positions.Count == 0)
                 return new ErrorResponse("Could not read vertex positions.");
@@ -293,11 +293,18 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             );
         }
 
-        private static void SetVertexPositions(Component pbMesh, Vector3[] positions)
+        internal static bool CanSetPositions() => ManageProBuilder.PositionsProperty?.CanWrite == true || PositionsSetter() != null;
+
+        private static MethodInfo PositionsSetter() =>
+            ManageProBuilder._proBuilderMeshType.GetMethod(ManageProBuilder.LegacyMesh ? "SetVertices" : "SetPositions", new[] { typeof(Vector3[]) });
+
+        internal static void SetVertexPositions(Component pbMesh, Vector3[] positions)
         {
-            var positionsProp = ManageProBuilder._proBuilderMeshType.GetProperty("positions");
+            var positionsProp = ManageProBuilder.PositionsProperty;
             if (positionsProp != null && positionsProp.CanWrite)
                 positionsProp.SetValue(pbMesh, new List<Vector3>(positions));
+            else
+                PositionsSetter().Invoke(pbMesh, new object[] { positions });
         }
 
         internal static object RepairMesh(JObject @params)
@@ -307,7 +314,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             PropertyInfo triangleCount = ManageProBuilder._proBuilderMeshType.GetProperty("triangleCount", BindingFlags.Instance | BindingFlags.Public);
             if (removeMethod == null || triangleCount?.PropertyType != typeof(int) || triangleCount.GetMethod == null)
                 return new ErrorResponse(
-                    "Unsupported ProBuilder mesh repair API. Expected bool RemoveDegenerateTriangles(ProBuilderMesh, List<int>) and int triangleCount."
+                    "Unsupported ProBuilder mesh repair API. A recognized RemoveDegenerateTriangles signature and triangleCount are required."
                 );
 
             int before = (int)triangleCount.GetValue(pbMesh);
@@ -315,7 +322,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             bool changed;
             try
             {
-                changed = (bool)removeMethod.Invoke(null, new object[] { pbMesh, null });
+                object result = removeMethod.Invoke(null, removeMethod.GetParameters().Length == 1 ? new object[] { pbMesh } : new object[] { pbMesh, null });
+                changed = result is bool modified ? modified : result is int[] removed && removed.Length > 0;
             }
             catch (TargetInvocationException exception)
             {
@@ -327,6 +335,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             // ProBuilder 6.1.4 returns a bool and its optional list contains removed vertex
             // indices. Neither value measures the number of triangles removed.
             int repaired = before - (int)triangleCount.GetValue(pbMesh);
+            if (ManageProBuilder.LegacyMesh)
+                repaired /= 3; // pb_Object.triangleCount counts triangle indices.
 
             if (changed || repaired > 0)
                 ManageProBuilder.RefreshMesh(pbMesh);
@@ -353,7 +363,13 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 new[] { meshType, typeof(List<int>) },
                 null
             );
-            return method?.ReturnType == typeof(bool) ? method : null;
+            if (method?.ReturnType == typeof(bool))
+                return method;
+            method = validationType?.GetMethod("RemoveDegenerateTriangles", new[] { meshType, typeof(int[]).MakeByRefType() });
+            if (method?.ReturnType == typeof(bool) && method.GetParameters()[1].IsOut)
+                return method;
+            method = validationType?.GetMethod("RemoveDegenerateTriangles", new[] { meshType });
+            return method?.ReturnType == typeof(int[]) ? method : null;
         }
 
         private static float Round(float v) => ManageProBuilder.Round(v);

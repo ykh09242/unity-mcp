@@ -23,7 +23,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             var faces = ManageProBuilder.GetFacesByIndices(pbMesh, faceIndicesToken);
             var smProp = ManageProBuilder._faceType.GetProperty("smoothingGroup");
-            if (smProp == null)
+            if (smProp?.CanWrite != true)
                 return new ErrorResponse("Could not find smoothingGroup property on Face type.");
 
             Undo.RecordObject(pbMesh, "Set Smoothing Groups");
@@ -59,12 +59,21 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             }
 
             // Smoothing.ApplySmoothingGroups(ProBuilderMesh mesh, IEnumerable<Face> faces, float angle)
-            var applyMethod = ManageProBuilder._smoothingType.GetMethod("ApplySmoothingGroups", BindingFlags.Static | BindingFlags.Public);
+            Type faceSequence = typeof(IEnumerable<>).MakeGenericType(ManageProBuilder._faceType);
+            Type[] signature = ManageProBuilder.LegacyMesh
+                ? new[] { ManageProBuilder._proBuilderMeshType, faceSequence, typeof(float), typeof(Vector3[]) }
+                : new[] { ManageProBuilder._proBuilderMeshType, faceSequence, typeof(float) };
+            var applyMethod = ManageProBuilder._smoothingType.GetMethod("ApplySmoothingGroups", signature);
             if (applyMethod == null)
                 return new ErrorResponse("Smoothing.ApplySmoothingGroups method not found.");
 
             Undo.RecordObject(pbMesh, "Auto Smooth");
-            applyMethod.Invoke(null, new object[] { pbMesh, facesToSmooth, angleThreshold });
+            applyMethod.Invoke(
+                null,
+                ManageProBuilder.LegacyMesh
+                    ? new object[] { pbMesh, facesToSmooth, angleThreshold, null }
+                    : new object[] { pbMesh, facesToSmooth, angleThreshold }
+            );
 
             ManageProBuilder.RefreshMesh(pbMesh);
 

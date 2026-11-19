@@ -5,6 +5,7 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Build;
 using MCPForUnity.Editor.Tools.Cameras;
 using MCPForUnity.Editor.Tools.Netcode;
+using MCPForUnity.Editor.Tools.ProBuilder;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -126,8 +127,8 @@ namespace MCPForUnity.Editor.Services
             result["probuilder"] = Package(
                 "com.unity.probuilder",
                 "manage_probuilder",
-                Type.GetType("UnityEngine.ProBuilder.ProBuilderMesh, Unity.ProBuilder") != null,
-                "ProBuilderMesh API; operation compatibility checked per action",
+                ManageProBuilder.InstalledMeshType != null,
+                "ProBuilder mesh API; operation compatibility checked per action",
                 "inspect_mesh_and_requested_operation",
                 busy
             );
@@ -166,23 +167,17 @@ namespace MCPForUnity.Editor.Services
             return DescribePackage(name, version, observed, api, Enabled(tool), busy, required, next);
         }
 
-        internal static JObject DescribePackage(
-            string name,
-            string version,
-            bool observed,
-            bool api,
-            bool enabled,
-            bool busy,
-            string required,
-            string next
-        )
+        internal static JObject DescribePackage(string name, string version, bool observed, bool api, bool enabled, bool busy, string required, string next)
         {
             string reason =
                 api ? "preflight_required"
                 : !observed ? "package_metadata_unknown"
                 : version == null ? "missing_package"
                 : "package_api_unavailable";
-            bool? supported = api ? true : !observed || (busy && version != null) ? (bool?)null : false;
+            bool? supported =
+                api ? true
+                : !observed || (busy && version != null) ? (bool?)null
+                : false;
             var result = Describe(
                 supported,
                 reason,

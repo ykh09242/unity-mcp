@@ -145,7 +145,8 @@ def _topology_admission(action: str, properties: Any) -> str | None:
 @mcp_for_unity_tool(
     group="probuilder",
     description=(
-        "Manage ProBuilder meshes for in-editor 3D modeling. Requires com.unity.probuilder package.\n\n"
+        "Manage native ProBuilder meshes (3.x pb_Object or 4.x+ ProBuilderMesh). "
+        "Requires com.unity.probuilder and compatible native APIs for the requested operation.\n\n"
         "Geometry edits include bounded post-edit health observations (8192 vertices, 512 faces, 16384 index entries per mesh); larger or unsupported data remains incomplete, with no automatic repair.\n"
         "SHAPE CREATION:\n"
         "- create_shape: Create a ProBuilder primitive (shape_type: Cube/Cylinder/Sphere/Plane/Cone/"
