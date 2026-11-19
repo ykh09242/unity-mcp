@@ -48,7 +48,9 @@ class PeerTiming(BaseModel):
     response_bytes: int
 
 
-def make_result(workload: Workload, large_bytes: int) -> dict[str, JsonValue]:
+def make_result(
+    workload: Workload, large_bytes: int, *, observed_at_unix_ms: int | None = None
+) -> dict[str, JsonValue]:
     match workload:
         case Workload.SMALL:
             data: JsonValue = {"lines": [{"message": "owned benchmark", "type": "log"}]}
@@ -61,6 +63,8 @@ def make_result(workload: Workload, large_bytes: int) -> dict[str, JsonValue]:
                 "settings": {"batch_execute_max_commands": 25},
                 "objects": [{"name": f"Object{index}", "active": True} for index in range(100)],
             }
+            if observed_at_unix_ms is not None:
+                data["observed_at_unix_ms"] = observed_at_unix_ms
         case Workload.LARGE:
             data = {"lines": [{"message": "x" * large_bytes, "type": "log"}]}
         case Workload.JOB:

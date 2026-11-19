@@ -104,11 +104,19 @@ class PeerState:
 
     def serialize(self, request: PeerRequest, queue_ms: float, work_ms: float) -> bytes:
         started = time.perf_counter()
-        result: dict[str, JsonValue] = (
-            {"message": "pong"}
-            if request.name == "ping"
-            else make_result(request.workload, self.large_bytes)
-        )
+        if request.name == "ping":
+            result: dict[str, JsonValue] = {"message": "pong"}
+        else:
+            # The real state resource requests a live snapshot with empty params.
+            # Correlated latency workloads need byte-identical replay payloads.
+            observed_at = (
+                time.time_ns() // 1_000_000
+                if request.name == "get_editor_state" and not request.params
+                else None
+            )
+            result = make_result(
+                request.workload, self.large_bytes, observed_at_unix_ms=observed_at
+            )
         envelope: dict[str, JsonValue] = {"status": "success", "result": result}
         if request.id:
             envelope = {"type": "command_result", "id": request.id, "result": envelope}
