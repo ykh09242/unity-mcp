@@ -357,7 +357,7 @@ def direct_child(record, parent):
     )
 
 
-async def collect_children(client, spawned, received, emit, case_dir, server, asset):
+async def collect_children(client, spawned, received, emit, case_dir, server, asset, project=""):
     """Read only direct trial children attested by a spawn receipt or thread-start notification."""
     from tools.experiments.blind_tool_trace import thread_digest
 
@@ -390,7 +390,7 @@ async def collect_children(client, spawned, received, emit, case_dir, server, as
                     {"type": "item.completed", "item": item, "host_actor": digest}
                     for turn in turns
                     for raw in turn.get("items", [])
-                    if (item := project_item(raw, server, asset))
+                    if (item := project_item(raw, server, asset, project))
                 ]
                 rows.append({"type": "turn.completed", "host_actor": digest})
         except (InteropFailure, KeyError, ValueError, TimeoutError):
@@ -477,7 +477,7 @@ def project_item(item, server, asset, project=""):
     if kind == "commandExecution":
         projected.update(type="command_execution", exit_code=item.get("exitCode"))
         command, output = item.get("command") or "", item.get("aggregatedOutput") or ""
-        receipt = shell_receipt(command, output, item.get("exitCode"), asset, project)
+        receipt = shell_receipt(command, output, item.get("exitCode"), asset, project, item.get("cwd"))
         projected["shell_receipt"] = receipt
         if (
             item.get("exitCode") == 0
@@ -857,6 +857,7 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                         case_dir,
                                         server,
                                         args.graph_asset,
+                                        args.project,
                                     )
                                 return
                         if client.reader_error:

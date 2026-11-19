@@ -20,7 +20,7 @@ def _tokens(command):
     ]
 
 
-def shell_purpose(command, asset="", project=""):
+def shell_purpose(command, asset="", project="", cwd=None):
     if not isinstance(command, str) or len(command) > 8192:
         return "unknown"
     tokens = _tokens(command)
@@ -51,6 +51,11 @@ def shell_purpose(command, asset="", project=""):
     path = PurePosixPath(literal)
     if project:
         root = PurePosixPath(str(project).replace("\\", "/"))
+        if not path.is_absolute() and not re.match(r"^[A-Za-z]:/", path.as_posix()):
+            if cwd:
+                path = PurePosixPath(str(cwd).replace("\\", "/")) / path
+            elif path.as_posix() == asset:
+                return "unknown"
         if path.is_relative_to(root):
             path = path.relative_to(root)
     if asset and path.as_posix() == asset:
@@ -60,10 +65,10 @@ def shell_purpose(command, asset="", project=""):
     return "other_file_read"
 
 
-def shell_receipt(command, output, exit_code, asset, project=""):
+def shell_receipt(command, output, exit_code, asset, project="", cwd=None):
     from tools.experiments.blind_tool_trace import saved_graph_facts
 
-    purpose = shell_purpose(command, asset, project)
+    purpose = shell_purpose(command, asset, project, cwd)
     receipt = {"purpose": purpose}
     if purpose == "named_asset_read" and exit_code == 0 and isinstance(output, str):
         facts = saved_graph_facts(output[:2_000_000], allow_partial=True)

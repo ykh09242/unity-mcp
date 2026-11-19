@@ -30,6 +30,13 @@ def test_classify_only_an_unambiguous_literal_command(command, purpose):
     assert shell_purpose(command, ASSET, "E:/Game") == purpose
 
 
+def test_relative_read_in_a_different_project_cannot_supply_asset_evidence():
+    assert shell_purpose("cat " + ASSET, ASSET, "E:/Game", "E:/Other") == "other_file_read"
+    assert (
+        shell_purpose("cat A.shadergraph", ASSET, "E:/Game", "E:/Game/Assets") == "named_asset_read"
+    )
+
+
 def test_project_only_returned_fields_and_bind_to_named_asset_and_actor(tmp_path):
     root = json.dumps({"m_Nodes": [{"m_Id": "One"}], "m_Edges": []})
     item = project_item(

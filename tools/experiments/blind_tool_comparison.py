@@ -29,6 +29,7 @@ METRICS = (
     "first_business_call",
     "first_shell_purpose",
     "first_observation_attempt",
+    "first_observation_attempt_suitable",
     "preparatory_calls_before_observation",
     "first_suitable_business_call",
     "calls_before_first_suitable",
@@ -139,6 +140,10 @@ def study_stratum(pairs):
             ),
             "first_success_on_first_business_call": ratio(
                 sum(c["calls_before_first_success"] == 0 for c in positive), len(positive)
+            ),
+            "first_observation_attempt_suitable": ratio(
+                sum(c.get("first_observation_attempt_suitable") is True for c in positive),
+                sum(c.get("first_observation_attempt_suitable") is not None for c in positive),
             ),
             "first_success_without_search": ratio(
                 sum(c["calls_before_first_success"] == 0 for c in direct), len(direct)

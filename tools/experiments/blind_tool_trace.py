@@ -679,6 +679,8 @@ def client_trace(
                         command, string(item.get("aggregated_output")), item.get("exit_code"), asset
                     )
                     call.shell_purpose = string(receipt.get("purpose")) or "unknown"
+                    if call.shell_purpose == "named_asset_read":
+                        call.route = SAVED_FILE
                     if event.get("type") != "item.completed":
                         continue
                     trace.shell_calls += 1
@@ -702,9 +704,10 @@ def client_trace(
                         trace.saved_reads_to_review += int(grade == "review")
                         if grade == "observed":
                             call.route = SAVED_FILE
-                            trace.saved_observations.append(
-                                mapping(recorded.get("facts")) or saved_graph_facts(output)
+                            call.evidence = mapping(recorded.get("facts")) or saved_graph_facts(
+                                output
                             )
+                            trace.saved_observations.append(call.evidence)
                         elif (
                             asset
                             and call.shell_purpose == "named_asset_read"
@@ -1031,7 +1034,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         (
             call
             for call in sequence
-            if call.status == "returned" and (call.evidence or call.route == SAVED_FILE)
+            if call.status == "returned" and call.evidence
         ),
         None,
     )
@@ -1156,6 +1159,13 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         ),
         "preparatory_calls_before_observation": (
             business.index(first_observation)
+            if first_observation
+            and role == "confirmed"
+            and first_observation.shell_purpose != "unknown"
+            else None
+        ),
+        "first_observation_attempt_suitable": (
+            first_observation is first_suitable
             if first_observation
             and role == "confirmed"
             and first_observation.shell_purpose != "unknown"
