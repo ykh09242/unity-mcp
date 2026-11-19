@@ -25,6 +25,36 @@ namespace MCPForUnityTests.Editor.Tools
         private long now;
         private Backend backend;
 
+        private enum ModuleResult
+        {
+            Success,
+            Failure,
+        }
+
+        private sealed class ModuleCallbacks
+        {
+            public Action<ModuleResult> Legacy;
+            public Action<string, ModuleResult, long> WithTiming;
+        }
+
+        [Test]
+        public void AdapterExtractsOnlyAnalysisResultFromSupportedModuleCallbacks()
+        {
+            var callbacks = new ModuleCallbacks { Legacy = null, WithTiming = null };
+            var observed = new List<object>();
+            foreach (string name in new[] { "Legacy", "WithTiming" })
+            {
+                Type signature = typeof(ModuleCallbacks).GetField(name).FieldType;
+                int argument = ProjectAuditorApi.ModuleResultArgument(signature, typeof(ModuleResult));
+                Assert.GreaterOrEqual(argument, 0);
+                ProjectAuditorApi.Bind(callbacks, name, observed.Add, argument);
+            }
+            callbacks.Legacy(ModuleResult.Success);
+            callbacks.WithTiming("Code", ModuleResult.Failure, 14L);
+            CollectionAssert.AreEqual(new object[] { ModuleResult.Success, ModuleResult.Failure }, observed);
+            Assert.AreEqual(-1, ProjectAuditorApi.ModuleResultArgument(typeof(Action<string, long>), typeof(ModuleResult)));
+        }
+
         private sealed class Backend : IProjectAuditorBackend
         {
             internal int Starts;

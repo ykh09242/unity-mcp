@@ -19,7 +19,7 @@ AUDIT_ID = click.STRING
 
 @click.group("project-auditor")
 def project_auditor() -> None:
-    """Optional Project Auditor 1.0.1 analysis; requires the installed package and rules."""
+    """Run Project Auditor analysis with compatible installed APIs and rules."""
 
 
 def _send(params: dict[str, Any]) -> None:

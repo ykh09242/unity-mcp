@@ -1,7 +1,7 @@
 ---
 title: manage_project_auditor
 sidebar_label: manage_project_auditor
-description: "Optional Project Auditor 1.0.1 integration. availability checks the installed package, API and bundled rules without starting analysis. start requests one Editor-session audit and returns audit_id; reuse that ID after an uncertain respon…"
+description: "Optional Unity Project Auditor integration. availability checks the loaded analysis API and its installed rule databases. start requests one Editor-session audit and returns audit_id; reuse that ID after an uncertain response. status obs…"
 ---
 
 # `manage_project_auditor`
@@ -14,7 +14,7 @@ description: "Optional Project Auditor 1.0.1 integration. availability checks th
 
 ## Description
 
-Optional Project Auditor 1.0.1 integration. availability checks the installed package, API and bundled rules without starting analysis. start requests one Editor-session audit and returns audit_id; reuse that ID after an uncertain response. status observes its queued/running/completed/failed/unavailable/interrupted state. issues pages captured diagnostics after completion (page_size 1..100, opaque cursor). Analysis uses the current build target and may compile Player assemblies and save Auditor settings. Missing rules and failed modules are distinct from completed zero diagnostics. The package is never installed automatically. No cancellation or arbitrary report file writes are supported.
+Optional Unity Project Auditor integration. availability checks the loaded analysis API and its installed rule databases. start requests one Editor-session audit and returns audit_id; reuse that ID after an uncertain response. status observes its queued/running/completed/failed/unavailable/interrupted state. issues pages captured diagnostics after completion (page_size 1..100, opaque cursor). Analysis uses the current build target and may compile Player assemblies and save Auditor settings. Missing rules and failed modules are distinct from completed zero diagnostics. The package is never installed automatically. No cancellation or arbitrary report file writes are supported.
 
 ## Parameters
 

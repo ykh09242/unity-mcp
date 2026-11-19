@@ -1,13 +1,16 @@
 # Optional Project Auditor analysis
 
-`manage_project_auditor` is an experimental integration for the official
-`com.unity.project-auditor` **1.0.1** API on Unity 2021.3 or newer. The package must
-already be installed and compiled in the selected project. This tool never installs
-packages, changes the active build target, runs fixers, or writes an exported report.
-Other package versions return an explicit unsupported-version result.
+`manage_project_auditor` works with the official Project Auditor package or an Auditor
+module supplied by the Unity Editor. `availability` inspects the loaded implementation
+without constructing an analysis session. It checks the analysis entry point, constructors,
+callbacks, registered descriptor reader and the diagnostic members used in the result.
+An incompatible signature returns `unsupported_api_shape`.
 
-The package bundles its diagnostic rules. `availability` checks the loaded API and
-validates the two bundled rule databases without constructing an analysis session.
+Availability also validates the API and project-settings rule databases. It resolves
+them from the Auditor's bundled data or its installed `com.unity.project-auditor-rules`
+dependency. The Editor-integrated provider uses the rules package. The response includes
+`integration`, the installed package version when present, and the rules provider.
+`api_supported` and `rules_available` describe separate prerequisites for starting analysis.
 `start` additionally checks that native modules registered descriptors. Missing rules,
 no completed modules, module failures and successful analysis with zero diagnostics
 remain distinct outcomes.
@@ -65,12 +68,11 @@ unity-mcp project-auditor status <audit_id>
 unity-mcp project-auditor issues <audit_id> --page-size 50
 ```
 
-The adapter was reviewed against the installed official 1.0.1 source, including
-`AnalysisParams.OnModuleCompleted`, the `AnalysisResult` enum, `ReportItem` and
-`DescriptorId.GetDescriptor()`. Rule registration uses the exact version's internal
-`GetDescriptorIDs` observation, so widening version support requires another API review.
-Official references: [command-line analysis](https://docs.unity3d.com/Packages/com.unity.project-auditor@1.0/manual/run-from-command-line.html)
-and [API namespace](https://docs.unity3d.com/Packages/com.unity.project-auditor@1.0/api/Unity.ProjectAuditor.Editor.html).
+The adapter reads the native `AnalysisResult` from the module completion callback.
+It accepts the result-only signature and the Editor signature that also reports a
+module name and elapsed time. On explicit start, the registered descriptor query
+establishes the actual rule count. [Package scripting API](https://docs.unity3d.com/Packages/com.unity.project-auditor@1.0/api/Unity.ProjectAuditor.Editor.ProjectAuditor.html)
+and [Editor implementation](https://github.com/Unity-Technologies/UnityCsReference/blob/master/Modules/ProjectAuditorEditor/API/ProjectAuditor.cs).
 
 `ProjectAuditorContractTests` covers missing rules versus empty success, duplicate
 requests, ownership, failures, reload, stable pagination and capture limits without the
@@ -81,8 +83,8 @@ packages or the wrong profile fails its prerequisites; it does not skip the requ
 positive case.
 
 The fixture profile contains the current MCP package, Test Framework, NUnit,
-Editor Coroutines, uGUI, Newtonsoft JSON, Project Auditor 1.0.1 and its Mono.Cecil
-dependency, plus the Editor's built-in `com.unity.modules.*` packages. The observed
+Editor Coroutines, uGUI, Newtonsoft JSON, Project Auditor, its Mono.Cecil dependency,
+any declared Project Auditor Rules package, and the Editor's built-in `com.unity.modules.*` packages. The observed
 Unity 6000.0.69f1 profile used Test Framework 1.6.0, NUnit 2.0.5, Editor Coroutines 1.1.0,
 uGUI 2.0.0, Newtonsoft 3.2.2 and Cecil 1.11.4. Keep other optional runtime packages out
 of this fixture's active manifest; preserve their cached source directories and restore

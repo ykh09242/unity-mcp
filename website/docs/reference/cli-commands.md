@@ -3633,7 +3633,7 @@ Stop the Unity Profiler and any active recording.
 
 ## `unity-mcp project-auditor`
 
-Optional Project Auditor 1.0.1 analysis; requires the installed package and rules.
+Run Project Auditor analysis with compatible installed APIs and rules.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |

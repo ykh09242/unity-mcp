@@ -23,8 +23,8 @@ AUDIT_ID_PATTERN: Final = re.compile(r"[a-f0-9]{32}")
     group="profiling",
     maturity="experimental",
     description=(
-        "Optional Project Auditor 1.0.1 integration. availability checks the installed package, "
-        "API and bundled rules without starting analysis. start requests one Editor-session audit "
+        "Optional Unity Project Auditor integration. availability checks the loaded analysis API "
+        "and its installed rule databases. start requests one Editor-session audit "
         "and returns audit_id; reuse that ID after an uncertain response. status observes its "
         "queued/running/completed/failed/unavailable/interrupted state. issues pages captured "
         "diagnostics after completion (page_size 1..100, opaque cursor). Analysis uses the current "

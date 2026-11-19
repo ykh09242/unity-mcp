@@ -29,6 +29,7 @@ namespace MCPForUnityTests.Editor.Tools
                 "com.unity.editorcoroutines",
                 "com.unity.ugui",
                 "com.unity.project-auditor",
+                "com.unity.project-auditor-rules",
                 "com.unity.nuget.mono-cecil",
             };
             var registered = PackageInfo.GetAllRegisteredPackages();
@@ -49,7 +50,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(
                 "available",
                 (string)capability["data"]["state"],
-                "The explicitly selected fixture requires official Auditor 1.0.1 and its rules: " + capability
+                "The explicitly selected fixture requires the official analysis API and installed rules: " + capability
             );
             Assert.IsTrue(capability["data"].Value<bool>("rules_available"));
             string id = Guid.NewGuid().ToString("N");

@@ -891,7 +891,7 @@ TOOL_GUIDANCE: Final = {
     "manage_project_auditor": ToolGuidance(
         skills=("project-auditor-fixes",),
         requirements=(
-            "com.unity.project-auditor; reviewed API 1.0.1, Unity >=2021.3; call availability",
+            "Call availability to check the installed Project Auditor package or Editor module and its rules.",
         ),
     ),
     "manage_navigation": ToolGuidance(

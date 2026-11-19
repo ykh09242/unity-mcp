@@ -1,12 +1,14 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading;
 using Newtonsoft.Json.Linq;
-using UnityEditor.PackageManager;
+using UnityEditor;
+using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 
 namespace MCPForUnity.Editor.Tools.ProjectAuditor
 {
@@ -19,17 +21,17 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
         void Start(Action<JObject> issue, Action<string> moduleCompleted, Action completed, Action beforeInvoke);
     }
 
-    // This adapter is deliberately pinned: optional package internals must be reviewed before widening support.
     internal sealed class ProjectAuditorApi : IProjectAuditorBackend
     {
         internal const string PackageName = "com.unity.project-auditor";
-        internal const string SupportedVersion = "1.0.1";
+        private const string RulesPackage = "com.unity.project-auditor-rules";
         private const string Namespace = "Unity.ProjectAuditor.Editor.";
         private const int MaximumInspected = 250000;
-        private readonly Type auditorType = AppDomain
-            .CurrentDomain.GetAssemblies()
-            .Select(assembly => assembly.GetType(Namespace + "ProjectAuditor", false))
-            .FirstOrDefault(type => type != null);
+        private Type auditorType;
+        private Type parametersType;
+        private MethodInfo auditAsync;
+        private MethodInfo descriptorIds;
+        private int moduleResultArgument;
         private object auditor;
         private int inspected;
         private volatile bool observationTruncated;
@@ -39,17 +41,28 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
 
         public JObject Availability()
         {
-            var package =
-                auditorType == null
-                    ? PackageInfo.GetAllRegisteredPackages().FirstOrDefault(info => info.name == PackageName)
-                    : PackageInfo.FindForAssembly(auditorType.Assembly);
+            var registered = PackageInfo.GetAllRegisteredPackages();
+            var package = registered.FirstOrDefault(info => info.name == PackageName);
+            var providers = AppDomain
+                .CurrentDomain.GetAssemblies()
+                .Where(assembly => !assembly.IsDynamic)
+                .Select(assembly => assembly.GetType(Namespace + "ProjectAuditor", false))
+                .Where(type => type != null && (IsEditorProvider(type.Assembly) || PackageInfo.FindForAssembly(type.Assembly)?.name == PackageName))
+                .Distinct()
+                .ToArray();
+            auditorType = providers.Length == 1 ? providers[0] : null;
+            bool integrated = auditorType != null && IsEditorProvider(auditorType.Assembly);
             var data = new JObject
             {
                 ["state"] = "unavailable",
                 ["package"] = PackageName,
-                ["supported_version"] = SupportedVersion,
+                ["supported_version"] = JValue.CreateNull(),
                 ["package_installed"] = package != null,
                 ["version"] = package?.version,
+                ["integration"] =
+                    integrated ? "editor"
+                    : auditorType == null ? "none"
+                    : "package",
                 ["api_supported"] = false,
                 ["rules_available"] = false,
                 ["registered_rules_observed"] = false,
@@ -58,42 +71,44 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
             };
             if (auditorType == null)
             {
-                data["reason"] = package == null ? "package_not_installed" : "package_assembly_not_loaded";
+                data["reason"] =
+                    providers.Length > 1 ? "ambiguous_auditor_provider"
+                    : package == null ? "package_not_installed"
+                    : "package_assembly_not_loaded";
                 return data;
             }
-            if (package?.name != PackageName || package.version != SupportedVersion)
+            bool supported;
+            try
             {
-                data["reason"] = "unsupported_package_version";
-                return data;
+                supported = BindApi(auditorType);
             }
-            var parameters = auditorType.Assembly.GetType(Namespace + "AnalysisParams");
-            var report = auditorType.Assembly.GetType(Namespace + "Report");
-            bool supported =
-                parameters != null
-                && report != null
-                && parameters.GetConstructor(new[] { typeof(bool) }) != null
-                && auditorType
-                    .GetMethods()
-                    .Any(method => method.Name == "AuditAsync" && method.GetParameters().Length == 2 && method.GetParameters()[0].ParameterType == parameters)
-                && parameters.GetField("OnIncomingIssues") != null
-                && parameters.GetField("OnCompleted") != null
-                && parameters.GetField("OnModuleCompleted") != null
-                && auditorType.GetMethod("GetDescriptorIDs", BindingFlags.Instance | BindingFlags.NonPublic) != null;
+            catch (Exception error) when (error is AmbiguousMatchException || error is TypeLoadException || error is NotSupportedException)
+            {
+                supported = false;
+            }
             data["api_supported"] = supported;
             if (!supported)
             {
                 data["reason"] = "unsupported_api_shape";
                 return data;
             }
+            bool separateRules = integrated || (package?.dependencies?.Any(dependency => dependency.name == RulesPackage) ?? false);
+            var rules = separateRules ? registered.FirstOrDefault(info => info.name == RulesPackage) : package;
+            data["rules_package"] = separateRules ? RulesPackage : PackageName;
+            data["rules_version"] = rules?.version;
+            if (rules == null)
+            {
+                data["reason"] = "rules_package_not_installed";
+                return data;
+            }
             try
             {
-                int count =
-                    ReadRules(Path.Combine(package.resolvedPath, "Data", "ApiDatabase.json"))
-                    + ReadRules(Path.Combine(package.resolvedPath, "Data", "ProjectSettings.json"));
+                string directory = Path.Combine(rules.resolvedPath, separateRules ? "Rules" : "Data");
+                int count = ReadRules(Path.Combine(directory, "ApiDatabase.json")) + ReadRules(Path.Combine(directory, "ProjectSettings.json"));
                 data["bundled_rule_count"] = count;
                 data["rules_available"] = true;
                 data["state"] = "available";
-                data["reason"] = "supported_api_and_bundled_rules";
+                data["reason"] = separateRules ? "supported_api_and_rules_package" : "supported_api_and_bundled_rules";
             }
             catch (Exception error)
                 when (error is IOException || error is UnauthorizedAccessException || error is Newtonsoft.Json.JsonException || error is InvalidDataException)
@@ -101,6 +116,75 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                 data["reason"] = "rules_missing_or_invalid";
             }
             return data;
+        }
+
+        private static bool IsEditorProvider(Assembly assembly)
+        {
+            if (assembly == typeof(EditorApplication).Assembly)
+                return true;
+            if (!assembly.GetName().Name.StartsWith("UnityEditor.", StringComparison.Ordinal) || string.IsNullOrEmpty(assembly.Location))
+                return false;
+            var managed = Path.GetFullPath(Path.Combine(EditorApplication.applicationContentsPath, "Managed")) + Path.DirectorySeparatorChar;
+            var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return Path.GetFullPath(assembly.Location).StartsWith(managed, comparison);
+        }
+
+        private bool BindApi(Type type)
+        {
+            Type Lookup(string name) => type.Assembly.GetType(Namespace + name, false);
+            parametersType = Lookup("AnalysisParams");
+            var report = Lookup("Report");
+            var reportItem = Lookup("ReportItem");
+            var result = Lookup("AnalysisResult");
+            var progress = Lookup("IProgress");
+            if (parametersType == null || report == null || reportItem == null || result == null || !result.IsEnum || !Enum.IsDefined(result, "Success"))
+                return false;
+            const BindingFlags publicInstance = BindingFlags.Instance | BindingFlags.Public;
+            auditAsync = progress == null ? null : type.GetMethod("AuditAsync", publicInstance, null, new[] { parametersType, progress }, null);
+            auditAsync ??= type.GetMethod("AuditAsync", publicInstance, null, new[] { parametersType }, null);
+            descriptorIds = type.GetMethod("GetDescriptorIDs", publicInstance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+            Type id = MemberType(reportItem, "Id");
+            Type descriptor = id?.GetMethod("GetDescriptor", publicInstance, null, Type.EmptyTypes, null)?.ReturnType;
+            var module = parametersType.GetField("OnModuleCompleted", publicInstance);
+            moduleResultArgument = module == null || module.IsInitOnly ? -1 : ModuleResultArgument(module.FieldType, result);
+            return type.GetConstructor(Type.EmptyTypes) != null
+                && (parametersType.GetConstructor(new[] { typeof(bool) }) != null || parametersType.GetConstructor(Type.EmptyTypes) != null)
+                && auditAsync?.ReturnType == typeof(void)
+                && id != null
+                && descriptorIds?.ReturnType == id.MakeArrayType()
+                && Callback(parametersType, "OnIncomingIssues", typeof(IEnumerable<>).MakeGenericType(reportItem))
+                && moduleResultArgument >= 0
+                && Callback(parametersType, "OnCompleted", report)
+                && reportItem.GetMethod("IsIssue", publicInstance, null, Type.EmptyTypes, null)?.ReturnType == typeof(bool)
+                && MemberType(reportItem, "Category") != null
+                && MemberType(reportItem, "Severity") != null
+                && MemberType(reportItem, "Description") == typeof(string)
+                && MemberType(reportItem, "RelativePath") == typeof(string)
+                && MemberType(reportItem, "Line") == typeof(int)
+                && MemberType(descriptor, "Areas") != null
+                && MemberType(descriptor, "Recommendation") == typeof(string);
+        }
+
+        private static Type MemberType(Type type, string name)
+        {
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
+            var property = type?.GetProperty(name, flags);
+            return property?.GetGetMethod() != null && property.GetIndexParameters().Length == 0
+                ? property.PropertyType
+                : type?.GetField(name, flags)?.FieldType;
+        }
+
+        private static bool Callback(Type parameters, string name, Type argument)
+        {
+            var field = parameters.GetField(name, BindingFlags.Instance | BindingFlags.Public);
+            return field != null && !field.IsInitOnly && field.FieldType == typeof(Action<>).MakeGenericType(argument);
+        }
+
+        internal static int ModuleResultArgument(Type callback, Type result)
+        {
+            if (callback == typeof(Action<>).MakeGenericType(result))
+                return 0;
+            return callback == typeof(Action<,,>).MakeGenericType(typeof(string), result, typeof(long)) ? 1 : -1;
         }
 
         private static int ReadRules(string path)
@@ -123,15 +207,15 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
         public int Initialize()
         {
             auditor = Activator.CreateInstance(auditorType);
-            var descriptors = (Array)auditorType.GetMethod("GetDescriptorIDs", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(auditor, null);
+            var descriptors = (Array)descriptorIds.Invoke(auditor, null);
             return descriptors?.Length ?? 0;
         }
 
         public void Start(Action<JObject> issue, Action<string> moduleCompleted, Action completed, Action beforeInvoke)
         {
-            var parameterType = auditorType.Assembly.GetType(Namespace + "AnalysisParams");
             // The official default constructor registers thresholds and saves Auditor settings. Only explicit start reaches here.
-            object parameters = Activator.CreateInstance(parameterType, new object[] { true });
+            var constructor = parametersType.GetConstructor(new[] { typeof(bool) });
+            object parameters = constructor != null ? constructor.Invoke(new object[] { true }) : Activator.CreateInstance(parametersType);
             Bind(parameters, "OnIncomingIssues", value =>
             {
                 foreach (object item in (IEnumerable)value)
@@ -159,23 +243,19 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                     }
                 }
             });
-            Bind(parameters, "OnModuleCompleted", value => moduleCompleted(value.ToString()));
+            Bind(parameters, "OnModuleCompleted", value => moduleCompleted(value.ToString()), moduleResultArgument);
             Bind(parameters, "OnCompleted", _ => completed());
-            var method = auditorType
-                .GetMethods()
-                .Single(candidate =>
-                    candidate.Name == "AuditAsync" && candidate.GetParameters().Length == 2 && candidate.GetParameters()[0].ParameterType == parameterType
-                );
+            var arguments = auditAsync.GetParameters().Length == 1 ? new[] { parameters } : new[] { parameters, null };
             beforeInvoke();
-            method.Invoke(auditor, new[] { parameters, null });
+            auditAsync.Invoke(auditor, arguments);
         }
 
-        private static void Bind(object parameters, string name, Action<object> callback)
+        internal static void Bind(object parameters, string name, Action<object> callback, int valueIndex = 0)
         {
             var field = parameters.GetType().GetField(name);
-            var argument = Expression.Parameter(field.FieldType.GetGenericArguments()[0]);
-            var body = Expression.Invoke(Expression.Constant(callback), Expression.Convert(argument, typeof(object)));
-            field.SetValue(parameters, Expression.Lambda(field.FieldType, body, argument).Compile());
+            var arguments = field.FieldType.GetMethod("Invoke").GetParameters().Select(parameter => Expression.Parameter(parameter.ParameterType)).ToArray();
+            var body = Expression.Invoke(Expression.Constant(callback), Expression.Convert(arguments[valueIndex], typeof(object)));
+            field.SetValue(parameters, Expression.Lambda(field.FieldType, body, arguments).Compile());
         }
 
         internal static JObject Diagnostic(object item)

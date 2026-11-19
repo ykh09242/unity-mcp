@@ -144,7 +144,7 @@ ProBuilder 3D modeling – requires com.unity.probuilder package
 ## `profiling` &nbsp; (2 tools)
 Unity Profiler session control, counters, memory snapshots & Frame Debugger
 - **[`manage_profiler`](./profiling/manage_profiler.md)** — Unity Profiler session control, counter reads, memory snapshots, and Frame Debugger.
-- **[`manage_project_auditor`](./profiling/manage_project_auditor.md)** — Optional Project Auditor 1.0.1 integration. availability checks the installed package, API and bundled rules without starting analysis. start requests one Editor-session audit and returns audit_id; reuse that ID after an uncertain respon…
+- **[`manage_project_auditor`](./profiling/manage_project_auditor.md)** — Optional Unity Project Auditor integration. availability checks the loaded analysis API and its installed rule databases. start requests one Editor-session audit and returns audit_id; reuse that ID after an uncertain response. status obs…
 
 ## `scene` &nbsp; (5 tools)
 GameObject positioning, placement and scene diagnostics
