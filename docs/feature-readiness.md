@@ -15,8 +15,8 @@ checks and response limits remain unchanged. Older peers yield unknown evidence.
 | Build | Active platform module and configured Player backend | Preview the requested build; verify backend/SDK/license/subtarget toolchain |
 | Render pipeline | Current Built-in/URP/HDRP/custom pipeline | Inspect settings and the operation's selected target |
 | Cinemachine | Loaded camera and brain APIs from either Cinemachine namespace, with the registered package version when available | Inspect the selected camera, brain and components required by the requested preset |
-| ProBuilder | Registered version and loaded ProBuilderMesh type | Inspect mesh topology and requested operation compatibility |
-| Netcode for GameObjects | Registered version and NetworkManager type | Explicit scene preflight; transport/peers/hosting remain unverified |
+| ProBuilder | Installed ProBuilderMesh or legacy pb_Object type | Inspect mesh topology and the methods required by the requested operation |
+| Netcode for GameObjects | Registered version and NetworkManager type | Inspect inline or asset-based prefab registrations in an explicit scene. Transport and peer readiness require separate checks. |
 | Physics | Compiled Physics and Physics2D module boundaries | Both modules are required by the shared physics tools; inspect requested settings or targets |
 | Screen Capture | Compiled Screen Capture module boundary | Inspect the capture source; camera and Scene View rendering remain available without Game View capture |
 
@@ -24,8 +24,9 @@ Missing package, unavailable package API, missing platform module, disabled
 tool, busy Editor and unavailable evidence have distinct reasons. Known package
 or module support never produces `ready: true` for an unspecified operation.
 `missing_engine_module` is distinct from an unobserved package or platform SDK.
-See [optional Unity modules](optional-unity-modules.md) for required dependencies,
-per-tool behavior and compilation coverage.
+See [optional Unity modules](optional-unity-modules.md) for module dependencies
+and [Unity tool compatibility](development/unity-api-compatibility.md) for
+asset formats and operation-specific API requirements.
 Multiple blockers remain visible. A loaded API can establish support even when
 package metadata is unavailable. An idle Editor with an installed package and a
 missing required API reports `package_api_unavailable`. While the Editor is busy,
