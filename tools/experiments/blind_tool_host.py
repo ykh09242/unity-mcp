@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 from copy import copy
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from uuid import UUID
 
 import anyio
@@ -20,6 +23,92 @@ RECORDED_SERVER = "unityMCP_trial"
 IDENTIFIER = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 DOCTOR = "mcpforunity://doctor"
 TRIAL_SOURCE = "mcpforunity://trial/source"
+
+
+def _digest(value):
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def observed_permissions(settings):
+    sandbox = settings.get("sandbox") or settings.get("sandboxPolicy")
+    approval = settings.get("approvalPolicy")
+    if not isinstance(sandbox, dict) or not isinstance(approval, str):
+        return None
+    return {
+        "approval": approval,
+        "sandbox": sandbox.get("type"),
+        "digest": _digest(
+            [
+                sandbox,
+                approval,
+                settings.get("approvalsReviewer"),
+                settings.get("activePermissionProfile"),
+            ]
+        ),
+    }
+
+
+@lru_cache(maxsize=8)
+def executable_digest(codex):
+    path = shutil.which(codex)
+    if not path:
+        return None
+    with open(path, "rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+@lru_cache(maxsize=8)
+def supports_parent_lookup(codex):
+    """Only query a binary that declares bounded direct-parent and subagent filters."""
+    try:
+        with TemporaryDirectory(prefix="unity-mcp-host-schema-") as folder:
+            subprocess.run(
+                [codex, "app-server", "generate-json-schema", "--experimental", "--out", folder],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+                timeout=25,
+            )
+            schema = json.loads(
+                (Path(folder) / "v2" / "ThreadListParams.json").read_text(encoding="utf-8")
+            )
+            fields = schema["properties"]
+            return {
+                "parentThreadId",
+                "limit",
+                "sourceKinds",
+                "useStateDbOnly",
+            } <= fields.keys() and (
+                "subAgentThreadSpawn" in schema["definitions"]["ThreadSourceKind"]["enum"]
+            )
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return False
+
+
+async def scoped_children(client, parent):
+    if not _host_id(parent):
+        return set(), "invalid_parent"
+    try:
+        reply = await client.request(
+            "thread/list",
+            {
+                "parentThreadId": parent,
+                "sourceKinds": ["subAgentThreadSpawn"],
+                "limit": 4,
+                "useStateDbOnly": True,
+            },
+        )
+        rows = reply["data"]
+        if reply.get("nextCursor") or not isinstance(rows, list) or len(rows) > 4:
+            return set(), "incomplete"
+        children = {direct_child(row, parent) for row in rows}
+        if None in children:
+            return set(), "unverified_parent"
+        return children, "parent_linked" if children else "no_link"
+    except (InteropFailure, TimeoutError, KeyError, AttributeError, TypeError, ValueError):
+        return set(), "lookup_unavailable"
 
 
 def launch_settings(args, case_dir):
@@ -63,6 +152,7 @@ async def observe_host(client, thread_id, unity_server, instance, *, installed):
     source = {"kind": "unknown", "server_commit": None, "package_commit": None}
     result = {
         "status": "incomplete",
+        "namespace": unity_server,
         "unity": {"tools": [], "resources": [], "templates": []},
         "competing_servers": {},
         "competitor_digest": None,
@@ -111,6 +201,7 @@ async def observe_host(client, thread_id, unity_server, instance, *, installed):
                         ).hexdigest()
                     continue
                 result["unity"]["tools"] = sorted(tools)
+                result["tool_schema_digest"] = _digest(tools)
                 if not isinstance(item.get("resources"), list) or not isinstance(
                     item.get("resourceTemplates"), list
                 ):
@@ -394,6 +485,8 @@ def same_installation(normal, guarded):
         and normal.get("source", {}).get("server_commit")
         and normal["source"] == guarded["source"]
         and normal.get("unity") == guarded.get("unity")
+        and normal.get("tool_schema_digest") == guarded.get("tool_schema_digest")
+        and normal.get("permissions") == guarded.get("permissions")
     )
 
 
@@ -450,7 +543,8 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                 }
                 if args.approval == "auto-review":
                     options["approvalsReviewer"] = "auto_review"
-                thread = _host_id((await client.request("thread/start", options))["thread"]["id"])
+                started = await client.request("thread/start", options)
+                thread = _host_id(started["thread"]["id"])
                 if not thread:
                     raise ValueError("No host thread ID")
                 surface = await observe_host(
@@ -460,7 +554,8 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                     args.instance,
                     installed=args.installed or expected is not None,
                 )
-                if args.installed or expected is not None:
+                surface["permissions"] = observed_permissions(started)
+                if args.installed or expected is not None or getattr(args, "study", None):
                     surface["project_verified"] = await _project_verified(
                         client, thread, server, args.instance, args.project
                     )
@@ -481,6 +576,13 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                 metadata["competitor_digest"] = surface["competitor_digest"]
                 metadata["competition_observed"] = surface.get("competition_observed")
                 metadata["observed_server_commit"] = surface["source"]["server_commit"]
+                if getattr(args, "study", None):
+                    from tools.experiments.blind_tool_selection import probe_state
+
+                    if not surface.get("project_verified"):
+                        raise ValueError("Study host could not verify the selected project")
+                    metadata["host_binary_digest"] = executable_digest(args.codex)
+                    metadata["editor_start_state"] = probe_state(args)
                 if metadata["observed_server_commit"]:
                     metadata["backend_identity"] = metadata["observed_server_commit"]
                 metadata["runner_phase"] = "model_turn"
@@ -495,6 +597,7 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                 turn = reply["turn"]["id"]
                 parents = set()
                 children = {}
+                child_permissions = {}
                 offset = 0
                 with (case_dir / "events.jsonl").open("x", encoding="utf-8") as stream:
 
@@ -513,13 +616,21 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                             )
                             actor = _host_id(params.get("threadId"))
                             item = params.get("item") or {}
+                            if method == "thread/settings/updated" and actor and actor != thread:
+                                child_permissions[actor] = observed_permissions(
+                                    params.get("threadSettings") or {}
+                                )
                             if method == "thread/started":
                                 linked = direct_child(params.get("thread", {}), thread)
                                 if linked:
                                     parents.add(linked)
                                     if not children.get(linked):
                                         child_surface = await observe_host(
-                                            client, linked, server, args.instance, installed=False
+                                            client,
+                                            linked,
+                                            server,
+                                            args.instance,
+                                            installed=expected is not None,
                                         )
                                         (
                                             case_dir / f"host-child-{thread_digest(linked)}.json"
@@ -563,6 +674,35 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                     raise ValueError("Configured model turn did not complete")
                                 emit({"type": "turn.completed"})
                                 if metadata["role"] == "subagent" or parents:
+                                    if not parents and supports_parent_lookup(args.codex):
+                                        parents, metadata["child_lookup"] = await scoped_children(
+                                            client, thread
+                                        )
+                                    for linked in parents:
+                                        path = case_dir / f"host-child-{thread_digest(linked)}.json"
+                                        if path.is_file():
+                                            child_surface = json.loads(
+                                                path.read_text(encoding="utf-8")
+                                            )
+                                        else:
+                                            child_surface = await observe_host(
+                                                client,
+                                                linked,
+                                                server,
+                                                args.instance,
+                                                installed=expected is not None,
+                                            )
+                                        if getattr(args, "study", None):
+                                            child_surface[
+                                                "project_verified"
+                                            ] = await _project_verified(
+                                                client, linked, server, args.instance, args.project
+                                            )
+                                        child_surface["permissions"] = child_permissions.get(linked)
+                                        path.write_text(
+                                            json.dumps(child_surface, indent=2) + "\n",
+                                            encoding="utf-8",
+                                        )
                                     await collect_children(
                                         client,
                                         parents,
