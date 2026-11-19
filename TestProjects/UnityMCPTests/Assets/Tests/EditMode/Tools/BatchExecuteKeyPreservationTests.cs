@@ -687,8 +687,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                 duplicate = GameObject.Find(name);
                 Assert.IsNotNull(duplicate, response.ToString());
-                testGo.transform.position = new Vector3(4, 5, 6);
-                testGo.transform.rotation = Quaternion.Euler(0, 90, 0);
+                testGo.transform.SetPositionAndRotation(new Vector3(4, 5, 6), Quaternion.Euler(0, 90, 0));
                 testGo.transform.localScale = new Vector3(2, 2, 2);
                 response = SendGameObject(
                     new JObject

@@ -92,7 +92,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
             try
             {
-                texture.SetPixels(new[] { color, color, color, color });
+                texture.SetPixels32(new Color32[] { color, color, color, color });
                 texture.Apply();
                 return texture.EncodeToPNG();
             }

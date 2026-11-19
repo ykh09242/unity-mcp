@@ -398,7 +398,7 @@ namespace MCPForUnityTests.Editor.Tools
                 batch = null;
             void AddGeometry(string name, Vector3 position, Color color, bool triangle)
             {
-                Shader shader = Shader.Find("Unlit/Color") ?? Shader.Find("Sprites/Default");
+                Shader shader = TestUtilities.FindFirstShader("Unlit/Color", "Sprites/Default");
                 Assert.IsNotNull(shader, "The native fixture requires an existing built-in unlit shader.");
                 var shape = new GameObject(name);
                 UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(shape, scene);

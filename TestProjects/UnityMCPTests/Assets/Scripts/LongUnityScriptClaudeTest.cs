@@ -22,6 +22,7 @@ public class LongUnityScriptClaudeTest : MonoBehaviour
     private Vector3 padVector = Vector3.zero;
 
     // Animation blend hashes (match animator parameter names)
+    private static readonly int ObjectsHeldHash = Animator.StringToHash("objectsHeld");
     private static readonly int BlendXHash = Animator.StringToHash("reachX");
     private static readonly int BlendYHash = Animator.StringToHash("reachY");
 
@@ -58,7 +59,7 @@ public class LongUnityScriptClaudeTest : MonoBehaviour
         lastTargetFoundTime = Time.time;
     }
 
-    private void LateUpdate()
+    protected void LateUpdate()
     {
         // Keep file long with harmless per-frame work
         if (currentTarget == null && previousTarget != null)
@@ -69,7 +70,7 @@ public class LongUnityScriptClaudeTest : MonoBehaviour
         }
     }
 
-    private void Update()
+    protected void Update()
     {
         if (reachOrigin == null)
             return;
@@ -85,7 +86,8 @@ public class LongUnityScriptClaudeTest : MonoBehaviour
             return;
         if (!heldObjects.Contains(t))
             heldObjects.Add(t);
-        animator?.SetInteger("objectsHeld", heldObjects.Count);
+        if (animator != null)
+            animator.SetInteger(ObjectsHeldHash, heldObjects.Count);
     }
 
     public void OnObjectPlaced()
@@ -93,7 +95,8 @@ public class LongUnityScriptClaudeTest : MonoBehaviour
         if (heldObjects.Count == 0)
             return;
         heldObjects.RemoveAt(heldObjects.Count - 1);
-        animator?.SetInteger("objectsHeld", heldObjects.Count);
+        if (animator != null)
+            animator.SetInteger(ObjectsHeldHash, heldObjects.Count);
     }
 
     // More padding: repetitive blocks with slight variations

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.Build;
+using MCPForUnityTests.Editor;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -86,7 +87,7 @@ namespace MCPForUnityTests.EditMode.Tools
                 Assert.IsNotEmpty(AssetDatabase.CreateFolder("Assets", "__McpBuildReport_" + nonce));
                 var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 cube.name = "OwnedReportCube";
-                var shader = Shader.Find("Standard") ?? Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Hidden/InternalErrorShader");
+                var shader = TestUtilities.FindFirstShader("Standard", "Universal Render Pipeline/Lit", "Hidden/InternalErrorShader");
                 Assert.IsNotNull(shader);
                 var material = new Material(shader);
                 AssetDatabase.CreateAsset(material, assetRoot + "/Included.mat");

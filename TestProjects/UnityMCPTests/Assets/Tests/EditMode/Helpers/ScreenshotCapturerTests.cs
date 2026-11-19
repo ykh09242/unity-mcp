@@ -363,7 +363,9 @@ namespace MCPForUnityTests.Editor.Helpers
 
             var cameraObject = new GameObject("__ScreenshotDefaultFallbackCamera");
             cameraObject.AddComponent<Camera>();
-            var camera = Camera.main ?? UnityFindObjectsCompat.FindAll<Camera>()[0];
+            var camera = Camera.main;
+            if (camera == null)
+                camera = UnityFindObjectsCompat.FindAll<Camera>()[0];
             string folder = "Temp/ScreenshotDefaultFallback-" + System.Guid.NewGuid().ToString("N");
             string absolute = ScreenshotUtility.ResolveFolderAbsolute(folder);
             var targetBefore = camera.targetTexture;

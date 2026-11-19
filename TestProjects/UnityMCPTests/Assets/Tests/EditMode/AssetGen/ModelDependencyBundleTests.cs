@@ -93,7 +93,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
             try
             {
-                texture.SetPixels(new[] { color, color, color, color });
+                texture.SetPixels32(new Color32[] { color, color, color, color });
                 texture.Apply();
                 return texture.EncodeToPNG();
             }
@@ -289,7 +289,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             }
             Assert.IsTrue((bool)response["success"], "an installed but failing importer cannot be reported as missing: " + response);
             GameObject model = AssetDatabase.LoadAssetAtPath<GameObject>(main);
-            Assert.IsNotNull(model.GetComponentInChildren<MeshFilter>(true)?.sharedMesh);
+            var filter = model.GetComponentInChildren<MeshFilter>(true);
+            Assert.IsTrue(filter != null && filter.sharedMesh != null);
             var material = model.GetComponentInChildren<Renderer>(true).sharedMaterial;
             Assert.IsNotNull(material.mainTexture);
             Assert.AreEqual(outputRoot + "/Renamed/Textures/owned image.png", AssetDatabase.GetAssetPath(material.mainTexture));

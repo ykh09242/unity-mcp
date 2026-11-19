@@ -300,7 +300,10 @@ namespace MCPForUnityTests.Editor.AssetGen
             string result = (string)response["data"]["asset_path"];
             Assert.AreEqual(outputRoot + "/prepared_1.obj", result);
             Assert.IsNotEmpty(AssetDatabase.AssetPathToGUID(result));
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>(result)?.GetComponentInChildren<MeshFilter>(true)?.sharedMesh);
+            var model = AssetDatabase.LoadAssetAtPath<GameObject>(result);
+            Assert.IsTrue(model != null);
+            var filter = model.GetComponentInChildren<MeshFilter>(true);
+            Assert.IsTrue(filter != null && filter.sharedMesh != null);
             Assert.AreEqual(existingContents, File.ReadAllText(existing));
             Assert.IsTrue(File.Exists(source));
         }

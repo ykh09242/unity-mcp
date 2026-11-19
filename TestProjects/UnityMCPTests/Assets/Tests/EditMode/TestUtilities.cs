@@ -100,7 +100,18 @@ namespace MCPForUnityTests.Editor
         /// <returns>A shader suitable for test materials, or null if none found.</returns>
         public static Shader FindFallbackShader()
         {
-            return Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("HDRP/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Unlit/Color");
+            return FindFirstShader("Universal Render Pipeline/Lit", "HDRP/Lit", "Standard", "Unlit/Color");
+        }
+
+        internal static Shader FindFirstShader(params string[] names)
+        {
+            foreach (string name in names)
+            {
+                var shader = Shader.Find(name);
+                if (shader != null)
+                    return shader;
+            }
+            return null;
         }
 
         /// <summary>

@@ -169,7 +169,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 availability.SetValue(null, runtimeAvailable);
                 AssetGenJob result = ModelImportPipeline.ImportInto(Job("glb"), path);
-                if (AssetImporter.GetAtPath(path)?.GetType() != typeof(AssetImporter))
+                var importer = AssetImporter.GetAtPath(path);
+                if (importer == null || importer.GetType() != typeof(AssetImporter))
                     Assert.Ignore("This fixture exercises projects without an active glTF importer.");
                 Assert.AreEqual(AssetGenJobState.Failed, result.State);
                 Assert.AreEqual("registered", Stage(result));

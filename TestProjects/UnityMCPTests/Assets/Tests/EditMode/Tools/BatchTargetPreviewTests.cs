@@ -70,7 +70,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["params"] = new JObject
                 {
                     ["action"] = "modify",
-                    ["target"] = (target ?? root).GetInstanceIDCompat(),
+                    ["target"] = (target != null ? target : root).GetInstanceIDCompat(),
                     ["search_method"] = "by_id",
                     ["position"] = new JArray(1, 2, 3),
                 },

@@ -13,13 +13,13 @@ namespace MCPForUnityTests.Editor.AssetGen
         internal static string Watched;
         internal static int Count;
 
-        private void OnPostprocessTexture(Texture2D texture)
+        protected void OnPostprocessTexture(Texture2D texture)
         {
             if (assetPath == Watched)
                 Count++;
         }
 
-        private void OnPostprocessAudio(AudioClip clip)
+        protected void OnPostprocessAudio(AudioClip clip)
         {
             if (assetPath == Watched)
                 Count++;

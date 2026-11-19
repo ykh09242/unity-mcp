@@ -173,10 +173,10 @@ namespace MCPForUnityTests.Editor.Tools
 
             // Create test texture for texture-dependent scenarios (4, 5, 10)
             var tex = new Texture2D(4, 4, TextureFormat.RGBA32, false);
-            var pixels = new Color[16];
+            var pixels = new Color32[16];
             for (int i = 0; i < pixels.Length; i++)
                 pixels[i] = Color.white;
-            tex.SetPixels(pixels);
+            tex.SetPixels32(pixels);
             tex.Apply();
             AssetDatabase.CreateAsset(tex, texPath);
             AssetDatabase.SaveAssets();

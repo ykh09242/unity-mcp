@@ -151,10 +151,10 @@ namespace MCPForUnityTests.Editor.Tools
                     bundled.GetProperty("BundleMode").SetValue(schema, Enum.Parse(bundled.GetProperty("BundleMode").PropertyType, "PackTogether"));
                 }
                 var texture = new Texture2D(4, 4, TextureFormat.RGBA32, false);
-                texture.SetPixels(Enumerable.Repeat(Color.magenta, 16).ToArray());
+                texture.SetPixels32(Enumerable.Repeat<Color32>(Color.magenta, 16).ToArray());
                 texture.Apply();
                 AssetDatabase.CreateAsset(texture, root + "/SharedTexture.asset");
-                Shader shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Texture");
+                Shader shader = TestUtilities.FindFirstShader("Universal Render Pipeline/Unlit", "Unlit/Texture");
                 Assert.IsNotNull(shader, "A real installed unlit shader is required.");
                 var material = new Material(shader);
                 if (material.HasProperty("_BaseMap"))

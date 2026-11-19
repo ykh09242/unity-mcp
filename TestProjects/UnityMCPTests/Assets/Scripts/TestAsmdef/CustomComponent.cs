@@ -10,7 +10,7 @@ namespace TestNamespace
         [SerializeField]
         private float customFloat = 42.0f;
 
-        void Start()
+        protected void Start()
         {
             Debug.Log($"CustomComponent started: {customText}, value: {customFloat}");
         }

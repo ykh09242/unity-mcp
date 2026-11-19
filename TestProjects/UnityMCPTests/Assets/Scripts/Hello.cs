@@ -3,7 +3,7 @@ using UnityEngine;
 
 public class Hello : MonoBehaviour
 {
-    void Start()
+    protected void Start()
     {
         Debug.Log("Hello World");
     }

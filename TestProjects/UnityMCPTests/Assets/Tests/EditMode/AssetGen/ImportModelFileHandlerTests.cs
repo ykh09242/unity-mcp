@@ -105,7 +105,8 @@ namespace MCPForUnityTests.Editor.AssetGen
                 JObject response = Call(new JObject { ["sourcePath"] = source, ["outputFolder"] = outputFolder });
                 string retained = (string)response["data"]?["asset_path"];
                 Assert.IsNotNull(retained, response.ToString());
-                if (AssetImporter.GetAtPath(retained)?.GetType() != typeof(AssetImporter))
+                var importer = AssetImporter.GetAtPath(retained);
+                if (importer == null || importer.GetType() != typeof(AssetImporter))
                     Assert.Ignore("This fixture exercises projects without an active glTF importer.");
                 Assert.AreEqual(false, (bool)response["success"]);
                 StringAssert.Contains("glTFast", (string)response["error"]);
@@ -143,7 +144,10 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(assetPath, (string)resp["data"]["verification"]["observed_values"]["asset_path"]);
             Assert.Greater((int)resp["data"]["verification"]["observed_values"]["model"]["meshes_inspected"], 0);
             Assert.IsTrue((bool)resp["data"]["verification"]["complete"], resp.ToString());
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>(assetPath)?.GetComponentInChildren<MeshFilter>(true)?.sharedMesh);
+            var model = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+            Assert.IsTrue(model != null);
+            var filter = model.GetComponentInChildren<MeshFilter>(true);
+            Assert.IsTrue(filter != null && filter.sharedMesh != null);
         }
 
         [TestCase(false)]
