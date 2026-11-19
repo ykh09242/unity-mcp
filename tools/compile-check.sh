@@ -33,6 +33,8 @@
 #   COMPILE_INPUT_SYSTEM compile optional Input System adapters (default 0)
 #   INPUT_SYSTEM_REFS directory with verified Unity.InputSystem DLLs (or use source below)
 #   INPUT_SYSTEM_SOURCE verified pinned UPM package, compiled without Unity (6000.0 profile)
+#   UNITY_ANALYZER_DLL Microsoft.Unity.Analyzers from the locked script diagnostics host (optional)
+#   UNITY_ANALYZER_SDK .NET SDK version directory for the analysis pass (required with UNITY_ANALYZER_DLL)
 #   DISABLED_UNITY_MODULES space-separated physics/physics2d/screencapture (default empty; removes metadata and symbols)
 #   PLATFORMS      editor platforms to compile           (default "win osx linux")
 #   OUT            scratch dir                           (default /tmp/mcp-compile-check)
@@ -63,6 +65,25 @@ UNITY_DATA=$(winpath "${UNITY_DATA:-/opt/unity/Editor/Data}")
 REPO=$(winpath "${REPO:-"$(dirname "${BASH_SOURCE[0]}")/.."}")
 EXTRA_REFS=${EXTRA_REFS:-"$REPO/.compile-refs"}
 [ -d "$EXTRA_REFS" ] && EXTRA_REFS=$(winpath "$EXTRA_REFS")
+UNITY_ANALYZER_DLL=${UNITY_ANALYZER_DLL:-}
+analyzer_config="$REPO/tools/compile-refs/unity-analyzers.globalconfig"
+if [ -n "$UNITY_ANALYZER_DLL" ]; then
+  [ -s "$UNITY_ANALYZER_DLL" ] || die "Unity analyzer assembly not found: $UNITY_ANALYZER_DLL"
+  UNITY_ANALYZER_DLL="$(winpath "$(dirname "$UNITY_ANALYZER_DLL")")/$(basename "$UNITY_ANALYZER_DLL")"
+  [ -f "$analyzer_config" ] || die "Unity analyzer configuration not found: $analyzer_config"
+  [ -n "${UNITY_ANALYZER_SDK:-}" ] || die "UNITY_ANALYZER_SDK must select the SDK for first-party analysis"
+  analyzer_sdk=$(winpath "$UNITY_ANALYZER_SDK") || exit 2
+  analyzer_root=$(winpath "$analyzer_sdk/../..") || exit 2
+  analyzer_host="$analyzer_root/dotnet"
+  analyzer_csc="$analyzer_sdk/Roslyn/bincore/csc.dll"
+  sdk_analyzers="$analyzer_sdk/Sdks/Microsoft.NET.Sdk/analyzers"
+  sdk_version=${analyzer_sdk##*/}
+  ca_config="$sdk_analyzers/build/config/analysislevel_${sdk_version%%.*}_default.globalconfig"
+  [ -x "$analyzer_host" ] || die "analyzer SDK host not found: $analyzer_host"
+  for required in "$analyzer_csc" "$ca_config" "$sdk_analyzers"/Microsoft.CodeAnalysis{,.CSharp}.NetAnalyzers.dll; do
+    [ -f "$required" ] || die "analyzer SDK input not found: $required"
+  done
+fi
 TEST_FRAMEWORK_SOURCE=${TEST_FRAMEWORK_SOURCE:-}
 if [ -n "$TEST_FRAMEWORK_SOURCE" ]; then
   TEST_FRAMEWORK_SOURCE=$(winpath "$TEST_FRAMEWORK_SOURCE") || exit 2
@@ -342,17 +363,21 @@ compile() {
   [ "$compile_profile" = editor ] || dir="$dir/$compile_profile"
   [ -d "$dir" ] || mkdir -p "$dir" || return 1
   local rsp="$dir/$name.rsp"
-  local missing=0 nrefs=0 nsrc=0 sources
+  local missing=0 nrefs=0 nsrc=0 sources owned=0
   local bcl="$REFS_ROOT/BCL/Editor.txt"
   # Initial Unity 7 uses CoreCLR with the .NET Standard 2.1 scripting API surface,
   # including Editor assemblies. The bundled .NET 10 SDK does not widen that surface.
   case "$ver_major.$ver_minor:$name" in
-    7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:MCPForUnity.PlayScenarios.Integration.Runtime|*:MCPForUnity.ScenarioPlayerFixture|*:MCPForUnityTests.UI16CaretRuntime|*:TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
+    7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:MCPForUnity.PlayScenarios.Integration.Runtime|*:MCPForUnity.ScenarioPlayerFixture|*:MCPForUnityTests.UI16CaretRuntime|*:TestAsmdef|*:Assembly-CSharp|*:LifecycleSample.Runtime) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
   esac
   [ -d "$srcdir" ] && load_assembly_sources "$srcdir" && [ -n "$assembly_source_list" ] || {
     echo "::error::assembly sources not found: $srcdir" >&2; return 1;
   }
   sources=$assembly_source_list
+  if [ "$name" = LifecycleSample.Tests ]; then
+    # The sample's MCP runner stages this source into the same test asmdef.
+    sources+=$'\n'"$REPO/tools/fixtures/play_scenario_mcp/TransportScenarioTests.cs"
+  fi
   while IFS= read -r f; do
     [ -f "$f" ] || { echo "::error::assembly source not found: $f" >&2; return 1; }
   done <<< "$sources"
@@ -392,14 +417,20 @@ compile() {
       printf '%s\n' -define:UNITY_INPUT_SYSTEM_PLATFORM_SCROLL_DELTA -define:UNITY_INPUT_SYSTEM_INPUT_MODULE_SCROLL_DELTA -define:UNITY_INPUT_SYSTEM_SENDPOINTERHOVERTOPARENT
       ;;
     esac
+    if [ "$name" = MCPForUnity.Input.InputSystem.Editor ]; then echo "-unsafe+"; fi
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
     case "$name" in
-      MCPForUnity.Runtime|MCPForUnity.Editor|MCPForUnity.Input.UGUI.*|MCPForUnity.Input.InputSystem.*|MCPForUnity.PlayScenarios.Integration.*|MCPForUnity.ScenarioPlayerFixture*|MCPForUnity.CustomTools.Roslyn*|TestAsmdef|MCPForUnityTests.EditMode|MCPForUnityTests.PlayMode|MCPForUnityTests.UI16CaretRuntime)
+      MCPForUnity.*|MCPForUnityTests.*|TestAsmdef|Assembly-CSharp|LifecycleSample.*|UntouchedUpmSmoke.Editor.Tests)
+        owned=1
         echo "-warnaserror+" ;;
     esac
     case "$name" in MCPForUnity.Input.UGUI.*|MCPForUnity.PlayScenarios.Integration.*|MCPForUnity.ScenarioPlayerFixture*) echo "-define:MCP_INPUT_UGUI" ;; esac
     case "$name" in MCPForUnity.Input.InputSystem.*) echo "-define:MCP_INPUT_SYSTEM"; echo "-define:ENABLE_INPUT_SYSTEM" ;; esac
     case "$name" in MCPForUnity.CustomTools.RoslynOn) echo "-define:USE_ROSLYN" ;; esac
+    if [ "$name" = MCPForUnity.Editor ] && [ -n "$UNITY_ANALYZER_DLL" ] && [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
+      # The full profile carries the VFXModule and Unity's matching Roslyn assemblies.
+      printf '%s\n' -define:UNITY_VFX_GRAPH -define:USE_ROSLYN
+    fi
     case "$name" in
       UnityEngine.UI|UnityEditor.UI)
         # Module versionDefines from the verified bundled uGUI 7.0.0 asmdefs.
@@ -476,10 +507,29 @@ compile() {
     echo "::error::$name failed to compile for $platform"
     return 1
   fi
+  if [ "$owned" -eq 1 ] && [ -n "$UNITY_ANALYZER_DLL" ]; then
+    # Keep Unity's original compiler output for consumers. The analysis host
+    # reads the same C# sources, language level, symbols and Unity references.
+    mkdir -p "$dir/analyzed" || return 1
+    DOTNET_ROOT="$analyzer_root" DOTNET_MULTILEVEL_LOOKUP=0 "$analyzer_host" "$analyzer_csc" "@$rsp" \
+      "-analyzer:$UNITY_ANALYZER_DLL" "-analyzerconfig:$analyzer_config" \
+      "-analyzer:$sdk_analyzers/Microsoft.CodeAnalysis.NetAnalyzers.dll" "-analyzer:$sdk_analyzers/Microsoft.CodeAnalysis.CSharp.NetAnalyzers.dll" \
+      "-analyzerconfig:$ca_config" "-out:$dir/analyzed/$name.dll" || return 1
+  fi
   echo "OK  $name [$platform/$compile_profile]"
 }
 
 failed=0
+# Use Unity's coherent Mono/.NET Framework Roslyn group for optional script
+# validation and both custom-tool modes. The custom helper uses it even when off.
+roslyn_refs=()
+for name in Microsoft.CodeAnalysis Microsoft.CodeAnalysis.CSharp System.Collections.Immutable System.Reflection.Metadata; do
+  roslyn_refs+=("$UNITY_DATA/MonoBleedingEdge/lib/mono/4.5/$name.dll")
+done
+editor_roslyn_refs=()
+if [ -n "$UNITY_ANALYZER_DLL" ] && [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
+  editor_roslyn_refs=("${roslyn_refs[@]}")
+fi
 for platform in $PLATFORMS; do
   compile_profile=editor
   if [ "$ver_major.$ver_minor" = 7000.0 ]; then
@@ -538,7 +588,7 @@ for platform in $PLATFORMS; do
     "$REFS_PROFILE/Editor.txt" || { failed=1; continue; }
   compile MCPForUnity.Editor "$REPO/MCPForUnity/Editor" "$platform" \
     "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
-    "$OUT/$platform/Unity.EditorCoroutines.Editor.dll" || { failed=1; continue; }
+    "$OUT/$platform/Unity.EditorCoroutines.Editor.dll" "${editor_roslyn_refs[@]}" || { failed=1; continue; }
   if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
     compile MCPForUnity.Input.UGUI.Editor "$REPO/MCPForUnity/Editor/Tools/Input/UGUI" "$platform" \
       "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
@@ -551,12 +601,6 @@ for platform in $PLATFORMS; do
       "$OUT/$platform/MCPForUnity.Input.InputSystem.Runtime.dll" "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" \
       || { failed=1; continue; }
   fi
-  # Use Unity's coherent Mono/.NET Framework Roslyn group in both modes: the
-  # compiler helper still references CodeAnalysis under UNITY_EDITOR when off.
-  roslyn_refs=()
-  for name in Microsoft.CodeAnalysis Microsoft.CodeAnalysis.CSharp System.Collections.Immutable System.Reflection.Metadata; do
-    roslyn_refs+=("$UNITY_DATA/MonoBleedingEdge/lib/mono/4.5/$name.dll")
-  done
   for assembly in MCPForUnity.CustomTools.RoslynOff MCPForUnity.CustomTools.RoslynOn; do
     compile "$assembly" "$REPO/CustomTools/RoslynRuntimeCompilation" "$platform" \
       "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
@@ -565,6 +609,10 @@ for platform in $PLATFORMS; do
   if [ -n "$TEST_PROJECT" ]; then
     # These names/references mirror the owned asmdefs; the harness contract test
     # checks their JSON so a changed assembly graph cannot silently lose coverage.
+    if [ -n "$UNITY_ANALYZER_DLL" ]; then
+      compile Assembly-CSharp "$TEST_PROJECT/Assets" "$platform" "$REFS_PROFILE/Runtime.txt" \
+        || { failed=1; continue; }
+    fi
     compile TestAsmdef "$TEST_PROJECT/Assets/Scripts/TestAsmdef" "$platform" \
       "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
     compile MCPForUnityTests.EditMode "$TEST_PROJECT/Assets/Tests/EditMode" "$platform" \
@@ -600,6 +648,19 @@ for platform in $PLATFORMS; do
         "$OUT/$platform/MCPForUnity.Input.InputSystem.Runtime.dll" "$OUT/$platform/MCPForUnity.Input.InputSystem.Editor.dll" \
         "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" "$INPUT_SYSTEM_REFS/Unity.InputSystem.TestFramework.dll" \
         || failed=1
+      if [ -n "$UNITY_ANALYZER_DLL" ]; then
+        sample="$REPO/tools/fixtures/play_scenario_lifecycle/Assets"
+        compile LifecycleSample.Runtime "$sample/Runtime" "$platform" \
+          "$REFS_PROFILE/Runtime.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" || { failed=1; continue; }
+        compile LifecycleSample.Editor "$sample/Editor" "$platform" \
+          "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Editor.dll" \
+          "$OUT/$platform/LifecycleSample.Runtime.dll" || { failed=1; continue; }
+        compile LifecycleSample.Tests "$sample/Tests/Editor" "$platform" "$REFS_PROFILE/Editor.txt" \
+          "$OUT/$platform/MCPForUnity.Runtime.dll" "$OUT/$platform/MCPForUnity.Editor.dll" \
+          "$OUT/$platform/LifecycleSample.Runtime.dll" "$OUT/$platform/LifecycleSample.Editor.dll" || failed=1
+        compile UntouchedUpmSmoke.Editor.Tests "$REPO/tools/unity-ci/upm-smoke" "$platform" \
+          "$REFS_PROFILE/Editor.txt" || failed=1
+      fi
     else
       echo "Excluded Input System test assembly: COMPILE_INPUT_SYSTEM=0 (package profile disabled)"
     fi

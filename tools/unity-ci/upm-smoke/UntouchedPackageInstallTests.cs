@@ -14,16 +14,16 @@ namespace UntouchedUpmSmoke
         [Serializable]
         private class Dependency
         {
-            public string name;
-            public string version;
+            public string name = null;
+            public string version = null;
         }
 
         [Serializable]
         private class ExpectedInstallation
         {
-            public string packageName;
-            public string manifestSha256;
-            public Dependency[] dependencies;
+            public string packageName = null;
+            public string manifestSha256 = null;
+            public Dependency[] dependencies = null;
         }
 
         [Test]

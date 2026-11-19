@@ -4,6 +4,31 @@
 current C# source using Unity's owning assembly context. It returns advice and
 evidence without rewriting source, assets, serialization data or compiler settings.
 
+## Repository C# builds
+
+The compile workflow builds the package with each Unity distribution's own compiler.
+It then analyzes the same first-party sources, defines and Unity references using the
+pinned .NET SDK. All Microsoft.Unity.Analyzers rules are enabled as errors, including
+its two opt-in rules. The SDK's default C# code-quality warnings also fail the build.
+SDK suggestions retain their default severity. The diagnostic host itself uses the
+SDK defaults for its declared target framework. A host test checks that every
+descriptor in the locked Unity analyzer has an entry in the repository policy.
+
+The checks cover Editor and Player assemblies, optional input, script validation
+and VFX paths, custom tools, and the owned tests in the configured package profiles.
+The Addressables fixture compiles in its separate native package profile. Three public editor window
+`CreateGUI()` callbacks carry a method-level `UNT0021` exception to preserve
+external callers. The script-quality tests activate deliberate analyzer findings
+only in their test analysis request.
+
+To run the same checks locally, restore `MCPForUnity/Editor/ScriptDiagnosticsHost~/ScriptDiagnosticsHost.csproj`
+with `dotnet restore --locked-mode`. Set `UNITY_ANALYZER_DLL` to
+`analyzers/dotnet/cs/Microsoft.Unity.Analyzers.dll` under the restored package
+and `UNITY_ANALYZER_SDK` to the installed SDK version directory. Run
+`tools/compile-check.sh` with the Unity and package inputs documented in that script.
+The analyzer is a build dependency of this repository. Game projects can configure
+their own diagnostics independently. [Microsoft.Unity.Analyzers](https://github.com/microsoft/Microsoft.Unity.Analyzers)
+
 ## Optional setup
 
 In **Advanced > Script Validation**, explicitly set up/update the analysis host,
