@@ -233,6 +233,11 @@ def create_parser() -> argparse.ArgumentParser:
     )
     launch.add_argument("--state-probe", type=Path, help="Trusted read-only Python state probe")
     launch.add_argument(
+        "--live-child",
+        action="store_true",
+        help="Capture a v2 subagent's own host events and directly verify its parent and session",
+    )
+    launch.add_argument(
         "--delegation",
         choices=("v2", "legacy"),
         default="v2",

@@ -205,6 +205,17 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
                 reasons.extend(preparation_issues(left, right))
                 for arm, case in (("baseline", left), ("candidate", right)):
                     reasons.extend(arm + ":" + issue for issue in case.get("pair_reasons", []))
+                    if case.get("role") == "subagent":
+                        receipt = case.get("actor_receipt") or {}
+                        if len(receipt.get("children", [])) != 1 or not all(
+                            receipt.get(k)
+                            for k in (
+                                "child_business_observed",
+                                "child_final_observed",
+                                "child_turn_completed",
+                            )
+                        ):
+                            reasons.append("unverified:" + arm + "_child_turn")
             host_modes = [c.get("host_mode", "isolated") for c in (left, right)]
             if host_modes[0] != host_modes[1]:
                 reasons.append("different:host_mode")

@@ -1135,6 +1135,11 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         "actor_receipt": {
             "parent": parent.parent_actor or None,
             "children": sorted(parent.child_actors),
+            "child_turn_completed": bool(child and child.completed),
+            "child_final_observed": bool(child and child.completed and child.final_message),
+            "child_business_observed": bool(
+                child and any(call.channel != "discovery" for call in child.calls.values())
+            ),
         },
         "first_business_call": first.route if first else None,
         "first_shell_purpose": next(

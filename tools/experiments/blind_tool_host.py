@@ -141,7 +141,10 @@ def launch_settings(args, case_dir):
     server = args.unity_server
     command = [args.codex, "app-server"]
     for competitor in getattr(args, "disable_competitor", None) or ():
-        command.extend(["-c", f"mcp_servers.{competitor}.enabled=false"])
+        if competitor == "codex_apps":
+            command.extend(["--disable", "apps"])
+        else:
+            command.extend(["-c", f"mcp_servers.{competitor}.enabled=false"])
     if not args.installed:
         from tools.experiments.blind_tool_selection import proxy_args
 
@@ -155,6 +158,10 @@ def launch_settings(args, case_dir):
         }.items():
             command.extend(["-c", f"mcp_servers.{server}.{key}={json.dumps(value)}"])
     command.extend(["--enable" if args.delegation == "v2" else "--disable", "multi_agent_v2"])
+    if args.delegation == "v2" and (
+        getattr(args, "pair_gate", None) or getattr(args, "live_child", False)
+    ):
+        command.extend(["--enable", "code_mode"])
     if args.delegation == "legacy":
         command.extend(["--enable", "multi_agent"])
     return command, server
@@ -543,6 +550,10 @@ async def run_configured(args, case_dir, prompt, metadata):
 async def _configured_session(args, case_dir, prompt, metadata, expected=None):
     """Use the app-server protocol to observe the exact ephemeral thread before its model turn."""
     from tools.experiments.blind_tool_trace import thread_digest, wire_checkpoint
+    from tools.experiments.blind_tool_child import (
+        child_permissions as delivered_permissions,
+        verify_live_child,
+    )
 
     command, server = launch_settings(args, case_dir)
     metadata["unity_server"] = server
@@ -573,6 +584,11 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                     "approvalPolicy": "never" if args.approval == "never" else "on-request",
                     "sandbox": "read-only",
                 }
+                live_child = args.delegation == "v2" and (
+                    bool(gate) or getattr(args, "live_child", False)
+                )
+                if live_child:
+                    options["experimentalRawEvents"] = True
                 if args.approval == "auto-review":
                     options["approvalsReviewer"] = "auto_review"
                 if getattr(args, "study", None) or gate:
@@ -667,6 +683,8 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                 children = {}
                 child_permissions = {}
                 child_models = {}
+                verified_live = set()
+                attempted_live = set()
                 offset = 0
                 with (case_dir / "events.jsonl").open("x", encoding="utf-8") as stream:
 
@@ -685,13 +703,34 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                             )
                             actor = _host_id(params.get("threadId"))
                             item = params.get("item") or {}
+                            if (
+                                live_child
+                                and actor
+                                and actor != thread
+                                and method in ("turn/started", "item/started")
+                                and actor not in attempted_live
+                                and len(attempted_live) < 8
+                            ):
+                                attempted_live.add(actor)
+                                verified = await verify_live_child(
+                                    client, thread, started["thread"].get("sessionId"), actor
+                                )
+                                if verified is not None:
+                                    verified_live.add(actor)
+                                    parents.add(actor)
+                                    child_models.setdefault(actor, {}).update(verified)
+                                    metadata["child_lookup"] = "live_parent_and_session"
+                            if method == "rawResponseItem/completed" and actor in verified_live:
+                                if permission := delivered_permissions(item):
+                                    child_permissions.setdefault(actor, permission)
                             if method == "thread/settings/updated" and actor and actor != thread:
                                 child_models.setdefault(actor, {}).update(
                                     model_settings(params.get("threadSettings") or {})
                                 )
-                                child_permissions[actor] = observed_permissions(
+                                if permission := observed_permissions(
                                     params.get("threadSettings") or {}
-                                )
+                                ):
+                                    child_permissions[actor] = permission
                             if method == "thread/started":
                                 linked = direct_child(params.get("thread", {}), thread)
                                 if linked:
@@ -763,6 +802,8 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                                 path.read_text(encoding="utf-8")
                                             )
                                         else:
+                                            child_surface = {}
+                                        if child_surface.get("status") != "observed":
                                             child_surface = await observe_host(
                                                 client,
                                                 linked,
@@ -770,7 +811,7 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                                 args.instance,
                                                 installed=expected is not None,
                                             )
-                                        if getattr(args, "study", None):
+                                        if getattr(args, "study", None) or gate or live_child:
                                             child_surface[
                                                 "project_verified"
                                             ] = await _project_verified(
@@ -778,7 +819,7 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                             )
                                         child_surface["permissions"] = child_permissions.get(linked)
                                         settings = child_models.get(linked, {})
-                                        if getattr(args, "study", None):
+                                        if getattr(args, "study", None) or gate or live_child:
                                             settings = await owned_model_settings(
                                                 client, linked, settings
                                             )
