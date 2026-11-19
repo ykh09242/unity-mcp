@@ -114,7 +114,7 @@ namespace MCPForUnityTests.Editor.Services
                 )
                     throw new InvalidOperationException("Scenario requires a fresh inactive owned project/session.");
                 if (!NativeTestRunControl.Available || NativeTestRunControl.DisableForTests || NativeTestRunControl.FactoryOverride != null)
-                    throw new InvalidOperationException("Scenario requires actual exact-version native control without test overrides.");
+                    throw new InvalidOperationException("Scenario requires the installed GUID-scoped native control without test overrides.");
                 Require(
                     ((Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", Hidden).GetValue(null)).Count == 0,
                     "Scenario requires an empty fresh managed job table."

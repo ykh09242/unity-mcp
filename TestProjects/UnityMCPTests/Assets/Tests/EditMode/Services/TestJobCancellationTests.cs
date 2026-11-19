@@ -234,14 +234,139 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsFalse((bool)Call("AcceptsCallback"), "Ambiguous attribution remains unavailable.");
         }
 
-        [TestCase("1.4.6", false)]
-        [TestCase("1.6.0", true)]
-        [TestCase("1.6.1", false)]
-        [TestCase("", false)]
-        public void CapabilityVersionIsExact(string version, bool expected)
+        [TestCase("1.4.6")]
+        [TestCase("1.6.0")]
+        [TestCase("2.0.0-preview.1")]
+        [TestCase(null)]
+        public void RetainedGuidAndDeadlineDoNotDependOnFrameworkVersionMetadata(string version)
         {
             Create();
-            Assert.AreEqual(expected, control.GetType().GetMethod("SupportsVersion", Members).Invoke(null, new object[] { version }));
+            Call("BindGuid", Guid);
+            State["framework"] = version == null ? JValue.CreateNull() : new JValue(version);
+            Assert.IsTrue(NativeTestRunControl.ValidState(State, Job));
+            var previous = NativeTestRunControl.FactoryOverride;
+            try
+            {
+                NativeTestRunControl.FactoryOverride = (id, timeout) =>
+                    new NativeTestRunControl(id, timeout, () => now, () => snapshot, idToCancel => idToCancel == Guid);
+                using var restored = NativeTestRunControl.Restore(Job, State);
+                Assert.AreEqual(Guid, restored.NativeGuid);
+                restored.Request("user");
+                Assert.IsTrue(restored.CancelAccepted);
+            }
+            finally
+            {
+                NativeTestRunControl.FactoryOverride = previous;
+            }
+        }
+
+        [Test]
+        public void MissingOwnershipEvidenceCannotCancelPersistedGuid()
+        {
+            Create(100);
+            Call("BindGuid", Guid);
+            State["observation_lost"] = true;
+            now += 1;
+            Call("Tick");
+            Assert.AreEqual(0, calls);
+            Assert.AreEqual("unknown", (string)State["request_state"]);
+            Assert.IsFalse(Released);
+        }
+
+        private sealed class Progress
+        {
+            public string RunGuid = Guid;
+            public bool HasFinished = true;
+        }
+
+        private sealed class Row
+        {
+            public string guid = Guid;
+            public bool isRunning = true;
+        }
+
+        private sealed class Runner
+        {
+            public Row GetData() => new Row();
+        }
+
+        private sealed class Holder
+        {
+            public List<Row> TestRuns = new List<Row> { new Row() };
+
+            public Runner[] GetAllRunners() => new[] { new Runner() };
+        }
+
+        private sealed class IncompatibleEmptyHolder
+        {
+            public List<Row> TestRuns = new List<Row>();
+
+            public object[] GetAllRunners() => Array.Empty<object>();
+        }
+
+        private sealed class RunnerApi
+        {
+            internal static object m_testJobDataHolder { get; set; }
+            internal static readonly UnityEngine.Events.UnityEvent<Progress> runProgressChanged = new UnityEngine.Events.UnityEvent<Progress>();
+
+            internal static bool IsRunActive() => true;
+
+            public string Execute(ExecutionSettings _) => throw new AssertionException("Probing must never execute tests.");
+
+            public static bool CancelTestRun(string _) => throw new AssertionException("Probing must never cancel tests.");
+        }
+
+        [Test]
+        public void BindingChecksRowContractsEvenWhenNoRunnersAreRegistered()
+        {
+            try
+            {
+                RunnerApi.m_testJobDataHolder = new IncompatibleEmptyHolder();
+                Assert.Throws<NotSupportedException>(() => new NativeTestRunControl.Binding(typeof(RunnerApi)));
+                RunnerApi.m_testJobDataHolder = new Holder();
+                using var binding = new NativeTestRunControl.Binding(typeof(RunnerApi));
+                Assert.IsTrue(JToken.DeepEquals(Native(true), binding.Snapshot()));
+                string witness = null;
+                binding.Subscribe(id => witness = id);
+                RunnerApi.runProgressChanged.Invoke(new Progress { HasFinished = false });
+                Assert.IsNull(witness);
+                RunnerApi.runProgressChanged.Invoke(new Progress());
+                Assert.AreEqual(Guid, witness);
+                binding.Dispose();
+                witness = null;
+                RunnerApi.runProgressChanged.Invoke(new Progress());
+                Assert.IsNull(witness);
+            }
+            finally
+            {
+                RunnerApi.m_testJobDataHolder = null;
+            }
+        }
+
+        [Test]
+        public void ReleasedLegacyReceiptSurvivesLossOfTheInstalledObserver()
+        {
+            Create();
+            Call("BindGuid", Guid);
+            Call("ObserveFinal", Guid);
+            snapshot = Native(false);
+            Call("NoteEditorUpdate");
+            Call("TickFromEditorUpdate");
+            State["framework"] = "1.6.0";
+            bool previous = NativeTestRunControl.DisableForTests;
+            try
+            {
+                NativeTestRunControl.DisableForTests = true;
+                using var restored = NativeTestRunControl.Restore(Job, State);
+                Assert.IsTrue(restored.Released);
+                Assert.AreEqual("confirmed", (string)restored.State["termination"]);
+                Assert.IsTrue(NativeTestRunControl.ValidState(restored.State, Job));
+                Assert.IsFalse(restored.CanRequest);
+            }
+            finally
+            {
+                NativeTestRunControl.DisableForTests = previous;
+            }
         }
 
         [TestCase(-1)]
@@ -286,7 +411,7 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
-        public void ExactInstalledBindingAddsAndRemovesOnlyItsPassiveListener()
+        public void InstalledBindingUsesGuidCancellationAndARealFinalProgressListener()
         {
             string version = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(TestRunnerApi).Assembly)?.version;
             bool disabled = NativeTestRunControl.DisableForTests;
@@ -298,15 +423,21 @@ namespace MCPForUnityTests.Editor.Services
             {
                 NativeTestRunControl.DisableForTests = false;
                 NativeTestRunControl.FactoryOverride = null;
-                Assert.AreEqual(version == "1.6.0", NativeTestRunControl.Available, "Only exact installed supported binding may admit control.");
-                if (version != "1.6.0")
+                var api = typeof(TestRunnerApi);
+                var field = api.GetField("runProgressChanged", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                if (!NativeTestRunControl.Available)
+                {
+                    Assert.IsNull(NativeTestRunControl.Create(Job, 0));
                     return;
-                var field = typeof(TestRunnerApi).GetField("runProgressChanged", BindingFlags.NonPublic | BindingFlags.Static);
+                }
+                Assert.NotNull(field);
+                Assert.AreEqual(typeof(bool), api.GetMethod("CancelTestRun", new[] { typeof(string) })?.ReturnType);
                 object original = field.GetValue(null);
                 NativeTestRunControl actual = NativeTestRunControl.Create(Job, 0);
                 using (actual)
                 {
                     Assert.NotNull(actual);
+                    Assert.AreEqual(version, (string)actual.State["framework"]);
                     actual.BindGuid(Guid);
                     object binding = typeof(NativeTestRunControl).GetField("binding", Members).GetValue(actual);
                     object bridge = binding.GetType().GetField("bridge", Members).GetValue(binding);
@@ -528,7 +659,9 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.AreEqual("unsupported_native_test_control", (string)denied["error"]);
                 for (int index = 0; index < 2; index++)
                 {
-                    JObject started = JObject.FromObject(MCPForUnity.Editor.Tools.RunTests.HandleCommand(new JObject()).GetAwaiter().GetResult());
+                    JObject started = JObject.FromObject(
+                        MCPForUnity.Editor.Tools.RunTests.HandleCommand(new JObject { ["source_token"] = new string('a', 64) }).GetAwaiter().GetResult()
+                    );
                     Assert.IsTrue((bool)started["success"]);
                     Assert.IsFalse(TestJobManager.NativeAdmissionBlocked);
                     Assert.IsTrue(TestJobManager.ClearStuckJob());
@@ -557,7 +690,10 @@ namespace MCPForUnityTests.Editor.Services
                         }
                     );
                 JObject started = JObject.FromObject(
-                    MCPForUnity.Editor.Tools.RunTests.HandleCommand(new JObject { ["runTimeoutMs"] = 100 }).GetAwaiter().GetResult()
+                    MCPForUnity
+                        .Editor.Tools.RunTests.HandleCommand(new JObject { ["runTimeoutMs"] = 100, ["source_token"] = new string('a', 64) })
+                        .GetAwaiter()
+                        .GetResult()
                 );
                 Assert.IsTrue((bool)started["success"]);
                 string id = (string)started["data"]["job_id"];
@@ -1068,7 +1204,7 @@ namespace MCPForUnityTests.Editor.Services
                         saved["deadline_uptime"] = 0;
                         break;
                     case "deadline_after_limit":
-                        saved["deadline_uptime"] = 610.5;
+                        saved["deadline_uptime"] = 86410.5;
                         break;
                     case "request_time_before_start":
                         saved["reason"] = "user";
@@ -1166,13 +1302,13 @@ namespace MCPForUnityTests.Editor.Services
             double clock = 0;
             using var captured = new NativeTestRunControl(
                 Job,
-                600000,
+                86400000,
                 () => clock += 10,
                 () => Native(false),
                 _ => throw new AssertionException("No native run exists.")
             );
             Assert.AreEqual(
-                600,
+                86400,
                 (double)captured.State["deadline_uptime"] - (double)captured.State["started_uptime"],
                 "Clock movement while constructing the record must not extend the admitted budget."
             );

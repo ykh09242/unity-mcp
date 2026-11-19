@@ -57,7 +57,7 @@ namespace MCPForUnity.Editor.Tools
                         @params["runTimeoutMs"].Type != JTokenType.Integer
                         || !long.TryParse(@params["runTimeoutMs"].ToString(), out runTimeoutMs)
                         || runTimeoutMs < 1
-                        || runTimeoutMs > 86400000
+                        || runTimeoutMs > TestJobManager.MaxRunTimeoutMs
                     )
                         return StartError("runTimeoutMs must be 1..86400000 milliseconds.");
                     if (!NativeTestRunControl.Available)

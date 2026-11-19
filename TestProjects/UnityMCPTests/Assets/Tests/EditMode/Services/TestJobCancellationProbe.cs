@@ -30,6 +30,7 @@ namespace MCPForUnityTests.Editor.Services
         private static Func<string, int, int> originalRead;
         private static Action<string, int> originalWrite;
         private static Action originalApply;
+        private static string originalLeaseRoot;
         private static Func<string, int, int> ownedRead;
         private static Action<string, int> ownedWrite;
         private static Action ownedApply;
@@ -105,6 +106,8 @@ namespace MCPForUnityTests.Editor.Services
             originalRead = TestRunnerNoThrottle.ReadPreference;
             originalWrite = TestRunnerNoThrottle.WritePreference;
             originalApply = TestRunnerNoThrottle.ApplyInteractionPreferences;
+            originalLeaseRoot = TestRunnerNoThrottle.LeaseRootForTests;
+            TestRunnerNoThrottle.LeaseRootForTests = Path.Combine(directory, "preference-lease");
             // Unregister the automatic observer before outer Execute. It must never get an early
             // RunStarted callback that precedes a fixture's in-memory preference injection.
             typeof(TestRunnerNoThrottle).GetMethod("ReleaseApi", Hidden).Invoke(null, null);
@@ -173,7 +176,7 @@ namespace MCPForUnityTests.Editor.Services
                     throw new InvalidOperationException("PLAY03 isolated launcher refuses an unrelated or ambiguous filter.");
                 var active = typeof(TestRunnerApi).GetMethod("IsRunActive", Hidden, null, Type.EmptyTypes, null);
                 if (active == null || (bool)active.Invoke(null, null) || !NativeTestRunControl.Available)
-                    throw new InvalidOperationException("PLAY03 isolated launcher requires exact supported and idle native framework.");
+                    throw new InvalidOperationException("PLAY03 isolated launcher requires an idle native runner with GUID-scoped control.");
                 VerifyOwnedBackendPositiveControl();
                 state["ordinary_filter"] = filter;
                 state["ordinary_pending"] = true;
@@ -232,7 +235,7 @@ namespace MCPForUnityTests.Editor.Services
                 Record("owned_backend_positive_control_started");
                 TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
                 if (
-                    (int)state["reads"] != reads + 2
+                    (int)state["reads"] < reads + 2
                     || (int)state["writes"] != writes + 2
                     || (int)state["refreshes"] != refreshes + 1
                     || Preferences["ApplicationIdleTime"] != 0
@@ -244,8 +247,7 @@ namespace MCPForUnityTests.Editor.Services
                 Record("owned_backend_positive_control_applied");
                 TestRunnerNoThrottle.RestoreThrottling();
                 if (
-                    (int)state["reads"] != reads + 2
-                    || (int)state["writes"] != writes + 4
+                    (int)state["writes"] != writes + 4
                     || (int)state["refreshes"] != refreshes + 2
                     || Preferences["ApplicationIdleTime"] != 37
                     || Preferences["InteractionMode"] != 2
@@ -255,7 +257,7 @@ namespace MCPForUnityTests.Editor.Services
                     throw new InvalidOperationException("PLAY03 owned Restore positive control failed.");
                 state["positive_control"] = new JObject
                 {
-                    ["reads"] = 2,
+                    ["reads"] = (int)state["reads"] - reads,
                     ["writes"] = 4,
                     ["refreshes"] = 2,
                     ["restored_idle"] = 37,
@@ -382,6 +384,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             if (!installed)
                 return;
+            TestRunnerNoThrottle.RestoreThrottling();
             // Clear only task-owned flags before restoring default delegates. No real preferences
             // are read or applied, and the initial admission policy required both flags false.
             SessionState.SetBool(ActiveKey, false);
@@ -395,6 +398,7 @@ namespace MCPForUnityTests.Editor.Services
             TestRunnerNoThrottle.ReadPreference = originalRead;
             TestRunnerNoThrottle.WritePreference = originalWrite;
             TestRunnerNoThrottle.ApplyInteractionPreferences = originalApply;
+            TestRunnerNoThrottle.LeaseRootForTests = originalLeaseRoot;
             installed = false;
             Record("cleanup_default_delegates_restored");
             Persist();

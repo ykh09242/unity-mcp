@@ -78,6 +78,7 @@ namespace MCPForUnity.Editor.Services
         private const long StuckThresholdMs = 60_000;
         private const long DefaultInitializationTimeoutMs = 120_000; // Large-project startup; override per job via init_timeout.
         private const long MaxInitializationTimeoutMs = 3_600_000; // Explicit initialization policy, separate from execution.
+        internal const long MaxRunTimeoutMs = 86_400_000;
         private const int MaxJobsToKeep = 10;
         private const long MinPersistIntervalMs = 1000; // Throttle persistence to reduce overhead
 
@@ -870,7 +871,7 @@ namespace MCPForUnity.Editor.Services
         )
         {
             admission = TestJobAdmission.NotCreated;
-            if (runTimeoutMs < 0 || runTimeoutMs > 86400000)
+            if (runTimeoutMs < 0 || runTimeoutMs > MaxRunTimeoutMs)
                 throw new ArgumentException("runTimeoutMs must be 1..86400000 when supplied.");
             if (runTimeoutMs > 0 && !NativeTestRunControl.Available)
                 throw new NotSupportedException("unsupported_native_test_control");

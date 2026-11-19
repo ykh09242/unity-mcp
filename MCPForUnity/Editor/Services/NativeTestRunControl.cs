@@ -1,4 +1,6 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -9,7 +11,7 @@ using UnityEngine.Events;
 
 namespace MCPForUnity.Editor.Services
 {
-    /// <summary>Version-scoped passive termination evidence. Only public CancelTestRun mutates Unity execution.</summary>
+    /// <summary>GUID-scoped passive termination evidence. Only public CancelTestRun mutates Unity execution.</summary>
     internal sealed class NativeTestRunControl : IDisposable
     {
         internal static bool DisableForTests = false;
@@ -38,13 +40,12 @@ namespace MCPForUnity.Editor.Services
         private Action<Action> defer = action => action();
         internal Func<bool> Persist;
         internal JObject State { get; private set; }
-        internal bool CanRequest => !disposed && !Released && (binding != null || FactoryOverride != null);
+        internal bool CanRequest => !disposed && !Released && !OwnershipLost && (binding != null || FactoryOverride != null);
+        private bool OwnershipLost => observerUnavailable || (bool?)State["observation_lost"] == true;
         internal bool Released => (bool?)State["released"] == true;
         internal bool Requested => State["reason"]?.Type == JTokenType.String;
         internal bool CancelAccepted => (string)State["request_state"] == "accepted";
         internal string NativeGuid => (string)State["native_guid"];
-
-        internal static bool SupportsVersion(string version) => version == "1.6.0";
 
         // Injected snapshots never invoke Unity's runner or change Editor preferences/settings.
         internal NativeTestRunControl(string jobId, double timeoutMs, Func<double> clock, Func<JObject> snapshot, Func<string, bool> cancel)
@@ -57,7 +58,7 @@ namespace MCPForUnity.Editor.Services
             {
                 ["version"] = 1,
                 ["job_id"] = jobId,
-                ["framework"] = "1.6.0",
+                ["framework"] = null,
                 ["editor_session"] = "injected",
                 ["started_uptime"] = started,
                 ["deadline_uptime"] = timeoutMs > 0 ? started + timeoutMs / 1000 : JValue.CreateNull(),
@@ -79,7 +80,7 @@ namespace MCPForUnity.Editor.Services
                     return true;
                 try
                 {
-                    using var probe = new Binding();
+                    using var probe = new Binding(typeof(TestRunnerApi));
                     return true;
                 }
                 catch
@@ -110,17 +111,13 @@ namespace MCPForUnity.Editor.Services
             Binding native = null;
             try
             {
-                native = new Binding();
-                var control = new NativeTestRunControl(
-                    jobId,
-                    timeoutMs,
-                    () => EditorApplication.timeSinceStartup,
-                    native.Snapshot,
-                    TestRunnerApi.CancelTestRun
-                );
+                native = new Binding(typeof(TestRunnerApi));
+                var control = new NativeTestRunControl(jobId, timeoutMs, () => EditorApplication.timeSinceStartup, native.Snapshot, native.Cancel);
                 control.binding = native;
                 control.defer = control.ScheduleLaterEditorUpdate;
                 control.State["editor_session"] = Session();
+                var version = InstalledFrameworkVersion();
+                control.State["framework"] = version == null ? JValue.CreateNull() : new JValue(version);
                 native.Subscribe(control.ObserveFinal);
                 return control;
             }
@@ -131,23 +128,43 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
+        private static string InstalledFrameworkVersion()
+        {
+            try
+            {
+                string version = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(TestRunnerApi).Assembly)?.version;
+                return string.IsNullOrWhiteSpace(version) || version.Length > 128 ? null : version;
+            }
+            catch
+            {
+                // Package metadata is diagnostic. The installed runner supplies the control contract.
+                return null;
+            }
+        }
+
         internal static NativeTestRunControl Restore(string jobId, JObject state)
         {
             if (!ValidState(state, jobId))
                 return null;
-            var control = Create(jobId, 0);
+            bool released = (bool)state["released"];
+            var control = released ? null : Create(jobId, 0);
             if (control == null)
             {
                 control = new NativeTestRunControl(jobId, 0, () => EditorApplication.timeSinceStartup, () => null, _ => false);
                 control.State = (JObject)state.DeepClone();
-                control.State["termination"] = "unknown";
+                if (!released)
+                    control.State["termination"] = "unknown";
                 control.observerUnavailable = true;
+                control.restoredAfterReload = true;
                 return control;
             }
             control.State = (JObject)state.DeepClone();
             control.restoredAfterReload = true;
             if (FactoryOverride == null && (string)state["editor_session"] != Session())
+            {
                 control.State["observation_lost"] = true;
+                control.State["termination"] = "unknown";
+            }
             if ((bool?)state["final_witness"] == true)
             {
                 control.finalTick = 0;
@@ -168,8 +185,13 @@ namespace MCPForUnity.Editor.Services
                     || (int?)value["version"] != 1
                     || value["job_id"]?.Type != JTokenType.String
                     || (string)value["job_id"] != jobId
-                    || value["framework"]?.Type != JTokenType.String
-                    || (string)value["framework"] != "1.6.0"
+                    || value["framework"] == null
+                    || value["framework"].Type != JTokenType.Null
+                        && (
+                            value["framework"].Type != JTokenType.String
+                            || string.IsNullOrWhiteSpace((string)value["framework"])
+                            || ((string)value["framework"]).Length > 128
+                        )
                 )
                     return false;
                 if (
@@ -199,7 +221,7 @@ namespace MCPForUnity.Editor.Services
                 if (value["deadline_uptime"] != null && value["deadline_uptime"].Type != JTokenType.Null)
                 {
                     double deadline = (double)value["deadline_uptime"];
-                    if (deadline < started || deadline - started > 600.000001)
+                    if (deadline < started || deadline - started > TestJobManager.MaxRunTimeoutMs / 1000d + 0.000001)
                         return false;
                 }
                 bool hasReason = value["reason"] != null && value["reason"].Type != JTokenType.Null;
@@ -323,7 +345,7 @@ namespace MCPForUnity.Editor.Services
             {
                 ["version"] = 1,
                 ["job_id"] = jobId,
-                ["framework"] = "1.6.0",
+                ["framework"] = null,
                 ["editor_session"] = "unknown",
                 ["started_uptime"] = 0,
                 ["deadline_uptime"] = null,
@@ -346,7 +368,7 @@ namespace MCPForUnity.Editor.Services
 
         internal void Request(string reason)
         {
-            if (Released || Requested)
+            if (disposed || Released || Requested)
                 return;
             State["reason"] = reason;
             State["requested_uptime"] = clock();
@@ -357,9 +379,16 @@ namespace MCPForUnity.Editor.Services
                 State["termination"] = "unknown";
                 return;
             }
+            if (OwnershipLost)
+            {
+                State["termination"] = "unknown";
+                State["request_state"] = "unknown";
+                Save();
+                return;
+            }
             if (NativeGuid == null)
             {
-                if ((bool?)State["native_invoked"] == true || (bool?)State["observation_lost"] == true)
+                if ((bool?)State["native_invoked"] == true)
                 {
                     State["termination"] = "unknown";
                     State["request_state"] = "unknown";
@@ -626,49 +655,75 @@ namespace MCPForUnity.Editor.Services
             public void Invoke(T value) => Handler(value);
         }
 
-        private sealed class Binding : IDisposable
+        internal sealed class Binding : IDisposable
         {
-            private readonly FieldInfo eventField;
             private readonly FieldInfo guidField;
             private readonly FieldInfo finishedField;
             private readonly PropertyInfo holderProperty;
             private readonly MethodInfo globalActive;
-            private readonly Type progressType;
-            private object progressEvent;
-            private MethodInfo remove;
-            private Delegate listener;
-            private object bridge;
+            private readonly MethodInfo allRunners;
+            private readonly FieldInfo testRuns;
+            private readonly MethodInfo getData;
+            private readonly FieldInfo rowGuid;
+            private readonly FieldInfo rowRunning;
+            private readonly object progressEvent;
+            private readonly MethodInfo add;
+            private readonly MethodInfo remove;
+            private readonly Delegate listener;
+            private readonly object bridge;
+            private bool subscribed;
+            internal readonly Func<string, bool> Cancel;
 
-            internal Binding()
+            internal Binding(Type api)
             {
-                var api = typeof(TestRunnerApi);
-                if (!SupportsVersion(UnityEditor.PackageManager.PackageInfo.FindForAssembly(api.Assembly)?.version))
+                var cancel = api.GetMethod("CancelTestRun", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(string) }, null);
+                var execute = api.GetMethod("Execute", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(ExecutionSettings) }, null);
+                if (cancel?.ReturnType != typeof(bool) || execute?.ReturnType != typeof(string))
                     throw new NotSupportedException();
-                const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
-                eventField = api.GetField("runProgressChanged", flags) ?? throw new NotSupportedException();
-                progressType = api.Assembly.GetType("UnityEditor.TestTools.TestRunner.Api.TestRunProgress") ?? throw new NotSupportedException();
-                guidField = progressType.GetField("RunGuid");
-                finishedField = progressType.GetField("HasFinished");
+                Cancel = (Func<string, bool>)cancel.CreateDelegate(typeof(Func<string, bool>));
+                const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+                var eventField = api.GetField("runProgressChanged", flags) ?? throw new NotSupportedException();
+                var eventType = eventField.FieldType;
+                while (eventType != null && (!eventType.IsGenericType || eventType.GetGenericTypeDefinition() != typeof(UnityEvent<>)))
+                    eventType = eventType.BaseType;
+                if (eventType == null)
+                    throw new NotSupportedException();
+                var progressType = eventType.GetGenericArguments()[0];
+                guidField = progressType.GetField("RunGuid", BindingFlags.Instance | BindingFlags.Public);
+                finishedField = progressType.GetField("HasFinished", BindingFlags.Instance | BindingFlags.Public);
                 holderProperty = api.GetProperty("m_testJobDataHolder", flags);
                 globalActive = api.GetMethod("IsRunActive", flags, null, Type.EmptyTypes, null);
                 if (
                     guidField?.FieldType != typeof(string)
                     || finishedField?.FieldType != typeof(bool)
-                    || holderProperty == null
+                    || holderProperty?.GetGetMethod(true) == null
+                    || holderProperty.GetIndexParameters().Length != 0
                     || globalActive?.ReturnType != typeof(bool)
                 )
                     throw new NotSupportedException();
                 progressEvent = eventField.GetValue(null) ?? throw new NotSupportedException();
                 Type listenerType = typeof(UnityAction<>).MakeGenericType(progressType);
-                if (
-                    progressEvent.GetType().GetMethod("AddListener", new[] { listenerType }) == null
-                    || progressEvent.GetType().GetMethod("RemoveListener", new[] { listenerType }) == null
-                )
-                    throw new NotSupportedException();
+                add = eventType.GetMethod("AddListener", new[] { listenerType });
+                remove = eventType.GetMethod("RemoveListener", new[] { listenerType });
                 Type bridgeType = typeof(ProgressBridge<>).MakeGenericType(progressType);
                 bridge = Activator.CreateInstance(bridgeType, true);
                 listener = Delegate.CreateDelegate(listenerType, bridge, bridgeType.GetMethod("Invoke"));
-                // Validate holder shape and bounded passive reads before admission.
+                // Check the declared row contract even when both native collections are empty.
+                object holder = holderProperty.GetValue(null) ?? throw new NotSupportedException();
+                var holderType = holder.GetType();
+                allRunners = holderType.GetMethod("GetAllRunners", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                testRuns = holderType.GetField("TestRuns", BindingFlags.Public | BindingFlags.Instance);
+                if (allRunners?.ReturnType.IsArray != true || allRunners.ReturnType.GetArrayRank() != 1 || testRuns == null)
+                    throw new NotSupportedException();
+                var runnerType = allRunners.ReturnType.GetElementType();
+                getData = runnerType.GetMethod("GetData", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                var rowType = getData?.ReturnType;
+                if (rowType == null || !typeof(IEnumerable<>).MakeGenericType(rowType).IsAssignableFrom(testRuns.FieldType))
+                    throw new NotSupportedException();
+                rowGuid = rowType.GetField("guid", BindingFlags.Instance | BindingFlags.Public);
+                rowRunning = rowType.GetField("isRunning", BindingFlags.Instance | BindingFlags.Public);
+                if (rowGuid?.FieldType != typeof(string) || rowRunning?.FieldType != typeof(bool))
+                    throw new NotSupportedException();
                 Snapshot();
             }
 
@@ -689,17 +744,15 @@ namespace MCPForUnity.Editor.Services
                             catch { }
                         })
                     );
-                Type delegateType = listener.GetType();
-                progressEvent.GetType().GetMethod("AddListener", new[] { delegateType }).Invoke(progressEvent, new object[] { listener });
-                remove = progressEvent.GetType().GetMethod("RemoveListener", new[] { delegateType });
+                add.Invoke(progressEvent, new object[] { listener });
+                subscribed = true;
             }
 
             internal JObject Snapshot()
             {
                 object holder = holderProperty.GetValue(null);
-                var holderType = holder.GetType();
-                var runners = (Array)holderType.GetMethod("GetAllRunners").Invoke(holder, null);
-                var data = (System.Collections.IEnumerable)holderType.GetField("TestRuns").GetValue(holder);
+                var runners = (Array)allRunners.Invoke(holder, null);
+                var data = (IEnumerable)testRuns.GetValue(holder);
                 var registered = new JArray();
                 var active = new JArray();
                 var serialized = new JArray();
@@ -707,10 +760,10 @@ namespace MCPForUnity.Editor.Services
                     throw new NotSupportedException();
                 foreach (object runner in runners)
                 {
-                    object row = runner.GetType().GetMethod("GetData").Invoke(runner, null);
-                    string id = (string)row.GetType().GetField("guid").GetValue(row);
+                    object row = getData.Invoke(runner, null);
+                    string id = (string)rowGuid.GetValue(row);
                     registered.Add(id);
-                    if ((bool)row.GetType().GetField("isRunning").GetValue(row))
+                    if ((bool)rowRunning.GetValue(row))
                         active.Add(id);
                 }
                 int count = 0;
@@ -718,8 +771,8 @@ namespace MCPForUnity.Editor.Services
                 {
                     if (++count > 32)
                         throw new NotSupportedException();
-                    if ((bool)row.GetType().GetField("isRunning").GetValue(row))
-                        serialized.Add((string)row.GetType().GetField("guid").GetValue(row));
+                    if ((bool)rowRunning.GetValue(row))
+                        serialized.Add((string)rowGuid.GetValue(row));
                 }
                 return new JObject
                 {
@@ -732,14 +785,14 @@ namespace MCPForUnity.Editor.Services
 
             public void Dispose()
             {
-                if (remove != null)
+                if (subscribed)
                 {
                     try
                     {
                         remove.Invoke(progressEvent, new object[] { listener });
                     }
                     catch { }
-                    remove = null;
+                    subscribed = false;
                 }
             }
         }
