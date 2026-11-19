@@ -54,7 +54,8 @@ def test_editor_state_rejects_missing_payload_without_fabricating_readiness():
                         state.unity_transport.send_with_unity_instance = AsyncMock(return_value={"success": True, "data": copy.deepcopy(data)})
                         response = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
                         assert response["success"] is True, response
-                        assert response["data"]["advice"]["ready_for_tools"] is True, response
+                        assert response["data"]["advice"]["ready_for_tools"] is ("observed_at_unix_ms" in data), response
+                        assert response["data"]["staleness"]["is_stale"] is ("observed_at_unix_ms" not in data), response
                         assert response["data"]["sequence"] == 0, response
 
                     state.unity_transport.send_with_unity_instance = AsyncMock(return_value={"success": True, "data": {"observed_at_unix_ms": 0}})

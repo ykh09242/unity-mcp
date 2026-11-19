@@ -264,7 +264,11 @@ async def test_live_search_requires_an_advertised_route_and_can_execute_its_read
         ({"required_values": ["contents", "encodedContents"]}, "incompatible_combination"),
         ({"required_values": ["nodeCount", "contents"]}, "incompatible_combination"),
         ({"required_values": ["nodeCount"], "observation_source": "editor_live"}, "wrong_source"),
-        ({"required_values": ["active_scene.path"]}, "undeclared_evidence"),
+        (
+            {"required_values": ["active_scene.path"], "route_surfaces": "resources"},
+            "no_visible_route",
+        ),
+        ({"required_values": ["active_scene.path"], "host_tool_names": []}, "undeclared_evidence"),
         (
             {"observation_source": "imported_asset", "route_surfaces": "resources"},
             "no_visible_route",
