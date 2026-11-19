@@ -13,6 +13,36 @@ using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    public class LocalizationPackageCapabilitiesTests
+    {
+        [Test]
+        public void ReportsIdentityAndFallbacksFromTheInstalledFormat()
+        {
+            Type Find(string name) =>
+                AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("UnityEngine.Localization." + name)).FirstOrDefault(t => t != null);
+            JObject Send(string action) =>
+                JObject.FromObject(MCPForUnity.Editor.Tools.Localization.ManageLocalization.HandleCommand(new JObject { ["action"] = action }));
+            var result = Send("capabilities");
+            Assert.IsTrue((bool)result["success"], result.ToString());
+            var caps = result["data"];
+            var locale = Find("Locale");
+            Assert.AreEqual(locale != null, (bool)caps["package_available"]);
+            if (locale == null)
+            {
+                Assert.IsNull((string)caps["string_entry_identity"]);
+                Assert.AreEqual(0, (int)caps["max_fallback_locale_paths"]);
+                StringAssert.Contains("localization_package_unavailable", Send("list_tables").ToString());
+                return;
+            }
+            var table = Find("Tables.StringTable") ?? Find("StringTable");
+            Assert.IsNotNull(table);
+            bool nameOnly = table.GetMethod("AddKey", new[] { typeof(string) }) != null && table.GetMethod("GetEntry", new[] { typeof(uint) }) == null;
+            Assert.AreEqual(nameOnly ? "key_name" : "key_id", (string)caps["string_entry_identity"]);
+            Assert.AreEqual(Find("Tables.StringTableEntry")?.GetProperty("IsSmart") != null, (bool)caps["smart_strings_supported"]);
+            Assert.AreEqual(Find("Metadata.FallbackLocale") == null ? 1 : 32, (int)caps["max_fallback_locale_paths"]);
+        }
+    }
+
     [Parallelizable(ParallelScope.None)]
     public class LocalizationIntegrityTests
     {
@@ -543,9 +573,8 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void Setup()
         {
-            if (Kind("Locale") == null)
-                Assert.Ignore("Optional Localization package absent; positive fixture requires com.unity.localization 1.5.12.");
-            Assert.AreEqual("1.5.12", UnityEditor.PackageManager.PackageInfo.FindForAssembly(Kind("Locale").Assembly).version);
+            if (Kind("Tables.SharedTableData")?.GetMethod("AddKey", new[] { typeof(string), typeof(long) }) == null)
+                Assert.Ignore("This fixture uses explicit Int64 shared key IDs.");
             try
             {
                 InitializeFixture();
@@ -754,7 +783,10 @@ namespace MCPForUnityTests.Editor.Tools
         {
             JObject result = Send("capabilities");
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-            Assert.AreEqual("1.5.12", result["data"].Value<string>("package_version"));
+            Assert.AreEqual(
+                UnityEditor.PackageManager.PackageInfo.FindForAssembly(Kind("Locale").Assembly).version,
+                result["data"].Value<string>("package_version")
+            );
         }
 
         [Test]

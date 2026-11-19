@@ -47,6 +47,7 @@ def test_localization_sdk_read_and_explicit_mutation_contract(tmp_path):
                     ({"action": "set_fallbacks", "locale_path": "Assets/fr.asset", "fallback_locale_paths": [f"Assets/locale{i}.asset" for i in range(12)], "expected_revision": "a"*64}, "write"),
                     ({"action": "inspect", "table_paths": ["Assets/en.asset", "Assets/fr.asset"], "argument_names": ["player"]}, "read"),
                     ({"action": "set_string_entry", "table_path": "Assets/fr.asset", "key_id": "101", "value": "Bonjour {player}", "expected_revision": "a"*64}, "write"),
+                    ({"action": "set_string_entry", "table_path": "Assets/fr.asset", "key_name": "Greeting", "value": "Bonjour", "expected_revision": "a"*64}, "write"),
                     ({"action": "set_asset_entry", "table_path": "Assets/fr.asset", "key_id": "201", "asset_path": "Assets/Icon.png", "expected_revision": "a"*64}, "write"),
                     ({"action": "set_fallbacks", "locale_path": "Assets/fr.asset", "fallback_locale_paths": [], "expected_revision": "a"*64}, "write"),
                 )
@@ -74,6 +75,8 @@ def test_localization_sdk_read_and_explicit_mutation_contract(tmp_path):
                     {"action": "list_tables", "limit": True},
                     {"action": "list_tables", "limit": 101},
                     {"action": "list_locales", "offset": 100001},
+                    {"action": "set_string_entry", "table_path": "Assets/fr.asset", "key_name": "Greeting", "key_id": "1", "value": "x", "expected_revision": "a"*64},
+                    {"action": "set_asset_entry", "table_path": "Assets/fr.asset", "key_name": "Greeting", "asset_path": "Assets/Icon.png", "expected_revision": "a"*64},
                     {"action": "inspect", "table_paths": ["Assets/a.asset", "Assets/b.asset"], "limit": 1},
                     {"action": "inspect", "table_paths": ["Assets/a.asset"], "offset": 1},
                     {"action": "inspect", "table_paths": ["Assets/a.asset"], "offset": 1, "expected_revision": "not-a-revision"},

@@ -37,8 +37,9 @@ def _asset_path(value: str) -> bool:
         "Pages fit 1 MiB. Continue with data.next_offset and expected_revision=data.revision until next_offset is null. "
         "argument_names is the caller's available root-selector inventory, "
         "not proof of custom formatter or runtime variable behavior. list_locales/list_tables use optional exact paths "
-        "or bounded Assets discovery. set_string_entry corrects an existing shared key ID in one table and preserves "
-        "is_smart when omitted. set_fallbacks replaces only explicit locale fallback metadata, refusing cycles. "
+        "or bounded Assets discovery. set_string_entry uses key_id for shared keys or key_name for early "
+        "name-only tables. capabilities reports the native identity, Smart String support and fallback limit. "
+        "Omit is_smart to preserve it. set_fallbacks replaces explicit fallbacks, refusing cycles. "
         "Writes require the asset revision (tables[0].revision for a table) and save the exact asset with native Undo. Revision includes "
         "loaded serialization and source bytes; external process races are not excluded. set_asset_entry explicitly "
         "refuses: supported package authoring also changes Addressables groups/labels/shared metadata. "
@@ -97,6 +98,9 @@ async def manage_localization(
         Field(strict=True, ge=1, le=4096),
         "Page size, 1..100 for discovery or 1..4096 for one-table inspection. Default 50 in paged mode.",
     ] = None,
+    key_name: Annotated[
+        StrictStr | None, Field(max_length=65536), "Exact existing key in a name-only string table."
+    ] = None,
 ) -> dict[str, JsonValue]:
     """Validate corrections before dispatching to the selected Editor."""
     fields = {
@@ -105,6 +109,7 @@ async def manage_localization(
         "table_path": table_path,
         "locale_path": locale_path,
         "key_id": key_id,
+        "key_name": key_name,
         "value": value,
         "is_smart": is_smart,
         "asset_path": asset_path,
@@ -119,7 +124,14 @@ async def manage_localization(
         "list_locales": {"paths", "offset", "limit"},
         "list_tables": {"paths", "offset", "limit"},
         "inspect": {"table_paths", "argument_names", "offset", "limit", "expected_revision"},
-        "set_string_entry": {"table_path", "key_id", "value", "is_smart", "expected_revision"},
+        "set_string_entry": {
+            "table_path",
+            "key_id",
+            "key_name",
+            "value",
+            "is_smart",
+            "expected_revision",
+        },
         "set_asset_entry": {"table_path", "key_id", "asset_path", "expected_revision"},
         "set_fallbacks": {"locale_path", "fallback_locale_paths", "expected_revision"},
     }
@@ -152,11 +164,10 @@ async def manage_localization(
     if action.startswith("set_") and not expected_revision:
         return failure("Corrections require expected_revision from inspection.")
     if action in ("set_string_entry", "set_asset_entry"):
-        if (
-            not table_path
-            or not key_id
-            or not re.fullmatch(r"[1-9][0-9]{0,18}", key_id)
-            or int(key_id) > 9223372036854775807
+        if not table_path or (key_id is None) == (key_name is None):
+            return failure("Correction requires table_path and exactly one native key identity.")
+        if key_id is not None and (
+            not re.fullmatch(r"[1-9][0-9]{0,18}", key_id) or int(key_id) > 9223372036854775807
         ):
             return failure("Correction requires table_path and a positive Int64 key_id string.")
         if action == "set_string_entry" and value is None:

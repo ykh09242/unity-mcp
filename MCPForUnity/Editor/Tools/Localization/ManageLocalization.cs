@@ -17,10 +17,10 @@ using Object = UnityEngine.Object;
 
 namespace MCPForUnity.Editor.Tools.Localization
 {
-    // The optional package is accessed only through these fixed, public API members.
+    // The optional package is accessed through fixed members of its native table formats.
     // Keeping the adapter in the core assembly avoids a mandatory package dependency.
     [McpForUnityTool("manage_localization", AutoRegister = false, Group = "core")]
-    public static class ManageLocalization
+    public static partial class ManageLocalization
     {
         private const int MaxKeys = 100000;
         private const int MaxBytes = 16 * 1024 * 1024;
@@ -90,35 +90,34 @@ namespace MCPForUnity.Editor.Tools.Localization
             return paths;
         }
 
-        private static Object Load(string path, string kind)
+        private static Object Load(string path, Type type)
         {
-            Type type = Kind(kind) ?? throw new InvalidOperationException("localization_package_unavailable: com.unity.localization is required.");
+            if (type == null)
+                throw new InvalidOperationException("unsupported_package_api: the installed package does not expose the required asset type.");
             Object obj = AssetDatabase.LoadAssetAtPath(PathValue(path), type);
             if (obj == null || AssetDatabase.GetAssetPath(obj) != path || AssetDatabase.IsSubAsset(obj))
-                throw new ArgumentException("Expected one persistent main " + kind + " asset at " + path);
+                throw new ArgumentException("Expected one persistent main " + type.Name + " asset at " + path);
             return obj;
         }
 
         private static Object Table(string path)
         {
-            Object obj = Load(path, "Tables.LocalizationTable");
-            if (!Kind("Tables.StringTable").IsInstanceOfType(obj) && !Kind("Tables.AssetTable").IsInstanceOfType(obj))
+            Object obj = Load(path, TableType);
+            if (StringType?.IsInstanceOfType(obj) != true && AssetType?.IsInstanceOfType(obj) != true)
                 throw new ArgumentException("Only StringTable and AssetTable are supported.");
-            if (Convert.ToInt32(Get(obj, "Count"), CultureInfo.InvariantCulture) > MaxKeys)
-                throw new ArgumentException("table_limit: table exceeds 100000 entries.");
-            SharedEntries(obj);
+            if (obj is IEnumerable)
+                BoundedCount((int)Get(obj, "Count"));
+            else if (StringType?.IsInstanceOfType(obj) == true)
+            {
+                using var serialized = new SerializedObject(obj);
+                BoundedCount(serialized.FindProperty("m_StringTableEntries").arraySize);
+            }
+            else
+                BoundedCount(((IDictionary)Get(obj, "AssetMap")).Count);
+            Object shared = Shared(obj);
+            if (shared != null)
+                BoundedCount(((IList)Get(shared, "Entries")).Count);
             return obj;
-        }
-
-        private static IList SharedEntries(Object table)
-        {
-            Object shared = (Object)Get(table, "SharedData");
-            if (!EditorUtility.IsPersistent(shared))
-                throw new ArgumentException("SharedTableData must be a persistent asset.");
-            var entries = (IList)Get(shared, "Entries");
-            if (entries.Count > MaxKeys)
-                throw new ArgumentException("table_limit: shared data exceeds 100000 keys.");
-            return entries;
         }
 
         private static string Code(Object obj, bool locale) => (string)Get(Get(obj, locale ? "Identifier" : "LocaleIdentifier"), "Code");
@@ -214,7 +213,7 @@ namespace MCPForUnity.Editor.Tools.Localization
                     names = "table_paths argument_names offset limit expected_revision";
                     break;
                 case "set_string_entry":
-                    names = "table_path key_id value is_smart expected_revision";
+                    names = "table_path key_id key_name value is_smart expected_revision";
                     break;
                 case "set_asset_entry":
                     names = "table_path key_id asset_path expected_revision";
@@ -247,6 +246,15 @@ namespace MCPForUnity.Editor.Tools.Localization
                             package_available = locale != null,
                             package_name = "com.unity.localization",
                             package_version = locale == null ? null : UnityEditor.PackageManager.PackageInfo.FindForAssembly(locale.Assembly)?.version,
+                            string_tables_supported = StringType != null,
+                            asset_tables_supported = AssetType != null,
+                            string_entry_identity = StringType == null ? null
+                            : IdType == null ? "key_name"
+                            : "key_id",
+                            smart_strings_supported = HasSmartStrings,
+                            max_fallback_locale_paths = HasSingleFallback ? 1
+                            : Kind("Metadata.FallbackLocale") != null ? 32
+                            : 0,
                             asset_entry_authoring_supported = false,
                             smart_validation = "Default package parser and root selectors only; custom sources, formatters and runtime arguments are not evaluated.",
                             persistence = "Exact selected asset saved with native Undo; Undo persistence across reimport or Editor restart is not promised.",
@@ -292,7 +300,9 @@ namespace MCPForUnity.Editor.Tools.Localization
                 paths = Paths(p, "paths", 1, 256);
             else
             {
-                string[] ids = AssetDatabase.FindAssets(locales ? "t:Locale" : "t:LocalizationTable", new[] { "Assets" });
+                if (!locales && TableType == null)
+                    throw new InvalidOperationException("unsupported_package_api: no supported table base type.");
+                string[] ids = AssetDatabase.FindAssets(locales ? "t:Locale" : "t:" + TableType.Name, new[] { "Assets" });
                 if (ids.Length > MaxKeys)
                     throw new ArgumentException("discovery_limit: more than 100000 matching assets; supply exact paths.");
                 paths = ids.Select(AssetDatabase.GUIDToAssetPath).OrderBy(s => s, StringComparer.Ordinal).ToArray();
@@ -302,7 +312,7 @@ namespace MCPForUnity.Editor.Tools.Localization
             var rows = new JArray();
             foreach (string path in paths.Skip(offset).Take(limit))
             {
-                Object asset = locales ? Load(path, "Locale") : Table(path);
+                Object asset = locales ? Load(path, Kind("Locale")) : Table(path);
                 JObject row = locales ? LocaleRow(asset) : TableRow(asset);
                 rows.Add(row);
             }
@@ -319,14 +329,23 @@ namespace MCPForUnity.Editor.Tools.Localization
             );
         }
 
-        private static object[] Fallbacks(Object locale) =>
-            ((IEnumerable)Get(Get(locale, "Metadata"), "MetadataEntries"))
-                .Cast<object>()
-                .Where(m => m != null && m.GetType() == Kind("Metadata.FallbackLocale"))
-                .Take(33)
-                .ToArray();
+        private static IList MetadataEntries(Object locale)
+        {
+            object metadata = Get(locale, "Metadata");
+            return (IList)Get(metadata, metadata.GetType().GetProperty("MetadataEntries") == null ? "Entries" : "MetadataEntries");
+        }
 
-        private static Object FallbackTarget(object metadata) => (Object)metadata.GetType().GetProperty("Locale").GetValue(metadata);
+        private static object[] Fallbacks(Object locale)
+        {
+            if (HasSingleFallback)
+            {
+                Object target = (Object)GetNullable(locale, "FallbackLocale");
+                return target == null ? Array.Empty<object>() : new object[] { target };
+            }
+            return MetadataEntries(locale).Cast<object>().Where(m => m != null && m.GetType() == Kind("Metadata.FallbackLocale")).Take(33).ToArray();
+        }
+
+        private static Object FallbackTarget(object metadata) => HasSingleFallback ? (Object)metadata : (Object)GetNullable(metadata, "Locale");
 
         private static JObject LocaleRow(Object locale)
         {
@@ -352,17 +371,20 @@ namespace MCPForUnity.Editor.Tools.Localization
 
         private static JObject TableRow(Object table)
         {
-            Object shared = (Object)Get(table, "SharedData");
-            return new JObject
+            Object shared = Shared(table);
+            var row = new JObject
             {
                 ["path"] = AssetDatabase.GetAssetPath(table),
                 ["guid"] = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(table)),
-                ["kind"] = Kind("Tables.StringTable").IsInstanceOfType(table) ? "string" : "asset",
+                ["kind"] = StringType?.IsInstanceOfType(table) == true ? "string" : "asset",
                 ["locale"] = Code(table, false),
-                ["shared_data_path"] = AssetDatabase.GetAssetPath(shared),
-                ["shared_data_guid"] = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(shared)),
+                ["shared_data_path"] = shared == null ? null : AssetDatabase.GetAssetPath(shared),
+                ["shared_data_guid"] = shared == null ? null : AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(shared)),
                 ["revision"] = Revision(table, shared),
             };
+            if (shared == null)
+                row["table_name"] = (string)Get(table, "TableName");
+            return row;
         }
 
         private static object Inspect(JObject p)
@@ -392,7 +414,7 @@ namespace MCPForUnity.Editor.Tools.Localization
             }
             var tables = new JArray();
             var findings = new JArray();
-            var localeIdentities = new HashSet<string>(StringComparer.Ordinal);
+            var localeIdentities = new HashSet<(string Collection, string Locale, string Kind)>();
             int outputCount = 0;
             void CountItem()
             {
@@ -403,34 +425,31 @@ namespace MCPForUnity.Editor.Tools.Localization
             {
                 Object table = Table(path);
                 JObject row = TableRow(table);
-                void Finding(string code, string key)
+                void Finding(string code, string key, string name = null)
                 {
                     CountItem();
-                    findings.Add(FindingRow(code, path, key));
+                    findings.Add(FindingRow(code, path, key, name));
                 }
-                string identity = row.Value<string>("shared_data_guid") + "/" + row.Value<string>("locale") + "/" + row.Value<string>("kind");
-                if (!localeIdentities.Add(identity))
+                string collection = row.Value<string>("shared_data_guid") ?? row.Value<string>("table_name");
+                if (!localeIdentities.Add((collection, row.Value<string>("locale"), row.Value<string>("kind"))))
                     Finding("duplicate_locale_table", null);
-                var keys = SharedEntries(table).Cast<object>();
-                foreach (var group in keys.GroupBy(k => Get(k, "Id").ToString()).Where(g => g.Count() > 1))
-                    Finding("duplicate_key_id", group.Key);
-                foreach (var group in keys.GroupBy(k => (string)Get(k, "Key"), StringComparer.Ordinal).Where(g => g.Count() > 1))
-                    Finding("duplicate_key_name", Get(group.First(), "Id").ToString());
+                var keys = TableKeys(table);
+                foreach (var group in keys.Where(k => k.Id.HasValue).GroupBy(k => k.Id).Where(g => g.Count() > 1))
+                    Finding("duplicate_key_id", IdText(group.Key));
+                foreach (var group in keys.GroupBy(k => k.Name, StringComparer.Ordinal).Where(g => g.Count() > 1))
+                    Finding("duplicate_key_name", IdText(group.First().Id), group.Key);
                 var keyRows = new JArray();
-                foreach (object key in keys)
+                foreach (var key in keys)
                 {
                     CountItem();
-                    long id = (long)Get(key, "Id");
                     keyRows.Add(
-                        InspectKey(table, id, (string)Get(key, "Key"), row.Value<string>("kind") == "string", arguments, code =>
-                            Finding(code, id.ToString(CultureInfo.InvariantCulture))
-                        )
+                        InspectKey(table, key.Id, key.Name, row.Value<string>("kind") == "string", arguments, code => Finding(code, IdText(key.Id), key.Name))
                     );
                 }
-                var ids = new HashSet<long>(keys.Select(k => (long)Get(k, "Id")));
-                foreach (object entry in (IEnumerable)Get(table, "Values"))
-                    if (!ids.Contains((long)Get(entry, "KeyId")))
-                        Finding("orphan_entry", Get(entry, "KeyId").ToString());
+                var ids = new HashSet<long?>(keys.Select(k => k.Id));
+                foreach (long id in LocalIds(table))
+                    if (!ids.Contains(id))
+                        Finding("orphan_entry", IdText(id));
                 row["keys"] = keyRows;
                 tables.Add(row);
             }
@@ -447,13 +466,18 @@ namespace MCPForUnity.Editor.Tools.Localization
                 ["asset_validation"] = "Local GUID existence only; Addressables labels, build inclusion, subassets and runtime load are not proven.",
             };
 
-        private static JObject FindingRow(string code, string path, string id) =>
-            new JObject
+        private static JObject FindingRow(string code, string path, string id, string name = null)
+        {
+            var row = new JObject
             {
                 ["code"] = code,
                 ["path"] = path,
                 ["key_id"] = id,
             };
+            if (id == null && name != null)
+                row["key"] = name;
+            return row;
+        }
 
         // One bounded index for the most recently inspected table. It can always be rebuilt
         // from its content revision, so other callers or a domain reload cannot invalidate a cursor.
@@ -462,7 +486,7 @@ namespace MCPForUnity.Editor.Tools.Localization
         private sealed class InspectionIndex
         {
             public readonly string TableRevision;
-            public readonly (long Id, string Name)[] Keys;
+            public readonly (long? Id, string Name)[] Keys;
             public readonly HashSet<int> DuplicateIds;
             public readonly HashSet<int> DuplicateNames;
             public readonly long[] Orphans;
@@ -472,23 +496,19 @@ namespace MCPForUnity.Editor.Tools.Localization
             {
                 TableRevision = revision;
                 // The shared asset's serialized order preserves multiple occurrences of the same ID or name.
-                Keys = SharedEntries(table).Cast<object>().Select(k => ((long)Get(k, "Id"), (string)Get(k, "Key"))).ToArray();
+                Keys = TableKeys(table);
                 var positions = Enumerable.Range(0, Keys.Length);
-                DuplicateIds = new HashSet<int>(positions.GroupBy(i => Keys[i].Id).Where(g => g.Count() > 1).Select(g => g.First()));
+                DuplicateIds = new HashSet<int>(
+                    positions.Where(i => Keys[i].Id.HasValue).GroupBy(i => Keys[i].Id).Where(g => g.Count() > 1).Select(g => g.First())
+                );
                 DuplicateNames = new HashSet<int>(
                     positions.GroupBy(i => Keys[i].Name, StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => g.First())
                 );
-                var ids = new HashSet<long>(Keys.Select(k => k.Id));
-                var entries = ((IEnumerable)Get(table, "Values")).Cast<object>();
-                Orphans = entries.Select(e => (long)Get(e, "KeyId")).Where(id => !ids.Contains(id)).OrderBy(id => id).ToArray();
+                var ids = new HashSet<long?>(Keys.Select(k => k.Id));
+                Orphans = LocalIds(table).Where(id => !ids.Contains(id)).OrderBy(id => id).ToArray();
                 AssetGuids = isString
                     ? Array.Empty<string>()
-                    : entries
-                        .Where(e => !string.IsNullOrEmpty((string)GetNullable(e, "LocalizedValue")))
-                        .Select(e => (string)Get(e, "Guid"))
-                        .Distinct(StringComparer.Ordinal)
-                        .OrderBy(guid => guid, StringComparer.Ordinal)
-                        .ToArray();
+                    : ManageLocalization.AssetGuids(table).Distinct(StringComparer.Ordinal).OrderBy(guid => guid, StringComparer.Ordinal).ToArray();
             }
         }
 
@@ -502,7 +522,7 @@ namespace MCPForUnity.Editor.Tools.Localization
             writer.Write("mcp-localization-inspection-v1");
             writer.Write(index.TableRevision);
             writer.Write(row.Value<string>("path"));
-            writer.Write(row.Value<string>("shared_data_path"));
+            writer.Write(row.Value<string>("shared_data_path") ?? "");
             var names = arguments?.Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).ToArray();
             writer.Write(names?.Length ?? -1);
             if (names != null)
@@ -551,8 +571,8 @@ namespace MCPForUnity.Editor.Tools.Localization
                 if (next < index.Keys.Length)
                 {
                     var key = index.Keys[next];
-                    string id = key.Id.ToString(CultureInfo.InvariantCulture);
-                    void AddFinding(string code) => itemFindings.Add(FindingRow(code, path, id));
+                    string id = IdText(key.Id);
+                    void AddFinding(string code) => itemFindings.Add(FindingRow(code, path, id, key.Name));
                     if (index.DuplicateIds.Contains(next))
                         AddFinding("duplicate_key_id");
                     if (index.DuplicateNames.Contains(next))
@@ -579,15 +599,15 @@ namespace MCPForUnity.Editor.Tools.Localization
             return response;
         }
 
-        private static JObject InspectKey(Object table, long id, string name, bool isString, string[] arguments, Action<string> finding)
+        private static JObject InspectKey(Object table, long? id, string name, bool isString, string[] arguments, Action<string> finding)
         {
-            object entry = Call(table, "GetEntry", new[] { typeof(long) }, id);
-            string value = entry == null ? null : (string)GetNullable(entry, "LocalizedValue");
+            object entry = Entry(table, id, name);
+            string value = EntryValue(entry, isString);
             if (value != null && value.Length > 65536)
                 throw new ArgumentException("entry_limit: string value exceeds 65536 characters.");
             var keyRow = new JObject
             {
-                ["key_id"] = id.ToString(CultureInfo.InvariantCulture),
+                ["key_id"] = IdText(id),
                 ["key"] = name,
                 ["value"] = value == null ? JValue.CreateNull() : new JValue(value),
             };
@@ -595,7 +615,7 @@ namespace MCPForUnity.Editor.Tools.Localization
                 finding("missing_translation");
             else if (isString)
             {
-                bool smart = (bool)Get(entry, "IsSmart");
+                bool smart = HasSmartStrings && (bool)Get(entry, "IsSmart");
                 keyRow["is_smart"] = smart;
                 if (smart)
                 {
@@ -615,14 +635,14 @@ namespace MCPForUnity.Editor.Tools.Localization
             }
             else
             {
-                string guid = (string)Get(entry, "Guid");
+                string guid = AssetGuid(entry);
                 string target = AssetDatabase.GUIDToAssetPath(guid);
                 keyRow["asset_guid"] = guid;
                 keyRow["asset_path"] = target;
                 keyRow["runtime_load_verified"] = false;
                 if (string.IsNullOrEmpty(target))
                     finding("missing_asset_reference");
-                if ((bool)Get(entry, "IsSubAsset"))
+                if (entry.GetType().GetProperty("IsSubAsset") != null && (bool)Get(entry, "IsSubAsset"))
                     keyRow["subasset_validation"] = "not_evaluated";
             }
             return keyRow;
@@ -636,7 +656,9 @@ namespace MCPForUnity.Editor.Tools.Localization
             object formatter = smart.GetMethod("CreateDefaultSmartFormat", BindingFlags.Public | BindingFlags.Static).Invoke(null, null);
             object names = Call(formatter, "GetNotEmptyFormatterExtensionNames", Type.EmptyTypes);
             object parser = Get(formatter, "Parser");
-            object parsed = Call(parser, "ParseFormat", new[] { typeof(string), typeof(IList<string>) }, value, names);
+            Type namesType =
+                parser.GetType().GetMethod("ParseFormat", new[] { typeof(string), typeof(IList<string>) }) != null ? typeof(IList<string>) : typeof(string[]);
+            object parsed = Call(parser, "ParseFormat", new[] { typeof(string), namesType }, value, names);
             var selectors = new HashSet<string>(StringComparer.Ordinal);
             try
             {
@@ -645,7 +667,7 @@ namespace MCPForUnity.Editor.Tools.Localization
             }
             finally
             {
-                Call(parsed, "ReleaseToPool", Type.EmptyTypes);
+                parsed.GetType().GetMethod("ReleaseToPool", Type.EmptyTypes)?.Invoke(parsed, null);
             }
         }
 
@@ -671,28 +693,49 @@ namespace MCPForUnity.Editor.Tools.Localization
         private static object SetString(JObject p)
         {
             Object table = Table(Text(p, "table_path"));
-            if (!Kind("Tables.StringTable").IsInstanceOfType(table))
+            if (StringType?.IsInstanceOfType(table) != true)
                 throw new ArgumentException("set_string_entry requires a StringTable.");
-            Object shared = (Object)Get(table, "SharedData");
-            string idText = Text(p, "key_id", 19);
+            Object shared = Shared(table);
+            long? id = null;
+            string name = null;
+            if (IdType == null)
+            {
+                if (p["key_id"] != null || p["key_name"] == null)
+                    throw new ArgumentException("This table stores string keys. Supply its existing key_name.");
+                name = Text(p, "key_name", 65536);
+            }
+            else
+            {
+                if (p["key_name"] != null || p["key_id"] == null)
+                    throw new ArgumentException("This table stores shared IDs. Supply its existing key_id.");
+                string text = Text(p, "key_id", 19);
+                if (
+                    !long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out long parsed)
+                    || parsed <= 0
+                    || IdText(parsed) != text
+                    || (IdType == typeof(uint) && parsed > uint.MaxValue)
+                )
+                    throw new ArgumentException("key_id must be a positive canonical decimal ID in the table's native ID range.");
+                id = parsed;
+            }
+            var keys = TableKeys(table);
             if (
-                !long.TryParse(idText, NumberStyles.None, CultureInfo.InvariantCulture, out long id)
-                || id <= 0
-                || id.ToString(CultureInfo.InvariantCulture) != idText
+                keys.Count(k => id.HasValue ? k.Id == id : k.Name == name) != 1
+                || keys.Where(k => k.Id.HasValue).GroupBy(k => k.Id).Any(g => g.Count() != 1)
+                || keys.GroupBy(k => k.Name, StringComparer.Ordinal).Any(g => g.Count() != 1)
             )
-                throw new ArgumentException("key_id must be a positive Int64 decimal string.");
-            var keys = SharedEntries(table).Cast<object>();
-            if (
-                keys.Count(k => (long)Get(k, "Id") == id) != 1
-                || keys.GroupBy(k => Get(k, "Id")).Any(g => g.Count() != 1)
-                || keys.GroupBy(k => (string)Get(k, "Key"), StringComparer.Ordinal).Any(g => g.Count() != 1)
-            )
-                throw new ArgumentException("ambiguous_shared_key: corrections require existing unique shared IDs and names.");
+                throw new ArgumentException("ambiguous_shared_key: corrections require an existing unique key.");
+            if (shared != null && !(table is IEnumerable) && LocalIds(table).Count(local => local == id) > 1)
+                throw new ArgumentException("ambiguous_table_entry: duplicate local entries for the selected key.");
             string value = Text(p, "value", 65536);
             if (p["is_smart"] != null && p["is_smart"].Type != JTokenType.Boolean)
                 throw new ArgumentException("is_smart must be a JSON boolean when supplied.");
-            object entry = Call(table, "GetEntry", new[] { typeof(long) }, id);
-            bool isSmart = p["is_smart"] == null ? entry != null && (bool)Get(entry, "IsSmart") : p.Value<bool>("is_smart");
+            object entry = Entry(table, id, name);
+            if (id == null && entry == null)
+                throw new ArgumentException("ambiguous_table_entry: the existing string key could not be resolved.");
+            bool isSmart = p["is_smart"] == null ? HasSmartStrings && entry != null && (bool)Get(entry, "IsSmart") : p.Value<bool>("is_smart");
+            if (isSmart && !HasSmartStrings)
+                throw new ArgumentException("unsupported_package_api: this table stores plain text and plural forms; is_smart=true is unavailable.");
             if (isSmart)
                 Selectors(value);
             Expected(p, table, shared);
@@ -700,11 +743,15 @@ namespace MCPForUnity.Editor.Tools.Localization
                 table,
                 () =>
                 {
-                    if (entry == null)
-                        entry = Call(table, "AddEntry", new[] { typeof(long), typeof(string) }, id, value);
+                    if (entry == null && HasSmartStrings)
+                        entry = Call(table, "AddEntry", new[] { IdType, typeof(string) }, NativeKey(id, name), value);
                     else
-                        Set(entry, "Value", value);
-                    if (p["is_smart"] != null)
+                    {
+                        if (entry == null)
+                            entry = Call(table, "AddEntry", new[] { IdType }, NativeKey(id, name));
+                        Set(entry, HasSmartStrings ? "Value" : "Translated", value);
+                    }
+                    if (HasSmartStrings && p["is_smart"] != null)
                         Set(entry, "IsSmart", isSmart);
                 },
                 () => TableRow(table)
@@ -713,9 +760,9 @@ namespace MCPForUnity.Editor.Tools.Localization
                 return result;
             try
             {
-                object retained = Call(table, "GetEntry", new[] { typeof(long) }, id);
-                string actual = retained == null ? null : (string)Get(retained, "Value");
-                bool actualSmart = retained != null && (bool)Get(retained, "IsSmart");
+                object retained = Entry(table, id, name);
+                string actual = EntryValue(retained, true);
+                bool actualSmart = HasSmartStrings && retained != null && (bool)Get(retained, "IsSmart");
                 var findings = new JArray();
                 if (actual != value || actualSmart != isSmart)
                     findings.Add(new JObject { ["code"] = "retained_entry_differs" });
@@ -734,12 +781,14 @@ namespace MCPForUnity.Editor.Tools.Localization
                 var observed = new JObject
                 {
                     ["table_path"] = AssetDatabase.GetAssetPath(table),
-                    ["key_id"] = idText,
+                    ["key_id"] = IdText(id),
                     ["exists"] = retained != null,
                     ["is_smart"] = actualSmart,
                     ["character_count"] = actual?.Length,
                     ["matches_requested"] = actual == value && actualSmart == isSmart,
                 };
+                if (name != null)
+                    observed["key_name"] = name;
                 return PostEditVerification.Attach(result, PostEditVerification.Summary("affected_localization_key", observed, findings, complete));
             }
             catch (Exception)
@@ -783,8 +832,12 @@ namespace MCPForUnity.Editor.Tools.Localization
 
         private static object SetFallbacks(JObject p)
         {
-            Object locale = Load(Text(p, "locale_path"), "Locale");
-            Object[] targets = Paths(p, "fallback_locale_paths", 0, 32).Select(path => Load(path, "Locale")).ToArray();
+            Type localeType = Kind("Locale");
+            Object locale = Load(Text(p, "locale_path"), localeType);
+            var paths = Paths(p, "fallback_locale_paths", 0, 32);
+            if (HasSingleFallback && paths.Length > 1)
+                throw new ArgumentException("fallback_limit: this Locale format supports at most one fallback.");
+            Object[] targets = paths.Select(path => Load(path, localeType)).ToArray();
             foreach (Object target in targets)
                 if (HasCycle(target, locale, new HashSet<int>(), 0, true))
                     throw new ArgumentException("fallback_cycle: requested fallbacks return to the selected locale.");
@@ -795,7 +848,9 @@ namespace MCPForUnity.Editor.Tools.Localization
             Type fallbackType = Kind("Metadata.FallbackLocale");
             // Explicit argument array avoids binding Activator's (Type, bool) overload
             // through UnityEngine.Object's implicit bool conversion.
-            object[] replacements = targets.Select(t => Activator.CreateInstance(fallbackType, new object[] { t })).ToArray();
+            object[] replacements = HasSingleFallback
+                ? targets.Cast<object>().ToArray()
+                : targets.Select(t => Activator.CreateInstance(fallbackType, new object[] { t })).ToArray();
             for (int index = 0; index < replacements.Length; index++)
                 if (FallbackTarget(replacements[index]) != targets[index])
                     throw new InvalidOperationException("fallback_constructor_refused: package did not retain the requested fallback; no metadata changed.");
@@ -804,7 +859,15 @@ namespace MCPForUnity.Editor.Tools.Localization
                 locale,
                 () =>
                 {
-                    var entries = (IList)Get(Get(locale, "Metadata"), "MetadataEntries");
+                    if (HasSingleFallback)
+                    {
+                        Object requested = targets.FirstOrDefault();
+                        Set(locale, "FallbackLocale", requested);
+                        if ((Object)GetNullable(locale, "FallbackLocale") != requested)
+                            throw new InvalidOperationException("The package did not retain the requested fallback.");
+                        return;
+                    }
+                    var entries = MetadataEntries(locale);
                     foreach (object existing in prior)
                         entries.Remove(existing);
                     foreach (object replacement in replacements)
