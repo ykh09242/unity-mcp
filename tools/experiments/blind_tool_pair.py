@@ -128,28 +128,26 @@ def prepared_pair(arms, order, cell, root, run_case):
     """Retry transient mismatches only before any prompt. Retain the predeclared execution order."""
     name = "{}-{}-{}-{:02d}".format(*cell)
     attempts = []
+
+    def run(arm, directory, gate):
+        selected = copy(arms[arm])
+        selected.output = directory / arm
+        selected.output.mkdir(parents=True)
+        selected.pair_gate = gate
+        try:
+            run_case(selected, *cell)
+            return selected.output / name
+        finally:
+            gate.finish(arm)
+
     for number in (1, 2):
         gate = PreparedPair(
             order, arms[order[0]].timeout, getattr(arms[order[0]], "competitor", None)
         )
-        paths = {}
         directory = root / "preparation" / name / str(number)
-
-        def run(arm):
-            selected = copy(arms[arm])
-            selected.output = directory / arm
-            selected.output.mkdir(parents=True)
-            paths[arm] = selected.output / name
-            selected.pair_gate = gate
-            try:
-                run_case(selected, *cell)
-            finally:
-                gate.finish(arm)
-
         with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(run, arm) for arm in order]
-            for future in futures:
-                future.result()
+            futures = {arm: pool.submit(run, arm, directory, gate) for arm in order}
+            paths = {arm: future.result() for arm, future in futures.items()}
         attempts.append(
             {
                 "id": gate.id,
