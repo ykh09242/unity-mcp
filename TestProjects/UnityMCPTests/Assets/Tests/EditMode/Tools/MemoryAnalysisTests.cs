@@ -627,7 +627,15 @@ namespace MCPForUnityTests.Editor.Tools
 
         // This deterministic queried-snapshot fixture contains only the selected native columns and
         // representative optional chapters. RealSnapshots_ exercises actual Editor captures separately.
-        private static void WriteNativeColumnFixture(string path, uint format, ulong bytes, bool invalidIdWidth = false)
+        private static void WriteNativeColumnFixture(
+            string path,
+            uint format,
+            ulong bytes,
+            bool invalidIdWidth = false,
+            bool empty = false,
+            int[] omit = null,
+            int undefinedChapter = -1
+        )
         {
             using var writer = new BinaryWriter(File.Create(path));
             writer.Write(0xAEABCDCDu);
@@ -640,6 +648,17 @@ namespace MCPForUnityTests.Editor.Tools
             var blocks = new List<ulong>();
             void Column(int id, ushort kind, byte[] payload)
             {
+                if (omit?.Contains(id) == true)
+                    return;
+                bool emptyArray = empty && (id == 5 || id == 7 || id >= 10 && id <= 13);
+                uint elementSize = kind == 3 ? 1u : (uint)payload.Length;
+                if (emptyArray)
+                {
+                    kind = 2;
+                    payload = new byte[1];
+                    if (id == 10 && invalidIdWidth)
+                        elementSize = 1;
+                }
                 ulong data = (ulong)writer.BaseStream.Position;
                 writer.Write(payload);
                 blocks.Add((ulong)writer.BaseStream.Position);
@@ -647,10 +666,10 @@ namespace MCPForUnityTests.Editor.Tools
                 writer.Write((ulong)payload.Length);
                 writer.Write(data);
                 chapters[id] = (ulong)writer.BaseStream.Position;
-                writer.Write(kind);
+                writer.Write(id == undefinedChapter ? (ushort)0 : kind);
                 writer.Write((uint)blocks.Count - 1);
-                writer.Write(kind == 3 ? 1u : (uint)payload.Length);
-                writer.Write(kind == 2 ? 1UL : 0UL);
+                writer.Write(elementSize);
+                writer.Write(kind == 2 && !emptyArray ? 1UL : 0UL);
                 if (kind == 3)
                     writer.Write((ulong)payload.Length);
             }
@@ -686,6 +705,47 @@ namespace MCPForUnityTests.Editor.Tools
                 writer.Write(chapter);
             writer.Write(directory);
             writer.Write(0xABCDCDAEu);
+        }
+
+        [TestCase(8u)]
+        [TestCase(9u)]
+        [TestCase(10u)]
+        [TestCase(12u)]
+        public void NativeCaptureFlagRequiresDeclaredColumnsEvenAtZeroRows(uint version)
+        {
+            string path = Path.Combine(folder, "empty-native.snap");
+            JObject Compare() =>
+                Call(
+                    new JObject
+                    {
+                        ["action"] = "memory_analyze_snapshots",
+                        ["snapshot_a"] = path,
+                        ["snapshot_b"] = path,
+                    }
+                );
+            JObject CompareEmpty(params int[] omit)
+            {
+                WriteNativeColumnFixture(path, version, 0, false, true, omit);
+                return Compare();
+            }
+            var nativeColumns = new[] { 5, 7, 10, 11, 12, 13 };
+            foreach (var omitted in new[] { nativeColumns }.Concat(nativeColumns.Select(id => new[] { id })))
+            {
+                var missing = CompareEmpty(omitted);
+                Assert.AreEqual("snapshot_column_invalid", (string)missing["code"], missing.ToString());
+            }
+            WriteNativeColumnFixture(path, version, 0, empty: true, undefinedChapter: 11);
+            var undefinedName = Compare();
+            Assert.AreEqual("snapshot_column_invalid", (string)undefinedName["code"], undefinedName.ToString());
+            WriteNativeColumnFixture(path, version, 0, invalidIdWidth: true, empty: true);
+            var invalidWidth = Compare();
+            Assert.AreEqual("snapshot_column_invalid", (string)invalidWidth["code"], invalidWidth.ToString());
+            StringAssert.Contains("NativeObjects_InstanceId", (string)invalidWidth["data"]["message"]);
+            var present = CompareEmpty();
+            Success(present);
+            Assert.AreEqual(0, (int)present["data"]["snapshot_a"]["selected_object_count"]);
+            Assert.AreEqual(0L, (long)present["data"]["native_object_bytes_delta"]);
+            Assert.AreEqual(0, ((JArray)present["data"]["types"]).Count);
         }
 
         [TestCase(7u)]

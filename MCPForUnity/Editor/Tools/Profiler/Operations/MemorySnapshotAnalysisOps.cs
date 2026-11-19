@@ -703,7 +703,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     input.Position = checked((long)offset + 16 + (long)(i + 1) * 8);
                 }
             }
-            bool versionFound = false;
+            uint snapshotVersion = 0;
+            bool hasNativeObjects = false;
             for (int entryIndex = 0; entryIndex < entryOffsets.Length; entryIndex++)
             {
                 ulong offset = entryOffsets[entryIndex];
@@ -718,8 +719,25 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 if (format > 3 || format != 0 && block >= blocks)
                     throw new SnapshotProblem("snapshot_format_unsupported", "Invalid snapshot entry header.");
                 bool strings = entryName == "NativeObjects_Name" || entryName == "NativeTypes_Name";
-                if (format != 0 && strings && format != 3)
+                if (format == 0)
+                    entryOffsets[entryIndex] = 0; // An explicit Undefined header also describes an unwritten chapter.
+                bool emptyArray = format == 2 && (uint)last == 0;
+                if (format != 0 && strings && format != 3 && !emptyArray)
                     throw new SnapshotProblem("snapshot_column_invalid", "Native string column is missing its dynamic offset table: " + entryName);
+                if (emptyArray)
+                {
+                    // No buffer is read at zero rows. Validate the on-disk fixed element width
+                    // separately, since a byte-size query for zero elements always returns zero.
+                    uint elementBytes = entryName switch
+                    {
+                        "NativeObjects_InstanceId" => snapshotVersion >= 18 ? 8u : 4u,
+                        "NativeObjects_NativeTypeArrayIndex" => 4u,
+                        "NativeObjects_NativeObjectAddress" or "NativeObjects_Size" => 8u,
+                        _ => meta,
+                    };
+                    if (elementBytes != meta)
+                        throw new SnapshotProblem("snapshot_column_invalid", $"Invalid empty column width {meta} for {entryName}; expected {elementBytes}.");
+                }
                 if (
                     format == 3
                     && (
@@ -745,22 +763,37 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     );
                 if (format == 1 && (last > blockTotals[block] || meta > blockTotals[block] - last || meta > blockChunks[block] - last % blockChunks[block]))
                     throw new SnapshotProblem("snapshot_column_invalid", "Scalar column bytes exceed the owning chunk or native block.");
-                if (entryIndex == Convert.ToInt32(Enum.Parse(entryType, "Metadata_Version")))
+                if (entryName == "Metadata_Version" || entryName == "Metadata_CaptureFlags")
                 {
-                    if (format != 1 || meta != 4 || last > blockTotals[block] || 4UL > blockTotals[block] - last)
-                        throw new SnapshotProblem("snapshot_column_invalid", "Metadata_Version must be the inspected four-byte scalar before native open.");
+                    // Version is a single element. The equivalent one-element fixed array for
+                    // capture flags starts at byte zero of its block.
+                    bool fixedFlag = entryName == "Metadata_CaptureFlags" && format == 2 && last == 1;
+                    ulong start = fixedFlag ? 0 : last;
+                    if (
+                        (format != 1 && !fixedFlag)
+                        || meta != 4
+                        || start > blockTotals[block]
+                        || 4UL > blockTotals[block] - start
+                        || 4UL > blockChunks[block] - start % blockChunks[block]
+                    )
+                        throw new SnapshotProblem("snapshot_column_invalid", entryName + " must contain one four-byte scalar before native open.");
                     long restore = input.Position;
-                    ulong chunkIndex = last / blockChunks[block];
+                    ulong chunkIndex = start / blockChunks[block];
                     At(checked(blockOffsets[block] + 16 + chunkIndex * 8), 8);
                     ulong position = file.ReadUInt64();
-                    At(checked(position + last % blockChunks[block]), 4);
-                    uint version = file.ReadUInt32();
-                    if (version < MinimumFormat || version > maximumFormat)
-                        throw new SnapshotProblem(
-                            "snapshot_format_unsupported",
-                            $"Only inspected snapshot formats {MinimumFormat}–{maximumFormat} are supported; actual {version}."
-                        );
-                    versionFound = true;
+                    At(checked(position + start % blockChunks[block]), 4);
+                    uint scalar = file.ReadUInt32();
+                    if (entryName == "Metadata_Version")
+                    {
+                        snapshotVersion = scalar;
+                        if (scalar < MinimumFormat || scalar > maximumFormat)
+                            throw new SnapshotProblem(
+                                "snapshot_format_unsupported",
+                                $"Only inspected snapshot formats {MinimumFormat}–{maximumFormat} are supported; actual {scalar}."
+                            );
+                    }
+                    else
+                        hasNativeObjects = (scalar & 2) != 0;
                     input.Position = restore;
                 }
                 if (format == 3)
@@ -795,8 +828,25 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 if (metadataBytes > 32L * 1024 * 1024)
                     throw new SnapshotProblem("memory_work_limit", "Snapshot native open metadata exceeds 32 MiB.");
             }
-            if (!versionFound)
+            if (snapshotVersion == 0)
                 throw new SnapshotProblem("snapshot_format_unsupported", "Snapshot has no supported version scalar.");
+            if (hasNativeObjects)
+            {
+                void RequireChapter(string name)
+                {
+                    int index = Convert.ToInt32(Enum.Parse(entryType, name));
+                    if (index >= entryOffsets.Length || entryOffsets[index] == 0)
+                        throw new SnapshotProblem("snapshot_column_invalid", "Native capture is missing required chapter " + name + ".");
+                }
+                RequireChapter("NativeTypes_Name");
+                RequireChapter("NativeObjects_NativeTypeArrayIndex");
+                RequireChapter("NativeObjects_InstanceId");
+                RequireChapter("NativeObjects_Name");
+                RequireChapter("NativeObjects_NativeObjectAddress");
+                RequireChapter("NativeObjects_Size");
+                if (snapshotVersion >= SessionInfoFormat)
+                    RequireChapter("ProfileTarget_Info");
+            }
         }
     }
 }
