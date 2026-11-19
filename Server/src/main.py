@@ -531,10 +531,10 @@ def _build_instructions(project_scoped_tools: bool) -> str:
     return f"""Unity Editor tools. Use live schemas. Editor reads can return saved files.
 
 Target and discover
-- Resolve mcpforunity://instances. When ambiguous or sessionless, pass unity_instance=Name@hash on tools and _meta.unity_instance on resources. Where supported, use set_active_instance.
-- Prefer a listed resource that answers from the requested source. Otherwise use its tool action. Expand templates with observed values.
-- Use manage_tools(action="catalog") by meaning in any language. Filter groups by intent, follow next_offset and describe the operation. Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck target, scene and mode.
-- For missing tools inspect manage_tools(action="list_groups").discovery. Selection needs client scope/project binding, Editor toggles and consent. Fixed-inventory clients can use UNITY_MCP_TOOL_PROFILE=full and reconnect. {custom_tools_note}
+- Resolve mcpforunity://instances. If ambiguous or sessionless, pass unity_instance=Name@hash on tools and _meta.unity_instance on resources, or use supported set_active_instance.
+- Prefer listed resources from the requested source. Expand templates with observed values or use the tool action.
+- Choose observation_source and required_values by meaning for manage_tools(action="search") in any language. Browse manage_tools(action="catalog") by intent, follow next_offset and describe the operation. Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck target, scene and mode.
+- Missing tools: inspect manage_tools(action="list_groups").discovery. Selection needs client scope/project binding, Editor toggles and consent. Fixed inventories: reconnect with UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
 
 Observe and execute
 - Read mcpforunity://editor/state when lifecycle matters. Evaluate ready_for_tools, compiler outcome and source confirmation independently. Keep compile_id, follow get_compile_job and its next_call for pending/source observation. Inspect evidence_diagnostics for invalid responses.

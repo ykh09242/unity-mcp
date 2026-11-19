@@ -1,6 +1,10 @@
 """Tool listing and inspection of actual server-advertised schemas."""
 
+from typing import get_args
+
 import click
+
+from services.registry.action_catalog import ObservationSource, ObservationValue
 
 from cli.commands.custom_tool_scaffold import scaffold_command
 
@@ -56,7 +60,7 @@ def _validate_query(_ctx, _param, value):
 
 
 @tool.command("search")
-@click.argument("query", callback=_validate_query)
+@click.argument("query", required=False, callback=_validate_query)
 @click.option("--limit", type=click.IntRange(1, 20), default=5, show_default=True)
 @click.option(
     "--catalog-query",
@@ -68,7 +72,25 @@ def _validate_query(_ctx, _param, value):
     type=click.Choice(["observe", "interact", "edit"]),
     help="Filter routes by the requested outcome.",
 )
-def search(query: str, limit: int, catalog_query: str | None, intent: str | None) -> None:
+@click.option(
+    "--observation-source",
+    type=click.Choice(get_args(ObservationSource)),
+    help="Select the origin of the requested evidence. A text query is optional.",
+)
+@click.option(
+    "--required-value",
+    multiple=True,
+    type=click.Choice(get_args(ObservationValue)),
+    help="Require a declared result field. Repeat to require every field.",
+)
+def search(
+    query: str | None,
+    limit: int,
+    catalog_query: str | None,
+    intent: str | None,
+    observation_source: str | None,
+    required_value: tuple[str, ...],
+) -> None:
     """Search the offline local catalog by task purpose, without a Unity connection.
 
     Advertisement and project readiness remain unobserved in this offline scope.
@@ -81,10 +103,21 @@ def search(query: str, limit: int, catalog_query: str | None, intent: str | None
     from services.registry.task_search import SearchRequest, search_catalog
     from utils.module_discovery import discover_modules
 
+    try:
+        request = SearchRequest(
+            query=query,
+            catalog_query=catalog_query,
+            limit=limit,
+            intent=intent,
+            observation_source=observation_source,
+            required_values=list(required_value) or None,
+        )
+    except ValueError as error:
+        raise click.UsageError(str(error)) from error
     list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
     list(discover_modules(Path(resources_package.__file__).parent, resources_package.__name__))
     result = search_catalog(
-        SearchRequest(query=query, catalog_query=catalog_query, limit=limit, intent=intent),
+        request,
         get_registered_tools(),
         resources=get_registered_resources(),
     )

@@ -30,6 +30,33 @@ from services.registry.tool_registry import TOOL_GROUPS, ToolMaturity
 
 
 ActionIntent = Literal["observe", "interact", "edit"]
+ObservationSource = Literal["editor_live", "asset_file", "imported_asset"]
+ObservationValue = Literal[
+    "render_size.width",
+    "render_size.height",
+    "current_size",
+    "view_instance_id",
+    "presets",
+    "rendered_image",
+    "pointer_hit_order",
+    "nodeCount",
+    "edgeCount",
+    "nodes",
+    "edges",
+    "properties",
+    "keywords",
+    "unsaved_graph_structure",
+    "property_values",
+    "shader_source",
+    "contents",
+    "encodedContents",
+    "nextOffset",
+    "shader_graph_structure",
+    "unsaved_source",
+    "compilation",
+    "passes",
+    "subshader_count",
+]
 
 
 class CatalogEntry(TypedDict):
@@ -50,9 +77,10 @@ class SkillLink(TypedDict):
 class Observation(TypedDict):
     """Data origin and selected result fields that a successful read can supply."""
 
-    source: Literal["editor_live", "asset_file", "imported_asset"]
-    values: list[str]
-    unavailable: list[str]
+    source: ObservationSource
+    values: list[ObservationValue]
+    unavailable: list[ObservationValue]
+    mutually_exclusive_values: NotRequired[list[list[ObservationValue]]]
 
 
 OBSERVATION_META: Final = "io.github.ykh09242.unity-mcp/observation"
@@ -373,10 +401,15 @@ TOOL_GUIDANCE: Final = {
                 "as read_offset to continue.",
                 ("name",),
                 READ_ONLY_EFFECTS,
+                evidence_limit=(
+                    "Use read_encoding=text for contents or base64 for encodedContents. "
+                    "nextOffset is populated only when another source page exists."
+                ),
                 observation={
                     "source": "asset_file",
                     "values": ["contents", "encodedContents", "nextOffset"],
                     "unavailable": ["shader_graph_structure", "unsaved_source"],
+                    "mutually_exclusive_values": [["contents", "encodedContents"]],
                 },
             ),
             "update": ActionGuidance(

@@ -4374,10 +4374,12 @@ Search the offline local catalog by task purpose, without a Unity connection. Ad
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| query | text | required | nargs=1 | — | — |  |
+| query | text | optional | nargs=1 | — | — |  |
 | --limit | integer range: [1..20] | optional | nargs=1 | 5 | — |  |
 | --catalog-query | text | optional | nargs=1 | — | — | Optional alternate terms for literal search, such as a known API identifier. |
 | --intent | choice: observe, interact, edit | optional | nargs=1 | — | — | Filter routes by the requested outcome. |
+| --observation-source | choice: editor_live, asset_file, imported_asset | optional | nargs=1 | — | — | Select the origin of the requested evidence. A text query is optional. |
+| --required-value | choice: render_size.width, render_size.height, current_size, view_instance_id, presets, rendered_image, pointer_hit_order, nodeCount, edgeCount, nodes, edges, properties, keywords, unsaved_graph_structure, property_values, shader_source, contents, encodedContents, nextOffset, shader_graph_structure, unsaved_source, compilation, passes, subshader_count | optional | nargs=1, repeatable | — | — | Require a declared result field. Repeat to require every field. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp ui`

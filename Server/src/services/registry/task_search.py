@@ -2,15 +2,26 @@
 
 import unicodedata
 from collections import Counter
-from typing import Literal, NotRequired, TypedDict
+from typing import Annotated, Literal, NotRequired, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 from services.registry.action_catalog import (
+    ActionGuidance,
     ActionIntent,
     CatalogEntry as SearchEntry,
     CatalogResource,
     Observation,
+    ObservationSource,
+    ObservationValue,
     CatalogTool as SearchResult,
     RESOURCE_TEMPLATE_EXPANSION,
     action_guidance,
@@ -24,12 +35,24 @@ from services.registry.action_catalog import (
 )
 
 
+RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
+
+
 class SearchRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    query: StrictStr = Field(min_length=1, max_length=512)
+    query: StrictStr | None = Field(default=None, min_length=1, max_length=512)
     limit: StrictInt = Field(default=5, ge=1, le=20)
     catalog_query: StrictStr | None = Field(default=None, min_length=1, max_length=512)
     intent: ActionIntent | None = None
+
+    observation_source: ObservationSource | None = None
+    required_values: RequiredValues | None = None
+
+    @model_validator(mode="after")
+    def has_search_input(self):
+        if self.query is None and self.observation_source is None and self.required_values is None:
+            raise ValueError("Supply query, observation_source or required_values.")
+        return self
 
     @field_validator("query", "catalog_query")
     @classmethod
@@ -43,16 +66,27 @@ class SearchRequest(BaseModel):
         return value
 
 
-MatchBasis = Literal["exact_identifier", "multiple_terms", "single_term", "incidental", "none"]
+MatchBasis = Literal[
+    "exact_identifier",
+    "multiple_terms",
+    "single_term",
+    "incidental",
+    "declared_observation",
+    "none",
+]
 
 
 class SearchResponse(TypedDict):
     scope: Literal["local_catalog", "mcp_context"]
-    query: str
-    matched_query: str
-    matching: Literal["lexical"]
+    query: str | None
+    matched_query: str | None
+    matching: Literal["lexical", "observation"]
+    observation_source: NotRequired[ObservationSource | None]
+    required_values: NotRequired[list[ObservationValue]]
     catalog_language: Literal["en"]
-    next_action: Literal["inspect_candidates", "provide_catalog_query", "broaden_catalog_query"]
+    next_action: Literal[
+        "inspect_candidates", "provide_catalog_query", "broaden_catalog_query", "browse_catalog"
+    ]
     recommended_action: Literal["inspect_candidates", "browse_catalog"]
     match_basis: MatchBasis
     intent: ActionIntent | None
@@ -133,6 +167,43 @@ def _route_evidence(
     return "single_term" if route["distinctive_terms"] else "incidental"
 
 
+def _tool_route(
+    result: SearchResult, action: str | None, guidance: ActionGuidance | None
+) -> SearchRoute:
+    route: SearchRoute = {
+        "kind": "tool",
+        "tool": result["name"],
+        "purpose": result["description"][:320],
+        "intent": action_intent(guidance, result),
+        "advertised": result["advertised"],
+        "readiness": "unobserved",
+    }
+    if action:
+        route["operation"] = action
+        route["purpose"] = (
+            guidance.purpose if guidance and guidance.purpose else action.replace("_", " ")
+        )
+    if guidance and guidance.observation:
+        route["observation"] = guidance.observation
+    if guidance and guidance.evidence_limit:
+        route["evidence_limit"] = guidance.evidence_limit
+    return route
+
+
+def _observation_matches(request: SearchRequest, observation: Observation | None) -> bool:
+    needed = set(request.required_values or ())
+    return bool(
+        observation
+        and (not request.observation_source or observation["source"] == request.observation_source)
+        and needed.issubset(observation["values"])
+        and needed.isdisjoint(observation["unavailable"])
+        and all(
+            len(needed.intersection(group)) <= 1
+            for group in observation.get("mutually_exclusive_values", ())
+        )
+    )
+
+
 def search_catalog(
     request: SearchRequest,
     entries: list[SearchEntry],
@@ -143,13 +214,36 @@ def search_catalog(
     """Rank actions and readable resources while retaining the tool-level result contract."""
     matches: list[tuple[int, str, SearchResult]] = []
     routes: list[tuple[int, str, str, SearchRoute]] = []
-    matched_query = request.catalog_query or request.query
-    query = _normalized(matched_query)
+    structured = request.observation_source is not None or request.required_values is not None
+    if structured and visible_names is not None:
+        entries = [entry for entry in entries if entry["name"] in visible_names]
+    matched_query = None if structured else request.catalog_query or request.query
+    query = _normalized(matched_query or "")
     query_words = _words(query)
     occurrences: Counter[str] = Counter()
     for entry in entries:
         name = entry["name"]
         result = tool_capability(entry, visible_names=visible_names)
+        if structured:
+            selected_actions = []
+            for action in result["actions"] or [None]:
+                guidance = action_guidance(entry, action)
+                if not guidance or not _observation_matches(request, guidance.observation):
+                    continue
+                route = _tool_route(result, action, guidance)
+                if request.intent and route["intent"] != request.intent:
+                    continue
+                routes.append((0, name, action or "", route))
+                selected_actions.append(action)
+            if selected_actions:
+                result["actions"] = [action for action in selected_actions if action]
+                result["action_maturity"] = {
+                    action: maturity
+                    for action, maturity in result["action_maturity"].items()
+                    if action in selected_actions
+                }
+                matches.append((0, name, result))
+            continue
         description = tool_description(entry)
         aliases = result["aliases"]
         actions = result["actions"]
@@ -194,55 +288,10 @@ def search_catalog(
                 item for item in action_matches if action_intent(item[2], result) == request.intent
             ]
         for weight, action, guidance in suggested_actions[:3]:
-            routes.append(
-                (
-                    -(weight + score),
-                    name,
-                    action,
-                    {
-                        "kind": "tool",
-                        "tool": name,
-                        "operation": action,
-                        **(
-                            {"observation": guidance.observation}
-                            if guidance and guidance.observation
-                            else {}
-                        ),
-                        "intent": action_intent(guidance, result),
-                        "purpose": guidance.purpose
-                        if guidance and guidance.purpose
-                        else action.replace("_", " "),
-                        **(
-                            {"evidence_limit": guidance.evidence_limit}
-                            if guidance and guidance.evidence_limit
-                            else {}
-                        ),
-                        "advertised": result["advertised"],
-                        "readiness": "unobserved",
-                    },
-                )
-            )
+            routes.append((-(weight + score), name, action, _tool_route(result, action, guidance)))
         if not action_matches:
-            guidance = action_guidance(entry, None)
             routes.append(
-                (
-                    -score,
-                    name,
-                    "",
-                    {
-                        "kind": "tool",
-                        "tool": name,
-                        "purpose": result["description"][:320],
-                        **(
-                            {"observation": guidance.observation}
-                            if guidance and guidance.observation
-                            else {}
-                        ),
-                        "intent": action_intent(None, result),
-                        "advertised": result["advertised"],
-                        "readiness": "unobserved",
-                    },
-                )
+                (-score, name, "", _tool_route(result, None, action_guidance(entry, None)))
             )
     available_resources = concrete_resources(resources or [])
     available_templates = resource_templates(resources or [])
@@ -280,6 +329,10 @@ def search_catalog(
             route["uri"] = identifier
             evidence = _term_evidence(query_words, (resource["name"], 8), (purpose, 6))
         route["name"] = resource["name"]
+        if structured:
+            if _observation_matches(request, route.get("observation")):
+                routes.append((0, identifier, "", route))
+            continue
         occurrences.update(evidence.keys())
         weight = sum(evidence.values())
         if exact_name or query == _normalized(identifier):
@@ -295,14 +348,22 @@ def search_catalog(
     # corroborate a route. This derives common vocabulary from the catalog itself.
     documents = len(entries) + len(available_resources) + len(available_templates)
     distinctive = {term for term, count in occurrences.items() if count <= max(1, documents // 4)}
-    bases = [_route_evidence(route, query, query_words, distinctive) for route in selected_routes]
-    basis = bases[0] if bases else "none"
-    if matches:
-        lexical_action = "inspect_candidates"
+    basis: MatchBasis = "none"
+    if structured and selected_routes:
+        basis = "declared_observation"
+    elif not structured:
+        bases = [
+            _route_evidence(route, query, query_words, distinctive) for route in selected_routes
+        ]
+        basis = bases[0] if bases else "none"
+    if structured:
+        next_action = "inspect_candidates" if selected_routes else "browse_catalog"
+    elif matches:
+        next_action = "inspect_candidates"
     elif request.catalog_query is None:
-        lexical_action = "provide_catalog_query"
+        next_action = "provide_catalog_query"
     else:
-        lexical_action = "broaden_catalog_query"
+        next_action = "broaden_catalog_query"
     navigation = catalog_navigation(entries, available_resources, available_templates)
     if request.intent:
         for domain in navigation["groups"]:
@@ -311,15 +372,28 @@ def search_catalog(
         "scope": "mcp_context" if visible_names is not None else "local_catalog",
         "query": request.query,
         "matched_query": matched_query,
-        "matching": "lexical",
+        "matching": "observation" if structured else "lexical",
+        **(
+            {
+                "observation_source": request.observation_source,
+                "required_values": request.required_values or [],
+            }
+            if structured
+            else {}
+        ),
         "catalog_language": "en",
-        "next_action": lexical_action,
+        "next_action": next_action,
         "recommended_action": "inspect_candidates"
-        if basis in {"multiple_terms", "exact_identifier"}
+        if basis in {"multiple_terms", "exact_identifier", "declared_observation"}
         else "browse_catalog",
         "match_basis": basis,
         "intent": request.intent,
         "hint": (
+            "Routes match the declared evidence source and every required value. Check prerequisites "
+            "and any conditions for obtaining those values in the selected Editor."
+        )
+        if structured
+        else (
             "Interpret the original request in its own language. Use navigation to choose by purpose "
             "even when words do not match or lexical suggestions are incidental. Browse the selected "
             "domain and compare action outcomes or read a listed resource. Supply intent with a tool or tool group in catalog "
@@ -329,7 +403,7 @@ def search_catalog(
         "results": [item[2] for item in matches[: request.limit]],
         "routes": selected_routes,
         "total_matches": len(matches),
-        "truncated": len(matches) > request.limit,
+        "truncated": (len(routes) if structured else len(matches)) > request.limit,
         "note": (
             "Suggestions only; search never changes selection, permissions or Unity state. "
             "Advertised reflects this MCP context only, or is null for an offline catalog. "

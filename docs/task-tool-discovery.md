@@ -97,6 +97,39 @@ exact schema, and preview wording alone does not imply a read-only effects hint.
   the same offline catalog. CLI pages support `--limit` and `--offset` and always
   emit complete JSON. `tool describe NAME` inspects the actual connection schema.
 
+## First search for an observation
+
+Interpret the user's request in its own language and select `observation_source`
+or `required_values` from the advertised `manage_tools` search schema.
+Use `editor_live` for live Editor state, `asset_file` for saved contents and
+`imported_asset` for Unity's import results. For example, a request for current
+Game View dimensions maps to this first call:
+
+```json
+{"action":"search","observation_source":"editor_live","required_values":["render_size.width","render_size.height"]}
+```
+
+Every returned route declares the selected origin and all requested fields.
+A saved graph search can require `nodeCount`, `edgeCount` and `nodes` together.
+Requiring `unsaved_graph_structure` yields no match in the current catalog.
+The optional original `query` is retained as context. Evidence selection is
+independent of its wording and of `catalog_query`. Structured responses report
+`matching="observation"` and `matched_query=null`. In a live request, tool
+matches use the currently advertised inventory. A listed resource or template
+still requires its normal selection, permissions and successful read. Values
+describe potential evidence. For example, a shader source read supplies either
+text or base64 data according to the requested encoding. Requiring both
+representations in one call yields no match. Inspect the returned values after a read.
+
+Offline CLI equivalent:
+
+```sh
+unity-mcp tool search --observation-source editor_live --required-value render_size.width --required-value render_size.height
+```
+
+The calling agent chooses the fields. CLI and SDK tests exercise that boundary
+with the same field selections across request languages.
+
 ## Lexical compatibility
 
 `manage_tools(action="search", query="original task", catalog_query="English task terms")`

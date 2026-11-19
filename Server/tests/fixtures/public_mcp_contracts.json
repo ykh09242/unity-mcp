@@ -21340,6 +21340,22 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "observation_source": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "editor_live",
+                      "asset_file",
+                      "imported_asset"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "offset": {
                 "default": 0,
                 "minimum": 0,
@@ -21363,6 +21379,48 @@
                   {
                     "maxLength": 512,
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "required_values": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "render_size.width",
+                        "render_size.height",
+                        "current_size",
+                        "view_instance_id",
+                        "presets",
+                        "rendered_image",
+                        "pointer_hit_order",
+                        "nodeCount",
+                        "edgeCount",
+                        "nodes",
+                        "edges",
+                        "properties",
+                        "keywords",
+                        "unsaved_graph_structure",
+                        "property_values",
+                        "shader_source",
+                        "contents",
+                        "encodedContents",
+                        "nextOffset",
+                        "shader_graph_structure",
+                        "unsaved_source",
+                        "compilation",
+                        "passes",
+                        "subshader_count"
+                      ],
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "type": "array"
                   },
                   {
                     "type": "null"
@@ -47891,6 +47949,22 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "observation_source": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "editor_live",
+                      "asset_file",
+                      "imported_asset"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "offset": {
                 "default": 0,
                 "minimum": 0,
@@ -47914,6 +47988,48 @@
                   {
                     "maxLength": 512,
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "required_values": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "render_size.width",
+                        "render_size.height",
+                        "current_size",
+                        "view_instance_id",
+                        "presets",
+                        "rendered_image",
+                        "pointer_hit_order",
+                        "nodeCount",
+                        "edgeCount",
+                        "nodes",
+                        "edges",
+                        "properties",
+                        "keywords",
+                        "unsaved_graph_structure",
+                        "property_values",
+                        "shader_source",
+                        "contents",
+                        "encodedContents",
+                        "nextOffset",
+                        "shader_graph_structure",
+                        "unsaved_source",
+                        "compilation",
+                        "passes",
+                        "subshader_count"
+                      ],
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "type": "array"
                   },
                   {
                     "type": "null"

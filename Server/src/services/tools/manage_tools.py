@@ -26,7 +26,8 @@ from services.registry import (
     get_group_tool_names,
     get_registered_tools,
 )
-from services.registry.action_catalog import ActionIntent, CatalogResource
+from services.registry.action_catalog import ActionIntent, CatalogResource, ObservationSource
+from services.registry.task_search import RequiredValues
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -41,7 +42,7 @@ logger = logging.getLogger("mcp-for-unity-server")
         "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore configured profile), describe (full schema for one tool, optionally bind operation), "
         "catalog (choose a domain by purpose, then browse tools, actions or readable resources), "
-        "search (literal action and resource matches plus the same domain index for any language). "
+        "search (match declared observation_source and required_values directly from a task in any language, or search by text). "
         "Selection changes server tools/list; it does not confirm the client's callable inventory. "
         "Use sync after toggling tools in the Unity Editor GUI."
     ),
@@ -81,7 +82,7 @@ async def manage_tools(
     query: Annotated[
         str | None,
         Field(max_length=512),
-        "Original task query or exact identifier for search (1..512 characters).",
+        "Optional original task text when searching by observation, or a lexical query (1..512 characters).",
     ] = None,
     limit: Annotated[
         int, Field(strict=True, ge=1, le=20), "Maximum search or catalog page entries (1..20)."
@@ -108,6 +109,18 @@ async def manage_tools(
         ActionIntent | None,
         "Optional purpose interpreted from any language. For search or catalog with a tool/group: observe state, interact with the running game/editor, or edit project content. Classified routes only; inspect action effects separately.",
     ] = None,
+    observation_source: Annotated[
+        ObservationSource | None,
+        Field(
+            description="For search, interpret the request in its own language. Select where the evidence must originate: current Editor state (editor_live), saved file contents (asset_file), or Unity import results (imported_asset)."
+        ),
+    ] = None,
+    required_values: Annotated[
+        RequiredValues | None,
+        Field(
+            description="For search, select every result field the request needs. Game View pixels use render_size.width and render_size.height; saved graph totals use nodeCount and edgeCount. A route must declare all selected values. No query or translation is needed."
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
@@ -115,6 +128,11 @@ async def manage_tools(
     modern = is_sessionless(ctx)
     if intent is not None and action not in {"catalog", "search"}:
         return {"success": False, "error": "intent is supported only for search or catalog."}
+    if (observation_source is not None or required_values is not None) and action != "search":
+        return {
+            "success": False,
+            "error": "observation_source and required_values are supported only for search.",
+        }
     if catalog_query is not None and action != "search":
         return {"success": False, "error": "catalog_query is supported only for search."}
     if offset and action != "catalog":
@@ -149,16 +167,21 @@ async def manage_tools(
         if group is not None or tool is not None:
             return {
                 "success": False,
-                "error": "search accepts query, catalog_query and limit, without a group or tool selector.",
+                "error": "search does not accept a group or tool selector.",
             }
         try:
             request = SearchRequest(
-                query=query, catalog_query=catalog_query, limit=limit, intent=intent
+                query=query,
+                catalog_query=catalog_query,
+                limit=limit,
+                intent=intent,
+                observation_source=observation_source,
+                required_values=required_values,
             )
         except ValidationError:
             return {
                 "success": False,
-                "error": "search requires nonempty query/catalog_query strings of at most 512 characters and limit 1..20. catalog_query may be omitted.",
+                "error": "Supply query (1..512 nonblank characters), observation_source or 1..32 required_values. Use a declared source and values, optional catalog_query (1..512 characters), and limit 1..20.",
             }
         entries, visible = await _catalog_inventory(ctx, entries, discovery)
         return search_catalog(
