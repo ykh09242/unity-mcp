@@ -11382,6 +11382,18 @@
                 ],
                 "default": null
               },
+              "key_name": {
+                "anyOf": [
+                  {
+                    "maxLength": 65536,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "limit": {
                 "anyOf": [
                   {
@@ -38283,6 +38295,18 @@
               "key_id": {
                 "anyOf": [
                   {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "key_name": {
+                "anyOf": [
+                  {
+                    "maxLength": 65536,
                     "type": "string"
                   },
                   {
