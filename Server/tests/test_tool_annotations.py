@@ -55,6 +55,8 @@ READ_ONLY = {
     # Session reference cache only; neither action edits scenes/assets or refreshes them.
     "manage_object_handles",
     "manage_script_capabilities",
+    # Searches request-visible catalog metadata without changing tool groups or calling the Editor.
+    "search_unity_tools",
     "unity_docs",
     "unity_reflect",
     "validate_script",
