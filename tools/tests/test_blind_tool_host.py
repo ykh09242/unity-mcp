@@ -130,6 +130,24 @@ def test_archive_source_is_attested_for_recorded_treatment():
     }
 
 
+def test_guarded_installed_turn_requires_matching_target_catalog_and_source():
+    normal = {
+        "status": "observed",
+        "project_verified": True,
+        "unity": {"tools": ["view"]},
+        "competitor_digest": "catalog",
+        "source": {"server_commit": "a" * 40},
+    }
+    assert host.same_installation(normal, dict(normal))
+    for key, bad in (
+        ("project_verified", False),
+        ("status", "incomplete"),
+        ("source", {}),
+        ("unity", {"tools": []}),
+    ):
+        assert not host.same_installation(normal, {**normal, key: bad})
+
+
 def test_installed_host_scores_result_and_retains_competing_first_call(tmp_path):
     from tools.experiments.blind_tool_trace import score_case
 

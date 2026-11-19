@@ -64,6 +64,7 @@ DISCOVERY = {
     "mcpforunity://capabilities/scoped",
     "mcpforunity://instances",
     "mcpforunity://trial/source",
+    "mcpforunity://doctor",
     "mcpforunity://scene/gameobject-api",
 }
 OTHER_READS = {

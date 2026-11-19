@@ -133,7 +133,7 @@ def run_case(
         "effort": args.effort,
         "approval_policy": args.approval,
         "delegation": args.delegation,
-        "backend": "installed-host"
+        "backend": "installed-guarded"
         if args.installed
         else "trusted-stdio-relay"
         if args.relay
@@ -175,7 +175,10 @@ def run_case(
             metadata["exit_code"] = process.returncode
     except (subprocess.TimeoutExpired, TimeoutError):
         metadata["runner_status"] = "timed_out"
-    except (OSError, ValueError, ExceptionGroup) as error:
+    except ExceptionGroup as error:
+        metadata["runner_status"] = "timed_out" if error.subgroup(TimeoutError) else "host_failed"
+        metadata["failure_type"] = type(error.exceptions[0]).__name__
+    except (OSError, ValueError) as error:
         metadata["runner_status"] = "launch_failed"
         metadata["failure_type"] = type(error).__name__
     finally:
@@ -207,6 +210,10 @@ def create_parser() -> argparse.ArgumentParser:
         help="Installed Unity MCP server name in configured mode",
     )
     launch.add_argument("--graph-asset", default="")
+    launch.add_argument(
+        "--installed-endpoint",
+        help="Loopback endpoint for forwarding target-pinned reads to the verified installed server",
+    )
     launch.add_argument("--repeat", type=int, default=1)
     launch.add_argument("--timeout", type=int, default=240, help="Seconds per trial")
     launch.add_argument("--approval", choices=("never", "auto-review"), default="never")
@@ -247,8 +254,25 @@ def create_parser() -> argparse.ArgumentParser:
 
 def validate_backend(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if args.installed:
-        if args.host_mode != "configured" or not args.instance or "@" not in args.instance:
-            parser.error("--installed requires --host-mode configured and the exact --instance")
+        if (
+            args.host_mode != "configured"
+            or not args.instance
+            or "@" not in args.instance
+            or not args.installed_endpoint
+        ):
+            parser.error(
+                "--installed requires --host-mode configured, --installed-endpoint and the exact --instance"
+            )
+        if "raycast" in args.task:
+            parser.error("raycast requires a trusted --relay that guarantees read-only raycasts")
+        from tools.experiments.blind_tool_http import loopback_port
+
+        try:
+            loopback_port(args.installed_endpoint)
+        except ValueError:
+            parser.error(
+                "installed endpoint must be an HTTP loopback URL without credentials or query"
+            )
     elif args.relay:
         args.relay = args.relay.resolve()
         if not args.relay.is_file():

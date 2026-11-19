@@ -19,9 +19,15 @@ before forwarding an observation. It leaves the Editor's scenes, playback,
 settings and files untouched. Place trial outputs in a private ignored directory
 outside the project.
 
-Use `--host-mode configured --installed --instance Name@hash` for the normal
-installed Unity service, alongside the user's configured file, code, and other
-tools. This uses an ephemeral read-only app-server thread in the game project.
+Use `--host-mode configured --installed --installed-endpoint http://127.0.0.1:8080/mcp
+--instance Name@hash` for the installed Unity service. The runner probes the
+ordinary user configuration in a model-free thread. A second ephemeral thread
+exposes the same verified installation through the target-pinned observation
+proxy. Before its model turn both receipts must agree on the installation,
+project and advertised Unity catalog. The report records any difference between
+the two threads' competing capabilities. The proxy enforces
+the Unity read boundary. Competing MCP services retain their configured grants;
+use competing services trusted for observation in the game project.
 For configured baseline/candidate comparisons, provide trusted read-only
 relays. The runner disables only the installed Unity entry for the process and
 exposes the selected relay under the same trial name on both arms. The default

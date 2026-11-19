@@ -115,7 +115,7 @@ class ScopedObservation(Middleware):
         meta = context.fastmcp_context.request_context.meta or {}
         if meta.get("unity_instance", self.instance) != self.instance or channel == "blocked":
             raise ResourceError("Outside this project's permitted observations")
-        if channel != "unity":
+        if channel != "unity" and uri != "mcpforunity://doctor":
             return await call_next(context)
         async with self.client.new_stateful() as backend:
             await self.verify_target(backend)

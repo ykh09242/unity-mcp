@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import copy
 import json
 import os
 from pathlib import Path
@@ -361,7 +362,61 @@ def project_item(item, server, asset):
     return None
 
 
+async def _project_verified(client, thread, server, instance, project):
+    reply = await client.request(
+        "mcpServer/resource/read",
+        {
+            "threadId": thread,
+            "server": server,
+            "uri": "mcpforunity://project/info",
+            "_meta": {"unity_instance": instance},
+        },
+    )
+    for block in reply.get("contents", []):
+        if isinstance(block.get("text"), str):
+            receipt = json.loads(block["text"])
+            root = (receipt.get("data") or {}).get("projectRoot")
+            if (
+                receipt.get("success") is True
+                and isinstance(root, str)
+                and root
+                and Path(root).resolve() == project.resolve()
+            ):
+                return True
+    return False
+
+
+def same_installation(normal, guarded):
+    return (
+        normal.get("status") == guarded.get("status") == "observed"
+        and normal.get("project_verified") is True
+        and guarded.get("project_verified") is True
+        and normal.get("source", {}).get("server_commit")
+        and normal["source"] == guarded["source"]
+        and normal.get("unity") == guarded.get("unity")
+    )
+
+
 async def run_configured(args, case_dir, prompt, metadata):
+    """Probe the installed configuration before handing the model a guarded equivalent surface."""
+    expected = None
+    if args.installed:
+        metadata["runner_phase"] = "installed_preflight"
+        expected = await _configured_session(args, case_dir, prompt, metadata)
+        if (
+            not expected
+            or not expected.get("project_verified")
+            or not expected["source"]["server_commit"]
+        ):
+            raise ValueError("Installed server identity unavailable")
+        args = copy(args)
+        args.installed = False
+        args.endpoint = args.installed_endpoint
+    metadata["runner_phase"] = "configured_preflight"
+    await _configured_session(args, case_dir, prompt, metadata, expected)
+
+
+async def _configured_session(args, case_dir, prompt, metadata, expected=None):
     """Use the app-server protocol to observe the exact ephemeral thread before its model turn."""
     from tools.experiments.blind_tool_trace import thread_digest
 
@@ -399,16 +454,36 @@ async def run_configured(args, case_dir, prompt, metadata):
                 if not thread:
                     raise ValueError("No host thread ID")
                 surface = await observe_host(
-                    client, thread, server, args.instance, installed=args.installed
+                    client,
+                    thread,
+                    server,
+                    args.instance,
+                    installed=args.installed or expected is not None,
                 )
-                (case_dir / "host.json").write_text(
+                if args.installed or expected is not None:
+                    surface["project_verified"] = await _project_verified(
+                        client, thread, server, args.instance, args.project
+                    )
+                (case_dir / ("installed-host.json" if args.installed else "host.json")).write_text(
                     json.dumps(surface, indent=2) + "\n", encoding="utf-8"
                 )
+                if args.installed:
+                    return surface
+                if expected is not None and not same_installation(expected, surface):
+                    raise ValueError(
+                        "Guarded server does not match installed catalog, source and target"
+                    )
+                if expected is not None:
+                    metadata["installed_competitors_match"] = (
+                        expected["competitor_digest"] == surface["competitor_digest"]
+                    )
+                    metadata["installed_competitor_digest"] = expected["competitor_digest"]
                 metadata["competitor_digest"] = surface["competitor_digest"]
                 metadata["competition_observed"] = surface.get("competition_observed")
                 metadata["observed_server_commit"] = surface["source"]["server_commit"]
                 if metadata["observed_server_commit"]:
                     metadata["backend_identity"] = metadata["observed_server_commit"]
+                metadata["runner_phase"] = "model_turn"
                 reply = await client.request(
                     "turn/start",
                     {
