@@ -42,7 +42,7 @@ Camera setup, Cinemachine and view capture
 - **[`manage_cameras`](./camera/manage_cameras.md)** — Create or list cameras, select targets and configure lenses or priority.
 - **[`manage_cinemachine`](./camera/manage_cinemachine.md)** — Configure Cinemachine brains, tracking, extensions and camera blends.
 
-## `core` &nbsp; (45 tools)
+## `core` &nbsp; (46 tools)
 Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`asset_inspect`](./core/asset_inspect.md)** — Search assets or inspect their metadata and components.
@@ -59,6 +59,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`get_compile_job`](./core/get_compile_job.md)** — Read compilation status, bounded diagnostics and the last successful compile by compile_id.
 - **[`get_game_view_size`](./core/get_game_view_size.md)** — Read the current Game View render size in pixels, selected preset and available presets from an existing window in the selected Unity Editor.
 - **[`get_sha`](./core/get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
+- **[`inspect_editor_state`](./core/inspect_editor_state.md)** — Read the selected Editor snapshot including active scene and current compiling flag.
 - **[`manage_addressables`](./core/manage_addressables.md)** — Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing native build-layout report for duplicate…
 - **[`manage_audio`](./core/manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./core/manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
@@ -174,9 +175,10 @@ Test runner, async test jobs & bounded Play Mode input simulation
 - **[`run_tests`](./testing/run_tests.md)** — Starts a Unity test run asynchronously and returns a job_id immediately.
 - **[`view_test_results`](./testing/view_test_results.md)** — Read one completed Unity test-result page (up to 100 failed/skipped details).
 
-## `ui` &nbsp; (7 tools)
+## `ui` &nbsp; (8 tools)
 UI Toolkit (UXML, USS, UIDocument, optional PanelRenderer) and Canvas-based uGUI editing and diagnostics
 - **[`capture_ui_snapshot`](./ui/capture_ui_snapshot.md)** — Capture a bounded complete semantic scene UI snapshot for ugui or uitoolkit.
+- **[`inspect_ugui_hit_order`](./ui/inspect_ugui_hit_order.md)** — Read ordered native uGUI hits for a scene RectTransform and current bottom-left screen pixel coordinates.
 - **[`manage_ugui`](./ui/manage_ugui.md)** — Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings.
 - **[`ui_capture`](./ui/ui_capture.md)** — Start, poll or cancel a bounded UI Toolkit render capture.
 - **[`ui_document`](./ui/ui_document.md)** — Attach UI documents and configure Panel Settings.

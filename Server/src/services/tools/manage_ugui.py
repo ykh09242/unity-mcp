@@ -764,6 +764,8 @@ async def _diagnose_raycast(
     max_depth,
     max_evaluations,
     max_characters,
+    *,
+    strict_read=False,
 ):
     """Preserve the full closed receipt, including an opted-in native query failure."""
     invalid = {"success": False, "message": "invalid_raycast_request", "data": None}
@@ -798,6 +800,9 @@ async def _diagnose_raycast(
         "screen_position": screen_position,
         "allow_custom_filters": allow_custom_filters,
     }
+    if strict_read:
+        # Earlier peers reject this unknown field before target resolution or RaycastAll.
+        params["strict_read"] = True
     for key, (value, default, low, high) in budgets.items():
         value = default if value is None else value
         if type(value) is not int or not low <= value <= high:
@@ -820,6 +825,10 @@ async def _diagnose_raycast(
         native = {key: value for key, value in result.items() if key not in {"error", "hint"}}
         decoded = validate_ugui_raycast_response(native)
         data = decoded["data"]
+        if strict_read and data is None:
+            return {"success": False, "message": "strict_raycast_unavailable"}
+        if strict_read and data["policy"].get("strict_read") is not True:
+            return {"success": False, "message": "strict_raycast_unavailable"}
         if data is not None:
             if any(data["budget"][key] != params[key] for key in budgets):
                 raise ValueError("budget echo")
@@ -975,6 +984,11 @@ async def manage_ugui(
             description="For diagnose_raycast only: explicitly permit native ICanvasRaycastFilter user code. Default false refuses before applicable custom callbacks; opt-in is not transactional or interruptible.",
         ),
     ] = False,
+    strict_read: Annotated[
+        bool,
+        Field(strict=True),
+        "For diagnose_raycast, require native read-only preflight and a matching policy receipt.",
+    ] = False,
 ) -> dict[str, JsonValue]:  # noqa: DICT_OK - existing MCP/Unity JSON response contract
     """Validate a request and dispatch it through the selected Unity transport.
 
@@ -985,6 +999,8 @@ async def manage_ugui(
     action-specific inputs rather than an opaque options object.
     """
     action_lower = action.strip().lower()
+    if strict_read and (action_lower != "diagnose_raycast" or allow_custom_filters):
+        return {"success": False, "message": "invalid_raycast_request", "data": None}
     if action_lower == "create_control":
         conflicts = [
             field
@@ -1070,6 +1086,7 @@ async def manage_ugui(
             max_depth,
             max_evaluations,
             max_characters,
+            strict_read=strict_read,
         )
     if screen_position is not None or allow_custom_filters is not False:
         return {"success": False, "message": "invalid_raycast_request", "data": None}

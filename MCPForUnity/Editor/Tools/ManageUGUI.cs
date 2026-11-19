@@ -152,7 +152,12 @@ namespace MCPForUnity.Editor.Tools
                 spent = 0;
             try
             {
-                CheckKeys(raw, Keys("action target screen_position allow_custom_filters max_nodes max_depth max_evaluations max_characters"));
+                CheckKeys(raw, Keys("action target screen_position allow_custom_filters strict_read max_nodes max_depth max_evaluations max_characters"));
+                if (
+                    raw["strict_read"] != null
+                    && (raw["strict_read"].Type != JTokenType.Boolean || (raw.Value<bool>("strict_read") && raw.Value<bool>("allow_custom_filters")))
+                )
+                    throw new ArgumentException();
                 var point = raw["screen_position"] as JArray;
                 if (point == null || point.Count != 2 || (raw["allow_custom_filters"] != null && raw["allow_custom_filters"].Type != JTokenType.Boolean))
                     throw new ArgumentException();

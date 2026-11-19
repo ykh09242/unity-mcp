@@ -24,6 +24,7 @@ namespace MCPForUnity.Editor.Tools
             "target",
             "screen_position",
             "allow_custom_filters",
+            "strict_read",
             "max_nodes",
             "max_depth",
             "max_evaluations",
@@ -62,6 +63,7 @@ namespace MCPForUnity.Editor.Tools
                 Graphics,
                 Slots;
             public bool Allow,
+                StrictRead,
                 Attempted,
                 Custom,
                 CustomKnown;
@@ -159,6 +161,8 @@ namespace MCPForUnity.Editor.Tools
                         "Opted-in user filters can mutate state, dispatch events, throw or never return; no rollback, atomic snapshot or hard deadline is promised."
                     ),
                 };
+                if (StrictRead)
+                    data["policy"]["strict_read"] = true;
                 return new JObject
                 {
                     ["success"] = status != "failed",
@@ -212,6 +216,8 @@ namespace MCPForUnity.Editor.Tools
                 var ui = AppDomain.CurrentDomain.GetAssemblies().SingleOrDefault(a => a.GetName().Name == "UnityEngine.UI");
                 if (ui == null)
                     throw new Unavailable("ugui_unavailable");
+                if (query.StrictRead && !ReviewedPackage(ui))
+                    throw new Unavailable("unsupported_read_policy");
                 Type eventType = NativeType(ui, "UnityEngine.EventSystems.EventSystem");
                 var systems = Field(eventType, null, "m_EventSystems", query) as IList;
                 if (systems == null || systems.GetType() != typeof(List<>).MakeGenericType(eventType))
@@ -318,6 +324,9 @@ namespace MCPForUnity.Editor.Tools
             var allow = request["allow_custom_filters"];
             if (allow != null && allow.Type != JTokenType.Boolean)
                 throw new ArgumentException();
+            var strict = request["strict_read"];
+            if (strict != null && (strict.Type != JTokenType.Boolean || (strict.Value<bool>() && allow?.Value<bool>() == true)))
+                throw new ArgumentException();
             var targetToken = request["target"];
             if (targetToken != null && targetToken.Type != JTokenType.Integer && targetToken.Type != JTokenType.String)
                 throw new ArgumentException();
@@ -335,6 +344,7 @@ namespace MCPForUnity.Editor.Tools
                 TargetId = target.GetInstanceIDCompat(),
                 Position = new Vector2(x, y),
                 Allow = allow != null && allow.Value<bool>(),
+                StrictRead = strict?.Value<bool>() == true,
                 MaxNodes = Integer(request, "max_nodes", 200, 1, 1000),
                 MaxDepth = Integer(request, "max_depth", 10, 0, 24),
                 MaxWork = Integer(request, "max_evaluations", 20000, 1, 200000),
@@ -357,6 +367,15 @@ namespace MCPForUnity.Editor.Tools
                 throw new Unavailable("registry_uninitialized");
             var dictionary = Field(registryType, registry, "m_RaycastableGraphics", query) as IDictionary;
             Type graphicType = NativeType(ui, "UnityEngine.UI.Graphic");
+            if (query.StrictRead)
+            {
+                // A previous throwing project filter can leave foreign graphics in native sort scratch.
+                var scratch = Field(raycaster, null, "s_SortedGraphics", query) as IList;
+                var empty = Field(registryType, null, "s_EmptyList", query) as IList;
+                var listType = typeof(List<>).MakeGenericType(graphicType);
+                if (scratch == null || scratch.GetType() != listType || scratch.Count != 0 || empty == null || empty.GetType() != listType || empty.Count != 0)
+                    throw new Unavailable("unsupported_read_policy");
+            }
             Type maskableGraphicType = NativeType(ui, "UnityEngine.UI.MaskableGraphic");
             Type setType = NativeType(ui, "UnityEngine.UI.Collections.IndexedSet").MakeGenericType(graphicType);
             if (dictionary == null || dictionary.GetType() != typeof(Dictionary<,>).MakeGenericType(typeof(Canvas), setType))
@@ -422,6 +441,18 @@ namespace MCPForUnity.Editor.Tools
                     // Match the native early rejection only after proving the getter is built-in.
                     if (!(bool)Property(graphicType, graphic, "raycastTarget", query))
                         continue;
+                    // Graphic.canvasRenderer can AddComponent on a missing renderer.
+                    // The fixed read accepts only existing native components.
+                    if (query.StrictRead)
+                    {
+                        query.Spend(2);
+                        if (
+                            (!knownGraphic && !ReviewedPackage(actual.Assembly))
+                            || !(graphic.transform is RectTransform)
+                            || graphic.GetComponent<CanvasRenderer>() == null
+                        )
+                            throw new Unavailable("unsupported_read_policy");
+                    }
                     int depth = 0;
                     for (Transform current = graphic.transform; current != null; current = current.parent, depth++)
                     {
@@ -449,6 +480,13 @@ namespace MCPForUnity.Editor.Tools
                                 if (!query.Allow)
                                     throw new Unavailable("custom_filters_not_allowed");
                             }
+                            // Image alpha sampling can log an error and dispatch project log handlers.
+                            if (
+                                query.StrictRead
+                                && component.GetType() == NativeType(ui, "UnityEngine.UI.Image")
+                                && !((float)Property(component.GetType(), component, "alphaHitTestMinimumThreshold", query) <= 0f)
+                            )
+                                throw new Unavailable("unsupported_read_policy");
                         }
                         if (stop)
                             break;
@@ -569,6 +607,21 @@ namespace MCPForUnity.Editor.Tools
                 current = current.parent;
             }
             return true;
+        }
+
+        private static bool ReviewedPackage(Assembly assembly)
+        {
+            var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(assembly);
+            return package != null
+                && package.name == "com.unity.ugui"
+                && package.version == "2.0.0"
+                && (
+                    package.source == UnityEditor.PackageManager.PackageSource.BuiltIn
+                    || (
+                        package.source == UnityEditor.PackageManager.PackageSource.Registry
+                        && package.registry?.url?.TrimEnd('/') == "https://packages.unity.com"
+                    )
+                );
         }
 
         private static Type NativeType(Assembly ui, string name)

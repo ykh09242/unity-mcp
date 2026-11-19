@@ -121,10 +121,10 @@ POINTER_ORDER_OBSERVATION: Final[Observation] = {
     "unavailable": [],
     "wire_paths": {"pointer_hit_order": "hits[].rank"},
     "required_parameters": ["target", "screen_position"],
-    "fixed_arguments": {"allow_custom_filters": False},
+    "fixed_arguments": {"allow_custom_filters": False, "strict_read": True},
     "conditions": (
         "Requires a scene RectTransform target, in-bounds bottom-left Game View pixel coordinates, "
-        "Unity 6000.0.69f1, supported uGUI components and one active native EventSystem. "
+        "Unity 6000.0.69f1, supported uGUI 2.0.0 components and one active native EventSystem. "
         "Only status=observed with policy.native_query_attempted=true establishes ordered hits. "
         "Inspect hits_total and hits_truncated. Unknown, failed or missing evidence establishes no "
         "hit order. This query does not dispatch input or prove event receipt."

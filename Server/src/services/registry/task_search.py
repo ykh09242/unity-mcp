@@ -17,6 +17,8 @@ from pydantic import (
 
 from services.registry.action_catalog import (
     ACTIVE_SCENE_OBSERVATION,
+    EDITOR_STATE_OBSERVATION,
+    POINTER_ORDER_OBSERVATION,
     ActionGuidance,
     ActionIntent,
     CatalogEntry as SearchEntry,
@@ -172,15 +174,15 @@ class EquivalentRead:
     focused_action: tuple[str, str] | None = None
 
     @property
-    def parent(self) -> tuple[str, str]:
-        return self.focused_action or FIXED_OBSERVATION_ACTIONS[self.tool]
+    def parent(self) -> tuple[str, str] | None:
+        return self.focused_action or FIXED_OBSERVATION_ACTIONS.get(self.tool)
 
     def bindings(self) -> tuple[RouteKey, ...]:
-        parent, action = self.parent
         tools: tuple[RouteKey, ...] = (
-            ("tool", self.tool, action if self.focused_action else ""),
-            ("tool", parent, action),
+            ("tool", self.tool, self.focused_action[1] if self.focused_action else ""),
         )
+        if self.parent:
+            tools += (("tool", *self.parent),)
         if self.resource is None:
             return tools
         return (
@@ -190,13 +192,19 @@ class EquivalentRead:
 
     def allowed(self, unavailable_parents: set[str]) -> bool:
         # Fixed tools/resources inherit the parent toggle. A focused tool has its own toggle.
-        return self.focused_action is not None or self.parent[0] not in unavailable_parents
+        return (
+            self.focused_action is not None
+            or self.parent is None
+            or self.parent[0] not in unavailable_parents
+        )
 
 
 # Each resource delegates to the dedicated tool, which binds the same native
 # action as its mixed tool. Name similarity and matching result fields are
 # insufficient to make a new equivalent route.
 _EQUIVALENT_READS: Final = (
+    EquivalentRead("inspect_editor_state", "mcpforunity://editor/state", EDITOR_STATE_OBSERVATION),
+    EquivalentRead("inspect_ugui_hit_order", None, POINTER_ORDER_OBSERVATION),
     EquivalentRead(
         "scene_inspect",
         None,
@@ -233,7 +241,7 @@ def _equivalent_binding(route: SearchRoute, read: EquivalentRead) -> SearchRoute
     if route.get("observation") != read.observation or route.get("intent") != "observe":
         return None
     path = read.path if route["kind"] == "tool" else read.template_path
-    required = [path] if path else []
+    required = [path] if path else list(read.observation.get("required_parameters", []))
     optional = list(read.pagination)
     if route["kind"] == "resource_template" and (
         route.get("required_parameters") != required or route.get("optional_parameters") != optional
@@ -347,7 +355,7 @@ def _tool_route(
         route["observation"] = observation
         route["arguments"] = {
             **({"action": action} if action else {}),
-            **observation.get("fixed_arguments", {}),
+            **(observation.get("fixed_arguments", {}) if action else {}),
         }
         route["required_parameters"] = list(
             observation.get("required_parameters", guidance.required)

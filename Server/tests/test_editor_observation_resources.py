@@ -40,7 +40,47 @@ FOCUSED = {
         editor_observations.inspect_shader_graph.__name__,
         {"path": GRAPH_PATH, "page_size": 3, "page_number": 2},
     ),
+    "manage_ugui": ("inspect_ugui_hit_order", {"target": 7, "screen_position": [100, 80]}),
 }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_fixed_state_and_pointer_are_routed_reads(command_hub, monkeypatch, mode):
+    from unittest.mock import AsyncMock
+    import importlib
+    from tests.test_ugui_raycast_diagnostics import sample
+    from tests.http.test_doctor import install_native_replies, observations
+    from services.operation_permissions import Permission, required_permissions
+
+    ugui = importlib.import_module("services.tools.manage_ugui")
+    await install_native_replies(command_hub, observations())
+    preflight = AsyncMock(return_value=None)
+    monkeypatch.setattr(ugui, "preflight", preflight)
+    native = AsyncMock(return_value=sample())
+    monkeypatch.setattr(ugui, "send_with_unity_instance", native)
+    async with Client(observation_server(monkeypatch), mode=mode, cache=False) as client:
+        for name in ("inspect_editor_state", "inspect_ugui_hit_order"):
+            assert required_permissions(name, {}) == {Permission.READ}
+        state = await client.call_tool("inspect_editor_state", TARGET)
+        assert (
+            state.structured_content["success"]
+            and command_hub.sent[-1]["name"] == "get_editor_state"
+        )
+        args = {**FOCUSED["manage_ugui"][1], **TARGET}
+        result = await client.call_tool("inspect_ugui_hit_order", args)
+        assert result.structured_content["message"] == "strict_raycast_unavailable"
+        reply = sample()
+        reply["data"]["policy"]["strict_read"] = True
+        native.return_value = reply
+        result = await client.call_tool("inspect_ugui_hit_order", args)
+        assert result.structured_content == reply
+        assert native.call_args.args[1:3] == ("Fixture@hash", "manage_ugui")
+        assert native.call_args.args[3]["strict_read"] is True
+        assert native.call_args.args[3]["allow_custom_filters"] is False
+        assert not preflight.call_args.kwargs.get("refresh_if_dirty", False)
+        with pytest.raises(ToolError):
+            await client.call_tool("inspect_ugui_hit_order", {**args, "allow_custom_filters": True})
 
 
 @pytest.mark.asyncio

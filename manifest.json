@@ -187,12 +187,20 @@
       "description": "Import a 3D model file that is already on disk (FBX, OBJ, glTF) into the project"
     },
     {
+      "name": "inspect_editor_state",
+      "description": "Read the selected Editor snapshot, its freshness, active scene and current compilation activity."
+    },
+    {
       "name": "inspect_serialized_object",
       "description": "Inspect one exact Component or ScriptableObject instance ID through SerializedObject. The initial Unity ID lookup MAY load a previously unloaded asset and invoke OnEnable or serialization callbacks before type/context admission. (group: scripting_ext)"
     },
     {
       "name": "inspect_shader_graph",
       "description": "Inspect nodes, edges and properties in a saved project-owned Shader Graph file. Unsaved graph-window edits are unavailable."
+    },
+    {
+      "name": "inspect_ugui_hit_order",
+      "description": "Read strict native uGUI hit order without input, custom filters or a layout refresh."
     },
     {
       "name": "manage_addressables",

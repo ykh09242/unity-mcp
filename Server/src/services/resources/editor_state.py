@@ -275,14 +275,10 @@ def _enrich_advice_and_staleness(
         else None
     )
     observed = state_v2.get("observed_at_unix_ms")
-    try:
-        observed_ms = int(observed)
-    except Exception:
-        observed_ms = editor_now_ms
-
+    observed_ms = observed if type(observed) is int else 0
     age_ms = max(0, editor_now_ms - observed_ms)
     # Conservative default: treat >2s as stale (covers common unfocused-editor throttling).
-    is_stale = age_ms > 2000 or (editor_clock is not None and observed_ms > editor_now_ms + 5000)
+    is_stale = observed_ms <= 0 or age_ms > 2000 or observed_ms > editor_now_ms + 5000
 
     compilation = state_v2.get("compilation") or {}
     tests = state_v2.get("tests") or {}
@@ -601,7 +597,9 @@ async def _read_editor_state(
 
     state_v2 = response["data"]
     state_v2.setdefault("schema_version", "unity-mcp/editor_state@2")
-    state_v2.setdefault("observed_at_unix_ms", _now_unix_ms())
+    # A missing native timestamp cannot make supplied scene/compile fields fresh.
+    if type(state_v2.get("observed_at_unix_ms")) is not int:
+        state_v2["observed_at_unix_ms"] = 0
     state_v2.setdefault("sequence", 0)
 
     # Ensure the returned snapshot is clearly associated with the targeted instance.

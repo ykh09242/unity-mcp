@@ -459,6 +459,8 @@ def required_permissions(
     if not native and name in FIXED_OBSERVATION_ACTIONS:
         name, fixed_action = FIXED_OBSERVATION_ACTIONS[name]
         params = {**params, "action": fixed_action}
+    if not native and name == "inspect_editor_state":
+        name = "get_editor_state"
     # The Python tool routes inspect/exists to a different native command.
     # Native execute handlers ignore a supplied action: do not trust that alias input.
     if native and name in {"execute_menu_item", "execute_menu_item_observed"}:

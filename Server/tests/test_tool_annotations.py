@@ -46,6 +46,8 @@ READ_ONLY = {
     # Fixed reads of the existing Game View and the saved graph file; neither refreshes the Editor.
     "get_game_view_size",
     "inspect_shader_graph",
+    "inspect_editor_state",
+    "inspect_ugui_hit_order",
     "get_sha",
     "get_test_job",
     "wait_for_operation",

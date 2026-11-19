@@ -18,6 +18,16 @@ Use the read-only MCP tool `search_unity_tools` for task search. It accepts the 
 search fields as `manage_tools(action="search")` and requires read access. Discovery
 leaves tool selection and Unity state unchanged.
 
+`inspect_editor_state` reads the same selected snapshot as
+`mcpforunity://editor/state`. Check freshness and the requested scene or
+compilation field. `inspect_ugui_hit_order(target, screen_position)` binds the
+strict read of `manage_ugui.diagnose_raycast` and requires its parent selection
+and read grant. The fixed tool has no callback or input switches. Its native
+guard requires the reviewed Unity 6000.0.69f1 uGUI 2.0.0 package, supported
+registered participants, existing graphic renderers and safe filters. Older
+packages reject the strict request. An unsupported query establishes no hit
+order. `hits_total=0` is an empty order only when the native query was observed.
+
 A host that knows the complete callable tool names for its current connection
 can pass them as `host_tool_names` to search. Use exact MCP names after any host
 filter, without connection prefixes. The list is limited to 512 names of 1..128

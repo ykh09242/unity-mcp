@@ -531,6 +531,20 @@ namespace MCPForUnityTests.EditMode.Tools.Input
         }
 
         [Test]
+        public void StrictReadRefusesAlphaSamplingBeforeNativeQuery()
+        {
+            var request = Request();
+            request["strict_read"] = true;
+            cover.GetComponent<Image>().alphaHitTestMinimumThreshold = 0.5f;
+            var data = Observe(request)["data"];
+            Assert.AreEqual("unknown", data.Value<string>("status"));
+            Assert.AreEqual("unsupported_read_policy", data.Value<string>("reason"));
+            Assert.IsTrue(data["policy"].Value<bool>("strict_read"));
+            Assert.IsFalse(data["policy"].Value<bool>("native_query_attempted"));
+            Assert.AreEqual(0, eventProbe.Calls);
+        }
+
+        [Test]
         public void DefaultRefusesBeforeEvenDisabledCustomFilterCallbacks()
         {
             var filter = cover.AddComponent<Ui09FilterProbe>();

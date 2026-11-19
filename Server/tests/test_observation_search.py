@@ -263,23 +263,37 @@ async def test_search_reports_wire_evidence_with_its_binding_and_prerequisites(m
 
         (pointer,) = await groups("pointer_hit_order")
         route = pointer["representative"]
-        assert (route["tool"], route["arguments"]) == (
-            "manage_ugui",
-            {"action": "diagnose_raycast", "allow_custom_filters": False},
-        )
+        assert (route["tool"], route["arguments"]) == ("inspect_ugui_hit_order", {})
+        assert pointer["alternatives"][0]["arguments"] == {
+            "action": "diagnose_raycast",
+            "allow_custom_filters": False,
+            "strict_read": True,
+        }
         assert route["required_parameters"] == ["target", "screen_position"]
         assert {"status=observed", "policy.native_query_attempted=true"} <= set(
             route["observation"]["conditions"].split()
         )
         assert route["observation"]["wire_paths"]["pointer_hit_order"] == "hits[].rank"
-        (scene,) = await groups("active_scene.name", route_surfaces="tools")
+        scene = next(
+            group
+            for group in await groups("active_scene.name", route_surfaces="tools")
+            if group["representative"]["tool"] == "scene_inspect"
+        )
         assert [r["tool"] for r in [scene["representative"], *scene["alternatives"]]] == [
             "scene_inspect",
             "manage_scene",
         ]
         assert scene["representative"]["observation"]["wire_paths"]["active_scene.name"] == "name"
         (state,) = await groups("compilation.is_compiling")
-        assert state["representative"]["uri"] == "mcpforunity://editor/state"
+        assert state["representative"]["tool"] == "inspect_editor_state"
+        assert state["alternatives"][0]["uri"] == "mcpforunity://editor/state"
+        (filtered,) = await groups(
+            "pointer_hit_order", route_surfaces="tools", host_tool_names=["inspect_ugui_hit_order"]
+        )
+        assert (
+            filtered["representative"]["tool"] == "inspect_ugui_hit_order"
+            and not filtered["alternatives"]
+        )
         assert "staleness.is_stale=false" in state["representative"]["observation"]["conditions"]
         assert await groups("compile_job.outcome", observation_source="editor_live") == []
         (job,) = await groups("compile_job.outcome", observation_source="compile_job")

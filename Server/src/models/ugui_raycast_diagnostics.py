@@ -34,6 +34,7 @@ Reason = Literal[
     "query_inventory_changed",
     "invalid_native_hit",
     "native_query_threw",
+    "unsupported_read_policy",
 ]
 LIMITATIONS: Final = (
     "Current native cached raycast state; no layout, render, input or selection update is requested.",
@@ -52,6 +53,7 @@ class Closed(BaseModel):
 
 
 class CallbackPolicy(Closed):
+    strict_read: StrictBool | None = None
     allow_custom_filters: StrictBool
     custom_filters_present: StrictBool | None
     native_query_attempted: StrictBool
@@ -69,6 +71,7 @@ class CallbackPolicy(Closed):
         )
         if (
             self.user_code_may_have_run != expected
+            or (self.strict_read is True and self.allow_custom_filters)
             or self.package_explicit_event_dispatch
             or self.package_explicit_source_edits
             or (self.native_query_attempted and self.custom_filters_present is None)

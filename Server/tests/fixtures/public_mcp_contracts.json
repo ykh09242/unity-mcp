@@ -7096,6 +7096,36 @@
             "type": "object"
           }
         },
+        "inspect_editor_state": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "inspect_serialized_object": {
           "annotations": {
             "destructiveHint": true,
@@ -7207,6 +7237,58 @@
             },
             "required": [
               "path"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "inspect_ugui_hit_order": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "screen_position": {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "target",
+              "screen_position"
             ],
             "type": "object"
           },
@@ -21787,6 +21869,10 @@
                   }
                 ],
                 "default": null
+              },
+              "strict_read": {
+                "default": false,
+                "type": "boolean"
               },
               "target": {
                 "anyOf": [
@@ -33919,6 +34005,36 @@
             "type": "object"
           }
         },
+        "inspect_editor_state": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "inspect_serialized_object": {
           "annotations": {
             "destructiveHint": true,
@@ -34030,6 +34146,58 @@
             },
             "required": [
               "path"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "inspect_ugui_hit_order": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "screen_position": {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "target",
+              "screen_position"
             ],
             "type": "object"
           },
@@ -48610,6 +48778,10 @@
                   }
                 ],
                 "default": null
+              },
+              "strict_read": {
+                "default": false,
+                "type": "boolean"
               },
               "target": {
                 "anyOf": [
