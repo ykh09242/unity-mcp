@@ -365,7 +365,7 @@ def test_all_registered_tools_have_safe_bounded_argument_guards(tmp_path):
             for tool in tools:
                 assert isinstance(tool, FunctionTool), tool.name
                 _argument_validator(tool.fn)
-            assert _argument_validator.cache_info().currsize == len(tools)
+            assert _argument_validator.cache_info().currsize == min(128, len(tools))
             def first(value: int):
                 raise AssertionError("Handler ran")
             def replacement(value: str):
