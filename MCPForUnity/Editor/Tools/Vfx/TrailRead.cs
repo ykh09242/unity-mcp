@@ -17,6 +17,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (tr == null)
                 return new { success = false, message = componentError };
 
+            var material = tr.sharedMaterial;
             return new
             {
                 success = true,
@@ -35,7 +36,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     numCornerVertices = tr.numCornerVertices,
                     numCapVertices = tr.numCapVertices,
                     generateLightingData = tr.generateLightingData,
-                    material = tr.sharedMaterial?.name,
+                    material = material != null ? material.name : null,
                     shadowCastingMode = tr.shadowCastingMode.ToString(),
                     receiveShadows = tr.receiveShadows,
                     lightProbeUsage = tr.lightProbeUsage.ToString(),

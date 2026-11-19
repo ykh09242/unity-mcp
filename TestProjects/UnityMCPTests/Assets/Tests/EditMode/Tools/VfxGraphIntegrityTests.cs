@@ -231,7 +231,11 @@ namespace MCPForUnityTests.EditMode.Tools
                 templatePath = ((JArray)listed["data"]?["templates"])
                     ?.OfType<JObject>()
                     .Select(entry => entry.Value<string>("path"))
-                    .FirstOrDefault(path => UnityEditor.AssetDatabase.LoadMainAssetAtPath(path)?.GetType().Name == "VisualEffectAsset");
+                    .FirstOrDefault(path =>
+                    {
+                        var asset = UnityEditor.AssetDatabase.LoadMainAssetAtPath(path);
+                        return asset != null && asset.GetType().Name == "VisualEffectAsset";
+                    });
             });
             if (templatePath == null)
                 Assert.Ignore("A loadable existing VFX Graph template is required; the fixture does not install optional packages or templates.");

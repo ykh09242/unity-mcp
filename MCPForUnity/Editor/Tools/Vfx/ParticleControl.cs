@@ -86,8 +86,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 go.transform.localScale = scale.Value;
             }
 
-            var ps = go.GetComponent<ParticleSystem>();
-            if (ps == null)
+            if (!go.TryGetComponent(out ParticleSystem ps))
             {
                 ps = recordUndo ? Undo.AddComponent<ParticleSystem>(go) : go.AddComponent<ParticleSystem>();
                 addedParticleSystem = true;
@@ -102,8 +101,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 Undo.RecordObject(ps, "Configure ParticleSystem");
             }
 
-            var renderer = go.GetComponent<ParticleSystemRenderer>();
-            if (renderer != null)
+            if (go.TryGetComponent(out ParticleSystemRenderer renderer))
             {
                 RendererHelpers.EnsureMaterial(renderer);
             }
@@ -132,6 +130,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 Undo.IncrementCurrentGroup();
             }
 
+            var assignedMaterial = renderer != null ? renderer.sharedMaterial : null;
             return new
             {
                 success = true,
@@ -141,7 +140,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 data = new { verification = VfxObservation.Particle(ps, "main") },
                 createdGameObject,
                 addedParticleSystem,
-                assignedMaterial = renderer?.sharedMaterial?.name,
+                assignedMaterial = assignedMaterial != null ? assignedMaterial.name : null,
             };
         }
 

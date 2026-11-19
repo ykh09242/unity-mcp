@@ -19,6 +19,7 @@ namespace MCPForUnityTests.Editor.Tools
         private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private Scene ownedScene;
         private GameObject root;
+        private static readonly Pose InitialPose = new Pose(new Vector3(-1, 2, 3), new Quaternion(0, 1, 0, 0));
         private ParticleSystem particles;
         private ParticleSystem child;
         private ParticleSystemRenderer renderer;
@@ -175,8 +176,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void CreateExistingInactiveIdRecordsTransformSystemAndMaterialForUndoRedo()
         {
             root.SetActive(false);
-            Vector3 position = root.transform.position;
-            Quaternion rotation = root.transform.rotation;
+            root.transform.SetPositionAndRotation(InitialPose.position, InitialPose.rotation);
             Vector3 scale = root.transform.localScale;
             int rootCount = ownedScene.rootCount;
             JObject response = Call(
@@ -199,8 +199,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(assigned);
 
             Undo.PerformUndo();
-            Assert.AreEqual(position, root.transform.position);
-            Assert.AreEqual(rotation, root.transform.rotation);
+            Assert.AreEqual(InitialPose.position, root.transform.position);
+            Assert.AreEqual(InitialPose.rotation, root.transform.rotation);
             Assert.AreEqual(scale, root.transform.localScale);
             Assert.IsTrue(particles.main.loop);
             Assert.IsFalse(particles.main.playOnAwake);
@@ -296,9 +296,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("{position:[9,8,7],playOnAwake:true,looping:'bad'}")]
         public void InvalidCreatePreservesExistingObjectComponentsAndTransforms(string json)
         {
+            root.transform.SetPositionAndRotation(InitialPose.position, InitialPose.rotation);
             sceneFixture.ClearDirtiness();
-            Vector3 position = root.transform.position;
-            Quaternion rotation = root.transform.rotation;
             Vector3 scale = root.transform.localScale;
             string before = Snapshot();
             int dirty = EditorUtility.GetDirtyCount(root);
@@ -308,8 +307,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.AreSame(particles, root.GetComponent<ParticleSystem>());
             Assert.AreSame(renderer, root.GetComponent<ParticleSystemRenderer>());
-            Assert.AreEqual(position, root.transform.position);
-            Assert.AreEqual(rotation, root.transform.rotation);
+            Assert.AreEqual(InitialPose.position, root.transform.position);
+            Assert.AreEqual(InitialPose.rotation, root.transform.rotation);
             Assert.AreEqual(scale, root.transform.localScale);
             Assert.AreEqual(before, Snapshot());
             Assert.IsNull(renderer.sharedMaterial);

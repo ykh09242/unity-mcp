@@ -95,6 +95,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             var emission = ps.emission;
             var shape = ps.shape;
             var renderer = ParticleCommon.FindParticleSystemRenderer(ps);
+            var material = renderer != null ? renderer.sharedMaterial : null;
+            var trailMaterial = renderer != null ? renderer.trailMaterial : null;
 
             return new
             {
@@ -134,8 +136,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                         {
                             renderMode = renderer.renderMode.ToString(),
                             sortMode = renderer.sortMode.ToString(),
-                            material = renderer.sharedMaterial?.name,
-                            trailMaterial = renderer.trailMaterial?.name,
+                            material = material != null ? material.name : null,
+                            trailMaterial = trailMaterial != null ? trailMaterial.name : null,
                             minParticleSize = renderer.minParticleSize,
                             maxParticleSize = renderer.maxParticleSize,
                             shadowCastingMode = renderer.shadowCastingMode.ToString(),

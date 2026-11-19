@@ -21,6 +21,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             var positions = new Vector3[lr.positionCount];
             lr.GetPositions(positions);
 
+            var material = lr.sharedMaterial;
             return new
             {
                 success = true,
@@ -45,7 +46,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     numCornerVertices = lr.numCornerVertices,
                     numCapVertices = lr.numCapVertices,
                     generateLightingData = lr.generateLightingData,
-                    material = lr.sharedMaterial?.name,
+                    material = material != null ? material.name : null,
                     shadowCastingMode = lr.shadowCastingMode.ToString(),
                     receiveShadows = lr.receiveShadows,
                     lightProbeUsage = lr.lightProbeUsage.ToString(),

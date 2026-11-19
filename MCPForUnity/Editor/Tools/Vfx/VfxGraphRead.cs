@@ -26,13 +26,14 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = "VisualEffect not found" };
             }
 
+            var asset = vfx.visualEffectAsset;
             return new
             {
                 success = true,
                 data = new
                 {
                     gameObject = vfx.gameObject.name,
-                    assetName = vfx.visualEffectAsset?.name ?? "None",
+                    assetName = (asset != null ? asset.name : null) ?? "None",
                     aliveParticleCount = vfx.aliveParticleCount,
                     culled = vfx.culled,
                     pause = vfx.pause,

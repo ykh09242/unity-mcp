@@ -21,7 +21,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return null;
 
             GameObject go = ManageVfxCommon.FindTargetGameObject(@params);
-            return go?.GetComponent<VisualEffect>();
+            return go != null && go.TryGetComponent(out VisualEffect effect) ? effect : null;
         }
 #endif
     }
