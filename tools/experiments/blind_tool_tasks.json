@@ -1,5 +1,6 @@
 {
   "raycast": {
+    "tr": "Bu proje için açık olan Unity Editörü'nde Oyun Görünümü'nün piksel cinsinden tam merkezini bulun. Canlı gözlemle belirlenebiliyorsa, o noktada işaretçiyi ilk hangi uGUI öğesinin alacağını söyleyin. Koordinatı ve gözlemin sınırlarını bildirin.",
     "en": "In the Unity Editor already open for this project, find the exact center of the current Game View in pixels. Determine which uGUI element would receive a pointer there first, if the available live evidence permits it. Report the coordinate and any limit on the result.",
     "ko": "이 프로젝트에 이미 열려 있는 Unity 에디터에서 현재 Game View의 정확한 중앙 픽셀 좌표를 찾아 주세요. 실시간 근거로 확인할 수 있다면 그 위치에서 포인터를 가장 먼저 받을 uGUI 요소도 조사해 주세요. 좌표와 결과의 한계를 알려 주세요.",
     "ja": "このプロジェクトですでに開いている Unity エディターで、現在の Game View の正確な中央座標をピクセル単位で調べてください。ライブの証拠で確認できる場合は、その位置でポインターを最初に受け取る uGUI 要素を特定し、座標と観察の限界を報告してください。",
@@ -7,6 +8,7 @@
     "ar": "في محرر Unity المفتوح حاليًا لهذا المشروع، حدد إحداثيات المركز الدقيقة لعرض اللعبة الحالي بالبكسل. إذا سمحت الأدلة المباشرة، حدد عنصر uGUI الذي سيتلقى المؤشر أولًا عند هذه النقطة. اذكر الإحداثيات وحدود ما أمكن ملاحظته."
   },
   "graph": {
+    "tr": "Bu proje için açık olan Unity Editörü'nde {graph_asset} grafiğini inceleyin. Toplam düğüm ve bağlantı sayılarını ve editörün yanıtında gördüğünüz iki düğüm türünü bildirin. Editörden yanıt alamazsanız bunu açıkça belirtin.",
     "en": "In the Unity Editor already open for this project, inspect the graph at {graph_asset}. Report the total nodes and connections and two node types you actually observed in the Editor's response. If the Editor cannot answer, state that clearly.",
     "ko": "이 프로젝트에 이미 열려 있는 Unity 에디터에서 {graph_asset} 그래프를 조사해 주세요. 전체 노드와 연결의 수, 에디터 응답에서 실제로 확인한 노드 유형 두 가지를 알려 주세요. 에디터 응답을 얻지 못했다면 그 점을 분명히 밝혀 주세요.",
     "ja": "このプロジェクトですでに開いている Unity エディターで {graph_asset} のグラフを調べてください。ノードと接続の総数、およびエディターの応答で実際に観察したノードの種類を二つ報告してください。エディターが応答できない場合は、その旨を明記してください。",
@@ -14,6 +16,7 @@
     "ar": "في محرر Unity المفتوح حاليًا لهذا المشروع، افحص الرسم الموجود في {graph_asset}. اذكر العدد الإجمالي للعقد والوصلات ونوعين من العقد لاحظتهما فعليًا في استجابة المحرر. إذا تعذر الحصول على استجابة المحرر، اذكر ذلك بوضوح."
   },
   "graph-open": {
+    "tr": "{graph_asset} için açık Shader Graph penceresindeki güncel içeriği, kaydedilmemiş değişiklikler dahil, doğrulayabiliyor musunuz? Düğüm ve bağlantı sayılarını ve iki düğüm türünü yalnızca pencerenin içeriğini doğrulayabiliyorsanız bildirin. Gözlemin sınırlarını açıklayın.",
     "en": "For {graph_asset}, can you establish the graph's current contents in the open Shader Graph window, including any unsaved edits? Report node and connection totals and two node types only if the current window contents can be verified. Explain any observation limit.",
     "ko": "{graph_asset}의 열린 Shader Graph 창에서 아직 저장하지 않은 편집까지 포함한 현재 내용을 확인해 주세요. 창의 내용을 확인할 수 있을 때만 노드와 연결의 총수, 노드 유형 두 가지를 알려 주세요. 관찰의 한계도 밝혀 주세요.",
     "ja": "{graph_asset} の開いている Shader Graph ウィンドウについて、未保存の編集も含む現在の内容を確認できますか。ウィンドウの内容を確認できた場合のみ、ノード数と接続数、ノードの種類を二つ報告し、観察の限界を明示してください。",
@@ -21,6 +24,7 @@
     "ar": "هل يمكنك التحقق من محتوى {graph_asset} الحالي في نافذة Shader Graph المفتوحة، بما في ذلك التعديلات غير المحفوظة؟ اذكر عدد العقد والوصلات ونوعين من العقد فقط إذا أمكن التحقق من محتوى النافذة الحالية. وضح حدود الملاحظة."
   },
   "graph-saved": {
+    "tr": "Projenin diske kaydedilmiş {graph_asset} Shader Graph dosyasını inceleyin. Dosyadaki toplam düğüm ve bağlantı sayılarını ve iki düğüm türünü bildirin. Editörün o anki durumundan bağımsız olarak diskteki dosyayı esas alın.",
     "en": "Inspect the saved Shader Graph file at {graph_asset} in this project. Report the total nodes and connections and two node types from the saved file. This request concerns the file on disk, regardless of the Editor's current state.",
     "ko": "이 프로젝트에서 저장된 Shader Graph 파일 {graph_asset}을 조사해 주세요. 파일에서 확인한 전체 노드와 연결의 수, 노드 유형 두 가지를 알려 주세요. 에디터의 현재 상태와 관계없이 디스크에 저장된 파일을 확인해 주세요.",
     "ja": "このプロジェクトの {graph_asset} に保存された Shader Graph ファイルを調べてください。保存されたファイルからノードと接続の総数、およびノードの種類を二つ報告してください。対象はエディターの現在の状態にかかわらずディスク上のファイルです。",
@@ -28,6 +32,7 @@
     "ar": "افحص ملف Shader Graph المحفوظ في {graph_asset} ضمن هذا المشروع. اذكر العدد الإجمالي للعقد والوصلات ونوعين من العقد من الملف المحفوظ. المطلوب هو الملف الموجود على القرص بصرف النظر عن حالة المحرر الحالية."
   },
   "game-view": {
+    "tr": "Bu proje için açık olan Unity Editörü'nde Oyun Görünümü'nün güncel çizim genişliğini ve yüksekliğini piksel cinsinden bildirin. Editör gösteriyorsa seçili boyut önayarını da belirtin.",
     "en": "In the Unity Editor already open for this project, report the Game View's current rendered width and height in pixels and the selected size preset if the Editor reports one.",
     "ko": "이 프로젝트에 이미 열려 있는 Unity 에디터에서 현재 Game View의 실제 렌더링 너비와 높이를 픽셀 단위로 알려 주세요. 에디터가 선택된 크기 프리셋도 반환한다면 함께 알려 주세요.",
     "ja": "このプロジェクトですでに開いている Unity エディターから、現在の Game View の描画幅と高さをピクセル単位で報告してください。エディターが選択中のサイズプリセットを返す場合は、併記してください。",
@@ -35,6 +40,7 @@
     "ar": "في محرر Unity المفتوح حاليًا لهذا المشروع، اذكر عرض وارتفاع التصيير الحاليين لعرض اللعبة بالبكسل، وإعداد الحجم المحدد مسبقًا إذا أبلغ عنه المحرر."
   },
   "editor": {
+    "tr": "Bu proje için açık olan Unity Editörü şu anda oynatma modunda mı, derleme yapıyor mu ve etkin sahne hangisi? Editörde doğrulayabildiğiniz durumu bildirin.",
     "en": "In the Unity Editor already open for this project, check whether it is currently playing or compiling and identify the active scene. Report what the live Editor can confirm.",
     "ko": "이 프로젝트에 이미 열려 있는 Unity 에디터에서 현재 재생 중인지, 컴파일 중인지, 활성 씬이 무엇인지 확인해 주세요. 실시간 에디터에서 확인한 내용을 알려 주세요.",
     "ja": "このプロジェクトですでに開いている Unity エディターで、現在の再生状態とコンパイル状態、およびアクティブなシーンを確認してください。ライブのエディターで確認できた内容を報告してください。",
@@ -42,6 +48,7 @@
     "ar": "في محرر Unity المفتوح حاليًا لهذا المشروع، تحقق مما إذا كان في وضع التشغيل أو يجري عملية ترجمة، وحدد المشهد النشط. اذكر ما أمكن تأكيده من المحرر المباشر."
   },
   "context": {
+    "tr": "Bu proje için açık olan Unity Editörü'nün bildirdiği proje kök dizinini, Unity sürümünü ve görüntü oluşturma işlem hattını belirleyin.",
     "en": "Identify the project root, Unity version, and render pipeline reported by the Unity Editor already open for this project.",
     "ko": "이 프로젝트에 이미 열려 있는 Unity 에디터가 보고하는 프로젝트 루트, Unity 버전, 렌더 파이프라인을 알려 주세요.",
     "ja": "このプロジェクトですでに開いている Unity エディターが報告するプロジェクトルート、Unity バージョン、レンダーパイプラインを確認してください。",
@@ -49,6 +56,7 @@
     "ar": "حدد جذر المشروع وإصدار Unity ومسار التصيير كما يبلغ عنها محرر Unity المفتوح حاليًا لهذا المشروع."
   },
   "limits": {
+    "tr": "Yalnızca gözlem yapın. Girdi göndermeyin. Oynatma durumunu, sahneleri, ayarları veya dosyaları değiştirmeyin. Derleme başlatmayın. Assets/Resources/GameData dizinine erişmeyin. Kimlik bilgilerini, oturum günlüklerini veya değerlendirme kaynaklarını incelemeyin. Bulguların kaynağını belirtin ve canlı gözlemleri kayıtlı dosyadan elde edilen bulgulardan ayırın.",
     "en": "Observe only. Do not send input, change playback, scenes, settings or files, run builds or compilation, access Assets/Resources/GameData, or inspect credentials, session logs, or benchmark sources. Identify the source of your findings and distinguish live observations from saved-file evidence.",
     "ko": "관찰만 해 주세요. 입력 전송, 재생 상태·씬·설정·파일 변경, 빌드나 컴파일, Assets/Resources/GameData 접근, 자격 증명·세션 로그·평가 소스 열람은 하지 마세요. 근거의 출처를 밝히고 실시간 관찰과 저장 파일에서 얻은 내용을 구분해 주세요.",
     "ja": "観察のみ行ってください。入力の送信、再生状態・シーン・設定・ファイルの変更、ビルドやコンパイル、Assets/Resources/GameData へのアクセス、認証情報・セッションログ・評価のソースの閲覧は行わないでください。根拠の出所を示し、ライブの観察と保存ファイルの証拠を区別してください。",

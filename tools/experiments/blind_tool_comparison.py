@@ -38,6 +38,10 @@ METRICS = (
     "repeats_after_complete_evidence",
     "raycast_before_size",
     "backend_identity",
+    "host_mode",
+    "competitor_digest",
+    "observed_server_commit",
+    "evidence_transport",
     "role_attribution",
     "graph_data_state",
     "unsaved_graph_observed",
@@ -101,6 +105,16 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
         if left is None or right is None:
             reasons.append("missing_arm")
         else:
+            host_modes = [c.get("host_mode", "isolated") for c in (left, right)]
+            if host_modes[0] != host_modes[1]:
+                reasons.append("different:host_mode")
+            if "configured" in host_modes:
+                if not all(c.get("observed_server_commit") for c in (left, right)):
+                    reasons.append("unverified:server_source")
+                if not all(c.get("competitor_digest") for c in (left, right)):
+                    reasons.append("unverified:competing_tools")
+                elif left["competitor_digest"] != right["competitor_digest"]:
+                    reasons.append("different:competing_tools")
             for name in CONDITIONS:
                 if (
                     name not in left

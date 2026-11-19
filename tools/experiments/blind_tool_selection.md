@@ -2,7 +2,7 @@
 
 This benchmark asks a model to perform an observation without naming the tool,
 action, resource URI, or expected result. Each task is available in English,
-Korean, Japanese, Spanish, and Arabic. The matrix runs each selected task and
+Korean, Japanese, Spanish, Arabic, and Turkish. The matrix runs each selected task and
 language in either the main role or a fresh native subagent role. Both roles
 receive identical observation requests. The parent delivers the request and
 collects the result for subagent cells.
@@ -18,6 +18,22 @@ credential to its outputs. It checks the selected Editor's reported project root
 before forwarding an observation. It leaves the Editor's scenes, playback,
 settings and files untouched. Place trial outputs in a private ignored directory
 outside the project.
+
+Use `--host-mode configured --installed --instance Name@hash` for the normal
+installed Unity service, alongside the user's configured file, code, and other
+tools. This uses an ephemeral read-only app-server thread in the game project.
+For configured baseline/candidate comparisons, provide trusted read-only
+relays. The runner disables only the installed Unity entry for the process and
+exposes the selected relay under the same trial name on both arms. The default
+`isolated` mode remains available for controlled comparisons.
+
+Before the model acts, the configured runner records the same thread's paged
+advertised inventory in private `host.json`. An installed doctor receipt must
+identify the requested Editor. A trusted archive relay can serve
+`mcpforunity://trial/source` with `kind: archived_server`, a verified tar commit
+in `source_commit`, and its `archive_sha256`. Configured pairs require observed
+server commits and matching competitor catalogs. The scored output distinguishes
+MCP wire responses, installed host responses, and exact saved-file reads.
 
 ```sh
 python tools/experiments/blind_tool_selection.py run \

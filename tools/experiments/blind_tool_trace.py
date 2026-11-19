@@ -63,6 +63,7 @@ DISCOVERY = {
     "mcpforunity://capabilities",
     "mcpforunity://capabilities/scoped",
     "mcpforunity://instances",
+    "mcpforunity://trial/source",
     "mcpforunity://scene/gameobject-api",
 }
 OTHER_READS = {
@@ -572,7 +573,9 @@ class ClientTrace:
     final_message: str = ""
 
 
-def client_trace(path: Path, asset: str, *, endpoint: bool) -> ClientTrace:
+def client_trace(
+    path: Path, asset: str, *, endpoint: bool, unity_server: str = "unityMCP"
+) -> ClientTrace:
     """Use host accounting for calls blocked before the relay and main-role shell activity."""
     trace = ClientTrace()
     if not path.exists():
@@ -587,7 +590,7 @@ def client_trace(path: Path, asset: str, *, endpoint: bool) -> ClientTrace:
                 case "thread.started", _:
                     trace.parent_actor = thread_digest(event.get("thread_id"))
                 case "item.started" | "item.completed", "mcp_tool_call" if (
-                    item.get("server") == "unityMCP"
+                    item.get("server") == unity_server
                 ):
                     route = event_route(item)
                     args = mapping(item.get("arguments"))
@@ -611,11 +614,32 @@ def client_trace(path: Path, asset: str, *, endpoint: bool) -> ClientTrace:
                         else:
                             call.status = string(item.get("status"))
                             result = mapping(item.get("result"))
-                            if result and call.status == "completed":
+                            receipt = mapping(item.get("observed_result"))
+                            if receipt and call.status == "completed":
+                                call.status = string(receipt.get("status"))
+                                call.evidence = mapping(receipt.get("facts"))
+                            elif result and call.status == "completed":
                                 call.status, data = unpack({"result": result})
                                 call.evidence = observation(route, data)
                                 if route == RAYCAST and data.get("status") == "failed":
                                     call.status = "error"
+                case "item.started" | "item.completed", "mcp_tool_call" | "other_tool":
+                    service = string(item.get("server")) or "host"
+                    tool = string(item.get("tool"))
+                    channel = (
+                        "discovery"
+                        if tool
+                        in {"list_mcp_resources", "list_mcp_resource_templates", "tool_search"}
+                        else "competitor"
+                    )
+                    call = trace.calls.setdefault(
+                        item_id, Call(f"{service}.{tool}", channel, len(trace.calls) + 1)
+                    )
+                    if event.get("type") == "item.completed":
+                        call.status = string(item.get("status")) or "completed"
+                        if APPROVAL.search(string(mapping(item.get("error")).get("message"))):
+                            call.status = "approval_blocked"
+                            trace.approval_blocks += 1
                 case "item.started" | "item.completed", "command_execution":
                     # Reserve the start position even when a later command completes first.
                     command = string(item.get("command"))
@@ -631,12 +655,17 @@ def client_trace(path: Path, asset: str, *, endpoint: bool) -> ClientTrace:
                     call.status = "returned" if item.get("exit_code") == 0 else "error"
                     output = string(item.get("aggregated_output"))
                     if item.get("exit_code") == 0:
-                        grade = saved_read_grade(command, output, asset) if exact_path else "none"
+                        recorded = mapping(item.get("saved_read"))
+                        grade = recorded.get("grade") or (
+                            saved_read_grade(command, output, asset) if exact_path else "none"
+                        )
                         trace.saved_reads += int(grade == "observed")
                         trace.saved_reads_to_review += int(grade == "review")
                         if grade == "observed":
                             call.route = SAVED_FILE
-                            trace.saved_observations.append(saved_graph_facts(output))
+                            trace.saved_observations.append(
+                                mapping(recorded.get("facts")) or saved_graph_facts(output)
+                            )
                     elif APPROVAL.search(output):
                         trace.approval_blocks += 1
                 case (
@@ -831,6 +860,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         case_dir / "events.jsonl",
         string(row["graph_asset"]),
         endpoint=row.get("backend") == "unity-mcp-loopback",
+        unity_server=string(row.get("unity_server")) or "unityMCP",
     )
     connections = [wire_trace(path) for path in sorted(case_dir.glob("mcp-*.jsonl"))]
     wire = [call for calls in connections for call in calls]
@@ -838,16 +868,24 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     relevant = [call for call in unity if call.route in routes]
     # Wire response order is established only within a connection.
     relevant = sorted(relevant, key=lambda c: (c.timeline, c.response_at))
+    wire_grade = evidence_grade(task, relevant)
+    host_business = [call for call in host.calls.values() if call.channel != "discovery"]
+    host_only = row.get("backend") == "installed-host" and row.get("host_mode") == "configured"
+    if host_only:
+        relevant = [
+            call for call in host_business if call.channel == "unity" and call.route in routes
+        ]
     grade = evidence_grade(task, relevant)
     role, attribution = role_status(string(row["role"]), host, connections)
     attributed = grade if role == "confirmed" or grade == "none" else "unattributed"
     task_evidence = attributed
     if task == "graph-saved" and host.saved_reads:
         task_evidence = "complete" if role == "confirmed" else "unattributed"
-    discovery_sources = [call for call in wire if call.channel == "discovery"]
+    discovery_sources = [
+        call for call in (host.calls.values() if host_only else wire) if call.channel == "discovery"
+    ]
     # Start order comes from the client when present, including pre-wire approvals. For
     # an isolated child, the single wire connection is the only source of call order.
-    host_business = [call for call in host.calls.values() if call.channel != "discovery"]
     business = merge_business_calls(
         host_business, [call for call in wire if call.channel != "discovery"]
     )
@@ -919,7 +957,8 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             else "none"
         ),
         "live_evidence": attributed,
-        "wire_evidence": grade,
+        "wire_evidence": wire_grade,
+        "evidence_transport": "configured-host" if host_only else "relay",
         "task_evidence": task_evidence,
         "live_observations": live_observations,
         "graph_data_state": "saved"

@@ -22,7 +22,7 @@ from tools.experiments.blind_tool_comparison import compare_directories, paired_
 from tools.experiments.blind_tool_trace import score_directory
 
 TASKS = ("raycast", "graph", "graph-saved", "graph-open", "game-view", "editor", "context")
-LANGUAGES = ("en", "ko", "ja", "es", "ar")
+LANGUAGES = ("en", "ko", "ja", "es", "ar", "tr")
 ROLES = ("main", "subagent")
 
 
@@ -51,8 +51,8 @@ def delivery_prompt(args: argparse.Namespace, task: str, language: str, role: st
     )
 
 
-def codex_command(args: argparse.Namespace, case_dir: Path) -> list[str]:
-    """Use the installed interactive login and an isolated MCP configuration."""
+def proxy_args(args: argparse.Namespace, case_dir: Path) -> list[str]:
+    """Keep the same scoped Unity transport for isolated and configured comparisons."""
     proxy = [
         "-X",
         "utf8",
@@ -75,10 +75,15 @@ def codex_command(args: argparse.Namespace, case_dir: Path) -> list[str]:
                 args.project.as_posix(),
             ]
         )
+    return proxy
+
+
+def codex_command(args: argparse.Namespace, case_dir: Path) -> list[str]:
+    """Use the installed interactive login and an isolated MCP configuration."""
     settings = {
         "model_reasoning_effort": args.effort,
         "mcp_servers.unityMCP.command": Path(sys.executable).as_posix(),
-        "mcp_servers.unityMCP.args": proxy,
+        "mcp_servers.unityMCP.args": proxy_args(args, case_dir),
         "mcp_servers.unityMCP.startup_timeout_sec": 60,
         "mcp_servers.unityMCP.tool_timeout_sec": 60,
     }
@@ -128,7 +133,12 @@ def run_case(
         "effort": args.effort,
         "approval_policy": args.approval,
         "delegation": args.delegation,
-        "backend": "trusted-stdio-relay" if args.relay else "unity-mcp-loopback",
+        "backend": "installed-host"
+        if args.installed
+        else "trusted-stdio-relay"
+        if args.relay
+        else "unity-mcp-loopback",
+        "host_mode": args.host_mode,
         "runner_status": "launch_failed",
         "project": str(args.project),
         "instance": args.instance,
@@ -137,9 +147,16 @@ def run_case(
         "prompt_digest": sha256(prompt.encode()).hexdigest(),
         **getattr(args, "case_metadata", {}),
     }
-    command = codex_command(args, case_dir)
     environment = {**os.environ, "PYTHONUTF8": "1"}
     try:
+        if args.host_mode == "configured":
+            import anyio
+            from tools.experiments.blind_tool_host import run_configured
+
+            anyio.run(run_configured, args, case_dir, prompt, metadata)
+            metadata.update(runner_status="finished", exit_code=0)
+            return
+        command = codex_command(args, case_dir)
         with (
             (case_dir / "events.jsonl").open("wb") as events,
             (case_dir / "stderr.txt").open("wb") as errors,
@@ -156,10 +173,11 @@ def run_case(
             )
             metadata["runner_status"] = "finished" if process.returncode == 0 else "cli_failed"
             metadata["exit_code"] = process.returncode
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, TimeoutError):
         metadata["runner_status"] = "timed_out"
-    except OSError:
+    except (OSError, ValueError, ExceptionGroup) as error:
         metadata["runner_status"] = "launch_failed"
+        metadata["failure_type"] = type(error).__name__
     finally:
         (case_dir / "case.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
@@ -177,6 +195,17 @@ def create_parser() -> argparse.ArgumentParser:
     launch.add_argument("--task", choices=TASKS, action="append", required=True)
     launch.add_argument("--language", choices=LANGUAGES, action="append", required=True)
     launch.add_argument("--role", choices=ROLES, action="append", required=True)
+    launch.add_argument(
+        "--host-mode",
+        choices=("isolated", "configured"),
+        default="isolated",
+        help="Use the normal Codex host and competing tools, or the isolated control",
+    )
+    launch.add_argument(
+        "--unity-server",
+        default="unityMCP",
+        help="Installed Unity MCP server name in configured mode",
+    )
     launch.add_argument("--graph-asset", default="")
     launch.add_argument("--repeat", type=int, default=1)
     launch.add_argument("--timeout", type=int, default=240, help="Seconds per trial")
@@ -203,6 +232,11 @@ def create_parser() -> argparse.ArgumentParser:
             f"--{prefix}relay", type=Path, help="Trusted read-only Python MCP relay"
         )
         backend.add_argument(f"--{prefix}endpoint", help="Running Unity MCP loopback endpoint")
+        backend.add_argument(
+            f"--{prefix}installed",
+            action="store_true",
+            help="Use the configured host's installed Unity server unchanged",
+        )
     compare = modes.add_parser("compare", help="Re-score two private matrix directories")
     compare.add_argument("baseline", type=Path)
     compare.add_argument("candidate", type=Path)
@@ -212,7 +246,10 @@ def create_parser() -> argparse.ArgumentParser:
 
 
 def validate_backend(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    if args.relay:
+    if args.installed:
+        if args.host_mode != "configured" or not args.instance or "@" not in args.instance:
+            parser.error("--installed requires --host-mode configured and the exact --instance")
+    elif args.relay:
         args.relay = args.relay.resolve()
         if not args.relay.is_file():
             parser.error("trusted relay script does not exist")
@@ -250,6 +287,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.mode in {"run", "matched"}:
         args.project, args.output = map(Path.resolve, (args.project, args.output))
+        if args.host_mode == "configured":
+            from tools.experiments.blind_tool_host import IDENTIFIER, RECORDED_SERVER
+
+            if (
+                not IDENTIFIER.fullmatch(args.unity_server)
+                or args.unity_server == RECORDED_SERVER
+                or "." in args.unity_server
+            ):
+                parser.error("invalid configured --unity-server name")
         if not args.codex or not args.project.is_dir():
             parser.error("run requires an installed Codex CLI and the Unity project directory")
         args.answer_format = args.answer_format or ("json" if args.mode == "matched" else "prose")
@@ -294,6 +340,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 selected.output = args.output / arm
                 selected.relay = getattr(args, arm + "_relay")
                 selected.endpoint = getattr(args, arm + "_endpoint")
+                selected.installed = getattr(args, arm + "_installed")
             validate_backend(parser, selected)
             arms[arm] = selected
         for selected in arms.values():
