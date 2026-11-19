@@ -311,10 +311,20 @@ def test_workflow_prepares_profile_sources_and_passes_them_to_the_compiler(
         compiler["env"]["COMPILE_INPUT_SYSTEM"]
         == "${{ startsWith(matrix.unity.version, '6000.0.') && '1' || '0' }}"
     )
+    sdk = next(step for step in steps if step.get("id") == "analyzer_sdk")
+    sdk_version = sdk["with"]["dotnet-version"]
+    assert (
+        compiler["env"]["ANALYZER_SDK_VERSION"]
+        == "${{ steps.analyzer_sdk.outputs.dotnet-version }}"
+    )
+    assert compiler["env"]["UNITY_ANALYZER_DLL"] == "${{ steps.unity_analyzers.outputs.dll }}"
     environment.update(
         {
             "INPUT_SYSTEM_SOURCE": "verified/input-package",
             "COMPILE_INPUT_SYSTEM": "1" if selected else "0",
+            "DOTNET_ROOT": "/verified/analysis host",
+            "ANALYZER_SDK_VERSION": sdk_version,
+            "UNITY_ANALYZER_DLL": "/repo/verified/Microsoft.Unity.Analyzers.dll",
             "UNITY_IMAGE": "verified/image",
             "EXTRA_REFS": "verified/refs",
             "TEST_FRAMEWORK_SOURCE": "verified/test-framework",
@@ -338,7 +348,7 @@ def test_workflow_prepares_profile_sources_and_passes_them_to_the_compiler(
         text=True,
         check=False,
     )
-    assert result.returncode == 7
+    assert result.returncode == 7, result.stderr
     arguments = capture.read_text(encoding="utf-8").splitlines()
     wrapper = wrapper_capture.read_text(encoding="utf-8").splitlines()
     assert wrapper[:6] == [
@@ -352,6 +362,9 @@ def test_workflow_prepares_profile_sources_and_passes_them_to_the_compiler(
     assert wrapper[wrapper.index("--") + 1 :] == ["docker", *arguments]
     assert f"COMPILE_INPUT_SYSTEM={1 if selected else 0}" in arguments
     assert "INPUT_SYSTEM_SOURCE=/repo/verified/input-package" in arguments
+    assert "/verified/analysis host:/analyzer-dotnet:ro" in arguments
+    assert arguments[arguments.index("UNITY_ANALYZER_DLL") - 1] == "-e"
+    assert f"UNITY_ANALYZER_SDK=/analyzer-dotnet/sdk/{sdk_version}" in arguments
     assert arguments[-1] == "/repo/tools/compile-check.sh"
 
 
