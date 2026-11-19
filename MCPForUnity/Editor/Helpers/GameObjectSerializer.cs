@@ -28,6 +28,7 @@ namespace MCPForUnity.Editor.Helpers
             if (go == null)
                 return null;
             var transform = go.transform;
+            var parent = transform.parent;
             var position = transform.position;
             var localPosition = transform.localPosition;
             var rotation = transform.rotation.eulerAngles;
@@ -44,7 +45,7 @@ namespace MCPForUnity.Editor.Helpers
                 layer = go.layer,
                 activeSelf = go.activeSelf,
                 activeInHierarchy = go.activeInHierarchy,
-                isStatic = go.isStatic,
+                isStatic = GameObjectUtility.GetStaticEditorFlags(go) != 0,
                 scenePath = go.scene.path, // Identify which scene it belongs to
                 transform = new // Serialize transform components carefully to avoid JSON issues
                 {
@@ -99,7 +100,7 @@ namespace MCPForUnity.Editor.Helpers
                         z = right.z,
                     },
                 },
-                parentInstanceID = transform.parent?.gameObject.GetInstanceIDCompat() ?? 0, // 0 if no parent
+                parentInstanceID = parent != null ? parent.gameObject.GetInstanceIDCompat() : 0,
                 // Optionally include components, but can be large
                 // components = go.GetComponents<Component>().Select(c => GetComponentData(c)).ToList()
                 // Or just component names:
@@ -324,6 +325,8 @@ namespace MCPForUnity.Editor.Helpers
             if (componentType == typeof(Transform))
             {
                 Transform tr = c as Transform;
+                Transform parent = tr.parent;
+                Transform root = tr.root;
                 // McpLog.Info($"[GetComponentData] Manually serializing Transform (ID: {tr.GetInstanceIDCompat()})");
                 return new Dictionary<string, object>
                 {
@@ -338,13 +341,13 @@ namespace MCPForUnity.Editor.Helpers
                     { "right", CreateTokenFromValue(tr.right, typeof(Vector3))?.ToObject<object>() ?? new JObject() },
                     { "up", CreateTokenFromValue(tr.up, typeof(Vector3))?.ToObject<object>() ?? new JObject() },
                     { "forward", CreateTokenFromValue(tr.forward, typeof(Vector3))?.ToObject<object>() ?? new JObject() },
-                    { "parentInstanceID", tr.parent?.gameObject.GetInstanceIDCompat() ?? 0 },
-                    { "rootInstanceID", tr.root?.gameObject.GetInstanceIDCompat() ?? 0 },
+                    { "parentInstanceID", parent != null ? parent.gameObject.GetInstanceIDCompat() : 0 },
+                    { "rootInstanceID", root != null ? root.gameObject.GetInstanceIDCompat() : 0 },
                     { "childCount", tr.childCount },
                     // Include standard Object/Component properties
                     { "name", tr.name },
                     { "tag", tr.tag },
-                    { "gameObjectInstanceID", tr.gameObject?.GetInstanceIDCompat() ?? 0 },
+                    { "gameObjectInstanceID", tr.gameObject.GetInstanceIDCompat() },
                 };
             }
             // --- End Special handling for Transform ---

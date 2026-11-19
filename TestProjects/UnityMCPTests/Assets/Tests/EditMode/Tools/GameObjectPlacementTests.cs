@@ -34,8 +34,7 @@ namespace MCPForUnityTests.Editor.Tools
             parent.transform.SetPositionAndRotation(new Vector3(10, 20, 30), Quaternion.Euler(25, 60, 15));
             parent.transform.localScale = new Vector3(2, 3, 4);
             target = Make("Target");
-            target.transform.localPosition = new Vector3(2, 3, 4);
-            target.transform.localRotation = Quaternion.Euler(10, 20, 30);
+            target.transform.SetPositionAndRotation(new Vector3(2, 3, 4), Quaternion.Euler(10, 20, 30));
         }
 
         private GameObject Make(string name)

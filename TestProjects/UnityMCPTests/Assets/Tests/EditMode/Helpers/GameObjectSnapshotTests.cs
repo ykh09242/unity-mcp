@@ -21,13 +21,11 @@ namespace MCPForUnityTests.EditMode.Helpers
             var target = new GameObject("Snapshot Target");
             try
             {
-                parent.transform.position = new Vector3(10, 20, 30);
-                parent.transform.rotation = Quaternion.Euler(15, 25, 35);
+                parent.transform.SetPositionAndRotation(new Vector3(10, 20, 30), Quaternion.Euler(15, 25, 35));
                 parent.transform.localScale = new Vector3(2, 3, 4);
                 var transform = target.transform;
+                transform.SetPositionAndRotation(new Vector3(1, 2, 3), Quaternion.Euler(40, 50, 60));
                 transform.SetParent(parent.transform, false);
-                transform.localPosition = new Vector3(1, 2, 3);
-                transform.localRotation = Quaternion.Euler(40, 50, 60);
                 transform.localScale = new Vector3(5, 6, 7);
                 target.AddComponent<BoxCollider>();
                 var snapshot = JObject.FromObject(GameObjectSerializer.GetGameObjectData(target));
@@ -39,7 +37,7 @@ namespace MCPForUnityTests.EditMode.Helpers
                 Assert.AreEqual(target.layer, snapshot.Value<int>("layer"));
                 Assert.AreEqual(target.activeSelf, snapshot.Value<bool>("activeSelf"));
                 Assert.AreEqual(target.activeInHierarchy, snapshot.Value<bool>("activeInHierarchy"));
-                Assert.AreEqual(target.isStatic, snapshot.Value<bool>("isStatic"));
+                Assert.AreEqual(UnityEditor.GameObjectUtility.GetStaticEditorFlags(target) != 0, snapshot.Value<bool>("isStatic"));
                 CollectionAssert.AreEquivalent(new[] { typeof(Transform).FullName, typeof(BoxCollider).FullName }, snapshot["componentNames"].Values<string>());
                 var vectors = snapshot["transform"];
                 AssertVector(vectors["position"], transform.position);

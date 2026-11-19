@@ -1955,7 +1955,8 @@ namespace MCPForUnity.Editor.Tools
                     if (gameViewType != null)
                     {
                         var window = EditorWindow.GetWindow(gameViewType);
-                        window?.Repaint();
+                        if (window != null)
+                            window.Repaint();
                     }
                 }
                 catch (Exception e)
@@ -2317,14 +2318,12 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (!int.TryParse(target, out int exactId))
                     return null;
-                var exactObject = GameObjectLookup.ResolveInstanceID(exactId);
-                var exact = exactObject as GameObject ?? (exactObject as Component)?.gameObject;
+                var exact = ResolveMoveSourceById(exactId);
                 return exact != null && exact.scene.IsValid() && exact.scene.isLoaded ? exact : null;
             }
             if (int.TryParse(target, out int id))
             {
-                var obj = GameObjectLookup.ResolveInstanceID(id);
-                var byId = obj as GameObject ?? (obj as Component)?.gameObject;
+                var byId = ResolveMoveSourceById(id);
                 if (byId != null)
                     return byId.scene.IsValid() && byId.scene.isLoaded ? byId : null;
             }
@@ -2357,6 +2356,16 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
             return match;
+        }
+
+        private static GameObject ResolveMoveSourceById(int id)
+        {
+            var obj = GameObjectLookup.ResolveInstanceID(id);
+            if (obj is GameObject gameObject && gameObject != null)
+                return gameObject;
+            if (obj is Component component && component != null)
+                return component.gameObject;
+            return null;
         }
 
         // ModifyBuildSettings removed — use manage_build(action="scenes") instead.
@@ -2710,7 +2719,7 @@ namespace MCPForUnity.Editor.Tools
                 { "activeInHierarchy", go.activeInHierarchy },
                 { "tag", go.tag },
                 { "layer", go.layer },
-                { "isStatic", go.isStatic },
+                { "isStatic", GameObjectUtility.GetStaticEditorFlags(go) != 0 },
                 { "path", GetGameObjectPath(go) },
                 { "childCount", childCount },
                 { "childrenTruncated", childrenTruncated },

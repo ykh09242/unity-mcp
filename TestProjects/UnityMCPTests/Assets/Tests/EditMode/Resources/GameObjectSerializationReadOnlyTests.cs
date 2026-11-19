@@ -114,7 +114,7 @@ namespace MCPForUnityTests.Editor.Resources
             Mesh mesh = null;
             try
             {
-                Shader shader = Shader.Find("Standard") ?? Shader.Find("Universal Render Pipeline/Lit");
+                Shader shader = TestUtilities.FindFirstShader("Standard", "Universal Render Pipeline/Lit");
                 Assert.IsNotNull(shader);
                 first = new Material(shader) { name = "ExistingRuntimeMaterial" };
                 second = new Material(shader) { name = "SecondRuntimeMaterial" };
@@ -143,8 +143,7 @@ namespace MCPForUnityTests.Editor.Resources
             finally
             {
                 // Also clean up any unexpected copies if the regression fails on an older implementation.
-                var renderer = go.GetComponent<MeshRenderer>();
-                if (renderer != null)
+                if (go.TryGetComponent(out MeshRenderer renderer))
                     foreach (Material material in renderer.sharedMaterials)
                         if (material != null && material != first && material != second)
                             Object.DestroyImmediate(material);

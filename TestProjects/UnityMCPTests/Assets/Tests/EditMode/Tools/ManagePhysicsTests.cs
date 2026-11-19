@@ -1010,7 +1010,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void Validate_DetectsColliderWithoutRigidbody()
         {
             var go = new GameObject("PhysTest_NoRigidbody");
-            go.isStatic = false;
+            GameObjectUtility.SetStaticEditorFlags(go, 0);
             go.AddComponent<BoxCollider>();
 
             var result = ToJObject(ManagePhysics.HandleCommand(new JObject { ["action"] = "validate", ["target"] = "PhysTest_NoRigidbody" }));

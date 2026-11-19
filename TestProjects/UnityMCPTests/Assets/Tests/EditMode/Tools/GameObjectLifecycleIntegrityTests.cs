@@ -465,7 +465,7 @@ namespace MCPForUnityTests.Editor.Tools
                 request["isStatic"] = isStatic.Value;
             var response = Call(request);
             Succeeded(response);
-            Assert.AreEqual(isStatic ?? true, ResponseObject(response).isStatic);
+            Assert.AreEqual(isStatic ?? true, GameObjectUtility.GetStaticEditorFlags(ResponseObject(response)) != 0);
             if (!isStatic.HasValue)
                 Assert.AreEqual(StaticEditorFlags.BatchingStatic, GameObjectUtility.GetStaticEditorFlags(ResponseObject(response)));
         }
@@ -482,11 +482,15 @@ namespace MCPForUnityTests.Editor.Tools
             request["isStatic"] = isStatic;
             var response = Call(request);
             Succeeded(response);
-            Assert.AreEqual(isStatic, ResponseObject(response).isStatic);
+            Assert.AreEqual(isStatic, GameObjectUtility.GetStaticEditorFlags(ResponseObject(response)) != 0);
             var contents = PrefabUtility.LoadPrefabContents(path);
             try
             {
-                Assert.AreEqual(isStatic, contents.isStatic, "The published asset must contain the requested flag before it is reloaded.");
+                Assert.AreEqual(
+                    isStatic,
+                    GameObjectUtility.GetStaticEditorFlags(contents) != 0,
+                    "The published asset must contain the requested flag before it is reloaded."
+                );
             }
             finally
             {

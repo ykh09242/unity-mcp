@@ -260,7 +260,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool IsCanvasScaler(Behaviour behaviour)
         {
-            for (Type type = behaviour?.GetType(); type != null; type = type.BaseType)
+            for (Type type = behaviour != null ? behaviour.GetType() : null; type != null; type = type.BaseType)
                 if (type.FullName == "UnityEngine.UI.CanvasScaler")
                     return true;
             return false;

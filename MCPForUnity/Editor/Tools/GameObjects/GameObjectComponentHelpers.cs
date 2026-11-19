@@ -390,7 +390,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             {
                 bool resolved = ComponentResolver.TryResolve(entry.Name, out Type type, out _);
                 Component existing = resolved ? target.GetComponent(type) : target.GetComponent(entry.Name);
-                type ??= existing?.GetType();
+                if (type == null && existing != null)
+                    type = existing.GetType();
                 Type planned = type == null ? null : plannedTypes.FirstOrDefault(type.IsAssignableFrom);
                 if (planned == null)
                 {
@@ -727,6 +728,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             error = null;
             try
             {
+                var component = target as Component;
                 if (
                     !TryPrepareNestedProperty(
                         target.GetType(),
@@ -735,7 +737,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                         out object preparedValue,
                         out bool prepared,
                         out error,
-                        (target as Component)?.transform.GetType(),
+                        component != null ? component.transform.GetType() : null,
                         target
                     )
                 )

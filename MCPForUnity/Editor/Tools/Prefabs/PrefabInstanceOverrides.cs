@@ -359,7 +359,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     + ":"
                     + entry.Instance.GetInstanceIDCompat()
                     + ":"
-                    + (entry.PropertyPath ?? entry.Asset?.GetInstanceIDCompat().ToString() ?? "added");
+                    + (entry.PropertyPath ?? (entry.Asset != null ? entry.Asset.GetInstanceIDCompat().ToString() : "added"));
                 entries.Add(entry);
             }
             foreach (var item in PrefabUtility.GetObjectOverrides(root, false))
@@ -455,7 +455,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 ["instanceId"] = obj.GetInstanceIDCompat(),
                 ["name"] = obj.name,
                 ["type"] = obj.GetType().FullName,
-                ["gameObjectInstanceId"] = go?.GetInstanceIDCompat(),
+                ["gameObjectInstanceId"] = go != null ? go.GetInstanceIDCompat() : (int?)null,
                 ["path"] = go == null ? null : GameObjectLookup.GetGameObjectPath(go),
                 ["assetPath"] = AssetDatabase.GetAssetPath(obj),
             };
@@ -524,7 +524,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 // Component operations may implicitly affect coupled/required components or open dialogs.
                 // Reject those before invoking Unity, including dependencies on the asset being restored.
                 GameObject owner = entry.Owner;
-                Component selected = entry.Instance as Component ?? entry.Asset as Component;
+                Component selected = entry.Instance as Component;
+                if (selected == null)
+                    selected = entry.Asset as Component;
                 if (selected != null)
                 {
                     if (selected is ParticleSystem || selected is ParticleSystemRenderer)

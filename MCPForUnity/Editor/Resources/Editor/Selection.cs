@@ -64,22 +64,30 @@ namespace MCPForUnity.Editor.Resources.Editor
                         return ReadPage(@params);
                 }
                 var activeObject = UnityEditor.Selection.activeObject;
+                var activeGameObject = UnityEditor.Selection.activeGameObject;
+                var activeTransform = UnityEditor.Selection.activeTransform;
                 var selectionInfo = new
                 {
-                    activeObject = activeObject?.name,
-                    activeGameObject = UnityEditor.Selection.activeGameObject?.name,
-                    activeTransform = UnityEditor.Selection.activeTransform?.name,
-                    activeInstanceID = activeObject?.GetInstanceIDCompat() ?? 0,
+                    activeObject = activeObject != null ? activeObject.name : null,
+                    activeGameObject = activeGameObject != null ? activeGameObject.name : null,
+                    activeTransform = activeTransform != null ? activeTransform.name : null,
+                    activeInstanceID = activeObject.GetInstanceIDCompat(),
                     count = UnityEditor.Selection.count,
                     objects = UnityEditor
                         .Selection.objects.Select(obj => new
                         {
-                            name = obj?.name,
-                            type = obj?.GetType().FullName,
-                            instanceID = obj?.GetInstanceIDCompat(),
+                            name = obj != null ? obj.name : null,
+                            type = obj != null ? obj.GetType().FullName : null,
+                            instanceID = obj != null ? obj.GetInstanceIDCompat() : (int?)null,
                         })
                         .ToList(),
-                    gameObjects = UnityEditor.Selection.gameObjects.Select(go => new { name = go?.name, instanceID = go?.GetInstanceIDCompat() }).ToList(),
+                    gameObjects = UnityEditor
+                        .Selection.gameObjects.Select(go => new
+                        {
+                            name = go != null ? go.name : null,
+                            instanceID = go != null ? go.GetInstanceIDCompat() : (int?)null,
+                        })
+                        .ToList(),
                     assetGUIDs = UnityEditor.Selection.assetGUIDs,
                 };
 

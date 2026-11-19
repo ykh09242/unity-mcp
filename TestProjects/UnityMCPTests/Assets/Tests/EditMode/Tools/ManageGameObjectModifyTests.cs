@@ -21,8 +21,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // Create a standard test object for each test
             var go = new GameObject("ModifyTestObject");
-            go.transform.position = Vector3.zero;
-            go.transform.rotation = Quaternion.identity;
+            go.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
             go.transform.localScale = Vector3.one;
             testObjects.Add(go);
         }

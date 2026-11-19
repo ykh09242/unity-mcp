@@ -199,8 +199,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             if (dimension == "2d")
             {
-                var rb2d = go.GetComponent<Rigidbody2D>();
-                if (rb2d != null)
+                if (go.TryGetComponent(out Rigidbody2D rb2d))
                 {
                     results.Add(
                         new
@@ -220,8 +219,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             }
             else
             {
-                var rb = go.GetComponent<Rigidbody>();
-                if (rb != null)
+                if (go.TryGetComponent(out Rigidbody rb))
                 {
                     results.Add(
                         new

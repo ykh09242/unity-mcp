@@ -439,7 +439,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = CreateTestObject("ComplexObject");
             go.tag = "Player";
             go.layer = 8;
-            go.isStatic = true;
+            UnityEditor.GameObjectUtility.SetStaticEditorFlags(go, (UnityEditor.StaticEditorFlags)(-1));
 
             // Add components - AudioSource is OK here since we're only reading component types, not serializing properties
             go.AddComponent<Rigidbody>();

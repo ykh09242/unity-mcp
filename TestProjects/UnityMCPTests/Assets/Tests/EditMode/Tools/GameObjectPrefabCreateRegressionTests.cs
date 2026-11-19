@@ -284,12 +284,14 @@ namespace MCPForUnityTests.Editor.Tools
                 ["look_at_target"] = new JArray(4, 5, 6),
             };
             Call(request);
-            Vector3 expectedPosition = child.localPosition;
-            Quaternion expectedRotation = child.localRotation;
-            if (action == "move_relative")
-                Assert.AreNotEqual(Vector3.zero, expectedPosition);
-            else
-                Assert.Greater(Quaternion.Angle(Quaternion.identity, expectedRotation), 1f);
+            var expectedPosition = action == "move_relative" ? new Vector3(5, 7, 9) : Vector3.zero;
+            var expectedRotation = action == "look_at" ? Quaternion.LookRotation(new Vector3(4, 5, 6)) : Quaternion.identity;
+            void AssertOverride(Transform actual)
+            {
+                Assert.Less(Vector3.Distance(expectedPosition, actual.localPosition), 0.001f);
+                Assert.Less(Quaternion.Angle(expectedRotation, actual.localRotation), 0.01f);
+            }
+            AssertOverride(child);
 
             string path = assetRoot + "/OverrideScene.unity";
             Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, path));
@@ -297,8 +299,7 @@ namespace MCPForUnityTests.Editor.Tools
             ownedScene = EditorSceneManager.OpenScene(path, OpenSceneMode.Additive);
             var reopened = ownedScene.GetRootGameObjects().Single(go => PrefabUtility.GetCorrespondingObjectFromSource(go) == asset).transform.Find("Child");
             Assert.IsTrue(PrefabUtility.IsPartOfPrefabInstance(reopened));
-            Assert.Less(Vector3.Distance(expectedPosition, reopened.localPosition), 0.001f);
-            Assert.Less(Quaternion.Angle(expectedRotation, reopened.localRotation), 0.01f);
+            AssertOverride(reopened);
         }
 
         private GameObject CreatePrefab(bool active)

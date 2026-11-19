@@ -73,7 +73,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 throw new ArgumentException("Parent would create a hierarchy loop.");
 
             bool parentSpecified = parentToken != null || detach;
-            Transform destination = parentSpecified ? parent?.transform : target?.transform.parent;
+            Transform destination =
+                parentSpecified ? (parent != null ? parent.transform : null)
+                : target != null ? target.transform.parent
+                : null;
             int? sibling = null;
             JToken siblingToken = parameters["sibling_index"];
             if (siblingToken != null && siblingToken.Type != JTokenType.Null)
@@ -97,10 +100,14 @@ namespace MCPForUnity.Editor.Tools.GameObjects
         internal bool Apply(Transform transform, Vector3? position, Vector3? rotation, Vector3? scale)
         {
             bool changed = false;
-            if (ParentSpecified && transform.parent != Parent?.transform)
+            if (ParentSpecified)
             {
-                Undo.SetTransformParent(transform, Parent?.transform, worldPositionStays, "Reparent GameObject");
-                changed = true;
+                Transform parent = Parent != null ? Parent.transform : null;
+                if (transform.parent != parent)
+                {
+                    Undo.SetTransformParent(transform, parent, worldPositionStays, "Reparent GameObject");
+                    changed = true;
+                }
             }
             if (siblingIndex.HasValue && transform.GetSiblingIndex() != siblingIndex.Value)
             {

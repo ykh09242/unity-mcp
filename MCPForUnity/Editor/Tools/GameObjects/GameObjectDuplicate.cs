@@ -50,7 +50,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     return new ErrorResponse($"Parent GameObject '{parentToken}' not found.");
             }
 
-            Transform duplicateParent = parentToken == null ? sourceGo.transform.parent : newParent?.transform;
+            Transform duplicateParent =
+                parentToken == null ? sourceGo.transform.parent
+                : newParent != null ? newParent.transform
+                : null;
             string originalName = sourceGo.name;
             int originalId = sourceGo.GetInstanceIDCompat();
             bool placementRequested = position.HasValue || offset.HasValue;

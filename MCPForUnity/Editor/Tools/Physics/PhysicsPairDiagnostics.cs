@@ -222,7 +222,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 ["is_trigger"] = trigger,
                 ["layer"] = go.layer,
                 ["layer_name"] = LayerMask.LayerToName(go.layer),
-                ["editor_static_flag"] = go.isStatic,
+                ["editor_static_flag"] = GameObjectUtility.GetStaticEditorFlags(go) != 0,
                 ["layer_overrides"] = LayerOverrides(collider),
                 ["scene"] = new JObject
                 {

@@ -411,10 +411,12 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             Selection.activeGameObject = finalInstance;
 
-            string messagePrefabPath =
-                finalInstance == null
-                    ? originalPrefabPath
-                    : AssetDatabase.GetAssetPath(PrefabUtility.GetCorrespondingObjectFromSource(finalInstance) ?? (UnityEngine.Object)finalInstance);
+            string messagePrefabPath = originalPrefabPath;
+            if (finalInstance != null)
+            {
+                GameObject prefabSource = PrefabUtility.GetCorrespondingObjectFromSource(finalInstance);
+                messagePrefabPath = AssetDatabase.GetAssetPath(prefabSource != null ? prefabSource : finalInstance);
+            }
 
             string successMessage;
             if (!createdNewObject && !string.IsNullOrEmpty(messagePrefabPath))

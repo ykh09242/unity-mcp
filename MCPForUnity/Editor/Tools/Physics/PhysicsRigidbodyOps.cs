@@ -229,8 +229,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
         private static object ConfigureRigidbody3D(GameObject go, JObject properties)
         {
-            var rb = go.GetComponent<Rigidbody>();
-            if (rb == null)
+            if (!go.TryGetComponent(out Rigidbody rb))
                 return new ErrorResponse($"No Rigidbody found on '{go.name}'.");
 
             // Validate all keys before applying any changes
@@ -372,8 +371,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
         private static object ConfigureRigidbody2D(GameObject go, JObject properties)
         {
-            var rb2d = go.GetComponent<Rigidbody2D>();
-            if (rb2d == null)
+            if (!go.TryGetComponent(out Rigidbody2D rb2d))
                 return new ErrorResponse($"No Rigidbody2D found on '{go.name}'.");
 
             // Validate all keys before applying any changes

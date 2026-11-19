@@ -288,6 +288,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 Selection.activeGameObject = sourceObject;
                 // Unity may give the saved asset root a different name from the scene instance.
                 GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(finalPath);
+                string prefabAssetName = prefabAsset != null ? prefabAsset.name : null;
 
                 var response = new SuccessResponse(
                     $"Prefab created at '{finalPath}' and instance linked.",
@@ -296,8 +297,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         prefabPath = finalPath,
                         instanceId = sourceObject.GetInstanceIDCompat(),
                         instanceName = sourceObject.name,
-                        rootObjectName = prefabAsset?.name,
-                        rootObjectPath = prefabAsset?.name,
+                        rootObjectName = prefabAssetName,
+                        rootObjectPath = prefabAssetName,
                         wasUnlinked = unlinkIfInstance && objectValidation.shouldUnlink,
                         wasReplaced = replacingPrefab,
                         componentCount = sourceObject.GetComponents<Component>().Length,
@@ -720,7 +721,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         {
             error = null;
             PrefabStage stage = PrefabStageUtility.GetCurrentPrefabStage();
-            GameObject stageRoot = stage?.prefabContentsRoot;
+            GameObject stageRoot = stage != null ? stage.prefabContentsRoot : null;
             GameObject[] sceneRoots = SceneManager.GetActiveScene().GetRootGameObjects();
 
             // Numeric targets are IDs, never a fallback name. Restrict resolved objects
@@ -1164,13 +1165,20 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
             // Tag
             string tag = @params["tag"]?.ToString();
-            if (tag != null && targetGo.tag != tag)
+            if (tag != null)
             {
                 string tagToSet = string.IsNullOrEmpty(tag) ? "Untagged" : tag;
                 try
                 {
-                    targetGo.tag = tagToSet;
-                    modified = true;
+                    if (
+                        tag.Length == 0
+                        || (tagToSet != "Untagged" && !UnityEditorInternal.InternalEditorUtility.tags.Contains(tagToSet))
+                        || !targetGo.CompareTag(tagToSet)
+                    )
+                    {
+                        targetGo.tag = tagToSet;
+                        modified = true;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1812,7 +1820,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 }
 
                 // Find the child to remove
-                Transform childToRemove = FindInPrefabContents(targetGo, childPath, relativePathOnly: true)?.transform;
+                GameObject child = FindInPrefabContents(targetGo, childPath, relativePathOnly: true);
+                Transform childToRemove = child != null ? child.transform : null;
                 if (childToRemove == null)
                 {
                     return (removedCount, new ErrorResponse($"Child '{childPath}' not found under '{targetGo.name}'."));

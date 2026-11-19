@@ -49,7 +49,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     searchMethod == "by_name" && lookAtToken.Type == JTokenType.String && int.TryParse(lookAtToken.ToString(), out _)
                         ? ManageGameObjectCommon.FindObjectInternal(lookAtToken, "by_name")
                         : null;
-                lookAtGo = lookAtGo ?? ManageGameObjectCommon.FindObjectInternal(lookAtToken, "by_id_or_name_or_path");
+                if (lookAtGo == null)
+                    lookAtGo = ManageGameObjectCommon.FindObjectInternal(lookAtToken, "by_id_or_name_or_path");
                 if (lookAtGo == null)
                 {
                     return new ErrorResponse($"look_at_target '{lookAtToken}' could not be resolved as a position [x,y,z] or found as a GameObject.");

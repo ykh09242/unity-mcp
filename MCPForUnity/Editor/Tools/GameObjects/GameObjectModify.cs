@@ -155,11 +155,13 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             string tag = @params["tag"]?.ToString();
-            if (tag != null && targetGo.tag != tag)
+            bool createTag = !string.IsNullOrEmpty(tag) && tag != "Untagged" && !InternalEditorUtility.tags.Contains(tag);
+            // CompareTag throws for undefined names, which this tool can create.
+            if (tag != null && (tag.Length == 0 || createTag || !targetGo.CompareTag(tag)))
             {
-                string tagToSet = string.IsNullOrEmpty(tag) ? "Untagged" : tag;
+                string tagToSet = tag.Length == 0 ? "Untagged" : tag;
 
-                if (tagToSet != "Untagged" && !InternalEditorUtility.tags.Contains(tagToSet))
+                if (createTag)
                 {
                     McpLog.Info($"[ManageGameObject] Tag '{tagToSet}' not found. Creating it.");
                     try

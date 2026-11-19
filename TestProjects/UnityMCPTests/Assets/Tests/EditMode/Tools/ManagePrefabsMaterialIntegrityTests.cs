@@ -521,7 +521,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         private Material Material(Color color)
         {
-            Shader shader = Shader.Find("Standard") ?? Shader.Find("Unlit/Color");
+            Shader shader = TestUtilities.FindFirstShader("Standard", "Unlit/Color");
             if (shader == null)
                 Assert.Ignore("Requires an installed shader with _Color for the serialization fixture.");
             var material = new Material(shader);

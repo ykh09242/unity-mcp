@@ -103,7 +103,7 @@ namespace MCPForUnity.Editor.Resources.Scene
                     layerName = budget.Text(LayerMask.LayerToName(layer)),
                     active = go.activeSelf,
                     activeInHierarchy = go.activeInHierarchy,
-                    isStatic = go.isStatic,
+                    isStatic = GameObjectUtility.GetStaticEditorFlags(go) != 0,
                     transform = new
                     {
                         position = SerializeVector3(transform.position),

@@ -290,7 +290,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (check3D)
             {
                 colliders3D = go.GetComponents<Collider>();
-                if (colliders3D.Length > 0 && rb == null && !go.isStatic)
+                if (colliders3D.Length > 0 && rb == null && GameObjectUtility.GetStaticEditorFlags(go) == 0)
                 {
                     bool hasAnimator = go.GetComponent<Animator>() != null || HasAnimatorInParent(go);
                     if (hasAnimator)
@@ -308,7 +308,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (check2D)
             {
                 colliders2D = go.GetComponents<Collider2D>();
-                if (colliders2D.Length > 0 && go.GetComponent<Rigidbody2D>() == null && !go.isStatic)
+                if (colliders2D.Length > 0 && go.GetComponent<Rigidbody2D>() == null && GameObjectUtility.GetStaticEditorFlags(go) == 0)
                 {
                     bool hasAnimator = go.GetComponent<Animator>() != null || HasAnimatorInParent(go);
                     if (hasAnimator)
