@@ -218,6 +218,17 @@ The legacy `discovery_calls` and `discovery_successes` counters cover the
 whole trial. `selection_diagnosis.actor_discovery` counts the selected
 actor's receipts and remains null when its capture is unknown.
 
+## Per-claim answers
+
+Use `--answer-format json --answer-protocol v3` to score the value, data origin
+and delivery channel of each claim. V1 and V2 retain their original prompts
+and scoring. V3 reports valid JSON shape, measured fact accuracy and measured
+provenance accuracy independently. Unknown, unverified and malformed claims
+stay visible outside their respective accuracy denominators. A saved number
+reported in an open-window answer belongs in the optional `saved_reference`
+object. A limited receipt can support an honest unknown about the open window.
+A number without an actor-owned receipt receives no accuracy credit.
+
 ## Contrast observation with action
 
 Run the disconnected fixture to compare observing compilation with starting

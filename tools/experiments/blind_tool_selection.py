@@ -220,7 +220,7 @@ def create_parser() -> argparse.ArgumentParser:
     launch.add_argument("--answer-format", choices=("json", "prose"))
     launch.add_argument(
         "--answer-protocol",
-        choices=("v1", "v2"),
+        choices=("v1", "v2", "v3"),
         default="v2",
         help="JSON answer schema (v1 reproduces the earlier prompt)",
     )

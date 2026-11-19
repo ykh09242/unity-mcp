@@ -32,6 +32,10 @@ CONVENTIONS = {
 
 
 def answer_instruction(task: str, protocol: str = "v1") -> str:
+    if protocol == "v3":
+        from tools.experiments.blind_tool_claims import claim_instruction
+
+        return claim_instruction(task)
     if protocol == "v2":
         keys = ("channel", "source", *FIELDS[task])
         return (
@@ -154,6 +158,7 @@ def final_answer(
     host_answer: str = "",
     *,
     protocol: str = "v1",
+    explicit_limit: bool = False,
 ) -> dict:
     """Bind optional human reviews to the actual answer and evidence."""
     answer_path = case / "answer.txt"
@@ -161,11 +166,21 @@ def final_answer(
         answer_path.read_text(encoding="utf-8-sig") if answer_path.is_file() else host_answer
     ).strip()
     if not text:
+        if protocol == "v3":
+            from tools.experiments.blind_tool_claims import score_claims
+
+            return {
+                **score_claims(task, None, wire, saved),
+                "status": "missing",
+                "protocol": protocol,
+            }
         return {"status": "missing", "protocol": protocol}
     expected, sources = expected_facts(task, wire, saved)
     signature = [task, text, wire, saved]
     if protocol != "v1":
         signature.append(protocol)
+    if protocol == "v3":
+        signature.append(explicit_limit)
     receipt = sha256(json.dumps(signature, sort_keys=True).encode()).hexdigest()
     result = {"status": "needs_review", "review_digest": receipt, "protocol": protocol}
     review_path = case / "answer-review.json"
@@ -181,12 +196,15 @@ def final_answer(
             and review["reason"].strip()
             and review.get("status") in {"correct", "incorrect", "limited", "needs_review"}
         ):
-            return {
+            reviewed = {
                 **result,
                 "status": review["status"],
                 "method": "review",
                 "reason": review["reason"],
             }
+            if protocol != "v3":
+                return reviewed
+            result["review"] = {"status": review["status"], "reason": review["reason"]}
     try:
         lines = text.splitlines()
         payload = (
@@ -196,6 +214,16 @@ def final_answer(
         )
         answer = json.loads(payload)
     except ValueError:
+        if protocol == "v3":
+            answer = None
+        else:
+            return result
+    if protocol == "v3":
+        from tools.experiments.blind_tool_claims import score_claims
+
+        scored = score_claims(task, answer, wire, saved, explicit_limit=explicit_limit)
+        return {**result, **scored}
+    if not isinstance(answer, dict):
         return result
     fields = FIELDS[task]
     keys = {"source", *fields}

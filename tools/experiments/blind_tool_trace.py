@@ -1126,8 +1126,10 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         "final_answer": final_answer(
             case_dir,
             task,
-            live_observations,
-            host.saved_observations,
+            live_observations if role == "confirmed" or row.get("answer_protocol") != "v3" else [],
+            host.saved_observations
+            if role == "confirmed" or row.get("answer_protocol") != "v3"
+            else [],
             parent.final_message if parent.completed else "",
             protocol=string(row.get("answer_protocol")) or "v1",
         ),
