@@ -90,7 +90,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     enabled = animator.enabled,
                     speed = animator.speed,
                     hasController = runtimeController != null,
-                    controllerName = runtimeController?.name,
+                    controllerName = runtimeController != null ? runtimeController.name : null,
                     applyRootMotion = animator.applyRootMotion,
                     updateMode = animator.updateMode.ToString(),
                     cullingMode = animator.cullingMode.ToString(),

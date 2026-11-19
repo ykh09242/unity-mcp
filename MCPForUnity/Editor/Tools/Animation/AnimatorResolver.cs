@@ -28,8 +28,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (go == null)
                 return null;
 
-            var own = go.GetComponent<Animator>();
-            if (own != null)
+            if (go.TryGetComponent(out Animator own))
                 return own;
 
             // go carries none, so every hit here is a descendant.

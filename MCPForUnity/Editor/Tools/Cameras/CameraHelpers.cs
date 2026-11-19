@@ -337,7 +337,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (!create)
                 return null;
             var method = camera.GetType().GetMethod("GetComponentOwner", Type.EmptyTypes);
-            return (method?.Invoke(camera, null) as Transform)?.gameObject;
+            var owner = method?.Invoke(camera, null) as Transform;
+            return owner != null ? owner.gameObject : null;
         }
 
         internal static bool IsLive(Component camera)

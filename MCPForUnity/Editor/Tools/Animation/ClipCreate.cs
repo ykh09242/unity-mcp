@@ -368,8 +368,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = false, message = $"AnimationClip not found at '{clipPath}'" };
 
             // Try legacy Animation component first
-            var legacyAnim = go.GetComponent<UnityEngine.Animation>();
-            if (legacyAnim != null)
+            if (go.TryGetComponent(out UnityEngine.Animation legacyAnim))
             {
                 var wasLegacy = clip.legacy;
                 AssetPathUtility.GetFullAssetPath(clipPath);
@@ -405,8 +404,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
 
             // Add Animation component if no Animator or Animation exists
-            var animator = go.GetComponent<Animator>();
-            if (animator == null)
+            if (!go.TryGetComponent(out Animator _))
             {
                 var wasLegacy = clip.legacy;
                 AssetPathUtility.GetFullAssetPath(clipPath);

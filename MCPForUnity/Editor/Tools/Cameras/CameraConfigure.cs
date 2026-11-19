@@ -20,8 +20,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (go == null)
                 return new ErrorResponse("Target Camera not found.");
 
-            var cam = go.GetComponent<UnityEngine.Camera>();
-            if (cam == null)
+            if (!go.TryGetComponent(out UnityEngine.Camera cam))
                 return new ErrorResponse($"No Camera component on '{go.name}'.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
@@ -52,8 +51,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (go == null)
                 return new ErrorResponse("Target Camera not found.");
 
-            var cam = go.GetComponent<UnityEngine.Camera>();
-            if (cam == null)
+            if (!go.TryGetComponent(out UnityEngine.Camera cam))
                 return new ErrorResponse($"No Camera component on '{go.name}'.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
@@ -89,8 +87,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (go == null)
                 return new ErrorResponse("Target Camera not found.");
 
-            var cam = go.GetComponent<UnityEngine.Camera>();
-            if (cam == null)
+            if (!go.TryGetComponent(out UnityEngine.Camera cam))
                 return new ErrorResponse($"No Camera component on '{go.name}'.");
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
@@ -313,7 +310,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 var owner = CameraHelpers.PipelineOwner(cmCamera);
                 propertyError = PrepareComponentPropertiesForTarget(
                     bodyType,
-                    owner?.GetComponent(bodyType),
+                    owner != null ? owner.GetComponent(bodyType) : null,
                     props,
                     new[] { "bodyType", "body_type" },
                     out setters,
@@ -386,7 +383,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 var owner = CameraHelpers.PipelineOwner(cmCamera);
                 propertyError = PrepareComponentPropertiesForTarget(
                     aimType,
-                    owner?.GetComponent(aimType),
+                    owner != null ? owner.GetComponent(aimType) : null,
                     props,
                     new[] { "aimType", "aim_type" },
                     out setters,
@@ -465,7 +462,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 }
             }
             var owner = CameraHelpers.PipelineOwner(cmCamera);
-            var noiseComponent = owner?.GetComponent(noiseType);
+            var noiseComponent = owner != null ? owner.GetComponent(noiseType) : null;
             var propertyError = PrepareComponentPropertiesForTarget(noiseType, noiseComponent, props, Array.Empty<string>(), out var setters, owner);
             if (propertyError != null)
                 return propertyError;
@@ -647,7 +644,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
             var existing = CameraHelpers.GetPipelineComponent(cmCamera, stage);
             if (existing != null && existing.GetType() == newType)
                 return existing;
-            var comp = owner.GetComponent(newType) ?? Undo.AddComponent(owner, newType);
+            if (!owner.TryGetComponent(newType, out var comp))
+                comp = Undo.AddComponent(owner, newType);
             if (CameraHelpers.GetReflectionProperty(comp, "Stage")?.ToString() != stage)
                 throw new InvalidOperationException($"{newType.Name} does not implement the {stage} stage.");
             if (existing != null)

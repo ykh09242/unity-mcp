@@ -531,7 +531,9 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.IsNull(Pipeline.GetComponent(oldType));
-            Assert.AreEqual(newType, CameraHelpers.GetPipelineComponent(camera, stage)?.GetType());
+            var replacement = CameraHelpers.GetPipelineComponent(camera, stage);
+            Assert.IsTrue(replacement != null);
+            Assert.AreEqual(newType, replacement.GetType());
         }
 
         [Test]

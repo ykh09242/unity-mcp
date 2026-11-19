@@ -435,10 +435,11 @@ namespace MCPForUnity.Editor.Tools.Animation
                             );
                         }
 
+                        var destination = t.destinationState;
                         transitions.Add(
                             new
                             {
-                                destinationState = t.destinationState?.name,
+                                destinationState = destination != null ? destination.name : null,
                                 hasExitTime = t.hasExitTime,
                                 exitTime = t.exitTime,
                                 duration = t.duration,
@@ -452,7 +453,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     float stateSpeed = cs.state.speed;
                     var motion = cs.state.motion;
                     bool hasMotion = motion != null;
-                    string motionName = motion?.name;
+                    string motionName = hasMotion ? motion.name : null;
                     if (!defaultStateRead)
                     {
                         defaultState = layer.stateMachine.defaultState;
@@ -523,8 +524,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (go == null)
                 return new { success = false, message = "Target GameObject not found" };
 
-            var animator = go.GetComponent<Animator>();
-            if (animator == null)
+            if (!go.TryGetComponent(out Animator animator))
             {
                 Undo.RecordObject(go, "Add Animator Component");
                 animator = Undo.AddComponent<Animator>(go);

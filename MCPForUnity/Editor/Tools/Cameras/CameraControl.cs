@@ -58,9 +58,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
                             priority,
                             follow = follow != null ? new { name = follow.gameObject.name, instanceID = follow.gameObject.GetInstanceIDCompat() } : null,
                             lookAt = lookAt != null ? new { name = lookAt.gameObject.name, instanceID = lookAt.gameObject.GetInstanceIDCompat() } : null,
-                            body = body?.GetType().Name,
-                            aim = aim?.GetType().Name,
-                            noise = noise?.GetType().Name,
+                            body = body != null ? body.GetType().Name : null,
+                            aim = aim != null ? aim.GetType().Name : null,
+                            noise = noise != null ? noise.GetType().Name : null,
                             extensions,
                         }
                     );
