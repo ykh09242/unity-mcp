@@ -155,7 +155,7 @@ remain explicit. They do not fulfill the original request.
 | `contents` and `encodedContents` | `incompatible_combination` | The source reader supports one encoding per invocation. |
 | A valid evidence ID with no applicable declaration | `undeclared_evidence` | The current inventory cannot establish support. |
 | Unmatched catalog text | `lexical_miss` | Text matching did not establish support or its absence. |
-| A matching route only on another invocation surface | `no_visible_route` | The requested client surface has no matching group. |
+| A match excluded by intent, invocation surface or visibility | `no_visible_route` | The current selection has no eligible route group. |
 
 Alternatives use the same registration, advertisement, intent and surface scope.
 `limit` applies after grouping equivalent reads. JSON includes

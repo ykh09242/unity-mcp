@@ -354,3 +354,33 @@ async def test_no_match_wire_and_cli_text_preserve_alternative_source_and_bindin
     assert "inspect_shader_graph [asset_file]" in text.output
     assert "nodeCount" in text.output and "Requires: path" in text.output
     assert "Readiness: unobserved" in text.output
+
+
+def test_cli_flat_graph_binding_and_lexical_match_before_intent_filter():
+    runner = CliRunner()
+    graph = runner.invoke(
+        cli, ["--format", "json", "tool", "search", "--required-value", "nodeCount", "--limit", "1"]
+    )
+    assert graph.exit_code == 0, graph.output
+    payload = json.loads(graph.stdout)
+    for route in (payload["routes"][0], payload["route_groups"][0]["representative"]):
+        assert route["tool"] == "inspect_shader_graph"
+        assert route["required_parameters"] == ["path"]
+    filtered = runner.invoke(
+        cli, ["--format", "json", "tool", "search", "diagnose_raycast", "--intent", "edit"]
+    )
+    assert filtered.exit_code == 0, filtered.output
+    payload = json.loads(filtered.stdout)
+    assert payload["results"] and not payload["route_groups"]
+    assert payload["no_match"]["reason"] == "no_visible_route"
+
+
+def test_resource_only_lexical_match_filtered_by_intent():
+    result = search_catalog(
+        SearchRequest(query="mcpforunity://known", intent="edit"),
+        [],
+        resources=[
+            {"uri": "mcpforunity://known", "name": "known", "description": "Known resource."}
+        ],
+    )
+    assert result["no_match"]["reason"] == "no_visible_route"

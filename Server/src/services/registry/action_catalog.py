@@ -905,12 +905,30 @@ def resource_observation(item: CatalogResource) -> dict:
     return {"observation": observation} if observation else {}
 
 
+def _required_tool_parameters(entry: CatalogEntry) -> list[str]:
+    function = entry.get("func")
+    parameters = inspect.signature(function).parameters.values() if function else ()
+    return [
+        name for name in entry.get("input_schema", {}).get("required", ()) if name != "action"
+    ] + [
+        parameter.name
+        for parameter in parameters
+        if parameter.name not in {"ctx", "action"}
+        and parameter.default is inspect.Parameter.empty
+        and parameter.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+    ]
+
+
 def action_guidance(entry: CatalogEntry, action: str | None) -> ActionGuidance | None:
     """Use reviewed action evidence or the tool's own wire schema alternative."""
     if action is None:
         observation = (entry.get("kwargs", {}).get("meta") or {}).get(OBSERVATION_META)
         if observation:
-            return ActionGuidance(tool_description(entry), observation=observation)
+            return ActionGuidance(
+                tool_description(entry),
+                tuple(_required_tool_parameters(entry)),
+                observation=observation,
+            )
         return None
     guidance = TOOL_GUIDANCE.get(entry["name"])
     if guidance and action in guidance.actions:
@@ -984,17 +1002,7 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
     rules = next(
         (rule for rule in ACTION_RULES.get(entry["name"], ()) if rule.action == action), None
     )
-    function = entry.get("func")
-    parameters = inspect.signature(function).parameters.values() if function else ()
-    required = [
-        name for name in entry.get("input_schema", {}).get("required", ()) if name != "action"
-    ] + [
-        parameter.name
-        for parameter in parameters
-        if parameter.name not in {"ctx", "action"}
-        and parameter.default is inspect.Parameter.empty
-        and parameter.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
-    ]
+    required = _required_tool_parameters(entry)
     effects = tool["effects"]
     if guidance and guidance.effects:
         effects = {

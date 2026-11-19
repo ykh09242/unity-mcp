@@ -374,14 +374,14 @@ _NO_MATCH_EXPLANATIONS: Final[dict[NoMatchReason, str]] = {
     "wrong_source": "A visible route declares all required values only from a different source.",
     "incompatible_combination": "The values are individually declared, but no eligible route supplies this combination in one observation.",
     "lexical_miss": "No catalog text matched. Evidence support is unknown.",
-    "no_visible_route": "No matching route is available on the selected invocation surfaces in this scope.",
+    "no_visible_route": "No matching route is available with the selected intent, invocation surfaces and visibility in this scope.",
 }
 
 
 def _diagnose_miss(
     request: SearchRequest,
     structured: bool,
-    has_flat_match: bool,
+    matched_before_filters: bool,
     observations: list[RankedRoute],
     equivalents: dict[RouteKey, SearchRoute],
     unavailable_parents: set[str],
@@ -417,7 +417,7 @@ def _diagnose_miss(
 
     undeclared = needed - offered - excluded
     reason: NoMatchReason
-    if has_flat_match:
+    if matched_before_filters:
         reason = "no_visible_route"
     elif not structured:
         reason = "lexical_miss"
@@ -603,6 +603,7 @@ def search_catalog(
             weight += 1000
         if weight:
             routes.append((-weight, identifier, "", route))
+    matched_before_filters = bool(matches or routes)
     matches.sort(key=lambda item: (item[0], item[1]))
     if request.intent:
         routes = [item for item in routes if item[3].get("intent") == request.intent]
@@ -656,7 +657,7 @@ def search_catalog(
                 "no_match": _diagnose_miss(
                     request,
                     structured,
-                    bool(routes),
+                    matched_before_filters,
                     observations,
                     available_equivalents,
                     unavailable_parents,
