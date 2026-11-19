@@ -172,7 +172,8 @@ namespace MCPForUnityTests.Editor.Tools
                 ScriptDiagnosticJobs.Start(next, options);
                 var completed = await WaitForAnalysis(next);
                 Assert.That((string)completed["state"], Is.EqualTo("completed"), completed.ToString());
-                Assert.That(completed["result"]["rows"].Any(), Is.True);
+                Assert.That((string)completed["result"]["source_token"], Is.Not.Null.And.Not.Empty);
+                Assert.That(completed["result"]["providers"]["compiler"], Is.Not.Null);
             }
             finally
             {
@@ -299,7 +300,9 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.That(capture.IsFaulted, Is.False, capture.Exception?.ToString());
             JObject request = capture.Result;
             Assert.That(request["selected_paths"].Values<string>(), Is.EqualTo(new[] { path }));
-            Assert.That(request["assemblies"].Any(a => (string)a["name"] == "TestAsmdef"), Is.True);
+            var fixtureAssembly = request["assemblies"].Single(a => (string)a["name"] == "TestAsmdef");
+            // Activate the deliberate selected and context violations only inside this diagnostic run.
+            ((JArray)fixtureAssembly["defines"]).Add("MCP_QUALITY_DIAGNOSTIC_FIXTURE");
             string package = PackageInfo.FindForAssembly(typeof(AnalysisHostProcess).Assembly).resolvedPath;
             string cache = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "Library", "MCPQualityFixture-" + Guid.NewGuid().ToString("N")));
             using var owner = new AnalysisHostProcess();
@@ -321,7 +324,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.That(run.IsFaulted, Is.False, run.Exception?.ToString());
             var result = JObject.Parse(Encoding.UTF8.GetString(run.Result));
             Assert.That(result["diagnostics"].Any(d => (string)d["id"] == "UNT0008" && (string)d["path"] == path), Is.True, result.ToString());
-            Assert.That(result["context_diagnostics"].Any(d => (string)d["id"] == "UNT0008"), Is.True, result.ToString());
+            const string context = "Assets/Scripts/TestAsmdef/ScriptQuality/ContextQualitySource.cs";
+            Assert.That(result["context_diagnostics"].Any(d => (string)d["id"] == "UNT0008" && (string)d["path"] == context), Is.True, result.ToString());
             Assert.That(result["diagnostics"].Concat(result["context_diagnostics"]).Any(d => (string)d["severity"] == "error"), Is.False, result.ToString());
             Assert.That(File.ReadAllBytes(physical), Is.EqualTo(original));
             Assert.That(File.ReadAllBytes(physical + ".meta"), Is.EqualTo(metadata));
