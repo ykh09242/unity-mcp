@@ -66,7 +66,7 @@ def test_editor_readiness_nested_validation_and_existing_advice(tmp_path):
                         assert raw["unity"]["instance_id"] == "Selected@hash"
                         assert captured[before] == "get_editor_state"
                     for observed, expected_age, stale in ((3000, 2000, False), (2999, 2001, True),
-                                                         (6000, 0, False), (0, 5000, True)):
+                                                         (6000, 0, False), (0, None, True)):
                         reply = {"success": True, "data": {"observed_at_unix_ms": observed, "sequence": 0,
                                  "compilation": None, "tests": None, "assets": {"refresh": None}}}
                         result = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
@@ -82,7 +82,8 @@ def test_editor_readiness_nested_validation_and_existing_advice(tmp_path):
                     reply = {"success": True, "data": {}}
                     result = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
                     assert result["success"] and result["data"]["sequence"] == 0
-                    assert result["data"]["observed_at_unix_ms"] == 5000
+                    assert result["data"]["observed_at_unix_ms"] == 0
+                    assert result["data"]["staleness"] == {"age_ms": None, "is_stale": True}
                     assert result["data"]["advice"]["ready_for_tools"] is True
                     reply = {"success": True, "data": {"observed_at_unix_ms": 0,
                              "compilation": {"is_compiling": True, "is_domain_reload_pending": True},

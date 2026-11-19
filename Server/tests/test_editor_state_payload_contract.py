@@ -6,6 +6,8 @@ import subprocess
 import sys
 import textwrap
 
+import pytest
+
 
 def _run_sdk_regression(source):
     result = subprocess.run(
@@ -17,6 +19,50 @@ def _run_sdk_regression(source):
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.asyncio
+async def test_unstamped_editor_reply_and_cached_copy_have_distinct_readiness(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from services.registry.action_catalog import EDITOR_STATE_OBSERVATION
+    from services.registry.observation_predicates import evaluate_observation
+    from services.resources import editor_state as state
+
+    snapshot = {"compilation": {"is_compiling": False}}
+    monkeypatch.setattr(state.config, "transport_mode", "http")
+    monkeypatch.setattr(state.config, "http_remote_hosted", False)
+    monkeypatch.setattr(state, "get_unity_instance_from_context", AsyncMock(return_value="Editor"))
+    monkeypatch.setattr(state, "_local_project_root", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        state.external_changes_scanner, "update_and_get_async", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(state.PluginHub, "is_configured", lambda: True)
+    cache = AsyncMock(return_value=snapshot)
+    send = AsyncMock(return_value={"success": True, "data": snapshot})
+    monkeypatch.setattr(state.PluginHub, "get_cached_editor_state", cache)
+    monkeypatch.setattr(state.unity_transport, "send_with_unity_instance", send)
+
+    ctx = AsyncMock()
+    live = await state.get_editor_state_authoritative(ctx)
+    cached = await state.get_editor_state(ctx)
+    send.assert_awaited_once()
+    cache.assert_awaited_once()
+    assert "observed_at_unix_ms" not in snapshot
+    assert live.data["advice"]["ready_for_tools"] is True
+    assert cached.data["advice"]["ready_for_tools"] is False
+    assert cached.data["diagnostics"]["status"] == "stale"
+    for response in (live, cached):
+        assert response.data["observed_at_unix_ms"] == 0
+        assert response.data["staleness"] == {"age_ms": None, "is_stale": True}
+        value = "compilation.is_compiling"
+        assert evaluate_observation(EDITOR_STATE_OBSERVATION, response.model_dump(), [value]) == {
+            value: False
+        }
+    repeated = state._enrich_advice_and_staleness(dict(live.data), direct_reply=False)
+    assert repeated["staleness"] == {"age_ms": None, "is_stale": True}
+    assert repeated["advice"]["ready_for_tools"] is False
+    assert repeated["diagnostics"]["status"] == "stale"
 
 
 def test_editor_state_rejects_missing_payload_without_fabricating_readiness():
@@ -54,8 +100,10 @@ def test_editor_state_rejects_missing_payload_without_fabricating_readiness():
                         state.unity_transport.send_with_unity_instance = AsyncMock(return_value={"success": True, "data": copy.deepcopy(data)})
                         response = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
                         assert response["success"] is True, response
-                        assert response["data"]["advice"]["ready_for_tools"] is ("observed_at_unix_ms" in data), response
+                        assert response["data"]["advice"]["ready_for_tools"] is True, response
                         assert response["data"]["staleness"]["is_stale"] is ("observed_at_unix_ms" not in data), response
+                        if "observed_at_unix_ms" not in data:
+                            assert response["data"]["staleness"]["age_ms"] is None, response
                         assert response["data"]["sequence"] == 0, response
 
                     state.unity_transport.send_with_unity_instance = AsyncMock(return_value={"success": True, "data": {"observed_at_unix_ms": 0}})

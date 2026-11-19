@@ -39,6 +39,7 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> Boundary:
                     "compilation": {"is_compiling": False, "is_domain_reload_pending": False},
                     "assets": {"external_changes_scan_complete": True},
                     "advice": {"ready_for_tools": True},
+                    "staleness": {"is_stale": False},
                 },
             }
         ),

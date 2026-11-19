@@ -472,7 +472,10 @@ async def test_stdio_resource_ttl_generation_and_authoritative_bypass(monkeypatc
     try:
         replies = await asyncio.gather(*callers)
         assert all(reply.success for reply in replies) and sender.await_count == 1
-        await state.get_editor_state(context())
+        assert all(reply.data["advice"]["ready_for_tools"] is True for reply in replies)
+        assert all(reply.data["staleness"]["is_stale"] is True for reply in replies)
+        cached = await state.get_editor_state(context())
+        assert cached.data["advice"]["ready_for_tools"] is False
         assert sender.await_count == 1
         await state.get_editor_state_authoritative(context())
         assert sender.await_count == 2

@@ -163,7 +163,7 @@ class EditorStateStaleness(BaseModel):
 
 class EditorStateDiagnostics(BaseModel):
     status: str
-    heartbeat_age_ms: int
+    heartbeat_age_ms: int | None
     activity_age_ms: int | None = None
     modal_detection: str = "unavailable"
     possible_causes: list[str] = []
@@ -261,7 +261,10 @@ async def _local_project_root(instance_id: str) -> str | None:
 
 
 def _enrich_advice_and_staleness(
-    state_v2: dict[str, Any], editor_clock: EditorStateClock | None = None
+    state_v2: dict[str, Any],
+    editor_clock: EditorStateClock | None = None,
+    *,
+    direct_reply: bool = True,
 ) -> dict[str, Any]:
     now_ms = _now_unix_ms()
     editor_now_ms = editor_clock.now_ms(time.monotonic()) if editor_clock is not None else now_ms
@@ -274,11 +277,14 @@ def _enrich_advice_and_staleness(
         if source.observed_at_unix_ms is not None
         else None
     )
-    observed = state_v2.get("observed_at_unix_ms")
+    # Older Editors omit the observation time. A direct reply proves responsiveness,
+    # but its receipt time cannot date the scene or compilation facts inside it.
+    missing_timestamp = "observed_at_unix_ms" not in state_v2
+    observed = state_v2.get("observed_at_unix_ms", editor_now_ms if direct_reply else 0)
     observed_ms = observed if type(observed) is int else 0
-    age_ms = max(0, editor_now_ms - observed_ms)
+    age_ms = max(0, editor_now_ms - observed_ms) if observed_ms > 0 else None
     # Conservative default: treat >2s as stale (covers common unfocused-editor throttling).
-    is_stale = observed_ms <= 0 or age_ms > 2000 or observed_ms > editor_now_ms + 5000
+    is_stale = age_ms is None or age_ms > 2000 or observed_ms > editor_now_ms + 5000
 
     compilation = state_v2.get("compilation") or {}
     tests = state_v2.get("tests") or {}
@@ -361,7 +367,7 @@ def _enrich_advice_and_staleness(
         activity_age_ms = None
     # A missing heartbeat cannot distinguish a native dialog, a blocked editor,
     # background throttling or a transport interruption. Never dismiss dialogs.
-    unresponsive = age_ms >= 30_000
+    unresponsive = age_ms is not None and age_ms >= 30_000
     prolonged = (
         phase in {"compiling", "domain_reload", "asset_import", "playmode_transition"}
         and activity_age_ms is not None
@@ -434,7 +440,10 @@ def _enrich_advice_and_staleness(
         if ready_for_tools
         else "retry_later",
     }
-    state_v2["staleness"] = {"age_ms": age_ms, "is_stale": is_stale}
+    state_v2["staleness"] = {
+        "age_ms": None if missing_timestamp else age_ms,
+        "is_stale": missing_timestamp or is_stale,
+    }
     from services.source_recovery_diagnostics import RecoveryObservations, classify_source_recovery
 
     state_v2["source_recovery"] = classify_source_recovery(
@@ -446,7 +455,7 @@ def _enrich_advice_and_staleness(
             state=state_v2,
         )
     ).model_dump(mode="json")
-    return state_v2
+    return {**state_v2, "observed_at_unix_ms": 0 if missing_timestamp else observed_ms}
 
 
 @mcp_for_unity_resource(
@@ -490,6 +499,7 @@ async def _read_editor_state(
         editor_clock = clock
 
     response = None
+    direct_reply = False
     stdio_key = None
     if (
         (config.transport_mode or "stdio").lower() != "http"
@@ -538,15 +548,21 @@ async def _read_editor_state(
             return value.model_dump() if isinstance(value, MCPResponse) else value
 
         if stdio_key is not None and not require_fresh:
+
+            def observe_flight(task: asyncio.Task) -> None:
+                nonlocal direct_reply
+                direct_reply = not task.done()
+
             try:
                 async with _stdio_state_reads.session(stdio_key) as shared_read:
-                    response = await shared_read.fetch(fetch_state)
+                    response = await shared_read.fetch(fetch_state, on_flight=observe_flight)
                 if stdio_key[1] != await get_authenticated_stdio_generation(unity_instance):
                     await _stdio_state_reads.invalidate(stdio_key)
             except SharedReadCapacityError:
                 return MCPResponse(**response_limit_error("result_capacity"))
         else:
             response = await fetch_state()
+            direct_reply = True
 
     if isinstance(response, MCPResponse):
         response = response.model_dump()
@@ -595,11 +611,8 @@ async def _read_editor_state(
             message="Editor state response must contain a data object.",
         )
 
-    state_v2 = response["data"]
+    state_v2 = dict(response["data"])
     state_v2.setdefault("schema_version", "unity-mcp/editor_state@2")
-    # A missing native timestamp cannot make supplied scene/compile fields fresh.
-    if type(state_v2.get("observed_at_unix_ms")) is not int:
-        state_v2["observed_at_unix_ms"] = 0
     state_v2.setdefault("sequence", 0)
 
     # Ensure the returned snapshot is clearly associated with the targeted instance.
@@ -660,7 +673,7 @@ async def _read_editor_state(
         pass
 
     try:
-        state_v2 = _enrich_advice_and_staleness(state_v2, editor_clock)
+        state_v2 = _enrich_advice_and_staleness(state_v2, editor_clock, direct_reply=direct_reply)
         if hasattr(EditorStateData, "model_validate"):
             validated = EditorStateData.model_validate(state_v2)
         else:

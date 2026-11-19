@@ -262,6 +262,9 @@ async def _preflight_test_run(ctx, observations, refresh_if_dirty, max_wait_s):
                 and not compilation["is_domain_reload_pending"]
                 and advice.get("ready_for_tools") is True
             )
+            staleness = data.get("staleness")
+            if ready and not (isinstance(staleness, dict) and staleness.get("is_stale") is False):
+                return _busy("editor_state_freshness_unverified", 500)
             reason = (
                 blocking[0]
                 if isinstance(blocking, list) and blocking

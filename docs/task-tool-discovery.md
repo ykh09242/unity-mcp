@@ -75,6 +75,11 @@ Python consumers can call
 `services.registry.observation_predicates.evaluate_observation(observation, reply, required_values)`
 to receive a boolean for each requested value. A fresh boolean `false` is a
 valid compilation activity observation. A stale snapshot cannot establish it.
+An older Editor can answer a direct readiness check without a native timestamp.
+Its reply can establish that the Editor responded. The server returns
+`observed_at_unix_ms=0`, `staleness.is_stale=true` and `staleness.age_ms=null`
+for the undated scene and compilation fields. A cached copy also leaves readiness
+unverified. Starting a test run requires a dated, stable compilation state.
 
 Paths are dot-separated object keys. `equals` uses exact type and value,
 `one_of` checks literal strings, and `type` checks the specified JSON type or

@@ -20,6 +20,7 @@ from tests.sdk_scenarios import run_sdk_scenario, sdk_scenario_host  # noqa: F40
         "unknown_state",
         "malformed_state",
         "stale_idle",
+        "undated_idle",
         "unresponsive_idle",
         "refresh_error_blocks",
         "refresh_exception_blocks",
@@ -159,6 +160,7 @@ async def _scenario(case):
                 )
                 index += 1
                 data = {
+                    "observed_at_unix_ms": int(time.time() * 1000),
                     "compilation": {
                         "is_compiling": compiling,
                         "is_domain_reload_pending": case == "reload_after_first_ready"
@@ -169,6 +171,8 @@ async def _scenario(case):
                 }
                 if case == "stale_idle":
                     data["observed_at_unix_ms"] = int(time.time() * 1000) - 3000
+                elif case == "undated_idle":
+                    del data["observed_at_unix_ms"]
                 elif case == "unresponsive_idle":
                     data["observed_at_unix_ms"] = int(time.time() * 1000) - 60000
                 return {"success": True, "data": data}
@@ -221,6 +225,10 @@ async def _scenario(case):
             assert response["hint"] == "retry"
             assert response["data"] == {"reason": "tests_running", "retry_after_ms": 5000}
             assert "run_tests" not in commands and "refresh_unity" not in commands
+        elif case == "undated_idle":
+            assert response["success"] is False and response["error"] == "busy"
+            assert response["data"]["reason"] == "editor_state_freshness_unverified"
+            assert commands == ["get_editor_state"]
         elif case in ("unknown_state", "malformed_state", "stale_idle"):
             assert response["success"] is False
             assert response["error"] == "busy"

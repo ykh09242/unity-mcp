@@ -26,6 +26,7 @@ def editor_boundary(monkeypatch):
             "success": True,
             "data": {
                 "advice": {"ready_for_tools": True},
+                "staleness": {"is_stale": False},
                 "assets": {"external_changes_scan_complete": True},
                 "compilation": {"is_compiling": False, "is_domain_reload_pending": False},
             },

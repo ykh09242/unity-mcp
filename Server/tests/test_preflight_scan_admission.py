@@ -42,6 +42,7 @@ def admission(monkeypatch):
             "success": True,
             "data": editor_state._enrich_advice_and_staleness(
                 {
+                    "observed_at_unix_ms": editor_state._now_unix_ms(),
                     "compilation": {
                         "is_compiling": clock.compiling,
                         "is_domain_reload_pending": False,
