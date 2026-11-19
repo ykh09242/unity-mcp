@@ -217,13 +217,19 @@ namespace MCPForUnity.Editor.Tools
                         clone = previewRoot;
                     else
                     {
-                        clone = new GameObject(source.name, source is RectTransform ? typeof(RectTransform) : typeof(Transform));
+                        bool hasRect = source is RectTransform;
+                        clone = hasRect ? new GameObject(source.name, typeof(RectTransform)) : new GameObject(source.name);
                         clone.hideFlags = HideFlags.HideAndDontSave;
                         clone.SetActive(false);
-                        clone.transform.SetParent(previewParent, false);
-                        clone.transform.localPosition = source.localPosition;
-                        clone.transform.localRotation = source.localRotation;
-                        clone.transform.localScale = source.localScale;
+                        var cloneTransform = clone.transform;
+                        // A plain Transform retains its local pose when parented with worldPositionStays set to false.
+                        if (!hasRect)
+                            cloneTransform.SetPositionAndRotation(source.localPosition, source.localRotation);
+                        cloneTransform.SetParent(previewParent, false);
+                        // CopyRect restores the RectTransform's position from its anchors below.
+                        if (hasRect)
+                            cloneTransform.localRotation = source.localRotation;
+                        cloneTransform.localScale = source.localScale;
                     }
 
                     if (source is RectTransform rect)

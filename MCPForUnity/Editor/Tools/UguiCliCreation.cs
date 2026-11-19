@@ -98,8 +98,7 @@ namespace MCPForUnity.Editor.Tools
                 if (kind == "text")
                 {
                     SetText(Add(root, text), fontProperty, textProperty, font, content);
-                    var rect = root.GetComponent<RectTransform>();
-                    if (rect == null)
+                    if (!root.TryGetComponent(out RectTransform rect))
                         throw new InvalidOperationException("TMP creation did not produce a RectTransform.");
                     Undo.RecordObject(rect, "Set CLI text position");
                     rect.anchoredPosition = position;

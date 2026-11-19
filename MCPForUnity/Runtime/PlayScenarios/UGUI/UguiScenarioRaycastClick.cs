@@ -24,10 +24,14 @@ namespace MCPForUnity.Editor.Tools.Input
             if (rect == null)
                 throw new ArgumentException("Raycast clicks require a RectTransform target.");
             Canvas.ForceUpdateCanvases();
-            Camera camera =
-                context.Canvas.renderMode == RenderMode.ScreenSpaceOverlay
-                    ? null
-                    : (context.Canvas.GetComponent<GraphicRaycaster>()?.eventCamera ?? context.Canvas.worldCamera);
+            Camera camera = null;
+            if (context.Canvas.renderMode != RenderMode.ScreenSpaceOverlay)
+            {
+                if (context.Canvas.TryGetComponent(out GraphicRaycaster raycaster))
+                    camera = raycaster.eventCamera;
+                if (camera == null)
+                    camera = context.Canvas.worldCamera;
+            }
             Vector3 center = rect.TransformPoint(rect.rect.center);
             if (camera != null && camera.WorldToScreenPoint(center).z <= 0)
                 return NotReady("Waiting for the target center to be in front of its canvas camera.", true, out detail);

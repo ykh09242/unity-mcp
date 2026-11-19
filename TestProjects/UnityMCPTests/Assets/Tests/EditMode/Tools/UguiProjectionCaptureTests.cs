@@ -343,8 +343,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(0, renderCallbacks, "Diagnosis must not render.");
             var snapshotBefore = Snapshot();
             var pixelsBefore = ComparePixels(before, ReadTarget(orthographic ? "capture-ortho-before" : "capture-perspective-before"));
-            camera.transform.position = new Vector3(0.4f, 0, 0);
-            camera.transform.rotation = Quaternion.Euler(0, 3, 0);
+            camera.transform.SetPositionAndRotation(new Vector3(0.4f, 0, 0), Quaternion.Euler(0, 3, 0));
             var after = Diagnose();
             var pixelsAfter = ComparePixels(after, ReadTarget(orthographic ? "capture-ortho-after" : "capture-perspective-after"));
             Assert.Less(pixelsAfter.center.x, pixelsBefore.center.x);
@@ -400,8 +399,7 @@ namespace MCPForUnityTests.EditMode.Tools
                 root.transform.position = new Vector3(3.4f, 0, 5);
             else
             {
-                root.transform.position = new Vector3(0, 0, 0.35f);
-                root.transform.rotation = Quaternion.Euler(0, 65, 0);
+                root.transform.SetPositionAndRotation(new Vector3(0, 0, 0.35f), Quaternion.Euler(0, 65, 0));
             }
             var d = Diagnose();
             Assert.AreEqual("partial", d["nodes"].Single(n => n.Value<string>("name") == "ColoredQuad").Value<string>("frustum_relation"));
@@ -428,7 +426,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsFalse(Application.isBatchMode, "WaitForEndOfFrame is unavailable in Editor batch mode.");
             Assert.AreEqual(
                 "UnityEditor.GameView",
-                EditorWindow.focusedWindow?.GetType().FullName,
+                EditorWindow.focusedWindow != null ? EditorWindow.focusedWindow.GetType().FullName : null,
                 "Owned focused Game View prerequisite; the fixture does not alter saved layouts/preferences."
             );
             yield return new EnterPlayMode();

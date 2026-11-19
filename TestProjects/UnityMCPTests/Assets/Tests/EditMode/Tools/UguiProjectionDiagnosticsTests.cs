@@ -58,7 +58,7 @@ namespace MCPForUnityTests.EditMode.Tools
         private GameObject Child(string name = "Panel", Transform parent = null)
         {
             var go = new GameObject(name, typeof(RectTransform));
-            go.transform.SetParent(parent ?? root.transform, false);
+            go.transform.SetParent(parent != null ? parent : root.transform, false);
             ((RectTransform)go.transform).sizeDelta = new Vector2(1, 0.5f);
             return go;
         }
@@ -275,8 +275,7 @@ namespace MCPForUnityTests.EditMode.Tools
         [Test]
         public void NearCrossingClipsBeforePerspectiveDivide()
         {
-            root.transform.position = new Vector3(0, 0, 0.35f);
-            root.transform.rotation = Quaternion.Euler(0, 65, 0);
+            root.transform.SetPositionAndRotation(new Vector3(0, 0, 0.35f), Quaternion.Euler(0, 65, 0));
             var corners = new Vector3[4];
             ((RectTransform)root.transform).GetWorldCorners(corners);
             var depths = corners.Select(p => camera.WorldToViewportPoint(p).z).ToArray();
@@ -599,12 +598,13 @@ namespace MCPForUnityTests.EditMode.Tools
         public void WorstCaseUnicodeAndClippedVerticesRespectActualSerializedLimit()
         {
             string unicode = new string('\u754c', 252);
+            var worldPosition = root.transform.TransformPoint(new Vector3(0.1234567f, 0.2345678f, -4.25f));
+            var worldRotation = root.transform.rotation * Quaternion.Euler(30, 60, 15);
             for (int i = 0; i < 999; i++)
             {
                 var child = Child(unicode + i.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 ((RectTransform)child.transform).sizeDelta = new Vector2(100, 70);
-                child.transform.localPosition = new Vector3(0.1234567f, 0.2345678f, -4.25f);
-                child.transform.localRotation = Quaternion.Euler(30, 60, 15);
+                child.transform.SetPositionAndRotation(worldPosition, worldRotation);
             }
             var response = Send(
                 new JObject

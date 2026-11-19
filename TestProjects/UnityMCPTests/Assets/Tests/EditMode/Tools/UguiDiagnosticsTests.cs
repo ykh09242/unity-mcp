@@ -36,7 +36,7 @@ namespace MCPForUnityTests.Editor.Tools
         private GameObject Child(string name, GameObject parent = null)
         {
             var go = new GameObject(name, typeof(RectTransform));
-            go.transform.SetParent((parent ?? root).transform, false);
+            go.transform.SetParent((parent != null ? parent : root).transform, false);
             go.GetComponent<RectTransform>().sizeDelta = new Vector2(100, 40);
             return go;
         }
@@ -59,7 +59,9 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Diagnose(GameObject target = null, JArray sizes = null, bool includeInactive = false, int maxNodes = 200)
         {
-            return JObject.FromObject(DiagnoseMethod.Invoke(null, new object[] { target ?? root, sizes ?? Sizes(800, 600), includeInactive, maxNodes }));
+            return JObject.FromObject(
+                DiagnoseMethod.Invoke(null, new object[] { target != null ? target : root, sizes ?? Sizes(800, 600), includeInactive, maxNodes })
+            );
         }
 
         private static JArray Sizes(int width, int height) => new JArray(new JObject { ["width"] = width, ["height"] = height });
@@ -1620,17 +1622,17 @@ namespace MCPForUnityTests.Editor.Tools
     {
         public static int Callbacks;
 
-        private void OnEnable()
+        protected void OnEnable()
         {
             Callbacks++;
         }
 
-        private void OnDisable()
+        protected void OnDisable()
         {
             Callbacks++;
         }
 
-        private void OnValidate()
+        protected void OnValidate()
         {
             Callbacks++;
         }

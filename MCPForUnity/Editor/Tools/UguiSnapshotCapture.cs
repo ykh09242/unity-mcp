@@ -244,7 +244,10 @@ namespace MCPForUnity.Editor.Tools
                     throw new ArgumentException("UI node exceeds the component bound.");
                 var textComponent = components.FirstOrDefault(item => item.GetType().FullName == "UnityEngine.UI.Text" || IsTmp(item.GetType()));
                 var state = State(components);
-                string text = privacy.Suppress(go, textComponent) ? null : textComponent?.GetType().GetProperty("text")?.GetValue(textComponent)?.ToString();
+                string text =
+                    privacy.Suppress(go, textComponent) || textComponent == null
+                        ? null
+                        : textComponent.GetType().GetProperty("text")?.GetValue(textComponent)?.ToString();
                 if (text != null && text.Length > 8192)
                     throw new ArgumentException("UI text exceeds the snapshot bound.");
                 var graphic = graphicType == null ? null : go.GetComponent(graphicType);

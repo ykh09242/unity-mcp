@@ -463,7 +463,9 @@ namespace MCPForUnity.Editor.Tools
 
         private static object SetText(GameObject go, JObject props)
         {
-            var c = Find(go, Tmp) ?? Find(go, Ui + "Text");
+            var c = Find(go, Tmp);
+            if (c == null)
+                c = Find(go, Ui + "Text");
             if (c == null)
                 throw new ArgumentException("Target has no TMP or legacy Text component. Create text with element_type=text after configuring TMP essentials.");
             ValidateTextRange(c, props);
@@ -672,8 +674,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static object SetCanvas(GameObject go, JObject props)
         {
-            var canvas = go.GetComponent<Canvas>();
-            if (canvas == null)
+            if (!go.TryGetComponent(out Canvas canvas))
                 throw new ArgumentException("Target has no Canvas.");
             CheckKeys(props, CanvasKeys);
             var canvasKeys = Keys("renderMode sortingOrder overrideSorting pixelPerfect worldCamera planeDistance scaleFactor referencePixelsPerUnit");
@@ -1004,8 +1005,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (token.Type == JTokenType.Null)
                     return null;
-                var camera = Resolve(token, true).GetComponent<Camera>();
-                if (camera == null)
+                if (!Resolve(token, true).TryGetComponent(out Camera camera))
                     throw new ArgumentException("worldCamera target has no Camera.");
                 return camera;
             }
@@ -1319,7 +1319,9 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 var rt = go.transform as RectTransform;
-                var c = Find(go, Tmp, types) ?? Find(go, Ui + "Text", types);
+                var c = Find(go, Tmp, types);
+                if (c == null)
+                    c = Find(go, Ui + "Text", types);
                 var node = new JObject
                 {
                     ["instance_id"] = go.GetInstanceIDCompat(),
