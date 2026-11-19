@@ -119,7 +119,7 @@ def test_pin_change_selects_full_selected_distribution_platform_matrix(path):
     assert len(rows) == 5
     steps = config["jobs"]["canary"]["steps"]
     behavior = next(step for step in steps if step.get("name", "").startswith("Exercise installed"))
-    assert "if" not in behavior
+    assert behavior["if"] == "${{ !cancelled() && steps.archive_install.outcome == 'success' }}"
     assert "tools/check_server_archive.py" in behavior["run"]
     assert "tools/check_server_startup.py" in behavior["run"]
 
@@ -186,7 +186,7 @@ def test_direct_canary_push_inputs_are_covered_by_qualification():
     assert not job.get("continue-on-error")
     assert not job["strategy"]["fail-fast"]
     optional = {step.get("name") for step in job["steps"] if step.get("continue-on-error")}
-    assert optional == {"Preserve installer checkpoint", "Compare archive installation"}
+    assert not optional
     report = config["jobs"]["archive_attempts"]
     assert report["needs"] == ["canary"]
     assert report["uses"] == "./.github/workflows/archive-attempts.yml"

@@ -251,13 +251,14 @@ jobs:
           enable-cache: false
 
       - name: Preserve installer checkpoint
+        id: checkpoint
         uses: ./.github/actions/archive-checkpoint
-        continue-on-error: true
         with:
           kind: bootstrap
           platform: ${{ matrix.os }}
           python-version: '3.11'
       - name: Verify cold and offline server bootstrap
+        if: ${{ !cancelled() && (success() || steps.checkpoint.outcome == 'failure') }}
         timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 18 || 10 }}
         shell: pwsh
         env:
@@ -330,14 +331,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: false
       - name: Preserve installer checkpoint
+        id: checkpoint
         uses: ./.github/actions/archive-checkpoint
-        continue-on-error: true
         with:
           kind: candidate
           platform: ${{ matrix.os }}
           python-version: ${{ matrix.python-version }}
       - name: Install candidate archive without runtime lock
         id: archive_install
+        if: ${{ !cancelled() && (success() || steps.checkpoint.outcome == 'failure') }}
         # Leave time for the evidence upload if a macOS source build times out.
         timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 18 || 10 }}
         env:
@@ -373,6 +375,7 @@ jobs:
           "ARCHIVE_CANDIDATE_SHA=$revision" >> $env:GITHUB_ENV
           "ARCHIVE_FILE=$archive" >> $env:GITHUB_ENV
       - name: Exercise installed MCP, HTTP and CLI behavior
+        if: ${{ !cancelled() && steps.archive_install.outcome == 'success' }}
         run: |
           $ErrorActionPreference = 'Stop'
           & $env:ARCHIVE_PYTHON -I -W error "$env:GITHUB_WORKSPACE/tools/check_server_archive.py" --forbid-source $env:GITHUB_WORKSPACE --candidate-sha $env:ARCHIVE_CANDIDATE_SHA --archive-file $env:ARCHIVE_FILE > .tmp/candidate-archive/behavior.json 2> .tmp/candidate-archive/behavior.stderr.log
@@ -394,7 +397,6 @@ jobs:
 
       - name: Compare archive installation
         if: always() && steps.archive_install.outcome != 'skipped'
-        continue-on-error: true
         timeout-minutes: 2
         uses: ./.github/actions/report-archive-install
         with:

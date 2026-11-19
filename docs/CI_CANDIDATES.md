@@ -62,10 +62,23 @@ An independent runner publishes the installer phases that GitHub observed in eac
 attempt of the run. Its summary links each matrix job and reports the last phase
 started, last phase passed and first unsuccessful phase. When a runner disappears,
 the checkpoint and hosted phase history can survive even if its final install log
-does not. Missing metadata remains unknown. To inspect a past fork run locally, use
-`python tools/ci_archive_attempts.py --repository OWNER/REPO --run-id ID --attempt N
---kind candidate --output history.json` with GitHub CLI read access. The `published`
-kind selects distribution canary jobs.
+does not. The report checks each selected OS and Python from the workflow at the
+tested commit. Each successful bootstrap needs a checkpoint. Each successful
+installer also needs its install report and raw source, resolution, toolchain and
+probe files. Jobs interrupted before an upload retain their observed phases.
+On partial reruns each row uses its latest actual attempt, including earlier
+successful rows. The report distinguishes missing and expired artifacts from an
+unavailable inventory. The job uploads its report even when it finds a gap and
+reads the uploaded history back to verify its contents.
+
+To audit a completed run, use the repository's Python environment and GitHub CLI
+with Actions read access. The tested commit must be present in the local Git
+checkout. Use `published` for distribution canary jobs.
+
+```sh
+python tools/ci_archive_attempts.py --repository OWNER/REPO --run-id ID --attempt N \
+  --checked-sha FULL_TESTED_SHA --kind candidate --include-history --output history.json
+```
 
 After uploading the installation evidence, candidate and distribution jobs also
 compare the current package inventory, confirmed source builds and uv phase times

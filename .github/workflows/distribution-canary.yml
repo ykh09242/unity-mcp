@@ -21,6 +21,7 @@ on:
       - tools/check_source_pin_drift.py
       - tools/check_release_evidence.py
       - tools/ci_archive_attempts.py
+      - tools/ci_archive_evidence.py
       - tools/ci_archive_install_report.py
       - tools/ci_archive_install_history.py
       - .github/actions/archive-checkpoint/**
@@ -108,14 +109,15 @@ jobs:
           enable-cache: false
 
       - name: Preserve installer checkpoint
+        id: checkpoint
         uses: ./.github/actions/archive-checkpoint
-        continue-on-error: true
         with:
           kind: published
           platform: ${{ matrix.os }}
           python-version: ${{ matrix.python-version }}
       - name: Resolve and install the pinned archive without a lock or shared cache
         id: archive_install
+        if: ${{ !cancelled() && (success() || steps.checkpoint.outcome == 'failure') }}
         timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 18 || 10 }}
         env:
           SERVER_SOURCE: ${{ steps.source.outputs.server_source }}
@@ -136,6 +138,7 @@ jobs:
           "CANARY_PYTHON=$python" >> $env:GITHUB_ENV
 
       - name: Exercise installed registration, MCP, HTTP and CLI behavior
+        if: ${{ !cancelled() && steps.archive_install.outcome == 'success' }}
         env:
           SERVER_COMMIT: ${{ steps.source.outputs.server_commit }}
           SERVER_SOURCE: ${{ steps.source.outputs.server_source }}
@@ -162,7 +165,6 @@ jobs:
 
       - name: Compare archive installation
         if: always() && steps.archive_install.outcome != 'skipped'
-        continue-on-error: true
         timeout-minutes: 2
         uses: ./.github/actions/report-archive-install
         with:

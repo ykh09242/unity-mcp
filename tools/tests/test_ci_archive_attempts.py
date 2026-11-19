@@ -80,6 +80,8 @@ def test_checkpoint_records_the_actual_toolchain_and_distinct_source_before_inst
 def example_job(attempt, conclusion, steps):
     return {
         "id": 10 + attempt,
+        "run_id": 112,
+        "head_sha": "a" * 40,
         "name": JOB,
         "run_attempt": attempt,
         "conclusion": conclusion,
@@ -90,6 +92,15 @@ def example_job(attempt, conclusion, steps):
     }
 
 
+def collect(attempt, fetch):
+    jobs, _, warnings = attempts.collect(
+        "owner/project", 112, attempt, "candidate", fetch, "a" * 40
+    )
+    return [attempts.summarize(j, "candidate", j["run_attempt"]) for j in jobs], list(
+        warnings.values()
+    )
+
+
 def test_attempts_keep_interrupted_install_and_completed_retry():
     ready = ("Preserve installer checkpoint", "completed", "success", "2026-11-18T00:00:01Z")
     first = example_job(
@@ -98,13 +109,13 @@ def test_attempts_keep_interrupted_install_and_completed_retry():
     second = example_job(
         2, "success", [ready, (INSTALL, "completed", "success", "2026-11-18T01:00:02Z")]
     )
-    pages = {1: [first], 2: [second, first, {"name": "unrelated"}]}
+    pages = {1: [first], 2: [second, first, {**second, "id": 19, "name": "unrelated"}]}
 
     def fetch(endpoint):
         attempt = int(endpoint.split("/attempts/")[1].split("/")[0])
         return json.dumps({"total_count": len(pages[attempt]), "jobs": pages[attempt]}).encode()
 
-    rows, warnings = attempts.collect("owner/project", 112, 2, "candidate", fetch)
+    rows, warnings = collect(2, fetch)
     assert not warnings
     assert [(r["attempt"], r["job_id"], r["conclusion"]) for r in rows] == [
         (1, 11, "cancelled"),
@@ -122,7 +133,7 @@ def test_missing_first_attempt_and_skipped_steps_remain_unknown():
         skipped = example_job(2, "skipped", [(INSTALL, "completed", "skipped", None)])
         return json.dumps({"total_count": 1, "jobs": [skipped]}).encode()
 
-    rows, warnings = attempts.collect("owner/project", 112, 2, "candidate", fetch)
+    rows, warnings = collect(2, fetch)
     assert warnings and "1" in warnings[0]
     assert rows[0]["last_started"] is None and rows[0]["last_succeeded"] is None
 
@@ -140,7 +151,7 @@ def test_gateway_failure_splits_same_page_without_skipping_later_jobs():
             {"total_count": 17, "jobs": original[(page - 1) * size : page * size]}
         ).encode()
 
-    rows, warnings = attempts.collect("owner/project", 112, 1, "candidate", fetch)
+    rows, warnings = collect(1, fetch)
     assert not warnings
     assert [r["job_id"] for r in rows] == list(range(1, 18))
 
@@ -183,6 +194,10 @@ def test_checkpoint_is_stored_before_install_and_attempt_names_are_immutable(
         assert report["with"]["kind"] == kind
         assert report["with"]["outcome"] == "${{ steps.archive_install.outcome }}"
         assert next(s for s in steps if s.get("id") == "archive_install")["name"] == step
-        assert report["continue-on-error"] and "always()" in report["if"]
+        assert not report.get("continue-on-error") and "always()" in report["if"]
+    assert not checkpoint.get("continue-on-error")
+    installer = next(s for s in steps if s.get("name") == step)
+    assert "steps.checkpoint.outcome == 'failure'" in installer["if"]
+    assert not installer.get("continue-on-error")
     assert job in jobs["archive_attempts"]["needs"]
     assert "always()" in jobs["archive_attempts"]["if"]

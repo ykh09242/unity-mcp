@@ -27,8 +27,10 @@ class HistoryUnavailable(ValueError):
     """The Actions API or archive did not provide usable bounded evidence."""
 
 
-def read_archive(content: bytes) -> dict[str, bytes]:
+def read_archive(content: bytes, member_limits: dict[str, int] | None = None) -> dict[str, bytes]:
     """Read only named evidence from memory, without extracting any archive paths."""
+    if member_limits is None:
+        member_limits = MEMBER_LIMITS
     if len(content) > ARCHIVE_LIMIT:
         raise HistoryUnavailable("Artifact exceeds size limit")
     try:
@@ -38,7 +40,7 @@ def read_archive(content: bytes) -> dict[str, bytes]:
                 raise HistoryUnavailable("Artifact has too many entries")
             files = {}
             for entry in entries:
-                limit = MEMBER_LIMITS.get(entry.filename)
+                limit = member_limits.get(entry.filename)
                 if limit is None:
                     continue
                 if (

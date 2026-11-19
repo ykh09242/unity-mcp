@@ -17,8 +17,7 @@ jobs:
   report:
     name: Installer attempts (${{ inputs.kind }})
     runs-on: ubuntu-26.04
-    timeout-minutes: 4
-    continue-on-error: true
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: read
@@ -27,17 +26,36 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      - name: Summarize each installer attempt
+      - name: Prepare installer matrix reader
+        run: |
+          python3 -m venv "$RUNNER_TEMP/archive-audit"
+          "$RUNNER_TEMP/archive-audit/bin/python" -m pip install --only-binary=:all: PyYAML==6.0.3
+          echo "$RUNNER_TEMP/archive-audit/bin" >> "$GITHUB_PATH"
+      - name: Reconcile installer attempts and retained evidence
         env:
           GH_TOKEN: ${{ github.token }}
-          ARCHIVE_KIND: ${{ inputs.kind }}
         run: |
-          python3 tools/ci_archive_attempts.py --kind "$ARCHIVE_KIND" --repository "$GITHUB_REPOSITORY" \
-            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --output .tmp/archive-attempts.json
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          python tools/ci_archive_attempts.py --kind "$ARCHIVE_KIND" --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --checked-sha "$(git rev-parse HEAD)" \
+            --output .tmp/archive-attempts.json
+      - name: Retain installer attempt history
+        id: upload
+        if: ${{ !cancelled() && hashFiles('.tmp/archive-attempts.json') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: archive-history-${{ inputs.kind }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: .tmp/archive-attempts.json
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
+      - name: Verify retained attempt history
+        if: ${{ !cancelled() && steps.upload.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HISTORY_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+        run: |
+          python tools/ci_archive_attempts.py --kind "$ARCHIVE_KIND" --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --checked-sha "$(git rev-parse HEAD)" \
+            --output .tmp/archive-attempts.json --verify-upload "$HISTORY_ARTIFACT_ID"
+    env:
+      ARCHIVE_KIND: ${{ inputs.kind }}
