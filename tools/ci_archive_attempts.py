@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 
 if __package__:
     from tools import ci_archive_evidence as evidence
@@ -200,13 +201,24 @@ def history_artifact(store, kind, number, jobs, exact=None):
 
 
 def verify_upload(run, kind, artifact_id, exact, fetch=github_api):
+    def fetch_published(endpoint):
+        # A successful upload can precede availability of its metadata or ZIP through the API.
+        for delay in (1, 2, 4):
+            try:
+                return fetch(endpoint)
+            except (ValueError, OSError, subprocess.SubprocessError):
+                time.sleep(delay)
+        return fetch(endpoint)
+
     try:
-        item = json.loads(fetch(f"repos/{run.repository}/actions/artifacts/{artifact_id}"))
+        item = json.loads(
+            fetch_published(f"repos/{run.repository}/actions/artifacts/{artifact_id}")
+        )
         evidence.require_fields(item, id=artifact_id)
         records = [item]
     except API_ERRORS:
         records = None
-    store = evidence.Artifacts(run, records, fetch)
+    store = evidence.Artifacts(run, records, fetch_published)
     return history_artifact(store, kind, run.attempt, [], exact)
 
 

@@ -5,6 +5,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 import re
+import time
 from urllib.parse import parse_qs
 from zipfile import ZipFile
 
@@ -294,11 +295,13 @@ def test_upload_verification_uses_the_returned_artifact_id(actions):
     actions.add_artifact(name, {"archive-attempts.json": "exact report bytes"})
     item = actions.entries[name]
     artifact_id = item["id"]
+    lookups = []
 
     def fetch(endpoint):
         if endpoint.endswith("/zip"):
             return actions.fetch(endpoint)
         assert endpoint.endswith(f"/actions/artifacts/{artifact_id}")
+        lookups.append(endpoint)
         return json.dumps(item)
 
     assert (
@@ -310,6 +313,47 @@ def test_upload_verification_uses_the_returned_artifact_id(actions):
         audit.verify_upload(RUN, "published", artifact_id, b"exact report bytes", fetch)["status"]
         != "verified"
     )
+    assert len(lookups) == 2
+
+
+@pytest.mark.parametrize("delayed_suffix", ["", "/zip"])
+def test_just_uploaded_history_waits_for_the_exact_artifact(actions, monkeypatch, delayed_suffix):
+    name = "archive-history-published-42-attempt-1"
+    actions.add_artifact(name, {"archive-attempts.json": "retained report"})
+    item = actions.entries[name]
+    metadata = f"repos/{RUN.repository}/actions/artifacts/{item['id']}"
+    calls = []
+    delays = []
+    monkeypatch.setattr(time, "sleep", delays.append)
+
+    def fetch(endpoint):
+        calls.append(endpoint)
+        if endpoint == metadata + delayed_suffix and calls.count(endpoint) == 1:
+            raise ValueError("GitHub history request failed")
+        if endpoint == metadata:
+            return json.dumps(item)
+        assert endpoint == metadata + "/zip"
+        return actions.fetch(endpoint)
+
+    proof = audit.verify_upload(RUN, "published", item["id"], b"retained report", fetch)
+    assert proof["status"] == "verified"
+    assert calls.count(metadata + delayed_suffix) == 2
+    assert len(delays) == 1 and delays[0] > 0
+
+
+def test_just_uploaded_history_stops_when_metadata_stays_unavailable(monkeypatch):
+    calls = []
+    delays = []
+    monkeypatch.setattr(time, "sleep", delays.append)
+
+    def fetch(endpoint):
+        calls.append(endpoint)
+        raise ValueError("GitHub history request failed")
+
+    proof = audit.verify_upload(RUN, "published", 91, b"retained report", fetch)
+    assert proof["status"] == "inventory_unknown"
+    assert calls == [f"repos/{RUN.repository}/actions/artifacts/91"] * 4
+    assert len(delays) == 3
 
 
 def test_unavailable_rerun_job_inventory_cannot_certify_earlier_success(actions):
