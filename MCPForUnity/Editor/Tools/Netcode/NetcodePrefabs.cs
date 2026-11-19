@@ -66,8 +66,9 @@ namespace MCPForUnity.Editor.Tools.Netcode
 
         private static uint SourceHash(object entry, GameObject source)
         {
-            if (!NetcodeAccess.TryGet(entry, "SourcePrefabGlobalObjectIdHash", out object value))
-                value = NetcodeAccess.Get(source.GetComponent(NetcodeAccess.Type("NetworkObject")), "GlobalObjectIdHash");
+            // Read the effective source directly, including when NGO would fill SourcePrefabToOverride during validation.
+            if (!NetcodeAccess.TryGet(source.GetComponent(NetcodeAccess.Type("NetworkObject")), "GlobalObjectIdHash", out object value))
+                value = NetcodeAccess.Get(entry, "SourcePrefabGlobalObjectIdHash");
             return value is uint hash ? hash : throw new InvalidOperationException("netcode_api_unsupported: expected a uint prefab source hash.");
         }
 
@@ -107,6 +108,8 @@ namespace MCPForUnity.Editor.Tools.Netcode
                             break;
                         case "Prefab":
                             source = NetcodeAccess.Get(entry, "SourcePrefabToOverride") as GameObject;
+                            if (source == null && entry.GetType().GetMethod("Validate", new[] { typeof(int) })?.ReturnType == typeof(bool))
+                                source = NetcodeAccess.Get(entry, "Prefab") as GameObject;
                             if (
                                 !Prefab(source, issues, location + " source")
                                 || !Prefab(NetcodeAccess.Get(entry, "OverridingTargetPrefab") as GameObject, issues, location + " target")

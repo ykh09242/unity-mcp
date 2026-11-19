@@ -161,24 +161,29 @@ namespace MCPForUnityTests.EditMode.Tools
             StringAssert.Contains("transport_scene_mismatch", result["data"]["diagnostics"].ToString());
         }
 
+        private GameObject CreateNetworkPrefab(string name)
+        {
+            if (!AssetDatabase.IsValidFolder(folder))
+                AssetDatabase.CreateFolder("Assets", folder.Substring("Assets/".Length));
+            var source = new GameObject(name);
+            source.AddComponent(Ngo("NetworkObject"));
+            try
+            {
+                return PrefabUtility.SaveAsPrefabAsset(source, folder + "/" + name + ".prefab");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+        }
+
         [TestCase("None")]
         [TestCase("Prefab")]
         [TestCase("Hash")]
         public void DuplicateSerializedPrefabRegistrationIsReportedAndPreserved(string mode)
         {
             Component manager = Manager();
-            AssetDatabase.CreateFolder("Assets", folder.Substring("Assets/".Length));
-            var source = new GameObject("OwnedNetworkPrefab");
-            source.AddComponent(Ngo("NetworkObject"));
-            GameObject prefab;
-            try
-            {
-                prefab = PrefabUtility.SaveAsPrefabAsset(source, folder + "/Owned.prefab");
-            }
-            finally
-            {
-                UnityEngine.Object.DestroyImmediate(source);
-            }
+            GameObject prefab = CreateNetworkPrefab("Owned");
             uint prefabHash;
             using (var serialized = new SerializedObject(prefab.GetComponent(Ngo("NetworkObject"))))
                 prefabHash = (uint)serialized.FindProperty("GlobalObjectIdHash").longValue;
@@ -230,20 +235,60 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(before, EditorJsonUtility.ToJson(owner), "Raw duplicate registrations must not be cleaned up by inspection.");
         }
 
+        private static FieldInfo RegisterInline(object config, object entry)
+        {
+            if (Get(config, "Prefabs") is object prefabs)
+                ((IList)Get(prefabs, "NetworkPrefabsLists")).Clear();
+            FieldInfo field = config.GetType().GetField("NetworkPrefabs", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? config.GetType().GetField("OldPrefabList", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(field);
+            var entries = (IList)Activator.CreateInstance(field.FieldType);
+            entries.Add(entry);
+            field.SetValue(config, entries);
+            return field;
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void InlinePrefabOverrideUsesThePackageSourceRuleWithoutNormalizingIt(bool hasDefault)
+        {
+            Component manager = Manager();
+            object config = Get(manager, "NetworkConfig");
+            GameObject target = CreateNetworkPrefab("Target");
+            GameObject source = hasDefault ? CreateNetworkPrefab("Source") : null;
+            object entry = Activator.CreateInstance(Ngo("NetworkPrefab"));
+            Set(entry, "Override", Enum.Parse(Ngo("NetworkPrefabOverride"), "Prefab"));
+            Set(entry, "Prefab", source);
+            Set(entry, "OverridingTargetPrefab", target);
+            FieldInfo field = RegisterInline(config, entry);
+            string before = EditorJsonUtility.ToJson(manager);
+            JObject result = Call(Request());
+            Assert.IsTrue((bool)result["success"], result.ToString());
+            bool ready = hasDefault && field.Name == "OldPrefabList";
+            Assert.AreEqual(ready, (bool)result["data"]["ready"], result.ToString());
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(manager));
+            Assert.IsNull(Get(entry, "SourcePrefabToOverride"));
+            if (ready)
+            {
+                var row = result["data"]["managers"][0]["prefabs"][0];
+                Assert.AreEqual(AssetDatabase.GetAssetPath(source), (string)row["source_path"]);
+                using (var serialized = new SerializedObject(source.GetComponent(Ngo("NetworkObject"))))
+                    Assert.AreEqual((uint)serialized.FindProperty("GlobalObjectIdHash").longValue, (uint)row["source_hash"]);
+            }
+            else
+                StringAssert.Contains(field.Name + "[0] source", result["data"]["diagnostics"].ToString());
+        }
+
         [Test]
         public void InlineOverrideWithMissingTargetIsReportedWithoutMigratingIt()
         {
             Component manager = Manager();
             object config = Get(manager, "NetworkConfig");
-            FieldInfo field = config.GetType().GetField("NetworkPrefabs", BindingFlags.Instance | BindingFlags.NonPublic)
-                ?? config.GetType().GetField("OldPrefabList", BindingFlags.Instance | BindingFlags.NonPublic);
-            Assert.IsNotNull(field);
-            var entries = (IList)Activator.CreateInstance(field.FieldType);
             object entry = Activator.CreateInstance(Ngo("NetworkPrefab"));
             Set(entry, "Override", Enum.Parse(Ngo("NetworkPrefabOverride"), "Hash"));
             Set(entry, "SourceHashToOverride", 123u);
-            entries.Add(entry);
-            field.SetValue(config, entries);
+            FieldInfo field = RegisterInline(config, entry);
+            object entries = field.GetValue(config);
             string before = EditorJsonUtility.ToJson(manager);
             JObject result = Call(Request());
             Assert.IsTrue((bool)result["success"], result.ToString());
