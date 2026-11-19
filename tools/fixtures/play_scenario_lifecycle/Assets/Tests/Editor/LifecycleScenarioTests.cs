@@ -171,6 +171,7 @@ namespace UnityMcpLifecycleSample.Tests
             var observed = new HashSet<int>();
             var acquired = new List<Acquisition>();
             double deadline = Time.realtimeSinceStartupAsDouble + 50;
+            var pollInterval = new WaitForSecondsRealtime(0.1f);
             while (Time.realtimeSinceStartupAsDouble < deadline)
             {
                 JObject status = Status(id);
@@ -220,7 +221,7 @@ namespace UnityMcpLifecycleSample.Tests
                     if (cancel)
                         SampleEvidence.Command(new JObject { ["action"] = "cancel", ["job_id"] = id });
                 }
-                yield return new WaitForSecondsRealtime(0.1f);
+                yield return pollInterval;
             }
             JObject done = Status(id);
             Assert.That((string)done["status"], Is.Not.EqualTo("running"), done.ToString());

@@ -454,8 +454,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return result;
             }
             result.Scene = target.scene.path;
-            PlayScenarioTarget identity = target.GetComponent<PlayScenarioTarget>();
-            if (identity != null)
+            if (target.TryGetComponent(out PlayScenarioTarget identity))
             {
                 if (!PlayScenarioTarget.IsValidTargetId(identity.TargetId))
                 {

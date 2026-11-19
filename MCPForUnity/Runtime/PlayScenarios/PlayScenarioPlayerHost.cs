@@ -183,7 +183,14 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 {
                     var entry = targetQuery.Pop();
                     Transform current = entry.Node;
-                    bool match = parts == null ? current.GetComponent<PlayScenarioTarget>()?.TargetId == step.TargetId : entry.Segment == parts.Length;
+                    bool match;
+                    if (parts == null)
+                    {
+                        string id = current.TryGetComponent(out PlayScenarioTarget marker) ? marker.TargetId : null;
+                        match = id == step.TargetId;
+                    }
+                    else
+                        match = entry.Segment == parts.Length;
                     if (match)
                     {
                         matched++;

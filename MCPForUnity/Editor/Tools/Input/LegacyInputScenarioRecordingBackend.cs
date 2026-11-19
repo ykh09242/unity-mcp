@@ -109,7 +109,8 @@ namespace MCPForUnity.Editor.Tools.Input
                 observation.Dispose();
                 var owned = pump;
                 pump = null;
-                owned?.Cancel();
+                if (owned != null)
+                    owned.Cancel();
             }
         }
 #endif

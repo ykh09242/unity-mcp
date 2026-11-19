@@ -40,9 +40,9 @@ namespace MCPForUnityTests.PlayScenarios.Player
             return args[first + 1];
         }
 
+#if !UNITY_EDITOR && !MCP_FOR_UNITY_PLAY_SCENARIOS
         private void Start()
         {
-#if !UNITY_EDITOR && !MCP_FOR_UNITY_PLAY_SCENARIOS
             for (int index = 0; index < PlayScenarioResourceTracker.RegistrationLimit + 1; index++)
             {
                 PlayScenarioResourceTracker.RegisterHandle().Dispose();
@@ -80,7 +80,7 @@ namespace MCPForUnityTests.PlayScenarios.Player
             }
             Debug.Log("ORDINARY_PLAYER_BOUNDARY_VERIFIED");
             Application.Quit(0);
-#endif
         }
+#endif
     }
 }

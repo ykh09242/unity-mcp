@@ -8,6 +8,8 @@ namespace MCPForUnityTests.PlayScenarios.Player
     /// <summary>Explicit scalar probe and bounded failure modes for the dedicated native test Player.</summary>
     public sealed class ScenarioPlayerFixtureProbe : MonoBehaviour, IPlayScenarioStateProvider
     {
+        private readonly WaitForSecondsRealtime liveUpdateDelay = new WaitForSecondsRealtime(2);
+        private readonly WaitForSecondsRealtime readinessDelay = new WaitForSecondsRealtime(0.4f);
         private IDisposable registration;
         private bool ready;
         private int reads;
@@ -30,7 +32,7 @@ namespace MCPForUnityTests.PlayScenarios.Player
             string mode = ScenarioPlayerFixture.Mode;
             if (mode == "crash" || mode == "hang")
             {
-                yield return new WaitForSecondsRealtime(2);
+                yield return liveUpdateDelay;
                 Debug.Log("PLAYER_FIXTURE_AFTER_LIVE_UPDATES:" + mode);
                 if (mode == "crash")
                 {
@@ -44,7 +46,7 @@ namespace MCPForUnityTests.PlayScenarios.Player
                 }
                 yield break;
             }
-            yield return new WaitForSecondsRealtime(0.4f);
+            yield return readinessDelay;
             if (mode == "state-destroyed")
             {
                 Debug.Log("PLAYER_FIXTURE_PROVIDER_DESTROYED:reads=" + reads);

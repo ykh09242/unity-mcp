@@ -28,7 +28,12 @@ namespace MCPForUnityTests.PlayScenarios.Integration.Runtime
 
         private IEnumerator EmitDelayedError()
         {
-            yield return new WaitForSecondsRealtime(0.15f);
+            // Clicks can overlap. Each invocation owns its deadline.
+            double deadline = Time.realtimeSinceStartupAsDouble + 0.15;
+            do
+            {
+                yield return null;
+            } while (Time.realtimeSinceStartupAsDouble < deadline);
             Debug.LogError("PLAY_SCENARIO_QA_DELAYED_ERROR");
         }
 

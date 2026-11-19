@@ -821,7 +821,7 @@ namespace MCPForUnityTests.Editor.Tools
         internal static string Path;
         internal static int Count;
 
-        private static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom)
+        protected static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom)
         {
             if (Path != null && imported.Contains(Path))
                 Count++;

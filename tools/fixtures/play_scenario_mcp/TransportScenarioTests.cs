@@ -70,8 +70,9 @@ namespace UnityMcpLifecycleTransport.Tests
             File.Move(readyPath + ".tmp", readyPath);
             double deadline = Time.realtimeSinceStartupAsDouble + 150;
             string completedPath = Path.Combine(output, "complete.json");
+            var pollInterval = new WaitForSecondsRealtime(0.1f);
             while (!File.Exists(completedPath) && Time.realtimeSinceStartupAsDouble < deadline)
-                yield return new WaitForSecondsRealtime(0.1f);
+                yield return pollInterval;
             Assert.That(File.Exists(completedPath), Is.True, "External MCP client must complete.");
             JObject completed = JObject.Parse(File.ReadAllText(completedPath));
             Assert.That((string)completed["nonce"], Is.EqualTo(nonce));

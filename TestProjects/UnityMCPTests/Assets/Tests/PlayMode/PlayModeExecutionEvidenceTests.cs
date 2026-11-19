@@ -95,7 +95,7 @@ namespace MCPForUnityTests.PlayMode
                     RunAnimationCommand(AnimationCommand("animator_set_parameter_runtime", liveTarget, "\"parameterName\":\"Speed\",\"value\":4")),
                     Is.True
                 );
-                Assert.That(liveAnimator.GetFloat("Speed"), Is.EqualTo(4f));
+                Assert.That(liveAnimator.GetFloat(controller.parameters[0].nameHash), Is.EqualTo(4f));
                 Assert.That(RunAnimationCommand(AnimationCommand("animator_set_enabled_runtime", liveTarget, "\"enabled\":false")), Is.True);
                 Assert.That(liveAnimator.enabled, Is.False);
             }

@@ -11,6 +11,8 @@ namespace MCPForUnityTests.PlayMode
     /// </summary>
     public class PlayModeBasicTests
     {
+        private static readonly WaitForSeconds ShortDelay = new WaitForSeconds(0.1f);
+
         [UnityTest]
         public IEnumerator GameObjectCreation_InPlayMode_Succeeds()
         {
@@ -29,7 +31,7 @@ namespace MCPForUnityTests.PlayMode
         {
             float startTime = Time.time;
 
-            yield return new WaitForSeconds(0.1f);
+            yield return ShortDelay;
 
             float elapsed = Time.time - startTime;
             Assert.GreaterOrEqual(elapsed, 0.09f, "Should have waited at least 0.09 seconds");
