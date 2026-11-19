@@ -41,6 +41,8 @@ from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
+ToolName = Annotated[StrictStr, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")]
+HostToolNames = Annotated[list[ToolName], Field(max_length=512)]
 RouteSurfaces = Literal["both", "tools", "resources"]
 
 
@@ -54,6 +56,7 @@ class SearchRequest(BaseModel):
     observation_source: ObservationSource | None = None
     required_values: RequiredValues | None = None
     route_surfaces: RouteSurfaces = "both"
+    host_tool_names: HostToolNames | None = None
 
     @model_validator(mode="after")
     def has_search_input(self):
@@ -457,7 +460,11 @@ def search_catalog(
     unavailable_parents = (
         {entry["name"] for entry in entries} - visible_names if visible_names is not None else set()
     )
-    if structured and visible_names is not None:
+    if request.host_tool_names is not None:
+        # A host can narrow a live list. Its report never establishes server authority.
+        allowed = set(request.host_tool_names).intersection(visible_names or ())
+        entries = [entry for entry in entries if entry["name"] in allowed]
+    elif structured and visible_names is not None:
         entries = [entry for entry in entries if entry["name"] in visible_names]
     matched_query = None if structured else request.catalog_query or request.query
     query = _normalized(matched_query or "")

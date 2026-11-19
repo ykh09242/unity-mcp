@@ -21,13 +21,20 @@ from models.doctor import EXACT_TARGET_PATTERN, DoctorCLIReceipt
     is_flag=True,
     help="Read local CLI effective configuration offline; does not observe a running server.",
 )
-def doctor(protocol: Literal["auto", "legacy"], show_config: bool = False):
+@click.option("--inspect-tool", help="Check one exact name in tools/list on this SDK connection.")
+def doctor(
+    protocol: Literal["auto", "legacy"], show_config: bool = False, inspect_tool: str | None = None
+):
     """Verify this diagnostic SDK connection; does not attest another desktop client's session.
 
     Source recovery advice in data.source_recovery is observational; this command
     never restarts, focuses or repairs the Editor.
     """
     config = get_config()
+    if inspect_tool is not None and (
+        show_config or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", inspect_tool)
+    ):
+        raise click.UsageError("--inspect-tool requires a live connection and one exact tool name.")
     if show_config:
         from cli.utils.config_diagnostics import local_configuration
 
@@ -61,6 +68,10 @@ def doctor(protocol: Literal["auto", "legacy"], show_config: bool = False):
                 next_action="install_declared_dependencies",
             )
         else:
-            receipt = anyio.run(diagnose, config, protocol)
+            receipt = (
+                anyio.run(diagnose, config, protocol, inspect_tool)
+                if inspect_tool
+                else anyio.run(diagnose, config, protocol)
+            )
     click.echo(format_output(receipt.model_dump(mode="json"), config.format))
     raise click.exceptions.Exit(receipt.exit_code)

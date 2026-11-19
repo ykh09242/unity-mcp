@@ -15,7 +15,12 @@ from pydantic import ValidationError
 
 from cli.utils.config import CLIConfig
 from cli.utils.connection import UnityConnectionError, _auth_headers, _server_url
-from models.doctor import EXACT_TARGET_PATTERN, DoctorCLIReceipt, DoctorResourceResponse
+from models.doctor import (
+    EXACT_TARGET_PATTERN,
+    DoctorCLIReceipt,
+    DoctorResourceResponse,
+    DoctorToolInventory,
+)
 
 _DOCTOR_URI: Final = "mcpforunity://doctor"
 _TARGET: Final = re.compile(EXACT_TARGET_PATTERN)
@@ -514,7 +519,9 @@ async def _read(client, config: CLIConfig, protocol: Literal["auto", "legacy"]) 
 
 
 async def diagnose(
-    config: CLIConfig, protocol: Literal["auto", "legacy"] = "auto"
+    config: CLIConfig,
+    protocol: Literal["auto", "legacy"] = "auto",
+    inspect_tool: str | None = None,
 ) -> DoctorCLIReceipt:
     """Diagnose only this fresh connection, using one deadline and no client config search."""
     if not config.unity_instance or not _TARGET.fullmatch(config.unity_instance):
@@ -550,7 +557,23 @@ async def diagnose(
         with anyio.fail_after(max(0.001, deadline + 1 - anyio.current_time())):
             async with client:
                 with anyio.fail_after(max(0.001, deadline - anyio.current_time())):
-                    return await _read(client, config, protocol)
+                    receipt = await _read(client, config, protocol)
+                    if inspect_tool and receipt.connection_verified:
+                        from cli.utils.tool_description import _listing
+
+                        listing = {"advertised": None, "tool": None}
+                        await _listing(
+                            client,
+                            inspect_tool,
+                            {"unity_instance": config.unity_instance},
+                            deadline,
+                            listing,
+                        )
+                        inventory = DoctorToolInventory(
+                            tool=inspect_tool, received=listing["advertised"]
+                        )
+                        receipt = receipt.model_copy(update={"tool_inventory": inventory})
+                    return receipt
     except (ValidationError, ValueError, RecursionError) as error:
         reason = "diagnostic_limit" if isinstance(error, DiagnosticLimit) else "invalid_receipt"
         return _failure(config, protocol, reason, 3, "update_selected_server")

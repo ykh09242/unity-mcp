@@ -377,6 +377,8 @@ async def test_real_click_sdk_loopback_discovery_and_safe_read(
                     "doctor",
                     "--protocol",
                     mode,
+                    "--inspect-tool",
+                    "not_registered",
                 ],
             )
         )
@@ -386,6 +388,7 @@ async def test_real_click_sdk_loopback_discovery_and_safe_read(
     assert receipt["connection_verified"] is True
     assert receipt["requested_target"] == receipt["data"]["target"]["instance_id"] == target
     assert receipt["external_client_verified"] is False
+    assert "tools/list" in trace and receipt["tool_inventory"]["received"] is False
     assert "resources/list" in trace and "resources/read" in trace
     if mode == "legacy" or legacy_only:
         assert "initialize" in trace

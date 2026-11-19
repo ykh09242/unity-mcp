@@ -27,7 +27,7 @@ from services.registry import (
     get_registered_tools,
 )
 from services.registry.action_catalog import ActionIntent, CatalogResource, ObservationSource
-from services.registry.task_search import RequiredValues, RouteSurfaces
+from services.registry.task_search import HostToolNames, RequiredValues, RouteSurfaces
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -67,6 +67,10 @@ async def search_unity_tools(
     route_surfaces: Annotated[
         RouteSurfaces | None, "Group tools, resources or both (default)."
     ] = None,
+    host_tool_names: Annotated[
+        HostToolNames | None,
+        "Complete callable tool names exposed by this host for this connection. Omit if unknown.",
+    ] = None,
 ) -> dict[str, Any]:
     from services.registry.task_search import SearchRequest, search_catalog
 
@@ -79,6 +83,7 @@ async def search_unity_tools(
             observation_source=observation_source,
             required_values=required_values,
             route_surfaces=route_surfaces or "both",
+            host_tool_names=host_tool_names,
         )
     except ValidationError:
         return {
@@ -130,6 +135,7 @@ async def manage_tools(
             "describe",
             "search",
             "catalog",
+            "inspect_inventory",
         ],
         "Action to perform.",
     ],
@@ -190,11 +196,37 @@ async def manage_tools(
         "For search, choose both (default), tools, or resources for route_groups. Use tools for a "
         "tools-only client. Each group offers a representative and available alternatives.",
     ] = None,
+    host_tool_names: Annotated[
+        HostToolNames | None,
+        "For search or inspect_inventory, supply this host's complete callable tool names. Omit if unknown.",
+    ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
     discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
     modern = is_sessionless(ctx)
+    if host_tool_names is not None and action not in {"search", "inspect_inventory"}:
+        return {"success": False, "error": "host_tool_names requires search or inspect_inventory."}
+    if action == "inspect_inventory":
+        if not tool or len(tool) > 128:
+            return {"success": False, "error": "Inspect one exact tool name (1..128 characters)."}
+        # Only report the queried name's membership. Catalog definitions include
+        # selectable but denied entries and must never populate this receipt.
+        advertised = any(item.name == tool for item in await _visible_tools(ctx))
+        return {
+            "scope": "current_mcp_request",
+            "server_advertised": advertised,
+            "host_evidence": "caller_report" if host_tool_names is not None else "unknown",
+            "status": (
+                "server_unavailable"
+                if not advertised
+                else "host_unknown"
+                if host_tool_names is None
+                else "host_advertised"
+                if tool in host_tool_names
+                else "host_filtered"
+            ),
+        }
     if intent is not None and action not in {"catalog", "search"}:
         return {"success": False, "error": "intent is supported only for search or catalog."}
     if (observation_source is not None or required_values is not None) and action != "search":
@@ -247,6 +279,7 @@ async def manage_tools(
             observation_source=observation_source,
             required_values=required_values,
             route_surfaces=route_surfaces,
+            host_tool_names=host_tool_names,
         )
     if action in ("activate", "deactivate", "reset") and modern:
         if discovery is None or await discovery.scope_key(ctx) is None:

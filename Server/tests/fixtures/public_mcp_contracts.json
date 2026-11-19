@@ -21287,7 +21287,8 @@
                   "reset",
                   "describe",
                   "search",
-                  "catalog"
+                  "catalog",
+                  "inspect_inventory"
                 ],
                 "type": "string"
               },
@@ -21307,6 +21308,24 @@
                 "anyOf": [
                   {
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "host_tool_names": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9_.-]+$",
+                      "type": "string"
+                    },
+                    "maxItems": 512,
+                    "type": "array"
                   },
                   {
                     "type": "null"
@@ -25219,6 +25238,24 @@
                   {
                     "maxLength": 512,
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "host_tool_names": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9_.-]+$",
+                      "type": "string"
+                    },
+                    "maxItems": 512,
+                    "type": "array"
                   },
                   {
                     "type": "null"
@@ -48073,7 +48110,8 @@
                   "reset",
                   "describe",
                   "search",
-                  "catalog"
+                  "catalog",
+                  "inspect_inventory"
                 ],
                 "type": "string"
               },
@@ -48093,6 +48131,24 @@
                 "anyOf": [
                   {
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "host_tool_names": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9_.-]+$",
+                      "type": "string"
+                    },
+                    "maxItems": 512,
+                    "type": "array"
                   },
                   {
                     "type": "null"
@@ -52005,6 +52061,24 @@
                   {
                     "maxLength": 512,
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "host_tool_names": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9_.-]+$",
+                      "type": "string"
+                    },
+                    "maxItems": 512,
+                    "type": "array"
                   },
                   {
                     "type": "null"

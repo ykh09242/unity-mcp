@@ -112,6 +112,12 @@ class DoctorResourceResponse(DoctorModel):
     data: DoctorReceipt
 
 
+class DoctorToolInventory(DoctorModel):
+    tool: Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")]
+    scope: Literal["diagnostic_sdk_tools_list"] = "diagnostic_sdk_tools_list"
+    received: bool | None
+
+
 class DoctorCLIReceipt(DoctorModel):
     schema_version: Literal["unity-mcp/doctor-cli@1"] = "unity-mcp/doctor-cli@1"
     scope: Literal["diagnostic_sdk"] = "diagnostic_sdk"
@@ -166,3 +172,4 @@ class DoctorCLIReceipt(DoctorModel):
         Literal["passed", "failed", "unknown", "not_checked"],
     ] = Field(default_factory=dict)
     data: DoctorReceipt | None = None
+    tool_inventory: DoctorToolInventory | None = Field(default=None, exclude_if=lambda v: v is None)

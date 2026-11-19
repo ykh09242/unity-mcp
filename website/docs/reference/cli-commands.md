@@ -1397,6 +1397,7 @@ Verify this diagnostic SDK connection; does not attest another desktop client's 
 | --- | --- | --- | --- | --- | --- | --- |
 | --protocol | choice: auto, legacy | optional | nargs=1 | "auto" | — |  |
 | --config | boolean | optional | nargs=1, flag | — | — | Read local CLI effective configuration offline; does not observe a running server. |
+| --inspect-tool | text | optional | nargs=1 | — | — | Check one exact name in tools/list on this SDK connection. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp editor`

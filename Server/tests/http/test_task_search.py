@@ -80,3 +80,36 @@ async def test_read_only_search_uses_same_scoped_registration(discovery_server, 
         assert await names(client) == before
         assert store.retained_entries == 0
     assert required_permissions("search_unity_tools", {}) == {Permission.READ}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+async def test_host_inventory_only_narrows_the_current_server_list(discovery_server, mode):
+    build, _ = discovery_server
+    server, _ = build("core")
+    async with Client(server, mode=mode) as client:
+        visible = await names(client)
+        for inventory, status in (
+            (None, "host_unknown"),
+            ([], "host_filtered"),
+            (sorted(visible), "host_advertised"),
+        ):
+            args = {"action": "inspect_inventory", "tool": "manage_tools"}
+            if inventory is not None:
+                args["host_tool_names"] = inventory
+            receipt = (await client.call_tool("manage_tools", args)).structured_content
+            assert receipt["status"] == status and receipt["server_advertised"]
+        missing = {
+            "action": "inspect_inventory",
+            "tool": "effect_probe",
+            "host_tool_names": ["effect_probe"],
+        }
+        receipt = (await client.call_tool("manage_tools", missing)).structured_content
+        assert receipt["status"] == "server_unavailable"
+        results = (
+            await client.call_tool(
+                "manage_tools",
+                {"action": "search", "query": "effect_probe", "host_tool_names": ["effect_probe"]},
+            )
+        ).structured_content
+        assert not results["results"] and not results["route_groups"]

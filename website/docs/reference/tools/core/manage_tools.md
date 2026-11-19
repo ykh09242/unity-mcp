@@ -20,7 +20,7 @@ Find Unity tools, actions and readable resources for a task; inspect schemas or 
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['list_groups', 'activate', 'deactivate', 'sync', 'reset', 'describe', 'search', 'catalog']` | yes | Action to perform. |
+| `action` | `Literal['list_groups', 'activate', 'deactivate', 'sync', 'reset', 'describe', 'search', 'catalog', 'inspect_inventory']` | yes | Action to perform. |
 | `group` | `str \| None` | — | Group name for activate/deactivate/catalog. Catalog also supports resources for fixed URIs and resource_templates for parameterized Unity observations. Valid groups: animation, asset_gen, assets, camera, core, docs, graphics, legacy, physics, prefabs, probuilder, profiling, scene, scripting_ext, testing, ui, vfx |
 | `tool` | `str \| None` | — | Single tool name for activate/deactivate/describe/catalog. Discover names with catalog. |
 | `query` | `str \| None` | — | Optional original task text when searching by observation, or a lexical query (1..512 characters). |
@@ -33,6 +33,7 @@ Find Unity tools, actions and readable resources for a task; inspect schemas or 
 | `observation_source` | `Literal['editor_live', 'asset_file', 'imported_asset', 'compile_job'] \| None` | — | For search, interpret the request in its own language. Select where the evidence must originate: current Editor state (editor_live), saved file contents (asset_file), Unity import results (imported_asset), or a retained compilation request (compile_job). |
 | `required_values` | `list[Literal['render_size.width', 'render_size.height', 'current_size', 'view_instance_id', 'presets', 'rendered_image', 'pointer_hit_order', 'active_scene.name', 'active_scene.path', 'compilation.is_compiling', 'compile_job.outcome', 'nodeCount', 'edgeCount', 'nodes', 'edges', 'properties', 'keywords', 'unsaved_graph_structure', 'property_values', 'shader_source', 'contents', 'encodedContents', 'nextOffset', 'shader_graph_structure', 'unsaved_source', 'compilation', 'passes', 'subshader_count']] \| None` | — | For search, select every result field the request needs. Game View pixels use render_size.width and render_size.height; saved graph totals use nodeCount and edgeCount. A route must declare all selected values. No query or translation is needed. |
 | `route_surfaces` | `Literal['both', 'tools', 'resources'] \| None` | — | For search, choose both (default), tools, or resources for route_groups. Use tools for a tools-only client. Each group offers a representative and available alternatives. |
+| `host_tool_names` | `list[str] \| None` | — | For search or inspect_inventory, supply this host's complete callable tool names. Omit if unknown. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

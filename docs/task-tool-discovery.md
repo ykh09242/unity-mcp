@@ -18,6 +18,23 @@ Use the read-only MCP tool `search_unity_tools` for task search. It accepts the 
 search fields as `manage_tools(action="search")` and requires read access. Discovery
 leaves tool selection and Unity state unchanged.
 
+A host that knows the complete callable tool names for its current connection
+can pass them as `host_tool_names` to search. Use exact MCP names after any host
+filter, without connection prefixes. The list is limited to 512 names of 1..128
+characters and only restricts tools. An empty list permits only resource routes.
+Omit it if the host inventory is unknown or incomplete.
+
+To investigate one missing tool, read `mcpforunity://doctor` for the selected
+target's observed package and running-server source comparison. On the **same
+connection and target**, call `manage_tools(action="inspect_inventory", tool=NAME,
+host_tool_names=[...])` with that host's own complete callable list. The result
+distinguishes `server_unavailable`, `host_filtered`, `host_advertised`, and
+`host_unknown`. Server absence does not reveal whether a declaration is hidden,
+denied, or missing. This caller-reported comparison cannot attest another host.
+`unity-mcp-cli --instance PROJECT@HASH doctor --inspect-tool NAME` checks source
+and the actual SDK tools/list in the same diagnostic connection. An incomplete
+list produces `received: null`. A desktop host must inspect its own connection.
+
 ## One catalog projection
 
 `Server/src/services/registry/action_catalog.py` projects registered tool signatures,
