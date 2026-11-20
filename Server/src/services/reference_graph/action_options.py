@@ -71,10 +71,12 @@ GRAPH_ACTION_OPTIONS: Final = {
     "sync": GraphOptions(optional=("force",)),
     "query": GraphOptions(("node",), ("direction", "limit", "cursor", "consistency")),
     "diagnostics": GraphOptions(
-        ("node",), ("offset", "limit", "revision", "cursor", "consistency")
+        ("node",), ("offset", "limit", "revision", "cursor", "consistency", "commit")
     ),
     "explain": GraphOptions(("id",), ("consistency",)),
-    "impact": GraphOptions(("node",), ("direction", "limit", "cursor", "max_depth", "consistency")),
+    "impact": GraphOptions(
+        ("node",), ("direction", "limit", "cursor", "max_depth", "consistency", "commit")
+    ),
     "path": GraphOptions(("node", "target"), ("direction", "limit", "cursor", "consistency")),
     "snapshot": GraphOptions(optional=("name", "limit", "cursor", "consistency")),
     "diff": GraphOptions(("before", "after"), ("limit", "cursor")),

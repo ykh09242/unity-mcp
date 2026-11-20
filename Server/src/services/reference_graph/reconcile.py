@@ -1132,7 +1132,16 @@ class Reconciler:
                     self.workspace.clean_asset,
                     self.worker,
                     guid,
-                    version={"stamp": page.get("file_stamp"), "dependency": fingerprint},
+                    version={
+                        "stamp": page.get("file_stamp"),
+                        "dependency": fingerprint,
+                        **({"meta_stamp": page["meta_stamp"]} if page.get("meta_stamp") else {}),
+                        **(
+                            {"import_witness": page["import_witness"]}
+                            if page.get("import_witness")
+                            else {}
+                        ),
+                    },
                 )
                 return
 

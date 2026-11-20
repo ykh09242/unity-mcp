@@ -954,6 +954,11 @@ namespace MCPForUnity.Editor.Tools
             asset["revision"] = dependencyRevision;
             asset["fingerprint"] = AssetDatabase.GetAssetDependencyHash(path).ToString();
             asset["file_stamp"] = FileStamp(path);
+            if (ReferenceGraphImportWitness.Read(path) is JObject witness)
+            {
+                asset["meta_stamp"] = ImportedFileStamp(path + ".meta");
+                asset["import_witness"] = witness;
+            }
             asset["targets"] = new JArray(dependencies.Skip(offset).Take(end - offset));
             asset["next_offset"] = end < dependencies.Length ? (JToken)end : JValue.CreateNull();
             return asset;

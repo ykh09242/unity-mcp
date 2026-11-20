@@ -9,6 +9,9 @@
 *.py text eol=lf
 *.pyi text eol=lf
 *.cs text eol=lf
+# Native graph evidence compares the fixture's exact working bytes with its Git blobs.
+/TestProjects/UnityMCPTests/Assets/TestMat.mat text eol=lf
+/TestProjects/UnityMCPTests/Assets/TestMat.mat.meta text eol=lf
 *.csx text eol=lf
 *.js text eol=lf
 *.jsx text eol=lf

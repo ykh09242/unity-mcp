@@ -8,6 +8,7 @@ import re
 from cli.utils.play_scenario_analysis_io import safe_local_path
 from services.reference_graph.queries import decode_cursor
 from services.verification.git_draft import _Git, _blob_ids
+from services.verification.graph_commit_evidence import capture_guard, verify_impact_page
 from services.verification.input_chunks import (
     MAX_INPUT_PATHS,
     source_revision,
@@ -188,6 +189,17 @@ def propose_dependency_closure(project: Path, evidence, root, pages, diagnostics
     if not _asset(root) or not 1 <= len(pages) <= MAX_PAGES or len(diagnostics) > MAX_PAGES:
         raise ValueError("candidate_dependency_root_or_page_limit")
     identity, query, origin, edges, gaps = _impact_pages(pages)
+    retained = [*pages, *(page for _, page in diagnostics)]
+    binding = "unverified"
+    if any(capture_guard(page) is not None for page in retained):
+        guards = set()
+        for page in retained:
+            if not verify_impact_page(project, head, page):
+                raise ValueError("graph_commit_missing_page_evidence")
+            guards.add(capture_guard(page))
+        if len(guards) != 1:
+            raise ValueError("graph_commit_collection_changed")
+        binding = "verified"
     by_owner = defaultdict(list)
     paths = {root}
     for edge in edges:
@@ -317,7 +329,7 @@ def propose_dependency_closure(project: Path, evidence, root, pages, diagnostics
         "graph_scope": identity[0],
         "query_id": query,
         "coverage": "partial_static",
-        "graph_commit_binding": "unverified",
+        "graph_commit_binding": binding,
         "proposed_inputs": proposals,
         "traversed_edges": traversed,
         "input_hashes": hashes,

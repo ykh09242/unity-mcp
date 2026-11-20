@@ -64,6 +64,12 @@ namespace MCPForUnity.Editor.Tools
                     case "probe":
                         fields = new[] { "paths", "static_proof" };
                         break;
+                    case "commit_inputs":
+                        fields = new[] { "paths", "closing" };
+                        break;
+                    case "commit_links":
+                        fields = new[] { "paths" };
+                        break;
                     case "copy_destination":
                         fields = new[] { "path" };
                         break;
@@ -102,7 +108,12 @@ namespace MCPForUnity.Editor.Tools
                             throw new ArgumentException("Collection paths must be an array of strings.");
                         continue;
                     }
-                    if (property.Name == "validate" || property.Name == "static_proof" || property.Name == "validate_ignore_current")
+                    if (
+                        property.Name == "validate"
+                        || property.Name == "static_proof"
+                        || property.Name == "validate_ignore_current"
+                        || property.Name == "closing"
+                    )
                     {
                         if (property.Value.Type != JTokenType.Boolean)
                             throw new ArgumentException(property.Name + " requires a boolean.");
@@ -133,13 +144,17 @@ namespace MCPForUnity.Editor.Tools
                         ? staged
                             ? await ReferenceGraphCollector.HandleWithStatusAsync(parameters, status, token)
                             : ReferenceGraphCollector.HandleWithStatus(parameters, status)
-                        : action == "status"
-                            ? status
-                            : action.StartsWith("runtime_", StringComparison.Ordinal)
-                                ? ReferenceGraphRuntimeCapture.Handle(parameters)
-                                : staged
-                                    ? await ReferenceGraphCollector.HandleAsync(parameters, token)
-                                    : ReferenceGraphCollector.Handle(parameters);
+                        : action == "commit_inputs"
+                            ? await ReferenceGraphCommitInputs.Observe(parameters["paths"] as JArray, parameters.Value<bool>("closing"), staged, token)
+                            : action == "commit_links"
+                                ? await ReferenceGraphCommitInputs.Links(parameters["paths"] as JArray, staged, token)
+                                : action == "status"
+                                    ? status
+                                    : action.StartsWith("runtime_", StringComparison.Ordinal)
+                                        ? ReferenceGraphRuntimeCapture.Handle(parameters)
+                                        : staged
+                                            ? await ReferenceGraphCollector.HandleAsync(parameters, token)
+                                            : ReferenceGraphCollector.Handle(parameters);
                 data["instance_id"] = instance;
                 data["project_id"] = project;
                 return new SuccessResponse("Reference evidence collected", data);
@@ -161,6 +176,8 @@ namespace MCPForUnity.Editor.Tools
                         ? "Runtime capture unavailable (" + error.GetType().Name + "). Inspect capture status, then retry or release it."
                     : parameters?["action"]?.Type == JTokenType.String && ((string)parameters["action"]).StartsWith("ignore_", StringComparison.Ordinal)
                         ? "Ignore evidence unavailable (" + error.GetType().Name + "). Refresh rule evidence and retry collection."
+                    : parameters?["action"]?.Type == JTokenType.String && (string)parameters["action"] == "commit_inputs"
+                        ? "Commit input observation unavailable (" + error.GetType().Name + "). Check the file scope, size and availability."
                     : error.Message,
                 };
             }

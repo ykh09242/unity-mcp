@@ -345,7 +345,7 @@ namespace MCPForUnity.Editor.Tools
                 using (MCPForUnity.Editor.Services.Transport.CommandPhaseTiming.MeasureImport())
                 {
                     AssetSearchSnapshots.Invalidate();
-                    AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
+                    ReferenceGraphImportWitness.Reimport(fullPath);
                 }
                 // AssetDatabase.Refresh(); // Usually ImportAsset handles refresh
                 return new SuccessResponse($"Asset '{fullPath}' reimported.", GetAssetData(fullPath));

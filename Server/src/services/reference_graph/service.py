@@ -26,6 +26,7 @@ from services.credential_lease import (
 from services.operation_permissions import OperationPermissionError, authorize_operation
 from services.reference_graph.action_options import GRAPH_ACTION_OPTIONS
 from services.reference_graph.analysis import ANALYSIS_VERSION, validate_rule
+from services.reference_graph import commit_evidence
 from services.reference_graph.collection_protocol import integer, text
 from services.reference_graph.external import ExternalSource
 from services.reference_graph.reconcile import (
@@ -1069,6 +1070,14 @@ class ReferenceGraphService:
             raise InvalidGraphRequest("A node id is required, for example asset:<Unity GUID>")
         if "direction" in options and options["direction"] not in ("incoming", "outgoing"):
             raise InvalidGraphRequest("Use incoming or outgoing for direction")
+        if "commit" in options and (
+            not isinstance(options["commit"], str)
+            or not commit_evidence.COMMIT.fullmatch(options["commit"])
+            or options.get("direction", "outgoing") != "outgoing"
+        ):
+            raise InvalidGraphRequest(
+                "Commit evidence requires a full Git commit and outgoing assets"
+            )
         if action == "path" and (
             not isinstance(options.get("target"), str) or not options["target"]
         ):
@@ -1426,7 +1435,7 @@ class ReferenceGraphService:
                 **{
                     key: value
                     for key, value in options.items()
-                    if key not in {"node", "consistency"}
+                    if key not in {"node", "consistency", "commit"}
                 },
             )
             external_changed = await drained_thread(
@@ -1442,7 +1451,9 @@ class ReferenceGraphService:
             "delete_snapshot",
         }:
             queries = await drained_thread(workspace.queries)
-            arguments = {key: value for key, value in options.items() if key != "consistency"}
+            arguments = {
+                key: value for key, value in options.items() if key not in {"consistency", "commit"}
+            }
             if action == "explain":
                 data = await drained_thread(queries.explain, options["id"])
             elif action == "release_query":
@@ -1700,6 +1711,10 @@ class ReferenceGraphService:
                 "Runtime collection policy changed before delivery; restart the page"
             )
         if protected:
+            if "commit" in options:
+                data["commit_evidence"] = await commit_evidence.capture(
+                    entry, data, options["commit"], editor
+                )
             produced_fence = (
                 page_fence
                 if page_fence is not None

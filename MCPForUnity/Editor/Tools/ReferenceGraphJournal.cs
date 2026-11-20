@@ -110,6 +110,13 @@ namespace MCPForUnity.Editor.Tools
             if (!active)
                 return;
             var batch = new Dictionary<string, bool>(StringComparer.Ordinal);
+            if (ReferenceGraphImportWitness.HasWatches)
+            {
+                foreach (string path in deleted.Concat(movedFrom).Concat(moved))
+                    ReferenceGraphImportWitness.Changed(path, false);
+                foreach (string path in imported)
+                    ReferenceGraphImportWitness.Changed(path, true);
+            }
             foreach (string path in deleted.Concat(movedFrom))
                 if (ReferenceGraphCollector.Admitted(path))
                     batch[path] = true;
