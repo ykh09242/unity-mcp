@@ -1,5 +1,6 @@
 """Verify competing managed launches retain discovery and graceful shutdown ownership."""
 
+import errno
 import json
 import os
 import socket
@@ -38,19 +39,19 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
             "PYTHONASYNCIODEBUG": "1",
         }
     )
-    # Import both actual servers before releasing either main(), so neither launch
-    # waits for the other's readiness. No listener/auth implementation is replaced.
-    entry = tmp_path / "simultaneous_launch.py"
-    entry.write_text(
-        "import os, sys\n"
-        "from pathlib import Path\n"
-        "import main\n"
-        "Path(os.environ['LAUNCH_READY_FILE']).write_text(str(os.getpid()))\n"
-        "assert sys.stdin.buffer.read(1) == b'1'\n"
-        "main.main()\n",
-        encoding="utf-8",
-    )
-    processes = []
+    entry = Path(__file__).with_name("competing_launch.py")
+    processes = {}
+
+    def failure_report(process):
+        report = processes[process] / "failure.json"
+        return json.loads(report.read_text(encoding="ascii")) if report.exists() else {}
+
+    def launch_states():
+        states = {}
+        for process, root in processes.items():
+            code = process.poll()
+            states[root.name] = (code, failure_report(process)) if code is not None else "running"
+        return states
 
     def wait_until(predicate, phase):
         deadline = time.monotonic() + watchdog_timeout(30)
@@ -59,11 +60,11 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
             if value:
                 return value
             time.sleep(0.05)  # Bounded observation of external process progress.
-        raise AssertionError(f"Timed out waiting for {phase}")
+        raise AssertionError(f"Timed out waiting for {phase}: {launch_states()}")
 
     with ExitStack() as resources:
-        # Reserve the same resolved listeners that both servers must acquire. Keep
-        # them through cold imports so another worker cannot take the chosen port.
+        # Keep the listeners through CLI and server construction. Release only
+        # when both contenders reach their own production socket acquisition.
         reservation = resources.enter_context(ExitStack())
         try:
             listeners = reservation.enter_context(local_http_sockets(host, 0))
@@ -108,12 +109,12 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
                 stderr=log,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
-            processes.append(process)
+            processes[process] = root
             return process, pidfile, launch_token, ready_file
 
         def gated(launch):
             process, _pidfile, _identity, ready_file = launch
-            assert process.poll() is None, "managed server exited before the launch gate"
+            assert process.poll() is None, f"Exited before the launch gate: {launch_states()}"
             return ready_file.exists() and ready_file.read_text() == str(process.pid)
 
         def release(launch):
@@ -124,7 +125,7 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
 
         def ready():
             exit_codes = [process.poll() for process in processes]
-            assert None in exit_codes, f"All managed launches exited with codes {exit_codes}"
+            assert None in exit_codes, f"All managed launches exited: {launch_states()}"
             try:
                 token = token_path.read_text().strip()
                 if client.get(url, headers={"X-Unity-MCP-Token": token}).status_code == 200:
@@ -160,6 +161,15 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
             winner = next(launch for launch in launches if launch[0].poll() is None)
             loser = next(launch for launch in launches if launch[0].poll() is not None)
             assert loser[0].returncode != 0
+            failure = failure_report(loser[0])
+            assert (
+                failure.get("file") == "local_auth.py"
+                and failure.get("function") == "_bind_listeners"
+                and (
+                    failure.get("errno") == errno.EADDRINUSE
+                    or failure.get("winerror") in (10013, 10048)
+                )
+            ), f"Contender exited for an unexpected reason: {failure}"
             for process, pidfile, _identity, _ready_file in launches:
                 assert int(pidfile.read_text()) == process.pid
             assert token_path.read_text().strip() == original
@@ -209,7 +219,7 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
             # also models the owning editor exiting while the peer still uses it.
             assert shutdown(loser).status_code == 403
             assert winner[0].poll() is None
-            # The replacement imports behind its gate while the winner still owns
+            # The replacement reaches its bind gate while the winner still owns
             # the listeners. Its actual launch occurs only after graceful shutdown.
             replacement = start("project-restart")
             wait_until(lambda: gated(replacement), "replacement launch gate")
