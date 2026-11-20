@@ -35,6 +35,8 @@
 #   INPUT_SYSTEM_SOURCE verified pinned UPM package, compiled without Unity (6000.0 profile)
 #   UNITY_ANALYZER_DLL Microsoft.Unity.Analyzers from the locked script diagnostics host (optional)
 #   UNITY_ANALYZER_SDK .NET SDK version directory for the analysis pass (required with UNITY_ANALYZER_DLL)
+#   PUBLIC_API_INPUTS directory staged by tools/public-api/prepare.sh (optional; first platform only)
+#   PUBLIC_API_DOTNET .NET 11 host for the SDK ApiCompat checker (default: dotnet on PATH)
 #   DISABLED_UNITY_MODULES space-separated physics/physics2d/screencapture (default empty; removes metadata and symbols)
 #   PLATFORMS      editor platforms to compile           (default "win osx linux")
 #   OUT            scratch dir                           (default /tmp/mcp-compile-check)
@@ -359,8 +361,13 @@ load_assembly_sources() {
 # platform suffix in the filename would make Runtime's internals invisible to Editor.
 compile() {
   local name="$1" srcdir="$2" platform="$3" manifest="$4"; shift 4
-  local dir="$OUT/$platform"
+  local dir="$OUT/$platform" analyze=1
   [ "$compile_profile" = editor ] || dir="$dir/$compile_profile"
+  if [ "${1:-}" = --public-api-output ]; then
+    dir=$2
+    shift 2
+    analyze=0
+  fi
   [ -d "$dir" ] || mkdir -p "$dir" || return 1
   local rsp="$dir/$name.rsp"
   local missing=0 nrefs=0 nsrc=0 sources owned=0
@@ -368,7 +375,7 @@ compile() {
   # Initial Unity 7 uses CoreCLR with the .NET Standard 2.1 scripting API surface,
   # including Editor assemblies. The bundled .NET 10 SDK does not widen that surface.
   case "$ver_major.$ver_minor:$name" in
-    7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:MCPForUnity.PlayScenarios.Integration.Runtime|*:MCPForUnity.ScenarioPlayerFixture|*:MCPForUnityTests.UI16CaretRuntime|*:TestAsmdef|*:Assembly-CSharp|*:LifecycleSample.Runtime) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
+    7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:MCPForUnity.PlayScenarios.Integration.Runtime|*:MCPForUnity.ScenarioPlayerFixture|*:MCPForUnityTests.UI16CaretRuntime|*:TestAsmdef|*:Assembly-CSharp|*:LifecycleSample.Runtime|*:IndependentExtension.Runtime) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
   esac
   [ -d "$srcdir" ] && load_assembly_sources "$srcdir" && [ -n "$assembly_source_list" ] || {
     echo "::error::assembly sources not found: $srcdir" >&2; return 1;
@@ -420,7 +427,7 @@ compile() {
     if [ "$name" = MCPForUnity.Input.InputSystem.Editor ]; then echo "-unsafe+"; fi
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
     case "$name" in
-      MCPForUnity.*|MCPForUnityTests.*|TestAsmdef|Assembly-CSharp|LifecycleSample.*|UntouchedUpmSmoke.Editor.Tests)
+      MCPForUnity.*|MCPForUnityTests.*|TestAsmdef|Assembly-CSharp|LifecycleSample.*|UntouchedUpmSmoke.Editor.Tests|IndependentExtension.*)
         owned=1
         echo "-warnaserror+" ;;
     esac
@@ -507,7 +514,7 @@ compile() {
     echo "::error::$name failed to compile for $platform"
     return 1
   fi
-  if [ "$owned" -eq 1 ] && [ -n "$UNITY_ANALYZER_DLL" ]; then
+  if [ "$owned" -eq 1 ] && [ "$analyze" -eq 1 ] && [ -n "$UNITY_ANALYZER_DLL" ]; then
     # Keep Unity's original compiler output for consumers. The analysis host
     # reads the same C# sources, language level, symbols and Unity references.
     mkdir -p "$dir/analyzed" || return 1
@@ -518,6 +525,16 @@ compile() {
   fi
   echo "OK  $name [$platform/$compile_profile]"
 }
+
+if [ -n "${PUBLIC_API_INPUTS:-}" ]; then
+  PUBLIC_API_INPUTS=$(winpath "$PUBLIC_API_INPUTS") || exit 2
+  for file in revision.txt checker/PublicApi.dll MCPForUnity/Editor/MCPForUnity.Editor.asmdef MCPForUnity/Runtime/MCPForUnity.Runtime.asmdef; do
+    [ -s "$PUBLIC_API_INPUTS/$file" ] || die "missing prepared public API input: $file"
+  done
+  expected=$(tr -d '\r\n' < "$REPO/tools/public-api/baseline.txt") || exit 2
+  [ "$(tr -d '\r\n' < "$PUBLIC_API_INPUTS/revision.txt")" = "$expected" ] || die "public API baseline revision mismatch"
+  source "$REPO/tools/public-api/check.sh" || exit 2
+fi
 
 failed=0
 # Use Unity's coherent Mono/.NET Framework Roslyn group for optional script
@@ -589,6 +606,9 @@ for platform in $PLATFORMS; do
   compile MCPForUnity.Editor "$REPO/MCPForUnity/Editor" "$platform" \
     "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
     "$OUT/$platform/Unity.EditorCoroutines.Editor.dll" "${editor_roslyn_refs[@]}" || { failed=1; continue; }
+  if [ -n "${PUBLIC_API_INPUTS:-}" ] && [ "$platform" = "${PLATFORMS%% *}" ]; then
+    check_public_api "$OUT/$platform" || { failed=1; continue; }
+  fi
   if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
     compile MCPForUnity.Input.UGUI.Editor "$REPO/MCPForUnity/Editor/Tools/Input/UGUI" "$platform" \
       "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
@@ -669,6 +689,9 @@ for platform in $PLATFORMS; do
     player_dir="$OUT/$platform/$compile_profile"
     compile MCPForUnity.Runtime "$REPO/MCPForUnity/Runtime" "$platform" \
       "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
+    if [ -n "${PUBLIC_API_INPUTS:-}" ] && [ "$platform" = "${PLATFORMS%% *}" ]; then
+      check_public_api "$player_dir" || { failed=1; continue; }
+    fi
     if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
       compile MCPForUnity.Input.UGUI.Runtime "$REPO/MCPForUnity/Runtime/PlayScenarios/UGUI" "$platform" \
         "$REFS_PROFILE/Runtime.txt" "$player_dir/MCPForUnity.Runtime.dll" || failed=1

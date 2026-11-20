@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RestoreSources>$(MSBuildThisFileDirectory)</RestoreSources>
+    <ApiCompatDir>$(MSBuildSDKsPath)/Microsoft.NET.Sdk/tools/net11.0</ApiCompatDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Microsoft.DotNet.ApiCompatibility" HintPath="$(ApiCompatDir)/Microsoft.DotNet.ApiCompatibility.dll" />
+    <Reference Include="Microsoft.DotNet.ApiSymbolExtensions" HintPath="$(ApiCompatDir)/Microsoft.DotNet.ApiSymbolExtensions.dll" />
+    <Reference Include="Microsoft.CodeAnalysis" HintPath="$(RoslynTargetsPath)/bincore/Microsoft.CodeAnalysis.dll" />
+    <Reference Include="Microsoft.CodeAnalysis.CSharp" HintPath="$(RoslynTargetsPath)/bincore/Microsoft.CodeAnalysis.CSharp.dll" />
+  </ItemGroup>
+</Project>

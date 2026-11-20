@@ -36,6 +36,7 @@ on:
       - CustomTools/RoslynRuntimeCompilation/**/*.cs
       - TestProjects/UnityMCPTests/**
       - tools/compile-check.sh
+      - tools/public-api/**
       - tools/compile-optional-modules.sh
       - tools/optional-module-paths.txt
       - tools/compile_matrix.py
@@ -235,6 +236,18 @@ jobs:
           install -D -m 644 "$package/analyzers/dotnet/cs/Microsoft.Unity.Analyzers.dll" "$destination"
           printf 'dll=/repo/%s\n' "$destination" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare the public extension API baseline
+        if: startsWith(matrix.unity.version, '2021.3.') || startsWith(matrix.unity.version, '6000.0.')
+        id: public_api
+        run: |
+          set -euo pipefail
+          bash tools/public-api/prepare.sh .unity-ci/public-api
+          printf 'inputs=/repo/.unity-ci/public-api\n' >> "$GITHUB_OUTPUT"
+
+      - name: Exercise source and binary compatibility regressions
+        if: startsWith(matrix.unity.version, '2021.3.')
+        run: python3 tools/public-api/test_compatibility.py .unity-ci/public-api/checker/PublicApi.dll
+
       - name: Verify the analysis host and Unity rule inventory
         if: steps.packages.outputs.input_system_source != ''
         run: |
@@ -256,6 +269,7 @@ jobs:
           COMPILE_INPUT_SYSTEM: ${{ startsWith(matrix.unity.version, '6000.0.') && '1' || '0' }}
           UNITY_ANALYZER_DLL: ${{ steps.unity_analyzers.outputs.dll }}
           ANALYZER_SDK_VERSION: ${{ steps.analyzer_sdk.outputs.dotnet-version }}
+          PUBLIC_API_INPUTS: ${{ steps.public_api.outputs.inputs }}
           EVIDENCE_STEP_NAME: Compile [compile:${{ matrix.unity.version }}:main]
         run: |
           set -euo pipefail
@@ -270,6 +284,7 @@ jobs:
             -e COMPILE_INPUT_SYSTEM="$COMPILE_INPUT_SYSTEM" \
             -e UNITY_ANALYZER_DLL \
             -e UNITY_ANALYZER_SDK="/analyzer-dotnet/sdk/$ANALYZER_SDK_VERSION" \
+            -e PUBLIC_API_INPUTS -e PUBLIC_API_DOTNET=/analyzer-dotnet/dotnet \
             -e INPUT_SYSTEM_SOURCE="/repo/$INPUT_SYSTEM_SOURCE" \
             -e EXTRA_REFS="/repo/$EXTRA_REFS" \
             -e TEST_FRAMEWORK_SOURCE="/repo/$TEST_FRAMEWORK_SOURCE" \
