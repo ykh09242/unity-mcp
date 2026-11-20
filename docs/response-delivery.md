@@ -89,6 +89,22 @@ Verify the complete bytes against `sha256`, then decode UTF-8 and parse JSON.
 Pages may split a multibyte UTF-8 character, so decode UTF-8 after joining bytes.
 There is no caller-controlled page size or filesystem path.
 
+The scenario artifact regression runs two readers against the same retained response
+through the FastMCP HTTP application. Its ASGI transport pauses the first reader
+during its second page. The second reader assembles the response, verifies the
+handle digest and checks a 1536 by 1536 PNG against the hash in its accompanying
+report. Cancelling the paused send releases its response owner. A truncated page
+and an expired handle both produce explicit assembly errors. The test checks that
+the original tool ran exactly once and that expiry reclaimed the retained bytes.
+The test exercises application delivery in-process.
+
+Run the regression and the client assembly controls from `Server`.
+
+```powershell
+$env:UNITY_MCP_RUN_HTTP_TESTS = '1'
+& .venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/http/test_scenario_artifact_delivery.py tests/test_retained_response_assembly.py
+```
+
 If the original call supplied `unity_instance`, pass it on each page and on release.
 Python clients can pass `unity_instance=...` to `utils.retained_response.assemble_response`.
 The originating server can read or release the result even after the Editor disconnects
