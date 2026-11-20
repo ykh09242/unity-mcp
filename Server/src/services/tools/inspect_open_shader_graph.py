@@ -38,4 +38,4 @@ async def inspect_open_shader_graph(
         str, Field(min_length=1, description="Full project-owned Assets/*.shadergraph path.")
     ],
 ) -> dict:
-    return await _read_shader(ctx, action="inspect_open_graph", path=path)
+    return await _read_shader(ctx=ctx, action="inspect_open_graph", path=path)

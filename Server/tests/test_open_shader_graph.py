@@ -1,11 +1,14 @@
 """Live window counts are conditional evidence and inherit the selected shader parent's read grant."""
 
+import inspect
+
 import pytest
 from fastmcp import Client
 
 from services.operation_permissions import Permission, required_permissions
 from services.registry.observation_predicates import evaluate_observation
 from services.registry.open_shader_graph_observation import OPEN_GRAPH_OBSERVATION
+from services.registry.operation_invocation import wrap_tool
 from tests.test_editor_observation_resources import (
     GRAPH_PATH,
     OBSERVATION,
@@ -39,10 +42,28 @@ def test_only_live_integer_counts_are_evidence(status, count, expected):
 
 @pytest.mark.asyncio
 async def test_fixed_read_uses_selected_shader_parent(command_hub, monkeypatch):
+    import services.tools.inspect_open_shader_graph as shader_graph_tool
+    from services.tools.manage_shader import manage_shader
+
     name = "inspect_open_shader_graph"
     parent = "manage_shader"
     assert required_permissions(name, {}) == {Permission.READ}
     assert required_permissions(parent, {"action": "inspect_open_graph"}) == {Permission.READ}
+
+    # FastMCP registration can move the injected Context after the required action.
+    signature = inspect.signature(manage_shader)
+    parameters = dict(signature.parameters)
+    action = parameters.pop("action")
+    with monkeypatch.context() as registration:
+        registration.setattr(
+            manage_shader,
+            "__signature__",
+            signature.replace(parameters=[action, *parameters.values()]),
+            raising=False,
+        )
+        admitted_parent = wrap_tool(manage_shader, parent, parent)
+    monkeypatch.setattr(shader_graph_tool, "_read_shader", admitted_parent)
+
     async with Client(observation_server(monkeypatch), mode="legacy", cache=False) as client:
         tools = {tool.name: tool for tool in await client.list_tools()}
         assert tools[name].annotations.read_only_hint

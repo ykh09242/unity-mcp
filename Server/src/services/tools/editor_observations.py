@@ -126,5 +126,5 @@ async def inspect_shader_graph(
     ] = 1,
 ) -> dict:
     return await _shader(
-        ctx, action=_GRAPH, path=path, page_size=page_size, page_number=page_number
+        ctx=ctx, action=_GRAPH, path=path, page_size=page_size, page_number=page_number
     )
