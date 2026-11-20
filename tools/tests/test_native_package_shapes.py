@@ -33,6 +33,9 @@ def test_profiles_cover_exact_native_shapes():
         assert shapes.fixture_sources(profile)[
             "Assets/Scripts/ProjectAuditorAuditFixture.cs"
         ].is_file()
+    used = [profile.packages for profile in shapes.PROFILES.values() if profile.packages]
+    assert all(packages in used for packages in shapes.NATIVE_PACKAGES.values())
+    assert all(packages in shapes.NATIVE_PACKAGES.values() for packages in used)
 
 
 def test_runner_rejects_mixed_suites_existing_roots_and_wrong_editor(tmp_path):
@@ -54,7 +57,8 @@ def test_runner_rejects_mixed_suites_existing_roots_and_wrong_editor(tmp_path):
 def test_requires_expected_manifest_and_actual_package_lock(tmp_path):
     packages = tmp_path / "Packages"
     packages.mkdir()
-    deps = {"com.unity.test-framework": "1.8.0", shapes.RULES: "file:../../packages/rules"}
+    rules = "com.unity.project-auditor-rules"
+    deps = {"com.unity.test-framework": "1.8.0", rules: "file:../../packages/rules"}
     manifest = packages / "manifest.json"
     manifest.write_text(json.dumps({"dependencies": deps}))
     locked = {
@@ -66,10 +70,10 @@ def test_requires_expected_manifest_and_actual_package_lock(tmp_path):
     shapes.verify_lock(tmp_path, deps)
     with pytest.raises(shapes.PreparationError, match="manifest"):
         shapes.verify_lock(tmp_path, {})
-    lock.write_text(json.dumps({"dependencies": {**locked, shapes.AUDITOR: {}}}))
+    lock.write_text(json.dumps({"dependencies": {**locked, "com.unity.project-auditor": {}}}))
     with pytest.raises(shapes.PreparationError, match="Unexpected resolved"):
         shapes.verify_lock(tmp_path, deps)
-    locked[shapes.RULES]["source"] = "registry"
+    locked[rules]["source"] = "registry"
     lock.write_text(json.dumps({"dependencies": locked}))
     with pytest.raises(shapes.PreparationError, match="locked source"):
         shapes.verify_lock(tmp_path, deps)

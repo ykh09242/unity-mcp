@@ -64,6 +64,7 @@ class JsonDocument(TypedDict, total=False):
     requiredModules: list[str]
     profiles: dict[str, ProfileSpec]
     optionalProfiles: dict[str, ProfileSpec]
+    nativePackageSets: dict[str, dict[str, PackageSpec]]
 
 
 class MatrixRow(TypedDict):

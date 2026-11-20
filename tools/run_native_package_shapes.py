@@ -11,7 +11,8 @@ import xml.etree.ElementTree as ET
 
 from check_unity_test_results import check_results
 from player_e2e_process import Invocation, execute
-from unity_ci_packages import PackageSpec, PreparationError, ROOT, prepare
+from unity_ci_packages import PROFILES as PACKAGE_CONFIG
+from unity_ci_packages import PackageSpec, PreparationError, ROOT, prepare, read_json
 
 
 SHAPES = ROOT / "tools/native_api_shapes"
@@ -19,8 +20,7 @@ ASSETS = ROOT / "TestProjects/UnityMCPTests/Assets"
 TESTS = ASSETS / "Tests/EditMode"
 NAMESPACE = "MCPForUnityTests.Editor.Tools"
 VERSIONS = {"package": "6000.0.69f1", "integrated": "6000.6.4f1"}
-AUDITOR = "com.unity.project-auditor"
-RULES = "com.unity.project-auditor-rules"
+NATIVE_PACKAGES = read_json(PACKAGE_CONFIG)["nativePackageSets"]
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ def atlas(version: str) -> Profile:
         "package",
         "SpriteAtlasReopenTests",
         ((f"Author{version}",), (f"Reopen{version}",)),
-        {"com.unity.2d.sprite": {"source": "editor", "version": "1.0.0"}},
+        NATIVE_PACKAGES["sprite-atlas"],
         (SHAPES / "SpriteAtlasReopenTests.cs",),
         graphics=True,
     )
@@ -70,10 +70,7 @@ PROFILES = {
                 "GuardedAddressAndGroupMovePreserveGuidLabelsAssetsAndUndo",
             ),
         ),
-        {
-            "com.unity.addressables": {"source": "registry", "version": "1.1.5"},
-            "com.unity.scriptablebuildpipeline": {"source": "registry", "version": "1.23.4"},
-        },
+        NATIVE_PACKAGES["addressables-legacy"],
         (
             TESTS / "Tools/AddressablesAuthoringTests.cs",
             TESTS / "Tools/AddressablesReferenceFixture.cs",
@@ -83,23 +80,13 @@ PROFILES = {
     "auditor-package": auditor(
         "package",
         "InstalledOfficialPackageProducesActualFixtureDiagnostic",
-        {
-            AUDITOR: {"source": "registry", "version": "3.2.0"},
-            RULES: {"source": "registry", "version": "3.2.0"},
-            "com.unity.nuget.mono-cecil": {"source": "registry", "version": "1.11.4"},
-        },
+        NATIVE_PACKAGES["auditor-package"],
     ),
     "auditor-absent": auditor("package", "EditorWithoutAuditorRejectsStart", {}),
     "auditor-integrated": auditor(
         "integrated",
         "IntegratedEditorProducesActualFixtureDiagnostic",
-        {
-            RULES: {
-                "source": "editor-archive",
-                "version": "1.0.1",
-                "sha256": "6bcb8b466c340969e89e71299fcfbb9dec40e235e59ee9b2e06adc8fd4bd79a6",
-            }
-        },
+        NATIVE_PACKAGES["auditor-integrated"],
     ),
     "auditor-integrated-no-rules": auditor(
         "integrated", "IntegratedEditorRequiresRulesBeforeStarting", {}

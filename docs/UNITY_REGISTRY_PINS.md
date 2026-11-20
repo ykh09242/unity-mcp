@@ -1,7 +1,7 @@
 # Reviewed Unity registry artifacts
 
 `tools/unity-registry-pins.json` records SHA256 digests of the exact registry
-tarball bytes used by base and optional CI profiles. The initial 16 entries were
+tarball bytes used by base, optional and native CI profiles. The initial 16 entries were
 downloaded on 2026-11-12 from the official Unity registry, with each tarball's SHA1
 verified against its official registry metadata before calculating SHA256. No
 hashes are inferred from package names, extracted files, or hypothetical archives.

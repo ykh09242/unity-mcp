@@ -25,6 +25,27 @@
     "com.unity.modules.video",
     "com.unity.modules.xr"
   ],
+  "nativePackageSets": {
+    "sprite-atlas": {
+      "com.unity.2d.sprite": {"source": "editor", "version": "1.0.0"}
+    },
+    "addressables-legacy": {
+      "com.unity.addressables": {"source": "registry", "version": "1.1.5"},
+      "com.unity.scriptablebuildpipeline": {"source": "registry", "version": "1.23.4"}
+    },
+    "auditor-package": {
+      "com.unity.project-auditor": {"source": "registry", "version": "3.2.0"},
+      "com.unity.project-auditor-rules": {"source": "registry", "version": "3.2.0"},
+      "com.unity.nuget.mono-cecil": {"source": "registry", "version": "1.11.4"}
+    },
+    "auditor-integrated": {
+      "com.unity.project-auditor-rules": {
+        "source": "editor-archive",
+        "version": "1.0.1",
+        "sha256": "6bcb8b466c340969e89e71299fcfbb9dec40e235e59ee9b2e06adc8fd4bd79a6"
+      }
+    }
+  },
   "optionalProfiles": {
     "unity-six-lts": {
       "unityFamilies": ["6000.0"],

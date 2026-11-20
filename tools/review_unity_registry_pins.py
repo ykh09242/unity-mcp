@@ -20,12 +20,17 @@ def propose(profiles: Path, output: Path) -> None:
     if output.exists():
         raise FileExistsError(f"Proposal already exists: {output}")
     config = packages.read_json(profiles)
+    package_sets = [
+        profile["packages"]
+        for section in ("profiles", "optionalProfiles")
+        for profile in config.get(section, {}).values()
+    ]
+    package_sets.extend(config.get("nativePackageSets", {}).values())
     identities = sorted(
         {
             (name, spec["version"])
-            for section in ("profiles", "optionalProfiles")
-            for profile in config.get(section, {}).values()
-            for name, spec in profile["packages"].items()
+            for package_set in package_sets
+            for name, spec in package_set.items()
             if spec["source"] == "registry"
         }
     )

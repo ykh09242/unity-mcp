@@ -49,15 +49,11 @@ def test_registry_metadata_and_archive_cannot_replace_reviewed_digest(tmp_path, 
     assert not (tmp_path / "output").exists()
 
 
-def test_committed_pins_cover_exact_registry_profile_inventory():
-    profiles = packages.read_json(packages.PROFILES)
-    identities = {
-        f"{name}@{spec['version']}"
-        for section in ("profiles", "optionalProfiles")
-        for profile in profiles[section].values()
-        for name, spec in profile["packages"].items()
-        if spec["source"] == "registry"
-    }
+def test_committed_pins_cover_exact_registry_profile_inventory(tmp_path, monkeypatch):
+    monkeypatch.setattr(packages, "download_registry_archive", lambda name, version: b"reviewed")
+    output = tmp_path / "proposal.json"
+    review.propose(packages.PROFILES, output)
+    identities = set(json.loads(output.read_text(encoding="utf-8"))["artifacts"])
     pins = json.loads(Path(packages.REGISTRY_PINS).read_text(encoding="utf-8"))
     assert pins["schemaVersion"] == 1
     assert set(pins["artifacts"]) == identities
@@ -98,7 +94,14 @@ def test_review_proposal_hashes_actual_downloads_and_does_not_write_accepted_loc
                             "com.unity.editor": {"source": "editor"},
                         }
                     }
-                }
+                },
+                "nativePackageSets": {
+                    "native": {
+                        "com.unity.test": {"source": "registry", "version": "1.0.0"},
+                        "com.unity.legacy": {"source": "registry", "version": "0.8.0"},
+                        "com.unity.builtin": {"source": "editor-archive", "version": "1.0.0"},
+                    }
+                },
             }
         )
     )
@@ -120,13 +123,16 @@ def test_review_proposal_hashes_actual_downloads_and_does_not_write_accepted_loc
     review.propose(profile, output)
     assert json.loads(output.read_text()) == {
         "schemaVersion": 1,
-        "artifacts": {"com.unity.test@1.0.0": hashlib.sha256(content).hexdigest()},
+        "artifacts": {
+            "com.unity.legacy@0.8.0": hashlib.sha256(content).hexdigest(),
+            "com.unity.test@1.0.0": hashlib.sha256(content).hexdigest(),
+        },
     }
-    assert calls == [("com.unity.test", "1.0.0")]
+    assert sorted(calls) == [("com.unity.legacy", "0.8.0"), ("com.unity.test", "1.0.0")]
     assert accepted.read_text() == "accepted original"
     with pytest.raises(FileExistsError):
         review.propose(profile, output)
-    assert calls == [("com.unity.test", "1.0.0")]
+    assert sorted(calls) == [("com.unity.legacy", "0.8.0"), ("com.unity.test", "1.0.0")]
 
 
 def test_failed_review_download_cannot_produce_completed_proposal(tmp_path, monkeypatch):
