@@ -10,6 +10,7 @@ from cli.commands.verification_candidate_portable import (
     register_candidate,
     verify_candidate,
 )
+from cli.commands.verification_configuration import configuration_diff
 from cli.commands.verification_dependency_closure import dependency_closure
 from cli.commands.verification_dependency_scan import dependency_diff, dependency_scan
 from cli.commands.verification_input_chunks import candidate_directory, input_chunks
@@ -29,6 +30,7 @@ verification_candidate.add_command(verify_candidate)
 verification_candidate.add_command(register_candidate)
 verification_candidate.add_command(dependency_closure)
 verification_candidate.add_command(reproduce_candidate)
+verification_candidate.add_command(configuration_diff)
 verification_candidate.add_command(dependency_scan)
 verification_candidate.add_command(dependency_diff)
 verification_candidate.add_command(anticipate_merge)

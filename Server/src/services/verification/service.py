@@ -252,6 +252,8 @@ class VerificationService:
         io = VerificationIO(bound, target)
         await io.authorize("manage_verification", {"action": action, "options": parsed})
         owner, deadline = target.scope.key, monotonic() + 30
+        if action in {"observe_assembly", "observe_texture"}:
+            return await io.native("manage_verification", {"action": action, **parsed}, deadline)
         if action in {"profiles", "set_profile", "prepare"}:
             native_action = "set_profile" if action == "set_profile" else "profiles"
             response = await io.native(

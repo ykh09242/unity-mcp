@@ -107,8 +107,27 @@ class VerificationStatus(QualityOptions):
         return self
 
 
+class AssemblyObservation(QualityOptions):
+    path: Annotated[str, Field(min_length=1, max_length=512)]
+    source: Annotated[str, Field(min_length=1, max_length=512)]
+
+
+class TextureObservation(QualityOptions):
+    path: Annotated[str, Field(min_length=1, max_length=512)]
+    search_folder: Annotated[str, Field(min_length=1, max_length=512)]
+    platform: Annotated[str, Field(min_length=1, max_length=64)]
+
+
 VerificationAction = Literal[
-    "profiles", "set_profile", "prepare", "run", "status", "cancel", "report"
+    "profiles",
+    "set_profile",
+    "prepare",
+    "run",
+    "status",
+    "cancel",
+    "report",
+    "observe_assembly",
+    "observe_texture",
 ]
 
 
@@ -121,6 +140,8 @@ def parse_verification_options(action, options):
         return VerificationDirectRun.model_validate(options)
     models = {
         "profiles": QualityOptions,
+        "observe_assembly": AssemblyObservation,
+        "observe_texture": TextureObservation,
         "set_profile": ProfileWrite,
         "prepare": VerificationPrepare,
         "run": VerificationStart,

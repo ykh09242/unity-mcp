@@ -15,6 +15,8 @@ from services.verification.service import VerificationService
     description=(
         "Run project verification with source-linked stage reports. profiles reads defaults and explicit project overrides without writing. "
         "set_profile requires profile_id, profile and expected_hash from profiles (missing for a new file). "
+        "observe_assembly reads an asmdef path and source from Editor and active-target Player compiler inputs. "
+        "observe_texture reads a texture .meta path, importer platform and direct material/scene references within search_folder. "
         "For scripts, prepare takes paths XOR change_set_id and optional profile_id, capture_baseline or baseline_id. "
         "For registered local standalone builds, prepare or run takes candidate_id with optional baseline_candidate_id and source_mode (current or frozen). "
         "execute_selected_checks=true also runs mapped checks in the selected Editor, using selected_test_mode (EditMode by default or PlayMode). "

@@ -18,11 +18,15 @@ namespace MCPForUnity.Editor.Tools
                 string[] fields = action switch
                 {
                     "profiles" => new[] { "action" },
+                    "observe_assembly" => new[] { "action", "path", "source" },
+                    "observe_texture" => new[] { "action", "path", "search_folder", "platform" },
                     "set_profile" => new[] { "action", "profile_id", "profile", "expected_hash" },
                     _ => throw new ArgumentException("unsupported_native_verification_action"),
                 };
                 if (parameters.Properties().Any(p => !fields.Contains(p.Name)))
                     throw new ArgumentException("unknown_verification_parameter");
+                if (action == "observe_assembly" || action == "observe_texture")
+                    return new SuccessResponse("Observed selected configuration inputs.", VerificationConfiguration.Observe(parameters));
                 if (action == "profiles")
                     return new SuccessResponse("Observed project verification profiles.", VerificationProfileStore.Read(ScriptAnalysisHost.ProjectRoot));
                 if (parameters["profile_id"]?.Type != JTokenType.String || parameters["expected_hash"]?.Type != JTokenType.String)

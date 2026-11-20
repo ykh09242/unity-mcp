@@ -170,7 +170,9 @@ _ACTIONS: Final = {
         ),
     },
     "manage_verification": {
-        Permission.READ: _names("profiles prepare run status cancel report"),
+        Permission.READ: _names(
+            "profiles prepare run status cancel report observe_assembly observe_texture"
+        ),
         Permission.EDIT: _names("set_profile"),
     },
     "manage_input": {

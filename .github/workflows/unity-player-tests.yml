@@ -189,6 +189,13 @@ jobs:
           uv run --project Server python tools/check_play_scenario_player_evidence.py .unity-ci/player-evidence --session-id $env:SESSION_ID --profile $env:PLAYER_PROFILE --backend $env:PLAYER_BACKEND
           if ($LASTEXITCODE -ne 0) { throw 'Fresh required Player evidence failed independent verification' }
           if ($env:RUNNER_OUTCOME -ne 'success') { throw 'Actual Player runner did not succeed' }
+      - name: Observe target compiler inputs and importer-only Player rendering
+        if: env.PLAYER_PROFILE == 'long' && env.PLAYER_BACKEND == 'mono'
+        run: |
+          uv run --project Server python tools/unity_ci_packages.py prepare --unity-version 6000.0.69f1 --unity-data "$env:UNITY_INSTALL_ROOT\installed\Editor\Data" --output .unity-ci/configuration-project
+          if ($LASTEXITCODE) { throw 'Could not prepare isolated configuration controls' }
+          uv run --project Server python TestProjects/UnityMCPTests/Verification/run_configuration_controls.py --editor "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe" --project .unity-ci/configuration-project/project --output .unity-ci/configuration-observations
+          if ($LASTEXITCODE) { throw 'Configuration controls lack the required compiler or rendered Player evidence' }
       - name: Return owned Windows license
         if: always() && steps.activate.outcome != 'skipped'
         run: |
@@ -207,6 +214,11 @@ jobs:
           path: |
             .unity-ci/player-evidence/**
             .unity-ci/player-project/resolved-packages.json
+            .unity-ci/configuration-observations/comparison.json
+            .unity-ci/configuration-observations/*/*.json
+            .unity-ci/configuration-observations/*/runs/*/*.json
+            .unity-ci/configuration-observations/*/runs/*/player.log
+            .unity-ci/configuration-observations/*/editor-process/process.log
             ${{ runner.temp }}/unity-player-6000.0.69f1/provision.json
             ${{ runner.temp }}/unity-player-6000.0.69f1/module-provision.json
             ${{ runner.temp }}/unity-player-6000.0.69f1/module-install-evidence/**

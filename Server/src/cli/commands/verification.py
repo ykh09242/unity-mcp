@@ -8,7 +8,19 @@ from cli.utils.connection import handle_unity_errors
 @click.command("verification")
 @click.argument(
     "action",
-    type=click.Choice(["profiles", "set_profile", "prepare", "run", "status", "cancel", "report"]),
+    type=click.Choice(
+        [
+            "profiles",
+            "set_profile",
+            "prepare",
+            "run",
+            "status",
+            "cancel",
+            "report",
+            "observe_assembly",
+            "observe_texture",
+        ]
+    ),
 )
 @click.option(
     "--options",
