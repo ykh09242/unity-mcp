@@ -459,6 +459,12 @@ NATIVE_HANDLERS = {
     "manage_ui": ("MCPForUnity.Editor.Tools.ManageUI", False),
 }
 
+CAMERA_INVENTORY_URI = "mcpforunity://scene/cameras"
+CAMERA_INVENTORY_READ = (
+    f"For read-only camera inventory, read the MCP resource {CAMERA_INVENTORY_URI}."
+)
+
+
 CAPABILITY_DESCRIPTIONS = {
     "manage_physics_settings": "Inspect or change 2D/3D physics settings and layer collision rules.",
     "manage_physics_materials": "Create, configure and assign physics materials.",
@@ -484,7 +490,8 @@ CAPABILITY_DESCRIPTIONS = {
     "manage_render_environment": "Inspect the environment or configure skybox, ambient light and sun.",
     "manage_render_fog": "Enable or configure scene fog.",
     "manage_render_reflections": "Configure environment reflection mode, intensity, bounces and resolution.",
-    "manage_cameras": "Create or list cameras, select targets and configure lenses or priority.",
+    "manage_cameras": "Create or list cameras, select targets and configure lenses or priority. "
+    + CAMERA_INVENTORY_READ,
     "manage_cinemachine": "Configure Cinemachine brains, tracking, extensions and camera blends.",
     "capture_camera": "Capture Game or Scene views, including surround and orbit batches.",
     "gameobject_create": (

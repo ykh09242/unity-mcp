@@ -3,19 +3,22 @@ from fastmcp import Context
 from models import MCPResponse
 from models.unity_response import parse_resource_response
 from services.registry import mcp_for_unity_resource
+from services.registry.action_catalog import OBSERVATION_META
+from services.registry.capability_catalog import CAMERA_INVENTORY_URI
+from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
 
 @mcp_for_unity_resource(
-    uri="mcpforunity://scene/cameras",
+    uri=CAMERA_INVENTORY_URI,
     name="cameras",
+    meta={OBSERVATION_META: CAMERA_INVENTORY_OBSERVATION},
     description=(
-        "List all cameras in the scene (Unity Camera + CinemachineCamera) with status. "
-        "Includes Brain state, Cinemachine camera priorities, pipeline components, "
-        "follow/lookAt targets, and Unity Camera info.\n\n"
-        "URI: mcpforunity://scene/cameras"
+        "Read the current scene camera inventory. Count the unityCameras and cinemachineCameras "
+        "entries and read their names. Includes brain state, Cinemachine priorities, pipeline "
+        "components, follow/lookAt targets and Unity Camera info."
     ),
 )
 async def get_cameras(ctx: Context) -> MCPResponse:

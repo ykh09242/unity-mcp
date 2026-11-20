@@ -10,6 +10,9 @@ from services.registry.observation_predicates import EvidencePredicates
 ActionIntent = Literal["observe", "interact", "edit"]
 ObservationSource = Literal["editor_live", "asset_file", "imported_asset", "compile_job"]
 ObservationValue = Literal[
+    "unityCameras",
+    "cinemachineCameras",
+    "cinemachineInstalled",
     "render_size.width",
     "render_size.height",
     "current_size",

@@ -6,6 +6,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from services.registry.capability_adapter import capability_command
+from services.registry.capability_catalog import CAMERA_INVENTORY_READ
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.rendering_limits import orbit_limits_error, screenshot_limits_error
@@ -59,7 +60,7 @@ ALL_ACTIONS = (
         "unlocks presets, pipelines, and blending when Cinemachine is installed. "
         "Authoring writes include bounded verification of the affected camera or component. "
         "Activation and blend completion have separate observations. "
-        "Use ping to check Cinemachine availability.\n\n"
+        f"Use ping to check Cinemachine availability. {CAMERA_INVENTORY_READ}\n\n"
         "SETUP:\n"
         "- ping: Check if Cinemachine is available\n"
         "- ensure_brain: Ensure CinemachineBrain exists on main camera\n"

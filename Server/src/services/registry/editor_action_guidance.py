@@ -2,9 +2,10 @@
 
 from typing import Final
 
-from services.registry.action_guidance_types import ActionGuidance
+from services.registry.action_guidance_types import ActionGuidance, Observation
 from services.registry.capability_catalog import (
     CALLBACK_INSPECTION_EFFECTS,
+    CAMERA_INVENTORY_READ,
     MUTATING_EFFECTS,
     READ_ONLY_EFFECTS,
 )
@@ -134,13 +135,24 @@ _ASSET: Final = {
     ),
 }
 
+CAMERA_INVENTORY_OBSERVATION: Final[Observation] = {
+    "source": "editor_live",
+    "values": ["unityCameras", "cinemachineCameras", "cinemachineInstalled"],
+    "unavailable": [],
+    "conditions": "Count entries in the two camera arrays and read each entry's name. The brain field can be null.",
+}
+
 _CAMERA: Final = {
     "ping": _read(
         "Check whether the selected Editor can resolve Cinemachine and report its version when available."
     ),
-    "list_cameras": _inspect(
-        "List Unity cameras in loaded scenes, their brain attachments, and any Cinemachine cameras, targets, stages and current live state.",
-        limit="With Cinemachine installed, the inventory reads provider methods and component getters. It does not attach a brain.",
+    "list_cameras": ActionGuidance(
+        "List Unity cameras in loaded scenes, their brain attachments, and any Cinemachine cameras, targets, stages and current live state. "
+        + CAMERA_INVENTORY_READ,
+        effects=CALLBACK_INSPECTION_EFFECTS,
+        evidence_limit="With Cinemachine installed, the inventory reads provider methods and component getters. It does not attach a brain.",
+        intent="observe",
+        observation=CAMERA_INVENTORY_OBSERVATION,
     ),
     "get_brain_status": _inspect(
         "Read the existing Cinemachine brain's active virtual camera and current blend state. Reports an error if the package or brain is absent.",

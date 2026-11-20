@@ -40,6 +40,8 @@ from services.registry.action_catalog import (
     tool_description,
 )
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
+from services.registry.capability_catalog import CAMERA_INVENTORY_URI
+from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
@@ -172,6 +174,7 @@ class EquivalentRead:
     template_path: str | None = None
     pagination: tuple[str, ...] = ()
     focused_action: tuple[str, str] | None = None
+    resource_first: bool = False
 
     @property
     def parent(self) -> tuple[str, str] | None:
@@ -185,10 +188,12 @@ class EquivalentRead:
             tools += (("tool", *self.parent),)
         if self.resource is None:
             return tools
-        return (
-            *tools,
-            ("resource_template" if self.template_path else "resource", self.resource, ""),
+        resource: RouteKey = (
+            "resource_template" if self.template_path else "resource",
+            self.resource,
+            "",
         )
+        return (resource, *tools) if self.resource_first else (*tools, resource)
 
     def allowed(self, unavailable_parents: set[str]) -> bool:
         # Fixed tools/resources inherit the parent toggle. A focused tool has its own toggle.
@@ -199,10 +204,15 @@ class EquivalentRead:
         )
 
 
-# Each resource delegates to the dedicated tool, which binds the same native
-# action as its mixed tool. Name similarity and matching result fields are
-# insufficient to make a new equivalent route.
+# Each relationship is backed by the same native read implementation.
 _EQUIVALENT_READS: Final = (
+    EquivalentRead(
+        "manage_cameras",
+        CAMERA_INVENTORY_URI,
+        CAMERA_INVENTORY_OBSERVATION,
+        focused_action=("manage_camera", "list_cameras"),
+        resource_first=True,  # Both tool bindings also admit authoring actions.
+    ),
     EquivalentRead("inspect_editor_state", "mcpforunity://editor/state", EDITOR_STATE_OBSERVATION),
     EquivalentRead("inspect_ugui_hit_order", None, POINTER_ORDER_OBSERVATION),
     EquivalentRead(

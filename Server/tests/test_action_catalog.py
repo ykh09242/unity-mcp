@@ -257,6 +257,40 @@ def test_ui_discovery_separates_file_panel_and_live_edits(entries):
     assert "PanelSettings" in attach["purpose"] and attach["intent"] == "edit"
 
 
+def test_camera_inventory_search_offers_the_published_resource_to_read_only_clients(entries):
+    from services.registry import get_registered_resources
+    from services.registry.action_catalog import action_card, tool_capability
+    from services.registry.task_search import SearchRequest, search_catalog
+    from services.resources import cameras
+
+    uri = "mcpforunity://scene/cameras"
+    resources = [row for row in get_registered_resources() if row["func"] is cameras.get_cameras]
+    assert [row["uri"] for row in resources] == [uri]
+    names = {"manage_camera", "manage_cameras"}
+    for entry in (row for row in entries if row["name"] in names):
+        card = action_card(entry, "list_cameras")
+        assert uri in card["purpose"] and uri in tool_capability(entry)["description"]
+        assert not card["effects"]["readOnlyHint"]
+    result = search_catalog(
+        SearchRequest(query="camera inventory", intent="observe"),
+        entries,
+        resources=resources,
+        visible_names=names,
+    )
+    group = next(g for g in result["route_groups"] if g["representative"].get("uri") == uri)
+    assert {row["tool"] for row in group["alternatives"]} == names
+    reads = search_catalog(
+        SearchRequest(
+            required_values=["unityCameras"], route_surfaces="resources", host_tool_names=[]
+        ),
+        entries,
+        resources=resources,
+        visible_names=names,
+    )
+    assert [g["representative"].get("uri") for g in reads["route_groups"]] == [uri]
+    assert "unityCameras" in reads["route_groups"][0]["representative"]["observation"]["values"]
+
+
 def test_focused_editor_actions_share_the_reviewed_native_contract(entries):
     from services.registry.action_catalog import action_card, declared_actions
     from services.registry.capability_catalog import CAPABILITIES
