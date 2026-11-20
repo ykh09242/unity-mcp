@@ -13,14 +13,14 @@ namespace VerificationFixtures
         public const string Folder = "Assets/__McpNavigationCheckFixture";
         public const string Map = Folder + "/MapMarkers.mat";
         public const string Route = Folder + "/RouteArrows.mat";
-        private string executionId;
+        private Guid executionId;
 
         [OneTimeSetUp]
         public void OpenFixture()
         {
             if (Environment.GetEnvironmentVariable("UNITY_MCP_UNMAPPED_CHECK_FIXTURE") != "1")
                 Assert.Ignore("Enable the navigation material fixture in an owned disposable project.");
-            executionId = Guid.NewGuid().ToString("N");
+            executionId = Guid.NewGuid();
             if (!AssetDatabase.IsValidFolder(Folder))
             {
                 string guid = AssetDatabase.CreateFolder("Assets", "__McpNavigationCheckFixture");
@@ -43,7 +43,7 @@ namespace VerificationFixtures
                 TestContext.WriteLine(path + " " + AssetDatabase.AssetPathToGUID(path) + " " + digest);
             }
             string fixture = typeof(NavigationMaterialChecks).FullName;
-            TestContext.WriteLine($"MCP_VERIFICATION_EXECUTION {executionId}");
+            TestContext.WriteLine($"MCP_VERIFICATION_EXECUTION {executionId:N}");
             TestContext.WriteLine($"MCP_VERIFICATION_EXPECTED_CASE {fixture}.{nameof(MapMarkersSupportInstancing)}");
             TestContext.WriteLine($"MCP_VERIFICATION_EXPECTED_CASE {fixture}.{nameof(RouteArrowsSupportInstancing)}");
             TestContext.WriteLine(
