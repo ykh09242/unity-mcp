@@ -6,6 +6,7 @@ from pathlib import Path
 import click
 
 from .formatting import OUTPUT_FORMAT_TYPE, format_output
+from .official_command import import_official
 from .play_scenario_analysis_io import write_new
 from .team_command import team
 from .verification_selection import read_cohort, selection_quality
@@ -103,7 +104,7 @@ def shards(manifest: Path, output: Path | None) -> None:
     emit_result(analyze, output)
 
 
-EVIDENCE_COMMANDS = (compare, first_failure, selection, shards, team)
+EVIDENCE_COMMANDS = (compare, first_failure, import_official, selection, shards, team)
 
 
 @click.group("unity-mcp-evidence", commands=EVIDENCE_COMMANDS)
