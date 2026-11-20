@@ -1,10 +1,12 @@
 """Holdout admission, trace accounting, and fresh teammate replay controls."""
 
 from copy import deepcopy
+from importlib.metadata import PathDistribution
 import json
 from pathlib import Path
 import subprocess
 import sys
+from zipfile import ZipFile
 
 import pytest
 
@@ -109,6 +111,51 @@ def test_prepare_excludes_related_copies_and_unfrozen_projects(tmp_path, monkeyp
     assert len(plan["cases"]) == 24
     assert len({slot[0] for slot in study.allocations(plan)}) == 96
     assert {row["language"] for row in plan["cases"]} == {"en", "ko"}
+    with ZipFile(tmp_path / "reader.whl", "w") as wheel:
+        wheel.writestr("pkg.dist-info/METADATA", "Name: ykh09242-unity-mcp-evidence\n")
+        wheel.writestr(
+            "pkg.dist-info/entry_points.txt",
+            "[console_scripts]\nunity-mcp-evidence = reader:main\n",
+        )
+        wheel.writestr("reader.py", "def main(): pass\n")
+    spec.update(design="three-arm", reader_tool="read_offline_evidence", reader_wheel="reader.whl")
+    spec["operators"] = {phase: [f"{phase}-{i}" for i in range(12)] for phase in study.PHASES}
+    (tmp_path / "reader.json").write_text('["test_tool", "read_offline_evidence"]')
+    for entry in spec["projects"]:
+        for fixture in entry["fixtures"].values():
+            fixture["raw_inputs"] = {"start": fixture["initial_state"]}
+        for mode in study.paired.MODES:
+            entry["catalogs"][mode]["official-reader"] = (
+                "reader.json" if mode == "mcp-only" else "catalog.json"
+            )
+    plan = study.prepare(spec, tmp_path)
+    assert len({slot[0] for slot in study.allocations(plan)}) == 144
+    assert all(
+        {run["arm"] for run in case["runs"]} == set(study.three_arm.ARMS) for case in plan["cases"]
+    )
+    assert plan["products"]["official-reader"] == plan["products"]["official"]
+    study.three_arm.validate_operator_schedule(plan)
+    for phase, operators in plan["operators"].items():
+        for operator in operators:
+            run_arms = [
+                run["arm"]
+                for case in plan["cases"]
+                for run in case["runs"]
+                if run[phase + "_operator"] == operator
+            ]
+            assert all(run_arms.count(arm) == 2 for arm in study.three_arm.ARMS)
+    packet = spec["projects"][0]["fixtures"]["asset-move"]["raw_inputs"]
+    renamed = tmp_path / "neutral-input.bin"
+    packet["guide"] = renamed.name
+    spec["training"]["used_evidence"].append(study.checksum(b"tuning capture").upper())
+    for forbidden in ((tmp_path / "observer").read_bytes(), b"tuning capture"):
+        renamed.write_bytes(forbidden)
+        with pytest.raises(ValueError, match="observer or tuning"):
+            study.prepare(spec, tmp_path)
+    del packet["guide"]
+    spec["projects"][0]["catalogs"]["mcp-only"]["official-reader"] = "catalog.json"
+    with pytest.raises(ValueError, match="same provider tools"):
+        study.prepare(spec, tmp_path)
     spec["training"]["projects"].append(study.project_snapshot(paths[1]))
     with pytest.raises(ValueError, match="overlaps"):
         study.prepare(spec, tmp_path)
@@ -121,7 +168,7 @@ def test_prepare_excludes_related_copies_and_unfrozen_projects(tmp_path, monkeyp
         study.prepare(spec, tmp_path)
 
 
-def plan_and_receipts():
+def plan_and_receipts(*, three=False):
     case = {
         "project": 0,
         "task": "blocked-click",
@@ -133,7 +180,7 @@ def plan_and_receipts():
         "prompt": "Investigate the target.",
         "runs": [
             {"id": arm + "-actor", "replay_id": arm + "-replay", "arm": arm}
-            for arm in study.paired.ARMS
+            for arm in (study.three_arm.ARMS if three else study.paired.ARMS)
         ],
     }
     plan = {
@@ -143,7 +190,7 @@ def plan_and_receipts():
         "controls": {"model": "model", "host": "host", "effort": "high"},
         "permissions": {"mcp-only": "4" * 64},
         "catalogs": [
-            {"mcp-only": dict.fromkeys(study.paired.ARMS, study.json_digest(["test_tool"]))}
+            {"mcp-only": dict.fromkeys(study.paired.ARMS, study.catalog_digest(["test_tool"]))}
         ],
         "products": {
             "fork": {"product_identity": "fork"},
@@ -156,6 +203,20 @@ def plan_and_receipts():
         "used_evidence": [],
         "cases": [case],
     }
+    if three:
+        plan["schema"] = 2
+        plan["reader"] = {"wheel_sha256": "a" * 64, "mcp_tool": "reader"}
+        plan["operators"] = {phase: [] for phase in study.PHASES}
+        for run in case["runs"]:
+            for phase in study.PHASES:
+                operator = f"{phase}-{run['arm']}"
+                run[phase + "_operator"] = operator
+                plan["operators"][phase].append(operator)
+        case["raw_inputs"] = {"raw": "b" * 64}
+        plan["products"]["official-reader"] = dict(plan["products"]["official"])
+        plan["catalogs"][0]["mcp-only"]["official-reader"] = study.catalog_digest(
+            ["test_tool", "reader"]
+        )
     evidence = {}
     for key, _, allocation, phase in study.allocations(plan):
         arm = allocation["arm"]
@@ -169,11 +230,11 @@ def plan_and_receipts():
             "unity_version": "6000.0.69f1",
             "fixture_digest": "0" * 64,
             "permission_digest": "4" * 64,
-            "catalog_digest": study.json_digest(["test_tool"]),
+            "catalog_digest": study.catalog_digest(["test_tool"]),
             "observer_digest": "1" * 64,
             "prompt_digest": study.checksum(case["prompt"].encode()),
             "handoff_digest": study.checksum(handoff.encode()),
-            "operator_id": phase,
+            "operator_id": allocation[phase + "_operator"] if three else phase,
             "session_id": key + "-session",
             "fixture_run_id": key + "-fixture",
             "execution": "native",
@@ -181,6 +242,21 @@ def plan_and_receipts():
             "elapsed_seconds": 3,
             "actor_claimed_success": True,
         }
+        catalog = ["test_tool"]
+        if three:
+            if arm == "official-reader":
+                catalog.append("reader")
+            host.update(
+                raw_inputs=dict(case["raw_inputs"]),
+                catalog_digest=study.catalog_digest(catalog),
+                reader_probe={
+                    "trial_id": key,
+                    "session_id": host["session_id"],
+                    "wheel_sha256": plan["reader"]["wheel_sha256"],
+                }
+                if arm == "official-reader"
+                else None,
+            )
         native = {
             name: host[name]
             for name in (
@@ -206,7 +282,7 @@ def plan_and_receipts():
                 "repaired_transitions": int(arm == "fork"),
             },
         )
-        if arm == "official":
+        if arm in ("official", "official-reader"):
             host.update(provider_command="unity mcp", connected_pipeline="p")
             native.update(
                 unity_cli="cli", pipeline_package="p", provider_session_id=host["session_id"]
@@ -216,8 +292,11 @@ def plan_and_receipts():
             {"kind": "mcp", "dispatch": 0, "return": 2, "reply": {"hit": "Blocker"}},
             {"kind": "mcp", "dispatch": 1, "return": None},
         ]
+        if three:
+            calls[0].update(dispatch_seconds=0.1, return_seconds=1.5 if arm == "official" else 1)
+            calls[1]["dispatch_seconds"] = 0.5
         review = {
-            "observer_id": "adjudicator",
+            "observer_id": f"adjudicator-{arm}" if three else "adjudicator",
             "coverage": "complete",
             "trial_id": key,
             "artifact_digest": study.checksum(capture.encode()),
@@ -227,7 +306,7 @@ def plan_and_receipts():
             ],
         }
         evidence[key] = {
-            "catalog": ["test_tool"],
+            "catalog": catalog,
             "host": host,
             "native_capture": capture,
             "handoff": handoff,
@@ -292,3 +371,128 @@ def test_changed_provider_tool_selection_is_inadmissible():
     evidence["official-actor"]["catalog"].append("unexpected_tool")
     with pytest.raises(ValueError, match="catalog differs"):
         totals(plan, evidence)
+
+
+def test_reader_probe_checks_the_actual_installed_source(tmp_path, monkeypatch):
+    installed = tmp_path / "site"
+    metadata = installed / "pkg.dist-info"
+    metadata.mkdir(parents=True)
+    files = {
+        "pkg.dist-info/METADATA": "Name: ykh09242-unity-mcp-evidence\n",
+        "pkg.dist-info/entry_points.txt": "[console_scripts]\nunity-mcp-evidence = reader:main\n",
+        "reader.py": "def main(): pass\n",
+    }
+    (metadata / "RECORD").write_text("".join(name + ",,\n" for name in files))
+    path = tmp_path / "reader.whl"
+    with ZipFile(path, "w") as wheel:
+        for name, source in files.items():
+            wheel.writestr(name, source)
+            (installed / name).write_bytes(source.encode())
+    monkeypatch.setattr(study.three_arm, "distribution", lambda name: PathDistribution(metadata))
+    probe = study.three_arm.probe_reader(path, "trial", "session")
+    assert probe["wheel_sha256"] == study.checksum(path.read_bytes())
+    (installed / "reader.py").write_text("different")
+    with pytest.raises(ValueError, match="Installed reader bytes"):
+        study.three_arm.probe_reader(path, "trial", "session")
+
+
+def test_three_arms_require_matched_actors_timing_and_separate_replays():
+    plan, evidence = plan_and_receipts(three=True)
+    report = study.report(plan, evidence)
+    assert report["complete"]
+    assert report["overall"] == report["by_project"][0]
+    arms = report["overall"]["arms"]
+    assert arms["official"]["false_successes"] == 1
+    assert arms["fork"]["teammate_success_rate"] == 1
+    assert arms["official-reader"]["paired_seconds_minus_official_median"] == -0.5
+    del evidence["official-reader-replay"]
+    evidence["official-reader-actor"]["review"]["valid_observations"] = []
+    summary = study.report(plan, evidence)["overall"]
+    assert summary["matched_actors"] == summary["planned_triplets"] == 1
+    assert summary["matched_first_observations"] == summary["matched_replays"] == 0
+    assert all(
+        s["first_seconds_median"] is None and s["teammate_success_rate"] is None
+        for s in summary["arms"].values()
+    )
+    del evidence["official-reader-actor"]
+    summary = study.report(plan, evidence)["overall"]
+    assert summary["arms"] is None
+    assert summary["unmatched_actors"] == 1
+
+
+@pytest.mark.parametrize("change", ["raw", "clock", "provider", "reuse", "reader"])
+def test_third_arm_cannot_borrow_provider_data_or_observation_time(change):
+    plan, evidence = plan_and_receipts(three=True)
+    bundle = evidence["official-reader-actor"]
+    if change == "reuse":
+        bundle["host"]["fixture_run_id"] = evidence["official-actor"]["host"]["fixture_run_id"]
+        witness = json.loads(bundle["native_capture"])
+        witness["fixture_run_id"] = bundle["host"]["fixture_run_id"]
+        bundle["native_capture"] = json.dumps(witness)
+        bundle["review"]["artifact_digest"] = study.checksum(bundle["native_capture"].encode())
+        assert study.report(plan, evidence)["overall"]["arms"] is None
+        return
+    if change == "raw":
+        bundle["host"]["raw_inputs"].clear()
+    elif change == "clock":
+        bundle["calls"][0]["return_seconds"] = 0.2
+        bundle["review"]["trace_digest"] = study.json_digest(bundle["calls"])
+    elif change == "provider":
+        bundle["host"]["provider_command"] = "fork"
+    else:
+        bundle["host"]["reader_probe"] = None
+    with pytest.raises(ValueError):
+        study.report(plan, evidence)
+
+
+@pytest.mark.parametrize("source", ["observer", "training"])
+def test_admission_blocks_private_bytes_even_in_a_pinned_packet(source):
+    plan, evidence = plan_and_receipts(three=True)
+    case = plan["cases"][0]
+    hidden = case["observer_digest"] if source == "observer" else study.checksum(b"training")
+    if source == "training":
+        plan["used_evidence"].append(hidden)
+    case["raw_inputs"]["renamed"] = hidden
+    bundle = evidence["official-reader-actor"]
+    bundle["host"]["raw_inputs"] = dict(case["raw_inputs"])
+    with pytest.raises(ValueError, match="observer or tuning"):
+        study.report(plan, {"official-reader-actor": bundle})
+
+
+@pytest.mark.parametrize("sibling", ["fork-actor", "fork-replay"])
+def test_three_arm_replay_cannot_be_a_sibling_participant(sibling):
+    plan, evidence = plan_and_receipts(three=True)
+    evidence["official-replay"]["host"]["operator_id"] = evidence[sibling]["host"]["operator_id"]
+    with pytest.raises(ValueError, match="counterbalanced allocation"):
+        study.report(plan, evidence)
+
+
+@pytest.mark.parametrize("participant", ["official-actor", "fork-replay"])
+def test_three_arm_adjudicator_is_independent_of_every_arm(participant):
+    plan, evidence = plan_and_receipts(three=True)
+    evidence["official-replay"]["review"]["observer_id"] = evidence[participant]["host"][
+        "operator_id"
+    ]
+    with pytest.raises(ValueError, match="Adjudicator"):
+        study.report(plan, evidence)
+
+
+def test_three_arm_schedule_rejects_same_task_reuse_and_unbalanced_exposure():
+    plan, _ = plan_and_receipts(three=True)
+    another = deepcopy(plan["cases"][0])
+    another["language"] = "ko"
+    plan["cases"].append(another)
+    with pytest.raises(ValueError, match="repeat a project/task"):
+        study.report(plan, {})
+    another["task"] = "asset-move"
+    with pytest.raises(ValueError, match="counterbalanced across arms"):
+        study.report(plan, {})
+
+
+@pytest.mark.parametrize("sibling", ["fork-actor", "fork-replay"])
+def test_cross_arm_adjudicator_invalidates_a_matched_case(sibling):
+    plan, evidence = plan_and_receipts(three=True)
+    original = evidence["official-replay"]
+    original["review"]["observer_id"] = evidence[sibling]["review"]["observer_id"]
+    with pytest.raises(ValueError, match="multiple arms of the same matched case"):
+        study.report(plan, {"official-replay": original, sibling: evidence[sibling]})

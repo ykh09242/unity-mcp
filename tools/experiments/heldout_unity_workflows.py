@@ -19,6 +19,7 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.experiments import paired_unity_workflows as paired
+from tools.experiments import heldout_three_arm as three_arm
 
 ROOT = Path(__file__).resolve().parents[2]
 LANGUAGES = ("en", "ko")
@@ -186,6 +187,8 @@ def catalog_digest(names):
 
 
 def prepare(spec, base):
+    design = spec.get("design", "two-arm")
+    require(design in {"two-arm", "three-arm"}, "Unknown held-out design")
     training = spec["training"]
     require(training["inventory_complete"] is True, "A complete tuning inventory is required")
     excluded = set(git(ROOT, "rev-list", "--max-parents=0", "HEAD").splitlines())
@@ -295,7 +298,7 @@ def prepare(spec, base):
                 }
             )
     require(snapshots[0]["unity_version"] == snapshots[1]["unity_version"], "Unity versions differ")
-    return {
+    plan = {
         "schema": 1,
         "controls": controls,
         "products": products,
@@ -306,6 +309,9 @@ def prepare(spec, base):
         "used_evidence": spent,
         "cases": cases,
     }
+    if design == "three-arm":
+        three_arm.extend_plan(plan, spec, base)
+    return plan
 
 
 def trace_metrics(trace, witness):
@@ -426,7 +432,7 @@ def assess(plan, case, allocation, phase, evidence):
     require(isinstance(evidence["handoff"], str), "Missing handoff record")
     handoff = checksum(evidence["handoff"].encode())
     require(host["handoff_digest"] == handoff, "Handoff disagrees with host record")
-    if arm == "official":
+    if arm in ("official", "official-reader"):
         require(
             host["provider_command"] == "unity mcp"
             and host["connected_pipeline"] == fixed["pipeline_package"],
@@ -446,9 +452,10 @@ def assess(plan, case, allocation, phase, evidence):
         "shell_calls": shell,
         "duplicate_writes": witness["duplicate_writes"],
     }
-    score, reason = paired.run_score(case["task"], case["mode"], arm, run)
+    provider = "official" if arm == "official-reader" else arm
+    score, reason = paired.run_score(case["task"], case["mode"], provider, run)
     require(score is not None, f"Unscorable native receipt: {reason}")
-    return {
+    sample = {
         "run": run,
         "passed": score["independent_pass"],
         "first": first,
@@ -461,6 +468,9 @@ def assess(plan, case, allocation, phase, evidence):
             witness["artifact_digest"],
         ],
     }
+    if plan.get("schema") == 2:
+        sample["first_seconds"] = three_arm.check_dispatch(plan, case, allocation, phase, evidence)
+    return sample
 
 
 def allocations(plan):
@@ -471,6 +481,10 @@ def allocations(plan):
 
 
 def report(plan, admitted):
+    if plan.get("schema") == 2:
+        three_arm.validate_operator_schedule(plan)
+        for case in plan["cases"]:
+            three_arm.check_case_adjudicators(case, admitted)
     measurements = {}
     uses = Counter(plan["used_evidence"])
     for key, case, allocation, phase in allocations(plan):
@@ -484,6 +498,8 @@ def report(plan, admitted):
         for key, sample in measurements.items()
         if any(uses[item] > 1 for item in sample["uses"])
     }
+    if plan.get("schema") == 2:
+        return three_arm.report(plan, measurements, invalid)
     pairs = []
     for serial, case in enumerate(plan["cases"]):
         pair = {"task": case["task"], "mode": case["mode"], "repetition": serial}
@@ -587,6 +603,12 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     identify = commands.add_parser("identify")
     identify.add_argument("project", type=Path)
+    probe = commands.add_parser(
+        "probe-reader", help="Verify the reader interpreter before dispatch"
+    )
+    probe.add_argument("wheel", type=Path)
+    probe.add_argument("trial_id")
+    probe.add_argument("session_id")
     create = commands.add_parser("prepare")
     create.add_argument("spec", type=Path)
     for name in ("prepare", "admit", "score"):
@@ -603,6 +625,9 @@ def main():
     try:
         if args.command == "identify":
             print(json.dumps(project_snapshot(args.project), indent=2))
+            return
+        if args.command == "probe-reader":
+            print(json.dumps(three_arm.probe_reader(args.wheel, args.trial_id, args.session_id)))
             return
         manifest = args.study / "manifest.json"
         receipts = args.study / "admitted"
@@ -624,6 +649,8 @@ def main():
             result["manifest_sha256"] = args.pin
             write_json(args.output, result)
             return
+        if plan.get("schema") == 2:
+            three_arm.validate_operator_schedule(plan)
         slots = {
             key: (case, allocation, phase) for key, case, allocation, phase in allocations(plan)
         }
@@ -631,6 +658,15 @@ def main():
         evidence = json.loads(args.bundle.read_bytes())
         case, allocation, phase = slots[args.id]
         sample = assess(plan, case, allocation, phase, evidence)
+        if plan.get("schema") == 2:
+            siblings = {}
+            for run in case["runs"]:
+                for key in (run["id"], run["replay_id"]):
+                    path = receipts / (key + ".json")
+                    if key != args.id and path.exists():
+                        siblings[key] = json.loads(path.read_bytes())
+            siblings[args.id] = evidence
+            three_arm.check_case_adjudicators(case, siblings)
         require(
             set(sample["uses"]).isdisjoint(plan["used_evidence"]),
             "Training evidence cannot be reused",

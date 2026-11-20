@@ -76,10 +76,9 @@ copies. The provider applies only the pinned product installation to each
 checkout, checks its native connection and records the loaded project identity.
 For the official arm, launch the actual `unity mcp` process with the exact
 project path and installed Pipeline package. Unity identifies this server as
-the supported replacement for the in-Editor assistant's MCP server. CLI 1.0.1
-supports filtering whole Editor command groups with `--tools` or
-`--exclude-tools`. Pipeline 1.0.0 targets Unity 6000.0. Record the versions
-actually installed on the provider.
+the supported replacement for the in-Editor assistant's MCP server. Record
+the installed CLI and connected Pipeline versions. Confirm the tool-group
+filters and Editor compatibility for those exact pins.
 [Unity's MCP migration guide](https://docs.unity.com/en-us/unity-cli/replace-mcp-server-unity-cli)
 and [CLI release notes](https://docs.unity.com/en-us/unity-cli/release-notes/2026/november)
 and [Pipeline registry metadata](https://packages.unity.com/com.unity.pipeline).
@@ -148,3 +147,71 @@ project index, task, language and repetition for audit. With no scored
 official/fork pair, arm metrics are null. The report records its manifest pin
 and matched actor/replay coverage per project. The `complete` flag requires
 both stages for every planned pair.
+
+## Three-arm held-out comparison
+
+Set `"design": "three-arm"` in a fresh specification and use the same
+`prepare`, `admit` and `score` commands above. Existing two-arm manifests
+keep their original study design. The three-arm design allocates 24 matched
+triplets per repetition, with a fresh actor and teammate for each arm (144
+slots in total). Within each project, complete blocks of six cases use all
+six arm orders once, shuffled before dispatch.
+
+| Additional preparation input | Contract |
+| --- | --- |
+| `reader_wheel` | Path to the standalone `unity-mcp-evidence` wheel actually distributed for this study. Archive the wheel and retain its SHA-256 through installation. |
+| `operators` | Separate `actor` and `replay` lists of unique pseudonymous participant IDs. Each panel has 12 participants per phase per repetition. Supply one panel to rotate each person through all six project/task combinations, two panels for three combinations per person, or six panels to use every participant once. |
+| `reader_tool` | Exact name of the broker's restricted read-only MCP adapter for this wheel. In MCP-only mode it may invoke the standalone reader with allowlisted arguments over the same admitted inputs. In shell-enabled mode expose the wheel's CLI under the existing shell grant. |
+| `projects[].catalogs[mode]["official-reader"]` | Export of the actual catalog for the official provider with the reader available. The MCP-only catalog adds exactly `reader_tool` to the official catalog. The shell-enabled catalog matches the official catalog. |
+| `projects[].fixtures[task].raw_inputs` | Nonempty object mapping neutral labels to original evidence files supplied to every actor and teammate in this case. Preparation hashes the files and records labels and digests. |
+
+Use the same pinned CLI and Pipeline for `official` and `official-reader`.
+Preparation shuffles each operator panel, assigns distinct people within
+each project/task (across languages, modes, arms and repetitions), and
+counterbalances arm assignments across new tasks. Dispatch the
+`actor_operator` and `replay_operator` named in the allocation. Select
+adjudicators independently from both participant rosters. For a matched
+case, each adjudicator may review only one arm, including its actor and
+replay. Admission and scoring check the recorded identities against the
+operator schedule and other receipts for that case.
+Only the reader arm gets the standalone wheel. Run the fork arm against the
+pinned fork installation. Recreate the same clean project, grants, raw
+bytes, distribution mechanism, model snapshot, effort, prompt and observer
+on each dispatch. Under MCP-only grants give all arms the same read-only
+access to the original raw files. Keep observer-only records out of that
+packet. Restrict the reader adapter to the same files and disable arbitrary
+shell, network and additional writes. Keep missing activations unfilled when
+the broker cannot enforce these controls. Preparation and admission reject
+actor files whose raw digests match any project's observer bundle or the
+custodian's prior evidence inventory, including renamed copies.
+
+Before each reader-arm dispatch, have the broker run the following command
+with the interpreter actually serving the wheel. It compares the installed
+Python sources, package metadata and console entry point against the wheel.
+
+```sh
+/path/to/reader/python tools/experiments/heldout_unity_workflows.py probe-reader /path/to/reader.whl TRIAL_ID HOST_SESSION_ID
+```
+
+In every host bundle record `raw_inputs` (the observed label-to-digest map
+of bytes delivered to this session), and `reader_probe` (that command's JSON
+for the reader arm, JSON null for the other arms).
+Record provider connection fields for **both** official arms,
+including the native capture's `provider_session_id`. Each broker trace
+event additionally records numeric `dispatch_seconds` and, when returned,
+`return_seconds` from the monotonic instant of prompt delivery. All events
+in an invocation share the same clock origin. Include time before the
+first dispatch and before the first independently accepted reply.
+
+The report retains all planned case triplets, with missing or reused slots
+and their reasons. It computes false successes per matched actor triplet
+and teammate reproduction per matched replay triplet, overall, by project
+index and by permission mode. First-observation medians use the same
+triplets for all arms. `paired_seconds_minus_official_median` takes the
+median of within-case time differences. Read the matched, unmatched,
+no-observation and planned counts alongside these rates. An absent third
+arm leaves the comparison unscored. Only an independently observed
+provider-run study can establish a comparative result.
+
+To examine native official-provider files independently, use the
+[official session evidence importer](../../docs/development/official-unity-evidence.md).
