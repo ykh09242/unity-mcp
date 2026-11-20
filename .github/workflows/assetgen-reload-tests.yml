@@ -159,7 +159,7 @@ jobs:
           testMode: editmode
           customParameters: -testFilter ${{ matrix.probe.method }}
           coverageEnabled: false
-          cliVersion: v0.1.69
+          cliVersion: v0.1.76
           githubToken: ""
           artifactsPath: ${{ steps.native-output.outputs.root }}
 

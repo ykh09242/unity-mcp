@@ -16,9 +16,8 @@ import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
 
-# The CLI version used by our successful Unity CI activation (v0.1.69).
-# Pin the implementation, including its capability-based older-editor fallback.
-GAME_CI_COMMIT = "75c5dcf81523f31b3cca9d7cd16228a2b53de9a8"
+# Match the CLI pinned by the Unity test workflows (v0.1.76).
+GAME_CI_COMMIT = "39868753b787468332a1f5a85aa151d02c8555c6"
 GAME_CI_SCRIPTS = (
     "activate.sh",
     "return_license.sh",

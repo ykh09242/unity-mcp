@@ -68,7 +68,7 @@ def test_each_probe_selects_an_existing_explicit_actual_reload_method(config):
         assert f'Environment.GetEnvironmentVariable("{row["owner"]}")' in source
     runner = next(step for step in job["steps"] if step.get("id") == "tests")
     assert runner["with"]["customParameters"] == "-testFilter ${{ matrix.probe.method }}"
-    assert runner["with"]["cliVersion"] == "v0.1.69"
+    assert runner["with"]["cliVersion"] == "v0.1.76"
     assert runner["with"]["customImage"] == "${{ steps.owned-image.outputs.image }}"
     assert runner["with"]["githubToken"] == ""
 

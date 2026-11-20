@@ -734,7 +734,7 @@ serial before a license file; Personal does not need `UNITY_SERIAL`.
 For Personal-only CI, omitting `UNITY_SERIAL` does not isolate a mixed account from its
 other entitlements. The pinned CLI can fall back from file activation to account login
 when machine bindings differ. Its modern-client account path uses
-[`--activate-all --include-personal`](https://github.com/game-ci/cli/blob/v0.1.69/dist/platforms/ubuntu/steps/resolve_unity_path.sh#L44),
+[`--activate-all --include-personal`](https://github.com/game-ci/cli/blob/v0.1.76/dist/platforms/ubuntu/steps/resolve_unity_path.sh#L44),
 which does not select Personal exclusively. Before enabling native jobs with that
 fallback, use an account configuration restricted to Personal or obtain a Unity-supported
 way to select only Personal. Do not try credentials-only activation on a mixed account
