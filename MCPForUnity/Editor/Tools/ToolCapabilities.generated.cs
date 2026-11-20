@@ -234,7 +234,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("manage_cameras", AutoRegister = false, Group = "camera",
-        DisplayName = "Cameras & Lenses", Description = "Create or list cameras, select targets and configure lenses or priority.")]
+        DisplayName = "Cameras & Lenses", Description = "Create or list cameras, select targets and configure lenses or priority. For read-only camera inventory, read the MCP resource mcpforunity://scene/cameras.")]
     public static class ManageCameras
     {
         private static readonly string[] Actions = { "create_camera", "list_cameras", "set_target", "set_priority", "set_lens" };
