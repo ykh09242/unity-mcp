@@ -407,10 +407,11 @@ def test_selected_input_system_compiles_runtime_editor_and_tests_in_order(
     )
     assert '/Unity.InputSystem.TestFramework.dll"' in tests
     assert '/MCPForUnity.Input.InputSystem.Runtime.dll"' in tests
+    assert f'/{UGUI_ASSEMBLIES[0]}.dll"' not in tests
     assert "-define:MCP_INPUT_UGUI" not in tests.splitlines()
 
 
-def test_combined_input_profile_compiles_native_ugui_focus_fixture(
+def test_combined_input_profile_compiles_native_ugui_fixtures_with_runtime_reference(
     harness: CompileHarness,
     ugui_sources: tuple[Path, Path],
     input_system_sources: tuple[Path, Path],
@@ -425,12 +426,17 @@ def test_combined_input_profile_compiles_native_ugui_focus_fixture(
         encoding="utf-8"
     )
     assert "/InputSystem/UguiNavigationInputTests.cs" in response
+    assert "/InputSystem/MixedUiPointerRouteTests.cs" in response
     assert {
         "-define:MCP_INPUT_SYSTEM",
         "-define:ENABLE_INPUT_SYSTEM",
         "-define:MCP_INPUT_UGUI",
     } <= set(response.splitlines())
     assert '/UnityEngine.UI.dll"' in response
+    runtime_ref = harness.output / "linux" / f"{UGUI_ASSEMBLIES[0]}.dll"
+    assert response.splitlines().count(f'-r:"{runtime_ref.as_posix()}"') == 1
+    calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
+    assert calls.index(UGUI_ASSEMBLIES[0]) < calls.index(INPUT_SYSTEM_ASSEMBLIES[2])
 
 
 def test_input_system_absent_path_excludes_optional_sources(

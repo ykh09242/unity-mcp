@@ -10,7 +10,8 @@
     "UnityEngine.TestRunner",
     "UnityEditor.TestRunner",
     "MCPForUnity.Runtime",
-    "MCPForUnity.Input.InputSystem.Runtime"
+    "MCPForUnity.Input.InputSystem.Runtime",
+    "MCPForUnity.Input.UGUI.Runtime"
   ],
   "includePlatforms": [
     "Editor"

@@ -712,10 +712,15 @@ for platform in $PLATFORMS; do
       echo "Excluded uGUI, PlayScenarios integration, and scenario Player fixture assemblies: COMPILE_INPUT_UGUI=0 (package profile disabled)"
     fi
     if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
+      input_test_ugui_refs=()
+      if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
+        input_test_ugui_refs+=("$OUT/$platform/MCPForUnity.Input.UGUI.Runtime.dll")
+      fi
       compile MCPForUnity.Input.InputSystem.Tests "$TEST_PROJECT/Assets/Tests/EditMode/Tools/Input/InputSystem" "$platform" \
         "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" "$OUT/$platform/MCPForUnity.Editor.dll" \
         "$OUT/$platform/MCPForUnity.Input.InputSystem.Runtime.dll" "$OUT/$platform/MCPForUnity.Input.InputSystem.Editor.dll" \
         "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" "$INPUT_SYSTEM_REFS/Unity.InputSystem.TestFramework.dll" \
+        "${input_test_ugui_refs[@]}" \
         || failed=1
       if [ -n "$UNITY_ANALYZER_DLL" ]; then
         sample="$REPO/tools/fixtures/play_scenario_lifecycle/Assets"

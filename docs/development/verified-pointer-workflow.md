@@ -1,5 +1,8 @@
 # Verify pointer routing and localized uGUI layout
 
+For mixed uGUI and UI Toolkit input through a shared EventSystem, see
+[mixed UI pointer evidence](mixed-ui-pointer-evidence.md).
+
 Use these fixtures to reproduce a transparent overlay blocking a button and to
 inspect localized text at two rendered viewport sizes. The examples use a
 Windows installation of Unity 6000.0.69f1 with uGUI 2.0.0. The project and all

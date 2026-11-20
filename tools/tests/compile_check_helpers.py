@@ -340,6 +340,7 @@ def input_system_sources(
         shutil.copy2(original, directory / f"{assembly}.asmdef")
     for name in ("Unity.InputSystem.dll", "Unity.InputSystem.TestFramework.dll"):
         (harness.extra / name).touch()
-    relative = Path("Assets/Tests/EditMode/Tools/Input/InputSystem/UguiNavigationInputTests.cs")
-    shutil.copy2(ROOT / "TestProjects/UnityMCPTests" / relative, project / relative)
+    for name in ("UguiNavigationInputTests.cs", "MixedUiPointerRouteTests.cs"):
+        relative = Path("Assets/Tests/EditMode/Tools/Input/InputSystem") / name
+        shutil.copy2(ROOT / "TestProjects/UnityMCPTests" / relative, project / relative)
     return project, framework

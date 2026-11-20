@@ -114,6 +114,13 @@
       ]
     },
     {
+      "id": "mixed-ui-pointer",
+      "filter": "MCPForUnityTests.EditMode.Tools.Input.MixedUiPointerRouteTests",
+      "requiredTests": [
+        "MCPForUnityTests.EditMode.Tools.Input.MixedUiPointerRouteTests.SharedPointerSwitchesFromToolkitToUguiAfterPickingRepairAtBothScales"
+      ]
+    },
+    {
       "id": "vfx-graph",
       "filter": "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests",
       "requiredTests": [
