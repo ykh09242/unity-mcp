@@ -413,3 +413,21 @@ Independent camera, active-scene, saved-graph and current-graph probes preserved
 identical text bytes and structured JSON. Only the camera and active-scene
 queries gained a concrete protocol link. This sample showed no reduction in
 calls to the first verified camera read.
+
+**Final integration check.** With locked FastMCP 4.2.2, `e86a39862` returned
+a duplicate stdio response-identity error from both search tools. The corrected
+server at `28b6676f6` passed all four selector probes over raw stdio. The
+game relay also reproduced all four original link-only responses, including
+the exact text bytes, structured JSON and expected links. The relay served
+`28b6676f6` to the actors. The existing Unity 6000.0.69f1 Editor supplied the
+observations through its installed server and native package at `8fdc71f69`.
+
+Two fresh actors on the corrected server produced answers grounded in the same
+running Editor. Both used `gpt-6.2-sol` at medium effort and started in the
+shell. The Korean main actor first read project information and verified the
+complete camera list and count on business call seven. The English direct child
+first tried the mixed scene tool, encountered an approval block, and verified
+the current scene name and path from Editor state on business call five.
+The independent before/after observations matched in both turns. Neither actor
+searched (0/2), leaving zero eligible search responses for conditional ranking
+or link exposure. These two turns stay outside the ten matched pairs.
