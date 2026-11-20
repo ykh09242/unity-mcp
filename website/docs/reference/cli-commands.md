@@ -4517,6 +4517,20 @@ Review source evidence and manage local Player candidate registrations.
 | --- | --- | --- | --- | --- | --- | --- |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp verification-candidate dependency-closure`
+
+Propose additional asset and metadata hashes from the selected commits.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | text | required | nargs=1 | — | — |  |
+| --draft | text | required | nargs=1 | — | — | Committed Git candidate draft. |
+| --root | text | required | nargs=1 | — | — | Project-relative entry asset. |
+| --graph-page | text | required | nargs=1, repeatable | — | — | Outgoing impact page in original order. |
+| --diagnostics | tuple: text, text | optional | nargs=2, repeatable | — | — | Graph node and its diagnostics page. |
+| --output | text | optional | nargs=1 | — | — | New proposal JSON file. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp verification-candidate draft`
 
 Compare selected Unity source bytes with a Git baseline and emit a reviewable JSON draft.
@@ -4525,8 +4539,22 @@ Compare selected Unity source bytes with a Git baseline and emit a reviewable JS
 | --- | --- | --- | --- | --- | --- | --- |
 | --project | text | required | nargs=1 | — | — |  |
 | --baseline | text | optional | nargs=1 | "HEAD" | — | Git commit or revision. |
-| --selection | choice: working-tree, staged | required | nargs=1 | — | — |  |
+| --selection | choice: working-tree, staged, committed | required | nargs=1 | — | — |  |
+| --candidate-ref | text | optional | nargs=1 | — | — | Head commit or ref for a committed comparison. |
 | --output | text | optional | nargs=1 | — | — | New JSON file. |
+| --chunk-directory | text | optional | nargs=1 | — | — | Parent of input-chunks. Defaults to the output file's directory. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate draft-inputs`
+
+Validate a Git draft side, transfer its chunks, and print registration fields.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --draft | text | required | nargs=1 | — | — |  |
+| --side | choice: baseline, candidate | required | nargs=1 | — | — |  |
+| --candidate-id | text | required | nargs=1 | — | — |  |
+| --chunk-directory | text | optional | nargs=1 | — | — | Parent of input-chunks. Defaults to the draft file's directory. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp verification-candidate export`
@@ -4581,6 +4609,19 @@ Verify local sources and the installed Player before creating a local registrati
 | --project | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp verification-candidate reproduce`
+
+Verify Git inputs, dependency closures and builds, then run both Players.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | text | required | nargs=1 | — | — |  |
+| --manifest | text | required | nargs=1 | — | — |  |
+| --sha256 | text | required | nargs=1 | — | — | Pair manifest digest from an independent review. |
+| --artifacts | text | optional | nargs=1 | — | — | Trusted pair directory. Defaults to the manifest's parent. |
+| --output | text | required | nargs=1 | — | — | New directory for fresh native evidence and reproduction.json. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp verification-candidate verify`
 
 Check pinned evidence against the current checkout's source bytes.
@@ -4600,15 +4641,54 @@ Compare retained results and their input identities without starting Unity.
 | --- | --- | --- | --- | --- | --- | --- |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp verification-evidence budget-assess`
+
+Measure elapsed time and missed failures against an independent full run.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --ranking | text | required | nargs=1 | — | — | Original ranked test list. |
+| --history | text | required | nargs=1, repeatable | — | — | Original timing XML. |
+| --budget-ms | integer range: [1..None] | required | nargs=1 | — | — |  |
+| --selected | text | optional | nargs=1 | — | — | Independent run of exactly the planned test names. |
+| --full | text | required | nargs=1 | — | — | Independent run of the full test inventory. |
+| --output | text | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence budget-plan`
+
+Select ranked tests that fit an estimate derived from observed history.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --ranking | text | required | nargs=1 | — | — | Ordered test names and impact reasons. |
+| --history | text | required | nargs=1, repeatable | — | — | Prior Unity NUnit XML. |
+| --budget-ms | integer range: [1..None] | required | nargs=1 | — | — |  |
+| --output | text | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp verification-evidence compare`
 
 Classify new, existing, repaired and unexecuted checks on the reviewed PR pair.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| --baseline | text | required | nargs=2 | — | — |  |
-| --candidate | text | required | nargs=2 | — | — |  |
-| --output | text | optional | nargs=1 | — | — |  |
+| --baseline | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=2 | — | — |  |
+| --candidate | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=2 | — | — |  |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence export-change-subset`
+
+Write a new source overlay archive from two explicit endpoint snapshots.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| manifest | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --group | text | optional | nargs=1, repeatable | — | — | Apply this repaired atomic group. |
+| --broken-root | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --repaired-root | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --archive | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp verification-evidence first-failure`
@@ -4617,10 +4697,82 @@ Locate the first failing archived build, or report observed bounds and missing t
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| history_manifest | text | required | nargs=1 | — | — |  |
+| history_manifest | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
 | --kind | choice: scenario, test, profile, observation, stage | required | nargs=1 | — | — |  |
 | --id | text | required | nargs=1 | — | — | Exact named check from the verification reports. |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence minimize-changes`
+
+Find independently witnessed repair groups or identify the next subset trials.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| manifest | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence mutation`
+
+Measure which suite catches a fault witnessed independently in NUnit.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --mutation-id | text | required | nargs=1 | — | — | Expected native fault witness marker ID. |
+| --mutated-asset | text | required | nargs=1 | — | — | Exact fixture asset deliberately changed. |
+| --baseline | text | required | nargs=1 | — | — | Clean full-suite NUnit XML. |
+| --selected | text | required | nargs=1 | — | — | Mutated selected-suite NUnit XML. |
+| --full | text | required | nargs=1 | — | — | Mutated full-suite NUnit XML. |
+| --witness-test | text | required | nargs=1 | — | — | Exact test from the independent witness fixture. |
+| --witness | text | required | nargs=2 | — | — | Independent clean and mutated executions of only the witness test. |
 | --output | text | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence oracle-matrix`
+
+Compare old/new game and oracle revisions across four archived executions.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| manifest | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence reuse`
+
+Assess whether the original execution can be cited for the reviewed commit.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --verification | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --native | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --archived | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | Original candidate.json. |
+| --target | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | Target candidate.json. |
+| --archive-scope | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --target-scope | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --bundle | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | Target scenario-bundle.json. |
+| --closure | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Optional reviewed target dependency closure. |
+| --max-age-seconds | integer range: [1..None] | required | nargs=1 | — | — |  |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence scope`
+
+Capture Git input digests and the observation to bind in a registration.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --revision | text | required | nargs=1 | — | — | Local Git commit or ref. |
+| --source | text | required | nargs=1, repeatable | — | — |  |
+| --dependency | text | optional | nargs=1, repeatable | — | — |  |
+| --setting | text | optional | nargs=1, repeatable | — | — |  |
+| --runtime-inputs | choice: unknown, self_contained | optional | nargs=1 | "unknown" | — |  |
+| --unresolved | text | optional | nargs=1, repeatable | — | — | Known gap in dependency coverage. |
+| --environment | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Expected native Player environment JSON. |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | New reviewed scope JSON. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp verification-evidence selection`
@@ -4629,11 +4781,11 @@ Measure missed regressions, unnecessary checks and observed elapsed time.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| --selected | text | required | nargs=1 | — | — | Narrow Unity NUnit XML. |
-| --full | text | required | nargs=1 | — | — | Independently executed full cohort. |
-| --fallback | text | optional | nargs=1 | — | — | Independently executed broader fallback. |
+| --selected | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | Narrow Unity NUnit XML. |
+| --full | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | Independently executed full cohort. |
+| --fallback | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Independently executed broader fallback. |
 | --affected-test | text | optional | nargs=1, repeatable | — | — | Known affected test in the fault fixture. |
-| --output | text | optional | nargs=1 | — | — |  |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp vfx`
