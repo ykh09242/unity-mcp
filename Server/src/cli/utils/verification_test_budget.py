@@ -49,7 +49,10 @@ class BudgetInputs:
 
 def read_ranking(path: Path) -> tuple[RankedTest, ...]:
     """Read an independently ordered candidate list and its impact reasons."""
-    raw = read_json(path)
+    return parse_ranking(read_json(path))
+
+
+def parse_ranking(raw) -> tuple[RankedTest, ...]:
     tests = raw.get("tests")
     if (
         raw.get("schema") != "verification_test_ranking@1"

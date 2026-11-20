@@ -1,0 +1,22 @@
+{
+  "schema": "verification_pr_replay@1",
+  "cohort_kind": "historical",
+  "budget_ms": 120000,
+  "prs": [
+    {
+      "pr": "https://github.com/ykh09242/unity-mcp/pull/320",
+      "commit": "845cfa5a0b824ea95e33dea4237e80a5d72f9dcf",
+      "archived_at": "2026-10-26T08:13:54Z"
+    },
+    {
+      "pr": "https://github.com/ykh09242/unity-mcp/pull/321",
+      "commit": "914a73c5e5d17d721d686e769f9d574f30935b26",
+      "archived_at": "2026-10-26T12:03:11Z"
+    },
+    {
+      "pr": "https://github.com/ykh09242/unity-mcp/pull/325",
+      "commit": "4c02da950ee73fba68a188b192643b5ace9d26a4",
+      "archived_at": "2026-10-26T12:26:01Z"
+    }
+  ]
+}
