@@ -70,7 +70,7 @@ async def inspect_ugui_hit_order(
     ],
 ) -> dict:
     return await _ugui(
-        ctx,
+        ctx=ctx,
         action="diagnose_raycast",
         target=target,
         screen_position=screen_position,
@@ -93,7 +93,7 @@ async def inspect_ugui_hit_order(
     ),
 )
 async def get_game_view_size(ctx: Context) -> dict:
-    return await _editor(ctx, action=_GAME_VIEW)
+    return await _editor(ctx=ctx, action=_GAME_VIEW)
 
 
 @mcp_for_unity_tool(
