@@ -8,9 +8,9 @@ using MCPForUnity.Editor.Services.ScriptQuality;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Compilation;
-using UnityEditor.PackageManager;
 using UnityEditorInternal;
 using UnityEngine;
+using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 
 namespace MCPForUnity.Editor.Tools
 {
