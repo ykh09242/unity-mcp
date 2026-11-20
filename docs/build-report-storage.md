@@ -105,3 +105,45 @@ deterministic 4 MiB resource for the second run. The owned report directory reta
 Unity 6000.0.69f1 run, the 4,194,304-byte source produced 4,194,324 packed bytes,
 4,194,416 additional total bytes and a 92-byte remainder. This single pair measures
 the fixture with those build settings.
+
+### Editor and Player build conditions
+
+Request `manage_build(action="build", options='["detailed_report"]', ...)`, then read
+`manage_build(action="report", report_id=...)` after completion. The summary's
+`native_build_guid` can be matched to `Application.buildGUID` in a Player witness.
+The sibling `build_conditions` object contains observations from that invocation.
+Older archives and builds without the callbacks return null. Reading a report
+after switching targets continues to show the recorded targets.
+
+| Field | Evidence |
+| --- | --- |
+| `editor_active_target`, `editor_active_defines` | Active Editor target and compiler directives during build preparation. |
+| `player_target`, `player_extra_defines` | Target and additional define inputs from the actual `BuildPlayerContext.BuildPlayerOptions`. |
+| `player_settings_defines` | PlayerSettings symbols observed for the selected named target/subtarget during preparation. Built-in and assembly-specific defines require additional evidence. |
+| `player_filter_assemblies` | DLL names observed at Unity's post-compilation assembly filter, before subsequent stripping and packaging. |
+| `editor_compilation_only_assemblies`, `player_filter_only_assemblies` | Differences between the Editor script compiler inventory and Player filter inventory. Precompiled plug-ins can appear in the latter. |
+
+Each list returns up to 256 sorted identifier names. Treat absence as unknown
+when `complete` is false or the list is missing. A runtime branch, gameplay
+outcome or stripped type requires a witness from the built Player. See Unity's
+[build context](https://docs.unity.com/en-us/engine/6000.0/script-reference/unityeditor/build/buildplayercontext/buildplayeroptions)
+and [assembly filter](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Build.IFilterBuildAssemblies.OnFilterAssemblies.html).
+
+For the reproducible reward regression, use a disposable copy of
+`TestProjects/UnityMCPTests` with a licensed Windows Editor, its Windows
+Standalone build module, and Windows64 already active. Set
+`MCP_DEV06_PROJECT_ROOT` to its absolute path, `MCP_DEV06_NONCE` to a fresh
+32-digit lowercase hex GUID and `MCP_BUILD_CONDITION_PAIR=1`. Invoke EditMode
+test `MCPForUnityTests.EditMode.Tools.BuildReportActualBuildTests.Phase1BuildOneOwnedSceneAndPersistNativeReport`
+by its full name. It executes the Editor reward transition, then builds and
+launches separate broken and repaired Players. The broken build receives
+`MCP_FIXTURE_REWARD_DISABLED` and reports zero coins and exit 42. Removing that
+build-only symbol restores one coin and exit zero. Both outcomes must carry
+their own native build GUID. The test requires the Editor-only package assembly
+in the Editor difference and the gameplay fixture assembly in the Player filter.
+
+Copy `.work/Dev06Reports_<nonce>/build-condition-pair.json` from the disposable
+project before the cleanup phase. Validate that archived receipt on any Python
+host with `python tools/check_build_condition_pair.py <receipt>`. The offline
+contract tests use synthetic records to exercise rejection of mismatched
+process and build identities and incomplete define evidence.

@@ -151,13 +151,18 @@ namespace MCPForUnity.Editor.Tools.Build
             catch { /* Report artifacts never change the accepted native build lifecycle. */ }
         }
 
-        internal static void Complete(BuildJob job, BuildReport nativeReport = null)
+        internal static void Complete(BuildJob job, BuildReport nativeReport = null) => CompleteWithConditions(job, nativeReport, null);
+
+        internal static void CompleteWithConditions(BuildJob job, BuildReport nativeReport, JObject buildConditions)
         {
             if (!Terminal(job.State))
                 return;
             try
             {
-                job.ReportId = PersistNativeSnapshot(CreateRecord(job, nativeReport), nativeReport);
+                var record = CreateRecord(job, nativeReport);
+                if (buildConditions != null && BuildConditionCapture.Valid(buildConditions))
+                    record["build_conditions"] = buildConditions;
+                job.ReportId = PersistNativeSnapshot(record, nativeReport);
                 job.ReportPersistenceError = null;
                 DeleteMarker(job.JobId);
             }
@@ -250,6 +255,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 var native = report.summary;
                 summary["native_result"] = native.result.ToString().ToLowerInvariant();
                 summary["native_platform"] = native.platform.ToString();
+                summary["native_build_guid"] = native.guid.ToString();
                 summary["native_build_options"] = (long)native.options;
                 summary["editor_version"] = Application.unityVersion;
                 summary["total_size_bytes"] = native.totalSize;
@@ -474,6 +480,7 @@ namespace MCPForUnity.Editor.Tools.Build
                     "children_complete",
                     "details_note",
                     "detail_index",
+                    "build_conditions",
                 },
                 StringComparer.Ordinal
             );
@@ -496,6 +503,8 @@ namespace MCPForUnity.Editor.Tools.Build
                 if (record[flag]?.Type != JTokenType.Boolean)
                     throw new ReportFailure("build_report_corrupt");
             ValidateIndex(record);
+            if (record["build_conditions"] != null && !BuildConditionCapture.Valid(record["build_conditions"]))
+                throw new ReportFailure("build_report_corrupt");
             var summaryFields = new HashSet<string>(
                 new[]
                 {
@@ -511,6 +520,7 @@ namespace MCPForUnity.Editor.Tools.Build
                     "duration_seconds",
                     "native_result",
                     "native_platform",
+                    "native_build_guid",
                     "native_build_options",
                     "editor_version",
                     "total_size_bytes",
@@ -528,6 +538,11 @@ namespace MCPForUnity.Editor.Tools.Build
                 if (summary[field] != null && (summary[field].Type != JTokenType.String || string.IsNullOrEmpty((string)summary[field])))
                     throw new ReportFailure("build_report_corrupt");
             if (summary["native_build_options"] != null && summary["native_build_options"].Type != JTokenType.Integer)
+                throw new ReportFailure("build_report_corrupt");
+            if (
+                summary["native_build_guid"] != null
+                && (summary["native_build_guid"].Type != JTokenType.String || !Guid.TryParseExact((string)summary["native_build_guid"], "N", out _))
+            )
                 throw new ReportFailure("build_report_corrupt");
             foreach (string name in new[] { "child_count", "errors", "warnings", "job_total_size_mb", "duration_seconds", "total_size_bytes" })
                 if (summary[name] != null && summary[name].Type != JTokenType.Null && !NonnegativeNumber(summary[name]))
@@ -704,6 +719,8 @@ namespace MCPForUnity.Editor.Tools.Build
                 : "requested_page_verified";
             if (record["details_note"] != null)
                 data["details_note"] = record["details_note"];
+            if (section == "summary")
+                data["build_conditions"] = record["build_conditions"]?.DeepClone() ?? JValue.CreateNull();
             if (section != "summary")
             {
                 int count = record["detail_index"] == null ? ((JArray)record[section]).Count : record["detail_index"][section].Value<int>("row_count");

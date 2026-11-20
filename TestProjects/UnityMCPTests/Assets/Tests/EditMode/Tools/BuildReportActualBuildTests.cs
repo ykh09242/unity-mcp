@@ -81,6 +81,7 @@ namespace MCPForUnityTests.EditMode.Tools
             BuildJob previousLast = BuildJobStore.LastCompletedJob;
             BuildJob job = null;
             BuildJob candidateJob = null;
+            BuildJob repairedJob = null;
             try
             {
                 scenes.PrepareRunnerBootstrap();
@@ -112,6 +113,9 @@ namespace MCPForUnityTests.EditMode.Tools
                     AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
                 }
                 string scenePath = assetRoot + "/" + scene.name + ".unity";
+                bool conditionPair = Environment.GetEnvironmentVariable("MCP_BUILD_CONDITION_PAIR") == "1";
+                if (conditionPair)
+                    Assert.AreEqual(1, cube.AddComponent<TestNamespace.BuildConditionRewardProbe>().CollectReward(0), "Editor reward transition");
                 Assert.IsTrue(EditorSceneManager.SaveScene(scene, scenePath));
                 var options = BuildRunner.CreateBuildOptions(
                     BuildTarget.StandaloneWindows64,
@@ -120,6 +124,8 @@ namespace MCPForUnityTests.EditMode.Tools
                     BuildOptions.DetailedBuildReport,
                     (int)StandaloneBuildSubtarget.Player
                 );
+                if (conditionPair)
+                    options.extraScriptingDefines = new[] { "MCP_FIXTURE_REWARD_DISABLED" };
                 job = new BuildJob(BuildJobStore.CreateJobId(), options.target, options.locationPathName);
                 BuildJobStore.AddBuildJob(job);
                 BuildReport capturedNative = null;
@@ -135,6 +141,31 @@ namespace MCPForUnityTests.EditMode.Tools
                 Assert.Greater((ulong)summary["summary"]["total_size_bytes"], 0);
                 Assert.Greater(Read(id, "steps")["entries"].Count(), 0, "The actual native report must provide build steps.");
                 Assert.Greater(Read(id, "packed_assets").Value<int>("total_entries"), 0, "DetailedBuildReport must expose a retained packed-asset inventory.");
+                if (conditionPair)
+                {
+                    var broken = ExerciseRewardPlayer(options.locationPathName, summary, reports, true);
+                    var fixedOptions = options;
+                    fixedOptions.extraScriptingDefines = Array.Empty<string>();
+                    fixedOptions.locationPathName = Path.Combine(output, "Repaired", "Owned.exe");
+                    Directory.CreateDirectory(Path.GetDirectoryName(fixedOptions.locationPathName));
+                    repairedJob = new BuildJob(BuildJobStore.CreateJobId(), fixedOptions.target, fixedOptions.locationPathName);
+                    BuildJobStore.AddBuildJob(repairedJob);
+                    typeof(BuildRunner)
+                        .GetMethod("RunBuildCore", BindingFlags.NonPublic | BindingFlags.Static)
+                        .Invoke(null, new object[] { repairedJob, new Func<BuildReport>(() => BuildPipeline.BuildPlayer(fixedOptions)), null });
+                    Assert.AreEqual(BuildJobState.Succeeded, repairedJob.State, repairedJob.ErrorMessage);
+                    var repaired = ExerciseRewardPlayer(fixedOptions.locationPathName, Read(repairedJob.ReportId), reports, false);
+                    Assert.AreNotEqual(broken["report"]["report_id"], repaired["report"]["report_id"]);
+                    File.WriteAllText(
+                        Path.Combine(reports, "build-condition-pair.json"),
+                        new JObject
+                        {
+                            ["editor_reward"] = 1,
+                            ["broken"] = broken,
+                            ["repaired"] = repaired,
+                        }.ToString()
+                    );
+                }
                 if (largeInventory)
                 {
                     var bounded = new JObject();
@@ -218,13 +249,59 @@ namespace MCPForUnityTests.EditMode.Tools
                     StringAssert.StartsWith(Path.Combine(Project, ".work", "Dev06Output_"), output);
                     Directory.Delete(output, true);
                 }
-                foreach (var created in new[] { job, candidateJob }.Where(created => created != null))
+                foreach (var created in new[] { job, candidateJob, repairedJob }.Where(created => created != null))
+                {
+                    BuildRunner.ReleaseNative(created.JobId);
                     (
                         (System.Collections.Generic.Dictionary<string, BuildJob>)
                             typeof(BuildJobStore).GetField("_buildJobs", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null)
                     ).Remove(created.JobId);
+                }
                 typeof(BuildJobStore).GetField("_lastCompletedJob", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, previousLast);
                 Storage.SetValue(null, previousStorage);
+            }
+        }
+
+        private static JObject ExerciseRewardPlayer(string executable, JToken report, string reports, bool broken)
+        {
+            var conditions = report["build_conditions"];
+            Assert.AreEqual("StandaloneWindows64", (string)conditions["player_target"]);
+            CollectionAssert.Contains(conditions["editor_compilation_only_assemblies"]["names"].Values<string>().ToArray(), "MCPForUnity.Editor");
+            CollectionAssert.Contains(conditions["player_filter_assemblies"]["names"].Values<string>().ToArray(), "TestAsmdef");
+            Assert.AreEqual(broken, conditions["player_extra_defines"]["names"].Values<string>().Contains("MCP_FIXTURE_REWARD_DISABLED"));
+            Assert.IsTrue(conditions["player_extra_defines"].Value<bool>("complete"));
+            string log = Path.Combine(reports, broken ? "broken-player.log" : "repaired-player.log");
+            Assert.IsFalse(File.Exists(log));
+            using (
+                var process = System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = executable,
+                        Arguments = "-batchmode -nographics -logFile \"" + log + "\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+                    }
+                )
+            )
+            {
+                if (!process.WaitForExit(60000))
+                {
+                    process.Kill();
+                    process.WaitForExit(5000);
+                    Assert.Fail("Owned fixture Player did not exit after the reward transition.");
+                }
+                Assert.AreEqual(broken ? 42 : 0, process.ExitCode);
+                string marker = File.ReadLines(log).Single(line => line.StartsWith("MCP_BUILD_CONDITION_REWARD ", StringComparison.Ordinal));
+                string[] fields = marker.Split(' ');
+                Assert.AreEqual(Guid.Parse((string)report["summary"]["native_build_guid"]), Guid.Parse(fields[1]));
+                Assert.AreEqual(broken ? "0" : "1", fields[2]);
+                return new JObject
+                {
+                    ["report"] = report,
+                    ["process_exit"] = process.ExitCode,
+                    ["player_marker"] = marker,
+                };
             }
         }
 

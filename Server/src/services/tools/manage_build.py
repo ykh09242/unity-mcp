@@ -88,6 +88,7 @@ async def _send_build_command(
         "Refuses links, active builds, project source paths, and scans over 5000 entries. "
         "Read-only report_history/report/compare_reports retain bounded completed build summaries, "
         "paged steps/packed_assets and semantic comparisons across domain reload. "
+        "Detailed build report summaries include observed Editor and Player target, define inputs and assembly filter differences when callbacks were available. "
         "Active observations after reload are interrupted, not resumed. Absolute paths/messages are omitted. "
         "Reports expire after 30 days or bounded eviction; missing/corrupt/partial evidence is explicit."
     ),

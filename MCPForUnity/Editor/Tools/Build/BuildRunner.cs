@@ -339,6 +339,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 job.StartedAt = DateTime.UtcNow;
             BuildReportStore.Observe(job);
             BuildReport capturedReport = null;
+            JObject buildConditions = null;
 
             try
             {
@@ -347,7 +348,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 // Persist immediately before the indivisible native invocation, after any
                 // preparation that can fail without ever entering BuildPlayer.
                 MarkNativeInvocation(job.JobId);
-                BuildReport report = buildFunc();
+                BuildReport report = BuildConditionCapture.Invoke(job, buildFunc, out buildConditions);
                 capturedReport = report;
                 job.CompletedAt = DateTime.UtcNow;
 
@@ -374,7 +375,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 job.ErrorMessage = ex.Message;
             }
 
-            BuildReportStore.Complete(job, capturedReport);
+            BuildReportStore.CompleteWithConditions(job, capturedReport, buildConditions);
             BuildJobStore.SetLastCompleted(job);
             BuildQueueCheckpoint.Complete(job);
 
