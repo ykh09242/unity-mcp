@@ -30,20 +30,24 @@ def _slot(paths, withheld: bool, aliases: Aliases, analysis: str):
         if withheld:
             raise ValueError("A withheld role needs a source to fingerprint")
         return {"availability": "absent", "original_sha256": {}}
+    if withheld:
+        names = ("verification", "native") if analysis == "change" else ("nunit",)
+        return {
+            "availability": "withheld",
+            "original_sha256": {
+                name: digest(read_bytes(path, REPORT_LIMIT))
+                for name, path in zip(names, paths, strict=True)
+            },
+        }
     if analysis == "change":
         verification, native = (read_bytes(path, REPORT_LIMIT) for path in paths)
         originals = {"verification": digest(verification), "native": digest(native)}
-        if not withheld:
-            observed = captured_run(parse_report(verification), parse_report(native))
-            projection = project_run(observed, aliases)
-    elif withheld:
-        originals = {"nunit": digest(read_bytes(paths[0], REPORT_LIMIT))}
+        observed = captured_run(parse_report(verification), parse_report(native))
+        projection = project_run(observed, aliases)
     else:
         observed = read_cohort(paths[0])
         originals = {"nunit": observed.digest}
         projection = project_cohort(observed, aliases)
-    if withheld:
-        return {"availability": "withheld", "original_sha256": originals}
     return {
         "availability": "included",
         "original_sha256": originals,
