@@ -143,6 +143,9 @@ def _observed_upgrade_failure(runs):
 
 def pair_verdict(runs, *, save_upgrade):
     """Return the schema-v1 report fields and CLI exit code for the completed phases."""
+    phases = {"baseline", "candidate", "restart"} if save_upgrade else {"baseline", "candidate"}
+    if runs.keys() != phases or any(row.get("status") == "incomplete" for row in runs.values()):
+        return {"status": "unavailable", "reason": "reproduction_run_phases_incomplete"}, 2
     if all(row["matched"] for row in runs.values()):
         return {"status": "save_preserved" if save_upgrade else "reproduced"}, 0
     if not save_upgrade:

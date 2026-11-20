@@ -346,3 +346,48 @@ def test_invalid_candidate_provenance_prevents_even_baseline_launch(
     code, report = run(review, tmp_path)
     assert (code, report["status"], report["reason"]) == (2, "unavailable", reason)
     assert report["runs"] == {} and set(report["admissions"]) == {"baseline"}
+
+
+@pytest.mark.parametrize(
+    ("save_upgrade", "phases"),
+    [
+        (False, ()),
+        (False, ("baseline",)),
+        (False, ("candidate",)),
+        (False, ("baseline", "candidate", "restart")),
+        (True, ("baseline", "candidate")),
+        (True, ("baseline", "restart")),
+        (True, ("candidate", "restart")),
+        (True, ("baseline", "candidate", "restart", "extra")),
+    ],
+)
+def test_pair_verdict_requires_exact_recorded_phases(save_upgrade, phases):
+    runs = {phase: {"matched": True, "status": "succeeded"} for phase in phases}
+    verdict, code = pair_verdict(runs, save_upgrade=save_upgrade)
+    assert (verdict["status"], code) == ("unavailable", 2)
+
+
+@pytest.mark.parametrize("save_upgrade", [False, True])
+def test_pair_verdict_requires_completed_final_phase(save_upgrade):
+    runs = {"baseline": {"matched": True, "status": "succeeded"}}
+    if save_upgrade:
+        runs["candidate"] = {"matched": True, "status": "succeeded"}
+    runs["restart" if save_upgrade else "candidate"] = {"matched": False, "status": "incomplete"}
+    verdict, code = pair_verdict(runs, save_upgrade=save_upgrade)
+    assert (verdict["status"], code) == ("unavailable", 2)
+
+
+def test_cli_preserves_partial_phase_records_as_unavailable(review, tmp_path, monkeypatch):
+    partial = {"baseline": {"matched": True, "status": "succeeded"}}
+
+    def incomplete_execution(artifacts, output, pair, report, *, launch):
+        report["runs"].update(partial)
+
+    monkeypatch.setattr(reproduce, "execute_pair", incomplete_execution)
+    code, report = run(review, tmp_path)
+    assert (code, report["status"], report["reason"]) == (
+        2,
+        "unavailable",
+        "reproduction_run_phases_incomplete",
+    )
+    assert report["runs"] == partial
