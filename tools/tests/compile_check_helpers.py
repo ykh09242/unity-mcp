@@ -156,6 +156,13 @@ def harness(tmp_path: Path) -> CompileHarness:
         profile.mkdir()
         for name in ("Runtime", "Editor"):
             (profile / f"{name}.txt").write_text("DATA/Managed/Core.dll\n", encoding="utf-8")
+    test_runner_manifest = Path("tools/compile-refs/7000.0/EditorTestRunner.txt")
+    test_runner_references = (ROOT / test_runner_manifest).read_text(encoding="utf-8")
+    (repo / test_runner_manifest).write_text(test_runner_references, encoding="utf-8")
+    for entry in test_runner_references.splitlines():
+        target = data / entry.removeprefix("DATA/")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.touch()
     compiler = data / "NetCoreRuntime" / "dotnet"
     compiler.write_text(
         """#!/usr/bin/env bash

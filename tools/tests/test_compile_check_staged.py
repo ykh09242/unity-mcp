@@ -51,11 +51,6 @@ def test_unity7_compiles_bundled_ui_before_all_consumers_without_template_cache(
         "System.Text.Encodings.Web.dll",
         "System.Text.Json.dll",
     }
-    (harness.data / extensions).mkdir(parents=True)
-    for name in vendor_references:
-        (harness.data / extensions / name).touch()
-    vendor_manifest = profile / "EditorTestRunner.txt"
-    shutil.copyfile(ROOT / vendor_manifest, harness.repo / vendor_manifest)
     (harness.data / "Managed/StandardApi.dll").touch()
     (harness.repo / "tools/compile-refs/BCL/Runtime.txt").write_text(
         "DATA/Managed/StandardApi.dll\n", encoding="utf-8"
