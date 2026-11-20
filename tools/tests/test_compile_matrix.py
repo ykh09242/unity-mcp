@@ -32,8 +32,10 @@ def test_compile_order_preserves_the_complete_current_matrix():
         tuple(sorted({"version": row["id"], "channel": row["channel"]}.items())) for row in original
     }
     assert len(rows) == len(original)
-    assert rows[0]["version"] == "7000.0.0a7"
-    assert rows[-1]["version"] == "2021.3.45f2"
+    preview = next(row for row in original if row["role"] == "unity7-alpha")
+    floor = next(row for row in original if row["role"] == "floor")
+    assert rows[0]["version"] == preview["id"]
+    assert rows[-1]["version"] == floor["id"]
 
 
 def test_compile_queue_compares_numeric_version_components(tmp_path):
