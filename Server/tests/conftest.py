@@ -6,9 +6,12 @@ import sys
 from pathlib import Path
 import pytest
 
+# These local run artifacts can contain nested pytest caches with private permissions.
+collect_ignore = ["reports", ".work"]
 # Run real ASGI regressions in a subprocess (test_http_security.py) to isolate
 # their application state from the tool and legacy integration suites.
-collect_ignore = [] if os.environ.get("UNITY_MCP_RUN_HTTP_TESTS") == "1" else ["http"]
+if os.environ.get("UNITY_MCP_RUN_HTTP_TESTS") != "1":
+    collect_ignore.append("http")
 
 logger = logging.getLogger(__name__)
 
