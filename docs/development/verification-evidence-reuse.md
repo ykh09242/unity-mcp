@@ -4,7 +4,7 @@ Use `unity-mcp verification-evidence reuse` to decide whether an earlier Player
 observation still applies to a reviewed commit. For example, a documentation
 commit outside the Unity input trees can preserve a Player result. The JSON
 names the original job, build, source revision, verification and scenario
-outcomes, observed environment, and completion time. A retained failure stays
+outcomes, observed environment, and both completion times. A retained failure stays
 a failure. The command performs no native execution.
 
 ## Bind the scope before verification
@@ -60,8 +60,12 @@ unity-mcp --no-project-context --format json verification-evidence reuse \
 ```
 
 Choose the maximum age for the consuming check. The example accepts an
-execution completed within the preceding day. Missing, nonpositive, future or
-expired completion times require a new execution. Use `--closure
+execution whose native Player finished within the preceding day. The age is
+measured from `run.json`'s `finished_unix_ms`. Later verification stages
+can delay workflow completion. The receipt preserves these timestamps as
+`original.native_finished_unix_ms` and `original.verification_finished_at_unix_ms`.
+Missing, nonpositive, future, or out-of-order times and expired native
+observations require a new execution. Use `--closure
 target/closure.json` to check a reviewed dependency closure against the
 target commit and its expanded registration.
 

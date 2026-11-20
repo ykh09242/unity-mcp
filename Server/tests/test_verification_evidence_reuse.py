@@ -162,6 +162,8 @@ def pair(tmp_path, registered, monkeypatch):
         report.update(
             source_token=old["source_revision"], finished_at_unix_ms=FINISHED, state=state
         )
+        report["started_at_unix_ms"] = FINISHED - 8000
+        native.update(started_unix_ms=FINISHED - 7000, finished_unix_ms=FINISHED - 250)
         report["stages"][0]["state"] = state
         if state == "failed":
             for row in (report["stages"][0]["evidence"], native):
@@ -234,7 +236,8 @@ def test_docs_commit_retains_original_observation_across_checkouts(pair, state):
     code, result = assess(pair(state=state))
     assert code == 0 and result["state"] == "retained_observation"
     assert result["original"]["git_commit"] != result["target"]["git_commit"]
-    assert result["original"]["finished_at_unix_ms"] == FINISHED
+    assert result["original"]["verification_finished_at_unix_ms"] == FINISHED
+    assert result["original"]["native_finished_unix_ms"] == FINISHED - 250
     assert result["original"]["scenario_state"] == result["original"]["verification_state"] == state
     assert result["native_executed"] is False and result["reasons"] == []
 
@@ -266,7 +269,10 @@ def test_changed_or_unknown_scope_requires_execution(pair, options, reason):
         ("missing_time", "missing_execution_time"),
         ("boolean_time", "missing_execution_time"),
         ("future", "execution_time_outside_window"),
-        ("expired", "execution_time_outside_window"),
+        ("expired_native_fresh_parent", "execution_time_outside_window"),
+        ("missing_native_time", "missing_execution_time"),
+        ("native_after_parent", "inconsistent_execution_time"),
+        ("native_started_after_finish", "inconsistent_execution_time"),
         ("partial_static", "unresolved_reference_impact"),
         ("dynamic_key", "unresolved_reference_impact"),
         ("unknown_hook", "unconfirmed_runtime_dependencies"),
@@ -284,13 +290,20 @@ def test_missing_or_incompatible_artifacts_cannot_create_a_pass(pair, fault, rea
     bundle_doc = json.loads(options["bundle"].read_bytes())
     if fault == "missing_scope":
         del options["archive_scope"]
-    elif fault in ("missing_time", "boolean_time", "future", "expired"):
+    elif fault in ("missing_time", "boolean_time", "future"):
         verification["finished_at_unix_ms"] = {
             "missing_time": None,
             "boolean_time": True,
             "future": FINISHED + 1000,
-            "expired": FINISHED - 5000,
         }[fault]
+    elif fault == "expired_native_fresh_parent":
+        native["finished_unix_ms"] = FINISHED - 5000
+    elif fault == "missing_native_time":
+        del native["finished_unix_ms"]
+    elif fault == "native_after_parent":
+        native["finished_unix_ms"] = FINISHED + 1
+    elif fault == "native_started_after_finish":
+        native["started_unix_ms"] = FINISHED
     elif fault == "partial_static":
         verification["stages"][-2]["evidence"]["coverage"].append(
             {"reason": "source_analysis_limit"}

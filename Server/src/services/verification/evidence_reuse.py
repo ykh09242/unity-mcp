@@ -262,12 +262,15 @@ def assess_reuse(
         observation = run.checks.get(("observation", old.scenario), {})
         if not same_json(observation.get("expected_state"), old.state_check.expected):
             reasons.append("unconfirmed_state_observation")
-    if not run.finished_at_unix_ms:
+    if not run.finished_at_unix_ms or not run.native_finished_unix_ms:
         reasons.append("missing_execution_time")
     else:
-        age = time_ns() // 1_000_000 - run.finished_at_unix_ms
-        if age < 0 or age > max_age_seconds * 1000:
+        now_ms = time_ns() // 1_000_000
+        age = now_ms - run.native_finished_unix_ms
+        if age < 0 or age > max_age_seconds * 1000 or run.finished_at_unix_ms > now_ms:
             reasons.append("execution_time_outside_window")
+        if not run.timestamps_ordered:
+            reasons.append("inconsistent_execution_time")
     if run.selection_gaps:
         reasons.append("outstanding_selection")
     if not _references_confirmed(run.reference_impact, old):
@@ -364,7 +367,8 @@ def assess_reuse(
             "git_commit": old_scope["git_commit"] if old_scope else None,
             "manifest_sha256": digest,
             "verification_state": run.state,
-            "finished_at_unix_ms": run.finished_at_unix_ms,
+            "verification_finished_at_unix_ms": run.finished_at_unix_ms,
+            "native_finished_unix_ms": run.native_finished_unix_ms,
             "scenario_state": run.checks[("scenario", run.scenario)]["state"],
             "observed_conditions": run.conditions,
         },

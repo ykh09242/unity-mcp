@@ -199,6 +199,8 @@ class CapturedRun:
     reference_impact: dict | None = None
     loader_observations: dict | None = None
     native_loader_capture: dict | None = None
+    native_finished_unix_ms: int | None = None
+    timestamps_ordered: bool = False
 
     def observed_jobs(self):
         jobs = {self.job_id}
@@ -403,6 +405,17 @@ def read_run(report_path: Path, native_path: Path) -> CapturedRun:
         ):
             checks[("stage", name)] = {"state": stage.get("state"), "target": "verification"}
     finished = report.get("finished_at_unix_ms")
+    native_finished = native.get("finished_unix_ms")
+    timestamps = [
+        record[field]
+        for record, field in (
+            (report, "started_at_unix_ms"),
+            (native, "started_unix_ms"),
+            (native, "finished_unix_ms"),
+            (report, "finished_at_unix_ms"),
+        )
+        if field in record
+    ]
     return CapturedRun(
         _name(report.get("run_id"), "run id"),
         job,
@@ -425,6 +438,9 @@ def read_run(report_path: Path, native_path: Path) -> CapturedRun:
         stages.get("reference_impact"),
         stages.get("loader_observations"),
         native.get("loader_capture"),
+        native_finished if type(native_finished) is int and native_finished > 0 else None,
+        all(type(value) is int and value > 0 for value in timestamps)
+        and timestamps == sorted(timestamps),
     )
 
 
