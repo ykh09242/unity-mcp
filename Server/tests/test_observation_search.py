@@ -138,7 +138,12 @@ def test_scenario_outcome_distinguishes_finished_timeout_from_pending_finalizati
     terminal = {"success": True, "data": report}
     finalizing = {
         "success": True,
-        "data": {**report, "status": "running", "phase": "finalizing", "pending_status": "timed_out"},
+        "data": {
+            **report,
+            "status": "running",
+            "phase": "finalizing",
+            "pending_status": "timed_out",
+        },
     }
     assert evaluate_observation(SCENARIO_JOB_OBSERVATION, terminal, values) == {values[0]: True}
     assert evaluate_observation(SCENARIO_JOB_OBSERVATION, finalizing, values) == {values[0]: False}
