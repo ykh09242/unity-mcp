@@ -1,0 +1,39 @@
+{
+  "serialized_references": [
+    {
+      "source": "Assets/VerifiedWorkflowShop/Shop.unity",
+      "field": "Banner",
+      "target": "Assets/VerifiedWorkflowShop/Resources/VerifiedShop/Store/ShopBanner.prefab"
+    }
+  ],
+  "baseline": {
+    "status": "timed_out",
+    "checkpoint": "show shop banner",
+    "action": "wait_state",
+    "state": {
+      "log_marker": "SHOP_WORKFLOW_OBSERVATION ",
+      "expected": {
+        "key": "VerifiedShop/UI/ShopBanner",
+        "expected": "ShopBanner",
+        "loaded": "",
+        "same_asset": false,
+        "visible_banners": 0
+      }
+    }
+  },
+  "candidate": {
+    "status": "succeeded",
+    "checkpoint": "show shop banner",
+    "action": "wait_state",
+    "state": {
+      "log_marker": "SHOP_WORKFLOW_OBSERVATION ",
+      "expected": {
+        "key": "VerifiedShop/Store/ShopBanner",
+        "expected": "ShopBanner",
+        "loaded": "ShopBanner",
+        "same_asset": true,
+        "visible_banners": 1
+      }
+    }
+  }
+}

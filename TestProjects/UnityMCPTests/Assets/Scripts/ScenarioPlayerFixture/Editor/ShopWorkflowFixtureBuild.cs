@@ -4,6 +4,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Services.PlayScenarios;
+using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -43,9 +44,12 @@ namespace MCPForUnityTests.PlayScenarios.Player
                     assetPath = Original;
                     break;
                 case "moved":
-                    string error = AssetDatabase.MoveAsset(Original, Moved);
-                    if (!string.IsNullOrEmpty(error))
-                        throw new IOException(error);
+                    if (Array.IndexOf(args, "--shop-reuse-prepared") < 0)
+                    {
+                        string error = AssetDatabase.MoveAsset(Original, Moved);
+                        if (!string.IsNullOrEmpty(error))
+                            throw new IOException(error);
+                    }
                     assetPath = Moved;
                     break;
                 case "repaired":
@@ -60,14 +64,12 @@ namespace MCPForUnityTests.PlayScenarios.Player
             GameObject loaded = ShopWorkflowProbe.LoadBanner();
             var inputs = new JObject();
             var manifest = new StringBuilder();
+            string[] direct = { ScenePath, assetPath, LoaderPath };
+            string[] dependencies = Array.IndexOf(args, "--shop-review-capture") >= 0 ? AssetDatabase.GetDependencies(ScenePath, true) : Array.Empty<string>();
+            string[] sources = direct.Concat(dependencies.Where(path => path.StartsWith("Assets/", StringComparison.Ordinal))).Distinct().ToArray();
             using (SHA256 sha = SHA256.Create())
             {
-                foreach (
-                    string path in new[] { ScenePath, ScenePath + ".meta", assetPath, assetPath + ".meta", LoaderPath, LoaderPath + ".meta" }.OrderBy(
-                        p => p,
-                        StringComparer.Ordinal
-                    )
-                )
+                foreach (string path in sources.SelectMany(path => new[] { path, path + ".meta" }).OrderBy(p => p, StringComparer.Ordinal))
                 {
                     using (FileStream file = File.OpenRead(Path.Combine(project, path)))
                     {
@@ -97,11 +99,15 @@ namespace MCPForUnityTests.PlayScenarios.Player
                 ["key"] = ShopWorkflowProbe.BannerKey,
                 ["loader_guid"] = loaded == null ? "" : AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(loaded)),
             };
+            if (Array.IndexOf(args, "--shop-review-capture") >= 0)
+            {
+                observed["direct_paths"] = new JArray(direct.SelectMany(path => new[] { path, path + ".meta" }));
+                observed["unity_dependencies"] = new JArray(dependencies.OrderBy(path => path, StringComparer.Ordinal));
+            }
             string evidencePath = Path.Combine(Path.GetDirectoryName(output), "editor.json");
             using (var stream = new FileStream(evidencePath, FileMode.CreateNew, FileAccess.Write))
             using (var writer = new StreamWriter(stream))
                 writer.WriteLine(observed.ToString());
-
             var definition = new JObject
             {
                 ["name"] = "verified-shop",
@@ -130,7 +136,15 @@ namespace MCPForUnityTests.PlayScenarios.Player
             };
             var scenario = PlayScenarioDefinition.Parse(definition);
             var store = new PlayScenarioStore(project);
-            store.Save(scenario);
+            if (Array.IndexOf(args, "--shop-reuse-prepared") >= 0)
+            {
+                if (PlayScenarioPlayerBundle.DefinitionJson(store.Get(scenario.Name)) != PlayScenarioPlayerBundle.DefinitionJson(scenario))
+                    throw new InvalidOperationException("The committed scenario differs from the maintained prefab control.");
+            }
+            else
+                store.Save(scenario);
+            if (Array.IndexOf(args, "--shop-prepare-only") >= 0)
+                return;
             PlayScenarioPlayerBuild.Build(scenario.Name, output, revision);
             if (Array.IndexOf(args, "--shop-reduced-output") >= 0)
             {

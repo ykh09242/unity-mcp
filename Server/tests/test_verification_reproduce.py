@@ -2,6 +2,7 @@
 
 from hashlib import sha256
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -214,6 +215,7 @@ def test_receipt_requires_two_fresh_native_results_and_matching_state(
                 "build_id": row["build_id"],
                 "build_source_revision": row["source_revision"],
                 "payload_hash": row["payload_hash"],
+                "environment": {"platform": "WindowsPlayer", "scripting_backend": "mono"},
             },
         }
         write(directory / "run.json", raw)
@@ -234,6 +236,7 @@ def test_receipt_requires_two_fresh_native_results_and_matching_state(
                 "process_ended": True,
                 "forced_termination": ok and fault == "forced",
                 "actual_exit_code": code,
+                "launch_environment": {"host_platform": "win32", "build_target": "windows64"},
             },
         )
         speed = 3 if ok and fault == "wrong-marker" else (2 if ok else 1)
@@ -259,3 +262,33 @@ def test_receipt_requires_two_fresh_native_results_and_matching_state(
         for row in report["runs"].values():
             raw = tmp_path / "results" / row["artifacts"] / "run.json"
             assert row["files"]["run.json"] == sha256(raw.read_bytes()).hexdigest()
+        monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "tools"))
+        from compare_player_pair_replays import compare
+
+        project, _, root, _ = review
+        pin = report["manifest_sha256"]
+        second = tmp_path / "second-results"
+        again, code = reproduce.reproduce_pair(project, root / "pair.json", pin, root, second)
+        assert code == 0, again
+        first = tmp_path / "results"
+        assert compare(first, second, pin)["status"] == "consistent"
+        assert compare(first, first, pin)["reason"] == "independent_replay_jobs_required"
+        assert compare(first, second, "f" * 64)["status"] == "unavailable"
+        # Two passing receipts must still agree on every main-step outcome.
+        candidate = again["runs"]["candidate"]
+        native_file = second / candidate["artifacts"] / "run.json"
+        native = json.loads(native_file.read_bytes())
+        extra_step = {
+            "stage": "cleanup",
+            "name": "another cleanup",
+            "action": "wait",
+            "status": "passed",
+        }
+        native["steps"].append(extra_step)
+        candidate["steps"].append(extra_step)
+        candidate["files"]["run.json"] = write(native_file, native)
+        write(second / "reproduction.json", again)
+        assert compare(first, second, pin)["status"] == "disagreement"
+        evidence = second / again["runs"]["baseline"]["artifacts"] / "player.log"
+        evidence.write_bytes(b"modified after upload")
+        assert "retained_replay_evidence_changed" in compare(first, second, pin)["reason"]

@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from uuid import uuid4
 import json
 import platform
+import re
 
 from pydantic import Field, model_validator
 
@@ -21,7 +22,13 @@ from models.play_scenarios import JobId, ScenarioName
 from models.script_quality import QualityOptions
 from services.verification.checkout_diagnostics import CheckoutDivergence, CheckoutInputs
 from services.verification.git_draft import _Git, _blob_ids, _snapshot
-from services.verification.input_chunks import Digest, SourceSample, decode_object, source_revision
+from services.verification.input_chunks import (
+    Digest,
+    SourcePath,
+    SourceSample,
+    decode_object,
+    source_revision,
+)
 from services.verification.player_candidate import StateCheck
 from services.verification.player_runner import _state_result
 from services.verification.portable_candidate import _check_build, read_portable_candidate
@@ -38,7 +45,7 @@ class PairExpectation(QualityOptions):
     state: StateCheck
 
 
-class PairSide(PairExpectation):
+class BuildIdentity(QualityOptions):
     project_commit: Commit
     package_commit: Commit
     proof_sha256: Digest
@@ -47,6 +54,26 @@ class PairSide(PairExpectation):
     source_revision: Digest
     payload_hash: Digest
     bundle_manifest_sha256: Digest
+
+    def identity(self):
+        return self.model_dump(include=set(BuildIdentity.model_fields))
+
+
+class PairSide(BuildIdentity, PairExpectation):
+    capture_sha256: Digest | None = None
+
+
+class BuildCapture(BuildIdentity):
+    schema_version: Literal[1]
+    kind: Literal["verification_player_build_capture"]
+    scenario: ScenarioName
+    definition_hash: Digest
+
+
+class SerializedReference(QualityOptions):
+    source: SourcePath
+    field: Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")]
+    target: SourcePath
 
 
 SavePath = Annotated[
@@ -71,6 +98,11 @@ class PlayerPair(QualityOptions):
     kind: Literal["verification_player_pair"]
     scenario: ScenarioName
     definition_hash: Digest
+    project_bundle_sha256: Digest | None = None
+    preserved_guids: Annotated[list[JobId], Field(max_length=64)] = Field(default_factory=list)
+    serialized_references: Annotated[list[SerializedReference], Field(max_length=16)] = Field(
+        default_factory=list
+    )
     baseline: PairSide
     candidate: PairSide
     save_upgrade: SaveUpgrade | None = None
@@ -147,7 +179,80 @@ def _check_closure(raw, side, manifest):
     }
 
 
-def _admit(project, directory, pair, side, sample, current):
+def _serialized_references(git, blobs, assets, references):
+    if not references:
+        return []
+    if any(ref.source not in blobs or ref.target not in assets for ref in references):
+        raise ValueError("reproduction_serialized_reference_inputs_required")
+    with git.blobs({ref.source: blobs[ref.source] for ref in references}) as files:
+        documents = dict(files)
+    observed = []
+    for ref in references:
+        # Unity text serialization writes top-level fields exactly two spaces in.
+        # Require one reference and a nonzero fileID in this admitted scene or asset.
+        pattern = (
+            rb"^  "
+            + ref.field.encode()
+            + rb": \{fileID: (-?[0-9]{1,20}), guid: ([0-9a-f]{32}), type: [0-9]+\}\r?$"
+        )
+        body = documents[ref.source]
+        hits = re.findall(pattern, body, re.MULTILINE)
+        if (
+            not body.startswith(b"%YAML 1.1")
+            or len(re.findall(rb"^  " + ref.field.encode() + rb":", body, re.MULTILINE)) != 1
+            or len(hits) != 1
+            or int(hits[0][0]) == 0
+            or hits[0][1].decode() != assets[ref.target]
+        ):
+            raise ValueError("reproduction_serialized_reference_mismatch: " + ref.source)
+        observed.append(
+            {**ref.model_dump(), "guid": assets[ref.target], "file_id": hits[0][0].decode()}
+        )
+    return observed
+
+
+def _check_native_source(directory, side, sample, package):
+    source = decode_object(sample.read(directory / "build/build-source.json", 4096))
+    raw_digest = source.get("package_checkout_sha256")
+    if not isinstance(raw_digest, str) or not re.fullmatch("[0-9a-f]{64}", raw_digest):
+        raise ValueError("reproduction_native_package_checkout_digest_required")
+    tree = (
+        _Git(package)
+        .read("rev-parse", "--verify", side.package_commit + ":MCPForUnity")
+        .strip()
+        .decode("ascii")
+    )
+    expected = {
+        "schema_version": 1,
+        "kind": "verification_player_build_source",
+        "build_id": side.build_id,
+        "source_revision": side.source_revision,
+        "project_commit": side.project_commit,
+        "package_commit": side.package_commit,
+        "package_tree": tree,
+        "package_checkout_sha256": raw_digest,
+    }
+    if source != expected:
+        raise ValueError("reproduction_native_build_source_mismatch")
+    return source
+
+
+def _admit(project, directory, pair, side, sample, current, *, package=None):
+    native_source = None
+    if isinstance(side, BuildCapture) or getattr(side, "capture_sha256", None):
+        native_source = _check_native_source(
+            directory, side, sample, package or Path(__file__).resolve().parents[4]
+        )
+    if getattr(side, "capture_sha256", None):
+        content = sample.read(directory / "capture.json", 64 * 1024)
+        capture = BuildCapture.model_validate(decode_object(content))
+        if (
+            sha256(content).hexdigest() != side.capture_sha256
+            or capture.scenario != pair.scenario
+            or capture.definition_hash != pair.definition_hash
+            or capture.identity() != side.identity()
+        ):
+            raise ValueError("reproduction_build_capture_mismatch")
     _, bundle_digest, _, manifest = read_portable_candidate(
         project, directory / "proof.json", side.proof_sha256, sample
     )
@@ -182,7 +287,18 @@ def _admit(project, directory, pair, side, sample, current):
     _, recheck = _check_build(
         directory, manifest, sample, bundle_digest, definition_hash=pair.definition_hash
     )
-    return recheck, {"verified_git_inputs": len(inputs), "closure": closure}
+    if set(getattr(pair, "preserved_guids", ())) - set(assets.values()):
+        raise ValueError("reproduction_preserved_guid_missing")
+    return recheck, {
+        "native_build_source": native_source,
+        "verified_git_inputs": len(inputs),
+        "assets": assets,
+        "serialized_references": _serialized_references(
+            git, blobs, assets, getattr(pair, "serialized_references", [])
+        ),
+        "source_observations": manifest.observations,
+        "closure": closure,
+    }
 
 
 def _execute(directory, output, pair, side, job, *, storage=None, expectation=None):
@@ -308,9 +424,14 @@ def _execute(directory, output, pair, side, job, *, storage=None, expectation=No
         "state_status": state,
         "checkpoint_reached": checkpoint_reached,
         "checkpoint_status": checkpoint_status,
+        "log_marker": expectation.state.log_marker,
         "files": files,
         "artifacts": f"{output.name}/{job}",
         "checkpoint": expectation.checkpoint,
+        "action": expectation.action,
+        "steps": [
+            {key: row.get(key) for key in ("stage", "name", "action", "status")} for row in rows
+        ],
         "definition_hash": pair.definition_hash,
         "build_id": side.build_id,
         "payload_hash": side.payload_hash,
@@ -415,7 +536,7 @@ def reproduce_pair(
         or pair.baseline.project_commit == pair.candidate.project_commit
     ):
         raise ValueError("save_upgrade_requires_distinct_versions_and_payloads")
-    if save_upgrade and any(output.is_relative_to(artifacts / name / "build") for name in SIDES):
+    if any(output.is_relative_to(artifacts / name / "build") for name in SIDES):
         raise ValueError("reproduction_output_cannot_overlap_payload")
     output.mkdir(parents=True, exist_ok=False)
     report = {
@@ -435,6 +556,18 @@ def reproduce_pair(
     if pair.save_upgrade is not None:
         report["preservation_keys"] = pair.save_upgrade.preserve
     try:
+        if pair.project_bundle_sha256:
+            from services.verification.pair_project import bundle_digest
+
+            if (
+                bundle_digest(
+                    artifacts / "project.bundle",
+                    pair.baseline.project_commit,
+                    pair.candidate.project_commit,
+                )
+                != pair.project_bundle_sha256
+            ):
+                raise ValueError("reproduction_project_bundle_digest_mismatch")
         checkout = _head(_Git(project))
         report["project_checkout_commit"] = checkout
         # Source checkouts identify the exact implementation running this command.
@@ -503,6 +636,11 @@ def reproduce_pair(
             )
             checks.append(check)
             report["admissions"][name] = admission
+        if (
+            report["admissions"]["baseline"]["serialized_references"]
+            != report["admissions"]["candidate"]["serialized_references"]
+        ):
+            raise ValueError("reproduction_serialized_reference_changed")
         for check in checks:
             check()
         check_revisions()

@@ -35,7 +35,7 @@ from services.verification.input_chunks import (
 )
 
 Text = Annotated[str, Field(min_length=1, max_length=512)]
-Scalar = Text | int | bool | None
+Scalar = Annotated[str, Field(max_length=512)] | int | bool | None
 StateValues = Annotated[dict[Text, Scalar], Field(max_length=64)]
 # A chunked registration can name a GUID for every source/metadata pair, each
 # with a 512-character path. UTF-8 names and JSON escaping affect encoded size.

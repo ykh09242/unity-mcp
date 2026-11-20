@@ -17,6 +17,10 @@ on:
         description: "Fail unless actual Windows Mono Player evidence completes."
         type: boolean
         default: false
+      produce_prefab_pair:
+        description: Build both reviewed prefab controls and package their complete source and native transfer
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       backend:
@@ -87,7 +91,7 @@ jobs:
             *) echo '::error::Unknown Player verification profile.'; exit 1 ;;
           esac
       - name: Require Windows Player prerequisites
-        if: inputs.require_player_e2e
+        if: inputs.require_player_e2e || inputs.produce_prefab_pair
         env:
           POLICY: ${{ vars.UNITY_RUN_LICENSED_TESTS }}
           AVAILABLE: ${{ steps.detect.outputs.unity_ok || 'false' }}
@@ -102,7 +106,7 @@ jobs:
     needs: license
     if: needs.license.outputs.unity_ok == 'true'
     runs-on: windows-2022
-    timeout-minutes: 100
+    timeout-minutes: ${{ inputs.produce_prefab_pair && 180 || 100 }}
     concurrency:
       group: unity-windows-player-license-${{ github.repository }}
       cancel-in-progress: false
@@ -110,6 +114,9 @@ jobs:
       run:
         shell: pwsh
     steps:
+      - name: Preserve committed source bytes for paired builds
+        if: inputs.produce_prefab_pair
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
@@ -196,6 +203,24 @@ jobs:
           if ($LASTEXITCODE) { throw 'Could not prepare isolated configuration controls' }
           uv run --project Server python TestProjects/UnityMCPTests/Verification/run_configuration_controls.py --editor "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe" --project .unity-ci/configuration-project/project --output .unity-ci/configuration-observations
           if ($LASTEXITCODE) { throw 'Configuration controls lack the required compiler or rendered Player evidence' }
+      - name: Build and capture the maintained moved and repaired prefab Players
+        if: inputs.produce_prefab_pair && github.repository == 'ykh09242/unity-mcp' && github.ref == 'refs/heads/beta'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/Server/src
+        run: |
+          $receipt = uv run --project Server --locked python TestProjects/UnityMCPTests/Verification/build_reviewed_prefab_pair.py --editor "$env:UNITY_INSTALL_ROOT/installed/Editor/Unity.exe" --output "$env:RUNNER_TEMP/prefab-builder"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $receipt >> $env:GITHUB_STEP_SUMMARY
+      - name: Upload complete candidate transfer for independent approval
+        if: inputs.produce_prefab_pair && github.repository == 'ykh09242/unity-mcp' && github.ref == 'refs/heads/beta'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: prebuilt-player-pair
+          path: ${{ runner.temp }}/prefab-builder/transfer
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 14
       - name: Return owned Windows license
         if: always() && steps.activate.outcome != 'skipped'
         run: |

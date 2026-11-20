@@ -34,7 +34,7 @@ jobs:
       - name: Exercise source, artifact and report admission with synthetic controls
         env:
           PYTHONPATH: ${{ github.workspace }}/Server/src
-        run: uv run --locked --project Server --extra dev python -m pytest -q Server/tests/test_verification_reproduce.py
+        run: uv run --locked --project Server --extra dev python -m pytest -q Server/tests/test_verification_reproduce.py Server/tests/test_verification_pair_transfer.py
 
   admission:
     name: Admit reviewed build artifact
@@ -110,10 +110,14 @@ jobs:
           retention-days: 14
 
   replay:
-    name: Execute reviewed broken and repaired Players
+    name: Replay admitted Players on Windows host ${{ matrix.host }}
     needs: [admission, contracts]
     if: needs.admission.outputs.admitted == 'true'
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [first, second]
     timeout-minutes: 20
     permissions:
       contents: read
@@ -151,19 +155,66 @@ jobs:
           if ($pair.baseline.status -notin @('failed', 'timed_out') -or $pair.candidate.status -ne 'succeeded') {
             throw 'Hosted controls require the reviewed broken baseline and repaired candidate'
           }
-          uv run --project Server --locked python -m cli.main --no-project-context verification-candidate reproduce --project TestProjects/UnityMCPTests --manifest $manifest --sha256 $env:PAIR_SHA256 --output .unity-ci/pair-reproduction
+          $project = uv run --project Server --locked python -m services.verification.pair_project --manifest $manifest --sha256 $env:PAIR_SHA256 --fallback TestProjects/UnityMCPTests --output "${{ runner.temp }}/source-${{ matrix.host }}"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          uv run --project Server --locked python -m cli.main --no-project-context verification-candidate reproduce --project $project --manifest $manifest --sha256 $env:PAIR_SHA256 --output "${{ runner.temp }}/replay-${{ matrix.host }}"
           exit $LASTEXITCODE
       - name: Retain native receipt and evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: player-pair-reproduction-${{ github.sha }}
+          name: player-pair-reproduction-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
           path: |
-            .unity-ci/pair-reproduction/reproduction.json
-            .unity-ci/pair-reproduction/*/*/run.json
-            .unity-ci/pair-reproduction/*/*/process.json
-            .unity-ci/pair-reproduction/*/*/diagnostics.json
-            .unity-ci/pair-reproduction/*/*/player.log
+            ${{ runner.temp }}/replay-${{ matrix.host }}/reproduction.json
+            ${{ runner.temp }}/replay-${{ matrix.host }}/*/*/run.json
+            ${{ runner.temp }}/replay-${{ matrix.host }}/*/*/process.json
+            ${{ runner.temp }}/replay-${{ matrix.host }}/*/*/diagnostics.json
+            ${{ runner.temp }}/replay-${{ matrix.host }}/*/*/player.log
           include-hidden-files: true
           if-no-files-found: warn
+          retention-days: 14
+
+  consistency:
+    name: Compare independent Windows Player evidence
+    needs: [admission, replay]
+    if: always() && needs.admission.outputs.admitted == 'true' && !cancelled()
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.9"
+          python-version: "3.11"
+          enable-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: player-pair-reproduction-${{ github.run_id }}-${{ github.run_attempt }}-*
+          digest-mismatch: error
+          path: ${{ runner.temp }}/replay-receipts
+      - name: Compare exact build identities, committed references, steps and observed state
+        env:
+          PYTHONPATH: ${{ github.workspace }}/Server/src
+          PAIR_SHA256: ${{ needs.admission.outputs.manifest_pin }}
+        run: |
+          prefix="$RUNNER_TEMP/replay-receipts/player-pair-reproduction-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          uv run --project Server --locked python tools/compare_player_pair_replays.py --first "$prefix-first" --second "$prefix-second" --sha256 "$PAIR_SHA256" --output consistency.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: player-pair-consistency-${{ github.run_id }}-${{ github.run_attempt }}
+          path: consistency.json
+          retention-days: 14
+      - name: Check maintained prefab observations
+        id: prefab
+        run: python TestProjects/UnityMCPTests/Verification/check_prefab_pair.py consistency.json >> "$GITHUB_OUTPUT"
+      - name: Retain verified prefab native evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.prefab.outputs.confirmed == 'true'
+        with:
+          name: native-case-prefab-${{ github.run_id }}-${{ github.run_attempt }}
+          path: consistency.json
           retention-days: 14

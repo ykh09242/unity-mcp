@@ -1,0 +1,96 @@
+name: Package Player pair for review
+
+on:
+  workflow_dispatch:
+    inputs:
+      capture_artifact_id:
+        description: ID of the trusted player-pair-captures Actions artifact
+        required: true
+        type: string
+      capture_archive_sha256:
+        description: Reviewed SHA-256 of the captures archive
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  package:
+    if: github.repository == 'ykh09242/unity-mcp' && github.ref == 'refs/heads/beta'
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Check capture identity and successful same-repository beta builder
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT: ${{ inputs.capture_artifact_id }}
+          ARCHIVE: ${{ inputs.capture_archive_sha256 }}
+        run: |
+          python - <<'PY'
+          import json, os, re, subprocess
+          env = os.environ
+          if not re.fullmatch(r"[1-9][0-9]{0,18}", env["ARTIFACT"]) or not re.fullmatch(r"[0-9a-f]{64}", env["ARCHIVE"]):
+              raise SystemExit("Invalid capture archive pin")
+          def api(path):
+              return json.loads(subprocess.check_output(["gh", "api", "repos/" + env["GITHUB_REPOSITORY"] + "/actions/" + path], timeout=30))
+          artifact = api("artifacts/" + env["ARTIFACT"])
+          producer = artifact["workflow_run"]
+          run = api("runs/" + str(producer["id"]))
+          if (artifact["id"] != int(env["ARTIFACT"]) or artifact["expired"] or artifact["name"] != "player-pair-captures"
+              or artifact["digest"] != "sha256:" + env["ARCHIVE"] or producer["head_repository_id"] != producer["repository_id"]
+              or run["head_repository"]["full_name"] != env["GITHUB_REPOSITORY"] or run["head_branch"] != "beta"
+              or run["head_sha"] != producer["head_sha"] or run["conclusion"] != "success" or run["event"] not in ("push", "workflow_dispatch")):
+              raise SystemExit("Unexpected source of builder captures")
+          with open(env["GITHUB_OUTPUT"], "a", encoding="utf-8") as outputs:
+              print("run_id=" + str(run["id"]), file=outputs)
+          PY
+      - name: Preserve committed bytes during Windows checkout
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.9"
+          python-version: "3.11"
+          enable-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.run_id }}
+          artifact-ids: ${{ inputs.capture_artifact_id }}
+          digest-mismatch: error
+          merge-multiple: true
+          path: ${{ runner.temp }}/captures
+      - name: Validate captured builds and assemble review manifest
+        env:
+          PYTHONPATH: ${{ github.workspace }}/Server/src
+        run: |
+          $captures = Join-Path $env:RUNNER_TEMP captures
+          $project = uv run --project Server --locked python -m services.verification.pair_project --admitted-captures "$captures/transfer" --fallback TestProjects/UnityMCPTests --output "$env:RUNNER_TEMP/captured-project"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $receipt = uv run --project Server --locked python -m cli.main --no-project-context verification-candidate pack-pair --project $project --artifacts "$captures/transfer" --expectations "$captures/expectations.json"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $receipt >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: publish
+        with:
+          name: prebuilt-player-pair
+          path: ${{ runner.temp }}/captures/transfer
+          compression-level: 0
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+      - name: Record immutable artifact identity for the independent reviewer
+        env:
+          ARTIFACT: ${{ steps.publish.outputs.artifact-id }}
+          ARCHIVE: ${{ steps.publish.outputs.artifact-digest }}
+        run: |
+          "Artifact $env:ARTIFACT in run $env:GITHUB_RUN_ID at $env:GITHUB_SHA, archive SHA-256 $env:ARCHIVE" >> $env:GITHUB_STEP_SUMMARY

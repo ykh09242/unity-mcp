@@ -169,7 +169,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 throw new IOException("Player payload contains changed, extra or missing files.");
         }
 
-        private static void ValidatePath(string relative)
+        internal static void ValidatePath(string relative)
         {
             string[] segments = relative?.Split('/');
             if (
