@@ -74,6 +74,13 @@ The maintained [prefab move example](../TestProjects/UnityMCPTests/Verification/
 
 ## Read the result
 
+The verifier admits both builds before allocating a Player job. An invalid
+captured build source on either side yields an `unavailable` receipt with an
+empty `runs` object. For each admitted job, the verifier compares the retained
+`run.json`, `process.json`, `diagnostics.json` and `player.log` against its
+launcher outcome and the reviewed expectation. It rechecks the source after
+both jobs finish before issuing the pair verdict.
+
 The command verifies both proofs, the committed input hashes, the complete local payload inventories and the candidate's live input bytes before running either Player. The candidate's committed `Assets`, `Packages` and `ProjectSettings` trees must match the selected checkout. The native MCP package tree for the candidate must match the verifier checkout. The baseline uses its recorded historical source and package commits. A change to a checked native tree requests a new build. The procedure covers the declared Git sources and observed dependency closure. An external source or environment dependency requires its own provenance at build time.
 
 Each invocation creates a fresh output directory. `reproduction.json` records the verifier and project checkout commits, required build identities on both sides, each new job ID, the native outcome, the independently observed state and SHA-256 hashes of the retained evidence files. Its admission rows retain the verified input counts, dependency closure digest, graph revision and the graph's own commit-binding status. Hash the files relative to the reported artifact directory to verify a transferred result.

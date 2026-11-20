@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from services.verification import reproduce
+from services.verification.reproduction_verdict import evaluate_native, pair_verdict
 from .test_play_scenario_player import bundle
 from .test_play_scenario_player_assurance import verified_bundle
 from .test_verification_git_draft import git
@@ -114,8 +115,11 @@ def run(review, tmp_path):
         "--output",
         tmp_path / "results",
     )
-    assert (tmp_path / "results/reproduction.json").exists(), (result.output, result.exception)
-    return result.exit_code, json.loads(result.output)
+    receipt = tmp_path / "results/reproduction.json"
+    assert receipt.exists(), (result.output, result.exception)
+    report = json.loads(result.output)
+    assert report == json.loads(receipt.read_bytes())
+    return result.exit_code, report
 
 
 def test_clean_crlf_clone_reports_exact_metadata_path_before_launch(review, tmp_path, monkeypatch):
@@ -182,6 +186,7 @@ def test_receipt_requires_two_fresh_native_results_and_matching_state(
     review, tmp_path, monkeypatch, fault
 ):
     pair = review[-1]
+    retained = {}
 
     def launcher(options):
         job = options.player_job_id
@@ -244,17 +249,43 @@ def test_receipt_requires_two_fresh_native_results_and_matching_state(
             "" if ok and fault == "missing-marker" else "WIND " + json.dumps({"speed": speed}),
             encoding="utf-8",
         )
-        return SimpleNamespace(
+        retained[side] = SimpleNamespace(
             report=raw,
             directory=directory,
             diagnostics=diagnostics,
             exit_code=code,
             client_error=None,
         )
+        return retained[side]
 
     monkeypatch.setattr(reproduce, "run_player", launcher)
     code, report = run(review, tmp_path)
     assert code == {None: 0, "wrong-marker": 1, "missing-marker": 2, "forced": 2}[fault], report
+    # Replay the same schema-v1 native records independently of Git and the launcher.
+    expected_pair = reproduce.PlayerPair.model_validate(pair)
+    replay = {}
+    for name, outcome in retained.items():
+        side = getattr(expected_pair, name)
+        job = outcome.directory.name
+        try:
+            replay[name] = evaluate_native(
+                outcome,
+                outcome.directory.parent,
+                expected_pair,
+                side,
+                job,
+                expectation=side,
+                save_upgrade=False,
+            )
+        except ValueError as error:
+            assert code == 2 and name == "candidate" and report["reason"] == str(error)
+            assert report["runs"][name]["status"] == "incomplete"
+        else:
+            assert replay[name] == report["runs"][name]
+    if code != 2:
+        verdict, replay_code = pair_verdict(replay, save_upgrade=False)
+        assert (verdict, replay_code) == ({"status": report["status"]}, code)
+        assert report["status"] == ("reproduced" if fault is None else "expectation_mismatch")
     if fault is None:
         assert report["status"] == "reproduced"
         assert report["admissions"]["candidate"]["closure"]["verified_additional_files"] == 2
@@ -292,3 +323,26 @@ def test_receipt_requires_two_fresh_native_results_and_matching_state(
         evidence = second / again["runs"]["baseline"]["artifacts"] / "player.log"
         evidence.write_bytes(b"modified after upload")
         assert "retained_replay_evidence_changed" in compare(first, second, pin)["reason"]
+
+
+@pytest.mark.parametrize(
+    ("source", "reason"),
+    [
+        ([], "candidate_json_object_required"),
+        (
+            {"package_checkout_sha256": "bad"},
+            "reproduction_native_package_checkout_digest_required",
+        ),
+        ({"package_checkout_sha256": "a" * 64}, "reproduction_native_build_source_mismatch"),
+    ],
+)
+def test_invalid_candidate_provenance_prevents_even_baseline_launch(
+    review, tmp_path, monkeypatch, source, reason
+):
+    _, _, artifacts, pair = review
+    pair["candidate"]["capture_sha256"] = "a" * 64
+    write(artifacts / "candidate/build/build-source.json", source)
+    monkeypatch.setattr(reproduce, "run_player", lambda options: pytest.fail("unadmitted launch"))
+    code, report = run(review, tmp_path)
+    assert (code, report["status"], report["reason"]) == (2, "unavailable", reason)
+    assert report["runs"] == {} and set(report["admissions"]) == {"baseline"}
