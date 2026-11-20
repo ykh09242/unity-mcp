@@ -9,6 +9,7 @@ from uuid import uuid4
 import anyio
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import Middleware
 from fastmcp.tools.base import ToolResult
 from mcp_types import TextContent
@@ -116,11 +117,16 @@ class ObserveInitialize(Middleware):
     async def on_initialize(self, context, call_next):
         result = await call_next(context)
         if result is not None:
+            try:
+                registration = get_http_request().headers.get("x-interop-registration")
+            except RuntimeError:
+                registration = None  # Stdio has no HTTP request.
             observe(
                 "initialize",
                 requested=context.message.params.protocol_version,
                 negotiated=result.protocol_version,
                 client=context.message.params.client_info.model_dump(),
+                registration=registration if registration in {"unity", "unity_secondary"} else None,
             )
         return result
 

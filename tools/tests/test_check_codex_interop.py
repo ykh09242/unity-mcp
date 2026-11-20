@@ -26,13 +26,23 @@ from check_codex_interop import (
 
 def test_config_keeps_command_at_server_scope_when_environment_is_first(tmp_path):
     # Given: nested environment data precedes scalar server settings.
-    server = {"env": {"PYTHONPATH": "/selected/source"}, "command": "/owned/python"}
+    servers = {
+        "unity": {"env": {"PYTHONPATH": "/selected/source"}, "command": "/owned/python"},
+        "unity_secondary": {
+            "http_headers": {"x-interop-registration": "unity_secondary"},
+            "url": "http://127.0.0.1:1234/mcp",
+        },
+    }
     # When: the actual subprocess configuration is serialized.
-    write_config(tmp_path, server)
-    # Then: TOML nesting cannot silently move the executable into env.
-    config = tomllib.loads((tmp_path / "config.toml").read_text(encoding="utf-8"))
-    assert config["mcp_servers"]["unity"]["command"] == "/owned/python"
-    assert config["mcp_servers"]["unity"]["env"] == {"PYTHONPATH": "/selected/source"}
+    write_config(tmp_path, servers)
+    # Then: TOML nesting cannot move scalar keys into another table.
+    config = tomllib.loads((tmp_path / "config.toml").read_text(encoding="utf-8"))["mcp_servers"]
+    assert config["unity"]["command"] == "/owned/python"
+    assert config["unity"]["env"] == {"PYTHONPATH": "/selected/source"}
+    assert config["unity_secondary"]["url"] == "http://127.0.0.1:1234/mcp"
+    assert config["unity_secondary"]["http_headers"] == {
+        "x-interop-registration": "unity_secondary"
+    }
 
 
 def test_child_environment_excludes_user_credentials_when_parent_contains_them(
@@ -78,7 +88,7 @@ def test_deadline_oracle_rejects_normal_completion_when_only_finally_marker_exis
 def test_modern_config_enables_real_client_opt_in_when_selected(tmp_path):
     # Given: the isolated modern profile is selected for an actual-client case.
     # When: the child configuration is serialized.
-    write_config(tmp_path, {"command": "/owned/python"}, modern=True)
+    write_config(tmp_path, {"unity": {"command": "/owned/python"}}, modern=True)
     # Then: Codex receives the feature gate needed to negotiate modern MCP.
     config = tomllib.loads((tmp_path / "config.toml").read_text(encoding="utf-8"))
     assert config["features"]["mcp_2026_07_28"] is True

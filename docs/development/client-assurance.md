@@ -97,7 +97,7 @@ require their own execution evidence; this suite does not claim those outcomes.
 
 ## Actual Codex client regression
 
-`tools/check_codex_interop.py` drives the installed **Codex CLI 0.170.0**
+`tools/check_codex_interop.py` drives the installed **Codex CLI 0.171.0**
 `app-server` through its experimental direct MCP RPCs. These are the actual Rust
 `codex-rmcp-client` transport and decoder, not the Python client configured with a
 Codex name. The fixture starts the production CLI, registry and all normal
@@ -112,11 +112,9 @@ Server/.venv/Scripts/python.exe tools/check_codex_interop.py `
 
 The machine-readable receipt records the exact binary version, legacy initialize
 exchange, actual per-request protocol, catalog count, deadline error and verified
-size cases. Windows runs on 2026-11-18 with Codex 0.170.0 and on 2026-11-11
-with Codex 0.167.1 passed all five
-protocol/transport/sharing cases described in the
-[versioned shared-connection matrix](shared-connections.md). The earlier 2026-11-02 run is historical evidence for
-0.166.0. The matrix uses both the legacy default and the installed experimental
+size cases. See the [versioned shared-connection matrix](shared-connections.md)
+for the five protocol, transport and sharing cases and earlier Windows runs.
+The matrix uses both the legacy default and the installed experimental
 `mcp_2026_07_28` feature over stdio and locally authenticated streamable HTTP.
 Modern stdio also sets the supported `CODEX_MCP_PROTOCOL_VERSION=2026-07-28`
 server opt-in. Every actual tool request must use the selected protocol:
@@ -134,6 +132,19 @@ and must be observed before the reload. Normal completion and teardown cannot
 create a false cancellation pass. This is **deadline-triggered cancellation**; the pinned direct
 MCP RPC API has no per-call cancel operation. Explicit caller cancellation remains
 covered by the independent Python wire tests.
+
+The legacy authenticated HTTP case registers the same owned loopback fixture under
+two names. It checks `mcpServerStatus/list` with `limit: 1` and follows the returned
+`nextCursor` through both pages. In `full` mode before any thread starts, each page
+initializes only its requested registration and returns the resource inventory.
+On a loaded thread with matching fixed HTTP authentication, `toolsAndAuthOnly`
+returns the tool inventory and auth status without starting another connection or
+listing resources. The fixture counts MCP requests, and the receipt records the
+counts per registration and completion of pagination. Codex classifies the owned
+test bearer as fixed authentication, while the server continues to enforce its own
+local launch header.
+[Page-scoped discovery](https://github.com/openai/codex/commit/6d99161bced769f68a60e3c37e5dd4fc6fbad44c) ·
+[Thread inventory reuse](https://github.com/openai/codex/commit/f1ebc7b372bc837b7c6386113e867256d7cc7036)
 
 Size cases verify an inline payload within 512 bytes of the production result
 budget, an 8 MiB ASCII payload and a 9 MiB UTF-8 Unicode payload. Oversized
@@ -153,15 +164,16 @@ adoption or a native Unity Editor scenario.
 The dedicated [Codex interoperability workflow](../../.github/workflows/codex-interop.yml)
 uses the official release archive with its published SHA256 digest pinned in the
 workflow. The binary version check is mandatory; upgrading the pin requires
-rerunning all five protocol/transport/sharing cases and reviewing the observed protocol. Protocol
-contracts come from the installed experimental schema and the
+rerunning all five protocol, transport and sharing cases and reviewing the
+observed protocol and status pagination. Protocol contracts come from the
+installed experimental schema and the
 [official app-server documentation](https://learn.chatgpt.com/docs/app-server).
 The client implementation is documented by the
-[pinned Rust source](https://github.com/openai/codex/blob/rust-v0.170.0/codex-rs/codex-mcp/src/rmcp_client.rs),
+[pinned Rust source](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/codex-mcp/src/rmcp_client.rs),
 and the binary comes from the
-[official 0.170.0 release](https://github.com/openai/codex/releases/tag/rust-v0.170.0).
+[official 0.171.0 release](https://github.com/openai/codex/releases/tag/rust-v0.171.0).
 
-The pinned client's [protocol selection policy](https://github.com/openai/codex/blob/rust-v0.170.0/codex-rs/rmcp-client/src/protocol_mode.rs)
+The pinned client's [protocol selection policy](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/rmcp-client/src/protocol_mode.rs)
 requires both the feature and server opt-in for the explicit modern stdio mode
 used by the modern/private control. The fifth case enables `mcp_connection_sharing`
 through the actual feature-enablement RPC, keeps the ordinary modern feature false,

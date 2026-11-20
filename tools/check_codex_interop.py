@@ -31,7 +31,9 @@ from anyio.abc import Process
 from pydantic import JsonValue
 
 ROOT: Final = Path(__file__).resolve().parents[1]
-PINNED_CODEX_VERSION: Final = "0.170.0"
+PINNED_CODEX_VERSION: Final = "0.171.0"
+PAGINATED_SERVERS: Final = ("unity", "unity_secondary")
+STATUS_REGISTRATION_HEADER: Final = "x-interop-registration"
 
 
 class InteropFailure(AssertionError):
@@ -105,7 +107,9 @@ def isolated_environment(directory: Path) -> dict[str, str]:
     return environment
 
 
-def write_config(home: Path, server: dict[str, JsonValue], *, modern: bool = False) -> None:
+def write_config(
+    home: Path, servers: dict[str, dict[str, JsonValue]], *, modern: bool = False
+) -> None:
     """Use an offline provider as an additional guard against accidental model traffic."""
     lines = [
         'model_provider = "interop_offline"',
@@ -126,17 +130,17 @@ def write_config(home: Path, server: dict[str, JsonValue], *, modern: bool = Fal
         'base_url = "http://127.0.0.1:9/v1"',
         'wire_api = "responses"',
         "requires_openai_auth = false",
-        "[mcp_servers.unity]",
-        "startup_timeout_sec = 45",
-        "tool_timeout_sec = 2",
     ]
-    for key, value in server.items():
-        if not isinstance(value, dict):
-            lines.append(f"{key} = {json.dumps(value)}")
-    for key, value in server.items():
-        if isinstance(value, dict):
-            lines.append(f"[mcp_servers.unity.{key}]")
-            lines.extend(f"{json.dumps(k)} = {json.dumps(v)}" for k, v in value.items())
+    for name, server in servers.items():
+        table = f"mcp_servers.{json.dumps(name)}"
+        lines.extend([f"[{table}]", "startup_timeout_sec = 45", "tool_timeout_sec = 2"])
+        for key, value in server.items():
+            if not isinstance(value, dict):
+                lines.append(f"{key} = {json.dumps(value)}")
+        for key, value in server.items():
+            if isinstance(value, dict):
+                lines.append(f"[{table}.{key}]")
+                lines.extend(f"{json.dumps(k)} = {json.dumps(v)}" for k, v in value.items())
     (home / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -244,12 +248,13 @@ class AppServer:
         arguments: dict[str, JsonValue],
         *,
         meta: dict[str, JsonValue] | None = None,
+        server: str = "unity",
     ):
         return await self.request(
             "mcpServer/tool/call",
             {
                 "threadId": thread,
-                "server": "unity",
+                "server": server,
                 "tool": name,
                 "arguments": arguments,
                 **({"_meta": meta} if meta is not None else {}),
@@ -292,6 +297,87 @@ async def wait_observation(directory: Path, event: str, marker: str) -> dict[str
             await anyio.sleep(0.01)
 
 
+async def exercise_status_pages(
+    client: AppServer, directory: Path, *, thread: str | None = None
+) -> dict[str, JsonValue]:
+    """Check wire discovery before a thread and inventory reuse on a loaded thread."""
+    detail = "full" if thread is None else "toolsAndAuthOnly"
+    params: dict[str, JsonValue] = {"limit": 1, "detail": detail}
+    if thread is not None:
+        params["threadId"] = thread
+    pages: list[JsonValue] = []
+    for index, name in enumerate(PAGINATED_SERVERS):
+        before = len(observations(directory))
+        response = await client.request("mcpServerStatus/list", params)
+        data = response.get("data")
+        require(isinstance(data, list) and len(data) == 1, "Expected one MCP registration per page")
+        row = mapping(data[0])
+        require(row.get("name") == name, f"Wrong MCP registration on page {index + 1}")
+        require(row.get("authStatus") == "bearerToken", f"Wrong auth status for {name}")
+        tools = mapping(row.get("tools"))
+        require(
+            {"manage_tools", "read_response"} <= tools.keys()
+            and sum(key.startswith("assurance_catalog_") for key in tools) == 512,
+            f"Incomplete tool catalog for MCP registration {name}",
+        )
+        resources = row.get("resources")
+        if thread is None:
+            require(
+                isinstance(resources, list)
+                and any(
+                    mapping(resource).get("uri") == "assurance://retention"
+                    for resource in resources
+                ),
+                f"Full status omitted the retained-state resource for {name}",
+            )
+        else:
+            require(
+                resources == [] and row.get("resourceTemplates") == [],
+                f"Lightweight status included resources for {name}",
+            )
+        discovered = observations(directory)[before:]
+        initialized = [
+            item.get("registration") for item in discovered if item["event"] == "initialize"
+        ]
+        require(
+            initialized == ([name] if thread is None else []),
+            f"Unexpected MCP initializations for {detail} status page {name}: {initialized}",
+        )
+        methods = [item.get("method") for item in discovered if item["event"] == "request"]
+        tool_lists = methods.count("tools/list")
+        resource_lists = methods.count("resources/list")
+        template_lists = methods.count("resources/templates/list")
+        expected_lists = 1 if thread is None else 0
+        require(
+            tool_lists == resource_lists == expected_lists
+            and (thread is None or template_lists == 0),
+            f"Unexpected MCP discovery requests for {detail} status page {name}: {methods}",
+        )
+        cursor = response.get("nextCursor")
+        if index + 1 < len(PAGINATED_SERVERS):
+            require(isinstance(cursor, str) and bool(cursor), "Missing next MCP status cursor")
+            params["cursor"] = cursor
+        else:
+            require(cursor is None, "Last MCP status page returned another cursor")
+        pages.append(
+            {
+                "registration": name,
+                "catalog_tools": len(tools),
+                "auth_status": row.get("authStatus"),
+                "initialized_registrations": initialized,
+                "tools_lists": tool_lists,
+                "resources_lists": resource_lists,
+                "resource_templates_lists": template_lists,
+                "has_next_cursor": cursor is not None,
+            }
+        )
+    return {
+        "detail": detail,
+        "scope": "standalone" if thread is None else "loaded_thread",
+        "pages": pages,
+    }
+
+
 async def start_thread(client: AppServer, directory: Path) -> str:
     started = await client.request(
         "thread/start", {"cwd": str(directory), "ephemeral": True, "approvalPolicy": "never"}
@@ -299,6 +385,20 @@ async def start_thread(client: AppServer, directory: Path) -> str:
     thread = mapping(started["thread"])["id"]
     require(isinstance(thread, str), "Missing isolated test thread ID")
     return thread
+
+
+async def loaded_inventory(
+    client: AppServer, thread: str, *, paginated: bool
+) -> dict[str, JsonValue]:
+    """Run ordinary full discovery and confirm the loaded registrations."""
+    inventory = await client.request("mcpServerStatus/list", {"threadId": thread})
+    data = inventory.get("data")
+    expected = PAGINATED_SERVERS if paginated else ("unity",)
+    require(
+        isinstance(data, list) and tuple(mapping(row).get("name") for row in data) == expected,
+        "Loaded thread did not discover the expected MCP registrations",
+    )
+    return inventory
 
 
 async def unload_thread(client: AppServer, thread: str) -> None:
@@ -386,11 +486,7 @@ async def exercise_threads(
     ]
     second = await start_thread(client, directory)
     require(second != first, "Expected two actual ephemeral threads")
-    inventory = await client.request("mcpServerStatus/list", {"threadId": second})
-    require(
-        isinstance(inventory.get("data"), list) and len(inventory["data"]) == 1,
-        "Second thread did not discover the server",
-    )
+    await loaded_inventory(client, second, paginated=transport == "http" and not modern)
     second_identity = await identity(client, second, "owner-B")
     startups_with_two_owners = [
         item for item in observations(directory) if item.get("event") == "process_started"
@@ -528,11 +624,23 @@ async def exercise(
         mapping(enabled.get("enablement")).get("mcp_connection_sharing") is sharing,
         "Client did not apply the connection sharing feature",
     )
+    status_pagination: list[JsonValue] = []
+    paginated = transport == "http" and not modern
+    if paginated:
+        status_pagination.append(await exercise_status_pages(client, directory))
     thread = await start_thread(client, directory)
-    inventory = await client.request("mcpServerStatus/list", {"threadId": thread})
-    data = inventory.get("data")
-    require(isinstance(data, list) and len(data) == 1, "Expected one configured MCP server")
-    server = mapping(data[0])
+    if paginated:
+        for server_name in PAGINATED_SERVERS:
+            echo = await client.call(
+                thread, "interop_echo", {"value": server_name}, server=server_name
+            )
+            require(
+                json.loads(text_payload(echo)) == {"value": server_name},
+                "MCP registration not ready",
+            )
+        status_pagination.append(await exercise_status_pages(client, directory, thread=thread))
+    inventory = await loaded_inventory(client, thread, paginated=paginated)
+    server = mapping(inventory["data"][0])
     (directory / "inventory.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
     tools = mapping(server.get("tools"))
     names = {mapping(tool).get("name") for tool in tools.values()}
@@ -673,7 +781,7 @@ async def exercise(
     reconnected = await client.call(reconnect_thread, "interop_echo", {"value": "after-reload"})
     require(json.loads(text_payload(reconnected)) == {"value": "after-reload"}, "Reload failed")
     await unload_thread(client, reconnect_thread)
-    return {
+    report = {
         "user_agent": initialized.get("userAgent"),
         "catalog_tools": len(tools),
         "cases": [
@@ -692,6 +800,9 @@ async def exercise(
         "ownership": ownership,
         "notifications": client.notifications,
     }
+    if status_pagination:
+        report["status_pagination"] = status_pagination
+    return report
 
 
 async def run_case(
@@ -719,7 +830,22 @@ async def run_case(
             url, _, token = owned.enter_context(
                 local_server_process(directory, module="tests.http.codex_interop_server")
             )
-            server = {"url": url + "/mcp", "http_headers": {LOCAL_AUTH_HEADER: token}}
+            endpoint = url + "/mcp"
+            servers = {"unity": {"url": endpoint, "http_headers": {LOCAL_AUTH_HEADER: token}}}
+            if not modern:
+                # Codex recognizes the standard header as fixed authentication for reuse.
+                # The production server still enforces its separate local launch header.
+                servers = {
+                    name: {
+                        "url": endpoint,
+                        "http_headers": {
+                            LOCAL_AUTH_HEADER: token,
+                            "Authorization": f"Bearer {token}",
+                            STATUS_REGISTRATION_HEADER: name,
+                        },
+                    }
+                    for name in PAGINATED_SERVERS
+                }
         else:
             server = {
                 "command": sys.executable,
@@ -733,7 +859,8 @@ async def run_case(
                 "cwd": str(ROOT / "Server"),
                 "env": fixture_env,
             }
-        write_config(home, server, modern=modern and not sharing)
+            servers = {"unity": server}
+        write_config(home, servers, modern=modern and not sharing)
         with (directory / "app-server.log").open("wb") as log:
             process = await anyio.open_process(
                 [codex, "app-server"],
@@ -764,14 +891,17 @@ async def run_case(
         f"Actual Codex {transport} requests did not use {expected_protocol}; observed "
         f"{sorted({str(item.get('protocol')) for item in calls})}",
     )
+    after_reconnect = observed[result["observations_before_reconnect"] :]
     if modern:
-        after_reconnect = observed[result["observations_before_reconnect"] :]
         require(
             any(item.get("method") == "tools/list" for item in after_reconnect),
             "Fresh modern runtime did not rediscover the actual catalog",
         )
     else:
-        require(len(initializations) >= 2, "Reconnect did not perform another MCP handshake")
+        require(
+            any(item.get("event") == "initialize" for item in after_reconnect),
+            "Reconnect did not perform another MCP handshake",
+        )
     result["selected_mode"] = "modern" if modern else "legacy"
     result["observed_protocol"] = expected_protocol
     result["request_methods"] = sorted({item["method"] for item in requests})
