@@ -7,21 +7,28 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import StrictInt
 
-from services.addressable_prefab import PREFAB_ACTIONS, prefab_parameters
+from services.addressable_prefab import prefab_parameters
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
 
-ALL_ACTIONS = (
+PREFAB_ACTIONS = (
+    "preview_prefab",
+    "create_prefab",
+    "register_prefab",
+    "prefab_status",
+    "cancel_prefab",
+)
+SETTINGS_AND_LAYOUT_ACTIONS = (
     "inspect",
     "preflight",
     "set_address",
     "move_entry",
     "set_profile_value",
     "analyze_layout",
-    *PREFAB_ACTIONS,
 )
+ALL_ACTIONS = SETTINGS_AND_LAYOUT_ACTIONS + PREFAB_ACTIONS
 _GUID = re.compile(r"[0-9a-f]{32}\Z")
 
 

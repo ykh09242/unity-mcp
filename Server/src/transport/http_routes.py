@@ -18,7 +18,7 @@ from core.server_build import RUNNING_SERVER
 from models.response_limits import bound_response
 from models.connection_diagnosis import no_unity_instances_response
 from core.server_runtime import ServerRuntime
-from services.addressable_prefab import PREFAB_ACTIONS, prefab_parameters
+from services.addressable_prefab import prefab_parameters
 from services.execution_receipt_context import owned_to_thread
 from services.execution_receipt_identity import ReceiptConflict, ReceiptInvalid
 from transport.execution_receipts import rest_receipt_control
@@ -180,6 +180,8 @@ def install_http_routes(
                         return InputFailure.INVALID.response()
                 command = body["type"] if isinstance(body, dict) else body.type
                 if command.casefold() == "manage_addressables":
+                    from services.tools.manage_addressables import PREFAB_ACTIONS
+
                     params = body.get("params", {}) if isinstance(body, dict) else body.params
                     action = params.get("action")
                     if isinstance(action, str) and action.casefold() in PREFAB_ACTIONS:

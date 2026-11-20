@@ -4,14 +4,6 @@ import re
 
 from services.execution_receipt_context import execution_owner
 
-PREFAB_ACTIONS = (
-    "preview_prefab",
-    "create_prefab",
-    "register_prefab",
-    "prefab_status",
-    "cancel_prefab",
-)
-
 
 def prefab_parameters(params: dict) -> dict:
     action = params["action"]
