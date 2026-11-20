@@ -1454,6 +1454,8 @@ class ReferenceGraphService:
             arguments = {
                 key: value for key, value in options.items() if key not in {"consistency", "commit"}
             }
+            if action == "impact" and "commit" in options:
+                arguments["direction"] = "outgoing"
             if action == "explain":
                 data = await drained_thread(queries.explain, options["id"])
             elif action == "release_query":

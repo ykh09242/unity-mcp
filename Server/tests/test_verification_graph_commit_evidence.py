@@ -8,6 +8,7 @@ from click.testing import CliRunner
 import pytest
 
 from cli.main import cli
+from services.reference_graph.store import InvalidGraphRequest
 from services.verification.git_draft import git_draft
 from services.verification.graph_commit_evidence import capture_guard, verify_impact_page
 from tests.test_reference_graph_service import setup  # noqa: F401
@@ -97,6 +98,11 @@ async def test_commit_bound_pages_use_published_imports_and_both_disk_observatio
         assert await entry.engine.reconcile()
         options = {"node": "asset:" + guid, "commit": git_head}
         impact = await service.execute(ctx, "impact", options)
+        assert impact["data"]["direction"] == "outgoing"
+        legacy = await service.execute(ctx, "impact", {"node": options["node"]})
+        assert legacy["data"]["direction"] == "incoming"
+        with pytest.raises(InvalidGraphRequest, match="outgoing"):
+            await service.execute(ctx, "impact", {**options, "direction": "incoming"})
         diagnostics = await service.execute(ctx, "diagnostics", options)
         assert verify_impact_page(project, git_head, impact)
         assert capture_guard(impact) == capture_guard(diagnostics)
