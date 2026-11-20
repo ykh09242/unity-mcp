@@ -24,7 +24,11 @@ def test_real_watchdog_hands_off_latest_generation_with_one_cleanup_deadline(
     main_finalizing = threading.Event()
     completed = threading.Event()
     hard_exit = threading.Event()
+    main_wait_requested = threading.Event()
     exits, threads, errors = [], [], []
+    main_lock_timeouts = []
+    past_budget = mode in ("past-budget", "unknown-past-budget")
+    guard_timeout = 10
     state = {"alive": False, "stops": 0}
     start = time.monotonic()
     real_write = Path.write_text
@@ -33,7 +37,7 @@ def test_real_watchdog_hands_off_latest_generation_with_one_cleanup_deadline(
     def write_text(path, data, *args, **kwargs):
         if path.name == "reuse.json" and not receipt_entered.is_set():
             receipt_entered.set()
-            if not release_receipt.wait(6):
+            if not release_receipt.wait(2 * guard_timeout):
                 raise TimeoutError("test did not release its owned receipt writer")
         return real_write(path, data, *args, **kwargs)
 
@@ -42,8 +46,9 @@ def test_real_watchdog_hands_off_latest_generation_with_one_cleanup_deadline(
         threads.append(thread)
         return thread
 
-    def timer(*args, **kwargs):
-        thread = threading.Timer(*args, **kwargs)
+    def timer(interval, *args, **kwargs):
+        state["cleanup_alarm_due"] = time.monotonic() + interval
+        thread = threading.Timer(interval, *args, **kwargs)
         threads.append(thread)
         return thread
 
@@ -51,14 +56,40 @@ def test_real_watchdog_hands_off_latest_generation_with_one_cleanup_deadline(
         exits.append((code, time.monotonic() - start))
         hard_exit.set()
 
+    class ObservedLock:
+        def __init__(self):
+            self.lock = threading.Lock()
+
+        def acquire(self, blocking=True, timeout=-1):
+            if timeout >= 0 and threading.current_thread() is main_thread:
+                main_lock_timeouts.append(timeout)
+                main_wait_requested.set()
+            return self.lock.acquire(blocking, timeout)
+
+        def release(self):
+            self.lock.release()
+
+        def __enter__(self):
+            return self.lock.__enter__()
+
+        def __exit__(self, *args):
+            return self.lock.__exit__(*args)
+
     def reports(*args):
         real_reports(*args)
         if any(outcome.name == "cleanup" for outcome in args[2]):
             main_finalizing.set()
+            # The main handoff must request a zero-length lock wait after expiry.
+            if past_budget:
+                if not hard_exit.wait(guard_timeout):
+                    raise TimeoutError("the hard cleanup deadline did not fire")
+                # A native timer can wake slightly before its monotonic due time.
+                while (remaining := state["cleanup_alarm_due"] - time.monotonic()) > 0:
+                    time.sleep(remaining)
 
     def launch(_editor, _project, status, *_):
         state["status"] = status
-        if not receipt_entered.wait(4):
+        if not receipt_entered.wait(guard_timeout):
             raise TimeoutError("watchdog did not enter the owned receipt writer")
         state["alive"] = True
         if mode in ("unknown", "unknown-past-budget"):
@@ -86,7 +117,7 @@ def test_real_watchdog_hands_off_latest_generation_with_one_cleanup_deadline(
             Thread=spawn,
             Timer=timer,
             Event=threading.Event,
-            Lock=threading.Lock,
+            Lock=ObservedLock,
         ),
     )
     monkeypatch.setattr(lh.os, "_exit", intercepted_exit)
@@ -126,12 +157,15 @@ def test_real_watchdog_hands_off_latest_generation_with_one_cleanup_deadline(
     threads.append(main_thread)
     main_thread.start()
     try:
-        assert receipt_entered.wait(4) and main_finalizing.wait(1)
+        assert receipt_entered.wait(guard_timeout) and main_finalizing.wait(guard_timeout)
         # When: main publishes a late resource while another cleanup owns the lock.
-        if mode in ("past-budget", "unknown-past-budget"):
-            assert hard_exit.wait(3)
-            assert exits[0][0] == 2 and 2.7 <= exits[0][1] < 4.0
-            assert completed.wait(0.3), "main must use the existing absolute cleanup deadline"
+        if past_budget:
+            assert hard_exit.wait(guard_timeout)
+            assert exits[0][0] == 2 and exits[0][1] >= 2.7
+            assert completed.wait(guard_timeout)
+            assert main_lock_timeouts == [0.0], (
+                "main must use the existing absolute cleanup deadline"
+            )
             # A still-blocked old writer must not be the sole recovery identity.
             late_receipt = json.loads((report_dir / "reuse.json").read_text())
             assert late_receipt["cleanup_confirmed"] is False
@@ -148,15 +182,17 @@ def test_real_watchdog_hands_off_latest_generation_with_one_cleanup_deadline(
             else:
                 assert late_receipt["pid"] == published["pid"] == 12345
         else:
-            assert not completed.wait(0.05), "lock contention must not complete cleanup"
+            assert main_wait_requested.wait(guard_timeout)
+            assert len(main_lock_timeouts) == 1 and 0 < main_lock_timeouts[0] <= 2
+            assert not completed.is_set(), "lock contention must not complete cleanup"
             assert not hard_exit.is_set(), "cleanup completion must not trigger an early hard exit"
         release_receipt.set()
-        assert completed.wait(3)
+        assert completed.wait(guard_timeout)
     finally:
         release_receipt.set()
         for thread in threads:
             if thread.ident is not None:
-                thread.join(4)
+                thread.join(guard_timeout)
     # Then: released ownership observes the latest generation before declaring completion.
     assert not errors and state["result"] == 2
     assert not any(thread.is_alive() for thread in threads)
