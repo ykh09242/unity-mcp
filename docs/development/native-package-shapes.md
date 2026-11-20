@@ -9,7 +9,7 @@ The native runner exercises the current checkout in small, disposable EditMode p
 | `package` | 6000.0.69f1 | `cinemachine-absent` | Verify the basic Unity camera and lens fallback, missing-package readiness, and refusal of Cinemachine actions. |
 | `package` | 6000.0.69f1 | `atlas-v1`, `atlas-v2` | Create an atlas with the Editor's 2D Sprite package, then reopen the same project in a second Editor process and verify persisted assets. |
 | `package` | 6000.0.69f1 | `addressables-legacy` | With Addressables 1.1.5 and Scriptable Build Pipeline 1.23.4, check unavailable layout data, missing entry writes, and guarded address/group moves with Undo. |
-| `package` | 6000.0.69f1 | `auditor-package` | With Project Auditor and its rules at 3.2.0 and Mono.Cecil 1.11.4, require the native audit to report the source fixture diagnostic. |
+| `package` | 6000.0.69f1 | `auditor-package` | With Project Auditor and its rules at 3.2.0 and Mono.Cecil 1.11.6, require the native audit to report the source fixture diagnostic. |
 | `package` | 6000.0.69f1 | `auditor-absent` | Require the missing provider result on an Editor without the integrated module or standalone package. |
 | `integrated` | 6000.6.4f1 | `auditor-integrated` | Run the Editor Auditor module with its distributed rules archive 1.0.1 and require the source fixture diagnostic. |
 | `integrated` | 6000.6.4f1 | `auditor-integrated-no-rules` | Require the Editor module to reject an audit before starting when rules are absent. |

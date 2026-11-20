@@ -45,7 +45,7 @@
     "auditor-package": {
       "com.unity.project-auditor": {"source": "registry", "version": "3.2.0"},
       "com.unity.project-auditor-rules": {"source": "registry", "version": "3.2.0"},
-      "com.unity.nuget.mono-cecil": {"source": "registry", "version": "1.11.4"}
+      "com.unity.nuget.mono-cecil": {"source": "registry", "version": "1.11.6"}
     },
     "auditor-integrated": {
       "com.unity.project-auditor-rules": {

@@ -87,7 +87,7 @@ isolated projects. Prepare dependencies before running the tests.
 
 | Editor verified | Additional packages | Explicit method | Expected availability |
 | --- | --- | --- | --- |
-| 6000.0.69f1 | Auditor 3.2.0, Rules 3.2.0, Mono.Cecil 1.11.4 | `InstalledOfficialPackageProducesActualFixtureDiagnostic` | `package`, API and rules available |
+| 6000.0.69f1 | Auditor 3.2.0, Rules 3.2.0, Mono.Cecil 1.11.6 | `InstalledOfficialPackageProducesActualFixtureDiagnostic` | `package`, API and rules available |
 | 6000.6.4f1 | Editor-bundled Rules 1.0.1 | `IntegratedEditorProducesActualFixtureDiagnostic` | `editor`, API and rules available |
 | 6000.6.4f1 | Base only | `IntegratedEditorRequiresRulesBeforeStarting` | `editor`, API available, `rules_package_not_installed` |
 | 6000.0.69f1 | Base only | `EditorWithoutAuditorRejectsStart` | `none`, `package_not_installed` |
