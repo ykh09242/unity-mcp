@@ -1,8 +1,7 @@
-"""Smoke-check package-pinned default selection at the Install Skills boundary."""
+"""License-free wiring smoke check for the client configuration Install Skills shortcut."""
 
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -18,18 +17,3 @@ def test_install_skills_defaults_to_installed_package_revision() -> None:
     assert "GetGitUpdateBranch" not in method
     assert "IsPreReleaseVersion" not in method
     assert re.search(r"SkillSyncService\.SyncSourceAsync\(\s*source\s*,\s*installPath\s*,", method)
-
-
-def test_skill_installer_menu_exposes_latest_without_changing_package_default() -> None:
-    source = (ROOT / "MCPForUnity/Editor/Setup/McpForUnitySkillInstaller.cs").read_text(
-        encoding="utf-8"
-    )
-    assert re.search(
-        r'\[MenuItem\(ProductInfo\.MenuRoot \+ "/Skill Installer", priority = 4\)\]\s*'
-        r"public static void OpenWindow\(\)",
-        source,
-    )
-    on_enable = re.search(r"\bvoid OnEnable\(\)(.*?)\bvoid OnDisable\(\)", source, re.DOTALL)
-    assert on_enable is not None
-    assert "_latest = false;" in on_enable[1]
-    assert '"Installed package", "Latest from branch"' in source

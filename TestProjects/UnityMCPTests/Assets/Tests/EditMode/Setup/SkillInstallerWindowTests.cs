@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Clients.Configurators;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Setup;
@@ -27,6 +28,81 @@ namespace MCPForUnityTests.Editor.Setup
             protected override void OnEnable() => WindowEnabled = true;
 
             protected override void OnDisable() => WindowEnabled = false;
+        }
+
+        [Test]
+        public void InstallerMenuDefaultsToTheInstalledPinAndLatestIsWindowLocal()
+        {
+            Assume.That(FindInstallerWindows(), Is.Empty, "Close the existing skill installer before running this test.");
+            var preferences = new Dictionary<string, string>
+            {
+                ["UnityMcpSkillSync.RepoUrl.ykh09242"] = "https://github.com/synthetic-owner/synthetic-skills",
+                ["UnityMcpSkillSync.Branch"] = "main",
+                ["UnityMcpSkillSync.Cli"] = "claude",
+                ["UnityMcpSkillSync.InstallDir"] = Path.Combine(Path.GetTempPath(), "skill-installer-" + Guid.NewGuid().ToString("N")),
+            };
+            var previous = preferences.Keys.ToDictionary(key => key, key => EditorPrefs.HasKey(key) ? EditorPrefs.GetString(key) : null);
+            var installed = SkillSyncSource.CaptureInstalled();
+            try
+            {
+                foreach (var entry in preferences)
+                    EditorPrefs.SetString(entry.Key, entry.Value);
+
+                var window = OpenInstallerFromMenu();
+                AssertInstalledPreviewSource(window, installed);
+
+                window.SelectSource(latest: true);
+                var latest = window.CapturePreviewSource();
+                Assert.That(latest.IsPackagePinned, Is.False);
+                Assert.That(latest.Repository, Is.EqualTo("synthetic-owner/synthetic-skills"));
+                Assert.That(latest.Branch, Is.EqualTo("main"));
+
+                // Re-enable the same window with Latest selected, so a fresh instance's field defaults cannot mask a missing reset.
+                var installerType = typeof(McpForUnitySkillInstaller);
+                installerType.GetMethod("OnDisable", PrivateInstance).Invoke(window, null);
+                installerType.GetMethod("OnEnable", PrivateInstance).Invoke(window, null);
+                AssertInstalledPreviewSource(window, installed);
+
+                window.SelectSource(latest: true);
+                window.Close();
+                Assert.That(FindInstallerWindows(), Is.Empty);
+                var reopened = OpenInstallerFromMenu();
+                AssertInstalledPreviewSource(reopened, installed);
+                reopened.SelectSource(latest: true);
+                Assert.That(reopened.CapturePreviewSource().Branch, Is.EqualTo("main"), "The saved branch still applies to an explicit Latest selection.");
+            }
+            finally
+            {
+                foreach (var window in FindInstallerWindows())
+                    window.Close();
+                foreach (var entry in previous)
+                {
+                    if (entry.Value == null)
+                        EditorPrefs.DeleteKey(entry.Key);
+                    else
+                        EditorPrefs.SetString(entry.Key, entry.Value);
+                }
+            }
+        }
+
+        private static McpForUnitySkillInstaller[] FindInstallerWindows() =>
+            UnityEngine
+                .Resources.FindObjectsOfTypeAll<McpForUnitySkillInstaller>()
+                .Where(window => window.GetType() == typeof(McpForUnitySkillInstaller))
+                .ToArray();
+
+        private static McpForUnitySkillInstaller OpenInstallerFromMenu()
+        {
+            Assert.That(EditorApplication.ExecuteMenuItem(ProductInfo.MenuRoot + "/Skill Installer"), Is.True);
+            return FindInstallerWindows().Single();
+        }
+
+        private static void AssertInstalledPreviewSource(McpForUnitySkillInstaller window, SkillSyncSource installed)
+        {
+            var source = window.CapturePreviewSource();
+            Assert.That(source.IsPackagePinned, Is.True, "An opened or re-enabled installer must default to the installed package.");
+            Assert.That(source.PackageIdentity, Is.EqualTo(installed.PackageIdentity));
+            Assert.That(source.Revision, Is.EqualTo(installed.Revision));
         }
 
         [TestCase(true)]

@@ -86,7 +86,7 @@ namespace MCPForUnity.Editor.Setup
             EditorGUI.BeginChangeCheck();
             using (new EditorGUI.DisabledScope(_operation.IsRunning))
             {
-                _latest = EditorGUILayout.Popup("Skill source", _latest ? 1 : 0, SourceOptions) == 1;
+                SelectSource(EditorGUILayout.Popup("Skill source", _latest ? 1 : 0, SourceOptions) == 1);
                 if (!_latest)
                 {
                     if (_packageSource == null)
@@ -246,6 +246,10 @@ namespace MCPForUnity.Editor.Setup
             }
         }
 
+        internal void SelectSource(bool latest) => _latest = latest;
+
+        internal SkillSyncSource CapturePreviewSource() => _latest ? SkillSyncSource.Latest(_repoUrl, _targetBranch) : SkillSyncSource.CaptureInstalled();
+
         private void RunPreview()
         {
             if (_operation.IsRunning)
@@ -253,7 +257,7 @@ namespace MCPForUnity.Editor.Setup
             SkillSyncSource source;
             try
             {
-                source = _latest ? SkillSyncSource.Latest(_repoUrl, _targetBranch) : SkillSyncSource.CaptureInstalled();
+                source = CapturePreviewSource();
                 if (!_latest)
                     _packageSource = source;
             }
