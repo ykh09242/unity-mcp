@@ -1,10 +1,10 @@
 """Tests for PluginHub WebSocket API key authentication gate."""
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 from core.config import config
 from core.constants import API_KEY_HEADER
@@ -12,7 +12,7 @@ from services.api_key_service import ApiKeyService, ValidationResult
 from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
 from starlette.datastructures import Headers
 from transport.plugin_hub import PluginHub
-from transport.plugin_registry import PluginRegistry
+from tests.plugin_hub_lifespan import isolated_plugin_hub
 
 
 @pytest.fixture(autouse=True)
@@ -22,25 +22,10 @@ def _reset_api_key_singleton():
     ApiKeyService._instance = None
 
 
-@pytest.fixture(autouse=True)
-def _reset_plugin_hub():
-    """Ensure PluginHub class-level state doesn't leak between tests."""
-    old_registry = PluginHub._registry
-    old_connections = PluginHub._connections.copy()
-    old_pending = PluginHub._pending.copy()
-    old_lock = PluginHub._lock
-    old_loop = PluginHub._loop
-    old_admitted = PluginHub._admitted
-    PluginHub._admitted = {}
-
-    yield
-
-    PluginHub._registry = old_registry
-    PluginHub._connections = old_connections
-    PluginHub._pending = old_pending
-    PluginHub._lock = old_lock
-    PluginHub._loop = old_loop
-    PluginHub._admitted = old_admitted
+@pytest_asyncio.fixture(autouse=True)
+async def auth_registry(monkeypatch):
+    async with isolated_plugin_hub(monkeypatch) as registry:
+        yield registry
 
 
 def _make_mock_websocket(headers=None, state_attrs=None):
@@ -56,10 +41,6 @@ def _make_mock_websocket(headers=None, state_attrs=None):
 
 def _make_hub():
     """Create a PluginHub instance with a minimal ASGI scope."""
-    # Admission now requires the same configured registry as the real route.
-    loop = asyncio.get_running_loop()
-    if PluginHub._registry is None or PluginHub._loop is not loop:
-        PluginHub.configure(PluginRegistry(), loop)
     scope = {"type": "websocket"}
     return PluginHub(scope, receive=AsyncMock(), send=AsyncMock())
 
@@ -153,14 +134,10 @@ class TestWebSocketAuthGate:
 
 class TestUserIdFlowsToRegistration:
     @pytest.mark.asyncio
-    async def test_user_id_passed_to_registry_on_register(self, monkeypatch):
+    async def test_user_id_passed_to_registry_on_register(self, monkeypatch, auth_registry):
         """After valid auth, the register message should pass user_id to registry."""
         monkeypatch.setattr(config, "http_remote_hosted", True)
         _init_api_key_service(ValidationResult(valid=True, user_id="user-99"))
-
-        registry = PluginRegistry()
-        loop = asyncio.get_running_loop()
-        PluginHub.configure(registry, loop)
 
         # Simulate full flow: connect, then register
         ws = _make_mock_websocket(headers={API_KEY_HEADER: "sk-valid-key"})
@@ -179,7 +156,7 @@ class TestUserIdFlowsToRegistration:
         await hub.on_receive(ws, register_data)
 
         # Verify registry has the user_id
-        sessions = await registry.list_sessions(user_id="user-99")
+        sessions = await auth_registry.list_sessions(user_id="user-99")
         assert len(sessions) == 1
         session = next(iter(sessions.values()))
         assert session.user_id == "user-99"

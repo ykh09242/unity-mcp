@@ -13,6 +13,7 @@ from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
 from transport.unity_transport import send_with_unity_instance
+from tests.plugin_hub_lifespan import isolated_plugin_hub
 from tests.transport_socket import JsonSocket
 from tests.timing import await_completion, await_signal
 
@@ -23,9 +24,6 @@ async def command_hub(monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setenv("UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", "0")
     monkeypatch.setenv("UNITY_MCP_SESSION_READY_WAIT_SECONDS", "0")
-    registry = PluginRegistry()
-    PluginHub.configure(registry)
-    await registry.register("session", "Fixture", "hash", "6000.3")
     endpoint = PluginHub.__new__(PluginHub)
     sent = []
 
@@ -52,9 +50,29 @@ async def command_hub(monkeypatch):
         send_json=send_json,
         close=close,
     )
-    PluginHub._connections["session"] = websocket
-    yield SimpleNamespace(registry=registry, endpoint=endpoint, websocket=websocket, sent=sent)
-    await PluginHub.shutdown()
+    async with isolated_plugin_hub(monkeypatch) as registry:
+        await registry.register("session", "Fixture", "hash", "6000.3")
+        PluginHub._connections["session"] = websocket
+        yield SimpleNamespace(registry=registry, endpoint=endpoint, websocket=websocket, sent=sent)
+
+
+@pytest.mark.asyncio
+async def test_command_hub_drains_only_its_own_loop(monkeypatch):
+    other_loop = asyncio.new_event_loop()
+    other_ping = other_loop.create_future()
+    prior_pings = {"prior": other_ping}
+    monkeypatch.setattr(PluginHub, "_ping_tasks", prior_pings)
+    try:
+        with monkeypatch.context() as fixture_state:
+            async with isolated_plugin_hub(fixture_state):
+                owned_ping = asyncio.create_task(asyncio.Event().wait())
+                PluginHub._ping_tasks["fixture"] = owned_ping
+        assert owned_ping.cancelled()
+        assert PluginHub._ping_tasks is prior_pings
+        assert not other_ping.done()
+    finally:
+        other_ping.cancel()
+        other_loop.close()
 
 
 async def dispatch(command="manage_scene"):
