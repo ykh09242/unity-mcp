@@ -4,6 +4,7 @@ import errno
 import os
 import socket
 import multiprocessing
+import sys
 from contextlib import ExitStack
 from itertools import count
 from pathlib import Path
@@ -215,28 +216,64 @@ def test_listener_is_owned_until_context_exit():
         listener.bind(("127.0.0.1", port))
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux permits competing SO_REUSEADDR binds")
+def test_fixed_port_recovers_after_both_contenders_bind(monkeypatch):
+    with socket.socket() as peer:
+        peer.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        peer.bind(("127.0.0.1", 0))
+        address = peer.getsockname()
+
+        class Contender(socket.socket):
+            def listen(self, backlog):
+                if peer.fileno() != -1:
+                    # Both sockets are bound. Make the peer reach LISTEN first
+                    # so the contender gets the real kernel error at listen().
+                    assert self.getsockname() == address
+                    peer.listen(backlog)
+                return super().listen(backlog)
+
+        def peer_releases(_delay):
+            assert peer.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN)
+            peer.close()
+
+        monkeypatch.setattr(socket, "socket", Contender)
+        monkeypatch.setattr("core.local_auth.time.sleep", peer_releases)
+        with local_http_sockets(*address) as listeners:
+            assert peer.fileno() == -1
+            assert listeners[0].getsockname() == address
+            assert listeners[0].getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN)
+            with pytest.raises(OSError) as error, local_http_sockets(*address):
+                pytest.fail("A second contender acquired the live listener")
+            assert error.value.errno == errno.EADDRINUSE
+
+
 def test_localhost_listeners_share_an_ephemeral_port():
     with local_http_sockets("localhost", 0) as listeners:
         assert len({listener.getsockname()[1] for listener in listeners}) == 1
         assert all(listener.getsockname()[1] != 0 for listener in listeners)
 
 
+@pytest.mark.parametrize("port,collision", [(0, "bind"), (41000, "listen"), (41000, "bind")])
 @pytest.mark.parametrize("persistent", [False, True])
-def test_ephemeral_port_retries_close_partial_listeners(monkeypatch, persistent):
+def test_listener_contention_releases_partial_addresses(monkeypatch, persistent, port, collision):
     addresses = [
-        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0)),
-        (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("::1", 0, 0, 0)),
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", port)),
+        (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("::1", port, 0, 0)),
     ]
     monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: addresses)
     listeners = []
+    delays = []
+    monkeypatch.setattr("core.local_auth.time.sleep", delays.append)
 
     def listener_for(family, *unused):
         listener = MagicMock()
         listener.__enter__.return_value = listener
-        chosen_port = 41000 + len(listeners) // 2
+        chosen_port = port or 41000 + len(listeners) // 2
         listener.getsockname.return_value = ("127.0.0.1", chosen_port)
-        if family == socket.AF_INET6 and (persistent or chosen_port == 41000):
-            listener.bind.side_effect = OSError(errno.EADDRINUSE, "port occupied")
+        if family == socket.AF_INET6 and (persistent or len(listeners) == 1):
+            # A simultaneous SO_REUSEADDR bind can succeed on both contenders;
+            # Linux then reports EADDRINUSE in listen(), after the IPv4 acquisition.
+            getattr(listener, collision).side_effect = OSError(errno.EADDRINUSE, "port occupied")
         if family == socket.AF_INET and listeners:
             listeners[-1].__exit__.assert_called_once()
             listeners[-2].__exit__.assert_called_once()
@@ -244,16 +281,18 @@ def test_ephemeral_port_retries_close_partial_listeners(monkeypatch, persistent)
         return listener
 
     monkeypatch.setattr(socket, "socket", listener_for)
-    if persistent:
-        with pytest.raises(OSError) as error, local_http_sockets("localhost", 0):
+    retryable = not port or (collision == "listen" and os.name != "nt")
+    if persistent or not retryable:
+        with pytest.raises(OSError) as error, local_http_sockets("localhost", port):
             pytest.fail("The acquisition must fail while the port remains occupied")
         assert error.value.errno == errno.EADDRINUSE
-        assert 2 < len(listeners) <= 32
+        assert len(listeners) == (16 if retryable else 2)
     else:
-        with local_http_sockets("localhost", 0) as ready:
+        with local_http_sockets("localhost", port) as ready:
             assert ready == listeners[2:]
-            listeners[1].bind.assert_called_once_with(("::1", 41000, 0, 0))
-            listeners[3].bind.assert_called_once_with(("::1", 41001, 0, 0))
+            listeners[1].bind.assert_called_once_with(("::1", port or 41000, 0, 0))
+            listeners[3].bind.assert_called_once_with(("::1", port or 41001, 0, 0))
+    assert len(delays) == (len(listeners) // 2 - 1 if port else 0)
     for listener in listeners:
         listener.__exit__.assert_called_once()
 

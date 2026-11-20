@@ -2,9 +2,11 @@
 
 import errno
 import os
+import random
 import secrets
 import socket
 import tempfile
+import time
 from contextlib import ExitStack, contextmanager
 from ipaddress import ip_address
 from pathlib import Path
@@ -24,23 +26,35 @@ def local_http_sockets(host: str, port: int) -> Iterator[list[socket.socket]]:
     addresses = dict.fromkeys(
         (family, kind, protocol, address) for family, kind, protocol, _, address in resolved
     )
-    attempts = 8 if port == 0 else 1
+    attempts = 8
+    reusable_fixed_port = port != 0 and os.name != "nt"
     for attempt in range(attempts):
         with ExitStack() as stack:
             try:
-                sockets = _bind_listeners(stack, addresses, port)
+                sockets = _bind_listeners(
+                    stack,
+                    addresses,
+                    port,
+                    retry_listen_collision=reusable_fixed_port and attempt + 1 < attempts,
+                )
             except OSError as exc:
                 # A port chosen for IPv4 may already be occupied on IPv6, or vice versa.
-                if exc.errno != errno.EADDRINUSE or attempt + 1 == attempts:
+                if port or exc.errno != errno.EADDRINUSE or attempt + 1 == attempts:
                     raise
                 continue
-            if not sockets:
-                raise OSError(f"No addresses available for {host}:{port}")
-            yield sockets
-            return
+            if sockets is not None:
+                if not sockets:
+                    raise OSError(f"No addresses available for {host}:{port}")
+                yield sockets
+                return
+        # Both reusable sockets can bind before either reaches listen(). Release
+        # all addresses, then stagger fresh attempts to acquire the whole set.
+        time.sleep(random.uniform(0, min(0.002 * 2**attempt, 0.032)))
 
 
-def _bind_listeners(stack: ExitStack, addresses, port: int) -> list[socket.socket]:
+def _bind_listeners(
+    stack: ExitStack, addresses, port: int, *, retry_listen_collision: bool
+) -> list[socket.socket] | None:
     sockets = []
     assigned_port = port
     for family, kind, protocol, address in addresses:
@@ -57,7 +71,12 @@ def _bind_listeners(stack: ExitStack, addresses, port: int) -> list[socket.socke
             if family == socket.AF_INET6:
                 listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
             listener.bind(address)
-            listener.listen(socket.SOMAXCONN)
+            try:
+                listener.listen(socket.SOMAXCONN)
+            except OSError as exc:
+                if retry_listen_collision and exc.errno == errno.EADDRINUSE:
+                    return None
+                raise
         except OSError as exc:
             if exc.errno in (errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT, errno.EADDRNOTAVAIL):
                 continue
