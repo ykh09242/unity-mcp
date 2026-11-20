@@ -74,6 +74,14 @@
       ]
     },
     {
+      "id": "modal-action-maps",
+      "filter": "MCPForUnityTests.EditMode.Tools.Input.ModalActionMapTests",
+      "requiredTests": [
+        "MCPForUnityTests.EditMode.Tools.Input.ModalActionMapTests.KeyboardSubmitWhileMenuOpen",
+        "MCPForUnityTests.EditMode.Tools.Input.ModalActionMapTests.GamepadSubmitWhileMenuOpen"
+      ]
+    },
+    {
       "id": "input-system",
       "filter": "MCPForUnityTests.EditMode.Tools.Input.InputSystemSimulationTests",
       "requiredTests": [
