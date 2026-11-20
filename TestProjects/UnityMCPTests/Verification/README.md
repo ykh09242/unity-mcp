@@ -37,3 +37,20 @@ the scene. These observations establish the state of this test fixture. The
 driver also requires the expected scenario step, process exit and frozen payload
 identity. Pass `--reduced-builds` to retain the shorter candidate replay
 alongside each moved and repaired full build.
+
+## Previous-version save fixture
+
+`SaveUpgradePlayerBuild` prepares fixture scenes and builds a Windows Mono scenario Player. Use an owned batch copy of this project, Windows Standalone Mono support, and a fresh build directory for each payload. Both Editor entry points require `--mcp-save-upgrade-owned-project`.
+
+1. Run `MCPForUnityTests.PlayScenarios.Player.SaveUpgradePlayerBuild.PrepareFromCommandLine` with `--mcp-save-upgrade-variant Previous`. The resulting bootstrap and fixture scenes and their metadata must be in the previous fixture commit. The save itself is created only by the Player at runtime.
+2. Prepare the inputs and dependency closure for that commit using the [reviewed pair instructions](../../../docs/verification-player-reproduction.md). Run `MCPForUnityTests.PlayScenarios.Player.SaveUpgradePlayerBuild.BuildFromCommandLine` with `--mcp-scenario-output <new-absolute-path>` and `--mcp-scenario-source-revision <expanded-source-revision>`.
+3. Reuse the owned scenes and run the prepare entry point with `--mcp-save-upgrade-variant Candidate`. The fixture scene changes its serialized version, preserving the scene path and definition. Commit the candidate project inputs and repeat the proof and build steps.
+4. Pin the three `SAVE_UPGRADE ` observations below, using `progress.json` for both save paths, `profile` and `coins` as preservation keys, and `Save checkpoint` / `wait_state` as the checkpoint.
+
+| Run | Outcome | Schema | Profile | Coins | Migration count |
+| --- | --- | --- | --- | --- | --- |
+| Previous | `written` | 1 | `fixture-profile` | 37 | 0 |
+| Candidate | `migrated` | 2 | `fixture-profile` | 37 | 1 |
+| Restart | `reopened` | 2 | `fixture-profile` | 37 | 1 |
+
+Expect `migration_error: null` for all three positive observations. Build and review separate candidate variants `MigrationFailure` and `DuplicateOnRestart` to exercise native negative controls against the same expectations. A failed migration keeps the schema-1 save and emits its error on each attempted open. The duplicate control migrates successfully once, then records a second migration during restart. Both produce `migration_failed` with the restart's disk-backed observation retained.

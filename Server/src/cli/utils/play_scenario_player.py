@@ -35,6 +35,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from cli.utils.play_scenario_analysis_io import safe_local_path
 from cli.utils.play_scenario_player_payload import (
     PAYLOAD_FILE_LIMIT,
     PAYLOAD_INVENTORY_LIMIT,
@@ -62,6 +63,7 @@ from cli.utils.play_scenario_soak import SoakIdentity, SoakJournal, SoakRequest
 MANIFEST_LIMIT: Final = PAYLOAD_MANIFEST_LIMIT
 REPORT_LIMIT: Final = REPORT_BYTES
 PROCESS_LOG_LIMIT: Final = 1048576
+VERIFICATION_SAVE_ENV: Final = "UNITY_MCP_VERIFICATION_SAVE_DIRECTORY"
 
 
 class PlayerLaunchError(RuntimeError):
@@ -252,6 +254,7 @@ class PlayerRunOptions:
     dispatch: PlayerDispatch | None = field(default=None, compare=False, repr=False)
     replay_seed: int | None = None
     start_delay_frames: int = 0
+    verification_save_directory: Path | None = None
 
     def __post_init__(self) -> None:
         if type(self.start_delay_frames) is not int or not 0 <= self.start_delay_frames <= 120:
@@ -446,6 +449,23 @@ def _run_player(options: PlayerRunOptions, dispatch: PlayerDispatch) -> PlayerOu
                 "Verified Player request/output directories must be outside the build directory"
             )
         verify_player_payload(root, payload, options.deadline_monotonic)
+    launch_options = {}
+    if options.verification_save_directory is not None:
+        save_dir = safe_local_path(options.verification_save_directory)
+        output_dir = safe_local_path(options.output_directory)
+        if (
+            not options.require_verified_payload
+            or not save_dir.is_dir()
+            or save_dir.is_relative_to(root)
+            or root.is_relative_to(save_dir)
+            or save_dir.is_relative_to(output_dir)
+            or output_dir.is_relative_to(save_dir)
+        ):
+            raise PlayerLaunchError("Player save slot must be an isolated local directory")
+        launch_options["env"] = {**os.environ, VERIFICATION_SAVE_ENV: str(save_dir)}
+    elif VERIFICATION_SAVE_ENV in os.environ:
+        launch_options["env"] = os.environ.copy()
+        del launch_options["env"][VERIFICATION_SAVE_ENV]
     try:
         if "build_target" in bundle.model_fields_set:
             require_native_host(bundle.build_target)
@@ -510,6 +530,7 @@ def _run_player(options: PlayerRunOptions, dispatch: PlayerDispatch) -> PlayerOu
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             shell=False,
+            **launch_options,
         )
     except OSError as error:
         # A missing/inaccessible/invalid executable cannot have started the Player.

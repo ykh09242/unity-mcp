@@ -1,0 +1,206 @@
+name: Prebuilt Player save upgrade
+
+on:
+  push:
+    branches: [beta]
+  workflow_dispatch:
+    inputs:
+      require_player:
+        description: Fail if no reviewed save-upgrade pair is configured
+        type: boolean
+        default: true
+      expected_result:
+        description: Expected result of the reviewed native control
+        type: choice
+        options: [save_preserved, migration_failed]
+        default: save_preserved
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Save-upgrade CLI contracts with synthetic subprocesses
+    if: github.repository == 'ykh09242/unity-mcp' && github.ref == 'refs/heads/beta'
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - name: Preserve committed bytes during Windows checkout
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.9"
+          python-version: "3.11"
+          enable-cache: false
+      - name: Exercise success, migration failure, loss and duplicate controls
+        env:
+          PYTHONPATH: ${{ github.workspace }}/Server/src
+        run: uv run --project Server --locked --extra dev python -m pytest -q Server/tests/test_verification_save_upgrade.py
+
+  admission:
+    name: Admit an independently reviewed native transfer
+    if: github.repository == 'ykh09242/unity-mcp' && github.ref == 'refs/heads/beta'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.review.outputs.artifact_id }}
+      run_id: ${{ steps.review.outputs.run_id }}
+      producer_sha: ${{ steps.review.outputs.producer_sha }}
+      manifest_sha: ${{ steps.review.outputs.manifest_sha }}
+    steps:
+      - name: Check the reviewed archive and producer
+        id: review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ vars.VERIFICATION_SAVE_UPGRADE_ARTIFACT_ID }}
+          RUN_ID: ${{ vars.VERIFICATION_SAVE_UPGRADE_RUN_ID }}
+          PRODUCER_SHA: ${{ vars.VERIFICATION_SAVE_UPGRADE_PRODUCER_SHA }}
+          ARCHIVE_SHA: ${{ vars.VERIFICATION_SAVE_UPGRADE_ARCHIVE_SHA256 }}
+          MANIFEST_SHA: ${{ vars.VERIFICATION_SAVE_UPGRADE_MANIFEST_SHA256 }}
+          REQUIRE_PLAYER: ${{ inputs.require_player || false }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          env = os.environ
+          pins = {
+              'ARTIFACT_ID': r'[1-9][0-9]{0,18}',
+              'RUN_ID': r'[1-9][0-9]{0,18}',
+              'PRODUCER_SHA': r'[0-9a-f]{40}',
+              'ARCHIVE_SHA': r'[0-9a-f]{64}',
+              'MANIFEST_SHA': r'[0-9a-f]{64}',
+          }
+
+          def record(status, **data):
+              result = {'status': status, 'verifier_commit': env['GITHUB_SHA'], 'native_execution': False, **data}
+              Path('admission.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+              with open(env['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+                  print(json.dumps(result), file=summary)
+
+          missing = [name for name in pins if not env.get(name)]
+          if missing:
+              record('unavailable', missing=missing)
+              raise SystemExit(1 if env['REQUIRE_PLAYER'] == 'true' or len(missing) != len(pins) else 0)
+          for name, pattern in pins.items():
+              if not re.fullmatch(pattern, env[name]):
+                  record('rejected', invalid_pin=name)
+                  raise SystemExit(1)
+
+          def api(path):
+              return json.loads(subprocess.check_output(
+                  ['gh', 'api', f"repos/{env['GITHUB_REPOSITORY']}/actions/{path}"], timeout=30,
+              ))
+
+          artifact_id, run_id = int(env['ARTIFACT_ID']), int(env['RUN_ID'])
+          artifact, run = api(f'artifacts/{artifact_id}'), api(f'runs/{run_id}')
+          producer = artifact['workflow_run']
+          if (
+              artifact['id'] != artifact_id or artifact['expired']
+              or artifact['name'] != 'prebuilt-save-upgrade'
+              or artifact['digest'] != 'sha256:' + env['ARCHIVE_SHA']
+              or producer['id'] != run_id or run['id'] != run_id
+              or producer['head_repository_id'] != producer['repository_id']
+              or run['head_repository']['full_name'] != env['GITHUB_REPOSITORY']
+              or run['event'] not in ('push', 'workflow_dispatch') or run['head_branch'] != 'beta'
+              or run['conclusion'] != 'success' or run['head_sha'] != producer['head_sha']
+              or run['head_sha'] != env['PRODUCER_SHA']
+          ):
+              record('rejected', reason='artifact_or_producer_mismatch')
+              raise SystemExit(1)
+          record('admitted', artifact_id=artifact_id, producer_run=run_id, producer_commit=run['head_sha'],
+                 archive_sha256=env['ARCHIVE_SHA'], manifest_sha256=env['MANIFEST_SHA'])
+          with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as outputs:
+              for key in ('ARTIFACT_ID', 'RUN_ID', 'PRODUCER_SHA', 'MANIFEST_SHA'):
+                  print(key.lower() + '=' + env[key], file=outputs)
+          PY
+      - name: Retain admission record
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: save-upgrade-admission
+          path: admission.json
+          retention-days: 14
+
+  native:
+    name: Run reviewed previous, candidate and restarted Players
+    needs: [admission, contracts]
+    if: needs.admission.outputs.artifact_id != ''
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Preserve committed bytes during Windows checkouts
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.admission.outputs.producer_sha }}
+          path: .unity-ci/save-fixture-source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.9"
+          python-version: "3.11"
+          enable-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.admission.outputs.run_id }}
+          artifact-ids: ${{ needs.admission.outputs.artifact_id }}
+          digest-mismatch: error
+          merge-multiple: true
+          path: ${{ runner.temp }}/prebuilt-save-upgrade
+      - name: Verify and execute both payloads and the candidate restart
+        shell: pwsh
+        env:
+          MANIFEST_SHA: ${{ needs.admission.outputs.manifest_sha }}
+          EXPECTED_RESULT: ${{ inputs.expected_result || 'save_preserved' }}
+          PYTHONPATH: ${{ github.workspace }}/Server/src
+        run: |
+          $manifest = Join-Path $env:RUNNER_TEMP 'prebuilt-save-upgrade/save-upgrade.json'
+          $output = Join-Path $env:RUNNER_TEMP 'save-upgrade-evidence'
+          uv run --project Server --locked python -m cli.main --no-project-context verification-candidate save-upgrade --project .unity-ci/save-fixture-source/TestProjects/UnityMCPTests --manifest $manifest --sha256 $env:MANIFEST_SHA --output $output
+          $result = $LASTEXITCODE
+          if ($env:EXPECTED_RESULT -eq 'migration_failed' -and $result -eq 1) {
+            $receipt = Get-Content -Raw -LiteralPath (Join-Path $output 'save-upgrade.json') | ConvertFrom-Json
+            $observed = @($receipt.runs.candidate, $receipt.runs.restart) | Where-Object {
+              $_.checkpoint_reached -eq $true -and $_.state_status -in @('passed', 'failed')
+            }
+            $failure = $observed | Where-Object { $_.state_status -eq 'failed' -or $_.save.status -ne 'present' }
+            if ($receipt.status -eq 'migration_failed' -and @($observed).Count -eq 2 -and $failure) { exit 0 }
+          }
+          if ($env:EXPECTED_RESULT -eq 'migration_failed' -and $result -eq 0) { throw 'Negative control unexpectedly preserved the save' }
+          exit $result
+      - name: Retain native process receipts and observations
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: save-upgrade-native-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/save-upgrade-evidence/save-upgrade.json
+            ${{ runner.temp }}/save-upgrade-evidence/*/*/run.json
+            ${{ runner.temp }}/save-upgrade-evidence/*/*/process.json
+            ${{ runner.temp }}/save-upgrade-evidence/*/*/diagnostics.json
+            ${{ runner.temp }}/save-upgrade-evidence/*/*/player.log
+            !${{ runner.temp }}/save-upgrade-evidence/storage/**
+          if-no-files-found: warn
+          retention-days: 14

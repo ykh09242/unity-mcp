@@ -1,13 +1,14 @@
 """Reproduce a reviewed pair of standalone Players against committed project inputs."""
 
 from hashlib import sha256
+from os.path import samestat
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
 import json
 import platform
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from cli.utils.play_scenario_analysis_io import read_bytes, safe_local_path, write_new
 from cli.utils.play_scenario_player import (
@@ -30,7 +31,14 @@ Label = Annotated[str, Field(min_length=1, max_length=128)]
 SIDES = ("baseline", "candidate")
 
 
-class PairSide(QualityOptions):
+class PairExpectation(QualityOptions):
+    status: Literal["succeeded", "failed", "timed_out"]
+    checkpoint: Label
+    action: Label
+    state: StateCheck
+
+
+class PairSide(PairExpectation):
     project_commit: Commit
     package_commit: Commit
     proof_sha256: Digest
@@ -39,10 +47,23 @@ class PairSide(QualityOptions):
     source_revision: Digest
     payload_hash: Digest
     bundle_manifest_sha256: Digest
-    status: Literal["succeeded", "failed", "timed_out"]
-    checkpoint: Label
-    action: Label
-    state: StateCheck
+
+
+SavePath = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$",
+    ),
+]
+
+
+class SaveUpgrade(QualityOptions):
+    previous_file: SavePath
+    candidate_file: SavePath
+    preserve: Annotated[list[Label], Field(min_length=1, max_length=64)]
+    restart: PairExpectation
 
 
 class PlayerPair(QualityOptions):
@@ -52,6 +73,25 @@ class PlayerPair(QualityOptions):
     definition_hash: Digest
     baseline: PairSide
     candidate: PairSide
+    save_upgrade: SaveUpgrade | None = None
+
+    @model_validator(mode="after")
+    def check_preservation_contract(self) -> "PlayerPair":
+        upgrade = self.save_upgrade
+        if upgrade is None:
+            return self
+        phases = (self.baseline, self.candidate, upgrade.restart)
+        if any(phase.status != "succeeded" for phase in phases):
+            raise ValueError("save_upgrade_requires_successful_expectations")
+        if len(set(upgrade.preserve)) != len(upgrade.preserve):
+            raise ValueError("save_upgrade_duplicate_preservation_keys")
+        for key in upgrade.preserve:
+            if (
+                any(key not in phase.state.expected for phase in phases)
+                or len({json.dumps(phase.state.expected[key]) for phase in phases}) != 1
+            ):
+                raise ValueError("save_upgrade_preserved_expectations_must_agree: " + key)
+        return self
 
 
 def _head(git):
@@ -145,7 +185,8 @@ def _admit(project, directory, pair, side, sample, current):
     return recheck, {"verified_git_inputs": len(inputs), "closure": closure}
 
 
-def _execute(directory, output, pair, side, job):
+def _execute(directory, output, pair, side, job, *, storage=None, expectation=None):
+    expectation = expectation or side
     outcome = run_player(
         PlayerRunOptions(
             build_directory=directory / "build",
@@ -159,6 +200,7 @@ def _execute(directory, output, pair, side, job):
             require_verified_payload=True,
             expected_payload_hash=side.payload_hash,
             expected_scenario=pair.scenario,
+            verification_save_directory=storage,
         )
     )
     native = outcome.directory
@@ -182,7 +224,6 @@ def _execute(directory, output, pair, side, job):
         records["process.json"],
         records["diagnostics.json"],
     )
-    expected_exit = 0 if side.status == "succeeded" else 1
     evidence = raw.get("reproduction", {})
     if (
         raw != outcome.report
@@ -213,42 +254,63 @@ def _execute(directory, output, pair, side, job):
     if (
         not isinstance(rows, list)
         or not rows
-        or any(not isinstance(row, dict) or not isinstance(row.get("stage"), str) for row in rows)
+        or any(
+            not isinstance(row, dict)
+            or not isinstance(row.get("stage"), str)
+            or not isinstance(row.get("status"), str)
+            for row in rows
+        )
     ):
         raise ValueError("reproduction_native_steps_unavailable")
     steps = [row for row in rows if row["stage"] == "main"]
     checkpoints = [
         index
         for index, row in enumerate(steps)
-        if row.get("name") == side.checkpoint and row.get("action") == side.action
+        if row.get("name") == expectation.checkpoint and row.get("action") == expectation.action
     ]
-    state, observed = _state_result(native, side.state)
+    try:
+        state, observed = _state_result(native, expectation.state)
+    except (OSError, ValueError) as error:
+        if storage is None:
+            raise
+        state, observed = "incomplete", {"reason": type(error).__name__}
     sample.finish()
-    if state == "incomplete":
+    if state == "incomplete" and storage is None:
         raise ValueError("reproduction_state_observation_incomplete: " + observed["reason"])
-    expected_step = "passed" if side.status == "succeeded" else side.status
-    matched = (
-        raw.get("status") == side.status
+    expected_exit = 0 if expectation.status == "succeeded" else 1
+    expected_step = "passed" if expectation.status == "succeeded" else expectation.status
+    checkpoint_index = checkpoints[0] if len(checkpoints) == 1 else None
+    checkpoint_status = None if checkpoint_index is None else steps[checkpoint_index].get("status")
+    checkpoint_reached = (
+        checkpoint_status in {"passed", "failed", "timed_out"}
+        and all(row.get("status") == "passed" for row in steps[:checkpoint_index])
+        and all(
+            row.get("status") in {"passed", "skipped"} for row in rows if row["stage"] == "setup"
+        )
+    )
+    checkpoint_matched = (
+        raw.get("status") == expectation.status
         and raw.get("exit_code") == expected_exit
-        and len(checkpoints) == 1
-        and steps[checkpoints[0]].get("status") == expected_step
-        and all(row.get("status") == "passed" for row in steps[: checkpoints[0]])
+        and checkpoint_reached
+        and checkpoint_status == expected_step
         and all(
             row.get("status") in {"passed", "skipped"}
             for row in rows
-            if row is not steps[checkpoints[0]]
+            if row is not steps[checkpoint_index]
         )
-        and state == "passed"
     )
     return {
-        "matched": matched,
+        "matched": checkpoint_matched and state == "passed",
         "job_id": job,
         "status": raw.get("status"),
         "exit_code": raw.get("exit_code"),
         "state": observed,
+        "state_status": state,
+        "checkpoint_reached": checkpoint_reached,
+        "checkpoint_status": checkpoint_status,
         "files": files,
         "artifacts": f"{output.name}/{job}",
-        "checkpoint": side.checkpoint,
+        "checkpoint": expectation.checkpoint,
         "definition_hash": pair.definition_hash,
         "build_id": side.build_id,
         "payload_hash": side.payload_hash,
@@ -258,18 +320,109 @@ def _execute(directory, output, pair, side, job):
     }
 
 
-def reproduce_pair(project, manifest_path, expected_sha256, artifacts, output):
+def _save_fingerprint(storage: Path, relative: str):
+    """Fingerprint an owned save after process exit, retaining only its size and digest."""
+    path = safe_local_path(storage / relative)
+    try:
+        links = path.stat().st_nlink
+    except FileNotFoundError:
+        return {"path": relative, "status": "missing"}
+    if links != 1 or not path.is_file():
+        raise ValueError("save_upgrade_requires_regular_owned_file: " + relative)
+    content = read_bytes(path, 32 * 1024**2)
+    return {
+        "path": relative,
+        "status": "present" if content else "empty",
+        "size": len(content),
+        "sha256": sha256(content).hexdigest(),
+    }
+
+
+def _execute_pair(artifacts, output, pair, report):
+    """Run two independent sides or three ordered processes with a single owned save slot."""
+    upgrade = pair.save_upgrade
+    storage = None
+    phases = [(name, name, getattr(pair, name), None) for name in SIDES]
+    if upgrade is not None:
+        storage = safe_local_path(output / "storage")
+        for relative in (upgrade.previous_file, upgrade.candidate_file):
+            safe_local_path(storage / relative)
+        storage.mkdir(mode=0o700)
+        phases = [
+            ("baseline", "baseline", pair.baseline, upgrade.previous_file),
+            ("candidate", "candidate", pair.candidate, upgrade.candidate_file),
+            ("restart", "candidate", upgrade.restart, upgrade.candidate_file),
+        ]
+    identity = storage.stat() if storage is not None else None
+    for phase, name, expectation, save_file in phases:
+        job = uuid4().hex
+        report["runs"][phase] = {
+            "job_id": job,
+            "artifacts": f"{phase}/{job}",
+            "matched": False,
+            "status": "incomplete",
+        }
+        side = getattr(pair, name)
+        if storage is None:
+            result = _execute(artifacts / name, output / phase, pair, side, job)
+        else:
+            result = _execute(
+                artifacts / name,
+                output / phase,
+                pair,
+                side,
+                job,
+                storage=storage,
+                expectation=expectation,
+            )
+        report["runs"][phase] = result
+        if storage is not None:
+            if not samestat(identity, safe_local_path(storage).stat()):
+                raise ValueError("save_upgrade_storage_replaced")
+            result["save"] = saved = _save_fingerprint(storage, save_file)
+            result["matched"] = result["matched"] and saved["status"] == "present"
+            if phase == "baseline" and not result["matched"]:
+                raise ValueError("save_upgrade_previous_save_unavailable")
+
+
+def _observed_upgrade_failure(runs):
+    """Require both opened-run oracles before attributing a failure to the save."""
+    candidates = (runs["candidate"], runs["restart"])
+    return all(
+        row["checkpoint_reached"] and row["state_status"] in {"passed", "failed"}
+        for row in candidates
+    ) and any(
+        row["state_status"] == "failed" or row["save"]["status"] != "present" for row in candidates
+    )
+
+
+def reproduce_pair(
+    project, manifest_path, expected_sha256, artifacts, output, *, save_upgrade=False
+):
     project, artifacts, output = (safe_local_path(p) for p in (project, artifacts, output))
     raw = read_bytes(manifest_path, 64 * 1024)
     if sha256(raw).hexdigest() != expected_sha256:
         raise ValueError("reproduction_manifest_digest_mismatch")
     pair = PlayerPair.model_validate(decode_object(raw))
+    if (pair.save_upgrade is not None) != save_upgrade:
+        raise ValueError(
+            "Use save-upgrade for a manifest declaring save_upgrade, or reproduce for an ordinary pair"
+        )
     if pair.baseline.build_id == pair.candidate.build_id:
         raise ValueError("reproduction_distinct_builds_required")
+    if save_upgrade and (
+        pair.baseline.payload_hash == pair.candidate.payload_hash
+        or pair.baseline.project_commit == pair.candidate.project_commit
+    ):
+        raise ValueError("save_upgrade_requires_distinct_versions_and_payloads")
+    if save_upgrade and any(output.is_relative_to(artifacts / name / "build") for name in SIDES):
+        raise ValueError("reproduction_output_cannot_overlap_payload")
     output.mkdir(parents=True, exist_ok=False)
     report = {
         "schema_version": 1,
-        "kind": "verification_player_reproduction",
+        "kind": "verification_player_save_upgrade"
+        if save_upgrade
+        else "verification_player_reproduction",
         "manifest_sha256": expected_sha256,
         "scenario": pair.scenario,
         "required_builds": {
@@ -279,6 +432,8 @@ def reproduce_pair(project, manifest_path, expected_sha256, artifacts, output):
         "status": "unavailable",
     }
     code = 2
+    if pair.save_upgrade is not None:
+        report["preservation_keys"] = pair.save_upgrade.preserve
     try:
         checkout = _head(_Git(project))
         report["project_checkout_commit"] = checkout
@@ -352,27 +507,22 @@ def reproduce_pair(project, manifest_path, expected_sha256, artifacts, output):
             check()
         check_revisions()
         sample.finish()
-        for name in SIDES:
-            job = uuid4().hex
-            report["runs"][name] = {
-                "job_id": job,
-                "artifacts": f"{name}/{job}",
-                "matched": False,
-                "status": "incomplete",
-            }
-            report["runs"][name] = _execute(
-                artifacts / name, output / name, pair, getattr(pair, name), job
-            )
+        _execute_pair(artifacts, output, pair, report)
         check_revisions()
         sample.finish()
         if all(row["matched"] for row in report["runs"].values()):
-            report["status"], code = "reproduced", 0
-        else:
+            report["status"], code = ("save_preserved" if save_upgrade else "reproduced"), 0
+        elif not save_upgrade:
             report["status"], code = "expectation_mismatch", 1
+        elif _observed_upgrade_failure(report["runs"]):
+            report["status"], code = "migration_failed", 1
+        else:
+            report["reason"] = "save_upgrade_migration_evidence_incomplete"
     except CheckoutDivergence as error:
         report["reason"] = str(error)[:1024]
         report["checkout_diagnostics"] = error.findings
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:
         report["reason"] = str(error)[:1024]
-    write_new(output / "reproduction.json", (json.dumps(report, indent=2) + "\n").encode("utf-8"))
+    filename = "save-upgrade.json" if save_upgrade else "reproduction.json"
+    write_new(output / filename, (json.dumps(report, indent=2) + "\n").encode("utf-8"))
     return report, code

@@ -16,6 +16,7 @@ from cli.commands.verification_dependency_scan import dependency_diff, dependenc
 from cli.commands.verification_input_chunks import candidate_directory, input_chunks
 from cli.commands.verification_merge import anticipate_merge
 from cli.commands.verification_reproduce import reproduce_candidate
+from cli.commands.verification_save_upgrade import save_upgrade_candidate
 from cli.utils.play_scenario_analysis_io import safe_local_path, write_new
 
 
@@ -34,6 +35,7 @@ verification_candidate.add_command(configuration_diff)
 verification_candidate.add_command(dependency_scan)
 verification_candidate.add_command(dependency_diff)
 verification_candidate.add_command(anticipate_merge)
+verification_candidate.add_command(save_upgrade_candidate)
 
 
 @verification_candidate.command("draft")
