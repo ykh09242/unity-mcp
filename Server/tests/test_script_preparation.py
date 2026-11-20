@@ -114,7 +114,7 @@ class OrderedWire:
         self.legacy_writes = []
         self.corrupt = None
         self.fail_action = None
-        self.commit_delay = 0
+        self.on_commit = None
         self.stage_delay = 0
         self.refresh_failure = False
         self.selected = []
@@ -174,8 +174,8 @@ class OrderedWire:
         if action == "apply_prepared_script":
             assert kwargs.get("retry_on_reload") is False
             self.commits.append(copy.deepcopy(params))
-            if self.commit_delay:
-                await asyncio.sleep(self.commit_delay)
+            if self.on_commit is not None:
+                await self.on_commit()
             candidate = params["candidate_contents"]
             assert params["original_bytes_sha256"] == self.digest(self.original, self.bom)
             assert params["candidate_bytes_sha256"] == self.digest(candidate, self.bom)
@@ -515,8 +515,24 @@ async def test_ordered_post_dispatch_timeout_reports_unknown_without_replay(
     native = ordered_wire
     proposal = await ordered_preview(native)
     assert proposal["success"] is True, proposal
-    native.commit_delay = 0.1
-    monkeypatch.setattr(tools.config, "command_total_timeout", 0.02)
+    timeout_at = asyncio.timeout_at
+    request_task = asyncio.current_task()
+    request_deadline = None
+
+    def capture_deadline(when):
+        nonlocal request_deadline
+        deadline = timeout_at(when)
+        if request_deadline is None and asyncio.current_task() is request_task:
+            request_deadline = deadline
+        return deadline
+
+    async def expire_after_dispatch():
+        assert request_deadline is not None
+        request_deadline.reschedule(asyncio.get_running_loop().time())
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(asyncio, "timeout_at", capture_deadline)
+    native.on_commit = expire_after_dispatch
     result = await tools.script_apply_edits(
         AsyncMock(),
         "Foo",
@@ -529,6 +545,8 @@ async def test_ordered_post_dispatch_timeout_reports_unknown_without_replay(
         },
     )
     assert result["success"] is False
+    assert request_deadline is not None and request_deadline.expired(), result
+    assert result.get("code") == "outcome_unknown", result
     assert result["data"]["outcome"] == "unknown", result
     assert result["data"].get("applied") is not False
     assert result["data"]["expected_bytes_sha256"] == proposal["data"]["candidate_bytes_sha256"]
