@@ -129,23 +129,17 @@ async def test_startup_silent_listener_consumes_original_remaining_budget(
     monkeypatch, tmp_path, phase
 ):
     monkeypatch.setattr(config, "http_remote_hosted", False)
-    monkeypatch.setattr(config, "connection_timeout", 2)
-    monkeypatch.setattr(config, "handshake_timeout", 2)
+    full_budget = 5.0
+    prior_work = 4.0
+    monkeypatch.setattr(config, "connection_timeout", full_budget)
+    monkeypatch.setattr(config, "handshake_timeout", full_budget)
+    monkeypatch.setattr(PortDiscovery, "CONNECT_TIMEOUT", full_budget)
     monkeypatch.setenv("UNITY_MCP_STATUS_DIR", str(tmp_path))
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
-        listener.settimeout(2)
+        listener.settimeout(1)
         port = listener.getsockname()[1]
-        accepted, release = threading.Event(), threading.Event()
-
-        def silent():
-            with listener.accept()[0] as peer:
-                accepted.set()
-                release.wait(2)
-
-        worker = threading.Thread(target=silent)
-        worker.start()
         (tmp_path / "unity-mcp-status-deadbeef.json").write_text(
             json.dumps({"project_path": "/Fixture/Assets", "unity_port": port})
         )
@@ -161,17 +155,17 @@ async def test_startup_silent_listener_consumes_original_remaining_budget(
         if phase == "handshake":
             monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
         function = pool.discover_all_instances if phase == "discovery" else pool.get_connection
-        deadline = asyncio.get_running_loop().time() + 0.16
-        # Prior startup work has already consumed half the original budget.
-        await main._startup_worker(lambda: time.sleep(0.08), deadline)
+        # Model elapsed startup work without making thread scheduling part of the fixture.
+        started = asyncio.get_running_loop().time() - prior_work
+        deadline = started + full_budget
         began = time.monotonic()
         try:
             with pytest.raises(TimeoutError):
                 await main._startup_worker(function, deadline)
-            assert accepted.is_set()
-            assert time.monotonic() - began < 0.2
+            assert time.monotonic() - began < full_budget - 1
+            # The kernel accepts the TCP handshake while user space stays silent.
+            peer, _ = listener.accept()
+            peer.close()
             assert not pool._connections
         finally:
-            release.set()
-            worker.join(2)
             pool.disconnect_all()
