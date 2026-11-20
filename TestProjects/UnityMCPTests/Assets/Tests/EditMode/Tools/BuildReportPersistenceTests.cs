@@ -537,6 +537,47 @@ namespace MCPForUnityTests.EditMode.Tools
         private string Persist(JObject record) =>
             (string)Store.GetMethod("PersistSnapshot", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { record });
 
+        [TestCase("match", "matched_report_settings")]
+        [TestCase("target", "incompatible")]
+        [TestCase("options", "incompatible")]
+        [TestCase("legacy", "unknown")]
+        [TestCase("incomplete", "matched_report_settings")]
+        public void PackedComparisonExposesSizeRemainderOnlyWithinRecordedScope(string mutation, string expected)
+        {
+            var before = Prepared(Complete(BuildJobState.Succeeded, 1));
+            var after = Prepared(Complete(BuildJobState.Succeeded, 2));
+            foreach (JObject record in new[] { before, after })
+            {
+                record["summary"]["native_result"] = "succeeded";
+                record["summary"]["native_report_available"] = true;
+                record["summary"]["native_platform"] = "StandaloneWindows64";
+                record["summary"]["native_build_options"] = 0;
+                record["summary"]["editor_version"] = "6000.0.69f1";
+                record["packed_assets_complete"] = true;
+            }
+            before["summary"]["total_size_bytes"] = 100;
+            after["summary"]["total_size_bytes"] = 190;
+            after["packed_assets"] = new JArray(
+                new JObject { ["source_asset_path"] = "Assets/Witness.bytes", ["packed_size_bytes"] = 120 },
+                new JObject { ["source_asset_path"] = "[unavailable]", ["packed_size_bytes"] = 10 }
+            );
+            if (mutation == "target")
+                after["summary"]["native_platform"] = "Android";
+            if (mutation == "options")
+                after["summary"]["native_build_options"] = (long)BuildOptions.Development;
+            if (mutation == "legacy")
+                ((JObject)before["summary"]).Remove("native_build_options");
+            if (mutation == "incomplete")
+                after["packed_assets_complete"] = false;
+            var result = Success(
+                Send("compare_reports", "baseline_report_id", Persist(before), "candidate_report_id", Persist(after), "report_section", "packed_assets")
+            );
+            Assert.AreEqual(expected, (string)result["size_comparability"]["status"]);
+            Assert.AreEqual(130, result.Value<long>("packed_size_delta_bytes"));
+            Assert.AreEqual(mutation == "match" ? 120L : (long?)null, (long?)result["named_packed_delta_bytes"]);
+            Assert.AreEqual(mutation == "match" ? -30L : (long?)null, (long?)result["unattributed_delta_bytes"]);
+        }
+
         [Test]
         public void DetailsPageAndComparisonReportAddedRemovedAndSizeChangesRatherThanFileLength()
         {

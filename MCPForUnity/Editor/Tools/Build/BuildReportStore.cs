@@ -249,6 +249,9 @@ namespace MCPForUnity.Editor.Tools.Build
             {
                 var native = report.summary;
                 summary["native_result"] = native.result.ToString().ToLowerInvariant();
+                summary["native_platform"] = native.platform.ToString();
+                summary["native_build_options"] = (long)native.options;
+                summary["editor_version"] = Application.unityVersion;
                 summary["total_size_bytes"] = native.totalSize;
                 summary["errors"] = native.totalErrors;
                 summary["warnings"] = native.totalWarnings;
@@ -507,6 +510,9 @@ namespace MCPForUnity.Editor.Tools.Build
                     "job_total_size_mb",
                     "duration_seconds",
                     "native_result",
+                    "native_platform",
+                    "native_build_options",
+                    "editor_version",
                     "total_size_bytes",
                 },
                 StringComparer.Ordinal
@@ -517,6 +523,11 @@ namespace MCPForUnity.Editor.Tools.Build
                 || summary["platform"]?.Type != JTokenType.String
                 || !new[] { "succeeded", "failed", "cancelled", "skipped" }.Contains((string)summary["result"])
             )
+                throw new ReportFailure("build_report_corrupt");
+            foreach (string field in new[] { "native_platform", "editor_version" })
+                if (summary[field] != null && (summary[field].Type != JTokenType.String || string.IsNullOrEmpty((string)summary[field])))
+                    throw new ReportFailure("build_report_corrupt");
+            if (summary["native_build_options"] != null && summary["native_build_options"].Type != JTokenType.Integer)
                 throw new ReportFailure("build_report_corrupt");
             foreach (string name in new[] { "child_count", "errors", "warnings", "job_total_size_mb", "duration_seconds", "total_size_bytes" })
                 if (summary[name] != null && summary[name].Type != JTokenType.Null && !NonnegativeNumber(summary[name]))
@@ -821,6 +832,32 @@ namespace MCPForUnity.Editor.Tools.Build
             }
         }
 
+        private static JObject SizeComparability(JToken baseline, JToken candidate)
+        {
+            var different = new JArray();
+            var missing = new JArray();
+            foreach (string field in new[] { "platform", "native_platform", "native_build_options", "editor_version" })
+            {
+                if (baseline[field] == null || candidate[field] == null)
+                    missing.Add(field);
+                else if (!JToken.DeepEquals(baseline[field], candidate[field]))
+                    different.Add(field);
+            }
+            if ((string)baseline["native_result"] != "succeeded" || (string)candidate["native_result"] != "succeeded")
+                missing.Add("successful_native_build_pair");
+            return new JObject
+            {
+                ["status"] =
+                    different.Count > 0 ? "incompatible"
+                    : missing.Count > 0 ? "unknown"
+                    : "matched_report_settings",
+                ["different"] = different,
+                ["missing"] = missing,
+                ["scope"] =
+                    "Successful native reports, target, Editor version and BuildOptions. Other project settings and build inputs require independent comparison.",
+            };
+        }
+
         private static JObject Compare(JObject baseline, JObject candidate, string section, int size, int page)
         {
             var data = new JObject
@@ -844,6 +881,8 @@ namespace MCPForUnity.Editor.Tools.Build
             data["candidate_result"] = candidate["summary"]["result"];
             data["result_changed"] = !JToken.DeepEquals(baseline["summary"]["result"], candidate["summary"]["result"]);
             data["same_platform"] = JToken.DeepEquals(baseline["summary"]["platform"], candidate["summary"]["platform"]);
+            var comparability = SizeComparability(baseline["summary"], candidate["summary"]);
+            data["size_comparability"] = comparability;
             if (section == "summary")
                 return data;
             int baselineTotal =
@@ -903,8 +942,20 @@ namespace MCPForUnity.Editor.Tools.Build
                 section == "packed_assets" ? "source_asset_path with aggregated occurrence count and packed bytes" : "step name, depth and occurrence ordinal";
             data["identity_complete"] = section != "packed_assets" || (!left.ContainsKey("[unavailable]") && !right.ContainsKey("[unavailable]"));
             if (section == "packed_assets")
+            {
                 data["packed_size_delta_bytes"] =
                     right.Values.Sum(row => row.Value<decimal>("packed_size_bytes")) - left.Values.Sum(row => row.Value<decimal>("packed_size_bytes"));
+                decimal? attributed = null;
+                if (comparability.Value<string>("status") == "matched_report_settings" && data.Value<bool>("details_complete"))
+                {
+                    decimal NamedBytes(Dictionary<string, JObject> rows) =>
+                        rows.Where(pair => pair.Key != "[unavailable]").Sum(pair => pair.Value.Value<decimal>("packed_size_bytes"));
+                    attributed = NamedBytes(right) - NamedBytes(left);
+                }
+                decimal? totalDelta = (decimal?)data["total_size_bytes_delta"];
+                data["named_packed_delta_bytes"] = attributed;
+                data["unattributed_delta_bytes"] = totalDelta - attributed;
+            }
             Load((string)baseline["report_id"], (string)baseline["report_revision"]);
             Load((string)candidate["report_id"], (string)candidate["report_revision"]);
             data["entries"] = Paged(changes, size, page);

@@ -79,3 +79,29 @@ cloning the enclosing summary or attaching the rows to a temporary record. Hashe
 use the original bytes after strict UTF-8 decoding, avoiding a second encoding.
 No parsed-page cache is retained; corruption and replacement between requests
 remain observable, and response rows remain detached from later requests.
+
+### Build size attribution
+
+`manage_build(action="compare_reports", report_section="packed_assets", ...)` returns
+`size_comparability` with the differing or missing fields. New native summaries retain
+their target, numeric BuildOptions mask and Editor version. A successful pair with
+matching values returns `matched_report_settings`. Project settings outside this
+native report scope require separate evidence. Historical summaries lacking these
+fields return `unknown` unless a known difference already establishes incompatibility.
+
+For a matched pair with complete captured inventories, `named_packed_delta_bytes`
+sums the changes to identifiable source paths across the entire comparison window.
+`unattributed_delta_bytes` subtracts that number from the change in total build size.
+It includes anonymous packed entries and differences such as compression or file
+overhead, so it can be negative. A missing total, incompatible settings or truncated
+detail leaves the corresponding attribution unknown. Existing raw differences and
+per-asset comparisons stay available for inspection.
+
+The explicit native fixture `BuildReportActualBuildTests.Phase1BuildOneOwnedSceneAndPersistNativeReport`
+accepts `MCP_BUILD_REPORT_SIZE_PAIR=1` alongside its normal exact disposable project
+and nonce. It builds the same scene twice with DetailedBuildReport, adding one
+deterministic 4 MiB resource for the second run. The owned report directory retains
+`size-pair.json` with both summaries, report revisions and comparison. In the Windows
+Unity 6000.0.69f1 run, the 4,194,304-byte source produced 4,194,324 packed bytes,
+4,194,416 additional total bytes and a 92-byte remainder. This single pair measures
+the fixture with those build settings.

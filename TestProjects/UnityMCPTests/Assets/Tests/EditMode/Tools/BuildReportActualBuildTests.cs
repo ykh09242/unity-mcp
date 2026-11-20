@@ -80,6 +80,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsFalse(Directory.Exists(output));
             BuildJob previousLast = BuildJobStore.LastCompletedJob;
             BuildJob job = null;
+            BuildJob candidateJob = null;
             try
             {
                 scenes.PrepareRunnerBootstrap();
@@ -145,6 +146,58 @@ namespace MCPForUnityTests.EditMode.Tools
                     Assert.IsTrue(Read(id, "packed_assets").Value<bool>("details_complete"));
                     TestContext.WriteLine($"NEXT13_NATIVE_LARGE old_bounded_rows={((JArray)bounded["packed_assets"]).Count} indexed_rows={retained}");
                 }
+                if (Environment.GetEnvironmentVariable("MCP_BUILD_REPORT_SIZE_PAIR") == "1")
+                {
+                    const int sourceBytes = 4 * 1024 * 1024;
+                    string resourceDirectory = assetRoot + "/Resources";
+                    Directory.CreateDirectory(resourceDirectory);
+                    string assetPath = resourceDirectory + "/SizeWitness.bytes";
+                    byte[] contents = new byte[sourceBytes];
+                    new System.Random(30130).NextBytes(contents);
+                    File.WriteAllBytes(assetPath, contents);
+                    AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                    candidateJob = new BuildJob(BuildJobStore.CreateJobId(), options.target, options.locationPathName);
+                    BuildJobStore.AddBuildJob(candidateJob);
+                    typeof(BuildRunner)
+                        .GetMethod("RunBuildCore", BindingFlags.NonPublic | BindingFlags.Static)
+                        .Invoke(null, new object[] { candidateJob, new Func<BuildReport>(() => BuildPipeline.BuildPlayer(options)), null });
+                    Assert.AreEqual(BuildJobState.Succeeded, candidateJob.State, candidateJob.ErrorMessage);
+                    var comparison = JObject.FromObject(
+                        ManageBuild.HandleCommand(
+                            new JObject
+                            {
+                                ["action"] = "compare_reports",
+                                ["baseline_report_id"] = id,
+                                ["candidate_report_id"] = candidateJob.ReportId,
+                                ["report_section"] = "packed_assets",
+                                ["page_size"] = 100,
+                            }
+                        )
+                    );
+                    Assert.IsTrue(comparison.Value<bool>("success"), comparison.ToString());
+                    var delta = comparison["data"];
+                    Assert.AreEqual("matched_report_settings", (string)delta["size_comparability"]["status"]);
+                    Assert.IsTrue(delta.Value<bool>("details_complete"));
+                    var addition = delta["entries"].Single(row => (string)row["key"] == assetPath);
+                    Assert.AreEqual("added", (string)addition["change"]);
+                    Assert.GreaterOrEqual(addition["candidate"].Value<long>("packed_size_bytes"), sourceBytes);
+                    Assert.AreEqual(
+                        delta.Value<long>("total_size_bytes_delta"),
+                        delta.Value<long>("named_packed_delta_bytes") + delta.Value<long>("unattributed_delta_bytes")
+                    );
+                    var pair = new JObject
+                    {
+                        ["unity"] = Application.unityVersion,
+                        ["source_bytes"] = sourceBytes,
+                        ["baseline"] = summary["summary"],
+                        ["candidate"] = Read(candidateJob.ReportId)["summary"],
+                        ["comparison"] = delta,
+                    };
+                    File.WriteAllText(Path.Combine(reports, "size-pair.json"), pair.ToString());
+                    TestContext.WriteLine(
+                        $"BUILD_SIZE_PAIR source_bytes={sourceBytes} named_asset_bytes={addition["candidate"]["packed_size_bytes"]} total_delta={delta["total_size_bytes_delta"]} named_delta={delta["named_packed_delta_bytes"]} remainder={delta["unattributed_delta_bytes"]}"
+                    );
+                }
                 capturedNative = null;
                 var state = new JObject
                 {
@@ -165,11 +218,11 @@ namespace MCPForUnityTests.EditMode.Tools
                     StringAssert.StartsWith(Path.Combine(Project, ".work", "Dev06Output_"), output);
                     Directory.Delete(output, true);
                 }
-                if (job != null)
+                foreach (var created in new[] { job, candidateJob }.Where(created => created != null))
                     (
                         (System.Collections.Generic.Dictionary<string, BuildJob>)
                             typeof(BuildJobStore).GetField("_buildJobs", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null)
-                    ).Remove(job.JobId);
+                    ).Remove(created.JobId);
                 typeof(BuildJobStore).GetField("_lastCompletedJob", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, previousLast);
                 Storage.SetValue(null, previousStorage);
             }
