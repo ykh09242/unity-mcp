@@ -75,6 +75,13 @@ its name as a short label and the enclosing tool description for context.
 parameters on cards supplement conditional requirements in the full live schema.
 
 For reviewed observations, `observation.source` names the origin of the data.
+Use `observation_source="scenario_job"` with
+`required_values=["scenario_job.outcome"]` to find the reader for an existing
+Editor Play Mode run. Supply its exact `job_id` and match the returned ID.
+Starting a scenario returns a handle. A terminal outcome records that run's
+result. For a particular gameplay effect, check the relevant runtime step and
+its expected state. Use the build-bound report for standalone Player evidence.
+
 `values` lists stable evidence IDs. Each ID names a field relative to a successful
 result's `data` object unless `wire_paths` maps it to a route-specific field.
 Read `conditions` before claiming evidence. Tool routes include fixed `arguments`

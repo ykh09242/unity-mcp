@@ -42,6 +42,7 @@ class PlayScenarioResponse(TypedDict, total=False):
         "Suite actions use suite_ prefixes, suite_save takes suite and suite_status/cancel take suite_id. "
         "run accepts an optional dataset; typed explicit scalar bindings are expanded and validated before saving. "
         "save takes a whole definition; get/delete/run take its name; reports accepts optional name. "
+        "status reads the existing job's runtime step results and terminal outcome; run only starts it. "
         "status/cancel require a 32-character lowercase hexadecimal job_id. "
         "run returns immediately; each repeat executes setup_steps, steps, then bounded cleanup_steps. "
         "Steps load_scene/wait_scene use Assets/... .unity paths; click_ui/wait_object use target_id or exact "

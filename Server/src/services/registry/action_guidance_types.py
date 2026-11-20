@@ -8,7 +8,9 @@ from services.registry.observation_predicates import EvidencePredicates
 
 
 ActionIntent = Literal["observe", "interact", "edit"]
-ObservationSource = Literal["editor_live", "asset_file", "imported_asset", "compile_job"]
+ObservationSource = Literal[
+    "editor_live", "asset_file", "imported_asset", "compile_job", "scenario_job"
+]
 ObservationValue = Literal[
     "unityCameras",
     "cinemachineCameras",
@@ -24,6 +26,7 @@ ObservationValue = Literal[
     "active_scene.path",
     "compilation.is_compiling",
     "compile_job.outcome",
+    "scenario_job.outcome",
     "nodeCount",
     "edgeCount",
     "nodes",

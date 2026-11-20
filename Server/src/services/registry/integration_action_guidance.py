@@ -74,8 +74,56 @@ MENU_DECLARATIONS_READ = (
     "A match confirms that declaration. Some native menu entries may be absent."
 )
 
+SCENARIO_JOB_OBSERVATION: Final[Observation] = {
+    "source": "scenario_job",
+    "values": ["scenario_job.outcome"],
+    "wire_paths": {"scenario_job.outcome": "status"},
+    "unavailable": [],
+    "conditions": (
+        "Require the returned job_id to match the request. A terminal Editor Play Mode "
+        "outcome reports that run only. To establish a gameplay effect, check the matching "
+        "runtime step and expected state in the receipt. Player runs have separate reports."
+    ),
+    "predicates": {
+        "all": [
+            {"op": "type", "path": "job_id", "type": "hex32"},
+            {"op": "equals", "path": "execution_environment", "value": "editor"},
+            {"op": "type", "path": "started_unix_ms", "type": "positive_integer"},
+            {"op": "type", "path": "finished_unix_ms", "type": "positive_integer"},
+            {"op": "timestamp_lte", "path": "started_unix_ms", "other_path": "finished_unix_ms"},
+        ],
+        "by_value": {
+            "scenario_job.outcome": [
+                {
+                    "op": "one_of",
+                    "path": "status",
+                    "values": ["succeeded", "failed", "timed_out", "cancelled"],
+                }
+            ]
+        },
+    },
+}
+
 INTEGRATION_ACTIONS: Final = {
     "manage_addressables": {
+        "preview_prefab": _edit(
+            "Prepare a receipt-scoped prefab copy and registration.",
+            "operation_id",
+            "settings_path",
+            "group_guid",
+            "source_prefab",
+            "prefab_path",
+        ),
+        "create_prefab": _edit(
+            "Create the previewed prefab and checkpoint its actual GUID.", "operation_id"
+        ),
+        "register_prefab": _edit(
+            "Register the checkpointed prefab in its previewed group.", "operation_id"
+        ),
+        "prefab_status": _observe(
+            "Inspect the last confirmed step and outstanding work.", "operation_id"
+        ),
+        "cancel_prefab": _edit("Cancel outstanding prefab workflow steps.", "operation_id"),
         "inspect": _observe(
             "Page existing Addressables groups, entries or raw profile values and their settings revision.",
             "settings_path",
@@ -106,24 +154,6 @@ INTEGRATION_ACTIONS: Final = {
             "Replace a raw variable value in an existing profile.",
             "settings_path",
             "expected_revision",
-        "preview_prefab": _edit(
-            "Prepare a receipt-scoped prefab copy and registration.",
-            "operation_id",
-            "settings_path",
-            "group_guid",
-            "source_prefab",
-            "prefab_path",
-        ),
-        "create_prefab": _edit(
-            "Create the previewed prefab and checkpoint its actual GUID.", "operation_id"
-        ),
-        "register_prefab": _edit(
-            "Register the checkpointed prefab in its previewed group.", "operation_id"
-        ),
-        "prefab_status": _observe(
-            "Inspect the last confirmed step and outstanding work.", "operation_id"
-        ),
-        "cancel_prefab": _edit("Cancel outstanding prefab workflow steps.", "operation_id"),
             "profile_id",
             "variable_name",
             "value",
@@ -388,7 +418,13 @@ INTEGRATION_ACTIONS: Final = {
         "list": _observe("List the saved scenarios available to this project."),
         "delete": _edit("Delete the named saved scenario.", "name"),
         "run": _interact("Run a saved scenario in Unity and obtain a job identity.", "name"),
-        "status": _observe("Read the progress and outcome of a scenario job.", "job_id"),
+        "status": _observe(
+            "Read one existing Play Mode scenario job's terminal outcome and observed runtime "
+            "steps, or its progress while running. Does not rerun the scenario.",
+            "job_id",
+            effects=READ_ONLY_EFFECTS,
+            observation=SCENARIO_JOB_OBSERVATION,
+        ),
         "cancel": _interact("Request cancellation of a running scenario job.", "job_id"),
         "reports": _observe("Read scenario report history, optionally filtered by name."),
         "suite_save": _edit("Save a suite definition and its scenario selection.", "suite"),

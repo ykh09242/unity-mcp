@@ -34,9 +34,13 @@ async def test_mcp_first_search_exposes_selectors_and_reaches_all_advertised_rea
     async with Client(server) as client:
         before = {t.name: t for t in await client.list_tools()}
         properties = before["manage_tools"].input_schema["properties"]
-        assert {"editor_live", "asset_file", "imported_asset", "compile_job"} == set(
-            next(t["enum"] for t in properties["observation_source"]["anyOf"] if "enum" in t)
-        )
+        assert {
+            "editor_live",
+            "asset_file",
+            "imported_asset",
+            "compile_job",
+            "scenario_job",
+        } == set(next(t["enum"] for t in properties["observation_source"]["anyOf"] if "enum" in t))
         values = next(t for t in properties["required_values"]["anyOf"] if t.get("type") == "array")
         assert values["minItems"] == 1 and values["maxItems"] <= 32
         assert set(PIXELS + COUNTS) <= set(values["items"]["enum"])
@@ -75,6 +79,94 @@ async def test_mcp_first_search_exposes_selectors_and_reaches_all_advertised_rea
             assert result["match_basis"] == "declared_observation"
             assert all(r["readiness"] == "unobserved" and r["advertised"] for r in result["routes"])
         assert {t.name for t in await client.list_tools()} == before.keys()
+
+
+@pytest.mark.parametrize(
+    ("status", "finished", "environment", "established"),
+    [
+        ("running", None, "editor", False),
+        ("running", 9, "editor", False),
+        ("succeeded", 9, "player", False),
+        ("succeeded", 7, "editor", False),
+        ("failed", 9, "editor", True),
+        ("cancelled", 9, "editor", True),
+        ("succeeded", 9, "editor", True),
+    ],
+)
+def test_terminal_scenario_outcome_excludes_acceptance_and_player_claims(
+    status, finished, environment, established
+):
+    from services.registry.integration_action_guidance import SCENARIO_JOB_OBSERVATION
+    from services.registry.observation_predicates import evaluate_observation
+
+    reply = {
+        "success": True,
+        "data": {
+            "job_id": "a" * 32,
+            "execution_environment": environment,
+            "status": status,
+            "started_unix_ms": 8,
+            "finished_unix_ms": finished,
+        },
+    }
+    assert evaluate_observation(SCENARIO_JOB_OBSERVATION, reply, ["scenario_job.outcome"]) == {
+        "scenario_job.outcome": established
+    }
+
+
+def test_scenario_outcome_distinguishes_finished_timeout_from_pending_finalization():
+    from services.registry.integration_action_guidance import SCENARIO_JOB_OBSERVATION
+    from services.registry.observation_predicates import evaluate_observation
+
+    # Match the Editor snapshot of StepTimeoutPreservesObservationAndSkipsRemainingSteps.
+    report = {
+        "job_id": "a" * 32,
+        "execution_environment": "editor",
+        "status": "timed_out",
+        "phase": "finished",
+        "started_unix_ms": 1000,
+        "finished_unix_ms": 3000,
+        "error": "Step timed out: Menu. Last observation: player is not present",
+        "steps": [
+            {"name": "Menu", "status": "timed_out", "detail": "player is not present"},
+            {"name": "Start", "status": "skipped"},
+            {"name": "Game", "status": "skipped"},
+            {"name": "Player", "status": "skipped"},
+        ],
+    }
+    values = ["scenario_job.outcome"]
+    terminal = {"success": True, "data": report}
+    finalizing = {
+        "success": True,
+        "data": {**report, "status": "running", "phase": "finalizing", "pending_status": "timed_out"},
+    }
+    assert evaluate_observation(SCENARIO_JOB_OBSERVATION, terminal, values) == {values[0]: True}
+    assert evaluate_observation(SCENARIO_JOB_OBSERVATION, finalizing, values) == {values[0]: False}
+
+
+def test_cli_structured_scenario_outcome_only_selects_the_existing_job_reader():
+    response = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "tool",
+            "search",
+            "Play Mode에서 이미 실행한 시나리오 결과를 확인해 주세요.",
+            "--observation-source",
+            "scenario_job",
+            "--required-value",
+            "scenario_job.outcome",
+            "--route-surfaces",
+            "tools",
+        ],
+    )
+    assert response.exit_code == 0, response.output
+    payload = json.loads(response.stdout)
+    assert targets(payload) == {("tool", "manage_play_scenario", "status")}
+    route = payload["route_groups"][0]["representative"]
+    assert route["arguments"] == {"action": "status"}
+    assert route["required_parameters"] == ["job_id"]
 
 
 @pytest.mark.parametrize(
