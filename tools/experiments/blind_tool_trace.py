@@ -210,7 +210,7 @@ def decision(
     return "blocked"
 
 
-def unpack(response: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def unpack(response: dict[str, Any], route: str = "") -> tuple[str, dict[str, Any]]:
     """Read MCP success separately from the domain payload nested in content."""
     result = mapping(response.get("result"))
     if response.get("error"):
@@ -236,7 +236,40 @@ def unpack(response: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         if data.get("kind") == "ugui_raycast_diagnostics" and data.get("status") == "failed":
             return "error", data
         return "error", {}
+    if route in SEARCH_ROUTES and isinstance(result.get("content"), list):
+        data = value.get("data") if value.get("success") is True else value
+        if isinstance(data, dict) and isinstance(data.get("routes"), list):
+            # A linked game asset can contain a private path. Record only public concrete
+            # identifiers already present among this response's ranked candidates.
+            from tools.experiments.blind_tool_diagnostics import search_receipt
+
+            ranked = {name for group in search_receipt(data)["top3"] for name in group}
+            blocks = [mapping(block) for block in result["content"]]
+            return "returned", {
+                **data,
+                "resource_link_count": sum(
+                    block.get("type") == "resource_link" for block in blocks
+                ),
+                "linked_top3": sorted(
+                    {
+                        block["uri"]
+                        for block in blocks
+                        if block.get("type") == "resource_link"
+                        and isinstance(block.get("uri"), str)
+                        and block["uri"] in ranked
+                    }
+                ),
+            }
     if value.get("success") is True:
+        windows = value.get("data")
+        if route == "mcpforunity://editor/windows" and isinstance(windows, list) and windows:
+            types = [mapping(window).get("typeName") for window in windows]
+            if not value.get("truncated") and all(isinstance(name, str) and name for name in types):
+                return "returned", {
+                    "shader_graph_window_listed": any(
+                        name.startswith("UnityEditor.ShaderGraph.") for name in types
+                    )
+                }
         return "returned", mapping(value.get("data"))
     if isinstance(value.get("routes"), list) and value.get("scope") in {
         "mcp_context",
@@ -258,6 +291,11 @@ def positive_size(value: Any) -> list[int] | None:
 
 def observation(route: str, data: dict[str, Any], fixture=None) -> dict[str, Any]:
     """Retain the documented evidence fields for the scored read operations."""
+    if (
+        route == "mcpforunity://editor/windows"
+        and type(data.get("shader_graph_window_listed")) is bool
+    ):
+        return {"shader_graph_window_listed": data["shader_graph_window_listed"]}
     if route in actions.CAMERA_ROUTES:
         return actions.camera_facts(data)
     if route in actions.UI_ROUTES:
@@ -267,7 +305,12 @@ def observation(route: str, data: dict[str, Any], fixture=None) -> dict[str, Any
     if route in SEARCH_ROUTES:
         from tools.experiments.blind_tool_diagnostics import search_receipt
 
-        return search_receipt(data)
+        receipt = search_receipt(data)
+        if "resource_link_count" in data:
+            receipt.update(
+                resource_link_count=data["resource_link_count"], linked_top3=data["linked_top3"]
+            )
+        return receipt
     if route in SIZE_ROUTES:
         size = positive_size(data.get("render_size"))
         selected = mapping(data.get("current_size"))
@@ -506,7 +549,7 @@ def relay_stdio(
                 request = pending.pop(request_id, None) if type(request_id) in (str, int) else None
                 if request is not None:
                     sequence, route, channel = request
-                    outcome, data = unpack(response)
+                    outcome, data = unpack(response, route)
                     if route == RAYCAST and data.get("status") == "failed":
                         outcome = "error"
                     detail = (
@@ -718,7 +761,7 @@ def client_trace(
                                 call.status = string(receipt.get("status"))
                                 call.evidence = mapping(receipt.get("facts"))
                             elif result and call.status == "completed":
-                                call.status, data = unpack({"result": result})
+                                call.status, data = unpack({"result": result}, route)
                                 call.evidence = observation(route, data, fixture)
                                 if route == RAYCAST and data.get("status") == "failed":
                                     call.status = "error"
@@ -1147,6 +1190,18 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         or (task == actions.UI_TASK and call.route == actions.SAVED_UI)
     ]
     first_suitable = next(iter(sequence), None)
+    absent_window = next(
+        (
+            index
+            for index, call in enumerate(business)
+            if task == "graph-open"
+            and role == "confirmed"
+            and call.route == "mcpforunity://editor/windows"
+            and call.status in {"returned", "completed"}
+            and call.evidence.get("shader_graph_window_listed") is False
+        ),
+        None,
+    )
     first_success = next(
         (
             call
@@ -1206,6 +1261,28 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         ),
     }
     searches = actor_searches(actor_host, wire, selected_actor, role == "confirmed")
+    graph_limit = next(
+        (
+            call
+            for call in searches
+            if task == "graph-open"
+            and call.status in {"returned", "completed"}
+            and call.evidence.get("no_match_reason") == "explicitly_unavailable"
+            and call.evidence.get("observation_source") == "editor_live"
+            and "unsaved_graph_structure" in call.evidence.get("excluded_values", [])
+        ),
+        None,
+    )
+    calls_before_graph_limit = None
+    if (
+        graph_limit
+        and actor_host
+        and any(call is graph_limit for call in actor_host.calls.values())
+    ):
+        calls_before_graph_limit = sum(
+            call.channel != "discovery" and call.order < graph_limit.order
+            for call in actor_host.calls.values()
+        )
     diagnosis = stage_diagnosis(
         set() if task == "graph-open" else routes,
         inventory,
@@ -1333,6 +1410,11 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         "wire_evidence": wire_grade,
         "evidence_transport": "configured-host" if host_only else "relay",
         "task_evidence": task_evidence,
+        "calls_before_window_absence": absent_window,
+        "declared_graph_limit": graph_limit is not None
+        if task == "graph-open" and role == "confirmed"
+        else None,
+        "calls_before_declared_graph_limit": calls_before_graph_limit,
         "live_observations": live_observations,
         "graph_data_state": "saved"
         if task.startswith("graph") and (live_observations or host.saved_reads)
@@ -1353,13 +1435,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             if row.get("answer_protocol") == "v3" and row["role"] == "subagent"
             else None,
             explicit_limit=task == "graph-open"
-            and any(
-                call.status in {"returned", "completed"}
-                and call.evidence.get("no_match_reason") == "explicitly_unavailable"
-                and call.evidence.get("observation_source") == "editor_live"
-                and "unsaved_graph_structure" in call.evidence.get("excluded_values", [])
-                for call in searches
-            ),
+            and (absent_window is not None or graph_limit is not None),
         ),
     }
 

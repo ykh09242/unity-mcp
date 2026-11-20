@@ -28,6 +28,7 @@ def test_first_search_logs_only_returned_ranked_bindings():
         "matching": "observation",
         "grouped": True,
         "top3": [["inspect_shader_graph"]],
+        "flat_top3": ["inspect_shader_graph"],
         "distinct_groups": 2,
     }
     assert "private" not in json.dumps(receipt)

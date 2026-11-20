@@ -61,6 +61,7 @@ def search_receipt(data):
         ),
         "grouped": isinstance(groups, list),
         "top3": ranked,
+        "flat_top3": [_route(row) for row in routes[:3]],
         "distinct_groups": count if type(count) is int and count >= 0 else None,
         **(
             {

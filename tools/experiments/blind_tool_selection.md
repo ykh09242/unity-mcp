@@ -320,3 +320,96 @@ preceding calls. All eight actors used the shell first when setup calls are
 included. No candidate actor used ranked search in this follow-up, so these
 sessions cannot isolate the effect of the ranking change. Raw game evidence
 remains local.
+
+### Isolating discovery surfaces
+
+Use the prepared-pair procedure above for each factor. For the description and
+order controls, choose two source revisions with identical trees for the served
+package. Pin each archive and verify both source receipts. In one read-only
+relay's FastMCP server factory, call
+`install_factor(server, "camera-description")` or
+`install_factor(server, "route-order")` from `blind_tool_factors` immediately
+before returning the server. Keep the other relay's responses as shipped.
+
+- The description condition removes one resource-reference sentence from the
+  two advertised camera tool descriptions. Action help, resources and search
+  results keep their original text.
+- The order condition reverses the returned `routes` and `route_groups` on each
+  search page. It preserves group membership, members' descriptions, legacy
+  tool-level `results` and all totals. A single row in each array has no order
+  contrast. Before task delivery compare the tool schemas and a multi-result
+  query's text and structured content in both arms.
+- For protocol links, use the actual before/after server revisions with the same
+  relay and native game. Independently verify equality of the original text,
+  structured results and order. Inspect the additional `resource_link` blocks,
+  including the absence of a link for an unbound resource template.
+
+Ask the natural camera question without naming an API. Pair a saved graph
+question with a current-window question for the same asset. Check the saved
+graph's exact bytes and the Editor's actual window inventory separately. Record
+a missing window as a live limitation and a verified saved read as saved evidence.
+`calls_before_window_absence` counts earlier business calls when the actor
+obtained a complete window list with no Shader Graph window.
+`calls_before_declared_graph_limit` counts earlier host business calls when the
+search reports that current graph contents cannot be observed. Report search use
+over eligible actors, top-three placement over actors with a returned ranking,
+and protocol links over searches with observable content blocks. Keep each
+factor's results and the pre-treatment pilot separate.
+
+Four prepared camera pairs exercised the two counterfactuals in one running game.
+The ordinary relay served `826e55bb7`. Each experimental relay changed one response
+surface of the byte-identical package tree from `63d84de05`.
+Each factor included one main actor and one direct child, with one
+English and one Korean request. All four pairs passed the role, host, permission,
+competitor and stable-state checks. All eight actors opened with the shell and
+eventually obtained the correct answer from the live camera inventory.
+
+| Factor | Business calls before a verified read, main / child | Actors using ranked search, main and child combined |
+| --- | --- | --- |
+| Shipped descriptions / camera sentence omitted | 2 / 4 with the sentence, 3 / 8 without it | 1/2 with the sentence, 2/2 without it |
+| Shipped order / reversed order within the returned page | 4 / 6 in each condition | 0/2 shipped, 1/2 reversed |
+
+Every naturally returned first ranking contained a suitable group in its top
+three. The sole actor who searched in the order comparison got one group
+containing three equivalent bindings. Its group position was fixed. The probe
+also showed that a typed search returning one group can reorder the separate
+flat list. The actor receipts captured group ranks. New receipts include
+`flat_top3` for the flat list as well. These samples cannot estimate the effect
+of ranking on natural adoption.
+
+### Resource links in actual model sessions
+
+Six additional pairs compared `826e55bb7` with `0d2d51ce9`. One separate
+Korean main-actor baseline turn finished before the new links shipped.
+The pairs kept the same running Editor, saved asset bytes, model
+(`gpt-6.2-sol`, medium), read-only sandbox, never approvals, shell and Context7.
+All six pairs passed the controls. Languages below identify prompt locales.
+
+| Request and actor | Baseline / link candidate outcome |
+| --- | --- |
+| Live camera, Korean main | Both first inspected Editor state, then attempted the mixed camera tool. A successful camera resource read followed 6 / 8 prior business calls. Both answers were grounded. |
+| Live camera, English direct child | The first Unity business operation was the camera resource / mixed camera tool. Each reached the camera resource after 2 / 8 prior business calls, without search. Both answers were grounded. |
+| Current graph, English main | Both received an explicit current-buffer limitation after 4 / 3 prior business calls and withheld current values. Only the candidate's optional saved reference had a verified file receipt. |
+| Current graph, Korean direct child | Both received the same limitation after 4 / 5 prior business calls. The baseline submitted saved values in the current fields. The candidate withheld them and supplied an unverified saved reference. |
+| Saved graph, Korean main and English direct child | All four used the shell only for business observations and returned the correct saved counts and two node types. Their path-mentioning commands lacked an attributable literal read with returned graph facts. |
+
+All 12 actors began with a shell command when setup is included. The two
+sources had 5/6 and 6/6 answers agreeing with the independent oracle,
+respectively, and 2/6 and 3/6 fully grounded finals, including any optional
+claims. For the saved task, the sanitized shell records preserve no evidence
+to resolve the unverified claims further. A separate probe verified the
+installed saved-graph tool. The graph resource template was unavailable on the
+installed connection. The evaluator's live window inventory contained no
+Shader Graph window. None of the four current-graph actors obtained that live
+window receipt. Their search established a limitation of the available API.
+
+Three of six actors in each arm searched. Two of those three received an
+empty result explaining the current-buffer limitation. The remaining actor
+received a suitable camera group in the top three in both arms (1/1 each).
+First search responses carried a protocol link in 0/3 baseline and 1/3 candidate
+turns. The recipient subsequently read the camera resource. The receipt does
+not distinguish clicking the link from choosing a URI also present in the text.
+Independent camera, active-scene, saved-graph and current-graph probes preserved
+identical text bytes and structured JSON. Only the camera and active-scene
+queries gained a concrete protocol link. This sample showed no reduction in
+calls to the first verified camera read.

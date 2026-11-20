@@ -488,7 +488,7 @@ def project_item(item, server, asset, project="", fixture=None):
                 if name == "read_mcp_resource":
                     clean["uri"] = args.get("uri")
                 projected["arguments"] = clean
-                status, data = unpack({"result": item.get("result")})
+                status, data = unpack({"result": item.get("result")}, route)
                 if route == RAYCAST and data.get("status") == "failed":
                     status = "error"
                 projected["observed_result"] = {
