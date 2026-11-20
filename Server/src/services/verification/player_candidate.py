@@ -13,6 +13,7 @@ from models.play_scenarios import JobId, ScenarioName
 from models.script_quality import QualityOptions
 from services.script_quality.pages import encoded_size
 from services.verification.affected_checks import bounded_selection, select_affected_checks
+from services.verification.checkout_paths import CheckoutPathAlias, CheckoutPaths
 from services.verification.project_configuration import (
     LOCK_PATH,
     PackageLockEvidence,
@@ -176,14 +177,16 @@ def read_manifest(root, candidate_id, project, *, allow_partial=False, read=read
 
 
 def live_sources(project, paths, *, read=read_bytes, lock_evidence=()):
+    paths = sorted(paths)
+    checkout = CheckoutPaths(project, paths)
     sources = {}
     total = 0
-    for path in sorted(paths):
+    for path in paths:
         # Each manifest rejects aliases. The union can contain both sides of a case-only rename.
         validate_input_paths([path])
         try:
-            content = read(project / path, min(4 * 1024 * 1024, 32 * 1024 * 1024 - total))
-        except FileNotFoundError:
+            content = read(checkout.resolve(path), min(4 * 1024 * 1024, 32 * 1024 * 1024 - total))
+        except (CheckoutPathAlias, FileNotFoundError):
             continue
         total += len(content)
         sources[path] = sha256(content).hexdigest()
@@ -193,6 +196,7 @@ def live_sources(project, paths, *, read=read_bytes, lock_evidence=()):
                 observed = package_lock_evidence(content)
                 if any(row != observed for row in matching):
                     raise ValueError("candidate_package_lock_semantics_mismatch")
+    checkout.finish()
     return sources
 
 

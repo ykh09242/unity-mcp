@@ -12,6 +12,7 @@ from threading import Timer
 from time import monotonic
 
 from cli.utils.play_scenario_analysis_io import safe_local_path
+from services.verification.checkout_paths import CheckoutPaths
 from services.verification.git_draft_artifacts import DRAFT_PATH_LIMIT, pack_inputs
 from services.verification.input_chunks import (
     CHUNK_BYTES,
@@ -75,7 +76,15 @@ class _Git:
         env.update(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", GIT_NO_REPLACE_OBJECTS="1")
         env.update(self.environment)
         with subprocess.Popen(
-            ["git", "--no-pager", "-c", "core.fsmonitor=false", *args],
+            [
+                "git",
+                "--no-pager",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.precomposeUnicode=false",
+                *args,
+            ],
             cwd=self.project,
             env=env,
             stdin=stdin,
@@ -200,15 +209,17 @@ def _blob_ids(git, commit, paths):
 
 def _working_bytes(project, paths):
     sample = SourceSample()
+    checkout = CheckoutPaths(project, paths)
     total = 0
     for path in paths:
         try:
-            data = sample.read(project / path, min(_BLOB_LIMIT, _SOURCE_BYTES - total))
+            data = sample.read(checkout.resolve(path), min(_BLOB_LIMIT, _SOURCE_BYTES - total))
         except FileNotFoundError:
             continue
         total += len(data)
         yield path, data
     sample.finish()
+    checkout.finish()
 
 
 def _snapshot(files):

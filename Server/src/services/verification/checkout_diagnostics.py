@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 from typing import Literal, TypedDict
 
+from services.verification.checkout_paths import CheckoutPathAlias, CheckoutPaths
 from services.verification.git_draft import _BLOB_LIMIT, _SOURCE_BYTES
 from services.verification.input_chunks import SourceSample
 
@@ -16,7 +17,12 @@ _LFS_POINTER = re.compile(
 )
 
 _Kind = Literal[
-    "line_endings", "unhydrated_lfs_pointer", "missing", "content_mismatch", "committed_mismatch"
+    "line_endings",
+    "unhydrated_lfs_pointer",
+    "missing",
+    "path_alias",
+    "content_mismatch",
+    "committed_mismatch",
 ]
 
 _HINTS: dict[_Kind, str] = {
@@ -29,6 +35,10 @@ _HINTS: dict[_Kind, str] = {
         "the proof was made from the exact required bytes."
     ),
     "missing": "Restore the reviewed input in a complete checkout and retry.",
+    "path_alias": (
+        "Use a checkout whose filesystem preserves the reviewed path spelling and can "
+        "represent every selected path separately."
+    ),
     "content_mismatch": "Compare the reported hashes with the reviewed build input and checkout filters.",
     "committed_mismatch": "Verify the proof against the recorded commit and its exact Git blob bytes.",
 }
@@ -57,15 +67,19 @@ class CheckoutInputs:
     """Keep the per-side byte budget and findings while Git streams the committed blobs."""
 
     def __init__(self, project: Path, expected: dict[str, str], sample: SourceSample):
-        self.project = project
+        self.paths = CheckoutPaths(project, expected)
         self.expected = expected
         self.sample = sample
         self.remaining = _SOURCE_BYTES
         self.findings: list[CheckoutFinding] = []
 
     def observe(self, path: str, committed: bytes | None) -> None:
+        alias = False
         try:
-            working = self.sample.read(self.project / path, min(_BLOB_LIMIT, self.remaining))
+            physical = self.paths.resolve(path)
+            working = self.sample.read(physical, min(_BLOB_LIMIT, self.remaining))
+        except CheckoutPathAlias:
+            alias, working = True, None
         except FileNotFoundError:
             working = None
         if working is not None:
@@ -74,7 +88,9 @@ class CheckoutInputs:
         committed_digest = sha256(committed).hexdigest() if committed is not None else None
         working_digest = sha256(working).hexdigest() if working is not None else None
         kind: _Kind
-        if (
+        if alias:
+            kind = "path_alias"
+        elif (
             working is not None
             and committed is not None
             and len(working) <= 1024
@@ -110,6 +126,7 @@ class CheckoutInputs:
         )
 
     def check(self) -> None:
+        self.paths.finish()
         if self.findings:
             raise CheckoutDivergence(sorted(self.findings, key=lambda finding: finding["path"]))
 
