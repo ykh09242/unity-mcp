@@ -59,6 +59,8 @@ UI layout and generated text can remain pending until Unity processes its normal
 
 `find_gameobjects(projection=[...])` optionally projects `name`, `active`, `transform`, `components` and `handle` for the same returned IDs. The projection has separate coverage limits and retains search pagination.
 
+Use `find_gameobjects(scene_scope="exact", scene_path="Assets/Levels/East.unity", search_method="by_path", search_term="/Doors/Main", projection=["handle"])` to isolate a saved additive scene when other loaded scenes have the same hierarchy names. `resultScene` identifies the exact path and session-local native scene handle for that page. An unloaded scene returns `scene_not_loaded`. Multiple loaded instances of the same path return `scene_ambiguous`. Require one unique result before editing. Send its current instance ID to `gameobject_edit` with `search_method="by_id"` and check the edit's returned `instanceID` and `scenePath`. `manage_object_handles(action="resolve", handle=...)` reports the original scene and object while the handle is valid, and `stale_handle` after the scene is unloaded. Rediscover explicitly for a different scene.
+
 Imported-asset reports use the published asset GUID and retain the original job and provider-task IDs. A replaced or missing published asset produces unavailable evidence. Model checks inspect up to 32 hierarchy nodes and 64 components, with separate material and bone limits. Addressables checks retain the edited entry/profile revision and report incomplete coverage when traversal or serialized-field limits are reached.
 
 ## Jobs and result summaries

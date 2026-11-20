@@ -28,10 +28,16 @@ def gameobject():
 @click.option("--limit", "-l", default=50, type=int, help="Maximum results to return.")
 @click.option(
     "--scene-scope",
-    type=click.Choice(["legacy", "active", "all_loaded"]),
+    type=click.Choice(["legacy", "active", "all_loaded", "exact"]),
     default="legacy",
     show_default=True,
-    help="Scene selection; active/all_loaded use opaque continuation cursors.",
+    help="Scene selection; scoped modes use opaque continuation cursors.",
+)
+@click.option(
+    "--scene-path", help="Exact loaded Assets/ or Packages/ scene path with --scene-scope exact."
+)
+@click.option(
+    "--include-handle", is_flag=True, help="Project session handles for the returned IDs."
 )
 @click.option(
     "--cursor",
@@ -47,6 +53,8 @@ def find(
     limit: int,
     cursor: str | None,
     scene_scope: str,
+    scene_path: str | None,
+    include_handle: bool,
 ):
     """Find GameObjects by search criteria.
 
@@ -57,6 +65,7 @@ def find(
         unity-mcp gameobject find --method by_id -- "-81840"
         unity-mcp gameobject find "Rigidbody" --method by_component
         unity-mcp gameobject find "/Canvas/Panel" --method by_path
+        unity-mcp gameobject find "Door" --scene-scope exact --scene-path Assets/Levels/East.unity --include-handle
     """
     params: dict[str, Any] = {
         "searchMethod": method,
@@ -64,6 +73,18 @@ def find(
         "includeInactive": include_inactive,
         "pageSize": limit,
     }
+    if scene_scope == "exact":
+        from services.tools.find_gameobjects import validate_exact_scene_path
+
+        try:
+            validate_exact_scene_path(scene_path)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="--scene-path") from exc
+        params["scene_path"] = scene_path
+    elif scene_path is not None:
+        raise click.BadParameter("requires --scene-scope exact", param_hint="--scene-path")
+    if include_handle:
+        params["projection"] = ["handle"]
     if scene_scope == "legacy":
         params["cursor"] = click.INT.convert(cursor if cursor is not None else "0", None, None)
     else:

@@ -57,7 +57,7 @@ def test_registered_scoped_gameobject_search_contract(mode, tmp_path):
                 assert "256 scene entries, 250000 roots/scene" in entry.description
                 assert "4096 managed traversal steps/page" in entry.description
                 schema = entry.input_schema
-                assert {"scene_scope", "conditions", "max_depth", "cursor"} <= schema["properties"].keys()
+                assert {"scene_scope", "scene_path", "conditions", "max_depth", "cursor"} <= schema["properties"].keys()
                 assert "search_term" not in schema.get("required", [])
                 assert entry.annotations.readOnlyHint is False
                 async def call(arguments):
@@ -73,6 +73,24 @@ def test_registered_scoped_gameobject_search_contract(mode, tmp_path):
                 assert requests[-1][2]["cursor"] == "a" * 32 and requests[-1][2]["max_depth"] == 0
                 assert await call({**args, "projection": ["name", "active", "handle"]}) == reply
                 assert requests[-1][2]["projection"] == ["name", "active", "handle"]
+                exact = {"scene_scope": "exact", "scene_path": "Assets/Additive/Shop.unity", "search_term": "Door", "projection": ["handle"]}
+                reply["data"]["resultScene"] = {"path": exact["scene_path"], "handle": 17}
+                assert await call(exact) == reply
+                assert requests[-1][2]["scene_path"] == exact["scene_path"]
+                assert requests[-1][2]["scene_scope"] == "exact"
+                for invalid in (
+                    {"scene_scope": "exact", "search_term": "Door"},
+                    {**exact, "scene_scope": "all_loaded"},
+                    {**exact, "scene_path": "Shop.unity"},
+                    {**exact, "scene_path": "Assets/../Shop.unity"},
+                    {**exact, "scene_path": "Assets/Shop.UNITY"},
+                    {**exact, "scene_path": "Assets/" + "\U0001f600" * 256 + ".unity"},
+                ):
+                    before = len(requests)
+                    gates = module.preflight.await_count
+                    result = await client.call_tool("find_gameobjects", invalid, raise_on_error=False)
+                    assert result.is_error or json.loads(result.content[0].text)["success"] is False
+                    assert len(requests) == before and module.preflight.await_count == gates
                 before = len(requests)
                 gates = module.preflight.await_count
                 invalid_projection = await client.call_tool("find_gameobjects", {**args, "projection": ["name", "name"]}, raise_on_error=False)

@@ -265,6 +265,7 @@ namespace MCPForUnity.Editor.Helpers
 
         private static JObject Describe(Object target, string handle, Entry entry)
         {
+            string scenePath = entry.Scene.path;
             var descriptor = new JObject
             {
                 ["contractVersion"] = 2,
@@ -274,6 +275,11 @@ namespace MCPForUnity.Editor.Helpers
                 ["instanceID"] = target.GetInstanceIDCompat(),
                 ["name"] = Text(target.name),
                 ["typeName"] = Text(target.GetType().FullName),
+                ["scene"] = new JObject
+                {
+                    ["path"] = scenePath != null && scenePath.Length <= 512 ? scenePath : null,
+                    ["handle"] = UnityJsonSerializer.SceneHandle(entry.Scene),
+                },
                 ["validUntil"] = new JObject
                 {
                     ["editorTimeSeconds"] = entry.Expires,

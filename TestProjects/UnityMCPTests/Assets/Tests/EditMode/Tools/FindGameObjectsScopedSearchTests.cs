@@ -108,6 +108,60 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void ExactAdditiveSelectionReportsTheEditedObjectAndNeverRebindsAfterUnload()
+        {
+            const string targetName = "IdenticalDoor";
+            GameObject survivor = Create(targetName, _firstScene);
+            GameObject target = Create(targetName, _secondScene);
+            string targetScenePath = _secondScene.path;
+            var query = Query("exact", "by_path", "/" + targetName);
+            query["scene_path"] = targetScenePath;
+            query["projection"] = new JArray("handle");
+
+            JObject selection = Search(query);
+            int targetId = target.GetInstanceIDCompat();
+            CollectionAssert.AreEqual(new[] { targetId }, ((JArray)selection["instanceIDs"]).Values<int>());
+            Assert.AreEqual(targetScenePath, selection["resultScene"]["path"].Value<string>());
+            Assert.AreNotEqual(JTokenType.Null, selection["resultScene"]["handle"].Type);
+            string handle = selection["projection"][0]["handle"].Value<string>();
+            var resolve = new JObject { ["action"] = "resolve", ["handle"] = handle };
+            JObject original = JObject.FromObject(ManageObjectHandles.HandleCommand(resolve));
+            Assert.IsTrue(original.Value<bool>("success"), original.ToString());
+            Assert.AreEqual(targetId, original["data"]["instanceID"].Value<int>());
+            Assert.IsTrue(JToken.DeepEquals(selection["resultScene"], original["data"]["scene"]));
+
+            JObject edit = JObject.FromObject(
+                ManageGameObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = targetId,
+                        ["searchMethod"] = "by_id",
+                        ["position"] = new JArray(1, 2, 3),
+                    }
+                )
+            );
+            Assert.IsTrue(edit.Value<bool>("success"), edit.ToString());
+            Assert.AreEqual(targetId, edit["data"]["instanceID"].Value<int>());
+            Assert.AreEqual(targetScenePath, edit["data"]["scenePath"].Value<string>());
+            Assert.AreEqual(new Vector3(1, 2, 3), target.transform.position);
+            Assert.AreEqual(Vector3.zero, survivor.transform.position);
+
+            Assert.IsTrue(EditorSceneManager.CloseScene(_secondScene, true));
+            JObject stale = JObject.FromObject(ManageObjectHandles.HandleCommand(resolve));
+            Assert.IsFalse(stale.Value<bool>("success"), stale.ToString());
+            Assert.AreEqual("stale_handle", stale.Value<string>("code"));
+            JObject unavailable = JObject.FromObject(FindGameObjects.HandleCommand(query));
+            Assert.AreEqual("scene_not_loaded", unavailable.Value<string>("code"), unavailable.ToString());
+            Assert.AreEqual(_firstScene, SceneManager.GetActiveScene());
+            query["scene_path"] = _firstScene.path;
+            JObject survivingSelection = Search(query);
+            CollectionAssert.AreEqual(new[] { survivor.GetInstanceIDCompat() }, ((JArray)survivingSelection["instanceIDs"]).Values<int>());
+            Assert.AreNotEqual(handle, survivingSelection["projection"][0]["handle"].Value<string>());
+            Assert.AreEqual(Vector3.zero, survivor.transform.position);
+        }
+
+        [Test]
         public void ExactId_ExcludesPersistentAssetsAndPreviewScenes()
         {
             GameObject source = Create("PrefabSource", _firstScene);

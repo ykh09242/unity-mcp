@@ -82,6 +82,7 @@ namespace MCPForUnity.Editor.Helpers
         private sealed class Query
         {
             internal string Scope;
+            internal string ScenePath;
             internal string Cursor;
             internal string Signature;
             internal int PageSize;
@@ -243,7 +244,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 token.ThrowIfCancellationRequested();
                 Query query = Parse(parameters, token);
-                SceneInfo[] scenes = SelectScenes(query.Scope, token);
+                SceneInfo[] scenes = SelectScenes(query, token);
                 State state = Resume(query, scenes);
                 var budget = new Budget(token);
                 var ids = new List<int>(query.PageSize);
@@ -342,7 +343,7 @@ namespace MCPForUnity.Editor.Helpers
                 }
 
                 token.ThrowIfCancellationRequested();
-                if (_epoch != state.Epoch || !SameScenes(scenes, SelectScenes(query.Scope, token)))
+                if (_epoch != state.Epoch || !SameScenes(scenes, SelectScenes(query, token)))
                     throw Stale();
                 bool complete = state.SceneIndex >= scenes.Length;
                 // Build and measure before publishing state, so failures never advance or consume input cursors.
@@ -371,6 +372,8 @@ namespace MCPForUnity.Editor.Helpers
                     ["outputLimitBytes"] = OutputLimit,
                     ["stopReason"] = complete ? "complete" : stop,
                 };
+                if (query.ScenePath != null)
+                    data["resultScene"] = new JObject { ["path"] = query.ScenePath, ["handle"] = DescribeSceneHandle(scenes[0].Handle) };
                 var response = new SuccessResponse("Found GameObjects", data);
                 if (Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(response)) > OutputLimit)
                     throw new InvalidOperationException("Search output reservation was exceeded.");
@@ -526,10 +529,12 @@ namespace MCPForUnity.Editor.Helpers
                 token == null || token.Type == JTokenType.Null ? "legacy"
                 : token.Type == JTokenType.String ? token.Value<string>()
                 : null;
-            if (scope != "legacy" && scope != "active" && scope != "all_loaded")
-                throw new ArgumentException("scene_scope must be legacy, active or all_loaded.");
+            if (scope != "legacy" && scope != "active" && scope != "all_loaded" && scope != "exact")
+                throw new ArgumentException("scene_scope must be legacy, active, all_loaded or exact.");
+            if (scope != "exact" && Alias(parameters, "scene_path", "scenePath") != null)
+                throw new ArgumentException("scene_path requires scene_scope exact.");
             if (scope == "legacy" && (parameters["conditions"] != null || parameters["max_depth"] != null || parameters["maxDepth"] != null))
-                throw new ArgumentException("conditions and max_depth require scene_scope active or all_loaded.");
+                throw new ArgumentException("conditions and max_depth require a non-legacy scene_scope.");
             return scope;
         }
 
@@ -541,6 +546,22 @@ namespace MCPForUnity.Editor.Helpers
                 PageSize = Integer(Alias(parameters, "page_size", "pageSize"), 50, 1, 500, "page_size"),
                 Depth = Integer(Alias(parameters, "max_depth", "maxDepth"), 64, 0, 128, "max_depth"),
             };
+            if (query.Scope == "exact")
+            {
+                JToken pathToken = Alias(parameters, "scene_path", "scenePath");
+                string path = pathToken?.Type == JTokenType.String ? pathToken.Value<string>() : null;
+                if (
+                    string.IsNullOrEmpty(path)
+                    || path.Length > 512
+                    || path.Any(char.IsControl)
+                    || path.IndexOf('\\') >= 0
+                    || !(path.StartsWith("Assets/", StringComparison.Ordinal) || path.StartsWith("Packages/", StringComparison.Ordinal))
+                    || !path.EndsWith(".unity", StringComparison.Ordinal)
+                    || path.Split('/').Any(part => part.Length == 0 || part == "." || part == "..")
+                )
+                    throw Invalid("scene_path must be a canonical Assets/ or Packages/ .unity path of at most 512 UTF-16 units.");
+                query.ScenePath = path;
+            }
             if (parameters["page_number"] != null || parameters["pageNumber"] != null)
                 throw Invalid("Scoped searches require opaque cursors, not page_number.");
             JToken cursor = parameters["cursor"];
@@ -599,6 +620,7 @@ namespace MCPForUnity.Editor.Helpers
             }
             query.Signature = new JArray(
                 query.Scope,
+                query.ScenePath,
                 query.PageSize,
                 query.Depth,
                 query.Inactive,
@@ -637,10 +659,10 @@ namespace MCPForUnity.Editor.Helpers
             query.Predicates.Add(predicate);
         }
 
-        private static SceneInfo[] SelectScenes(string scope, CancellationToken token)
+        private static SceneInfo[] SelectScenes(Query query, CancellationToken token)
         {
             var result = new List<SceneInfo>();
-            if (scope == "active")
+            if (query.Scope == "active")
             {
                 Scene active = SceneManager.GetActiveScene();
                 if (!Supported(active))
@@ -654,14 +676,19 @@ namespace MCPForUnity.Editor.Helpers
             {
                 int count = SceneManager.sceneCount;
                 if (count > SceneLimit)
-                    throw Limit("all_loaded supports at most 256 SceneManager entries.");
+                    throw Limit("Scene search supports at most 256 SceneManager entries.");
                 for (int i = 0; i < count; i++)
                 {
                     token.ThrowIfCancellationRequested();
                     Scene scene = SceneManager.GetSceneAt(i);
-                    if (Supported(scene))
-                        AddScene(scene, result, i);
+                    if (!Supported(scene) || (query.ScenePath != null && !string.Equals(scene.path, query.ScenePath, StringComparison.Ordinal)))
+                        continue;
+                    if (query.ScenePath != null && result.Count != 0)
+                        throw new Failure("scene_ambiguous", "More than one loaded scene has the exact scene_path.");
+                    AddScene(scene, result, i);
                 }
+                if (query.ScenePath != null && result.Count == 0)
+                    throw query.Cursor == null ? new Failure("scene_not_loaded", "No loaded ordinary scene has the exact scene_path.") : Stale();
             }
             return result.ToArray();
         }

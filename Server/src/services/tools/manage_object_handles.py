@@ -45,7 +45,9 @@ def validate_handle(handle: Any) -> bool:
         "Never loads assets/scenes, saves, scans or falls back to serialized IDs, names or paths. "
         "require_persistent and allow_asset_load are unsupported, including false: omit both. "
         "On stale_handle rediscover explicitly and capture again. Requires v2 Editor commands; "
-        "older Editors fail closed. Returned instance IDs remain ephemeral; no reload retry."
+        "older Editors fail closed. The descriptor includes the original scene's current path "
+        "(null above 512 UTF-16 units) and session-local native handle. Returned instance IDs "
+        "remain ephemeral; no reload retry."
     ),
     annotations=ToolAnnotations(
         title="Manage Object Handles", readOnlyHint=True, destructiveHint=False, openWorldHint=False

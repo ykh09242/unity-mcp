@@ -16,6 +16,22 @@ from services.tools.preflight import preflight
 _SEARCH_METHODS = {"by_name", "by_tag", "by_layer", "by_component", "by_path", "by_id"}
 
 
+def validate_exact_scene_path(path: str | None) -> None:
+    """Require the canonical scene asset path used by the Editor's exact selector."""
+    if (
+        type(path) is not str
+        or len(path.encode("utf-16-le", errors="surrogatepass")) > 1024
+        or not path.startswith(("Assets/", "Packages/"))
+        or not path.endswith(".unity")
+        or "\\" in path
+        or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in path)
+        or any(part in ("", ".", "..") for part in path.split("/"))
+    ):
+        raise ValueError(
+            "scene_path must be a canonical Assets/ or Packages/ .unity path of at most 512 UTF-16 units."
+        )
+
+
 def _scoped_options(search_term, search_method, conditions, page_size, cursor, max_depth):
     """Validate before preflight; never coerce an opaque cursor or truncate a predicate."""
     page_size = 50 if page_size is None else page_size
@@ -65,8 +81,9 @@ def _scoped_options(search_term, search_method, conditions, page_size, cursor, m
         "Optional projection fields name/active/transform/components/handle describe the same returned IDs, "
         "capped at64 rows,16KiB and16 component names per row; projection_verification reports incomplete coverage. "
         "scene_scope=legacy (default) preserves method-dependent scene selection and numeric offsets. "
-        "active uses SceneManager's reported active scene; all_loaded covers loaded ordinary scenes, "
-        "excluding preview/prefab stages. Scoped conditions are ANDed (at most eight predicates total). "
+        "active uses SceneManager's reported active scene; all_loaded covers loaded ordinary scenes. "
+        "exact requires scene_path and reports resultScene. Scoped modes exclude preview/prefab stages. "
+        "Scoped conditions are ANDed (at most eight predicates total). "
         "Scoped pages use opaque cursors and require identical options and unchanged scenes. "
         "Empty continuation pages are valid: hasMore means remaining scan work, not more matches. "
         "totalCount is unknown until complete and then exact only through max_depth (default64, max128). "
@@ -112,11 +129,15 @@ async def find_gameobjects(
         ),
     ] = None,
     scene_scope: Annotated[
-        Literal["legacy", "active", "all_loaded"],
+        Literal["legacy", "active", "all_loaded", "exact"],
         Field(
             description="Explicit scene selection; legacy preserves existing method-dependent scope"
         ),
     ] = "legacy",
+    scene_path: Annotated[
+        str | None,
+        Field(description="Exact loaded Assets/ or Packages/ .unity path for scene_scope=exact"),
+    ] = None,
     conditions: Annotated[
         list[dict[str, Any]] | None,
         Field(
@@ -157,13 +178,23 @@ async def find_gameobjects(
             "success": False,
             "message": "projection requires up to five unique supported fields.",
         }
-    if scene_scope not in ("legacy", "active", "all_loaded"):
-        return {"success": False, "message": "scene_scope must be legacy, active or all_loaded."}
+    if scene_scope not in ("legacy", "active", "all_loaded", "exact"):
+        return {
+            "success": False,
+            "message": "scene_scope must be legacy, active, all_loaded or exact.",
+        }
+    if scene_scope == "exact":
+        try:
+            validate_exact_scene_path(scene_path)
+        except ValueError as exc:
+            return {"success": False, "message": str(exc)}
+    elif scene_path is not None:
+        return {"success": False, "message": "scene_path requires scene_scope exact."}
     if scene_scope == "legacy":
         if conditions is not None or max_depth is not None:
             return {
                 "success": False,
-                "message": "conditions and max_depth require scene_scope active or all_loaded.",
+                "message": "conditions and max_depth require a non-legacy scene_scope.",
             }
         if not search_term:
             return {
@@ -206,6 +237,8 @@ async def find_gameobjects(
         }
         if scene_scope != "legacy":
             params.update(scene_scope=scene_scope, conditions=conditions, max_depth=max_depth)
+        if scene_path is not None:
+            params["scene_path"] = scene_path
         if projection is not None:
             params["projection"] = projection
         params = {key: value for key, value in params.items() if value is not None}
