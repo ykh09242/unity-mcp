@@ -14,7 +14,7 @@ $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 $intermediate = (Join-Path $OutputRoot 'obj').Replace('\', '/') + '/'
 $binary = (Join-Path $OutputRoot 'bin').Replace('\', '/') + '/'
 $dotnetArgs = @(
-    'run', '--project', (Join-Path $PSScriptRoot 'StoreHarness.csproj'),
+    '--project', (Join-Path $PSScriptRoot 'StoreHarness.csproj'),
     '--configuration', 'Release',
     "--property:BaseIntermediateOutputPath=$intermediate",
     "--property:OutputPath=$binary"
@@ -23,5 +23,5 @@ if ($KeyStoreSourceRoot) {
     $dotnetArgs += "--property:KeyStoreSourceRoot=$([IO.Path]::GetFullPath($KeyStoreSourceRoot))"
 }
 $dotnetArgs += @('--', (Join-Path $OutputRoot 'probes'))
-& dotnet @dotnetArgs
+& (Join-Path $repositoryRoot 'tools/Invoke-DotnetFixture.ps1') @dotnetArgs
 exit $LASTEXITCODE

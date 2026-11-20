@@ -9,6 +9,7 @@ on:
       - MCPForUnity/Editor/Helpers/Atomic*.cs
       - MCPForUnity/Runtime/Helpers/SafePathUtility.cs
       - tools/tests/fixtures/generation_journal/**
+      - tools/run_dotnet.py
       - .github/workflows/generation-journal.yml
   push:
     branches: [beta]
@@ -18,6 +19,7 @@ on:
       - MCPForUnity/Editor/Helpers/Atomic*.cs
       - MCPForUnity/Runtime/Helpers/SafePathUtility.cs
       - tools/tests/fixtures/generation_journal/**
+      - tools/run_dotnet.py
       - .github/workflows/generation-journal.yml
   workflow_dispatch: {}
 
@@ -42,4 +44,4 @@ jobs:
           dotnet-version: 11.0.100
           skip-lts-prepass: true
       - name: Verify instance lease and owned process interruption
-        run: dotnet run --project tools/tests/fixtures/generation_journal/JournalHarness.csproj -- "${{ runner.temp }}/generation-journal"
+        run: python tools/run_dotnet.py run --project tools/tests/fixtures/generation_journal/JournalHarness.csproj -- "${{ runner.temp }}/generation-journal"

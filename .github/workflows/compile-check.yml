@@ -36,6 +36,7 @@ on:
       - CustomTools/RoslynRuntimeCompilation/**/*.cs
       - TestProjects/UnityMCPTests/**
       - tools/compile-check.sh
+      - tools/run_dotnet.py
       - tools/public-api/**
       - tools/compile-optional-modules.sh
       - tools/optional-module-paths.txt
@@ -230,8 +231,8 @@ jobs:
         run: |
           set -euo pipefail
           project='MCPForUnity/Editor/ScriptDiagnosticsHost~/ScriptDiagnosticsHost.csproj'
-          dotnet restore "$project" --locked-mode
-          package=$(dotnet msbuild "$project" -nologo -getProperty:PkgMicrosoft_Unity_Analyzers)
+          python3 tools/run_dotnet.py restore "$project" --locked-mode
+          package=$(python3 tools/run_dotnet.py msbuild "$project" -nologo -getProperty:PkgMicrosoft_Unity_Analyzers)
           destination=.unity-ci/analyzers/Microsoft.Unity.Analyzers.dll
           install -D -m 644 "$package/analyzers/dotnet/cs/Microsoft.Unity.Analyzers.dll" "$destination"
           printf 'dll=/repo/%s\n' "$destination" >> "$GITHUB_OUTPUT"
@@ -253,8 +254,8 @@ jobs:
         run: |
           set -euo pipefail
           tests=tools/tests/fixtures/script_diagnostics_host/ScriptDiagnosticsHost.Tests.csproj
-          dotnet restore "$tests" --locked-mode
-          dotnet test "$tests" --no-restore -p:TreatWarningsAsErrors=true
+          python3 tools/run_dotnet.py restore "$tests" --locked-mode
+          python3 tools/run_dotnet.py test "$tests" --no-restore -p:TreatWarningsAsErrors=true
 
       - name: Compile [compile:${{ matrix.unity.version }}:main]
         env:

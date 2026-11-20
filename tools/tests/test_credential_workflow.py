@@ -29,6 +29,7 @@ def test_credential_changes_select_assurance_without_unrelated_changes(event: st
             "tools/tests/fixtures/key_store_process/ProcessHarness.cs",
             "tools/tests/fixtures/key_store_process/ProcessHarness.csproj",
             "tools/tests/fixtures/key_store_process/RunRegression.ps1",
+            "tools/Invoke-DotnetFixture.ps1",
             "tools/tests/test_credential_workflow.py",
             ".github/workflows/credential-assurance.yml",
         ]

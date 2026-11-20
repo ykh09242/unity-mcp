@@ -21,5 +21,5 @@ $project = @'
 '@
 [IO.File]::WriteAllText((Join-Path $work 'Harness.csproj'), $project)
 Write-Output 'MANAGED SEAMS: actual callback scheduler; simulated Editor tick/update; no Editor launched'
-& dotnet run --project (Join-Path $work 'Harness.csproj') -c Release
+& (Join-Path $root 'tools/Invoke-DotnetFixture.ps1') --project (Join-Path $work 'Harness.csproj') -c Release
 exit $LASTEXITCODE

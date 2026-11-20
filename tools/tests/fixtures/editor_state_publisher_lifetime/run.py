@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -135,7 +136,8 @@ internal partial class TransportLifetimeBoundary
     )
     return subprocess.call(
         [
-            "dotnet",
+            sys.executable,
+            str(ROOT / "tools/run_dotnet.py"),
             "run",
             "--project",
             str(output / "Harness.csproj"),

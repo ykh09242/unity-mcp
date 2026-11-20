@@ -40,5 +40,5 @@ $project = @"
 "@
 [IO.File]::WriteAllText((Join-Path $work 'Harness.csproj'), $project)
 Write-Output 'MANAGED SEAMS: actual refresh scheduler, compilation reservation and admission barriers; simulated Unity lifecycle; no Editor launched'
-& dotnet run --project (Join-Path $work 'Harness.csproj') -c Release
+& (Join-Path $root 'tools/Invoke-DotnetFixture.ps1') --project (Join-Path $work 'Harness.csproj') -c Release
 exit $LASTEXITCODE

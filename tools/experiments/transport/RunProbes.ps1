@@ -7,9 +7,9 @@ $pythonPath = Join-Path $repoRoot "Server/.venv/Scripts/python.exe"
 $fixtureDirectory = Join-Path $PSScriptRoot (".artifacts/" + [Guid]::NewGuid().ToString("N") + "/fixtures")
 $outputPath = [IO.Path]::GetFullPath((Join-Path $repoRoot $OutputDirectory))
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
-& dotnet restore (Join-Path $PSScriptRoot "dotnet/TransportProbe.csproj") --locked-mode --packages (Join-Path $PSScriptRoot ".artifacts/nuget")
+& $pythonPath (Join-Path $repoRoot "tools/run_dotnet.py") restore (Join-Path $PSScriptRoot "dotnet/TransportProbe.csproj") --locked-mode --packages (Join-Path $PSScriptRoot ".artifacts/nuget")
 if ($LASTEXITCODE) { throw "Experiment package restore failed" }
-& dotnet build (Join-Path $PSScriptRoot "dotnet/TransportProbe.csproj") -c Release --no-restore
+& $pythonPath (Join-Path $repoRoot "tools/run_dotnet.py") build (Join-Path $PSScriptRoot "dotnet/TransportProbe.csproj") -c Release --no-restore
 if ($LASTEXITCODE) { throw "Experiment build failed" }
 & $pythonPath (Join-Path $PSScriptRoot "prepare.py") $fixtureDirectory
 if ($LASTEXITCODE) { throw "Fixture generation failed" }

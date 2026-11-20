@@ -16,7 +16,7 @@ foreach ($harness in @('LifecycleHarness', 'ProcessHarness')) {
     $intermediate = (Join-Path $artifactRoot 'obj').Replace('\', '/') + '/'
     $binary = (Join-Path $artifactRoot 'bin').Replace('\', '/') + '/'
     $dotnetArgs = @(
-        'run', '--project', (Join-Path $PSScriptRoot "$harness.csproj"),
+        '--project', (Join-Path $PSScriptRoot "$harness.csproj"),
         '--configuration', 'Release',
         "--property:BaseIntermediateOutputPath=$intermediate",
         "--property:OutputPath=$binary"
@@ -24,7 +24,7 @@ foreach ($harness in @('LifecycleHarness', 'ProcessHarness')) {
     if ($harness -eq 'ProcessHarness') {
         $dotnetArgs += @('--', (Join-Path $artifactRoot 'probes'))
     }
-    & dotnet @dotnetArgs
+    & (Join-Path $repositoryRoot 'tools/Invoke-DotnetFixture.ps1') @dotnetArgs
     if ($LASTEXITCODE -ne 0) {
         $failed = $true
     }

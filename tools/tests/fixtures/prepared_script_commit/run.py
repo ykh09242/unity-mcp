@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import subprocess
+import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -66,7 +67,15 @@ def main() -> int:
         encoding="utf-8",
     )
     return subprocess.call(
-        ["dotnet", "run", "--project", str(output / "Harness.csproj"), "-c", "Release"],
+        [
+            sys.executable,
+            str(ROOT / "tools/run_dotnet.py"),
+            "run",
+            "--project",
+            str(output / "Harness.csproj"),
+            "-c",
+            "Release",
+        ],
         cwd=ROOT,
     )
 

@@ -153,7 +153,8 @@ $clear
     )
     return subprocess.call(
         [
-            "dotnet",
+            sys.executable,
+            str(ROOT / "tools/run_dotnet.py"),
             "run",
             "--project",
             str(output / "WindowActions.csproj"),

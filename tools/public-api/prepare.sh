@@ -13,8 +13,9 @@ if ! git -C "$repo" cat-file -e "$revision^{commit}" 2>/dev/null; then
 fi
 test "$(git -C "$repo" rev-parse "$revision^{commit}")" = "$revision"
 git -C "$repo" archive "$revision" MCPForUnity/Editor MCPForUnity/Runtime | tar -xf - -C "$destination"
-dotnet build "$repo/tools/public-api/checker/PublicApi.csproj" --nologo --disable-build-servers \
-  -m:1 -nr:false -p:UseSharedCompilation=false \
+sdk_python=python3
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then sdk_python=python; fi
+"$sdk_python" "$repo/tools/run_dotnet.py" build "$repo/tools/public-api/checker/PublicApi.csproj" --nologo \
   --artifacts-path "$destination/dotnet" -o "$destination/checker"
 printf '%s\n' "$revision" > "$destination/revision.txt"
 echo "Prepared public API baseline $revision"

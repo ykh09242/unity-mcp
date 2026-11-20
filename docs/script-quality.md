@@ -21,8 +21,9 @@ The Addressables fixture compiles in its separate native package profile. Three 
 external callers. The script-quality tests activate deliberate analyzer findings
 only in their test analysis request.
 
-To run the same checks locally, restore `MCPForUnity/Editor/ScriptDiagnosticsHost~/ScriptDiagnosticsHost.csproj`
-with `dotnet restore --locked-mode`. Set `UNITY_ANALYZER_DLL` to
+From the repository root, run
+`python tools/run_dotnet.py restore MCPForUnity/Editor/ScriptDiagnosticsHost~/ScriptDiagnosticsHost.csproj --locked-mode`.
+Set `UNITY_ANALYZER_DLL` to
 `analyzers/dotnet/cs/Microsoft.Unity.Analyzers.dll` under the restored package
 and `UNITY_ANALYZER_SDK` to the installed SDK version directory. Run
 `tools/compile-check.sh` with the Unity and package inputs documented in that script.
@@ -114,6 +115,24 @@ do not replay analysis. A domain reload stops the owned host and preserves an
 unsettled-process barrier when termination cannot be proven.
 
 ## CLI
+
+### Verifying the analysis host locally
+
+Run the same locked restore and host tests as the compile workflow from the repository root.
+The SDK runner checks that temporary storage and the requested artifact directory accept
+a real write before starting MSBuild. Each SDK command gets its own temporary directory.
+A build or assertion failure retains its diagnostics and exit status.
+
+```sh
+python tools/run_dotnet.py restore tools/tests/fixtures/script_diagnostics_host/ScriptDiagnosticsHost.Tests.csproj --locked-mode --artifacts-path .work/analysis-host/artifacts
+python tools/run_dotnet.py test tools/tests/fixtures/script_diagnostics_host/ScriptDiagnosticsHost.Tests.csproj --no-restore --artifacts-path .work/analysis-host/artifacts -p:TreatWarningsAsErrors=true
+```
+
+If the inherited temporary directory is unavailable, pass `--temp-parent` and an existing
+writable directory before the SDK command. The Editor reports `analysis_temp_unwritable`
+when the analysis host cannot use its temporary directory.
+
+### Using the MCP CLI
 
 The CLI uses the public MCP server composition, preserving baseline/report handles:
 

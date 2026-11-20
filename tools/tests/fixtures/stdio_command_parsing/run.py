@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -96,7 +97,15 @@ def main():
         f"<HintPath>{dll}</HintPath></Reference></ItemGroup></Project>",
         encoding="utf-8",
     )
-    command = ["dotnet", "run", "--project", str(output / "Harness.csproj"), "-c", "Release"]
+    command = [
+        sys.executable,
+        str(ROOT / "tools/run_dotnet.py"),
+        "run",
+        "--project",
+        str(output / "Harness.csproj"),
+        "-c",
+        "Release",
+    ]
     if args.require_reuse:
         command += ["--", "--require-reuse"]
     return subprocess.call(command, cwd=ROOT)
