@@ -1,9 +1,11 @@
 """Real Git ranges and pinned Ruff establish CI selection and check-only behavior."""
 
+from collections.abc import Iterator
 from fnmatch import fnmatchcase
 from pathlib import Path
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 
 import pytest
 import yaml
@@ -55,11 +57,20 @@ def commit(root):
 
 
 @pytest.fixture
-def repository(tmp_path):
-    git(tmp_path, "init")
-    git(tmp_path, "config", "user.name", "Formatting test")
-    git(tmp_path, "config", "user.email", "formatting@example.invalid")
-    git(tmp_path, "config", "core.autocrlf", "false")
+def checkout_path() -> Iterator[Path]:
+    # Ruff force-excludes **/Temp/**, which contains the Windows default tmp_path.
+    scratch = ROOT / ".work"
+    scratch.mkdir(exist_ok=True)
+    with TemporaryDirectory(prefix="changed-formatting-", dir=scratch) as directory:
+        yield Path(directory)
+
+
+@pytest.fixture
+def repository(checkout_path: Path) -> tuple[Path, str]:
+    git(checkout_path, "init")
+    git(checkout_path, "config", "user.name", "Formatting test")
+    git(checkout_path, "config", "user.email", "formatting@example.invalid")
+    git(checkout_path, "config", "core.autocrlf", "false")
     for path, content in {
         "tools/unchanged.py": "value = 1\n",
         "tools/changed.py": "value = 1\n",
@@ -75,8 +86,8 @@ def repository(tmp_path):
             encoding="utf-8"
         ),
     }.items():
-        write(tmp_path, path, content)
-    return tmp_path, commit(tmp_path)
+        write(checkout_path, path, content)
+    return checkout_path, commit(checkout_path)
 
 
 def test_complete_range_includes_added_renamed_destinations_but_not_deleted_or_manual(repository):

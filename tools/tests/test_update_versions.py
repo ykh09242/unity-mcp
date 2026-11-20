@@ -51,11 +51,19 @@ SAMPLE_LOCK = (
 
 
 @pytest.fixture
-def lock_file(tmp_path, monkeypatch):
-    path = tmp_path / "uv.lock"
-    path.write_bytes(SAMPLE_LOCK.encode("utf-8"))
+def lock_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # The publisher stages atomic replacements in the checkout containing the target.
+    path = tmp_path / "Server" / "uv.lock"
+    path.parent.mkdir()
+    monkeypatch.setattr(update_versions, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(update_versions, "UV_LOCK", path)
     return path
+
+
+@pytest.fixture
+def lock_file(lock_path: Path) -> Path:
+    lock_path.write_bytes(SAMPLE_LOCK.encode("utf-8"))
+    return lock_path
 
 
 def test_update_uv_lock_rewrites_only_the_project_entry(lock_file):
@@ -79,42 +87,36 @@ def test_update_uv_lock_dry_run_does_not_write(lock_file):
     assert 'version = "10.1.0"' in lock_file.read_bytes().decode("utf-8")
 
 
-def test_update_uv_lock_preserves_crlf_line_endings(tmp_path, monkeypatch):
+def test_update_uv_lock_preserves_crlf_line_endings(lock_path):
     """A core.autocrlf checkout must not be rewritten to LF (or vice versa) by a version bump."""
-    path = tmp_path / "uv.lock"
-    path.write_bytes(SAMPLE_LOCK.replace("\n", "\r\n").encode("utf-8"))
-    monkeypatch.setattr(update_versions, "UV_LOCK", path)
+    lock_path.write_bytes(SAMPLE_LOCK.replace("\n", "\r\n").encode("utf-8"))
     assert update_versions.update_uv_lock("10.2.0") is True
-    raw = path.read_bytes()
+    raw = lock_path.read_bytes()
     assert b"\r\n" in raw
     assert b"\n" not in raw.replace(b"\r\n", b"")
     assert b'name = "ykh09242-unity-mcp-server"\r\nversion = "10.2.0"' in raw
 
 
-def test_update_uv_lock_missing_entry_is_a_refusal(tmp_path, monkeypatch):
-    path = tmp_path / "uv.lock"
-    path.write_bytes(b'version = 1\n\n[[package]]\nname = "click"\nversion = "8.3.1"\n')
-    monkeypatch.setattr(update_versions, "UV_LOCK", path)
+def test_update_uv_lock_missing_entry_is_a_refusal(lock_path):
+    lock_path.write_bytes(b'version = 1\n\n[[package]]\nname = "click"\nversion = "8.3.1"\n')
     with pytest.raises(ValueError):
         update_versions.update_uv_lock("10.2.0")
-    assert b'version = "8.3.1"' in path.read_bytes()
+    assert b'version = "8.3.1"' in lock_path.read_bytes()
 
 
-def test_update_uv_lock_missing_file_is_a_refusal(tmp_path, monkeypatch):
-    monkeypatch.setattr(update_versions, "UV_LOCK", tmp_path / "absent.lock")
+@pytest.mark.usefixtures("lock_path")
+def test_update_uv_lock_missing_file_is_a_refusal():
     with pytest.raises(FileNotFoundError):
         update_versions.update_uv_lock("10.2.0")
 
 
-def test_update_uv_lock_matches_the_checked_in_lock_format(tmp_path, monkeypatch):
+def test_update_uv_lock_matches_the_checked_in_lock_format(lock_path):
     """The regex has to keep matching whatever uv writes for this repo."""
-    path = tmp_path / "uv.lock"
-    shutil.copy(REAL_LOCK, path)
-    monkeypatch.setattr(update_versions, "UV_LOCK", path)
+    shutil.copy(REAL_LOCK, lock_path)
     assert update_versions.update_uv_lock("0.0.0.dev0") is True
     assert re.search(
         r'^\[\[package\]\]\s*\nname = "ykh09242-unity-mcp-server"\s*\nversion = "0\.0\.0\.dev0"',
-        path.read_bytes().decode("utf-8"),
+        lock_path.read_bytes().decode("utf-8"),
         re.MULTILINE,
     )
 
