@@ -28,7 +28,9 @@ async def test_new_command_lease_and_wire_share_correlation_even_off_log_sample(
     timing = VerificationTiming("direct")
     with timing.bind():
         assert (await dispatch())["success"]
-    (row,) = timing.finish()["commands"]
+    commands = timing.finish()["commands"]
+    assert len(commands) == 1
+    row = commands[0]
     assert row["scheduler_queue_ms"] >= 0
     assert row["correlation"] == command_hub.sent[0]["diagnostics"]["correlation"]
 

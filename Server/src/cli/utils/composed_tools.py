@@ -73,16 +73,19 @@ async def send_composed_tool(name, action, options, config):
             # Legacy MCP wire avoids automatic schema negotiation re-dispatch.
             async with DiagnosticClient(config, "legacy", factory, headers) as client:
                 with anyio.fail_after(max(0.001, deadline - anyio.current_time())):
-                    read_report = name == "manage_verification" and action == "report"
-                    if read_report:
-                        requested = monotonic()
+                    requested = (
+                        monotonic()
+                        if name == "manage_verification" and action == "report"
+                        else None
+                    )
                     result = await client.call_tool_mcp(
                         name,
                         {"action": action, "options": options},
                         meta={"unity_instance": config.unity_instance},
                     )
-                    if read_report:
-                        response_ms = (monotonic() - requested) * 1000
+                    response_ms = (
+                        (monotonic() - requested) * 1000 if requested is not None else None
+                    )
         wire = result.structured_content
         if (
             wire is None
@@ -100,7 +103,7 @@ async def send_composed_tool(name, action, options, config):
                 else {"success": False, "error": "MCP tool rejected the request."}
             )
         if (
-            read_report
+            response_ms is not None
             and isinstance(wire.get("data"), dict)
             and isinstance(wire["data"].get("timing"), dict)
         ):

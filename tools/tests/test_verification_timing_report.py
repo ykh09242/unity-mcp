@@ -94,7 +94,9 @@ def test_duplicate_native_is_unknown_and_duplicate_run_refused(tmp_path):
     log = tmp_path / "local.jsonl"
     log.write_text(json.dumps(row) + "\n" + json.dumps(row))
     entry = ("cold", "image-a", path)
-    (group,) = summarize_trials([entry], [log])["groups"]
+    groups = summarize_trials([entry], [log])["groups"]
+    assert len(groups) == 1
+    group = groups[0]
     assert group["ambiguous_commands"] == 1
     assert group["phase_ms"]["run_tests.editor.queue"]["median"] is None
     with pytest.raises(ValueError, match="duplicate run ID"):
