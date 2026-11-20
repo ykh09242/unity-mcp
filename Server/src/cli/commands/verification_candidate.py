@@ -12,6 +12,7 @@ from cli.commands.verification_candidate_portable import (
 )
 from cli.commands.verification_dependency_closure import dependency_closure
 from cli.commands.verification_input_chunks import candidate_directory, input_chunks
+from cli.commands.verification_reproduce import reproduce_candidate
 from cli.utils.play_scenario_analysis_io import safe_local_path, write_new
 
 
@@ -25,6 +26,7 @@ verification_candidate.add_command(export_candidate)
 verification_candidate.add_command(verify_candidate)
 verification_candidate.add_command(register_candidate)
 verification_candidate.add_command(dependency_closure)
+verification_candidate.add_command(reproduce_candidate)
 
 
 @verification_candidate.command("draft")

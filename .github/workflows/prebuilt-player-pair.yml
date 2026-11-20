@@ -1,0 +1,169 @@
+name: Prebuilt Player pair
+
+on:
+  push:
+    branches: [beta]
+  workflow_dispatch:
+    inputs:
+      require_player:
+        description: Fail if no reviewed pair is configured
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Clean checkout reproduction command contracts
+    if: github.repository == 'ykh09242/unity-mcp' && github.ref == 'refs/heads/beta'
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - name: Preserve committed bytes during Windows checkout
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.9"
+          python-version: "3.11"
+          enable-cache: false
+      - name: Exercise source, artifact and report admission with synthetic controls
+        env:
+          PYTHONPATH: ${{ github.workspace }}/Server/src
+        run: uv run --locked --project Server --extra dev python -m pytest -q Server/tests/test_verification_reproduce.py
+
+  admission:
+    name: Admit reviewed build artifact
+    if: github.repository == 'ykh09242/unity-mcp' && github.ref == 'refs/heads/beta'
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      admitted: ${{ steps.review.outputs.admitted }}
+      artifact_id: ${{ steps.review.outputs.artifact_id }}
+      run_id: ${{ steps.review.outputs.run_id }}
+      manifest_pin: ${{ steps.review.outputs.manifest_pin }}
+    steps:
+      - name: Check repository review pins and producing run
+        id: review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ vars.VERIFICATION_PLAYER_ARTIFACT_ID }}
+          RUN_ID: ${{ vars.VERIFICATION_PLAYER_RUN_ID }}
+          PRODUCER_SHA: ${{ vars.VERIFICATION_PLAYER_PRODUCER_SHA }}
+          ARCHIVE_SHA: ${{ vars.VERIFICATION_PLAYER_ARCHIVE_SHA256 }}
+          MANIFEST_SHA: ${{ vars.VERIFICATION_PLAYER_PAIR_SHA256 }}
+          REQUIRE_PLAYER: ${{ inputs.require_player || false }}
+        run: |
+          python - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          env = os.environ
+          keys = ("ARTIFACT_ID", "RUN_ID", "PRODUCER_SHA", "ARCHIVE_SHA", "MANIFEST_SHA")
+          missing = [key for key in keys if not env.get(key)]
+          report = {"verifier_commit": env["GITHUB_SHA"], "native_execution": False}
+          def persist():
+              Path("admission.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+              with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                  print(json.dumps(report), file=summary)
+          if missing:
+              report.update(status="unavailable", missing=missing)
+              persist()
+              raise SystemExit(1 if env["REQUIRE_PLAYER"] == "true" or len(missing) != len(keys) else 0)
+          for key, pattern in zip(keys, (r"[1-9][0-9]{0,18}", r"[1-9][0-9]{0,18}", r"[a-f0-9]{40}", r"[a-f0-9]{64}", r"[a-f0-9]{64}")):
+              if not re.fullmatch(pattern, env[key]):
+                  raise SystemExit(f"Invalid repository review pin {key}")
+          def api(path):
+              return json.loads(subprocess.check_output(["gh", "api", "repos/" + env["GITHUB_REPOSITORY"] + "/actions/" + path], timeout=30))
+          artifact = api("artifacts/" + env["ARTIFACT_ID"])
+          run = api("runs/" + env["RUN_ID"])
+          producer = artifact["workflow_run"]
+          if (artifact["id"] != int(env["ARTIFACT_ID"]) or artifact["expired"]
+              or artifact["name"] != "prebuilt-player-pair"
+              or artifact["digest"] != "sha256:" + env["ARCHIVE_SHA"]
+              or producer["id"] != int(env["RUN_ID"]) or producer["head_repository_id"] != producer["repository_id"]
+              or run["id"] != producer["id"] or run["head_repository"]["full_name"] != env["GITHUB_REPOSITORY"]
+              or run["event"] not in ("push", "workflow_dispatch") or run["head_branch"] != "beta"
+              or run["conclusion"] != "success" or run["head_sha"] != producer["head_sha"]
+              or run["head_sha"] != env["PRODUCER_SHA"]):
+              raise SystemExit("Artifact identity or trusted producer mismatch")
+          report.update(status="admitted", artifact_id=artifact["id"], producer_commit=run["head_sha"],
+                        producer_run=run["id"], archive_sha256=env["ARCHIVE_SHA"], manifest_sha256=env["MANIFEST_SHA"])
+          persist()
+          with open(env["GITHUB_OUTPUT"], "a") as outputs:
+              print("admitted=true", file=outputs)
+              print("artifact_id=" + env["ARTIFACT_ID"], file=outputs)
+              print("run_id=" + env["RUN_ID"], file=outputs)
+              print("manifest_pin=" + env["MANIFEST_SHA"], file=outputs)
+          PY
+      - name: Retain admission record
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: player-pair-admission
+          path: admission.json
+          retention-days: 14
+
+  replay:
+    name: Execute reviewed broken and repaired Players
+    needs: [admission, contracts]
+    if: needs.admission.outputs.admitted == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Preserve committed bytes during Windows checkout
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.9"
+          python-version: "3.11"
+          enable-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.admission.outputs.run_id }}
+          artifact-ids: ${{ needs.admission.outputs.artifact_id }}
+          digest-mismatch: error
+          merge-multiple: true
+          path: ${{ runner.temp }}/prebuilt-player-pair
+      - name: Verify checkout and run both native expectations
+        shell: pwsh
+        env:
+          PAIR_SHA256: ${{ needs.admission.outputs.manifest_pin }}
+          PYTHONPATH: ${{ github.workspace }}/Server/src
+        run: |
+          $manifest = Join-Path $env:RUNNER_TEMP 'prebuilt-player-pair/pair.json'
+          $pair = Get-Content -Raw -LiteralPath $manifest | ConvertFrom-Json
+          if ($pair.baseline.status -notin @('failed', 'timed_out') -or $pair.candidate.status -ne 'succeeded') {
+            throw 'Hosted controls require the reviewed broken baseline and repaired candidate'
+          }
+          uv run --project Server --locked python -m cli.main --no-project-context verification-candidate reproduce --project TestProjects/UnityMCPTests --manifest $manifest --sha256 $env:PAIR_SHA256 --output .unity-ci/pair-reproduction
+          exit $LASTEXITCODE
+      - name: Retain native receipt and evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: player-pair-reproduction-${{ github.sha }}
+          path: |
+            .unity-ci/pair-reproduction/reproduction.json
+            .unity-ci/pair-reproduction/*/*/run.json
+            .unity-ci/pair-reproduction/*/*/process.json
+            .unity-ci/pair-reproduction/*/*/diagnostics.json
+            .unity-ci/pair-reproduction/*/*/player.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
