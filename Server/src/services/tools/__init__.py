@@ -54,6 +54,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         logger.warning("No MCP tools registered!")
         return
 
+    from services.tool_discovery import SETUP_GUIDANCE, SearchResultTool, ToolDiscovery
+
     definitions = {}
     groups = {}
     for tool_info in tools:
@@ -74,6 +76,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         wrapped = telemetry_tool(tool_name)(wrapped)
         # Keep the global declaration unchanged: each server owns its decorators.
         factory = FunctionTool if tool_name in ACTION_RULES else Tool
+        if tool_name in {"search_unity_tools", "manage_tools"}:
+            factory = SearchResultTool
         registered = factory.from_function(
             wrapped, name=tool_name, description=description, run_in_thread=True, **kwargs
         )
@@ -90,7 +94,6 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
     logger.info(f"Registered {len(tools)} MCP tools")
 
     from core.config import config as server_config
-    from services.tool_discovery import SETUP_GUIDANCE, ToolDiscovery
 
     discovery = ToolDiscovery(
         mcp,

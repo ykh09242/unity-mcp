@@ -5,15 +5,46 @@ import hashlib
 import json
 import os
 import time
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from fastmcp.server.dependencies import get_context
 from fastmcp.server.transforms import Transform, Visibility
-from mcp.types import ToolListChangedNotification
+from fastmcp.tools import FunctionTool, ToolResult
+from mcp.types import ResourceLink, ToolListChangedNotification
+from mcp_types.version import is_version_at_least
 
 from core.sdk_compatibility import is_reviewed_sdk
 from services.registry import DEFAULT_ENABLED_GROUPS, TOOL_GROUPS
 from transport.protocol import is_sessionless
+
+
+class SearchResultTool(FunctionTool):
+    """Keep the SDK's JSON result and link concrete reads on the requested surfaces."""
+
+    def convert_result(self, raw_value: Any) -> ToolResult:
+        result = super().convert_result(raw_value)
+        if (
+            not isinstance(raw_value, dict)
+            or raw_value.get("scope") != "mcp_context"
+            or not raw_value.get("route_groups")
+        ):
+            return result
+        request = get_context().request_context
+        if request is None or not is_version_at_least(request.protocol_version, "2025-06-18"):
+            return result
+        linked = set()
+        for group in raw_value.get("route_groups", ()):
+            for route in (group["representative"], *group["alternatives"]):
+                if (
+                    route["kind"] == "resource"
+                    and route["advertised"]
+                    and route["uri"] not in linked
+                ):
+                    result.content.append(
+                        ResourceLink(type="resource_link", uri=route["uri"], name=route["name"])
+                    )
+                    linked.add(route["uri"])
+        return result
 
 
 CLIENT_INVENTORY_GUIDANCE = (

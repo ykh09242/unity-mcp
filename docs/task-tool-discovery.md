@@ -232,6 +232,13 @@ groups and omits an equivalent resource when its registered parent tool is
 known to be unavailable. Searches use catalog metadata and do not test or
 change the selected Editor. All routes retain their normal admission checks.
 
+Since MCP 2025-06-18, a search result also includes a `resource_link` content
+block for each distinct advertised, fixed URI in the returned groups. A client
+can open that URI with `resources/read`. For example, the camera inventory
+reads the live scene. With `route_surfaces="tools"`, use the representative
+tool binding. Unbound templates stay in the JSON until the client supplies
+their arguments. The text and structured JSON retain their existing shape.
+
 Use the binding on the chosen route. For Shader Graph, the tool takes a
 full `Assets/*.shadergraph` path as `path`. The resource template uses the
 same path encoded as one URI segment in `encoded_path`. Both take

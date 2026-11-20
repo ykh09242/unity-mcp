@@ -1,9 +1,185 @@
 """Real MCP search sees the final visibility cap without modifying selection."""
 
+import json
+
 from fastmcp import Client
 import pytest
+from starlette.testclient import TestClient
 
 from tests.http.test_discovery_profiles import discovery_server, names  # noqa: F401
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [("2024-11-05", ["text"]), ("2025-03-26", ["text"]), ("2025-06-18", ["text", "resource_link"])],
+)
+def test_resource_link_negotiation(discovery_server, version, expected):
+    server, _ = discovery_server[0]("core")
+    uri = "mcpforunity://scene/cameras"
+
+    @server.resource(uri, name="camera_inventory")
+    def inventory() -> str:
+        return "camera inventory"
+
+    with TestClient(server.http_app(transport="http", json_response=True)) as client:
+        client.headers.update({"Accept": "application/json, text/event-stream"})
+        initialized = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": version,
+                    "capabilities": {},
+                    "clientInfo": {"name": "discovery", "version": "1"},
+                },
+            },
+        )
+        assert initialized.json()["result"]["protocolVersion"] == version
+        client.headers.update(
+            {
+                "Mcp-Session-Id": initialized.headers["mcp-session-id"],
+                "MCP-Protocol-Version": version,
+            }
+        )
+        assert (
+            client.post(
+                "/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"}
+            ).status_code
+            == 202
+        )
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "manage_tools",
+                    "arguments": {"action": "search", "query": uri, "route_surfaces": "resources"},
+                },
+            },
+        )
+        content = response.json()["result"]["content"]
+        assert [item["type"] for item in content] == expected
+        assert json.loads(content[0]["text"])["route_groups"][0]["representative"]["uri"] == uri
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+async def test_search_links_open_advertised_resources_with_unchanged_json(
+    discovery_server, mode, monkeypatch
+):
+    from services.registry import get_registered_tools
+    from services.tools.manage_tools import search_unity_tools
+
+    alias = dict(
+        name="search_unity_tools",
+        func=search_unity_tools,
+        description="Search",
+        group=None,
+        unity_target=None,
+        kwargs={},
+    )
+    monkeypatch.setattr(
+        "services.registry.tool_registry._tool_registry", [*get_registered_tools(), alias]
+    )
+    build, _ = discovery_server
+    server, _ = build("core")
+    fixed = "mcpforunity://scene/cameras"
+    reads = []
+
+    @server.resource(fixed, name="camera_inventory", description="Camera inventory")
+    def inventory() -> str:
+        reads.append(fixed)
+        return "observed camera"
+
+    @server.resource("mcpforunity://scene/cameras/{camera_id}", name="camera_by_id")
+    def camera(camera_id: str) -> str:
+        return camera_id
+
+    async with Client(server, mode=mode) as client:
+        for tool, args in (("search_unity_tools", {}), ("manage_tools", {"action": "search"})):
+            match = await client.call_tool(
+                tool, {**args, "query": fixed, "route_surfaces": "resources"}
+            )
+            assert json.loads(match.content[0].text) == match.structured_content
+            links = [item for item in match.content if item.type == "resource_link"]
+            assert [(str(item.uri), item.name) for item in links] == [(fixed, "camera_inventory")]
+            assert reads == []
+            assert (await client.read_resource(links[0].uri))[0].text == "observed camera"
+            reads.clear()
+            for query, surfaces in (
+                (fixed, "tools"),
+                ("camera_by_id", "resources"),
+                ("no_such_thing", "both"),
+            ):
+                other = await client.call_tool(
+                    tool, {**args, "query": query, "route_surfaces": surfaces, "limit": 1}
+                )
+                assert [item.type for item in other.content] == ["text"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+async def test_active_scene_link_and_tools_only_binding_respect_visibility(
+    discovery_server, mode, monkeypatch
+):
+    from services.registry import get_registered_tools
+    from services.registry.action_catalog import EDITOR_STATE_OBSERVATION, OBSERVATION_META
+
+    uri = "mcpforunity://editor/state"
+    snapshot = {
+        "editor": {"active_scene": {"name": "Unsaved fixture"}},
+        "staleness": {"is_stale": False},
+    }
+    meta = {OBSERVATION_META: EDITOR_STATE_OBSERVATION}
+
+    def inspect_editor_state() -> dict:
+        return snapshot
+
+    entry = dict(
+        name="inspect_editor_state",
+        func=inspect_editor_state,
+        description="Editor state",
+        group="core",
+        unity_target=None,
+        kwargs={"meta": meta},
+    )
+    monkeypatch.setattr(
+        "services.registry.tool_registry._tool_registry", [*get_registered_tools(), entry]
+    )
+    server, _ = discovery_server[0]("core")
+    server.resource(
+        uri, name="editor_state", description="Editor state", meta=meta, tags={"snapshot"}
+    )(inspect_editor_state)
+    query = {
+        "action": "search",
+        "observation_source": "editor_live",
+        "required_values": ["active_scene.name"],
+    }
+    async with Client(server, mode=mode) as client:
+        both = await client.call_tool("manage_tools", query)
+        links = [item for item in both.content if item.type == "resource_link"]
+        assert [str(item.uri) for item in links] == [uri]
+        observed = json.loads((await client.read_resource(links[0].uri))[0].text)
+        tools = await client.call_tool(
+            "manage_tools",
+            {**query, "route_surfaces": "tools", "host_tool_names": ["inspect_editor_state"]},
+        )
+        assert [item.type for item in tools.content] == ["text"]
+        binding = tools.structured_content["route_groups"][0]["representative"]
+        assert binding["tool"] == "inspect_editor_state"
+        assert (
+            (await client.call_tool(binding["tool"], {})).structured_content == observed == snapshot
+        )
+
+    server.disable(tags={"snapshot"}, components={"resource"})
+    async with Client(server, mode=mode) as client:
+        filtered = await client.call_tool("manage_tools", {**query, "route_surfaces": "resources"})
+        assert filtered.structured_content["route_groups"] == []
+        assert [item.type for item in filtered.content] == ["text"]
 
 
 @pytest.mark.asyncio
