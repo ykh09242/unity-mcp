@@ -18,6 +18,20 @@ The command selects supported sources in `Assets` and `Packages` and includes ea
 
 `changed_paths` lists added, modified and deleted files. A GUID found under a different asset path appears in `asset_moves`. A metadata GUID change at the same path appears in `asset_replacements`. An asset removed with no surviving GUID match in the selection appears in `asset_deletions`. Missing GUID evidence leaves the file-level change visible. Exact allowlisted project configuration files use raw hashes, with package-lock comparison also recording whether the dependency resolution changed. Keep the index and working files stable when capturing a staged or working-tree draft.
 
+## Check the anticipated merge
+
+Pass the current receiving ref and reviewed head to inspect what Git would combine with its built-in merge behavior. Use Git 2.43 or newer and a full local checkout containing both commits. The selected Unity project must have a tracked `Assets` directory and a regular `ProjectSettings/ProjectVersion.txt` in the compared trees.
+
+```sh
+unity-mcp --no-project-context verification-candidate anticipate-merge --project . --target origin/main --head review-head --output review/merge.json
+```
+
+The operation computes the actual three-way result in a temporary bare Git repository using read-only access to the original objects. It records the base, target and head commit and tree IDs and the clean merged tree ID. The original checkout, index, refs and object database stay intact. The receiving commit supplies versioned attributes. Local configuration, external merge drivers and checkout filters are outside this prediction. If a parent changes a protected path, the operation reports `unavailable` before loading merge blobs.
+
+The report compares static C# `Resources.Load`, `LoadAsync` and `LoadAll` lookups with the resource asset and `.meta` pairs tracked in each tree. When a branch moves a resource and the other introduces a call to its former key or folder, each parent can have no failures while the merged tree reports `key_not_found` at the new caller. The finding names the caller's merged Git blob, line, key and previous providers, including GUIDs and their merged Resources paths when available. Failures already present in either parent appear in the snapshot evidence. The coverage is `partial_static_resources`. Dynamic calls, custom loaders, package caches and Unity import or Player behavior need separate evidence.
+
+The command returns `0` for a clean Git merge with no new covered findings, `1` for a merged-only finding or Git conflict, and `2` when the required Git objects or static inputs are unavailable. A conflict report gives repo-relative paths and Git's conflict types. Source analysis runs only for a clean merge tree. Loader findings use paths relative to the selected Unity project.
+
 ## Large drafts and registration inputs
 
 Each side keeps its inline `inputs` map when it has at most 128 inputs and fits the 64 KiB registration budget with room for build fields. Larger sides use ordered `input_chunks`. The command selects up to 1,024 paths per side, including metadata, subject to eight chunks of 128 paths and 64 KiB each. File bytes are limited to 4 MiB per file and 32 MiB per side. Long names can reach the chunk byte limit with fewer paths. Split the staging selection or use smaller commit ranges when a selection exceeds the limits.

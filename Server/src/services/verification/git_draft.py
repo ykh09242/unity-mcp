@@ -55,19 +55,25 @@ class _GitFailed(ValueError):
 
 
 class _Git:
-    def __init__(self, project):
+    def __init__(self, project, *, environment=None):
         self.project = project
+        self.environment = environment or {}
         self.deadline = monotonic() + 60
+
+    def remaining(self):
+        seconds = self.deadline - monotonic()
+        if seconds <= 0:
+            raise ValueError("candidate_git_deadline")
+        return seconds
 
     @contextmanager
     def _process(self, *args, stdin=subprocess.DEVNULL, accepted=(0,)):
         # A repository can sit inside a larger checkout. Keep pathnames relative to
         # the selected project and never invoke a diff driver, hook, pager or smudge filter.
-        remaining = self.deadline - monotonic()
-        if remaining <= 0:
-            raise ValueError("candidate_git_deadline")
+        remaining = self.remaining()
         env = {key: val for key, val in os.environ.items() if not key.upper().startswith("GIT_")}
         env.update(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", GIT_NO_REPLACE_OBJECTS="1")
+        env.update(self.environment)
         with subprocess.Popen(
             ["git", "--no-pager", "-c", "core.fsmonitor=false", *args],
             cwd=self.project,
@@ -91,9 +97,14 @@ class _Git:
                     process.kill()
 
     def read(
-        self, *args, limit=_LIST_LIMIT, accepted=(0,), output_error="candidate_git_output_limit"
+        self,
+        *args,
+        limit=_LIST_LIMIT,
+        accepted=(0,),
+        output_error="candidate_git_output_limit",
+        stdin=subprocess.DEVNULL,
     ):
-        with self._process(*args, accepted=accepted) as stream:
+        with self._process(*args, accepted=accepted, stdin=stdin) as stream:
             data = stream.read(limit + 1)
             if len(data) > limit:
                 raise ValueError(output_error)
