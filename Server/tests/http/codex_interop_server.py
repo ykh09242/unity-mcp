@@ -17,6 +17,7 @@ from mcp_types import TextContent
 import main
 from services.registry import mcp_for_unity_tool
 from tests.http.client_assurance_server import build_server as assurance_server
+from transport.protocol import internal_resource_read_target, is_internal_resource_list
 
 STARTUP = uuid4().hex
 
@@ -102,7 +103,13 @@ class ObserveInitialize(Middleware):
         ctx = context.fastmcp_context
         request = ctx.request_context if ctx is not None else None
         if request is not None:
-            observe("request", method=context.method, protocol=request.protocol_version)
+            # Admission can dispatch a resource policy under the enclosing client request.
+            nested = is_internal_resource_list(context) or (
+                context.method == "resources/read"
+                and internal_resource_read_target(ctx, str(context.message.uri)) is not None
+            )
+            event = "internal_resource" if nested else "request"
+            observe(event, method=context.method, protocol=request.protocol_version)
         result = await call_next(context)
         capabilities = getattr(result, "capabilities", None)
         if capabilities is not None:
