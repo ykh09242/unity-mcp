@@ -25,6 +25,8 @@ from mcp.client.streamable_http import streamable_http_client
 
 TOOL = "debug_request_context"
 PACKAGE = "ykh09242-unity-mcp-server"
+STARTUP_TIMEOUT = 15.0
+REQUEST_TIMEOUT = 10.0
 
 
 @dataclass(frozen=True)
@@ -78,27 +80,31 @@ def validate_tool_result(result: types.CallToolResult, origin: Path, root: Path)
         raise RuntimeError("Installed MCP server did not enter its application lifespan")
 
 
-async def exchange(streams, origin: Path, root: Path) -> ProtocolProof:
+async def exchange(
+    streams, origin: Path, root: Path, *, initialize_timeout: float = REQUEST_TIMEOUT
+) -> ProtocolProof:
     """Initialize, traverse a bounded catalog and validate one pure server call."""
     read, write = streams
-    async with ClientSession(read, write, read_timeout_seconds=10.0) as session:
+    # initialize() uses the session default. list_tools() has no per-request
+    # timeout argument, so bound each catalog page independently below.
+    async with ClientSession(read, write, read_timeout_seconds=initialize_timeout) as session:
         with anyio.fail_after(30):
             initialized = await session.initialize()
             if not initialized.protocol_version or not initialized.server_info.name:
                 raise RuntimeError("Installed MCP initialization returned no server identity")
             count = 0
-            listing = await session.list_tools()
+            params = None
             for _ in range(8):
+                with anyio.fail_after(REQUEST_TIMEOUT):
+                    listing = await session.list_tools(params=params)
                 count += len(listing.tools)
                 if TOOL in {tool.name for tool in listing.tools}:
-                    result = await session.call_tool(TOOL, {}, read_timeout_seconds=10.0)
+                    result = await session.call_tool(TOOL, {}, read_timeout_seconds=REQUEST_TIMEOUT)
                     validate_tool_result(result, origin, root)
                     return ProtocolProof(initialized.protocol_version, count, str(origin))
                 if not listing.next_cursor:
                     break
-                listing = await session.list_tools(
-                    params=types.PaginatedRequestParams(cursor=listing.next_cursor)
-                )
+                params = types.PaginatedRequestParams(cursor=listing.next_cursor)
             raise RuntimeError("Installed MCP catalog did not expose the pure diagnostic tool")
 
 
@@ -154,7 +160,10 @@ async def check_stdio(root: Path, origin: Path) -> ProtocolProof:
         env=owned_environment(root),
     )
     async with stdio_client(parameters) as streams:
-        proof = await exchange(streams, origin, root)
+        # Unlike HTTP, stdio has no readiness wait before its first handshake.
+        proof = await exchange(
+            streams, origin, root, initialize_timeout=STARTUP_TIMEOUT + REQUEST_TIMEOUT
+        )
     return replace(proof, child_shutdown="sdk_context_exit")
 
 
@@ -190,7 +199,7 @@ async def check_http(root: Path, origin: Path) -> ProtocolProof:
     )
     token_path = Path(environment["UNITY_MCP_LOCAL_AUTH_TOKEN_FILE"])
     try:
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + STARTUP_TIMEOUT
         while not token_path.exists():
             if process.poll() is not None:
                 raise RuntimeError("Owned installed HTTP server exited before binding")
