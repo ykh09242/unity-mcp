@@ -189,6 +189,110 @@ def test_read_actions_and_callback_risks_are_distinct(entries):
     assert action_card(ugui, "diagnose_raycast")["effects"]["readOnlyHint"] is False
 
 
+@pytest.mark.parametrize(
+    ("tool", "reads"),
+    [
+        ("manage_addressables", {"inspect", "preflight", "analyze_layout"}),
+        ("manage_project_auditor", {"availability", "status", "issues"}),
+        ("manage_localization", {"capabilities", "list_locales", "list_tables", "inspect"}),
+        (
+            "manage_navigation",
+            {"capabilities", "list", "read", "bake_status", "sample_position", "calculate_path"},
+        ),
+        ("manage_sprite_atlas", {"capabilities", "read"}),
+        ("manage_timeline", {"capabilities", "read", "read_director"}),
+        (
+            "manage_packages",
+            {
+                "list_packages",
+                "search_packages",
+                "get_package_info",
+                "ping",
+                "status",
+                "list_registries",
+            },
+        ),
+        ("execute_menu_item", {"inspect", "exists", "evaluate_availability"}),
+        ("import_model", {"search", "preview", "status", "list_providers"}),
+        ("manage_recording", {"capabilities", "status"}),
+        (
+            "manage_play_scenario",
+            {
+                "get",
+                "list",
+                "status",
+                "reports",
+                "suite_get",
+                "suite_list",
+                "suite_status",
+                "suite_reports",
+            },
+        ),
+    ],
+)
+def test_reviewed_dispatchers_expose_only_their_observation_actions(entries, tool, reads):
+    from services.registry.action_catalog import CatalogRequest, browse_catalog
+
+    page = browse_catalog(CatalogRequest(tool=tool, intent="observe"), entries)
+    assert {card["action"] for card in page["actions"]} == reads
+    assert all(card["purpose_source"] == "declared" for card in page["actions"])
+
+
+def test_operation_intent_preserves_callback_and_preview_effects(entries):
+    from services.registry.action_catalog import action_card
+
+    by_name = {entry["name"]: entry for entry in entries}
+    menu = by_name["execute_menu_item"]
+    assert action_card(menu, "inspect")["effects"]["readOnlyHint"]
+    evaluated = action_card(menu, "evaluate_availability")
+    assert evaluated["intent"] == "observe" and not evaluated["effects"]["readOnlyHint"]
+    assert "callback" in evaluated["purpose"]
+    preview = action_card(by_name["manage_timeline"], "preview_start")
+    assert preview["intent"] == "interact" and not preview["effects"]["readOnlyHint"]
+    assert "expected_director_revision" in preview["required_parameters"]
+    unsupported = action_card(by_name["manage_localization"], "set_asset_entry")
+    assert "refus" in unsupported["purpose"].lower()
+
+
+@pytest.mark.parametrize(
+    ("tool", "operation", "value", "field"),
+    [
+        ("manage_navigation", "capabilities", "navigation.package_available", "package_available"),
+        (
+            "manage_project_auditor",
+            "availability",
+            "project_auditor.api_supported",
+            "api_supported",
+        ),
+    ],
+)
+def test_optional_capabilities_report_only_observed_booleans(
+    entries, tool, operation, value, field
+):
+    from services.registry.action_catalog import action_card
+    from services.registry.observation_predicates import evaluate_observation
+    from services.registry.task_search import SearchRequest, search_catalog
+
+    query = SearchRequest(
+        observation_source="editor_live", required_values=[value], intent="observe"
+    )
+    for wording in ("지원 여부", "¿Está disponible?", "対応していますか"):
+        result = search_catalog(query.model_copy(update={"query": wording}), entries)
+        assert [(route["tool"], route["operation"]) for route in result["routes"]] == [
+            (tool, operation)
+        ]
+    card = action_card(next(e for e in entries if e["name"] == tool), operation)
+    for data, expected in (
+        ({field: False}, True),
+        ({field: True}, True),
+        ({field: 0}, False),
+        ({}, False),
+    ):
+        assert evaluate_observation(
+            card["observation"], {"success": True, "data": data}, [value]
+        ) == {value: expected}
+
+
 def test_asset_discovery_distinguishes_import_load_and_reference_index(entries):
     from services.registry.action_catalog import action_card, tool_capability
 

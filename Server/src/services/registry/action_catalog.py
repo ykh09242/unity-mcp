@@ -37,6 +37,7 @@ from services.registry.action_guidance_types import (
 )
 from services.registry.capability_catalog import CAPABILITIES, READ_ONLY_EFFECTS
 from services.registry.editor_action_guidance import EDITOR_ACTIONS
+from services.registry.integration_action_guidance import INTEGRATION_ACTIONS
 from services.registry.tool_registry import TOOL_GROUPS, ToolMaturity
 
 
@@ -834,16 +835,17 @@ TOOL_GUIDANCE: Final = {
     ),
 }
 # Focused adapters share the source tool's dispatcher and server preflight.
-for source, actions in EDITOR_ACTIONS.items():
+_REVIEWED_DISPATCHERS: Final = EDITOR_ACTIONS | INTEGRATION_ACTIONS
+for source, actions in _REVIEWED_DISPATCHERS.items():
     TOOL_GUIDANCE[source] = replace(TOOL_GUIDANCE.get(source, ToolGuidance()), actions=actions)
 for capability in CAPABILITIES:
-    if capability.source in EDITOR_ACTIONS:
+    if capability.source in _REVIEWED_DISPATCHERS:
         TOOL_GUIDANCE[capability.name] = replace(
             TOOL_GUIDANCE.get(capability.name, ToolGuidance()),
             actions={
-                name: EDITOR_ACTIONS[capability.source][name]
+                name: _REVIEWED_DISPATCHERS[capability.source][name]
                 for name in capability.actions
-                if name in EDITOR_ACTIONS[capability.source]
+                if name in _REVIEWED_DISPATCHERS[capability.source]
             },
         )
 

@@ -284,6 +284,19 @@ direct event dispatch. Read the selected card's evidence and callback limits.
 Unclassified actions remain in ordinary browsing. The CLI exposes both filters
 as `--intent`.
 
+An observation can require a callback or an external request. The menu declaration
+reads (`inspect` and `exists`) leave validation callbacks untouched. The separate
+`evaluate_availability` action can run them. A marketplace model preview fetches
+metadata, while starting a Timeline preview operates a scene director. These
+distinctions use the installed operations and their contracts across request languages.
+
+For AI Navigation, request `navigation.module_available` and
+`navigation.package_available` together with source `editor_live`. For Project
+Auditor the selectors are `project_auditor.api_supported` and
+`project_auditor.rules_available`. Each field accepts a native boolean result.
+A successful `false` establishes unavailability for that field. A missing field
+or a refused tool call leaves it unknown.
+
 Tool and action maturity describe support status independently of visibility
 and runtime readiness. Official skill links retain their reviewed immutable
 revision and provide supplementary guidance. The catalog and its hints are

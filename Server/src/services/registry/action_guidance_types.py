@@ -41,6 +41,10 @@ ObservationValue = Literal[
     "compilation",
     "passes",
     "subshader_count",
+    "navigation.module_available",
+    "navigation.package_available",
+    "project_auditor.api_supported",
+    "project_auditor.rules_available",
 ]
 
 
