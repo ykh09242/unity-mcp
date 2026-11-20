@@ -66,8 +66,12 @@ does not. The report checks each selected OS and Python from the workflow at the
 tested commit. Each successful bootstrap needs a checkpoint. Each successful
 installer also needs its install report and raw source, resolution, toolchain and
 probe files. Jobs interrupted before an upload retain their observed phases.
-On partial reruns each row uses its latest actual attempt, including earlier
-successful rows. The report distinguishes missing and expired artifacts from an
+On partial reruns each row uses its latest actual attempt. GitHub can list an
+earlier success under a new attempt and job ID. When that listing has no new
+artifacts, the report links it to the original job only if the runner ID, job
+bounds and complete step timeline match and all original artifacts verify
+against the tested commit. A new execution requires its own evidence.
+The report distinguishes missing and expired artifacts from an
 unavailable inventory. The job uploads its report even when it finds a gap and
 reads the uploaded history back to verify its contents.
 

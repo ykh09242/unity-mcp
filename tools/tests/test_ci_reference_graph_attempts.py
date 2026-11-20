@@ -66,8 +66,14 @@ def test_attempts_preserve_before_and_after_without_accessing_logs():
         "timed_out",
     )
     carried = job(LINUX, 1, success)
+    carried.update(
+        runner_id=1000036296,
+        started_at="2026-11-20T00:00:59Z",
+        completed_at="2026-11-20T00:02:01Z",
+    )
     retry = job(MAC, 2, success)
-    jobs = {1: [first, carried], 2: [carried, retry]}
+    copied = {**carried, "id": 201, "run_attempt": 2}
+    jobs = {1: [first, carried], 2: [carried, copied, retry]}
 
     entry = {
         "name": "reference-graph-checkout-macos-26-intel-python-3.15-42-attempt-1",
@@ -91,12 +97,17 @@ def test_attempts_preserve_before_and_after_without_accessing_logs():
         "matrix_python": "3.15",
     }
     retry_entry = {**entry, "name": entry["name"].removesuffix("1") + "2", "id": 502}
+    linux_entry = {
+        **entry,
+        "name": entry["name"].replace("macos-26-intel", "ubuntu-26.04"),
+        "id": 503,
+    }
     again = {**receipt, "run_attempt": 2}
     repo = f"repos/{RUN.repository}/actions"
     api = {
         f"{repo}/runs/42/artifacts?per_page=100&page=1": {
-            "total_count": 2,
-            "artifacts": [entry, retry_entry],
+            "total_count": 3,
+            "artifacts": [entry, retry_entry, linux_entry],
         },
         **{
             f"{repo}/runs/42/attempts/{number}/jobs?per_page=10&page=1": {
@@ -109,6 +120,7 @@ def test_attempts_preserve_before_and_after_without_accessing_logs():
     artifacts = {
         f"{repo}/artifacts/500/zip": receipt,
         f"{repo}/artifacts/502/zip": again,
+        f"{repo}/artifacts/503/zip": {**receipt, "matrix_os": "ubuntu-26.04"},
     }
 
     def fetch(endpoint):
@@ -132,6 +144,19 @@ def test_attempts_preserve_before_and_after_without_accessing_logs():
     assert result["effective"][MAC]["attempt"] == 2
     assert result["effective"][MAC]["conclusion"] == "success"
     assert result["effective"][LINUX]["attempt"] == 1
+    assert result["carried_forward"] == [
+        {
+            "job": LINUX,
+            "attempt": 2,
+            "job_id": copied["id"],
+            "execution_attempt": 1,
+            "execution_job_id": carried["id"],
+        }
+    ]
+    copied["runner_id"] += 1
+    result = graph.inspect(RUN, fetch)
+    assert result["effective"][LINUX]["attempt"] == 2
+    assert result["effective"][LINUX]["checkout_receipt_status"] == "missing"
 
     receipt["run_attempt"] = 2
     result = graph.inspect(replace(RUN, attempt=1), fetch)

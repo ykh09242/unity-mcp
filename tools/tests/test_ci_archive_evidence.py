@@ -1,5 +1,6 @@
 """Exercise retained proof against exact-attempt API responses and real artifact ZIPs."""
 
+from copy import deepcopy
 from dataclasses import replace
 from io import BytesIO
 import json
@@ -190,6 +191,71 @@ def test_partial_rerun_uses_the_latest_actual_attempt_for_each_row():
         "report": "not_expected",
         "raw": "not_expected",
     }
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "none",
+        "runner",
+        "job_time",
+        "step_time",
+        "prior_failure",
+        "skipped",
+        "prior_sha",
+        "new_raw",
+        "duplicate_source",
+        "duplicate_copy",
+    ],
+)
+def test_partial_rerun_with_new_job_ids_requires_the_same_proven_execution(actions, change):
+    original = actions.jobs[1][0]
+    original.update(
+        runner_id=1000036296,
+        status="completed",
+        started_at="2026-11-20T14:14:09Z",
+        completed_at="2026-11-20T14:14:46Z",
+    )
+    for index, step in enumerate(original["steps"], 1):
+        step.update(
+            number=index,
+            started_at=f"2026-11-20T14:14:{index + 10:02}Z",
+            completed_at=f"2026-11-20T14:14:{index + 11:02}Z",
+        )
+    copied = {**deepcopy(original), "id": 200, "run_attempt": 2}
+    actions.jobs[2] = [copied]
+    actions.add_job(ROWS[1], 2)  # A real execution has its own artifact set.
+    if change == "runner":
+        copied["runner_id"] += 1
+    elif change == "job_time":
+        copied["completed_at"] = "2026-11-20T14:15:46Z"
+    elif change == "step_time":
+        copied["steps"][-1]["completed_at"] = "2026-11-20T14:14:45Z"
+    elif change == "prior_failure":
+        original["conclusion"] = "failure"
+    elif change == "skipped":
+        copied["conclusion"] = "skipped"
+    elif change == "prior_sha":
+        actions.files[1]["archive-checkpoint.json"]["checked_commit"] = "0" * 40
+    elif change == "new_raw":
+        actions.add_artifact(f"{ROWS[0].artifact_prefix}-42-attempt-2", {"install.log": "partial"})
+    elif change == "duplicate_source":
+        actions.jobs[1].append({**original, "id": 110})
+    elif change == "duplicate_copy":
+        actions.jobs[2].append({**copied, "id": 210})
+
+    report = actions.reconcile(2)
+    copies = [c for c in report["evidence"] if c["job_id"] == 200]
+    if change == "none":
+        assert report["issues"] == []
+        assert copies[0]["carried_forward_from"] == {"attempt": 1, "job_id": original["id"]}
+        assert [report["effective"][r.job_name]["attempt"] for r in ROWS] == [1, 2, 1]
+    else:
+        assert report["issues"]
+        assert all("carried_forward_from" not in entry for entry in report["evidence"])
+        assert report["effective"][ROWS[0].job_name]["attempt"] == 2
+    if change == "duplicate_copy":
+        assert report["effective"][ROWS[0].job_name] == {"attempt": 2, "status": "ambiguous_job"}
 
 
 @pytest.mark.parametrize("conclusion", ["skipped", "cancelled", "failure"])

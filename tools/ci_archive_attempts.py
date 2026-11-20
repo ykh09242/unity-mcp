@@ -1,6 +1,7 @@
 """Summarize installer attempts from hosted job metadata, even when a runner lost its log."""
 
 import argparse
+from collections import Counter
 from functools import partial
 import json
 import os
@@ -137,6 +138,44 @@ def inventory(fetch, prefix, field, size):
 API_ERRORS = (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError)
 
 
+def same_successful_execution(job, previous):
+    """Actions can assign a fresh attempt and job ID to an unchanged runner timeline."""
+    if not previous or previous["run_attempt"] >= job["run_attempt"]:
+        return False
+    fields = ("name", "run_id", "head_sha", "runner_id", "started_at", "completed_at", "steps")
+    if (
+        job.get("status") != previous.get("status")
+        or job.get("status") != "completed"
+        or job.get("conclusion") != previous.get("conclusion")
+        or job.get("conclusion") != "success"
+        or not evidence.positive_int(job.get("runner_id"))
+        or any(job.get(key) != previous.get(key) for key in fields)
+    ):
+        return False
+    start, end = job.get("started_at"), job.get("completed_at")
+    utc_time = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"
+    if not all(isinstance(t, str) and re.fullmatch(utc_time, t) for t in (start, end)):
+        return False
+    steps = job.get("steps") or []
+    if start >= end or not any(s.get("conclusion") == "success" for s in steps):
+        return False
+    for step in steps:
+        if (
+            not evidence.positive_int(step.get("number"))
+            or not step.get("name")
+            or step.get("status") != "completed"
+            or step.get("conclusion") not in {"success", "skipped"}
+        ):
+            return False
+        if step["conclusion"] == "success":
+            began, finished = step.get("started_at"), step.get("completed_at")
+            if not all(isinstance(t, str) and re.fullmatch(utc_time, t) for t in (began, finished)):
+                return False
+            if not start <= began <= finished <= end:
+                return False
+    return True
+
+
 def attempt_job_inventory(fetch, prefix):
     # A running workflow can gain jobs between pages. Each retry needs a fresh
     # count and identity set, including when a split-page fetch was interrupted.
@@ -252,15 +291,22 @@ def reconcile(run, kind, selected, fetch=github_api, include_history=False):
     warnings = list(unavailable.values())
     rows = [summarize(j, kind, j["run_attempt"]) for j in jobs]
     store = artifacts(run, fetch)
-    checks, latest, histories = [], {}, []
+    counts = Counter((row["job"], row["attempt"]) for row in rows)
+    checks, actual, histories = [], {}, []
     issues = list(warnings)
+    for (name, number), count in counts.items():
+        if count > 1:
+            issues.append(f"Duplicate installer job: {name}, attempt {number}.")
     if store.records is None:
         issues.append("Artifact inventory unavailable or incomplete.")
     for job, summary in zip(jobs, rows):
         name, number = summary["job"], job["run_attempt"]
         row = selected.get(name)
-        if row is None or (name, number) in latest:
-            issues.append(f"Unexpected or duplicate installer job: {name}, attempt {number}.")
+        if row is None:
+            issues.append(f"Unexpected installer job: {name}, attempt {number}.")
+            continue
+        if counts[name, number] > 1:
+            actual[name] = (job, None)
             continue
         proof = {}
         for role, artifact, expected in evidence.expected_artifacts(row, job, run):
@@ -270,18 +316,36 @@ def reconcile(run, kind, selected, fetch=github_api, include_history=False):
                 expected,
                 partial(evidence.validate_payload, role=role, row=row, job=job, run=run),
             )
-        latest[name, number] = job
-        checks.append({"job": name, "attempt": number, "job_id": job["id"], "artifacts": proof})
+        check = {"job": name, "attempt": number, "job_id": job["id"], "artifacts": proof}
+        checks.append(check)
+        previous = actual.get(name)
+        install = evidence.BOOTSTRAP if row.kind == "bootstrap" else row.step_name
+        if (
+            previous
+            and previous[1] is not None
+            and all(item["status"] == "missing" for item in proof.values())
+            and all(item["status"] == "verified" for item in previous[1].values())
+            and evidence.step_outcomes(job).get(install) == "success"
+            and same_successful_execution(job, previous[0])
+        ):
+            check["carried_forward_from"] = {
+                "attempt": previous[0]["run_attempt"],
+                "job_id": previous[0]["id"],
+            }
+        else:
+            actual[name] = (job, proof)
 
     effective = {}
     for name in selected:
-        attempts = [n for job, n in latest if job == name]
-        if not attempts:
+        if name not in actual:
             effective[name] = {"status": "inventory_unknown" if warnings else "missing_job"}
             issues.append(f"{name}: {effective[name]['status']}.")
             continue
-        number = max(attempts)
-        job = latest[name, number]
+        job, proof = actual[name]
+        number = job["run_attempt"]
+        if proof is None:
+            effective[name] = {"attempt": number, "status": "ambiguous_job"}
+            continue
         effective[name] = {"attempt": number, "job_id": job["id"], "status": job.get("conclusion")}
         if any(n >= number for n in unavailable):
             effective[name]["status"] = "inventory_unknown"
@@ -381,6 +445,12 @@ def main():
             f"| {row['attempt']} | [{row['job']}]({url}) | {row['conclusion'] or 'pending'} | "
             f"{row['last_started'] or 'unknown'} | {row['last_succeeded'] or 'unknown'} | {row['first_unsuccessful'] or '—'} |"
         )
+    for check in report["evidence"]:
+        if original := check.get("carried_forward_from"):
+            lines.append(
+                f"\nAttempt {check['attempt']} lists job {check['job_id']} ({check['job']}) "
+                f"from attempt {original['attempt']}, job {original['job_id']}."
+            )
     lines.extend(["", *report["issues"]])
     if not report["issues"]:
         lines.append(

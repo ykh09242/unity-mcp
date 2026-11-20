@@ -144,7 +144,10 @@ uv run --project Server --locked --extra dev python tools/ci_reference_graph_att
 
 The report retains each actual attempt and selects the latest recorded job for
 each matrix row. A retry of failed jobs leaves earlier successful rows attached
-to their original attempts. An unavailable later job inventory leaves the
+to their original attempts. When Actions assigns a new job ID to an earlier
+success, the report records both IDs if the runner and execution timeline match,
+the original checkout receipt verifies and the new listing has no receipt.
+An unavailable later job inventory leaves the
 effective result uncertain. Older runs expose their combined step as
 `legacy_combined`, since their metadata does not distinguish installation,
 collection or execution. [GitHub Actions jobs API](https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run-attempt)

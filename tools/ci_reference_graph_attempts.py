@@ -98,9 +98,9 @@ def summarize(job: dict, name: str) -> Attempt:
 
 def attempt_rows(
     run: ci_archive_evidence.Run, attempt: int, fetch: Callable[[str], bytes]
-) -> list[Attempt]:
+) -> list[tuple[dict, Attempt]]:
     endpoint = f"repos/{run.repository}/actions/runs/{run.run_id}/attempts/{attempt}/jobs"
-    rows: list[Attempt] = []
+    rows: list[tuple[dict, Attempt]] = []
     seen: set[str] = set()
     for job in ci_archive_attempts.attempt_job_inventory(fetch, endpoint):
         name = job["name"].rsplit(" / ", 1)[-1]
@@ -115,7 +115,7 @@ def attempt_rows(
         if name in seen:
             raise ValueError("Duplicate reference graph matrix row")
         seen.add(name)
-        rows.append(summarize(job, name))
+        rows.append((job, summarize(job, name)))
     return rows
 
 
@@ -151,18 +151,39 @@ def checkout_receipt(store: ci_archive_evidence.Artifacts, row: Attempt) -> dict
 def inspect(run: ci_archive_evidence.Run, fetch: Callable[[str], bytes] = github_api) -> dict:
     store = ci_archive_attempts.artifacts(run, fetch)
     attempts = []
+    carried_forward = []
     unavailable = []
     effective = {}
+    actual_jobs = {}
     for attempt in range(1, run.attempt + 1):
         try:
             rows = attempt_rows(run, attempt, fetch)
         except ci_archive_attempts.API_ERRORS:
             unavailable.append(attempt)
             continue
-        for row in sorted(rows, key=lambda item: item["job"]):
+        for job, row in sorted(rows, key=lambda item: item[1]["job"]):
             result = {**row, "checkout_receipt": checkout_receipt(store, row)}
+            name = row["job"]
+            previous = effective.get(name)
+            if (
+                previous
+                and result["checkout_receipt"]["status"] == "missing"
+                and previous["checkout_receipt"]["status"] == "verified"
+                and ci_archive_attempts.same_successful_execution(job, actual_jobs[name])
+            ):
+                carried_forward.append(
+                    {
+                        "job": name,
+                        "attempt": attempt,
+                        "job_id": job["id"],
+                        "execution_attempt": previous["attempt"],
+                        "execution_job_id": previous["job_id"],
+                    }
+                )
+                continue
             attempts.append(result)
-            effective[row["job"]] = result
+            effective[name] = result
+            actual_jobs[name] = job
 
     return {
         "repository": run.repository,
@@ -171,6 +192,7 @@ def inspect(run: ci_archive_evidence.Run, fetch: Callable[[str], bytes] = github
         "run_head_sha": run.head_sha,
         "expected_checkout_sha": run.checked_sha,
         "unavailable_attempts": unavailable,
+        "carried_forward": carried_forward,
         "jobs": attempts,
         "effective": {
             name: {
