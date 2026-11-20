@@ -220,6 +220,17 @@ def test_replay_excludes_outcome_from_later_pr_relabelled_as_history(tmp_path):
     assert "retained outcome" in report["prs"][0]["reason"]
 
 
+def test_impossible_time_in_partial_control_invalidates_same_archived_history(tmp_path):
+    manifest = replay_fixture(tmp_path)
+    first = manifest["prs"][0]
+    manifest["prs"].append(
+        {"pr": "fixture-2", "commit": BASE, "plan_at": LATE, "full": first["history"][0]}
+    )
+    code, report = offline("budget-replay", put(tmp_path, "replay.json", manifest))
+    assert code == 2 and report["paired_prs"] == 0
+    assert all(row["state"] == "incomparable" for row in report["prs"])
+
+
 @pytest.mark.parametrize("borrowed_field", ["history", "full"])
 def test_reexported_execution_in_partial_later_pr_excludes_both_rows(tmp_path, borrowed_field):
     manifest = replay_fixture(tmp_path)

@@ -78,6 +78,7 @@ class Archives:
         # receipt, so an earlier ranking cannot consume a later re-export.
         cache = {}
         claims = []
+        invalid = set()
         for row in rows:
             keys = set()
             claims.append(keys)
@@ -85,14 +86,15 @@ class Archives:
                 raise AnalysisError("Expected an archived PR entry")
             prior = row.get("history")
             receipts = (
-                [(r, r.get("commit")) for r in prior if isinstance(r, dict)]
+                [(r, False) for r in prior if isinstance(r, dict)]
                 if isinstance(prior, list) and len(prior) <= 16
                 else []
             )
             for field in ("automatic", "manual", "full"):
                 if isinstance(row.get(field), dict):
-                    receipts.append((row[field], row.get("commit")))
-            for receipt, commit in receipts:
+                    receipts.append((row[field], True))
+            cutoff = instant(row["plan_at"]) if row.get("plan_at") else None
+            for receipt, outcome in receipts:
                 digest = receipt.get("sha256")
                 if not isinstance(digest, str):
                     continue
@@ -100,26 +102,31 @@ class Archives:
                     stamp = instant(receipt.get("available_at"))
                 except ValueError:
                     stamp = None
+                commit = receipt.get("commit")
+                wrong_role = (commit == row.get("commit")) != outcome
+                wrong_time = stamp is None or (cutoff is not None and (stamp > cutoff) != outcome)
                 binding = (str(commit), digest, stamp)
-                keys.add(("sha256", digest))
-                self.bindings.setdefault(("sha256", digest), set()).add(binding)
+                receipt_keys = {("sha256", digest)}
                 try:
                     path = self.path(receipt, True)
                     if (path, digest) not in cache:
                         self.reserve(path.stat().st_size)
                         run = read_cohort(path)
-                        if run.digest != digest:
-                            continue
-                        cache[path, digest] = run.fixture.execution_id
-                    identity = cache[path, digest]
+                        if run.digest == digest:
+                            cache[path, digest] = run.fixture.execution_id
+                    if (path, digest) in cache:
+                        receipt_keys.add(("execution", cache[path, digest]))
                 except (OSError, ValueError):
-                    continue
-                keys.add(("execution", identity))
-                self.bindings.setdefault(("execution", identity), set()).add(binding)
+                    pass
+                keys.update(receipt_keys)
+                for key in receipt_keys:
+                    self.bindings.setdefault(key, set()).add(binding)
+                if wrong_time or wrong_role:
+                    invalid.update(receipt_keys)
         if self.remaining < 0:
             raise AnalysisError("Replay exceeds 256 MiB of selected archive input")
 
-        ambiguous = {key for key, receipts in self.bindings.items() if len(receipts) > 1}
+        ambiguous = invalid | {key for key, receipts in self.bindings.items() if len(receipts) > 1}
         return {index for index, keys in enumerate(claims) if not keys.isdisjoint(ambiguous)}
 
     def draft_inputs(self, draft, receipt):
