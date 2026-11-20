@@ -71,12 +71,27 @@ then restart. A closed input ledger reports `restart_server`. Disabled scene
 inputs leave ordinary explicit scene arguments available. No limits or operation
 deadlines are reduced by these diagnostics.
 
+## Skills on FastMCP 4.2.2
+
+FastMCP now discovers skills through tool-only server transforms. The packaged
+adapter resolves each concrete manifest URI under the caller's current transforms
+and uses the reviewed SDK's Skills read policy before returning the manifest.
+A hidden, replaced or unauthorized reference omits the entry from `skills/list`
+and makes `skills/get` return the same error as an unknown URI. These checks avoid
+reading file bodies. An unavailable SDK read-policy hook disables the optional adapter.
+
+The packaged adapter validates the sealed metadata before registration and
+serves the recorded source revision, original UTF-8 file bytes and private zero-TTL
+results. The native provider's `SkillManifest.to_mcp_skill` constructs its entry
+from frontmatter and file descriptors, omitting the package's source metadata.
+[FastMCP 4.2.2 change](https://github.com/PrefectHQ/fastmcp/pull/6548) · [Native manifest projection](https://github.com/PrefectHQ/fastmcp/blob/v4.2.2/fastmcp_slim/fastmcp/skills/skill.py)
+
 ## Skills on FastMCP 4.2.1
 
 The packaged adapter uses FastMCP's `ListSkillsParams`, `GetSkillParams`,
 `ListSkillsResult` and `GetSkillResult`. It validates the bundled manifest
 before registering resources and gives each request a detached result. The
-server's tool visibility transforms still prevent the upstream `SkillsExtension`
+server's tool visibility transforms prevented the 4.2.1 upstream `SkillsExtension`
 from discovering skill sources. The packaged adapter preserves the approved
 revision, file digests and private cache hints with those transforms enabled.
 [FastMCP 4.2 Skills release](https://github.com/PrefectHQ/fastmcp/releases/tag/v4.2.0) · [Upstream extension implementation](https://github.com/PrefectHQ/fastmcp/blob/v4.2.1/fastmcp_slim/fastmcp/skills/extension.py)
@@ -96,9 +111,8 @@ skill directories, credentials or Unity projects were read.
 | Repository and immutable revision metadata | Preserved | Absent by default |
 | Read remains equal after the fixture file changes | Yes | No |
 
-Retain the packaged adapter. The provider's live-directory behavior does not
-preserve the shipped snapshot, and its experimental extension cannot currently
-compose with this server's transforms. Existing authenticated HTTP, scoped-read,
+The 4.1.3 evaluation retained the packaged adapter because of live-directory reads
+and the experimental extension's handling of transforms. Authenticated HTTP, scoped-read,
 legacy file-install fallback, manifest digest and byte-limit tests remain the
 acceptance gate for any future migration. The comparison does not establish a
 performance advantage or justify bypassing authorization.

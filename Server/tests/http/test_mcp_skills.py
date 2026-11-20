@@ -435,7 +435,7 @@ async def test_explicit_legacy_keeps_resource_fallback_without_skills_methods(sk
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("unavailable", ["class", "version", "asset", "signature"])
+@pytest.mark.parametrize("unavailable", ["class", "version", "asset", "signature", "read-policy"])
 async def test_optional_support_failure_preserves_authenticated_ordinary_calls(
     bare_skills_server, monkeypatch, tmp_path, unavailable
 ):
@@ -449,6 +449,10 @@ async def test_optional_support_failure_preserves_authenticated_ordinary_calls(
         monkeypatch.setattr(module.metadata, "version", lambda _name: "unreviewed")
     elif unavailable == "asset":
         monkeypatch.setattr(module.resources, "files", lambda _package: tmp_path)
+    elif unavailable == "read-policy":
+        from fastmcp.skills import _routing
+
+        monkeypatch.delattr(_routing, "_may_read")
     else:
         monkeypatch.setattr(
             module, "signature", lambda _callable: type("Shape", (), {"parameters": {}})()
@@ -594,3 +598,49 @@ async def test_production_runtime_reports_installed_skills_with_visibility_trans
         assert len(result["skills"]) == 1
         assert result["cacheScope"] == "private"
         assert result["ttlMs"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "visibility", ["tool-only", "hidden-reference", "denied-reference", "replaced-reference"]
+)
+async def test_discovery_requires_every_packaged_reference_to_be_readable(
+    bare_skills_server, visibility
+):
+    from fastmcp.server.middleware.authorization import AuthMiddleware
+    from fastmcp.server.transforms import ResourcesAsTools
+    from transport.skills_extension import install_skills
+
+    server = bare_skills_server
+    assert install_skills(server) is not None
+    reference = next(
+        f["path"] for f in packaged_record()["payload"]["files"] if f["path"] != "SKILL.md"
+    )
+    uri = SKILL_URI.removesuffix("SKILL.md") + reference
+    server.add_transform(ResourcesAsTools(server))
+    if visibility == "hidden-reference":
+        server.disable(keys={(await server.get_resource(uri)).key})
+    elif visibility == "denied-reference":
+        server.add_middleware(
+            AuthMiddleware(auth=lambda ctx: str(getattr(ctx.component, "uri", "")) != uri)
+        )
+    elif visibility == "replaced-reference":
+
+        @server.resource(uri)
+        def replacement() -> str:
+            return "replacement"
+
+    async with skills_http(server) as client:
+        listed = complete_result(await skill_request(client, "skills/list"))
+        fetched = _message(await skill_request(client, "skills/get", {"uri": SKILL_URI}))
+        read = _message(await skill_request(client, "resources/read", {"uri": uri}))
+    if visibility == "tool-only":
+        assert listed["skills"] == [fetched["result"]["skill"]]
+        assert read["result"]["contents"][0]["uri"] == uri
+    else:
+        assert listed["skills"] == []
+        assert fetched["error"]["code"] == -32602
+        if visibility == "replaced-reference":
+            assert read["result"]["contents"][0]["text"] == "replacement"
+        else:
+            assert "error" in read

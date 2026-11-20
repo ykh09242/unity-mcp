@@ -127,7 +127,7 @@ def _snapshot(raw: bytes) -> tuple[dict[str, str], dict[str, JsonValue], dict[st
 def install_skills(
     server: "FastMCP", *, bundle_bytes: bytes | None = None
 ) -> "ServerExtension | None":
-    """Install only the reviewed public SDK shape and a fully admitted snapshot.
+    """Install only the reviewed SDK shape and a fully admitted snapshot.
 
     Invalid/missing optional support leaves ordinary MCP and file installation usable.
     No request-driven paths, package downloads or live guidance sources are consulted.
@@ -135,10 +135,12 @@ def install_skills(
     try:
         if not is_reviewed_sdk(metadata.version):
             return None
-        # Optional API imports stay inside the refusal boundary.
+        # The version-gated SDK read policy is shared with native Skills discovery.
         from fastmcp.resources import Resource
+        from fastmcp.server.context import Context
         from fastmcp.server.extensions import MethodBinding, ServerExtension
         from fastmcp.skills import GetSkillResult, ListSkillsResult
+        from fastmcp.skills._routing import _may_read
         from fastmcp.skills.models import GetSkillParams, ListSkillsParams
         from mcp.shared.exceptions import MCPError
         from mcp_types import INVALID_PARAMS
@@ -150,6 +152,9 @@ def install_skills(
                 MethodBinding,
                 ServerExtension,
                 Resource,
+                server.get_resource,
+                server._check_resource_access,
+                _may_read,
                 server.add_extension,
                 server.add_resource,
             )
@@ -176,16 +181,32 @@ def install_skills(
             async def read(self) -> str:
                 return self.text
 
+        async def can_discover() -> bool:
+            # Mirror FastMCP's manifest visibility without reading the files. The
+            # packaged skill owns concrete resources, never a template fallback.
+            async with Context(fastmcp=server):
+                for uri, text in texts.items():
+                    served = await server.get_resource(uri)
+                    if not (
+                        isinstance(served, SkillResource)
+                        and served.text == text
+                        and await _may_read(server, uri)
+                    ):
+                        return False
+            return True
+
         class SkillsExtension(ServerExtension):
             identifier = IDENTIFIER
 
             async def list_skills(self, _context, params):
                 if params.cursor is not None:
                     raise MCPError(INVALID_PARAMS, "Unknown skill cursor")
+                if not await can_discover():
+                    return ListSkillsResult(skills=[], ttl_ms=0, cache_scope="private")
                 return list_result.model_copy(deep=True)
 
             async def get_skill(self, _context, params):
-                if params.uri != SKILL_URI:
+                if params.uri != SKILL_URI or not await can_discover():
                     raise MCPError(INVALID_PARAMS, "Unknown skill URI")
                 return get_result.model_copy(deep=True)
 

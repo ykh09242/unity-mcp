@@ -188,7 +188,8 @@ def test_overflow_is_bounded_and_does_not_mask_delegate_failure() -> None:
 
 
 @pytest.mark.parametrize(
-    "fastmcp_version", ["4.0.11", "4.1.0", "4.1.1", "4.1.3", "4.1.4", "4.1.6", "4.1.8", "4.2.1"]
+    "fastmcp_version",
+    ["4.0.11", "4.1.0", "4.1.1", "4.1.3", "4.1.4", "4.1.6", "4.1.8", "4.2.1", "4.2.2"],
 )
 def test_reviewed_sdk_versions_are_supported(monkeypatch, fastmcp_version) -> None:
     versions = {"mcp": "2.3.0", "fastmcp": fastmcp_version}

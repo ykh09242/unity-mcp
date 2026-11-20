@@ -30,7 +30,10 @@ def require_sdk() -> None:
     """Only the source-reviewed installed SDK versions are supported."""
     for package, supported in (
         ("mcp", ("2.3.0",)),
-        ("fastmcp", ("4.0.11", "4.1.0", "4.1.1", "4.1.3", "4.1.4", "4.1.6", "4.1.8", "4.2.1")),
+        (
+            "fastmcp",
+            ("4.0.11", "4.1.0", "4.1.1", "4.1.3", "4.1.4", "4.1.6", "4.1.8", "4.2.1", "4.2.2"),
+        ),
     ):
         if importlib.metadata.version(package) not in supported:
             raise DiagnosticError(
