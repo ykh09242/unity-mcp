@@ -7,7 +7,9 @@ No SDK private dispatch or serialization kernel is used here.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
+import secrets
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -280,6 +282,14 @@ class PreparedExecution:
                 self.closed = True
                 self.references -= 1
                 self._release_if_settled()
+
+    def prefab_checkpoint(self, operation_id: str) -> str:
+        """Bind a caller-visible workflow ID to this receipt principal, project and server."""
+        scope = self.authority.scope
+        identity = (
+            f"{self.options.store_id}:{scope.owner_digest}:{scope.project_hash}:{operation_id}"
+        )
+        return hmac.digest(self.runtime.prefab_checkpoint_key, identity.encode(), "sha256").hex()
 
     def _release_if_settled(self) -> None:
         if self.references == 0:
@@ -557,6 +567,7 @@ class ExecutionReceipts:
 
     def __init__(self, root: Path | None, *, private_root: bool = False) -> None:
         self.root, self.private_root = root, private_root
+        self.prefab_checkpoint_key = secrets.token_bytes(32)
         self.store: ExecutionReceiptStore | None = None
         self.closed = False
         self.io_owners = 0

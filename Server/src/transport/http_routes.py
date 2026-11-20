@@ -18,6 +18,7 @@ from core.server_build import RUNNING_SERVER
 from models.response_limits import bound_response
 from models.connection_diagnosis import no_unity_instances_response
 from core.server_runtime import ServerRuntime
+from services.addressable_prefab import PREFAB_ACTIONS, prefab_parameters
 from services.execution_receipt_context import owned_to_thread
 from services.execution_receipt_identity import ReceiptConflict, ReceiptInvalid
 from transport.execution_receipts import rest_receipt_control
@@ -177,6 +178,22 @@ def install_http_routes(
                         return await rest_receipt_control(runtime.execution_receipts, request, body)
                     except ReceiptInvalid:
                         return InputFailure.INVALID.response()
+                command = body["type"] if isinstance(body, dict) else body.type
+                if command.casefold() == "manage_addressables":
+                    params = body.get("params", {}) if isinstance(body, dict) else body.params
+                    action = params.get("action")
+                    if isinstance(action, str) and action.casefold() in PREFAB_ACTIONS:
+                        try:
+                            scoped = prefab_parameters({**params, "action": action.casefold()})
+                        except ValueError as error:
+                            return JSONResponse(
+                                {"success": False, "message": str(error)}, status_code=400
+                            )
+                        body = (
+                            {**body, "params": scoped}
+                            if isinstance(body, dict)
+                            else body.model_copy(update={"params": scoped})
+                        )
                 return await execute(body)
 
         @mcp.custom_route("/api/server/shutdown", methods=["POST"])

@@ -39,6 +39,54 @@ def invoke(wire, **kwargs):
     return asyncio.run(wire[0].manage_addressables(SimpleNamespace(), **kwargs))
 
 
+def test_prefab_public_handle_requires_receipt_and_isolates_owner_target_and_server(wire):
+    from services.execution_receipt_context import execution_owner
+    from services.execution_receipt_identity import ReceiptOptions, ReceiptScope
+    from transport.execution_receipts import ExecutionReceipts, PreparedExecution
+
+    operation_id = "d" * 32
+    options = {"action": "register_prefab", "operation_id": operation_id}
+    assert invoke(wire, **options)["success"] is False
+    wire[1].assert_not_awaited()
+    runtime = ExecutionReceipts(None)
+
+    def observed(owner, project, server=runtime):
+        prepared = PreparedExecution(
+            server,
+            SimpleNamespace(scope=ReceiptScope(owner, project)),
+            ReceiptOptions("1" * 32, project),
+            None,
+            frozenset(),
+            None,
+        )
+        token = execution_owner.set(prepared)
+        try:
+            assert invoke(wire, **options)["success"]
+            sent = wire[1].await_args.args[3]
+            assert set(sent) == {"action", "checkpoint"}
+            assert sent["action"] == options["action"]
+            assert sent["checkpoint"] != operation_id
+            return sent["checkpoint"]
+        finally:
+            execution_owner.reset(token)
+
+    key = observed("one", "a" * 16)
+    assert key == observed("one", "a" * 16)
+    assert key != observed("two", "a" * 16)
+    assert key != observed("one", "b" * 16)
+    assert key != observed("one", "a" * 16, ExecutionReceipts(None))
+
+
+def test_prefab_recovery_cannot_supply_replacement_intent_or_private_checkpoint(wire):
+    from services.addressable_prefab import prefab_parameters
+
+    for extra in ({"checkpoint": "b" * 64}, {"prefab_path": "Assets/Other.prefab"}):
+        with pytest.raises(ValueError, match="exactly"):
+            prefab_parameters({"action": "register_prefab", "operation_id": "a" * 32, **extra})
+    assert invoke(wire, action="create_prefab", operation_id="invalid")["success"] is False
+    wire[1].assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "action,extra",
     [

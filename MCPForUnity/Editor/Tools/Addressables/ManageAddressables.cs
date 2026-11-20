@@ -16,6 +16,8 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 string action = AddressablesState.Text(request["action"], "action", 32).ToLowerInvariant();
                 request = (JObject)request.DeepClone();
                 request["action"] = action;
+                if (AddressablePrefabWorkflow.IsAction(action))
+                    return AddressablePrefabWorkflow.Handle(request, action);
                 AddressablesState.Validate(request, action);
                 if (action == "analyze_layout")
                     return AddressablesLayout.Read(request);

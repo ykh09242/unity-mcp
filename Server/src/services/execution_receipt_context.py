@@ -22,6 +22,8 @@ class Worker(Protocol):
 class ExecutionOwner(Protocol):
     expires_at: float
 
+    def prefab_checkpoint(self, operation_id: str) -> str: ...
+
     def acquire_worker(self) -> Worker: ...
 
     def native(

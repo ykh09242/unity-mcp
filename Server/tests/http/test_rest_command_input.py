@@ -20,6 +20,50 @@ JSON_HEADERS = {"content-type": "application/json"}
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["/api/command", "/api/context-command"])
+async def test_prefab_receipt_routes_bind_same_named_targets_before_dispatch(
+    environment, tmp_path, monkeypatch, route
+):
+    import main
+
+    _, _, a, b, client = environment
+    runtime = ExecutionReceipts(tmp_path / "prefab-ledger", private_root=True)
+    await runtime.start()
+    forward = main.execute_receipted_rest
+
+    async def owned_runtime(_, *args, **kwargs):
+        return await forward(runtime, *args, **kwargs)
+
+    monkeypatch.setattr(main, "execute_receipted_rest", owned_runtime)
+    operation_id = "a" * 32
+    try:
+        checkpoints = []
+        for target in (a, b):
+            command = payload(
+                target.root,
+                target.project_hash,
+                "manage_addressables",
+                {"action": "register_prefab", "operation_id": operation_id},
+            )
+            if route == "/api/command":
+                command.pop("expected_project")
+            assert (await client.post(route, json=command)).status_code == 400
+            assert not target.executes
+            command["execution"] = options(runtime, project=target.project_hash)
+            response = await client.post(route, json=command)
+            assert response.status_code == 200, response.text
+            assert response.json()["success"], response.text
+            assert len(target.executes) == 1
+            native = target.executes[0]["params"]
+            assert set(native) == {"action", "checkpoint"}
+            checkpoints.append(native["checkpoint"])
+        assert len(set(checkpoints)) == 2
+        assert all(len(value) == 64 and value != operation_id for value in checkpoints)
+    finally:
+        runtime.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("suffix,tail", [(rb"\\upload", "\\upload"), (rb"\u0061", "a")])
 async def test_default_rest_budget_preserves_large_ascii_escape(environment, suffix, tail):
     _, _, a, b, client = environment

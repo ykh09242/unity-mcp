@@ -130,6 +130,10 @@ interrupted child inside a running batch, arbitrary code, or native work with lo
 ownership requires inspection. Readiness and idle flags cannot establish that a
 previous side effect did not happen.
 
+For a prefab copy followed by Addressables registration, use the named workflow
+to retrieve the created GUID and last settled step across separate calls.
+[Addressable prefab recovery](addressable-prefab-recovery.md)
+
 ## Transport contract
 
 WebSocket registration and authenticated stdio handshakes advertise

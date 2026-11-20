@@ -7,6 +7,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import StrictInt
 
+from services.addressable_prefab import PREFAB_ACTIONS, prefab_parameters
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -19,6 +20,7 @@ ALL_ACTIONS = (
     "move_entry",
     "set_profile_value",
     "analyze_layout",
+    *PREFAB_ACTIONS,
 )
 _GUID = re.compile(r"[0-9a-f]{32}\Z")
 
@@ -125,7 +127,8 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
         "settings, evaluate arbitrary static profile properties or start content builds. "
         "Guarded set_address/move_entry/set_profile_value preserve existing GUIDs/labels. "
         "Supply explicit settings_path and exact expected_revision for edits/continuation pages. "
-        "No group/asset creation, content-build action or remote deployment. "
+        "A receipt-protected prefab workflow previews copying a source prefab and registering its new GUID. "
+        "Use the same operation_id for create_prefab, register_prefab, prefab_status or cancel_prefab. "
         "Caps128groups/4096entries/32profiles/64variables,256preflightentries,100rows/256KiB per response. "
         "Native layout files are bounded to16MiB."
     ),
@@ -149,6 +152,9 @@ async def manage_addressables(
     value: str | None = None,
     layout_path: str | None = None,
     include_preflight: bool | None = None,
+    operation_id: str | None = None,
+    source_prefab: str | None = None,
+    prefab_path: str | None = None,
 ) -> dict[str, Any]:
     args = {
         k: v
@@ -167,12 +173,23 @@ async def manage_addressables(
             "value": value,
             "layout_path": layout_path,
             "include_preflight": include_preflight,
+            "operation_id": operation_id,
+            "source_prefab": source_prefab,
+            "prefab_path": prefab_path,
         }.items()
         if v is not None
     }
-    error = _validate(args["action"], args)
-    if error:
-        return {"success": False, "message": error}
+    if args["action"] in PREFAB_ACTIONS:
+        if args.pop("page_number") != 1 or args.pop("page_size") != 50:
+            return {"success": False, "message": "Prefab workflows do not support paging."}
+        try:
+            args = prefab_parameters(args)
+        except ValueError as error:
+            return {"success": False, "message": str(error)}
+    else:
+        error = _validate(args["action"], args)
+        if error:
+            return {"success": False, "message": error}
     instance = await get_unity_instance_from_context(ctx)
     result = await send_with_unity_instance(
         async_send_command_with_retry, instance, "manage_addressables", args

@@ -3,7 +3,11 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
+using System.Threading.Tasks;
+using MCPForUnity.Editor.Services.Transport.Transports;
 using MCPForUnity.Editor.Tools.Addressables;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
@@ -11,9 +15,18 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
+using StdioPeer = MCPForUnityTests.Editor.Services.StdioBridgeReconnectTests;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    internal sealed class PrefabWorkflowImportObserver : AssetPostprocessor
+    {
+        internal static Action<string[]> Imported;
+
+        private static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom) => Imported?.Invoke(imported);
+    }
+
     public class AddressablesCompatibilityTests
     {
         private static object Policy(string name, params object[] args)
@@ -401,6 +414,246 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         private static string[] Labels(object value) => ((IEnumerable)Get(value, "labels")).Cast<string>().OrderBy(x => x).ToArray();
+
+        private static JObject Workflow(string key, string action, JObject args = null)
+        {
+            args = args ?? new JObject();
+            args["action"] = action;
+            args["checkpoint"] = key;
+            return JObject.FromObject(ManageAddressables.HandleCommand(args));
+        }
+
+        private string PreviewPrefab(string key)
+        {
+            var ownedScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            StringAssert.StartsWith("McpAddressables_", ownedScene.name);
+            ownedScene.name = "McpAddressables_PrefabRecoveryFixture";
+            string source = root + "/Template.prefab",
+                destination = root + "/Result.prefab";
+            var template = new GameObject("Template");
+            try
+            {
+                Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(template, source));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(template);
+            }
+            AssetDatabase.SaveAssetIfDirty((UnityEngine.Object)first);
+            var preview = Workflow(
+                key,
+                "preview_prefab",
+                new JObject
+                {
+                    ["source_prefab"] = source,
+                    ["prefab_path"] = destination,
+                    ["settings_path"] = settingsPath,
+                    ["group_guid"] = (string)Get(first, "m_GUID"),
+                }
+            );
+            Assert.IsTrue(preview.Value<bool>("success"), preview.ToString());
+            Assert.IsTrue(((JArray)preview["data"]["affected_paths"]).Values<string>().Contains(destination));
+            Assert.IsFalse(File.Exists(destination));
+            return destination;
+        }
+
+        private static void SendWorkflow(TcpClient peer, string key, string action)
+        {
+            var request = new JObject
+            {
+                ["type"] = "manage_addressables",
+                ["params"] = new JObject { ["action"] = action, ["checkpoint"] = key },
+            };
+            StdioPeer.SendFrame(peer.GetStream(), Encoding.UTF8.GetBytes(request.ToString(Newtonsoft.Json.Formatting.None)));
+        }
+
+        private static IEnumerator WaitFor(Func<bool> predicate)
+        {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            while (!predicate() && timer.Elapsed < TimeSpan.FromSeconds(20))
+                yield return null;
+            Assert.IsTrue(predicate(), "The owned Editor transport did not settle.");
+        }
+
+        [UnityTest, Explicit("Requires a disposable batch Editor and its own authenticated loopback bridge.")]
+        public IEnumerator PrefabRegistrationRecoversDroppedCreationResponseWithoutDuplicatingNativeWrites()
+        {
+            string key = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            string destination = PreviewPrefab(key);
+            Assert.IsFalse(StdioBridgeHost.IsRunning, "An owned idle Editor is required.");
+            string token = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            StdioBridgeHost.StartOwned(0, token);
+            JObject status;
+            try
+            {
+                int port = StdioBridgeHost.GetCurrentPort();
+                var firstClient = Task.Run(() => StdioPeer.ConnectProgressPeer(port, token, null, out _));
+                yield return WaitFor(() => firstClient.IsCompleted);
+                using (var peer = firstClient.GetAwaiter().GetResult())
+                {
+                    SendWorkflow(peer, key, "create_prefab");
+                    yield return WaitFor(() => !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(destination)));
+                    // Disconnect without reading the first delivery, after the actual import.
+                }
+                var secondClient = Task.Run(() => StdioPeer.ConnectProgressPeer(port, token, null, out _));
+                yield return WaitFor(() => secondClient.IsCompleted);
+                using (var peer = secondClient.GetAwaiter().GetResult())
+                {
+                    SendWorkflow(peer, key, "prefab_status");
+                    var read = Task.Run(() => JObject.Parse(Encoding.UTF8.GetString(StdioPeer.ReadFrame(peer.GetStream(), 10000))));
+                    yield return WaitFor(() => read.IsCompleted);
+                    var wire = read.GetAwaiter().GetResult();
+                    Assert.AreEqual("success", wire.Value<string>("status"), wire.ToString());
+                    status = (JObject)wire["result"];
+                    Assert.AreEqual("created", (string)status["data"]["state"], status.ToString());
+                    SendWorkflow(peer, key, "register_prefab");
+                    read = Task.Run(() => JObject.Parse(Encoding.UTF8.GetString(StdioPeer.ReadFrame(peer.GetStream(), 10000))));
+                    yield return WaitFor(() => read.IsCompleted);
+                    wire = read.GetAwaiter().GetResult();
+                    Assert.AreEqual("registered", (string)wire.SelectToken("result.data.state"), wire.ToString());
+                }
+            }
+            finally
+            {
+                StdioBridgeHost.Stop();
+            }
+            string guid = AssetDatabase.AssetPathToGUID(destination);
+            Assert.IsNotEmpty(guid);
+            Assert.AreNotEqual(AssetDatabase.AssetPathToGUID(root + "/Template.prefab"), guid);
+            Assert.AreEqual(guid, status["data"].Value<string>("prefab_guid"), status.ToString());
+            Assert.AreEqual("created", status["data"].Value<string>("state"));
+            Assert.IsFalse(Workflow(new string('f', 64), "register_prefab").Value<bool>("success"));
+            Assert.AreEqual("registered", Workflow(key, "create_prefab")["data"].Value<string>("state"));
+            foreach (var action in new[] { "register_prefab", "register_prefab", "prefab_status" })
+            {
+                var result = Workflow(key, action);
+                Assert.AreEqual("registered", result["data"].Value<string>("state"), result.ToString());
+                Assert.IsEmpty((JArray)result["data"]["outstanding_steps"]);
+            }
+            var entries = ((IEnumerable)Get(first, "entries")).Cast<object>().Where(item => (string)Get(item, "guid") == guid).ToArray();
+            Assert.AreEqual(1, entries.Length);
+            Assert.AreEqual(destination, Get(entries[0], "address"));
+            Assert.AreEqual(1, Directory.GetFiles(root, "Result*.prefab").Length);
+            Debug.Log(
+                "Prefab recovery confirmed new GUID "
+                    + guid
+                    + ", one asset, one saved explicit entry in "
+                    + AssetDatabase.GetAssetPath((UnityEngine.Object)first)
+            );
+        }
+
+        [Test]
+        public void PrefabRegistrationPreservesInterveningAddressEditAndReportsOutstandingStep()
+        {
+            string key = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            string destination = PreviewPrefab(key);
+            Workflow(key, "create_prefab");
+            Invoke(entry, "SetAddress", "manual/intervening", true);
+            var result = Workflow(key, "register_prefab");
+            Assert.AreEqual("conflict", result["data"].Value<string>("state"), result.ToString());
+            StringAssert.Contains("Addressables revision changed", result["data"].Value<string>("detail"));
+            CollectionAssert.AreEqual(new[] { "create_prefab" }, ((JArray)result["data"]["completed_steps"]).Values<string>());
+            CollectionAssert.AreEqual(new[] { "register_prefab" }, ((JArray)result["data"]["outstanding_steps"]).Values<string>());
+            Assert.AreEqual("manual/intervening", Get(entry, "address"));
+            Assert.IsNull(Invoke(settings, "FindAssetEntry", AssetDatabase.AssetPathToGUID(destination)));
+        }
+
+        [Test]
+        public void PrefabCancellationAndDestinationCollisionPreserveExistingAssets()
+        {
+            string key = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            string destination = PreviewPrefab(key);
+            Assert.IsTrue(AssetDatabase.CopyAsset(root + "/Template.prefab", destination));
+            string foreignGuid = AssetDatabase.AssetPathToGUID(destination);
+            Assert.AreEqual("conflict", Workflow(key, "create_prefab")["data"].Value<string>("state"));
+            Assert.AreEqual("cancelled", Workflow(key, "cancel_prefab")["data"].Value<string>("state"));
+            Assert.AreEqual("cancelled", Workflow(key, "register_prefab")["data"].Value<string>("state"));
+            Assert.AreEqual(foreignGuid, AssetDatabase.AssetPathToGUID(destination));
+            Assert.IsNull(Invoke(settings, "FindAssetEntry", foreignGuid));
+        }
+
+        private const string ReloadEvidence = "MCPForUnity.Tests.PrefabWorkflowReload";
+
+        [Test]
+        public void CancellationDuringNativeImportObservesRunningAndRetainsSettledCreation()
+        {
+            string key = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            string destination = PreviewPrefab(key);
+            string running = null;
+            PrefabWorkflowImportObserver.Imported = paths =>
+            {
+                if (paths.Contains(destination))
+                    running = (string)Workflow(key, "cancel_prefab")["data"]["state"];
+            };
+            try
+            {
+                var settlement = Workflow(key, "create_prefab");
+                Assert.AreEqual("running", running, settlement.ToString());
+                Assert.AreEqual("cancelled", (string)settlement["data"]["state"]);
+                Assert.AreEqual(AssetDatabase.AssetPathToGUID(destination), (string)settlement["data"]["prefab_guid"]);
+                Assert.IsNull(Invoke(settings, "FindAssetEntry", (string)settlement["data"]["prefab_guid"]));
+                Assert.AreEqual("cancelled", (string)Workflow(key, "register_prefab")["data"]["state"]);
+            }
+            finally
+            {
+                PrefabWorkflowImportObserver.Imported = null;
+            }
+        }
+
+        private static readonly string DomainIdentity = Guid.NewGuid().ToString("N");
+        private static string RestartEvidence => Path.Combine(Application.dataPath, "..", "Library", "McpPrefabWorkflowRestart.json");
+
+        [UnityTest, Explicit("Stages a process-bound checkpoint in a disposable Editor and actually reloads its domain.")]
+        public IEnumerator PrefabCheckpointSurvivesDomainReload()
+        {
+            Assert.IsTrue(Application.isBatchMode);
+            Assert.IsFalse(File.Exists(RestartEvidence), "Preserve any existing restart evidence.");
+            string key = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            string destination = PreviewPrefab(key);
+            var created = Workflow(key, "create_prefab");
+            Assert.AreEqual("created", (string)created["data"]["state"], created.ToString());
+            var marker = new JObject
+            {
+                ["key"] = key,
+                ["domain"] = DomainIdentity,
+                ["session"] = created["data"]["editor_session_id"],
+                ["guid"] = AssetDatabase.AssetPathToGUID(destination),
+                ["destination"] = destination,
+            };
+            SessionState.SetString(ReloadEvidence, marker.ToString());
+            EditorUtility.RequestScriptReload();
+            yield return new WaitForDomainReload();
+            marker = JObject.Parse(SessionState.GetString(ReloadEvidence, ""));
+            Assert.AreNotEqual((string)marker["domain"], DomainIdentity, "The Editor must actually reload its managed domain.");
+            var observed = Workflow((string)marker["key"], "prefab_status");
+            Assert.AreEqual((string)marker["session"], (string)observed["data"]["editor_session_id"], observed.ToString());
+            Assert.AreEqual((string)marker["guid"], (string)observed["data"]["prefab_guid"]);
+            Assert.AreEqual("created", (string)observed["data"]["state"], observed.ToString());
+            var cancelled = Workflow((string)marker["key"], "cancel_prefab");
+            Assert.AreEqual("cancelled", (string)cancelled["data"]["state"]);
+            Assert.AreEqual("cancelled", (string)Workflow((string)marker["key"], "register_prefab")["data"]["state"]);
+            using (var file = new FileStream(RestartEvidence, FileMode.CreateNew, FileAccess.Write))
+            using (var writer = new StreamWriter(file))
+                writer.Write(marker.ToString());
+            SessionState.EraseString(ReloadEvidence);
+        }
+
+        [Test, Explicit("Second Editor process in the disposable prefab recovery profile.")]
+        public void ReplacementEditorRefusesPriorPrefabCheckpoint()
+        {
+            Assert.IsTrue(Application.isBatchMode);
+            var marker = JObject.Parse(File.ReadAllText(RestartEvidence));
+            Assert.AreNotEqual((string)marker["session"], MCPForUnity.Editor.Services.Transport.CommandResumeState.SessionId);
+            string currentKey = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            string destination = PreviewPrefab(currentKey);
+            var refused = Workflow((string)marker["key"], "register_prefab");
+            Assert.IsFalse(refused.Value<bool>("success"), refused.ToString());
+            Assert.AreEqual("unknown", (string)refused["data"]["state"], refused.ToString());
+            Assert.IsFalse(File.Exists(destination));
+            var created = Workflow(currentKey, "create_prefab");
+            Assert.AreEqual("created", (string)created["data"]["state"], created.ToString());
+            Assert.AreNotEqual((string)marker["guid"], AssetDatabase.AssetPathToGUID(destination));
+        }
 
         private static void SameAsset(UnityEngine.Object before, UnityEngine.Object after)
         {

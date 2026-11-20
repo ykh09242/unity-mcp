@@ -189,6 +189,13 @@ namespace MCPForUnity.Editor.Tools
                         return InvalidBatch("Nested batch_execute commands are not allowed.", commandsToken, preview: preview);
                     else if (entry["params"] is JToken parameters && parameters.Type != JTokenType.Null && parameters is not JObject)
                         error = "Command 'params' must be a JSON object or null when provided.";
+                    else if (
+                        string.Equals(toolName, "manage_addressables", StringComparison.OrdinalIgnoreCase)
+                        && entry["params"] is JObject member
+                        && member["action"]?.Type == JTokenType.String
+                        && Addressables.AddressablePrefabWorkflow.IsAction(((string)member["action"]).ToLowerInvariant())
+                    )
+                        error = "Each prefab workflow step requires its own receipt and project binding.";
                 }
                 if (error != null)
                     validationFailures.Add(
