@@ -49,6 +49,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             root = new VisualElement { name = "graph-explorer" };
             root.AddToClassList("graph-explorer");
             parent.Add(root);
+            root.Add(new Button(ReviewReportWindow.Open) { text = "Review dependency report", name = "graph-review-report" });
             Note(root, "Explore an asset").AddToClassList("graph-section-heading");
 
             fields = new VisualElement();

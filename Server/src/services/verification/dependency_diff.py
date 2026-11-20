@@ -5,6 +5,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 from tempfile import TemporaryDirectory
 
@@ -79,13 +80,34 @@ def _side(db, side, other):
         yield {"kind": "relation", "side": side, **dict(row)}
 
 
-def _retargeted(db):
+def _property_path(parts):
+    # The first three elements identify the Unity class, file ID and YAML type wrapper.
+    path = []
+    for part in parts[3:]:
+        if type(part) is int and part >= 0:
+            path.append(f"Array.data[{part}]")
+        elif isinstance(part, str) and (
+            part.isidentifier()
+            or ((match := re.fullmatch(r"<(.+)>k__BackingField", part)) and match[1].isidentifier())
+        ):
+            path.append(part)
+        else:
+            return None
+    return ".".join(path) or None
+
+
+def _locator(side, commit, node, path):
+    return {"side": side, "commit": commit, "guid": node.removeprefix("asset:"), "path": path}
+
+
+def _retargeted(db, commits):
     # A native AssetDatabase dependency has no field identity. Confirm an actual
     # object/document/field slot in each immutable Git blob before joining targets.
     query = """
         SELECT old.owner, a.path AS baseline_owner_path, n.path AS candidate_owner_path,
                old.field, old.target AS baseline_target, t.path AS baseline_target_path,
                new.target AS candidate_target, u.path AS candidate_target_path,
+               a.source_hash AS baseline_source_hash, n.source_hash AS candidate_source_hash,
                old.file_id AS baseline_target_file_id, new.file_id AS candidate_target_file_id
         FROM baseline.slots old JOIN candidate.slots new USING(owner,field)
         JOIN baseline.reachable b ON b.node=old.owner
@@ -100,10 +122,27 @@ def _retargeted(db):
     for row in db.execute(query):
         for side in ("baseline", "candidate"):
             db.execute("INSERT OR IGNORE INTO affected VALUES (?,?)", (side, row["owner"]))
+        field = json.loads(row["field"])
+        property_path = _property_path(field)
         yield {
             "kind": "retargeted",
             **dict(row),
-            "field": json.loads(row["field"]),
+            "field": field,
+            "editor_locators": [
+                {
+                    **_locator(side, commits[side], row["owner"], row[f"{side}_owner_path"]),
+                    "local_file_id": field[1],
+                    **(
+                        {
+                            "property_path": property_path,
+                            "source_sha256": row[f"{side}_source_hash"],
+                        }
+                        if property_path
+                        else {"field_status": "owner_only"}
+                    ),
+                }
+                for side in ("baseline", "candidate")
+            ],
             "evidence": "committed_serialized_slot_with_native_dependency_on_each_side",
         }
 
@@ -149,11 +188,22 @@ def compare_scans(baseline, candidate):
             "candidate": after,
             "coverage": "observed_native_dependencies_under_selected_root",
         }
-        yield from _side(db, "baseline", "candidate")
-        yield from _side(db, "candidate", "baseline")
-        yield from _retargeted(db)
-        yield from _consumers(db, "baseline")
-        yield from _consumers(db, "candidate")
+        commits = {"baseline": before["commit"], "candidate": after["commit"]}
+        for side, other in (("baseline", "candidate"), ("candidate", "baseline")):
+            for row in _side(db, side, other):
+                yield {
+                    **row,
+                    "editor_locators": [
+                        _locator(side, commits[side], row["owner"], row["owner_path"])
+                    ],
+                }
+        yield from _retargeted(db, commits)
+        for side in ("baseline", "candidate"):
+            for row in _consumers(db, side):
+                yield {
+                    **row,
+                    "editor_locators": [_locator(side, commits[side], row["node"], row["path"])],
+                }
 
 
 def publish_rows(output, rows):

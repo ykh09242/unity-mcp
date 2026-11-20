@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Windows.Components.ReferenceGraph;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -45,6 +46,80 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             using var sha = SHA256.Create();
             return BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(path))).Replace("-", "").ToLowerInvariant();
+        }
+
+        [Test]
+        public void ReviewLocatorAcceptsCleanWindowsCheckoutAndRejectsAChangedField()
+        {
+            string file = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Library", $"ReportLocator-{Guid.NewGuid():N}.yaml");
+            var encoding = new System.Text.UTF8Encoding(false);
+            try
+            {
+                const string yaml = "%YAML 1.1\nMaterial:\n  m_Target: 1\n";
+                File.WriteAllText(file, yaml, encoding);
+                string digest = DiskHash(file);
+                File.WriteAllText(file, yaml.Replace("\n", "\r\n"), encoding);
+                Assert.IsTrue(ReviewReportWindow.MatchesSource(file, digest));
+                File.WriteAllText(file, yaml.Replace("m_Target: 1", "m_Target: 2").Replace("\n", "\r\n"), encoding);
+                Assert.IsFalse(ReviewReportWindow.MatchesSource(file, digest));
+            }
+            finally
+            {
+                File.Delete(file);
+            }
+        }
+
+        [Test]
+        public void ReviewLocatorSelectsExactMovedPrefabComponentAndReferenceField()
+        {
+            string folder = "Assets/__McpReportLocator_" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", folder.Substring(7));
+            var root = new GameObject("Original");
+            var prior = Selection.activeObject;
+            try
+            {
+                for (int i = 0; i < 2; i++)
+                {
+                    var child = new GameObject("Duplicate");
+                    child.transform.SetParent(root.transform);
+                    child.AddComponent<MeshFilter>();
+                }
+                string path = folder + "/Original.prefab";
+                var asset = PrefabUtility.SaveAsPrefabAsset(root, path);
+                var owner = asset.transform.GetChild(1).GetComponent<MeshFilter>();
+                Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(owner, out string guid, out long id));
+                string sha = new string('c', 40);
+                var locator = new JObject
+                {
+                    ["guid"] = guid,
+                    ["commit"] = sha,
+                    ["path"] = path,
+                    ["local_file_id"] = id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["property_path"] = "m_Mesh",
+                    ["source_sha256"] = DiskHash(path),
+                };
+                string moved = folder + "/Sub";
+                AssetDatabase.CreateFolder(folder, "Sub");
+                moved += "/Original.prefab";
+                Assert.IsEmpty(AssetDatabase.MoveAsset(path, moved));
+                var wrongCheckout = Assert.Throws<InvalidOperationException>(() => ReviewReportWindow.Select(locator, new string('a', 40), out _, out _));
+                StringAssert.Contains(sha, wrongCheckout.Message);
+                Assert.AreEqual(prior, Selection.activeObject);
+                var selected = ReviewReportWindow.Select(locator, sha, out string property, out _);
+                var destination = AssetDatabase.LoadAssetAtPath<GameObject>(moved);
+                Assert.AreEqual(destination.transform.GetChild(1).GetComponent<MeshFilter>(), selected);
+                Assert.AreEqual(selected, Selection.activeObject);
+                Assert.AreEqual("m_Mesh", property);
+                locator["local_file_id"] = "123456789";
+                Assert.Throws<InvalidDataException>(() => ReviewReportWindow.Select(locator, sha, out _, out _));
+                Assert.AreEqual(selected, Selection.activeObject);
+            }
+            finally
+            {
+                Selection.activeObject = prior;
+                UnityEngine.Object.DestroyImmediate(root);
+                AssetDatabase.DeleteAsset(folder);
+            }
         }
 
         private static string GitBlobHash(string commit, string path)

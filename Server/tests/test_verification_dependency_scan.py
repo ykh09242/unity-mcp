@@ -9,12 +9,20 @@ from click.testing import CliRunner
 from services.reference_graph.queries import GraphQueries, encode_cursor
 from services.reference_graph.store import Edge, GraphScope, GraphStore
 from services.reference_graph.workspace import GraphWorkspace
+from services.verification.dependency_diff import _property_path
 from services.verification.input_chunks import source_revision
 from tests.test_verification_git_draft import git
 
 
 def _node(index):
     return "asset:" + f"{index + 1:032x}"
+
+
+def test_property_locator_preserves_unity_segments():
+    owner = ["114", "123456", "MonoBehaviour"]
+    assert _property_path([*owner, "<Target>k__BackingField"]) == "<Target>k__BackingField"
+    assert _property_path([*owner, "목록", 1, "대상"]) == "목록.Array.data[1].대상"
+    assert _property_path([*owner, "ambiguous.name"]) is None
 
 
 def _assets(project, paths):
@@ -172,6 +180,14 @@ def test_diff_follows_old_and_current_consumers_and_identifies_explicit_retarget
     }
     (retarget,) = [r for r in rows if r["kind"] == "retargeted"]
     assert retarget["field"] == ["21", "2100000", "Material", "m_Texture"]
+    assert [
+        (item["side"], item["commit"], item["guid"], item["local_file_id"], item["property_path"])
+        for item in retarget["editor_locators"]
+    ] == [
+        (side, commit, retarget["owner"].removeprefix("asset:"), "2100000", "m_Texture")
+        for side, commit in (("baseline", baseline_commit), ("candidate", candidate_commit))
+    ]
+    assert all(len(item["source_sha256"]) == 64 for item in retarget["editor_locators"])
     assert (retarget["baseline_target_path"], retarget["candidate_target_path"]) == (
         paths[3],
         paths[4],

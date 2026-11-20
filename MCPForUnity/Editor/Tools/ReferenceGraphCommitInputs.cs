@@ -161,6 +161,12 @@ namespace MCPForUnity.Editor.Tools
 
         internal static string Hash(string file, ref long remaining)
         {
+            using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(ReadBytes(file, ref remaining))).Replace("-", "").ToLowerInvariant();
+        }
+
+        internal static byte[] ReadBytes(string file, ref long remaining)
+        {
             using var stream = new FileStream(GuardedFileSystem.CheckPath(file), FileMode.Open, FileAccess.Read, FileShare.Read);
             long length = stream.Length;
             if (length > Math.Min(remaining, MaxFileBytes))
@@ -171,11 +177,10 @@ namespace MCPForUnity.Editor.Tools
             if (bytes.Length != stream.Length || stream.ReadByte() != -1)
                 throw new InvalidDataException("Commit input changed while reading.");
             remaining -= bytes.Length;
-            using var sha = SHA256.Create();
-            return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
+            return bytes;
         }
 
-        private static string GitHead(string project)
+        internal static string GitHead(string project)
         {
             string name = Path.DirectorySeparatorChar == '\\' ? "git.exe" : "git";
             string executable = (Environment.GetEnvironmentVariable("PATH") ?? "")
