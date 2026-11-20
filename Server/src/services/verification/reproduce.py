@@ -341,19 +341,19 @@ def _save_fingerprint(storage: Path, relative: str):
 def _execute_pair(artifacts, output, pair, report):
     """Run two independent sides or three ordered processes with a single owned save slot."""
     upgrade = pair.save_upgrade
-    storage = None
+    owned_slot = None
     phases = [(name, name, getattr(pair, name), None) for name in SIDES]
     if upgrade is not None:
         storage = safe_local_path(output / "storage")
         for relative in (upgrade.previous_file, upgrade.candidate_file):
             safe_local_path(storage / relative)
         storage.mkdir(mode=0o700)
+        owned_slot = storage, storage.stat()
         phases = [
             ("baseline", "baseline", pair.baseline, upgrade.previous_file),
             ("candidate", "candidate", pair.candidate, upgrade.candidate_file),
             ("restart", "candidate", upgrade.restart, upgrade.candidate_file),
         ]
-    identity = storage.stat() if storage is not None else None
     for phase, name, expectation, save_file in phases:
         job = uuid4().hex
         report["runs"][phase] = {
@@ -363,26 +363,26 @@ def _execute_pair(artifacts, output, pair, report):
             "status": "incomplete",
         }
         side = getattr(pair, name)
-        if storage is None:
-            result = _execute(artifacts / name, output / phase, pair, side, job)
-        else:
-            result = _execute(
-                artifacts / name,
-                output / phase,
-                pair,
-                side,
-                job,
-                storage=storage,
-                expectation=expectation,
-            )
+        if owned_slot is None:
+            report["runs"][phase] = _execute(artifacts / name, output / phase, pair, side, job)
+            continue
+        storage, identity = owned_slot
+        result = _execute(
+            artifacts / name,
+            output / phase,
+            pair,
+            side,
+            job,
+            storage=storage,
+            expectation=expectation,
+        )
         report["runs"][phase] = result
-        if storage is not None:
-            if not samestat(identity, safe_local_path(storage).stat()):
-                raise ValueError("save_upgrade_storage_replaced")
-            result["save"] = saved = _save_fingerprint(storage, save_file)
-            result["matched"] = result["matched"] and saved["status"] == "present"
-            if phase == "baseline" and not result["matched"]:
-                raise ValueError("save_upgrade_previous_save_unavailable")
+        if not samestat(identity, safe_local_path(storage).stat()):
+            raise ValueError("save_upgrade_storage_replaced")
+        result["save"] = saved = _save_fingerprint(storage, save_file)
+        result["matched"] = result["matched"] and saved["status"] == "present"
+        if phase == "baseline" and not result["matched"]:
+            raise ValueError("save_upgrade_previous_save_unavailable")
 
 
 def _observed_upgrade_failure(runs):
