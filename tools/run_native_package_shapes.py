@@ -19,13 +19,15 @@ SHAPES = ROOT / "tools/native_api_shapes"
 ASSETS = ROOT / "TestProjects/UnityMCPTests/Assets"
 TESTS = ASSETS / "Tests/EditMode"
 NAMESPACE = "MCPForUnityTests.Editor.Tools"
-VERSIONS = {"package": "6000.0.69f1", "integrated": "6000.6.4f1"}
-NATIVE_PACKAGES = read_json(PACKAGE_CONFIG)["nativePackageSets"]
+VERSIONS = {"early-lts": "2022.3.62f3", "package": "6000.0.69f1", "integrated": "6000.6.4f1"}
+CAMERA_AND_ATLAS_SUITES = ("early-lts", "package", "integrated")
+CONFIG = read_json(PACKAGE_CONFIG)
+NATIVE_PACKAGES = CONFIG["nativePackageSets"]
 
 
 @dataclass(frozen=True)
 class Profile:
-    suite: str
+    suites: tuple[str, ...]
     test_class: str
     phases: tuple[tuple[str, ...], ...]
     packages: dict[str, PackageSpec]
@@ -35,7 +37,7 @@ class Profile:
 
 def atlas(version: str) -> Profile:
     return Profile(
-        "package",
+        CAMERA_AND_ATLAS_SUITES,
         "SpriteAtlasReopenTests",
         ((f"Author{version}",), (f"Reopen{version}",)),
         NATIVE_PACKAGES["sprite-atlas"],
@@ -44,9 +46,9 @@ def atlas(version: str) -> Profile:
     )
 
 
-def auditor(suite: str, method: str, packages: dict[str, PackageSpec]) -> Profile:
+def auditor(suites: tuple[str, ...], method: str, packages: dict[str, PackageSpec]) -> Profile:
     return Profile(
-        suite,
+        suites,
         "ProjectAuditorNativeIntegrationTests",
         ((method,),),
         packages,
@@ -59,7 +61,7 @@ def auditor(suite: str, method: str, packages: dict[str, PackageSpec]) -> Profil
 
 def cinemachine(method: str, packages: dict[str, PackageSpec]) -> Profile:
     return Profile(
-        "package",
+        CAMERA_AND_ATLAS_SUITES,
         "CinemachineShapeTests",
         ((method,),),
         packages,
@@ -74,7 +76,7 @@ PROFILES = {
     "atlas-v1": atlas("V1"),
     "atlas-v2": atlas("V2"),
     "addressables-legacy": Profile(
-        "package",
+        ("package",),
         "AddressablesAuthoringTests",
         (
             (
@@ -91,18 +93,18 @@ PROFILES = {
         ),
     ),
     "auditor-package": auditor(
-        "package",
+        ("package",),
         "InstalledOfficialPackageProducesActualFixtureDiagnostic",
         NATIVE_PACKAGES["auditor-package"],
     ),
-    "auditor-absent": auditor("package", "EditorWithoutAuditorRejectsStart", {}),
+    "auditor-absent": auditor(("early-lts", "package"), "EditorWithoutAuditorRejectsStart", {}),
     "auditor-integrated": auditor(
-        "integrated",
+        ("integrated",),
         "IntegratedEditorProducesActualFixtureDiagnostic",
         NATIVE_PACKAGES["auditor-integrated"],
     ),
     "auditor-integrated-no-rules": auditor(
-        "integrated", "IntegratedEditorRequiresRulesBeforeStarting", {}
+        ("integrated",), "IntegratedEditorRequiresRulesBeforeStarting", {}
     ),
 }
 
@@ -213,7 +215,7 @@ def run(
     selected = {
         name: profile
         for name, profile in PROFILES.items()
-        if profile.suite == suite and (profile_name is None or profile_name == name)
+        if suite in profile.suites and (profile_name is None or profile_name == name)
     }
     if not selected:
         raise PreparationError(f"Profile {profile_name} is outside suite {suite}")
@@ -229,6 +231,7 @@ def run(
     ):
         raise PreparationError("Output must be outside the Editor and tested source trees")
     output.mkdir(parents=True, exist_ok=False)
+    overrides = CONFIG["nativePackageOverrides"].get(suite, {})
     for name, profile in selected.items():
         print(f"Preparing {name}", flush=True)
         directory = output / name
@@ -236,7 +239,7 @@ def run(
             version,
             data,
             directory / "prepared",
-            extra_packages=profile.packages,
+            extra_packages=profile.packages | overrides.get(name, {}),
             fixture_sources=fixture_sources(profile),
         )
         project = ROOT / prepared.project_path

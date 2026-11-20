@@ -32,6 +32,8 @@ jobs:
       max-parallel: 1
       matrix:
         include:
+          - suite: early-lts
+            unity_version: '2022.3.62f3'
           - suite: package
             unity_version: '6000.0.69f1'
           - suite: integrated
@@ -123,7 +125,7 @@ jobs:
           output = Path(os.environ['PACKAGE_SHAPE_OUTPUT'])
           required = []
           for name, profile in PROFILES.items():
-              if profile.suite != suite:
+              if suite not in profile.suites:
                   continue
               directory = Path(name)
               required.append(directory / 'prepared' / 'resolved-packages.json')

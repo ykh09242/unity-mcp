@@ -12,20 +12,22 @@ import run_native_package_shapes as shapes
 
 
 def test_profiles_cover_exact_native_shapes():
-    assert {name for name, p in shapes.PROFILES.items() if p.suite == "package"} == {
+    common = {
         "atlas-v1",
         "atlas-v2",
-        "addressables-legacy",
-        "auditor-package",
-        "auditor-absent",
         "cinemachine-2",
         "cinemachine-3",
         "cinemachine-absent",
     }
-    assert {name for name, p in shapes.PROFILES.items() if p.suite == "integrated"} == {
-        "auditor-integrated",
-        "auditor-integrated-no-rules",
+    extra = {
+        "early-lts": {"auditor-absent"},
+        "package": {"auditor-package", "auditor-absent", "addressables-legacy"},
+        "integrated": {"auditor-integrated", "auditor-integrated-no-rules"},
     }
+    assert set(shapes.VERSIONS) == set(extra)
+    for suite, profiles in extra.items():
+        selected = {name for name, profile in shapes.PROFILES.items() if suite in profile.suites}
+        assert selected == common | profiles
     for version in ("V1", "V2"):
         profile = shapes.PROFILES[f"atlas-{version.lower()}"]
         assert profile.graphics and profile.phases == ((f"Author{version}",), (f"Reopen{version}",))
@@ -64,6 +66,32 @@ def test_runner_rejects_mixed_suites_existing_roots_and_wrong_editor(tmp_path):
         shapes.run("package", editor, shapes.VERSIONS["integrated"], output)
     with pytest.raises(shapes.PreparationError, match="Editor module"):
         shapes.run("integrated", editor, shapes.VERSIONS["integrated"], output)
+
+
+@pytest.mark.parametrize(
+    "suite,source,version",
+    [("package", "registry", "1.3.3"), ("integrated", "editor", "1.4.0")],
+)
+def test_modern_camera_prepares_math_provider_for_its_editor(
+    tmp_path, monkeypatch, suite, source, version
+):
+    editor = tmp_path / "Editor/Unity"
+    modules = editor.parent / "Data/Managed/UnityEngine"
+    modules.mkdir(parents=True)
+    editor.touch()
+    if suite == "integrated":
+        (modules / "UnityEditor.ProjectAuditorModule.dll").touch()
+    captured = {}
+
+    def capture(*_args, extra_packages, **_kwargs):
+        captured.update(extra_packages)
+        raise shapes.PreparationError("captured package request")
+
+    monkeypatch.setattr(shapes, "prepare", capture)
+    with pytest.raises(shapes.PreparationError, match="captured package request"):
+        shapes.run(suite, editor, shapes.VERSIONS[suite], tmp_path / "run", "cinemachine-3")
+    assert captured["com.unity.mathematics"] == {"source": source, "version": version}
+    assert captured["com.unity.cinemachine"] == {"source": "registry", "version": "3.1.7"}
 
 
 def test_requires_expected_manifest_and_actual_package_lock(tmp_path):

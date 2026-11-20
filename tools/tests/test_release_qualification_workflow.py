@@ -94,6 +94,7 @@ def test_qualification_requires_the_selected_server_suite_at_the_server_sha(
         "tools/native_api_shapes/CinemachineShapeTests.cs",
         "tools/unity-ci-packages.json",
         "tools/unity-registry-pins.json",
+        "tools/unity-windows-2022-lts.json",
         "tools/unity-windows-integrated-auditor.json",
         "tools/local_harness.py",
         "tools/tests/test_assetgen_reload_workflow.py",
@@ -504,6 +505,7 @@ def test_package_shapes_use_exact_beta_without_exposing_credentials_to_the_runne
     assert job["strategy"]["fail-fast"] is False
     assert job["strategy"]["max-parallel"] == 1
     assert job["strategy"]["matrix"]["include"] == [
+        {"suite": "early-lts", "unity_version": "2022.3.62f3"},
         {"suite": "package", "unity_version": "6000.0.69f1"},
         {"suite": "integrated", "unity_version": "6000.6.4f1"},
     ]
@@ -559,7 +561,11 @@ def test_package_shapes_use_exact_beta_without_exposing_credentials_to_the_runne
     "suite,missing",
     [
         ("package", None),
+        ("early-lts", None),
+        ("early-lts", "atlas-v1/ReopenV1/results.xml"),
+        ("early-lts", "auditor-absent/EditorWithoutAuditorRejectsStart/results.xml"),
         ("integrated", None),
+        ("integrated", "cinemachine-2/LegacyProvider/results.xml"),
         ("package", "atlas-v2/ReopenV2/results.xml"),
         ("package", "addressables-legacy/EditMode/process.log"),
         ("package", "cinemachine-2/LegacyProvider/results.xml"),
@@ -577,7 +583,7 @@ def test_complete_package_shape_evidence_is_required_after_success(tmp_path, sui
     program = next(step["run"] for step in steps if step.get("id") == "evidence")
     expected = set()
     for profile, spec in PROFILES.items():
-        if spec.suite == suite:
+        if suite in spec.suites:
             expected.add(f"{profile}/prepared/resolved-packages.json")
             expected.add(f"{profile}/prepared/project/Packages/packages-lock.json")
             for methods in spec.phases:

@@ -213,7 +213,7 @@ jobs:
           message = (
               'Exact receiving SHA `' + os.environ['QUALIFICATION_SHA'] + '` passed '
               'the focused Python suite at selected server `' + selected + '`, its real Editor bridge, both real reload probes, Windows VFX, '
-              'Windows standalone Player (Mono, standard), Windows native package shapes on both pinned Editors, '
+              'Windows standalone Player (Mono, standard), Windows native package shapes on all pinned Editors, '
               'untouched UPM installation on floor/current Editors and full distribution canary. '
               'No publication was performed.'
           )

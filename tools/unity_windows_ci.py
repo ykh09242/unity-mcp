@@ -14,6 +14,7 @@ from player_e2e_process import Invocation, execute
 
 PLAYER_VERSION = "6000.0.69f1"
 EDITOR_MANIFESTS = {
+    "2022.3.62f3": "unity-windows-2022-lts.json",
     PLAYER_VERSION: "unity-player-e2e.json",
     "6000.6.4f1": "unity-windows-integrated-auditor.json",
 }

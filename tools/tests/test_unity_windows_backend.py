@@ -106,8 +106,15 @@ def test_unknown_backend_is_refused_before_creating_install_root(tmp_path):
     assert not root.exists()
 
 
-def test_integrated_editor_uses_its_own_pin_without_requiring_a_player_module(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "version,revision,size,integrity",
+    [
+        ("2022.3.62f3", "96770f904ca7", 3695061288, "md5-Lp7FJ6Eyng1yw0VAR/N9JA=="),
+        ("6000.6.4f1", "12bfff696524", 3851126776, "md5-aKPa2Mx4GBqn0IjZdK3uzQ=="),
+    ],
+)
+def test_editor_uses_its_own_pin_without_requiring_a_player_module(
+    tmp_path, monkeypatch, version, revision, size, integrity
 ):
     root = tmp_path / "editor"
     calls = []
@@ -124,18 +131,18 @@ def test_integrated_editor_uses_its_own_pin_without_requiring_a_player_module(
 
     monkeypatch.setattr(windows, "verified_installer", verify)
     monkeypatch.setattr(windows, "execute", install)
-    windows.provision(root, unity_version="6000.6.4f1")
+    windows.provision(root, unity_version=version)
     receipt = windows.read_json(root / "provision.json")
     assert calls == [
         (
             root / "UnitySetup.exe",
-            "https://download.unity3d.com/download_unity/12bfff696524/Windows64EditorInstaller/UnitySetup64-6000.6.4f1.exe",
-            3851126776,
-            "md5-aKPa2Mx4GBqn0IjZdK3uzQ==",
+            f"https://download.unity3d.com/download_unity/{revision}/Windows64EditorInstaller/UnitySetup64-{version}.exe",
+            size,
+            integrity,
         )
     ]
-    assert receipt["unity_version"] == "6000.6.4f1"
-    assert receipt["release_revision"] == "12bfff696524"
+    assert receipt["unity_version"] == version
+    assert receipt["release_revision"] == revision
     assert receipt["authenticode_verified"] is True
     assert "windows_mono_verified" not in receipt
 

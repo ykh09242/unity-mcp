@@ -25,6 +25,13 @@
     "com.unity.modules.video",
     "com.unity.modules.xr"
   ],
+  "nativePackageOverrides": {
+    "integrated": {
+      "cinemachine-3": {
+        "com.unity.mathematics": {"source": "editor", "version": "1.4.0"}
+      }
+    }
+  },
   "nativePackageSets": {
     "cinemachine-2": {
       "com.unity.cinemachine": {"source": "registry", "version": "2.10.7"}
