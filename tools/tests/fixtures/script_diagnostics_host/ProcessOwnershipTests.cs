@@ -76,6 +76,36 @@ public class ProcessOwnershipTests
         Assert.That(owner.Occupied, Is.Zero);
     }
 
+    [NonParallelizable]
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task UnusableTempDirectoryRefusesLaunchAndReleasesCapacity(bool useFile)
+    {
+        string key = OperatingSystem.IsWindows() ? "TMP" : "TMPDIR";
+        string? previous = Environment.GetEnvironmentVariable(key);
+        string invalid = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        using var owner = new AnalysisHostProcess();
+        try
+        {
+            if (useFile)
+                File.WriteAllText(invalid, "owned sentinel");
+            Environment.SetEnvironmentVariable(key, invalid);
+            // Starting this sentinel executable would fail for a different reason.
+            var error = await Assert.ThrowsAsync<IOException>(async () =>
+                await owner.RunAsync("missing-unity-analysis-dotnet", [], AppContext.BaseDirectory, null, false, CancellationToken.None)
+            );
+            Assert.That(error!.Message, Is.EqualTo("analysis_temp_unwritable"));
+            Assert.That(owner.ActiveProcessId, Is.Zero);
+            Assert.That(owner.Occupied, Is.Zero);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(key, previous);
+            if (useFile)
+                File.Delete(invalid);
+        }
+    }
+
     private static bool Exited(int pid)
     {
         try

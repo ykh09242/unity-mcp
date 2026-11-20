@@ -79,10 +79,10 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
                 // Unity Mono's redirected StreamWriter can emit a BOM before BaseStream writes.
                 // Framed binary input must begin with the four length bytes on every runtime.
                 typeof(ProcessStartInfo).GetProperty("StandardInputEncoding")?.SetValue(info, new UTF8Encoding(false));
-                // Only the shipped host project is built; no inherited MSBuild import directories.
+                ConfigureTemporaryDirectory(info);
                 info.EnvironmentVariables["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
                 info.EnvironmentVariables["MSBUILDDISABLENODEREUSE"] = "1";
-                info.EnvironmentVariables["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
+                info.EnvironmentVariables["MSBUILDUSESERVER"] = "0";
                 process = new Process { StartInfo = info };
                 lock (_gate)
                 {
@@ -204,6 +204,28 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             catch (Exception)
             {
                 return false;
+            }
+        }
+
+        private static void ConfigureTemporaryDirectory(ProcessStartInfo info)
+        {
+            string? configured =
+                Path.DirectorySeparatorChar == '\\'
+                    ? info.EnvironmentVariables["TMP"] ?? info.EnvironmentVariables["TEMP"]
+                    : info.EnvironmentVariables["TMPDIR"];
+            try
+            {
+                string directory = Path.GetFullPath(string.IsNullOrEmpty(configured) ? Path.GetTempPath() : configured);
+                string probe = Path.Combine(directory, "unity-mcp-" + Guid.NewGuid().ToString("N") + ".tmp");
+                using (var file = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose))
+                    file.WriteByte(0);
+                info.EnvironmentVariables["TMP"] = directory;
+                info.EnvironmentVariables["TEMP"] = directory;
+                info.EnvironmentVariables["TMPDIR"] = directory;
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException || e is NotSupportedException)
+            {
+                throw new IOException("analysis_temp_unwritable", e);
             }
         }
 
