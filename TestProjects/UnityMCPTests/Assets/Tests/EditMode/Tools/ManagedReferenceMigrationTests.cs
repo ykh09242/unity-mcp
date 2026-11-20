@@ -62,7 +62,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
             void Reopen(string previous, string replacement)
             {
-                Resources.UnloadAsset(_asset);
+                UnityEngine.Resources.UnloadAsset(_asset);
                 // Unity may wrap a long type tuple across YAML lines. Only rewrite this owned type identity.
                 string yaml = File.ReadAllText(path);
                 var identity = new Regex(Regex.Escape(previous).Replace(@"\ ", @"\s+"));
