@@ -2174,6 +2174,52 @@ def registry_archive(entries: list[tuple[str, bytes]]) -> bytes:
     return content.getvalue()
 
 
+@pytest.mark.parametrize("good_archive", [True, False])
+def test_native_fixture_sources_and_exact_editor_archive(environment, tmp_path, good_archive):
+    repo, data, cache, profiles = environment
+    name = "com.unity.fixture-rules"
+    entry = json.dumps({"name": name, "version": "1.0.1"}).encode()
+    content = registry_archive([("package/package.json", entry)])
+    archive = data / f"Resources/PackageManager/Editor/{name}-1.0.1.tgz"
+    archive.parent.mkdir()
+    archive.write_bytes(content)
+    source = repo / "Selected.cs"
+    source.write_bytes(b"class Selected {}")
+    output = tmp_path / "external-output"
+    digest = hashlib.sha256(content).hexdigest() if good_archive else "0" * 64
+
+    def stage():
+        return packages.prepare(
+            "6000.0.69f1",
+            data,
+            output,
+            repo=repo,
+            profiles_path=profiles,
+            registry_cache=cache,
+            extra_packages={
+                name: {"source": "editor-archive", "version": "1.0.1", "sha256": digest}
+            },
+            fixture_sources={"Assets/Scripts/Selected.cs": source},
+        )
+
+    if not good_archive:
+        with pytest.raises(packages.PreparationError, match="archive integrity mismatch"):
+            stage()
+        assert not output.exists()
+        return
+    result = stage()
+    project = Path(result.project_path)
+    assert project == output / "project"
+    assert (project / "Assets/Scripts/Selected.cs").read_bytes() == source.read_bytes()
+    assert not (project / "Assets/Fixture.cs").exists()
+    assert (output / "package/package.json").read_bytes() == (
+        repo / "MCPForUnity/package.json"
+    ).read_bytes()
+    report = json.loads(Path(result.resolution_report).read_bytes())
+    record = next(item for item in report["packages"] if item["name"] == name)
+    assert record["source"] == "editor-archive" and record["integrity"]["archiveSha256"] == digest
+
+
 @pytest.mark.parametrize("conflict", ["package/a", "package/./a", "package/A", "package/a/child"])
 def test_registry_archive_collisions_fail_before_extracting_any_files(
     tmp_path: Path,

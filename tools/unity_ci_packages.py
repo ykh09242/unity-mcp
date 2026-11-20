@@ -42,6 +42,7 @@ TMP_REQUIRED_ASSETS = (
 class PackageSpec(TypedDict, total=False):
     source: str
     version: str
+    sha256: str
 
 
 class ProfileSpec(TypedDict, total=False):
@@ -647,6 +648,8 @@ def prepare(
     registry_integrity: dict[str, str] | None = None,
     include_optional: bool = False,
     include_input_system: bool = False,
+    extra_packages: dict[str, PackageSpec] | None = None,
+    fixture_sources: dict[str, Path] | None = None,
 ) -> Preparation:
     major, minor, _ = unity_numbers(unity_version)
     config = read_json(profiles_path)
@@ -684,7 +687,7 @@ def prepare(
     if registry_cache is not None:
         input_roots.append(registry_cache.resolve())
     if (
-        not output.is_relative_to(repo)
+        (not output.is_relative_to(repo) and fixture_sources is None)
         or output == repo
         or output.is_relative_to(package_root)
         or output.is_relative_to(project_root)
@@ -707,6 +710,12 @@ def prepare(
         specs["com.unity.inputsystem"] = candidates[0][1]["packages"]["com.unity.inputsystem"]
     if optional_profile is not None:
         specs.update(optional_profile["packages"])
+    for name, spec in (extra_packages or {}).items():
+        if name in specs:
+            raise PreparationError(
+                f"Additional fixture package overrides a base dependency: {name}"
+            )
+        specs[name] = spec
     for name in config["requiredModules"]:
         specs[name] = {"source": "editor"}
     for name in original_package.get("dependencies", {}):
@@ -731,7 +740,23 @@ def prepare(
             sha256 = None
             match spec["source"]:
                 case "editor":
-                    package = read_package(builtin / name, name, unity_version, "editor")
+                    package = read_package(
+                        builtin / name, name, unity_version, "editor", spec.get("version")
+                    )
+                case "editor-archive":
+                    version = spec["version"]
+                    package_numbers(version)
+                    archive = builtin.parent / "Editor" / f"{name}-{version}.tgz"
+                    content = archive.read_bytes()
+                    sha256 = hashlib.sha256(content).hexdigest()
+                    if sha256 != spec["sha256"]:
+                        raise PreparationError(
+                            f"Editor archive integrity mismatch: {name}@{version}"
+                        )
+                    extract_package(content, destination)
+                    package = read_package(
+                        destination, name, unity_version, "editor-archive", version, sha256
+                    )
                 case "registry":
                     version = spec["version"]
                     package_numbers(version)
@@ -814,16 +839,30 @@ def prepare(
         if not any(path.is_file() for path in coroutines_editor.rglob("*.cs")):
             raise PreparationError("Editor Coroutines Editor sources missing")
         copy_source(package_root, scratch / "package")
-        isolated_package = dict(original_package)
-        isolated_package["dependencies"] = {
-            name: resolved[name].version for name in original_package.get("dependencies", {})
-        }
-        (scratch / "package" / "package.json").write_text(
-            json.dumps(isolated_package, indent=2) + "\n", encoding="utf-8"
-        )
+        if fixture_sources is None:
+            isolated_package = dict(original_package)
+            isolated_package["dependencies"] = {
+                name: resolved[name].version for name in original_package.get("dependencies", {})
+            }
+            (scratch / "package" / "package.json").write_text(
+                json.dumps(isolated_package, indent=2) + "\n", encoding="utf-8"
+            )
         project = scratch / "project"
-        for directory in ("Assets", "ProjectSettings"):
-            copy_source(project_root / directory, project / directory)
+        if fixture_sources is None:
+            for directory in ("Assets", "ProjectSettings"):
+                copy_source(project_root / directory, project / directory)
+        else:
+            (project / "ProjectSettings").mkdir(parents=True)
+            for relative, source in fixture_sources.items():
+                target = project / relative
+                if not target.resolve().is_relative_to(
+                    project / "Assets"
+                ) or not source.resolve().is_relative_to(repo):
+                    raise PreparationError(
+                        f"Fixture must be a repository file staged under Assets: {relative}"
+                    )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
         # This disposable project targets the selected Editor, not the source
         # test project's baseline. An older version marker triggers Unity's
         # project upgrade and silently rewrites the pinned package manifest.
@@ -834,6 +873,7 @@ def prepare(
         dependencies = {
             name: package.version
             if name.startswith("com.unity.modules.")
+            or (fixture_sources is not None and package.source == "editor")
             else f"file:../../packages/{name}"
             for name, package in resolved.items()
         }
@@ -878,7 +918,7 @@ def prepare(
             json.dumps(report, indent=2) + "\n", encoding="utf-8"
         )
         scratch.replace(output)
-    relative = output.relative_to(repo).as_posix()
+    relative = (output.relative_to(repo) if output.is_relative_to(repo) else output).as_posix()
     return Preparation(
         f"{relative}/refs",
         f"{relative}/packages/com.unity.test-framework",
