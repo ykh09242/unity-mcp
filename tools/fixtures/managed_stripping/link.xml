@@ -1,0 +1,7 @@
+<linker>
+  <assembly fullname="ManagedStripping.Runtime">
+    <type fullname="ManagedStrippingFixture.ReflectionTarget" preserve="nothing">
+      <method signature="System.String Read()" />
+    </type>
+  </assembly>
+</linker>
