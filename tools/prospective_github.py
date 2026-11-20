@@ -23,6 +23,28 @@ def api(repository, path):
     return json.loads(subprocess.check_output(["gh", "api", f"repos/{repository}/{path}"]))
 
 
+def receiving_activity(repository, before, after):
+    # gh follows the activity endpoint's Link cursors. Filter output on every
+    # page to retain only matching ref transitions and their server timestamps.
+    query = (
+        f'.[] | select(.ref=="refs/heads/beta" and .before=="{before}" and .after=="{after}")'
+        " | {id,timestamp,activity_type}"
+    )
+    raw = subprocess.check_output(
+        [
+            "gh",
+            "api",
+            "--paginate",
+            "--jq",
+            query,
+            f"repos/{repository}/activity?ref=beta&per_page=100",
+        ],
+        text=True,
+        encoding="utf-8",
+    )
+    return [json.loads(line) for line in raw.splitlines() if line.strip()]
+
+
 def activation(repository, introduction):
     endpoint = "actions/workflows/prospective-pr.yml/runs"
     listing = api(repository, endpoint + "?per_page=1")
@@ -51,12 +73,22 @@ def activation(repository, introduction):
             ["git", "merge-base", "--is-ancestor", introduction, before], check=False
         ).returncode
         if after_contains == 0 and before_contains == 1:
+            activities = [
+                a
+                for a in receiving_activity(repository, before, after)
+                if a["activity_type"] in ("push", "force_push", "pr_merge", "merge_queue_merge")
+                and datetime.fromisoformat(a["timestamp"])
+                <= datetime.fromisoformat(run["created_at"])
+            ]
+            activity = only(activities, "Beta receiving activity missing or ambiguous")
             return {
                 "activation_commit": introduction,
                 "activation_before": before,
                 "activation_head": after,
                 "activation_run_id": run["id"],
-                "activation_at": run["created_at"],
+                "activation_run_created_at": run["created_at"],
+                "activation_activity_id": activity["id"],
+                "activation_at": activity["timestamp"],
             }
         return None
 
@@ -77,7 +109,7 @@ def opened_prs(repository, activation_at):
         batch = api(
             repository, f"pulls?state=all&sort=created&direction=asc&per_page=100&page={page}"
         )
-        yield from (r for r in batch if r["created_at"] > activation_at)
+        yield from (r for r in batch if r["created_at"] >= activation_at)
         if len(batch) < 100:
             return
     raise ValueError("PR opening history exceeds pagination limit")
@@ -157,14 +189,58 @@ def opening_receipts(repository, selected, activation_at):
     return receipts
 
 
-def cohort(repository, activation_at):
+def opening_order(receipt, activity):
+    if receipt:
+        base = receipt["base"]
+        if (
+            subprocess.run(
+                ["git", "merge-base", "--is-ancestor", activity["activation_head"], base],
+                check=False,
+            ).returncode
+            == 0
+        ):
+            return "after"
+        if (
+            subprocess.run(
+                ["git", "merge-base", "--is-ancestor", base, activity["activation_before"]],
+                check=False,
+            ).returncode
+            == 0
+        ):
+            return "before"
+    return "unresolved"
+
+
+def read_openings(repository, rows, at):
+    try:
+        return opening_receipts(repository, rows, at)
+    except (ValueError, OSError, KeyError, TypeError, subprocess.CalledProcessError):
+        return {}
+
+
+def cohort(repository, activity):
+    activation_at = activity["activation_at"]
     selected = []
-    # The REST connection is oldest first. Resolve ties by PR number even if
-    # the tied opening timestamps fall on two pages.
-    for _, same_second in groupby(
+    # Resolve tied GitHub timestamps across page boundaries. Original opening
+    # base ancestry decides which side of the receiving push a same-second PR was on.
+    for opened, same_second in groupby(
         opened_prs(repository, activation_at), key=lambda r: r["created_at"]
     ):
-        for pr in sorted(same_second, key=lambda r: r["number"]):
+        batch = sorted(same_second, key=lambda r: r["number"])
+        tied = (
+            read_openings(repository, [{"opened_at": opened}], activation_at)
+            if opened == activation_at
+            else {}
+        )
+        for pr in batch:
+            receipts = tied.get((pr["number"], opened), [])
+            order = (
+                opening_order(receipts[0] if len(receipts) == 1 else None, activity)
+                if opened == activation_at
+                else "after"
+            )
+            if order == "before":
+                continue
             try:
                 base = original_target(repository, pr)
             except (ValueError, OSError, KeyError, TypeError, subprocess.CalledProcessError):
@@ -177,6 +253,7 @@ def cohort(repository, activation_at):
                     "pr": pr["number"],
                     "opened_at": pr["created_at"],
                     "original_target": base,
+                    "activation_order": order,
                     "base": None,
                     "head": None,
                     "full_failures": None,
@@ -188,13 +265,12 @@ def cohort(repository, activation_at):
         if len(selected) == 3:
             break
     if selected:
-        try:
-            receipts = opening_receipts(repository, selected, activation_at)
-        except (ValueError, OSError, KeyError, TypeError, subprocess.CalledProcessError):
-            receipts = {}
+        receipts = read_openings(repository, selected, activation_at)
         for row in selected:
             found = receipts.get((row["pr"], row["opened_at"]), [])
-            if len(found) == 1 and row["original_target"] == "beta":
+            if row["activation_order"] == "unresolved":
+                row["reason"] = "Same-second PR opening order unavailable; reserving its slot"
+            elif len(found) == 1 and row["original_target"] == "beta":
                 row.update(found[0])
             elif row["original_target"] is None:
                 row["reason"] = (
@@ -209,6 +285,28 @@ def only(rows, reason):
     if len(rows) != 1:
         raise ValueError(reason)
     return rows[0]
+
+
+def workflow_files(repository, head):
+    # Traverse the immutable tree so an absent directory is distinguishable
+    # from an inaccessible commit or a failed network lookup.
+    tree = api(repository, f"git/commits/{head}")["tree"]["sha"]
+    for directory in (".github", "workflows"):
+        entries = api(repository, f"git/trees/{tree}")
+        if entries["truncated"]:
+            raise ValueError("Candidate workflow tree truncated")
+        child = next((r for r in entries["tree"] if r["path"] == directory), None)
+        if child is None:
+            return {}
+        if child["type"] != "tree":
+            raise ValueError("Candidate workflow directory is not a tree")
+        tree = child["sha"]
+    entries = api(repository, f"git/trees/{tree}")
+    if entries["truncated"]:
+        raise ValueError("Candidate workflow tree truncated")
+    return {
+        ".github/workflows/" + r["path"]: r["sha"] for r in entries["tree"] if r["type"] == "blob"
+    }
 
 
 def trusted_producer(repository, row, run):
@@ -228,12 +326,29 @@ def trusted_producer(repository, row, run):
         commit = api(repository, f"git/commits/{merge}")
         if [p["sha"] for p in commit["parents"]] != [row["base"], row["head"]]:
             raise ValueError("Producer merge revision differs from opening base and head")
+    head_files = workflow_files(repository, row["head"])
+    common = None
     blobs = {}
     for path in (PRODUCER, CONTROL):
         base_blob = git("rev-parse", f"{row['base']}:{path}")
-        for revision in {row["head"], merge}:
-            if api(repository, f"contents/{path}?ref={revision}")["sha"] != base_blob:
-                raise ValueError("PR workflow definition differs from the trusted opening base")
+        if api(repository, f"contents/{path}?ref={merge}")["sha"] != base_blob:
+            raise ValueError("Defining workflow differs from trusted opening base")
+        if head_files.get(path) != base_blob:
+            if merge == row["head"]:
+                raise ValueError("Defining head workflow differs from trusted opening base")
+            # A branch cut before rollout can legitimately lack the file on its
+            # head. A change relative to its merge base, including deletion,
+            # is candidate-authored and cannot supply trusted metrics.
+            if common is None:
+                common = api(repository, f"compare/{row['base']}...{row['head']}?per_page=1")[
+                    "merge_base_commit"
+                ]["sha"]
+                if not re.fullmatch(OID, common):
+                    raise ValueError("Missing candidate merge base")
+            entry = git("ls-tree", common, "--", path)
+            common_blob = entry.split()[2] if entry else None
+            if head_files.get(path) != common_blob:
+                raise ValueError("Candidate changed the original workflow definition")
         blobs[path] = base_blob
     return {"base_revision": row["base"], "workflow_revision": merge, "workflow_blobs": blobs}
 

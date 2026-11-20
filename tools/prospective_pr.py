@@ -226,7 +226,7 @@ def summarize(path):
 
     repository = os.environ["GITHUB_REPOSITORY"]
     receipt = rollout()
-    rows = cohort(repository, receipt["activation_at"])
+    rows = cohort(repository, receipt)
     for row in rows:
         row["state"] = "incomplete"
         if not row.get("head"):
@@ -236,6 +236,9 @@ def summarize(path):
         except (ValueError, OSError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
             row["reason"] = str(exc)
     paired = sum(row["state"] == "paired" for row in rows)
+    confirmed = sum(
+        r["original_target"] == "beta" and r["activation_order"] == "after" for r in rows
+    )
     metrics = {}
     for role in ROLES[:2]:
         measured = [
@@ -262,10 +265,12 @@ def summarize(path):
             "repository": repository,
             **receipt,
             "target_prs": 3,
-            "enrolled_prs": len(rows),
+            "enrolled_prs": confirmed,
+            "occupied_slots": len(rows),
+            "provisional_slots": len(rows) - confirmed,
             "awaiting_prs": 3 - len(rows),
             "paired_prs": paired,
-            "incomplete_prs": len(rows) - paired,
+            "incomplete_prs": confirmed - paired,
             "metrics": metrics,
             "prs": rows,
         },
@@ -289,10 +294,15 @@ def main():
     if args.action == "eligible":
         from prospective_github import cohort
 
-        since = rollout()["activation_at"]
+        receipt = rollout()
         for attempt in range(6):
-            rows = cohort(os.environ["GITHUB_REPOSITORY"], since)
-            if any(r.get("pr") == args.number and r["original_target"] == "beta" for r in rows):
+            rows = cohort(os.environ["GITHUB_REPOSITORY"], receipt)
+            if any(
+                r.get("pr") == args.number
+                and r["original_target"] == "beta"
+                and r["activation_order"] == "after"
+                for r in rows
+            ):
                 print("true")
                 return
             if len(rows) == 3 or attempt == 5:

@@ -143,7 +143,16 @@ def test_first_three_roster_retains_missing_full_and_missing_reports(monkeypatch
         study, "rollout", lambda: {"activation_commit": "c" * 40, "activation_at": EARLY}
     )
 
-    original = [{"slot": i, "pr": i, "head": "d" * 40} for i in range(1, 4)]
+    original = [
+        {
+            "slot": i,
+            "pr": i,
+            "head": "d" * 40,
+            "original_target": "beta",
+            "activation_order": "after",
+        }
+        for i in range(1, 4)
+    ]
     monkeypatch.setattr(provider, "cohort", lambda repo, activation: original)
     plan, runs = fixture()
     del runs["full"]
@@ -195,7 +204,7 @@ def test_canonical_openings_include_suppressed_event_and_preserve_original_base(
         }
 
     monkeypatch.setattr(provider, "opening_receipts", captures)
-    rows = provider.cohort("sample/repo", EARLY)
+    rows = provider.cohort("sample/repo", {"activation_at": EARLY})
     assert [r["pr"] for r in rows] == [1, 3, 4]
     assert rows[0]["head"] is None and rows[0]["comparisons"] is None and rows[0]["reason"]
     assert rows[1]["enrollment_run_id"] == 3
@@ -206,7 +215,7 @@ def test_canonical_openings_include_suppressed_event_and_preserve_original_base(
         return target(repo, row)
 
     monkeypatch.setattr(provider, "original_target", uncertain)
-    rows = provider.cohort("sample/repo", EARLY)
+    rows = provider.cohort("sample/repo", {"activation_at": EARLY})
     assert [r["pr"] for r in rows] == [1, 2, 3]
     assert rows[1]["original_target"] is None and rows[1]["reason"]
 
@@ -238,10 +247,17 @@ def test_trusted_activation_uses_first_actual_receiving_push_not_local_commit_ti
             command, 1 if command[-1] == before and command[1] == "merge-base" else 0
         ),
     )
+    monkeypatch.setattr(
+        provider,
+        "receiving_activity",
+        lambda repo, old, new: [{"id": 77, "timestamp": EARLY, "activity_type": "push"}],
+    )
     result = provider.activation("sample/repo", intro)
     assert (
         result["activation_run_id"] == 10
-        and result["activation_at"] == LATE
+        and result["activation_at"] == EARLY
+        and result["activation_activity_id"] == 77
+        and result["activation_run_created_at"] == LATE
         and result["activation_head"] == after
     )
     pushes.pop()
@@ -267,7 +283,12 @@ def test_modified_producer_workflow_rejected_even_when_its_report_claims_match(m
         "api",
         lambda repo, path: {"sha": "edited-blob" if provider.CONTROL in path else "original-blob"},
     )
-    with pytest.raises(ValueError, match="definition differs"):
+    monkeypatch.setattr(
+        provider,
+        "workflow_files",
+        lambda repo, sha: {provider.PRODUCER: "original-blob", provider.CONTROL: "edited-blob"},
+    )
+    with pytest.raises(ValueError, match="workflow differs"):
         provider.trusted_producer("sample/repo", row, run)
 
 
@@ -347,3 +368,88 @@ def test_verified_provider_jobs_recompute_metrics_from_raw_artifacts(monkeypatch
     report = provider.paired_report(plan["repository"], row)
     assert report["state"] == "paired" and report["comparisons"]["manual"]["seconds_saved"] == 6
     assert report["provenance"]["receipt_job_id"] == 6
+
+
+def test_same_second_openings_use_original_base_or_reserve_unresolved_slot(monkeypatch):
+    before, after = "a" * 40, "b" * 40
+    opened = EARLY
+    rows = [{"number": n, "created_at": opened if n <= 3 else LATE} for n in range(1, 6)]
+    monkeypatch.setattr(provider, "api", lambda repo, path: rows)
+    monkeypatch.setattr(provider, "original_target", lambda repo, row: "beta")
+    receipts = {
+        (1, opened): [{"head": "c" * 40, "base": before}],
+        (3, opened): [{"head": "d" * 40, "base": after}],
+        (4, LATE): [{"head": "e" * 40, "base": after}],
+        (5, LATE): [{"head": "f" * 40, "base": after}],
+    }
+    monkeypatch.setattr(provider, "opening_receipts", lambda *args: receipts)
+    monkeypatch.setattr(
+        provider.subprocess,
+        "run",
+        lambda command, check: subprocess.CompletedProcess(
+            command, 0 if command[-1] == command[-2] else 1
+        ),
+    )
+    actual = provider.cohort(
+        "sample/repo",
+        {"activation_at": EARLY, "activation_head": after, "activation_before": before},
+    )
+    assert [r["pr"] for r in actual] == [2, 3, 4]
+    assert [r["activation_order"] for r in actual] == ["unresolved", "after", "after"]
+    assert actual[0]["head"] is None and actual[1]["head"] == "d" * 40
+
+
+@pytest.mark.parametrize(
+    "common_blob,head_blob,ok",
+    [
+        (None, None, True),
+        ("previous", "previous", True),
+        ("previous", None, False),
+        (None, "edited", False),
+    ],
+)
+def test_actual_trusted_merge_accepts_untouched_old_branch_only(
+    monkeypatch, common_blob, head_blob, ok
+):
+    base, head, merge, common = ("1" * 40, "2" * 40, "3" * 40, "4" * 40)
+    row = {"pr": 8, "base": base, "head": head}
+    run = {
+        "display_title": f"Controls 8 {merge}",
+        "path": provider.PRODUCER,
+        "event": "pull_request",
+        "head_sha": head,
+        "status": "completed",
+        "repository": {"full_name": "sample/repo"},
+    }
+    monkeypatch.setattr(provider.subprocess, "run", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        provider,
+        "workflow_files",
+        lambda repo, sha: {
+            provider.CONTROL: "approved",
+            **({provider.PRODUCER: head_blob} if head_blob else {}),
+        },
+    )
+    monkeypatch.setattr(
+        provider,
+        "git",
+        lambda cmd, *a: (
+            "approved"
+            if cmd == "rev-parse"
+            else (f"100644 blob {common_blob} file" if common_blob else "")
+        ),
+    )
+
+    def api(repo, path):
+        if path.startswith("git/commits"):
+            return {"parents": [{"sha": base}, {"sha": head}]}
+        if path.startswith("compare/"):
+            return {"merge_base_commit": {"sha": common}}
+        return {"sha": "approved"}
+
+    monkeypatch.setattr(provider, "api", api)
+    if ok:
+        assert provider.trusted_producer("sample/repo", row, run)["workflow_revision"] == merge
+    else:
+        with pytest.raises(ValueError, match="Candidate changed"):
+            provider.trusted_producer("sample/repo", row, run)

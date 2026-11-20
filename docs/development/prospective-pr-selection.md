@@ -2,12 +2,17 @@
 
 The [hosted workflow](../../.github/workflows/prospective-pr.yml) enrolls the first
 three actual PRs originally opened against beta after rollout. Activation uses
-GitHub's timestamp for the beta push whose before/after Git history first
-contains the workflow. This covers a push that delivers several commits.
+the repository activity timestamp for the beta ref update whose before/after
+Git history first contains the workflow. The report retains the activity ID,
+both SHAs and the separate Actions run creation time. This covers a push
+that delivers several commits. For an opening in the same second, the recorded
+opening base determines which side of the push it belongs to. An unprovable
+order reserves a provisional slot.
 Opening order uses GitHub creation time, then PR number. The collector lists
 all PRs across every state and target. For each opening, the first base-change
 event supplies the previous branch. A confirmed zero changes uses the current branch. A missing target history reserves a possible slot until it can be
-resolved. A missing activation receipt leaves the population undetermined.
+resolved. The report counts confirmed enrollments and provisional slots
+separately. A missing activation receipt leaves the population undetermined.
 
 A metadata-only `pull_request_target.opened` workflow preserves the opening
 timestamp, number, base and head. It has no checkout or token permissions.
@@ -55,7 +60,10 @@ The cohort job downloads raw artifacts by the immutable IDs returned by the
 producer jobs. It checks the GitHub archive digests, opening base, head,
 producer and reusable workflow blobs, base observer revisions, plan inventory,
 job membership, host exit markers and timing before recomputing comparisons.
-The ordinary PR jobs run candidate tests on read-only hosted runners without
+For a branch created before rollout, the defining merge revision must contain
+the approved workflow bytes. Older or absent files on the branch head must
+match its common ancestor. The ordinary PR jobs run candidate tests on
+read-only hosted runners without
 secrets. Per-case observations come from pytest in the candidate process.
 GitHub independently observes job identity, time bounds and terminal status.
 
