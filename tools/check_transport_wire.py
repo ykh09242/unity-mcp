@@ -1,12 +1,12 @@
 """Compare four stable/candidate wire pairs and model the candidate continuation lifecycle."""
 
 import argparse
-from itertools import product
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from itertools import product
+from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from player_e2e_artifacts import digest, read_json, write_json
@@ -54,7 +54,7 @@ def build_peer(work: Path, package: Path) -> Path:
 def compare(work: Path, output: Path, stable: str, candidate: str, replay: dict | None) -> int:
     commits = {"stable": git_id(stable, "commit"), "candidate": git_id(candidate, "commit")}
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "boundary": "Managed production codecs and resume journal, simulated transport loss and handler",
         "fixture_sha256": {
             path.name: digest(path) for path in sorted(FIXTURE.iterdir()) if path.is_file()
@@ -105,12 +105,28 @@ def compare(work: Path, output: Path, stable: str, candidate: str, replay: dict 
             if meaning(reference.get(name)) != meaning(result["cases"].get(name))
         }
         report["differences_from_stable_pair"][pair] = differences
+        preservation_failures = [
+            direction
+            for direction, observation in result["preservation"].items()
+            if observation["status"] != "passed"
+        ]
+        for direction in preservation_failures:
+            detail = result["preservation"][direction]
+            print(
+                f"{pair} {direction}: {json.dumps(detail['failure'], ensure_ascii=True)}",
+                flush=True,
+            )
         if result["divergence"] is not None:
             write_json(
                 output / "reproducer.json",
                 {"pair": pair, "revisions": report["revisions"], **result["divergence"]},
             )
-        failed |= bool(differences or result["unexpected_cases"] or result["divergence"])
+        failed |= bool(
+            differences
+            or result["unexpected_cases"]
+            or result["divergence"]
+            or preservation_failures
+        )
     write_json(output / "comparison.json", report)
     print(output / "comparison.json", flush=True)
     return int(failed)

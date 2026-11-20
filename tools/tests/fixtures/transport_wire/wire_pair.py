@@ -1,17 +1,18 @@
 """Run one Python revision against one compiled peer. Each line carries one fixture operation."""
 
+import json
+import subprocess
+import sys
+import time
 from collections import Counter
 from dataclasses import dataclass, replace
 from itertools import product
-import json
 from pathlib import Path
-import subprocess
-import sys
 from threading import Event, Timer
-import time
 
 # -I and an explicit archive root keep installed/candidate modules out of the stable reader.
 sys.path.insert(0, sys.argv[1])
+sys.path.insert(1, str(Path(__file__).resolve().parent))
 
 from transport.command_resume import CommandResumeInvocation, CommandResumeProtocolError
 from transport.json_decoder import decode_json
@@ -21,6 +22,7 @@ from transport.native_arbitration import (
     NativeArbitrationRequest,
     decode_native_reply,
 )
+from wire_preservation import preservation
 
 EVENTS = ("request", "start", "cancel", "disconnect", "complete")
 MAX_EVENTS = 6
@@ -334,6 +336,7 @@ def run(peer, check_model, replay):
     return {
         "cases": cases,
         "unexpected_cases": errors,
+        "preservation": preservation(peer),
         "model_traces": count,
         "max_events": MAX_EVENTS if check_model else None,
         "divergence": failure,
@@ -351,6 +354,9 @@ def main():
         "transport.native_arbitration",
         "transport.models",
         "transport.json_decoder",
+        "transport.legacy.unity_connection",
+        "transport.payload_processing",
+        "transport.plugin_hub",
     ):
         if not Path(sys.modules[name].__file__).resolve().is_relative_to(source):
             raise ValueError(f"{name} did not load from the selected server archive")

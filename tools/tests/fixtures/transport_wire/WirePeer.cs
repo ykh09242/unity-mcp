@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json;
@@ -17,6 +18,10 @@ internal sealed class WirePeer
     {
         switch ((string)step["op"])
         {
+            case "observe_command":
+                return ObserveCommand((string)step["wire"]);
+            case "native_result":
+                return PreservationResult((string)step["id"], NativeReferences());
             case "reset":
                 journal = new CommandResumeJournal(() => null, _ => { }, () => 1000);
                 owners.Clear();
@@ -54,6 +59,37 @@ internal sealed class WirePeer
         }
     }
 
+    private static object ObserveCommand(string wire)
+    {
+        var payload = TransportJson.ParseObject(wire);
+        var parameters = payload.Value<JObject>("params") ?? new JObject();
+        return new { received = parameters.ToString(Formatting.None), response = PreservationResult(payload.Value<string>("id"), parameters) };
+    }
+
+    private static object NativeReferences()
+    {
+        const string path = "Assets/장면/카페.unity";
+        return new
+        {
+            references = new Dictionary<string, object>[]
+            {
+                new() { ["fileID"] = long.MaxValue, ["assetPath"] = path },
+                new()
+                {
+                    ["fileID"] = long.MinValue,
+                    ["assetPath"] = path.Normalize(NormalizationForm.FormD),
+                    ["optional"] = null,
+                },
+            },
+        };
+    }
+
+    private static object PreservationResult(string id, object result)
+    {
+        var response = TransportCommandResponse.FromObject(new { status = "success", result });
+        return new { stdio = response.ToJson(), websocket = TransportCommandResponse.ToWebSocketJson(id, response) };
+    }
+
     private object Frame(CommandResumeJournal.Admission admission, Command command, int connection, string fault)
     {
         // Corrupt only the specified field of a real receipt before the production serializer writes it.
@@ -87,6 +123,7 @@ internal sealed class WirePeer
     {
         try
         {
+            Console.OutputEncoding = new UTF8Encoding(false);
             var peer = new WirePeer();
             string line;
             while ((line = Console.ReadLine()) != null)
