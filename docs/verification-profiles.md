@@ -203,6 +203,7 @@ execution boundaries.
 
 ## Prepare inputs and compare runs
 
+- Read the [PR native fixture coverage](development/native-case-coverage.md) for the current source SHA, earlier observations and unavailable cases.
 - Start with a reviewable Git diff using [`verification-candidate draft`](verification-candidate-draft.md). For large inventories, [capture and assemble input chunks](verification-input-chunks.md).
 - To use a build on another machine, [export its proof and verify the receiving machine's files](verification-candidate-portability.md).
 - To classify a change or locate an earlier failing build, [compare retained verification and Player reports](development/verification-change-evidence.md).

@@ -1,0 +1,67 @@
+name: Native case coverage
+
+on:
+  pull_request:
+    branches: [main, beta]
+  push:
+    branches: [beta]
+  workflow_dispatch:
+    inputs:
+      observed_sha:
+        description: Full source SHA to inspect (defaults to this dispatch SHA).
+        type: string
+        required: false
+      archive_artifact_ids:
+        description: Earlier native artifact IDs, comma separated (defaults to repository selection).
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  collect:
+    name: Collect native fixture evidence
+    if: >-
+      github.repository == 'ykh09242/unity-mcp' &&
+      (github.event_name == 'pull_request' || github.ref == 'refs/heads/beta')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    outputs:
+      title: ${{ steps.coverage.outputs.title }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Read PR head evidence as data. Always run the collector from the reviewed beta branch.
+          ref: ${{ github.event_name == 'pull_request' && 'refs/heads/beta' || github.sha }}
+          persist-credentials: false
+      - name: Resolve same-repository native jobs and retained artifacts
+        id: coverage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OBSERVED_SHA: ${{ github.event.pull_request.head.sha || inputs.observed_sha || github.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ARCHIVED_IDS: ${{ inputs.archive_artifact_ids || vars.NATIVE_CASE_ARCHIVE_IDS }}
+        run: |
+          python3 tools/ci_native_case_coverage.py --repository "$GITHUB_REPOSITORY" \
+            --sha "$OBSERVED_SHA" --head-repo "$HEAD_REPO" --archive-ids "$ARCHIVED_IDS" \
+            --output native-case-coverage.json
+          printf '\nCollector revision `%s`; event revision `%s`.\n' "$(git rev-parse HEAD)" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain coverage snapshot
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-case-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-case-coverage.json
+          if-no-files-found: error
+          retention-days: 30
+
+  coverage:
+    name: ${{ needs.collect.outputs.title }}
+    needs: collect
+    permissions: {}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 2
+    steps:
+      - name: Show coverage in the PR checks list
+        run: echo "The run summary links each source observation."
