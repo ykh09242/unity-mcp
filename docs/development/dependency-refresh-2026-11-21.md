@@ -12,3 +12,20 @@ The review compared beta commit `7367cafd7` with public registry metadata on Nov
 | Website | npm 12.2.3 resolved one patch, `minimizer-webpack-plugin` 5.14.1. The other lock locations and all 13 direct dependencies matched the existing selections. The patch checks valid options without loading the full validation library. Its raised `schema-utils` minimum is already satisfied by the lock. The downloaded tarball matched the published SHA-512 integrity. A second lock-only resolution reproduced the result offline, and npm audit reported zero findings. [npm registry metadata](https://registry.npmjs.org/minimizer-webpack-plugin/5.14.1) · [Website dependency record](../../website/DEPENDENCIES.md#november-21-2026) |
 
 This review verified resolution, package integrity and workflow syntax. Hosted workflows provide execution evidence for the new action pin, and the consuming commit's site CI builds the updated lock.
+
+## Follow-up for change verification
+
+The follow-up queried the 86 third-party Python lock entries, the isolated
+build pins, uv, 63 NuGet names including CSharpier, 32 requested UPM entries
+and the pinned GitHub action and tool repositories. Registry responses matched
+the earlier review. The Unity Editor feed matched the current stable, beta and
+alpha rows. .NET SDK 11.0.100 and the Python 3.14 slim image digest matched their
+publisher feeds. The site's existing npm 12.2.3 refreshed the complete lock in
+a separate directory and produced byte-identical output. The current server lock
+passed uv 0.13.9's offline check, and no further compatible dependency updates
+were selected. [PyPI](https://pypi.org/project/fastmcp/) · [NuGet flat container](https://learn.microsoft.com/en-us/nuget/api/package-base-address-resource) · [Unity release API](https://services.api.unity.com/unity/editor/release/v1/releases) · [npm registry](https://registry.npmjs.org/npm/12.2.3)
+
+The installed SDK comparison fixes the application source and transitive graph
+while comparing the preceding FastMCP 4.2.2 pair with the reviewed 4.2.3 pair.
+The release-note fixture targets typed short positional arrays in MCP result
+schemas. See [the workload and evidence](../reviewed-sdk-runtime.md#isolated-sdk-comparison).

@@ -75,6 +75,46 @@ handlers and runs its own Tasks adapter. The separate platformdirs 4.14.8 lock
 update strengthens runtime-directory lookup and creation on Unix and macOS and
 validates Windows UNC overrides. [FastMCP 4.2.3 release](https://github.com/PrefectHQ/fastmcp/releases/tag/v4.2.3) · [platformdirs 4.14.8 release](https://github.com/tox-dev/platformdirs/releases/tag/4.14.8)
 
+### Isolated SDK comparison
+
+The [installed SDK workflow](../.github/workflows/dependency-sdk-comparison.yml)
+builds one server wheel from the checked commit and installs it into separate
+environments on Python 3.11 and 3.14. uv installs hash-verified requirements
+exported from the server lock. The preceding environment substitutes the
+previously locked FastMCP and FastMCP-Slim 4.2.2 wheel hashes for the co-versioned
+4.2.3 packages. Both runs attest the actual installed versions, the shared wheel
+SHA-256 and the packaged compatibility manifest. The comparison asserts that
+every other installed package version matches, including MCP and MCP Types
+2.3.0. The supported release floor remains the exact reviewed 4.2.3 pair and
+Python 3.11. [FastMCP 4.2.2 wheel](https://pypi.org/project/fastmcp/4.2.2/#files) · [FastMCP-Slim 4.2.2 wheel](https://pypi.org/project/fastmcp-slim/4.2.2/#files)
+
+The SDK fix covers a positional array with fewer supplied elements than its
+`prefixItems` declarations, nested in an object with typed extra fields. The
+fixture exposes this shape through the production object-result schema adapter.
+It registers a fixture tool and performs actual MCP listing and calls over the
+SDK's in-memory transport with both protocol modes. The gate requires identical
+wire schemas and payloads. Both SDKs must hydrate the full slot, while the 4.2.2
+client must lose typed hydration for the short slot and the 4.2.3 client must
+retain it. Existing project tool descriptors remain governed by their own tests.
+[Upstream positional array fix](https://github.com/PrefectHQ/fastmcp/pull/6572)
+
+The same probes construct the installed application and exercise the optional
+execution-receipt and Tasks stores under private temporary paths. The 4.2.2
+override must report `sdk_unsupported`, reject opening the receipt store and
+leave both store paths absent. The reviewed environment must report both adapters
+active. The workflow verifies runtime doctor registration and records the same
+runtime data the resource returns. The probes run without sockets or Unity.
+
+Run the `Installed SDK dependency comparison` workflow and inspect its
+`sdk-comparison-python-*` artifacts for the paired installed package inventories,
+adapter decisions, MCP results and the application commit. To run the same
+gate with uv 0.13.9 in an isolated development environment, use an unused output
+directory and choose `3.11` or `3.14`.
+
+```sh
+uv run --no-project --python 3.11 python tools/experiments/dependencies/compare_sdk.py --output .tmp/sdk-comparison
+```
+
 
 ## Skills and scene-input installation
 

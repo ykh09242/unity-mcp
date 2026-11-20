@@ -1,0 +1,3 @@
+# Wheel hashes from the previous reviewed Server lock at 7d9cdfaae.
+fastmcp==4.2.2 --hash=sha256:a4bb3916ac9d97fc2cc65e36c7bd1a438616b5ec5f1b8d46c8e98d47f150227d
+fastmcp-slim==4.2.2 --hash=sha256:5a8100e8c527d52a953bb895f8936edb5bc721141b4c1a79807fe89af84ba091
