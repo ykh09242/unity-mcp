@@ -78,7 +78,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.NotNull(edge);
                 windowType.GetMethod("UpdateTitle").Invoke(window, new object[] { false });
                 Assert.IsTrue(window.hasUnsavedChanges);
-                var selection = Selection.instanceIDs;
+                var selection = Selection.objects;
                 var focus = EditorWindow.focusedWindow;
                 var live = Inspect(path)["data"];
                 Assert.AreEqual("open_model", (string)live["status"], live.ToString());
@@ -111,7 +111,7 @@ namespace MCPForUnityTests.Editor.Tools
                     ownerField.SetValue(window, owner);
                 }
                 Assert.AreSame(focus, EditorWindow.focusedWindow);
-                CollectionAssert.AreEqual(selection, Selection.instanceIDs);
+                CollectionAssert.AreEqual(selection, Selection.objects);
                 Assert.IsTrue(window.hasUnsavedChanges);
                 CollectionAssert.AreEqual(saved, File.ReadAllBytes(path));
                 Assert.AreEqual(timestamp, File.GetLastWriteTimeUtc(path));
