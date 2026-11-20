@@ -52,6 +52,12 @@ python tools/verification_timing_report.py --trial warm fixtureA warm-1.json --t
 
 The report groups by declared setup and cold/warm condition, observed project
 and source identity, selection, profile, installation, entry path and verdict.
+An Editor trial requires complete source coverage and both the source and
+compilation-context digests from the initial freshness stage. This separates
+build targets, compiler options, defines and resolved references for identical
+source files. Mapped Editor children retain a combined token that also includes
+the Editor session, so those trials compare only within that session. A standalone
+Player trial uses the registered candidate manifest.
 It reports sample counts, median and interpolated p95 in milliseconds. Each
 command metric samples individual invocations, so a run that polls more often
 contributes more poll samples. The optional `--operations` view shows each

@@ -14,6 +14,7 @@ else:
     from phase_timing_report import NATIVE, SERVER, normalized, percentile, records
 
 TOKEN = re.compile(r"[0-9a-f]{32}")
+DIGEST = re.compile(r"[0-9a-f]{64}")
 COMMAND_PHASES = (*SERVER, "scheduler_queue")
 RUN_PHASES = ("scheduler_queue", "task_dispatch", "orchestration", "child_poll_sleep")
 PLAYER_PHASES = (
@@ -49,18 +50,48 @@ def fingerprint(report):
     freshness = next(
         (s["evidence"] for s in report.get("stages", []) if s["name"] == "freshness"), {}
     )
-    source = (
-        comparison.get("manifest_sha256")
-        or freshness.get("source_digest")
-        or report.get("source_token")
-    )
-    if not source or not report.get("project_scope"):
+    source = comparison.get("manifest_sha256")
+    editor_identity = []
+    if not source:
+        source = freshness.get("source_digest")
+        context = freshness.get("context_digest")
+        coverage = freshness.get("coverage") or {}
+        if (
+            not DIGEST.fullmatch(str(source))
+            or not DIGEST.fullmatch(str(context))
+            or coverage.get("complete") is not True
+            or coverage.get("reasons")
+        ):
+            raise ValueError(
+                "Editor trial lacks a complete source and compilation context fingerprint"
+            )
+        editor_identity.append((source, context))
+    for row in report.get("selected_check_results", []):
+        evidence = row.get("evidence") or {}
+        if evidence.get("target") != "editor":
+            continue
+        # Mapped children retain the source token, which hashes project, session,
+        # source and compiler context. It can conservatively match within a session.
+        token = evidence.get("source_token")
+        if not DIGEST.fullmatch(str(token)) or (
+            row["kind"] in {"test", "profile"}
+            and not any(
+                s["name"] == "freshness" and s["state"] == "passed"
+                for s in evidence.get("stages", [])
+            )
+        ):
+            raise ValueError(
+                "Mapped Editor check lacks a complete source and compilation context fingerprint"
+            )
+        editor_identity.append((row["kind"], row["id"], evidence.get("definition_hash"), token))
+    if not report.get("project_scope"):
         raise ValueError("trial lacks a comparable source or project identity")
     package = installation.get("package")
     server = installation.get("server") or {}
     controls = [
         report["project_scope"],
         source,
+        editor_identity,
         comparison.get("baseline_manifest_sha256"),
         report.get("baseline_id"),
         report.get("profile_id"),

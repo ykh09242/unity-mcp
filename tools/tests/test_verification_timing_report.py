@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 from pathlib import Path
 import sys
 
@@ -8,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.verification_timing_report import summarize_trials
 
 
-def write_trial(root, number, duration, *, source="same"):
+def write_trial(root, number, duration, *, source="same", context="a" * 64, complete=True):
     identity, correlation = f"{number:032x}", f"{number + 100:032x}"
     report = {
         "schema": "verification_report@1",
@@ -17,6 +18,16 @@ def write_trial(root, number, duration, *, source="same"):
         "state": "passed",
         "project_scope": "project",
         "selection": {"paths": ["Assets/A.cs"]},
+        "stages": [
+            {
+                "name": "freshness",
+                "evidence": {
+                    "source_digest": sha256(source.encode()).hexdigest(),
+                    "context_digest": context,
+                    "coverage": {"complete": complete, "reasons": []},
+                },
+            }
+        ],
         "timing": {
             "schema": "verification_timing@1",
             "entry": "direct",
@@ -88,3 +99,44 @@ def test_duplicate_native_is_unknown_and_duplicate_run_refused(tmp_path):
     assert group["phase_ms"]["run_tests.editor.queue"]["median"] is None
     with pytest.raises(ValueError, match="duplicate run ID"):
         summarize_trials([entry, entry], [])
+
+
+def test_same_source_different_compiler_context_separates_trials(tmp_path):
+    a, _ = write_trial(tmp_path, 1, 5)
+    b, _ = write_trial(tmp_path, 2, 80, context="b" * 64)
+    groups = summarize_trials([("warm", "same", a), ("warm", "same", b)], [])["groups"]
+    assert sorted(g["phase_ms"]["server.scheduler_queue"]["median"] for g in groups) == [5, 80]
+    assert all(g["trials"] == 1 for g in groups)
+
+
+@pytest.mark.parametrize(("context", "complete"), [(None, True), ("a" * 64, False)])
+def test_unknown_editor_compiler_context_rejected_even_with_source_token(
+    tmp_path, context, complete
+):
+    path, _ = write_trial(tmp_path, 1, 5, context=context, complete=complete)
+    with pytest.raises(ValueError, match="complete source and compilation context"):
+        summarize_trials([("cold", "same", path)], [])
+
+
+def test_mapped_editor_child_preserves_its_session_bound_source_context(tmp_path):
+    trials = []
+    for number, token in enumerate(("a" * 64, "b" * 64), 1):
+        path, _ = write_trial(tmp_path, number, 5)
+        envelope = json.loads(path.read_text())
+        report = envelope["data"]
+        report.pop("stages")
+        report["comparison"] = {"manifest_sha256": "c" * 64}
+        report["selected_check_results"] = [
+            {
+                "kind": "test",
+                "id": "target-check",
+                "evidence": {
+                    "target": "editor",
+                    "source_token": token,
+                    "stages": [{"name": "freshness", "state": "passed"}],
+                },
+            }
+        ]
+        path.write_text(json.dumps(envelope))
+        trials.append(("warm", "same", path))
+    assert len(summarize_trials(trials, [])["groups"]) == 2
