@@ -1,4 +1,12 @@
 {
+  "menu-declaration": {
+    "en": "Which full menu path does this editor declare for its Frame Debugger window? Please check the current editor and leave the window closed.",
+    "ko": "이 에디터에 프레임 디버거 창을 여는 메뉴가 어느 전체 경로로 선언되어 있나요? 현재 에디터에서 확인하고 창은 닫힌 상태로 두세요.",
+    "ja": "このエディターにフレームデバッガーのウィンドウを開くメニューはどのフルパスで宣言されていますか。現在のエディターで確認し、ウィンドウは開かないでください。",
+    "es": "¿Cuál es la ruta completa del menú declarada por este editor para su ventana Frame Debugger? Compruébalo en el editor actual y deja la ventana cerrada.",
+    "ar": "ما المسار الكامل للقائمة التي يعلنها هذا المحرر لنافذة مصحح الإطارات؟ تحقق في المحرر الحالي واترك النافذة مغلقة.",
+    "tr": "Bu düzenleyicide Frame Debugger penceresi için tanımlı menünün tam yolu nedir? Şu anki düzenleyicide kontrol edin ve pencereyi kapalı bırakın."
+  },
   "camera-depth": {
     "en": "Of the Unity cameras in the scene currently open in this project's editor, which one has the greatest depth, and what is its value?",
     "ko": "지금 열려 있는 프로젝트의 씬에서 Unity 카메라들을 비교해 주세요. 깊이 값이 가장 큰 카메라의 이름과 그 값은 무엇인가요?",

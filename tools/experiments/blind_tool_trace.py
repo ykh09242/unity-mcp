@@ -46,6 +46,7 @@ ACTIVE_SCENE = {"scene_inspect.get_active", "manage_scene.get_active"}
 ROUTES = {
     actions.CAMERA_TASK: actions.CAMERA_ROUTES,
     actions.UI_TASK: actions.UI_ROUTES,
+    actions.MENU_TASK: actions.MENU_ROUTES,
     "editor": {EDITOR_STATE, choices.STATE, *ACTIVE_SCENE},
     "compile-current": {EDITOR_STATE, choices.STATE},
     "active-scene": {EDITOR_STATE, choices.STATE, *ACTIVE_SCENE},
@@ -178,7 +179,7 @@ def decision(
     if any(args.get(key) for key in ("allow_custom_filters", "evaluate_getters", "include_values")):
         return "blocked"
     allowed = choices.permitted(route, args, fixture or {})
-    if endpoint and route in actions.CAMERA_ROUTES | actions.UI_ROUTES:
+    if endpoint and route in actions.CAMERA_ROUTES | actions.UI_ROUTES | actions.MENU_ROUTES:
         return "blocked"
     if allowed is not None:
         return "unity" if allowed else "blocked"
@@ -261,6 +262,11 @@ def unpack(response: dict[str, Any], route: str = "") -> tuple[str, dict[str, An
                 ),
             }
     if value.get("success") is True:
+        if route == actions.MENU_RESOURCE:
+            declarations = value.get("data")
+            if isinstance(declarations, list) and actions.FRAME_DEBUGGER in declarations:
+                return "returned", {"menu_path": actions.FRAME_DEBUGGER}
+            return "returned", {}
         windows = value.get("data")
         if route == "mcpforunity://editor/windows" and isinstance(windows, list) and windows:
             types = [mapping(window).get("typeName") for window in windows]
@@ -291,6 +297,12 @@ def positive_size(value: Any) -> list[int] | None:
 
 def observation(route: str, data: dict[str, Any], fixture=None) -> dict[str, Any]:
     """Retain the documented evidence fields for the scored read operations."""
+    if route in actions.MENU_ROUTES:
+        if data.get("menu_path") == actions.FRAME_DEBUGGER and (
+            route == actions.MENU_RESOURCE or mapping(data.get("existence")).get("value") is True
+        ):
+            return {"menu_path": actions.FRAME_DEBUGGER}
+        return {}
     if (
         route == "mcpforunity://editor/windows"
         and type(data.get("shader_graph_window_listed")) is bool

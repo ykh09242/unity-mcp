@@ -77,7 +77,7 @@ def fixture_availability(fixture, state):
 def observation_fixture(args, task):
     if task == actions.UI_TASK:
         return {"task": task, "ui_asset": getattr(args, "ui_asset", None)}
-    if task == actions.CAMERA_TASK:
+    if task in {actions.CAMERA_TASK, actions.MENU_TASK}:
         return {"task": task}
     if task == "compile-outcome":
         return {"task": task, "compile_id": getattr(args, "existing_compile_id", None)}

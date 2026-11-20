@@ -18,6 +18,7 @@ from uuid import UUID
 import anyio
 
 from tools.check_codex_interop import AppServer, InteropFailure, close_process
+from tools.experiments import blind_tool_actions as actions
 
 RECORDED_SERVER = "unityMCP_trial"
 IDENTIFIER = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
@@ -463,6 +464,10 @@ def project_item(item, server, asset, project="", fixture=None):
             args = item.get("arguments") or {}
             if not isinstance(args, dict):
                 return projected
+            if name == "execute_menu_item" and (fixture or {}).get("task") == actions.MENU_TASK:
+                mode = args.get("action", "execute")
+                if mode in ("execute", "inspect", "exists", "evaluate_availability"):
+                    projected["arguments"] = {"action": mode}
             if name == "read_mcp_resource":
                 route, arguments = route_name("resources/read", args)
             else:
@@ -473,6 +478,12 @@ def project_item(item, server, asset, project="", fixture=None):
                 clean = {
                     k: v for k, v in args.items() if k in {"action", "page_number", "page_size"}
                 }
+                if route in actions.MENU_LOOKUPS:
+                    clean["menu_path"] = (
+                        actions.FRAME_DEBUGGER
+                        if args.get("menu_path") == actions.FRAME_DEBUGGER
+                        else "[other]"
+                    )
                 if asset and args.get("path") == asset:
                     clean["path"] = asset
                 if fixture and fixture.get("ui_asset") and args.get("path") == fixture["ui_asset"]:

@@ -7,7 +7,7 @@ import pytest
 from tools.experiments import blind_tool_actions as actions
 from tools.experiments.blind_tool_claims import score_claims
 from tools.experiments.blind_tool_host import project_item
-from tools.experiments.blind_tool_trace import client_trace, decision, observation
+from tools.experiments.blind_tool_trace import client_trace, decision, observation, unpack
 
 
 ASSET = "Assets/Editor/Views/Menu.uxml"
@@ -49,7 +49,7 @@ def test_scoped_ui_asset_rejects_noncanonical_windows_components(path):
     assert not actions.valid_ui_path(path)
 
 
-@pytest.mark.parametrize("route", sorted(actions.CAMERA_ROUTES - {actions.CAMERA_RESOURCE}))
+@pytest.mark.parametrize("route", ["manage_camera.list_cameras", "manage_cameras.list_cameras"])
 def test_mixed_camera_tools_accept_only_argument_free_inventory(route):
     assert decision(route, {"action": "list_cameras"}, "", fixture=CAMERA) == "unity"
     assert (
@@ -60,6 +60,70 @@ def test_mixed_camera_tools_accept_only_argument_free_inventory(route):
         decision("manage_camera.set_lens", {"action": "set_lens"}, "", fixture=CAMERA) == "blocked"
     )
     assert decision(route, {}, "", fixture=UI) == "blocked"
+
+
+def test_fixed_camera_reader_accepts_only_the_camera_task_on_a_trusted_relay():
+    route = "inspect_scene_cameras"
+    assert decision(route, {}, "", fixture=CAMERA) == "unity"
+    assert decision(route, {"unity_instance": "Game@1234"}, "", fixture=CAMERA) == "unity"
+    assert decision(route, {"action": "list_cameras"}, "", fixture=CAMERA) == "blocked"
+    assert decision(route, {"target": "Object"}, "", fixture=CAMERA) == "blocked"
+    assert decision(route, {}, "", fixture=UI) == "blocked"
+    assert decision(route, {}, "", fixture=CAMERA, endpoint=True) == "blocked"
+    assert observation(route, {"unityCameras": [{"name": "Main", "depth": 1}]}) == {
+        "camera": "Main",
+        "depth": 1,
+    }
+
+
+def test_menu_trial_admits_only_declaration_lookups_and_preserves_approval_attempts():
+    fixture = {"task": actions.MENU_TASK}
+    args = {"action": "inspect", "menu_path": actions.FRAME_DEBUGGER}
+    route = "execute_menu_item.inspect"
+    assert decision(route, args, "", fixture=fixture) == "unity"
+    assert decision(route, args, "", fixture=fixture, endpoint=True) == "blocked"
+    assert decision(route, args, "", fixture=CAMERA) == "blocked"
+    assert decision(route, {**args, "wait_for": "console_window_open"}, "", fixture=fixture) == (
+        "blocked"
+    )
+    for mode in ("execute", "evaluate_availability"):
+        request = {"action": mode, "menu_path": "Private/Example"}
+        assert decision("execute_menu_item." + mode, request, "", fixture=fixture) == "blocked"
+        item = project_item(
+            {
+                "type": "mcpToolCall",
+                "id": "attempt",
+                "server": "trial",
+                "tool": "execute_menu_item",
+                "arguments": request,
+                "status": "failed",
+            },
+            "trial",
+            "",
+            fixture=fixture,
+        )
+        assert item["arguments"] == {"action": mode}
+    resource = actions.MENU_RESOURCE
+    assert decision(resource, {"uri": resource}, "", fixture=fixture) == "unity"
+    assert decision(resource, {"uri": resource, "url_query": "refresh=1"}, "", fixture=fixture) == (
+        "blocked"
+    )
+
+
+def test_menu_receipt_retains_only_an_independently_observed_frame_debugger_path():
+    resource = actions.MENU_RESOURCE
+    details = {"success": True, "data": ["Private/Menu", actions.FRAME_DEBUGGER]}
+    reply = {"result": {"contents": [{"text": json.dumps(details)}]}}
+    status, safe = unpack(reply, resource)
+    expected = {"menu_path": actions.FRAME_DEBUGGER}
+    assert status == "returned" and safe == expected
+    assert observation(resource, safe) == expected
+    route = "execute_menu_item.exists"
+    assert observation(route, {**expected, "existence": {"value": True}}) == expected
+    assert observation(route, {**expected, "existence": {"value": False}}) == {}
+    assert observation(route, expected) == {}
+    details["data"] = ["Private/Menu"]
+    assert unpack({"result": {"structuredContent": details}}, resource) == ("returned", {})
 
 
 def test_maximum_requires_the_full_unique_unity_camera_result():

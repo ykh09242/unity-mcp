@@ -8,11 +8,26 @@ from xml.etree import ElementTree
 
 CAMERA_TASK = "camera-depth"
 UI_TASK = "saved-ui-controls"
+MENU_TASK = "menu-declaration"
+MENU_RESOURCE = "mcpforunity://menu-items"
+FRAME_DEBUGGER = "Window/Analysis/Frame Debugger"
+MENU_LOOKUPS = {"execute_menu_item.inspect", "execute_menu_item.exists"}
+MENU_ROUTES = {MENU_RESOURCE, *MENU_LOOKUPS}
 CAMERA_RESOURCE = "mcpforunity://scene/cameras"
-CAMERA_ROUTES = {CAMERA_RESOURCE, "manage_camera.list_cameras", "manage_cameras.list_cameras"}
+CAMERA_READER = "inspect_scene_cameras"
+CAMERA_ROUTES = {
+    CAMERA_RESOURCE,
+    CAMERA_READER,
+    "manage_camera.list_cameras",
+    "manage_cameras.list_cameras",
+}
 UI_ROUTES = {"ui_source.read", "manage_ui.read"}
 SAVED_UI = "shell.read_saved_ui"
-FIELDS = {CAMERA_TASK: ("camera", "depth"), UI_TASK: ("buttons", "text_fields")}
+FIELDS = {
+    CAMERA_TASK: ("camera", "depth"),
+    UI_TASK: ("buttons", "text_fields"),
+    MENU_TASK: ("menu_path",),
+}
 
 
 def valid_ui_path(path):
@@ -32,6 +47,18 @@ def valid_ui_path(path):
 
 
 def permitted(route, args, fixture):
+    if route == MENU_RESOURCE:
+        return fixture.get("task") == MENU_TASK and not args.get("url_query")
+    if route in MENU_LOOKUPS:
+        path = args.get("menu_path")
+        return (
+            fixture.get("task") == MENU_TASK
+            and args.get("action") == route.split(".")[1]
+            and isinstance(path, str)
+            and 0 < len(path) <= 1024
+            and path.isprintable()
+            and set(args) <= {"action", "menu_path", "unity_instance"}
+        )
     if route in UI_ROUTES:
         path = fixture.get("ui_asset")
         return (
@@ -41,6 +68,8 @@ def permitted(route, args, fixture):
             and args.get("action") == "read"
             and set(args) <= {"path", "unity_instance", "action"}
         )
+    if route == CAMERA_READER:
+        return fixture.get("task") == CAMERA_TASK and set(args) <= {"unity_instance"}
     if route in CAMERA_ROUTES - {CAMERA_RESOURCE}:
         return (
             fixture.get("task") == CAMERA_TASK
