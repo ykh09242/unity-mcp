@@ -137,12 +137,23 @@ def inventory(fetch, prefix, field, size):
 API_ERRORS = (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError)
 
 
+def attempt_job_inventory(fetch, prefix):
+    # A running workflow can gain jobs between pages. Each retry needs a fresh
+    # count and identity set, including when a split-page fetch was interrupted.
+    for delay in (1, 2):
+        try:
+            return inventory(fetch, prefix, "jobs", 10)
+        except API_ERRORS:
+            time.sleep(delay)
+    return inventory(fetch, prefix, "jobs", 10)
+
+
 def collect(repository, run_id, attempt, kind, fetch, head_sha):
     jobs, history, unavailable = [], {}, {}
     for number in range(1, attempt + 1):
         prefix = f"repos/{repository}/actions/runs/{run_id}/attempts/{number}/jobs"
         try:
-            for job in inventory(fetch, prefix, "jobs", 10):
+            for job in attempt_job_inventory(fetch, prefix):
                 if job.get("run_attempt") != number:
                     # Some attempt pages also show jobs carried forward from an earlier attempt.
                     if type(job.get("run_attempt")) is int and 0 < job["run_attempt"] < number:

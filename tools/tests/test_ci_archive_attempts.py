@@ -126,7 +126,10 @@ def test_attempts_keep_interrupted_install_and_completed_retry():
     assert rows[1]["last_succeeded"] == INSTALL
 
 
-def test_missing_first_attempt_and_skipped_steps_remain_unknown():
+def test_missing_first_attempt_and_skipped_steps_remain_unknown(monkeypatch):
+    delays = []
+    monkeypatch.setattr(attempts.time, "sleep", delays.append)
+
     def fetch(endpoint):
         if "/attempts/1/" in endpoint:
             raise ValueError("unavailable")
@@ -135,6 +138,7 @@ def test_missing_first_attempt_and_skipped_steps_remain_unknown():
 
     rows, warnings = collect(2, fetch)
     assert warnings and "1" in warnings[0]
+    assert delays == [1, 2]
     assert rows[0]["last_started"] is None and rows[0]["last_succeeded"] is None
 
 
@@ -154,6 +158,29 @@ def test_gateway_failure_splits_same_page_without_skipping_later_jobs():
     rows, warnings = collect(1, fetch)
     assert not warnings
     assert [r["job_id"] for r in rows] == list(range(1, 18))
+
+
+def test_changed_job_count_restarts_the_entire_attempt_inventory(monkeypatch):
+    jobs = [dict(example_job(1, "success", []), id=index) for index in range(1, 13)]
+    pages = []
+    delays = []
+    monkeypatch.setattr(attempts.time, "sleep", delays.append)
+
+    def fetch(endpoint):
+        size, page = (int(part.split("=")[1]) for part in endpoint.split("?")[1].split("&"))
+        assert size == 10
+        pages.append(page)
+        if len(pages) == 1:
+            stale = [dict(job, id=job["id"] + 100) for job in jobs[:10]]
+            return json.dumps({"total_count": 11, "jobs": stale}).encode()
+        return json.dumps(
+            {"total_count": len(jobs), "jobs": jobs[(page - 1) * size : page * size]}
+        ).encode()
+
+    rows, warnings = collect(1, fetch)
+    assert not warnings
+    assert pages == [1, 2, 1, 2] and len(delays) == 1
+    assert [row["job_id"] for row in rows] == list(range(1, 13))
 
 
 @pytest.mark.parametrize(
