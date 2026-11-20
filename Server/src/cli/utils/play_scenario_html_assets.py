@@ -59,6 +59,13 @@ def screenshot_html(
             return unavailable, 0
         if metadata.get("width") != width or metadata.get("height") != height:
             return unavailable, 0
+        if (
+            metadata.get("requested_width", width) != width
+            or metadata.get("requested_height", height) != height
+        ):
+            return unavailable, 0
+        if metadata.get("status", "captured") != "captured":
+            return unavailable, 0
         title = escape(str(metadata.get("name", "Screenshot checkpoint"))[:128], quote=True)
         encoded = base64.b64encode(data).decode("ascii")
         return (

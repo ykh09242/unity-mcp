@@ -10,7 +10,7 @@ from typing import Final
 from pydantic import Field, JsonValue, ValidationError
 
 from cli.utils.play_scenario_html_assets import TOTAL_IMAGE_LIMIT, screenshot_html, unlinked
-from cli.utils.play_scenario_reports import ReportEvidence, SuiteReport
+from cli.utils.play_scenario_reports import ReportEvidence, SuiteReport, replay_context
 from cli.utils.play_scenario_soak import read_soak_json
 from cli.utils.play_scenario_soak_compare import compare_soak_metrics
 from cli.utils.play_scenario_soak_compare_evidence import read_saved_soak
@@ -185,6 +185,11 @@ def _run(raw: dict[str, JsonValue], name: str, attachments: _Attachments) -> str
         if error:
             result += f'<p class="error">{_text(error)}</p>'
     result += _details("Execution provenance", run.reproduction)
+    first = replay_context(run.steps, run.failure)["first_failed_step"] if run.failure else None
+    if first:
+        result += "<h3>First failed step</h3>" + _json(
+            {**first, "expected": run.failure.get("expected"), "actual": run.failure.get("actual")}
+        )
     result += _details("Failure details", run.failure)
     result += _details("Cleanup failures", raw.get("cleanup_failures"))
     if run.steps:

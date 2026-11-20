@@ -15,6 +15,58 @@ launcher; a parent output directory is not a saved soak. Create the selected out
 directories before exporting. Use a new filename for each output: analysis, visual artifacts and
 HTML export refuse to overwrite existing evidence.
 
+## Reduce a failing replay
+
+`play-scenario reduce-replay` takes a verified standalone build with an observed
+main-stage `wait_state` equality failure and a repaired build of the same scenario.
+The controls need distinct known build source revisions, matching Unity/package
+versions, target and backend, and matching observed runtime environments. Every
+trial runs both Players from a fresh process. The original scenario determines
+the target, expected value and observed mismatch. A missing provider, unrelated
+timeout or missing successful observation cannot establish the control.
+
+```sh
+unity-mcp --format json play-scenario reduce-replay \
+  --broken builds/broken --repaired builds/repaired \
+  --candidate-pair builds/shorter-broken builds/shorter-repaired \
+  --output reports/reduction
+```
+
+The reducer generates one-step deletions in original order. It preserves the
+initial scene anchor, first failing step, named screenshot steps and all setup
+and cleanup steps. It accepts a deletion only if the same original step still
+fails with the same observed value, and its repaired counterpart now observes
+the requested value. Each accepted deletion starts another pass. This finds a
+fixed point for single deletions under these constraints. Interactions requiring
+two simultaneous deletions and intermittent failures need separate trials.
+
+An existing verified pair can serve a generated definition through repeatable
+`--candidate-pair` options. To build missing pairs automatically, supply
+`--builder PATH` to an executable owned by the project. It receives three
+positional paths in order: generated definition JSON, new broken build directory
+and new repaired build directory. Build the unchanged project snapshots at those
+paths with the normal scenario Player builder, using the corresponding original
+source revisions. The reducer checks both manifests and executes the resulting
+Players. The builder has a 30-minute deadline per invocation. Use `--graphical`
+when the replay needs graphical execution.
+
+The output contains `reduced.json`, `reduction.json` with before/after original
+indices, the matched checkpoint, every trial and the retained native report
+hashes, and per-run JSON, JUnit and HTML evidence. The default budget is 24
+paired trials including the full controls. Exit 0 means the single-deletion
+search finished, including when the original replay was already irreducible.
+Exit 2 with `trial_limit` or `candidate_builds_unavailable` leaves a partial
+result and identifies the untested scope.
+
+For a graphical regression profile with named visual checks, its standard
+`regression.json`, `report.html` and `junit.xml` include the first failed step,
+expected and actual state, and the selected checkpoint's capture hashes and
+pixel differences. Each visual gate rechecks the capture metadata and PNG bytes
+against the fixed-resolution policy and the report returned by the launched
+Player. The portable HTML embeds baseline, candidate, diff and heatmap under
+the existing 4 MiB per-image and 12 MiB aggregate bounds. Oversized captures are
+identified by hash and omission reason. The native run retains the full replay.
+
 ## Observe step performance and named screenshots
 
 Add optional `performance` and `screenshot` objects to setup, main or cleanup steps. For example,

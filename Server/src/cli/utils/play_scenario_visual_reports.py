@@ -62,10 +62,17 @@ class CheckpointReport(BaseModel):
 
 
 def pair_visual_reports(
-    sources: tuple[Path, Path], selection: CheckpointSelection, policy: VisualPolicy
+    sources: tuple[Path, Path],
+    selection: CheckpointSelection,
+    policy: VisualPolicy,
+    *,
+    candidate_evidence: dict | None = None,
 ) -> VisualPair:
     """Require compatible capture environments, identical step identities and verified hashes."""
-    reports = tuple(CheckpointReport.model_validate(read_json(source)) for source in sources)
+    raw = tuple(read_json(source) for source in sources)
+    if candidate_evidence is not None and raw[1] != candidate_evidence:
+        raise AnalysisError("Candidate checkpoint report differs from the launched Player evidence")
+    reports = tuple(CheckpointReport.model_validate(value) for value in raw)
     left, right = reports
     if left.execution_environment != right.execution_environment:
         raise AnalysisError("Checkpoint execution environments differ")

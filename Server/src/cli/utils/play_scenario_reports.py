@@ -142,6 +142,8 @@ def _failure_context(evidence: ReportEvidence) -> str:
                 "target",
                 "component",
                 "property_path",
+                "expected",
+                "actual",
                 "message",
             },
         )
@@ -215,6 +217,40 @@ def _failure_context(evidence: ReportEvidence) -> str:
     )
 
 
+def replay_context(steps, failure):
+    """Keep the first failing step visible even when the bounded leading replay is truncated."""
+    first = next(
+        (
+            i
+            for i, row in enumerate(steps)
+            if row.get("status") in ("failed", "timed_out", "cancelled")
+        ),
+        None,
+    )
+
+    def summarize(row):
+        result = {
+            key: row.get(key)
+            for key in ("stage", "iteration", "step_index", "name", "action", "status", "detail")
+        }
+        if isinstance(row.get("screenshot"), dict):
+            result["screenshot"] = {
+                key: row["screenshot"].get(key)
+                for key in ("name", "status", "sha256", "width", "height")
+            }
+        return result
+
+    return {
+        "first_failed_step": summarize(steps[first]) if first is not None else None,
+        "failure": _context_fields(
+            failure or {},
+            {"code", "stage", "iteration", "step_index", "target", "expected", "actual"},
+        ),
+        "steps": [summarize(row) for row in steps[:32]],
+        "omitted_steps": max(0, len(steps) - 32),
+    }
+
+
 def junit_xml(raw: dict[str, JsonValue]) -> bytes:
     """Represent each scenario as one testcase with truthful outcomes and bounded logs."""
     report = SuiteReport.model_validate(raw)
@@ -261,6 +297,13 @@ def junit_xml(raw: dict[str, JsonValue]) -> bytes:
             properties["report_path"] = evidence.report_path
         if evidence.failure_diagnostics:
             properties["screenshot_path"] = evidence.failure_diagnostics.get("screenshot_path")
+        if evidence.failure:
+            replay = replay_context(evidence.steps, evidence.failure)
+            properties.update({f"failure.{k}": v for k, v in replay["failure"].items()})
+            if replay["first_failed_step"]:
+                properties.update(
+                    {f"first_failed_step.{k}": v for k, v in replay["first_failed_step"].items()}
+                )
         _properties(case, properties)
         if entry.status == "skipped":
             counts["skipped"] += 1

@@ -11,10 +11,11 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from cli.utils.play_scenario_analysis_io import read_bytes, safe_local_path, write_new
 from cli.utils.play_scenario_flakiness import analyze_flakiness
 from cli.utils.play_scenario_html import export_html
+from cli.utils.play_scenario_html_assets import IMAGE_LIMIT
 from cli.utils.play_scenario_player import PlayerLaunchError, PlayerRunOptions, run_player
 from cli.utils.play_scenario_player_session import PlayerSessionOptions, run_player_session
 from cli.utils.play_scenario_regression_profile import load_profile, profile_path
-from cli.utils.play_scenario_reports import write_player_artifacts
+from cli.utils.play_scenario_reports import replay_context, write_player_artifacts
 from cli.utils.play_scenario_soak_baselines import read_registry, validate_entry
 from cli.utils.play_scenario_soak_budget import check_soak_budget
 from cli.utils.play_scenario_soak_budget_policy import read_budget_policy
@@ -73,6 +74,8 @@ def run_regression(source: Path, output: Path) -> RegressionResult:
     gates: list[RegressionGate] = []
     directory = None
     native_exit = None
+    native_report = None
+    replay_detail = {}
     selected = None
     visual_policies = []
     visual_references: list[str] = []
@@ -114,6 +117,10 @@ def run_regression(source: Path, output: Path) -> RegressionResult:
         match execution.kind:
             case "run":
                 outcome = run_player(options)
+                native_report = outcome.report
+                replay_detail = replay_context(
+                    native_report.get("steps", []), native_report.get("failure")
+                )
                 directory, native_exit = outcome.directory, outcome.exit_code
                 write_player_artifacts(outcome.report, directory, outcome.client_error)
             case "soak":
@@ -141,7 +148,7 @@ def run_regression(source: Path, output: Path) -> RegressionResult:
             RegressionGate(
                 name="execution",
                 status="passed" if native_exit == 0 else "failed",
-                detail={"exit_code": native_exit, "directory": str(directory)},
+                detail={"exit_code": native_exit, "directory": str(directory), **replay_detail},
             )
         )
     except (OSError, ValueError, RuntimeError, RecursionError) as exc:
@@ -185,10 +192,35 @@ def run_regression(source: Path, output: Path) -> RegressionResult:
                 (baseline, directory / "run.json"),
                 visual.checkpoint,
                 visual_policies[index],
+                candidate_evidence=native_report,
             )
-            return compare_visual(
-                pair, visual_policies[index], output / f"visual-{index}"
-            ).to_dict()
+            policy = visual_policies[index]
+            destination = output / f"visual-{index}"
+            result = compare_visual(pair, policy, destination).to_dict()
+            result["checkpoint"] = visual.checkpoint.model_dump(mode="json")
+            result["job_id"] = native_report.get("job_id")
+            for artifact in result["artifacts"]:
+                artifact["path"] = Path(artifact["path"]).relative_to(output).as_posix()
+            for role, path, digest in (
+                ("baseline", pair.baseline, pair.baseline_sha256),
+                ("candidate", pair.candidate, pair.candidate_sha256),
+            ):
+                artifact = {
+                    "name": role,
+                    "sha256": digest,
+                    "width": policy.width,
+                    "height": policy.height,
+                }
+                if path.stat().st_size <= IMAGE_LIMIT:
+                    content = read_bytes(path, IMAGE_LIMIT)
+                    if sha256(content).hexdigest() != digest:
+                        raise ValueError("Checkpoint PNG changed after pixel comparison")
+                    copy = write_new(destination / f"{role}.png", content)
+                    artifact["path"] = copy.relative_to(output).as_posix()
+                else:
+                    artifact["omitted"] = "portable image byte limit"
+                result["artifacts"].append(artifact)
+            return result
 
         gates.append(_gate(f"visual-{index}", visual_check))
     for index, ui in enumerate(profile.ui_checks):

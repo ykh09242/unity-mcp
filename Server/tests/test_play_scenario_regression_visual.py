@@ -119,4 +119,76 @@ def test_admitted_visual_reference_reaches_real_comparison(tmp_path, monkeypatch
     gate = next(gate for gate in result.gates if gate.name == "visual-0")
     assert gate.status == ("failed" if changed else "passed")
     assert gate.detail["changed_pixels"] == (4 if changed else 0)
+    assert {a["name"] for a in gate.detail["artifacts"]} == {
+        "baseline",
+        "candidate",
+        "diff",
+        "heatmap",
+    }
+    portable = (tmp_path / "result" / "report.html").read_text()
+    assert portable.count("data:image/png;base64,") == 4
+    junit = (tmp_path / "result" / "junit.xml").read_text()
+    assert '"checkpoint"' in junit and '"sha256"' in junit
     assert all(path.read_bytes() == content for path, content in inputs.items())
+
+
+@pytest.mark.parametrize("damage", ["replaced_report", "missing_png", "wrong_requested_resolution"])
+def test_candidate_capture_failure_stays_visible_alongside_semantic_checkpoint(
+    tmp_path, monkeypatch, damage
+):
+    source, _, _ = visual_profile(tmp_path)
+
+    def player(options):
+        directory = options.output_directory / "new-job"
+        directory.mkdir(parents=True)
+        capture = png(directory / "capture.png")
+        report = checkpoint_report(capture)
+        report.update(
+            job_id="new-job",
+            scenario={"name": "observe"},
+            status="timed_out",
+            execution_environment="player",
+        )
+        report["reproduction"]["environment"].update(
+            platform="WindowsPlayer", build_mode="development"
+        )
+        row = {
+            "stage": "main",
+            "iteration": 1,
+            "step_index": 1,
+            "name": "Daylight",
+            "action": "wait_state",
+            "status": "timed_out",
+            "detail": "phase still night",
+        }
+        report["steps"].append(row)
+        report["failure"] = {
+            "code": "condition_unmet",
+            "stage": "main",
+            "iteration": 1,
+            "step_index": 1,
+            "target": "world.phase",
+            "expected": "day",
+            "actual": "night",
+        }
+        if damage == "missing_png":
+            capture.unlink()
+        if damage == "wrong_requested_resolution":
+            report["steps"][0]["screenshot"]["requested_height"] = 20
+        saved = {**report, "job_id": "prior-job"} if damage == "replaced_report" else report
+        write_json(directory / "run.json", saved)
+        return PlayerOutcome(report, directory, 1)
+
+    monkeypatch.setattr(regression, "run_player", player)
+    output = tmp_path / "result"
+    result = regression.run_regression(source, output)
+    visual = next(g for g in result.gates if g.name == "visual-0")
+    assert visual.status == "unavailable"
+    if damage == "replaced_report":
+        assert "differs from the launched Player" in visual.detail["error"]
+    for name in ("regression.json", "report.html", "junit.xml"):
+        text = (output / name).read_text()
+        assert all(
+            term in text
+            for term in ("Daylight", "first_failed_step", "world.phase", "day", "night")
+        )

@@ -7,6 +7,7 @@ from xml.etree import ElementTree
 
 from cli.utils.play_scenario_analysis_io import write_new
 from cli.utils.play_scenario_html import STYLE
+from cli.utils.play_scenario_html_assets import screenshot_html, TOTAL_IMAGE_LIMIT
 from cli.utils.play_scenario_regression import RegressionResult
 from cli.utils.play_scenario_reports import _xml_text
 
@@ -24,6 +25,7 @@ def write_regression_reports(directory: Path, result: RegressionResult) -> None:
     suite.set("failures", str(failures))
     suite.set("errors", str(errors))
     rows = []
+    remaining = TOTAL_IMAGE_LIMIT
     for gate in result.gates:
         detail = json.dumps(gate.detail, ensure_ascii=True, indent=2, allow_nan=False)
         case = ElementTree.SubElement(
@@ -34,9 +36,17 @@ def write_regression_reports(directory: Path, result: RegressionResult) -> None:
                 case, "failure" if gate.status == "failed" else "error", type=gate.status
             )
             node.text = _xml_text(detail[:65536])
+        elif gate.name == "execution" or gate.name.startswith("visual-"):
+            ElementTree.SubElement(case, "system-out").text = _xml_text(detail[:65536])
+        figures = []
+        if gate.name.startswith("visual-"):
+            for artifact in gate.detail.get("artifacts", []):
+                figure, used = screenshot_html(artifact, directory, remaining)
+                remaining -= used
+                figures.append(figure)
         suffix = "\n[Display truncated; consult regression.json]" if len(detail) > 65536 else ""
         rows.append(
-            f"<article><h2>{escape(gate.name)}: {gate.status}</h2><pre>{escape(detail[:65536] + suffix)}</pre></article>"
+            f"<article><h2>{escape(gate.name)}: {gate.status}</h2>{''.join(figures)}<pre>{escape(detail[:65536] + suffix)}</pre></article>"
         )
     write_new(
         directory / "junit.xml", ElementTree.tostring(suite, encoding="utf-8", xml_declaration=True)
@@ -45,7 +55,7 @@ def write_regression_reports(directory: Path, result: RegressionResult) -> None:
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
-        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">"
+        "img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">"
         f"<title>{escape(result.name)} | Regression</title><style>{STYLE}</style></head>"
         f"<body><header><h1>{escape(result.name)}</h1><p>Regression exit code: {result.exit_code}</p>"
         "<p>Each selected gate is independent. Missing evidence is unavailable. Original execution outcomes remain unchanged.</p>"
