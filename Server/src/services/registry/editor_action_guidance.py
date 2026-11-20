@@ -32,10 +32,8 @@ _LABEL_WRITE: Final = (
     "Supply the observed label_revision for path or a revision per label_targets row. "
     "Batch writes run sequentially and can partially apply."
 )
-_REFERENCE_LIMIT: Final = (
-    "Coverage follows AssetDatabase dependencies within the scan scope and budgets. "
-    "String-based or custom-loader references can be missing."
-)
+_REFERENCE_LIMIT: Final = "Budgets bound the imported Assets-file graph. String-based or custom-loader references can be missing."
+_REVERSE_LIMIT: Final = "Referrers are limited to candidates inside scan_root. " + _REFERENCE_LIMIT
 
 _ASSET: Final = {
     "search": _inspect(
@@ -89,23 +87,24 @@ _ASSET: Final = {
     "get_dependencies": _read(
         "Find assets referenced by the selected asset in the imported dependency database.",
         "path",
-        limit=_REFERENCE_LIMIT,
+        limit="Forward dependency edges can reach Assets files outside scan_root. "
+        + _REFERENCE_LIMIT,
     ),
     "get_reverse_references": _read(
         "Find project assets that refer to the selected asset, including usages of a prefab.",
         "path",
-        limit=_REFERENCE_LIMIT,
+        limit=_REVERSE_LIMIT,
     ),
     "preview_move": _read(
         "Observe bounded reference impact of moving path to destination without moving it. Return referenceRevision for an optional move with reference_revision; inspect scan coverage before relying on the result.",
         "path",
         "destination",
-        limit=_REFERENCE_LIMIT,
+        limit=_REVERSE_LIMIT,
     ),
     "preview_delete": _read(
         "Observe bounded references and deletion impact for path without deleting it. Return referenceRevision for an optional delete with reference_revision; inspect scan coverage before relying on the result.",
         "path",
-        limit=_REFERENCE_LIMIT,
+        limit=_REVERSE_LIMIT,
     ),
     "get_labels": _inspect(
         "Read exact AssetDatabase labels and a revision for path or each label_targets row.",
@@ -204,7 +203,7 @@ _CAMERA: Final = {
     ),
     "screenshot_multiview": _inspect(
         "Capture six surrounding viewpoints as a PNG contact sheet with the image included in the response.",
-        limit="Selects surround capture and inline output. Capture can write files in the project and run rendering callbacks.",
+        limit="Returns the contact sheet inline without saving a PNG. A temporary camera renders the views and can run rendering callbacks.",
     ),
 }
 

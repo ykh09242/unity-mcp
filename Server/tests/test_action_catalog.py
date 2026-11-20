@@ -204,6 +204,14 @@ def test_asset_discovery_distinguishes_import_load_and_reference_index(entries):
     assert "load" in labels["evidence_limit"]
     for action in ("preview_move", "get_bundle_assets"):
         assert action_card(by_name["manage_asset"], action)["effects"]["readOnlyHint"]
+    for name in ("manage_asset", "asset_reference_diagnostics"):
+        forward = action_card(by_name[name], "get_dependencies")
+        assert "outside scan_root" in forward["evidence_limit"]
+        for action in ("get_reverse_references", "preview_move", "preview_delete"):
+            assert (
+                "candidates inside scan_root"
+                in action_card(by_name[name], action)["evidence_limit"]
+            )
     assert not tool_capability(by_name["manage_asset"])["effects"]["readOnlyHint"]
     write = action_card(by_name["manage_asset"], "set_labels")
     assert "revision" in write["purpose"] and write["intent"] == "edit"
@@ -225,6 +233,8 @@ def test_camera_discovery_separates_package_presence_existing_brain_and_attachme
         assert "properties.camera" in ensure["purpose"] and not ensure["effects"]["readOnlyHint"]
     capture = action_card(by_name["capture_camera"], "screenshot_multiview")
     assert not capture["effects"]["readOnlyHint"] and "PNG" in capture["purpose"]
+    assert "without saving a PNG" in capture["evidence_limit"]
+    assert "temporary camera" in capture["evidence_limit"]
 
 
 def test_ui_discovery_separates_file_panel_and_live_edits(entries):
