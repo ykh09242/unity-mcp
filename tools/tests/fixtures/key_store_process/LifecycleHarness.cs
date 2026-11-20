@@ -8,20 +8,23 @@ using FakeProcess = System.Diagnostics.Process;
 
 internal static class LifecycleHarness
 {
+    private const string LookupFailure = "Credential lookup could not be confirmed.";
+    private const string StorageFailure = "Credential storage could not be confirmed.";
+    private const string RemovalFailure = "Credential removal could not be confirmed.";
     private static int failures;
     private static int checks;
 
     public static int Main()
     {
-        var actions = new (string Name, Action Action)[]
+        var actions = new (string Name, Action Action, string TimeoutFailure)[]
         {
-            ("linux availability", () => LinuxSecretToolKeyStore.IsAvailable()),
-            ("linux get", () => new LinuxSecretToolKeyStore().TryGet("fixture", out _)),
-            ("linux set", () => new LinuxSecretToolKeyStore().Set("fixture", "fixture-value")),
-            ("linux delete", () => new LinuxSecretToolKeyStore().Delete("fixture")),
-            ("mac get", () => new MacKeychainKeyStore().TryGet("fixture", out _)),
-            ("mac set", () => new MacKeychainKeyStore().Set("fixture", "fixture-value")),
-            ("mac delete", () => new MacKeychainKeyStore().Delete("fixture")),
+            ("linux availability", () => LinuxSecretToolKeyStore.IsAvailable(), null),
+            ("linux get", () => new LinuxSecretToolKeyStore().TryGet("fixture", out _), LookupFailure),
+            ("linux set", () => new LinuxSecretToolKeyStore().Set("fixture", "fixture-value"), StorageFailure),
+            ("linux delete", () => new LinuxSecretToolKeyStore().Delete("fixture"), RemovalFailure),
+            ("mac get", () => CreateMacStore().TryGet("fixture", out _), LookupFailure),
+            ("mac set", () => CreateMacStore().Set("fixture", "fixture-value"), StorageFailure),
+            ("mac delete", () => CreateMacStore().Delete("fixture"), RemovalFailure),
         };
         foreach (var action in actions)
         {
@@ -30,22 +33,16 @@ internal static class LifecycleHarness
                 FakeProcess.Completes = false;
                 for (int i = 0; i < 100; i++)
                 {
-                    bool refused = false;
                     try
                     {
                         action.Action();
+                        Require(action.TimeoutFailure == null, "Operation did not report an unconfirmed timeout");
                     }
                     catch (InvalidOperationException error)
-                        when (error.Message.StartsWith("Credential removal could not be confirmed.")
-                            || error.Message.StartsWith("Credential storage could not be confirmed.")
-                        )
+                        when (action.TimeoutFailure != null && error.Message.StartsWith(action.TimeoutFailure, StringComparison.Ordinal))
                     {
-                        refused = true;
+                        Require(error.InnerException == null, "Timeout exposed process details");
                     }
-                    Require(
-                        refused == (action.Name.EndsWith(" delete") || action.Name.EndsWith(" set")),
-                        "Mutation timeout did not report an unconfirmed result"
-                    );
                 }
                 int alive = FakeProcess.All.FindAll(p => p.Running).Count;
                 Console.WriteLine("TIMEOUT " + action.Name + ": alive=" + alive);
@@ -64,27 +61,25 @@ internal static class LifecycleHarness
             store.Set("fixture", "fixture-input");
             Require(FakeProcess.All[^1].InputValue == "fixture-input", "stdin changed");
             Require(FakeProcess.All.TrueForAll(p => p.Kills == 0 && p.Disposed), "Successful child was killed or not disposed");
-            FakeProcess.ExitStatus = 9;
-            Require(!store.TryGet("fixture", out _), "Nonzero exit was accepted");
+            CheckLookupRefusal(store);
         });
         Check("mac success preserves value and structured arguments", () =>
         {
             FakeProcess.Completes = true;
             FakeProcess.Output = " fixture-value \n";
-            var store = new MacKeychainKeyStore();
+            var store = CreateMacStore();
             Require(store.TryGet("fixture", out string value) && value == " fixture-value ", "Value changed");
             store.Set("fixture", "fixture-input");
             Require(FakeProcess.All[^1].StartInfo.ArgumentList.Contains("fixture-input"), "Argument value changed");
             Require(FakeProcess.All.TrueForAll(p => p.Kills == 0 && p.Disposed), "Successful child was killed or not disposed");
-            FakeProcess.ExitStatus = 9;
-            Require(!store.TryGet("fixture", out _), "Nonzero exit was accepted");
+            CheckLookupRefusal(store);
         });
         Check("read paths drain stdout and stderr asynchronously", () =>
         {
             FakeProcess.Completes = true;
             FakeProcess.ForbidSynchronousRead = true;
             Require(new LinuxSecretToolKeyStore().TryGet("fixture", out _), "Linux used blocking pipe read");
-            Require(new MacKeychainKeyStore().TryGet("fixture", out _), "macOS used blocking pipe read");
+            Require(CreateMacStore().TryGet("fixture", out _), "macOS used blocking pipe read");
             Require(FakeProcess.All.TrueForAll(p => p.AsyncReads == 2), "Both pipes were not drained");
         });
         Check("completed commands release every exposed stream", () =>
@@ -123,7 +118,7 @@ internal static class LifecycleHarness
                     {
                         FakeProcess.TrackStoredValue = true;
                         FakeProcess.StoredValue = replacing ? "fixture-old" : null;
-                        ISecureKeyStore store = mac ? new MacKeychainKeyStore() : new LinuxSecretToolKeyStore();
+                        ISecureKeyStore store = mac ? CreateMacStore() : new LinuxSecretToolKeyStore();
                         Require(store.Has("fixture") == replacing, "Initial presence changed");
                         FakeProcess.ErrorOutput = "fixture-input";
                         FakeProcess.ExitStatus = failure == "nonzero" ? 9 : 0;
@@ -141,7 +136,7 @@ internal static class LifecycleHarness
                 {
                     FakeProcess.TrackStoredValue = true;
                     FakeProcess.StoredValue = replacing ? "fixture-old" : null;
-                    ISecureKeyStore store = mac ? new MacKeychainKeyStore() : new LinuxSecretToolKeyStore();
+                    ISecureKeyStore store = mac ? CreateMacStore() : new LinuxSecretToolKeyStore();
                     store.Set("fixture", "fixture-input");
                     Require(store.TryGet("fixture", out string value) && value == "fixture-input", "Successful save did not persist entered value");
                     store.Set("fixture", "");
@@ -185,6 +180,26 @@ internal static class LifecycleHarness
             throw new InvalidOperationException(message);
     }
 
+    private static MacKeychainKeyStore CreateMacStore() =>
+        new(null, null, (_, _, _, _, _, _, _, _) => throw new InvalidOperationException("Unexpected native Keychain lookup in process fixture"));
+
+    private static void CheckLookupRefusal(ISecureKeyStore store)
+    {
+        FakeProcess.ExitStatus = 9;
+        FakeProcess.ErrorOutput = "fixture backend diagnostic";
+        try
+        {
+            store.TryGet("fixture", out _);
+        }
+        catch (InvalidOperationException error) when (error.Message.StartsWith(LookupFailure, StringComparison.Ordinal))
+        {
+            Require(!error.Message.Contains(FakeProcess.ErrorOutput) && error.InnerException == null, "Lookup failure exposed process details");
+            Require(FakeProcess.All[^1].Disposed && FakeProcess.All[^1].StreamsDisposed, "Failed lookup retained owned resources");
+            return;
+        }
+        throw new InvalidOperationException("Unconfirmed lookup returned a credential result");
+    }
+
     private static void RequireSaveRefused(ISecureKeyStore store)
     {
         try
@@ -193,7 +208,7 @@ internal static class LifecycleHarness
         }
         catch (InvalidOperationException error)
         {
-            Require(error.Message.StartsWith("Credential storage could not be confirmed."), "Save failure was not sanitized");
+            Require(error.Message.StartsWith(StorageFailure, StringComparison.Ordinal), "Save failure was not sanitized");
             Require(!error.Message.Contains("fixture") && error.InnerException == null, "Save failure exposed input or process details");
             return;
         }
