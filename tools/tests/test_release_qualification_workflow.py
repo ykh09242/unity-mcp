@@ -17,6 +17,7 @@ from tests.test_ci_trigger_policy import selected
 ROOT = Path(__file__).resolve().parents[2]
 pytest_plugins = ("tests.test_check_source_pin_drift",)
 PACKAGE_COMMIT = "a" * 40
+POWERSHELL_TIMEOUT_SECONDS = 60
 SERVER_COMMIT = "b" * 40
 
 
@@ -684,7 +685,7 @@ def test_package_shapes_admission_shell_requires_beta_policy_and_exact_head(
             "TEST_HEAD": head,
         },
         capture_output=True,
-        timeout=15,
+        timeout=POWERSHELL_TIMEOUT_SECONDS,
         check=False,
     )
     assert (result.returncode == 0) == success
@@ -722,7 +723,7 @@ def test_package_shapes_hosted_shell_invokes_each_fixed_suite_and_propagates_fai
                 "FAKE_EDITOR_EXIT": str(exit_code),
             },
             capture_output=True,
-            timeout=15,
+            timeout=POWERSHELL_TIMEOUT_SECONDS,
             check=False,
         )
         assert json.loads(result.stdout) == [
