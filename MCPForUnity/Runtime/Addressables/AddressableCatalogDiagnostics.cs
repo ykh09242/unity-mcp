@@ -31,6 +31,7 @@ namespace MCPForUnity.Runtime.Content
         public long download_bytes_after = -1;
         public BundleObservation[] bundles_before;
         public BundleObservation[] bundles_after;
+        public string load_status;
         public string loaded_marker;
     }
 
@@ -51,7 +52,12 @@ namespace MCPForUnity.Runtime.Content
             return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(value))).Replace("-", "").ToLowerInvariant();
         }
 
-        private static async Task<R> Read<T, R>(AsyncOperationHandle<T> handle, Func<T, R> observe, ResourceManager owner = null)
+        private static async Task<R> Read<T, R>(
+            AsyncOperationHandle<T> handle,
+            Func<T, R> observe,
+            ResourceManager owner = null,
+            Action<AsyncOperationStatus> recordStatus = null
+        )
         {
             try
             {
@@ -63,7 +69,10 @@ namespace MCPForUnity.Runtime.Content
             finally
             {
                 if (handle.IsValid())
+                {
+                    recordStatus?.Invoke(handle.Status);
                     (owner ?? Provider.ResourceManager).Release(handle);
+                }
             }
         }
 
@@ -253,12 +262,16 @@ namespace MCPForUnity.Runtime.Content
                     observation.bundles_before = Bundles(selected);
                     observation.download_bytes_before = await Read(Provider.GetDownloadSizeAsync(selected), bytes => bytes);
                     observation.stage = "load_marker";
-                    observation.loaded_marker = await Read(Provider.LoadAssetAsync<TextAsset>(selected), asset =>
-                    {
-                        if (asset == null || asset.GetData<byte>().Length > 256)
-                            throw new InvalidOperationException("Use a UTF-8 TextAsset marker of at most 256 bytes.");
-                        return asset.text;
-                    });
+                    observation.loaded_marker = await Read(
+                        Provider.LoadAssetAsync<TextAsset>(selected),
+                        asset =>
+                        {
+                            if (asset == null || asset.GetData<byte>().Length > 256)
+                                throw new InvalidOperationException("Use a UTF-8 TextAsset marker of at most 256 bytes.");
+                            return asset.text;
+                        },
+                        recordStatus: status => observation.load_status = status.ToString()
+                    );
                     observation.stage = "cache_after";
                     observation.bundles_after = Bundles(selected);
                     observation.download_bytes_after = await Read(Provider.GetDownloadSizeAsync(selected), bytes => bytes);

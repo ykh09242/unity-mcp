@@ -108,6 +108,37 @@ public sealed class CatalogMarkerPlayer : MonoBehaviour
         }
     }
 
+    private static async Task<object> TornDeployment(string session, string cacheCase)
+    {
+        string origin = Environment.GetEnvironmentVariable("MCP_CATALOG_ORIGIN");
+        // The product-specific catalog cache persists across launches. Install the original
+        // catalog without fetching its marker bundle, including in the empty cache case.
+        var baseline = await AddressableCatalogDiagnostics.ObserveAsync("absent-fixture-marker", true);
+        if (baseline.stage != "locate_marker" || baseline.error != "marker_not_found")
+            throw new InvalidOperationException("Could not establish the baseline catalog.");
+        if (cacheCase == "torn-old-warm")
+        {
+            var prime = await AddressableCatalogDiagnostics.ObserveAsync("marker-text");
+            if (prime.loaded_marker != "old-" + session || prime.stage != "complete")
+                throw new InvalidOperationException("Failed to prime the original bundle.");
+        }
+        long oldBytes = await RemainingBytes("marker-text");
+        await SignalOrigin(origin, "switch", session);
+        var torn = await AddressableCatalogDiagnostics.ObserveAsync("marker-text", true);
+        await SignalOrigin(origin, "rollback", session);
+        var recovered = await AddressableCatalogDiagnostics.ObserveAsync("marker-text", true);
+        await SignalOrigin(origin, "observed", session);
+        var stable = await AddressableCatalogDiagnostics.ObserveAsync("marker-text");
+        return new
+        {
+            baseline,
+            old_bytes = oldBytes,
+            torn,
+            recovered,
+            stable,
+        };
+    }
+
     private async void Start()
     {
         int exit = 1;
@@ -127,15 +158,16 @@ public sealed class CatalogMarkerPlayer : MonoBehaviour
                     throw new TimeoutException("Unity's bundle cache did not become ready.");
                 await Task.Yield();
             }
-            var cache = Caching.AddCache(Directory.CreateDirectory(Path.Combine(root, "bundle-cache")).FullName);
+            string initialization = Environment.GetEnvironmentVariable("MCP_CATALOG_INIT");
+            string cacheName = initialization == "torn-cold" || initialization == "torn-old-warm" ? initialization + "-cache" : "bundle-cache";
+            var cache = Caching.AddCache(Directory.CreateDirectory(Path.Combine(root, cacheName)).FullName);
             if (!cache.valid)
                 throw new InvalidOperationException("Could not open the owned fixture cache.");
             Caching.currentCacheForWriting = cache;
             bool apply = Environment.GetEnvironmentVariable("MCP_CATALOG_APPLY") == "1";
-            string initialization = Environment.GetEnvironmentVariable("MCP_CATALOG_INIT");
-            if (initialization == "selective")
+            if (initialization == "selective" || initialization.StartsWith("torn-", StringComparison.Ordinal))
             {
-                var selective = await SelectiveUpdate(session);
+                object result = initialization == "selective" ? await SelectiveUpdate(session) : await TornDeployment(session, initialization);
                 File.WriteAllText(
                     Path.Combine(directory, "observation.json"),
                     JsonConvert.SerializeObject(
@@ -145,7 +177,8 @@ public sealed class CatalogMarkerPlayer : MonoBehaviour
                             build_guid = Application.buildGUID,
                             unity_version = Application.unityVersion,
                             initialization,
-                            selective,
+                            selective = initialization == "selective" ? result : null,
+                            deployment = initialization.StartsWith("torn-", StringComparison.Ordinal) ? result : null,
                         }
                     )
                 );

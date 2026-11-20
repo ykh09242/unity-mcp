@@ -1,4 +1,4 @@
-"""Build one disposable Windows Player and verify old, stale, updated and cached marker loads."""
+"""Verify installed Addressables content and rollback in a disposable Windows Player."""
 
 import argparse
 from functools import partial
@@ -34,6 +34,13 @@ class CatalogServer(BaseHTTPRequestHandler):
             self.source["directory"] = destination
             self.source["switch_to"] = None
         elif (
+            self.path == "/rollback/" + session
+            and self.source.get("rollback_to") is not None
+            and self.source.get("before_switch") is not None
+        ):
+            self.source["rollback_offset"] = len(self.source["requests"])
+            self.source["directory"] = self.source.pop("rollback_to")
+        elif (
             self.path == "/observed/" + session
             and self.source.get("before_switch") is not None
             and self.source.get("retained_gets") is None
@@ -41,6 +48,7 @@ class CatalogServer(BaseHTTPRequestHandler):
             self.source["retained_gets"] = self.source["requests"][
                 len(self.source["before_switch"]) :
             ]
+            self.source["observed_offset"] = len(self.source["requests"])
         else:
             self.send_error(404)
             return
@@ -54,7 +62,20 @@ class CatalogServer(BaseHTTPRequestHandler):
             return
         self.source["requests"].append(name)
         path = self.source["directory"] / name
-        if not path.is_file() or (name.endswith(".bundle") and self.source["deny_bundles"]):
+        withheld = self.source.get("withheld") == (self.source["directory"].name, name)
+        missing = (
+            not path.is_file()
+            or withheld
+            or (name.endswith(".bundle") and self.source["deny_bundles"])
+        )
+        self.source["responses"].append(
+            {
+                "path": name,
+                "status": 404 if missing else 200,
+                "generation": self.source["directory"].name,
+            }
+        )
+        if missing:
             self.send_error(404)
             return
         self.send_response(200)
@@ -106,6 +127,21 @@ def checked(command, directory, env, timeout):
     result = execute(Invocation(command, directory, timeout=timeout, environment=env))
     if result["forced_termination"] or result["actual_exit_code"] != 0:
         raise ValueError(f"Native process failed. See {directory}")
+
+
+def launch_player(player, directory, env, initialization, apply=False):
+    checked(
+        [str(player), "-batchmode", "-nographics", "-logFile", str(directory / "player.log")],
+        directory,
+        {
+            **env,
+            "MCP_CATALOG_RUN": str(directory),
+            "MCP_CATALOG_APPLY": str(int(apply)),
+            "MCP_CATALOG_INIT": initialization,
+        },
+        120,
+    )
+    return read_json(directory / "observation.json", 32768)
 
 
 def catalog_generations(content, subdirectory=""):
@@ -214,6 +250,98 @@ def require_selective_observation(data, session, old_primary_bundle, catalogs, b
         raise ValueError("Missing isolated catalog and bundle HTTP evidence")
 
 
+def require_torn_observation(receipt, mode, catalogs, bundles, paths, traffic):
+    data = receipt["deployment"]
+    session = receipt["session"]
+    cold = mode == "torn-cold"
+    new_cached = mode == "torn-new-warm"
+    if data["old_bytes"] < 0 or (data["old_bytes"] > 0) != cold:
+        raise ValueError("Unexpected original marker cache before deployment")
+    catalog_path = catalogs["new"]["name"]
+    json_path = catalog_path.removesuffix(".hash") + ".json"
+    baseline = traffic["baseline"]
+    if (
+        not all(row["generation"] == "old" and row["status"] == 200 for row in baseline)
+        or catalog_path not in {row["path"] for row in baseline}
+        or {row["path"] for row in baseline if row["path"].endswith(".bundle")}
+        != ({paths["old"]} if mode == "torn-old-warm" else set())
+    ):
+        raise ValueError("Unexpected original catalog or cache priming traffic")
+    catalog_id = data["torn"]["updated_catalog_id"]
+    if not isinstance(catalog_id, str) or not re.fullmatch(r"[0-9a-f]{64}", catalog_id):
+        raise ValueError("Missing installed catalog identity")
+    for phase, generation, item, cached in (
+        ("torn", "new", data["torn"], new_cached),
+        ("rollback", "old", data["recovered"], not cold),
+    ):
+        responses = traffic[phase]
+        observed = {(row["path"], row["status"]) for row in responses}
+        expected_hash = hashlib.sha256(catalogs[generation]["published_hash"].encode()).hexdigest()
+        bundle_requests = [
+            (row["path"], row["status"]) for row in responses if row["path"].endswith(".bundle")
+        ]
+        if (
+            not all(row["generation"] == generation for row in responses)
+            or not {(catalog_path, 200), (json_path, 200)}.issubset(observed)
+            or item["installed_hash_id"] != expected_hash
+            or item["pending_catalog_ids"] != [catalog_id]
+            or item["updated_catalog_id"] != catalog_id
+            or item["update_count"] != 1
+            or item["updated_catalog_count"] != 1
+            or item["location_count"] != 1
+            or not item["location_id"]
+            or item["bundles_before"] != [{"hash": bundles[generation], "cached": cached}]
+        ):
+            raise ValueError(f"Missing catalog installation, location or cache evidence at {phase}")
+        if phase == "torn" and not new_cached:
+            if (
+                set(bundle_requests) != {(paths["new"], 404)}
+                or item["download_bytes_before"] <= 0
+                or item["stage"] != "load_marker"
+                or not item["error"]
+                or item["load_status"] != "Failed"
+                or item["loaded_marker"] is not None
+                or item["bundles_after"] is not None
+            ):
+                raise ValueError("Missing required new bundle must fail its actual native load")
+        else:
+            if set(bundle_requests) != (set() if cached else {(paths[generation], 200)}):
+                raise ValueError(f"Unexpected required bundle response at {phase}")
+            confirmed = require_player_observation(
+                dict(receipt, observed=item),
+                session,
+                receipt["unity_version"],
+                generation,
+                not cached,
+                {1},
+                True,
+                [path for path, _ in bundle_requests],
+            )
+            if confirmed != bundles[generation] or item["load_status"] != "Succeeded":
+                raise ValueError(f"Unexpected loaded generation at {phase}")
+    stable = data["stable"]
+    stable_gets = traffic["stable"]
+    confirmed = require_player_observation(
+        dict(receipt, observed=stable),
+        session,
+        receipt["unity_version"],
+        "old",
+        False,
+        {0},
+        False,
+        [row["path"] for row in stable_gets],
+    )
+    if (
+        stable["load_status"] != "Succeeded"
+        or {(row["generation"], row["path"], row["status"]) for row in stable_gets}
+        != {("old", catalog_path, 200)}
+        or confirmed != bundles["old"]
+        or stable["location_id"] != data["recovered"]["location_id"]
+        or catalog_id not in stable["catalog_ids"]
+    ):
+        raise ValueError("Restored catalog and bundle did not remain installed")
+
+
 def run(options):
     root = options.output.resolve()
     root.mkdir(parents=True)
@@ -241,6 +369,7 @@ def run(options):
         "session": session,
         "directory": content / "old",
         "requests": [],
+        "responses": [],
         "deny_bundles": False,
     }
     with HTTPServer(("127.0.0.1", 0), partial(CatalogServer, source=source)) as server:
@@ -291,6 +420,7 @@ def run(options):
                 source.update(
                     directory=content / generation,
                     requests=[],
+                    responses=[],
                     deny_bundles=not cold,
                     switch_to=content / "new"
                     if retained or initialization == "selective"
@@ -298,26 +428,17 @@ def run(options):
                     before_switch=None,
                     retained_gets=None,
                 )
-                checked(
-                    [
-                        str(player),
-                        "-batchmode",
-                        "-nographics",
-                        "-logFile",
-                        str(directory / "player.log"),
-                    ],
+                receipt = launch_player(
+                    player,
                     directory,
                     {
                         **env,
-                        "MCP_CATALOG_RUN": str(directory),
-                        "MCP_CATALOG_APPLY": str(int(apply)),
-                        "MCP_CATALOG_INIT": initialization,
                         "MCP_CATALOG_SECONDARY": secondary["old"]["name"].removesuffix(".hash")
                         + ".json",
                     },
-                    120,
+                    initialization,
+                    apply,
                 )
-                receipt = read_json(directory / "observation.json", 16384)
                 if receipt.get("initialization") != initialization:
                     raise ValueError("Missing host initialization ownership evidence")
                 if initialization == "selective":
@@ -401,6 +522,7 @@ def run(options):
                 observations[name] = {
                     "player": receipt,
                     "http_gets": source["requests"],
+                    "http": source["responses"],
                     "http_gets_before_switch": source["before_switch"],
                     "http_gets_with_retained_check": source["retained_gets"],
                 }
@@ -408,6 +530,73 @@ def run(options):
                 raise ValueError(
                     "Loaded old and new marker bundles must have distinct native hashes"
                 )
+            bundle_paths = {}
+            for generation, control in (("old", "old-cold"), ("new", "new-update")):
+                paths = {
+                    row["path"]
+                    for row in observations[control]["http"]
+                    if row["generation"] == generation
+                    and row["status"] == 200
+                    and row["path"].endswith(".bundle")
+                }
+                if len(paths) != 1:
+                    raise ValueError(
+                        "Expected a single required marker bundle from the successful control"
+                    )
+                bundle_paths[generation] = paths.pop()
+            for mode in ("torn-cold", "torn-old-warm", "torn-new-warm"):
+                source.update(
+                    directory=content / "old",
+                    switch_to=content / "new",
+                    rollback_to=content / "old",
+                    withheld=("new", bundle_paths["new"]),
+                    deny_bundles=False,
+                    requests=[],
+                    responses=[],
+                    before_switch=None,
+                    rollback_offset=None,
+                    observed_offset=None,
+                    retained_gets=None,
+                )
+                try:
+                    receipt = launch_player(player, root / mode, env, mode)
+                finally:
+                    write_json(
+                        root / mode / "origin.json",
+                        {
+                            "responses": source["responses"],
+                            "switch_offset": len(source["before_switch"])
+                            if source["before_switch"] is not None
+                            else None,
+                            "rollback_offset": source["rollback_offset"],
+                            "stable_offset": source["observed_offset"],
+                            "withheld_bundle": bundle_paths["new"],
+                        },
+                    )
+                if (
+                    receipt["session"],
+                    receipt["unity_version"],
+                    receipt["build_guid"],
+                    receipt["initialization"],
+                ) != (session, options.unity_version, expected_build, mode):
+                    raise ValueError("Torn deployment must use the original installed Player")
+                if (
+                    source["before_switch"] is None
+                    or source["rollback_offset"] is None
+                    or source["observed_offset"] is None
+                ):
+                    raise ValueError("Missing torn deployment or rollback boundary")
+                start, end = len(source["before_switch"]), source["rollback_offset"]
+                traffic = {
+                    "baseline": source["responses"][:start],
+                    "torn": source["responses"][start:end],
+                    "rollback": source["responses"][end : source["observed_offset"]],
+                    "stable": source["responses"][source["observed_offset"] :],
+                }
+                require_torn_observation(
+                    receipt, mode, catalogs, bundle_hashes, bundle_paths, traffic
+                )
+                observations[mode] = {"player": receipt, "http": traffic}
             write_json(
                 root / "result.json",
                 {
@@ -417,6 +606,8 @@ def run(options):
                     "secondary_content_state_sha256": digest(content / "secondary-state.bin"),
                     "package_lock_sha256": digest(project / "Packages/packages-lock.json"),
                     "catalogs": catalogs,
+                    "marker_bundle_paths": bundle_paths,
+                    "marker_bundle_hashes": bundle_hashes,
                     "secondary_catalogs": secondary,
                     "package_profile": profile,
                     "observations": observations,
