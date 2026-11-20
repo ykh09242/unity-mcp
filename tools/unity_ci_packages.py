@@ -979,6 +979,11 @@ def main() -> int:
     preparation.add_argument("--profiles", type=Path, default=PROFILES)
     preparation.add_argument("--include-optional", action="store_true")
     preparation.add_argument("--include-input-system", action="store_true")
+    preparation.add_argument(
+        "--include-addressables",
+        action="store_true",
+        help="Include the pinned content-update Player package profile",
+    )
     matrix = commands.add_parser(
         "optional-matrix", help="Emit compatible optional integration rows"
     )
@@ -1003,6 +1008,11 @@ def main() -> int:
                 profiles_path=args.profiles,
                 include_optional=args.include_optional,
                 include_input_system=args.include_input_system,
+                extra_packages=read_json(args.profiles)["playerPackageSets"][
+                    "addressables-content-update"
+                ]
+                if args.include_addressables
+                else None,
             )
         if args.github_output:
             with args.github_output.open("a", encoding="utf-8") as output:

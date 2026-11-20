@@ -36,6 +36,7 @@ on:
       - CustomTools/RoslynRuntimeCompilation/**/*.cs
       - TestProjects/UnityMCPTests/**
       - tools/compile-check.sh
+      - tools/native_api_shapes/CatalogMarker*.cs
       - tools/run_dotnet.py
       - tools/public-api/**
       - tools/compile-optional-modules.sh
@@ -211,14 +212,13 @@ jobs:
           EVIDENCE_STEP_NAME: Prepare version-specific test packages [compile:${{ matrix.unity.version }}:packages]
         run: |
           set -euo pipefail
-          input_system=()
-          # Reuse the compatible optional profile and its verified registry pin.
-          if [[ "$UNITY_VERSION" == 6000.0.* ]]; then input_system+=(--include-input-system); fi
+          package_options=()
+          if [[ "$UNITY_VERSION" == 6000.0.* ]]; then package_options+=(--include-input-system --include-addressables); fi
           python3 tools/release_execution.py run --kind package-preparation \
             --step-name "$EVIDENCE_STEP_NAME" --output "preparation=.unity-ci/$UNITY_VERSION/resolved-packages.json" -- \
             python3 tools/unity_ci_packages.py prepare \
             --unity-version "$UNITY_VERSION" --unity-data "$UNITY_DATA" \
-            --output ".unity-ci/$UNITY_VERSION" "${input_system[@]}"
+            --output ".unity-ci/$UNITY_VERSION" "${package_options[@]}"
 
       - name: Set up SDK for the locked Unity analyzers
         id: analyzer_sdk
@@ -268,6 +268,7 @@ jobs:
           TEST_PROJECT: ${{ steps.packages.outputs.project_path }}
           INPUT_SYSTEM_SOURCE: ${{ steps.packages.outputs.input_system_source }}
           COMPILE_INPUT_SYSTEM: ${{ startsWith(matrix.unity.version, '6000.0.') && '1' || '0' }}
+          COMPILE_ADDRESSABLES: ${{ startsWith(matrix.unity.version, '6000.0.') && '1' || '0' }}
           UNITY_ANALYZER_DLL: ${{ steps.unity_analyzers.outputs.dll }}
           ANALYZER_SDK_VERSION: ${{ steps.analyzer_sdk.outputs.dotnet-version }}
           PUBLIC_API_INPUTS: ${{ steps.public_api.outputs.inputs }}
@@ -283,6 +284,7 @@ jobs:
             -e REPO=/repo \
             -e COMPILE_INPUT_UGUI=1 \
             -e COMPILE_INPUT_SYSTEM="$COMPILE_INPUT_SYSTEM" \
+            -e COMPILE_ADDRESSABLES \
             -e UNITY_ANALYZER_DLL \
             -e UNITY_ANALYZER_SDK="/analyzer-dotnet/sdk/$ANALYZER_SDK_VERSION" \
             -e PUBLIC_API_INPUTS -e PUBLIC_API_DOTNET=/analyzer-dotnet/dotnet \

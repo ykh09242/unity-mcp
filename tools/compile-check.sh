@@ -33,6 +33,7 @@
 #   COMPILE_INPUT_SYSTEM compile optional Input System adapters (default 0)
 #   INPUT_SYSTEM_REFS directory with verified Unity.InputSystem DLLs (or use source below)
 #   INPUT_SYSTEM_SOURCE verified pinned UPM package, compiled without Unity (6000.0 profile)
+#   COMPILE_ADDRESSABLES compile the pinned provider and its Windows catalog Player fixture (6000.0)
 #   UNITY_ANALYZER_DLL Microsoft.Unity.Analyzers from the locked script diagnostics host (optional)
 #   UNITY_ANALYZER_SDK .NET SDK version directory for the analysis pass (required with UNITY_ANALYZER_DLL)
 #   PUBLIC_API_INPUTS directory staged by tools/public-api/prepare.sh (optional; first platform only)
@@ -375,12 +376,16 @@ compile() {
   # Initial Unity 7 uses CoreCLR with the .NET Standard 2.1 scripting API surface,
   # including Editor assemblies. The bundled .NET 10 SDK does not widen that surface.
   case "$ver_major.$ver_minor:$name" in
+    *:Unity.ResourceManager|*:Unity.Addressables|*:Unity.ScriptableBuildPipeline|*:MCPForUnity.Addressables.Diagnostics|*:MCPForUnity.CatalogMarkerPlayer) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
     7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:MCPForUnity.PlayScenarios.Integration.Runtime|*:MCPForUnity.ScenarioPlayerFixture|*:MCPForUnityTests.UI16CaretRuntime|*:TestAsmdef|*:Assembly-CSharp|*:LifecycleSample.Runtime|*:IndependentExtension.Runtime) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
   esac
-  [ -d "$srcdir" ] && load_assembly_sources "$srcdir" && [ -n "$assembly_source_list" ] || {
+  if [[ "$srcdir" == *.cs && -f "$srcdir" ]]; then
+    sources="$srcdir"
+  elif [ -d "$srcdir" ] && load_assembly_sources "$srcdir" && [ -n "$assembly_source_list" ]; then
+    sources="$assembly_source_list"
+  else
     echo "::error::assembly sources not found: $srcdir" >&2; return 1;
-  }
-  sources=$assembly_source_list
+  fi
   if [ "$name" = LifecycleSample.Tests ]; then
     # The sample's MCP runner stages this source into the same test asmdef.
     sources+=$'\n'"$REPO/tools/fixtures/play_scenario_mcp/TransportScenarioTests.cs"
@@ -425,6 +430,11 @@ compile() {
       ;;
     esac
     if [ "$name" = MCPForUnity.Input.InputSystem.Editor ]; then echo "-unsafe+"; fi
+    case "$name" in
+      Unity.ResourceManager) printf '%s\n' -unsafe+ -define:ENABLE_ASYNC_ASSETBUNDLE_UWR ;;
+      Unity.ScriptableBuildPipeline.Editor) printf '%s\n' -unsafe+ -define:ENABLE_TYPE_HASHING -define:NONRECURSIVE_DEPENDENCY_DATA -define:BUILD_OPTIONS_RECURSE_DEPENDENCIES_2023_3 ;;
+      Unity.Addressables.Editor) echo -define:NONRECURSIVE_DEPENDENCY_DATA ;;
+    esac
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
     case "$name" in
       MCPForUnity.*|MCPForUnityTests.*|TestAsmdef|Assembly-CSharp|LifecycleSample.*|UntouchedUpmSmoke.Editor.Tests|IndependentExtension.*)
@@ -551,6 +561,29 @@ editor_roslyn_refs=()
 if [ -n "$UNITY_ANALYZER_DLL" ] && [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
   editor_roslyn_refs=("${roslyn_refs[@]}")
 fi
+compile_catalog_fixture() {
+  local platform="$1" dir="$OUT/$1" refs="$REFS_PROFILE/Editor.txt"
+  local aa="$EXTRA_REFS/../packages/com.unity.addressables" sbp="$EXTRA_REFS/../packages/com.unity.scriptablebuildpipeline"
+  if [ "$compile_profile" = player ]; then
+    refs="$REFS_PROFILE/Runtime.txt"
+    dir="$dir/player"
+  fi
+  compile Unity.ResourceManager "$aa/Runtime/ResourceManager" "$platform" "$refs" || return 1
+  compile Unity.Addressables "$aa/Runtime" "$platform" "$refs" "$dir/Unity.ResourceManager.dll" || return 1
+  local provider=("$dir/Unity.Addressables.dll" "$dir/Unity.ResourceManager.dll")
+  compile MCPForUnity.Addressables.Diagnostics "$REPO/MCPForUnity/Runtime/Addressables" "$platform" "$refs" "${provider[@]}" || return 1
+  compile MCPForUnity.CatalogMarkerPlayer "$REPO/tools/native_api_shapes/CatalogMarkerPlayer.cs" "$platform" "$refs" \
+    "${provider[@]}" "$dir/MCPForUnity.Addressables.Diagnostics.dll" || return 1
+  if [ "$compile_profile" = editor ]; then
+    compile Unity.ScriptableBuildPipeline "$sbp/Runtime" "$platform" "$refs" || return 1
+    compile Unity.ScriptableBuildPipeline.Editor "$sbp/Editor" "$platform" "$refs" "$dir/Unity.ScriptableBuildPipeline.dll" || return 1
+    local build=("$dir/Unity.ScriptableBuildPipeline.dll" "$dir/Unity.ScriptableBuildPipeline.Editor.dll")
+    compile Unity.Addressables.Editor "$aa/Editor" "$platform" "$refs" "${provider[@]}" "${build[@]}" || return 1
+    compile MCPForUnity.CatalogMarkerBuild "$REPO/tools/native_api_shapes/CatalogMarkerBuild.cs" "$platform" "$refs" \
+      "${provider[@]}" "${build[@]}" "$dir/Unity.Addressables.Editor.dll" "$dir/MCPForUnity.CatalogMarkerPlayer.dll" || return 1
+  fi
+}
+
 for platform in $PLATFORMS; do
   compile_profile=editor
   if [ "$ver_major.$ver_minor" = 7000.0 ]; then
@@ -583,6 +616,9 @@ for platform in $PLATFORMS; do
     compile UnityEditor.TestRunner "$TEST_FRAMEWORK_SOURCE/UnityEditor.TestRunner" "$platform" \
       "$REFS_PROFILE/Editor.txt" "$OUT/$platform/UnityEngine.TestRunner.dll" \
       "${cecil_refs[@]}" || { failed=1; continue; }
+  fi
+  if [ "${COMPILE_ADDRESSABLES:-0}" = 1 ] && [ "$platform" = win ]; then
+    compile_catalog_fixture "$platform" || { failed=1; continue; }
   fi
   if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ] && [ -n "$INPUT_SYSTEM_SOURCE" ]; then
     # Build reference inputs from the registry-verified package. No Editor or license is used.
@@ -690,6 +726,9 @@ for platform in $PLATFORMS; do
     fi
   fi
   for compile_profile in player player-scenarios; do
+    if [ "${COMPILE_ADDRESSABLES:-0}" = 1 ] && [ "$platform" = win ] && [ "$compile_profile" = player ]; then
+      compile_catalog_fixture "$platform" || { failed=1; continue; }
+    fi
     player_dir="$OUT/$platform/$compile_profile"
     compile MCPForUnity.Runtime "$REPO/MCPForUnity/Runtime" "$platform" \
       "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }

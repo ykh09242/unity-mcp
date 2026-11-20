@@ -62,6 +62,12 @@
       }
     }
   },
+  "playerPackageSets": {
+    "addressables-content-update": {
+      "com.unity.addressables": {"source": "registry", "version": "1.21.17"},
+      "com.unity.scriptablebuildpipeline": {"source": "registry", "version": "1.23.4"}
+    }
+  },
   "optionalProfiles": {
     "unity-six-lts": {
       "unityFamilies": ["6000.0"],

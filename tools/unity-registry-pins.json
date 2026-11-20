@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "artifacts": {
     "com.unity.addressables@1.1.5": "e172823f18deb966325e123706194f7fc510bef69888235a1cfcc794fda00b32",
+    "com.unity.addressables@1.21.17": "24b102a051626e7a598eb448e3e0b6ffd623822879f6737f25f09d31a10040c6",
     "com.unity.burst@1.8.31": "05030ee30ceffef62d08f2340b4e768dcb6d2256cbc97557eb5ab2624e2b9cae",
     "com.unity.cinemachine@2.10.7": "f409347e3c19d2cb7a783664fec2df262c09ce0596b13c04a79aebbcbcf894c1",
     "com.unity.cinemachine@3.1.7": "8b77a98259c6726ce1795690dc2459f0f26d8d17345d9758f019d8de2653998a",

@@ -302,6 +302,9 @@ def test_workflow_prepares_profile_sources_and_passes_them_to_the_compiler(
     assert (
         "--include-input-system" in capture.read_text(encoding="utf-8").splitlines()
     ) == selected
+    assert (
+        "--include-addressables" in capture.read_text(encoding="utf-8").splitlines()
+    ) == selected
     compiler = next(step for step in steps if step.get("name", "").startswith("Compile ["))
     assert (
         compiler["env"]["INPUT_SYSTEM_SOURCE"]
@@ -361,6 +364,8 @@ def test_workflow_prepares_profile_sources_and_passes_them_to_the_compiler(
     ]
     assert wrapper[wrapper.index("--") + 1 :] == ["docker", *arguments]
     assert f"COMPILE_INPUT_SYSTEM={1 if selected else 0}" in arguments
+    assert compiler["env"]["COMPILE_ADDRESSABLES"] == compiler["env"]["COMPILE_INPUT_SYSTEM"]
+    assert arguments[arguments.index("COMPILE_ADDRESSABLES") - 1] == "-e"
     assert "INPUT_SYSTEM_SOURCE=/repo/verified/input-package" in arguments
     assert "/verified/analysis host:/analyzer-dotnet:ro" in arguments
     assert arguments[arguments.index("UNITY_ANALYZER_DLL") - 1] == "-e"

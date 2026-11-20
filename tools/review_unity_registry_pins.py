@@ -26,6 +26,7 @@ def propose(profiles: Path, output: Path) -> None:
         for profile in config.get(section, {}).values()
     ]
     package_sets.extend(config.get("nativePackageSets", {}).values())
+    package_sets.extend(config.get("playerPackageSets", {}).values())
     identities = sorted(
         {
             (name, spec["version"])
