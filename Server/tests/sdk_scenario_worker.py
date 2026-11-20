@@ -31,9 +31,8 @@ from fastmcp.server.dependencies import without_injected_parameters  # noqa: E40
 from fastmcp.server.sessions import session_id_parameter_names  # noqa: E402
 from fastmcp.tools.function_tool import _wrap_body_errors  # noqa: E402
 from fastmcp.utilities.types import get_cached_typeadapter  # noqa: E402
-from uncalled_for.annotations import _annotation_cache, _metadata_cache  # noqa: E402
-from uncalled_for.introspection import _parameter_cache, _signature_cache  # noqa: E402
-from uncalled_for.references import _reference_cache  # noqa: E402
+from uncalled_for import annotations, introspection, references  # noqa: E402
+from uncalled_for.resolution import without_dependencies  # noqa: E402
 
 _ABSENT = object()
 _GLOBALS = [
@@ -61,7 +60,9 @@ _CALLABLE_CACHES = (
     without_injected_parameters,
     session_id_parameter_names,
     _wrap_body_errors,
+    without_dependencies,
 )
+_DI_CACHE_TYPE = type(introspection._signature_cache)
 
 
 class _Output(io.StringIO):
@@ -102,16 +103,18 @@ def _reset():
             "main",
         }:
             del sys.modules[name]
-    # These four SDK LRUs key on dynamic callables whose globals retain the old app.
+    # These SDK LRUs key on dynamic callables whose globals retain the old app.
     # Recompile/rewrap every case; fail visibly if the pinned SDK changes this interface.
     for cache in _CALLABLE_CACHES:
         cache.cache_clear()
-    # FastMCP's DI caches key on scenario callables and retain their globals.
-    _parameter_cache.clear()
-    _signature_cache.clear()
-    _annotation_cache.clear()
-    _metadata_cache.clear()
-    _reference_cache.clear()
+    # uncalled-for 0.6.2 keeps non-weak-referenceable callables strongly. Its
+    # consumers resolve these module attributes when called, so replace all
+    # five caches in this private worker before the next scenario.
+    introspection._parameter_cache = _DI_CACHE_TYPE()
+    introspection._signature_cache = _DI_CACHE_TYPE()
+    annotations._annotation_cache = _DI_CACHE_TYPE()
+    annotations._metadata_cache = _DI_CACHE_TYPE()
+    references._reference_cache = _DI_CACHE_TYPE()
     gc.collect()
 
 

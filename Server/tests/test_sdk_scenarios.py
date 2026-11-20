@@ -31,6 +31,16 @@ def test_real_sdk_state_and_callable_graphs_do_not_survive_a_scenario():
             async with Client(app, mode="legacy") as client:
                 assert (await client.call_tool("echo", {"value": 7})).data == 7
         anyio.run(scenario)
+        from uncalled_for.introspection import get_signature
+        from uncalled_for.resolution import without_dependencies
+        class CallableOwner:
+            __slots__ = ("server",)
+            def __call__(self):
+                return self.server
+        owner = CallableOwner()
+        owner.server = app
+        assert not get_signature(owner).parameters
+        assert without_dependencies(echo) is echo
         print(json.dumps({"prefix":sys.prefix, "python":sys.version, "sdk":version("fastmcp")}))
         builtins._sdk_case_app_ref = weakref.ref(app)
         service._project_tools["poison"] = {}
