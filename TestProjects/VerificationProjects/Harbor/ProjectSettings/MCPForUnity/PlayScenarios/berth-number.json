@@ -1,0 +1,17 @@
+{
+  "name": "berth-number",
+  "steps": [
+    {
+      "name": "Load project scene",
+      "action": "load_scene",
+      "scene": "Assets/Dock.unity"
+    },
+    {
+      "name": "Read project state",
+      "action": "wait_state",
+      "state_id": "harbor.berth",
+      "state_equals": 3,
+      "timeout_seconds": 5
+    }
+  ]
+}

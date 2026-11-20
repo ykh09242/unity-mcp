@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "com.ykh09242.unity-mcp": "file:../../../../MCPForUnity"
+  }
+}

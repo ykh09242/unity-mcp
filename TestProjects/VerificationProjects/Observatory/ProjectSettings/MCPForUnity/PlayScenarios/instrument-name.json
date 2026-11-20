@@ -1,0 +1,17 @@
+{
+  "name": "instrument-name",
+  "steps": [
+    {
+      "name": "Load project scene",
+      "action": "load_scene",
+      "scene": "Assets/Summit.unity"
+    },
+    {
+      "name": "Read project state",
+      "action": "wait_state",
+      "state_id": "observatory.instrument",
+      "state_equals": "Zenith",
+      "timeout_seconds": 5
+    }
+  ]
+}
