@@ -36,6 +36,7 @@ def test_field_rename_with_migration_is_reported_without_claiming_safe_conversio
     assert delta["complete"]
     assert delta["changes"][0]["change"] == "field_renamed_with_alias"
     assert delta["changes"][0]["name"] == "count"
+    assert delta["changes"][0]["replacement_name"] == "total"
     assert (
         declaration_changes(result(), result("total"))["changes"][0]["change"]
         == "field_removed_or_renamed"
@@ -102,6 +103,52 @@ def graph_page(revision=4, cursor=None):
             },
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_renamed_members_report_owning_asset_observed_method_and_new_aliased_field():
+    before = result("oldCount")
+    after = result("newCount", former=["oldCount"])
+    before["declarations"].extend(result("OldClick", "method")["declarations"])
+    after["declarations"].extend(result("RenamedClick", "method")["declarations"])
+    members = [
+        {
+            "kind": "field",
+            "name": "oldCount",
+            "certainty": "confirmed_reference",
+            "basis": "serialized_top_level_field",
+        },
+        {
+            "kind": "method",
+            "name": "OldClick",
+            "certainty": "confirmed_reference",
+            "basis": "persistent_call_local_target",
+        },
+    ]
+    graph = SimpleNamespace(execute=AsyncMock(return_value=graph_page()))
+    native = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {"assets": [{"path": "Assets/C.prefab", "members": members}]},
+        }
+    )
+    page = await inspect_script_impact(
+        None,
+        after,
+        before,
+        options={"analysis_id": "e" * 32},
+        owner=("u", "p"),
+        secret=b"test",
+        graph=graph,
+        native=native,
+    )
+    (finding,) = page["findings"]
+    assert finding["asset_path"] == "Assets/C.prefab"
+    assert finding["member_evidence"] == members
+    changes = {row["name"]: row for row in finding["changed_members"]}
+    assert changes["oldCount"]["change"] == "field_renamed_with_alias"
+    assert changes["oldCount"]["replacement_name"] == "newCount"
+    assert changes["OldClick"]["change"] == "method_removed_or_renamed"
 
 
 @pytest.mark.asyncio

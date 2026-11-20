@@ -6,8 +6,11 @@ using MCPForUnity.Editor.Services.ScriptQuality;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
+using UnityEditor.Events;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Events;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -80,6 +83,54 @@ namespace MCPForUnityTests.Editor.Tools
             var result = SerializedScriptImpact.InspectText(Text, GuidValue, "C", Members);
             Assert.That(((JArray)result["members"]).Count, Is.EqualTo(2));
             Assert.That(result["members"].All(m => (string)m["certainty"] == "confirmed_reference"), Is.True);
+        }
+
+        [Test]
+        public void ReimportMigratesAliasedFieldButLeavesOldPersistentMethodUnbound()
+        {
+            string asset = "Assets/__McpRename_" + Guid.NewGuid().ToString("N") + ".prefab";
+            string physical = Path.Combine(Path.GetDirectoryName(Application.dataPath), asset);
+            var root = new GameObject("Counter");
+            try
+            {
+                var component = root.AddComponent<SerializedRenameFixture>();
+                component.newCount = 73;
+                UnityEventTools.AddPersistentListener(component.clicked, component.RenamedClick);
+                Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(root, asset));
+                string scriptGuid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(component)));
+                string saved = File.ReadAllText(physical);
+                StringAssert.Contains("  newCount: 73", saved);
+                StringAssert.Contains("m_MethodName: RenamedClick", saved);
+                string original = saved.Replace("  newCount: 73", "  oldCount: 73").Replace("m_MethodName: RenamedClick", "m_MethodName: OldClick");
+                File.WriteAllText(physical, original);
+                AssetDatabase.ImportAsset(asset, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                var reopened = AssetDatabase.LoadAssetAtPath<GameObject>(asset).GetComponent<SerializedRenameFixture>();
+                Assert.AreEqual(73, reopened.newCount);
+                Assert.AreEqual(reopened, reopened.clicked.GetPersistentTarget(0));
+                Assert.AreEqual("OldClick", reopened.clicked.GetPersistentMethodName(0));
+                Assert.IsNull(UnityEventBase.GetValidMethodInfo(reopened, "OldClick", Type.EmptyTypes));
+                Assert.IsNotNull(UnityEventBase.GetValidMethodInfo(reopened, "RenamedClick", Type.EmptyTypes));
+                var members = new JArray();
+                foreach (var pair in new[] { ("field", "oldCount"), ("method", "OldClick") })
+                    members.Add(
+                        new JObject
+                        {
+                            ["kind"] = pair.Item1,
+                            ["name"] = pair.Item2,
+                            ["container"] = "global::" + typeof(SerializedRenameFixture).FullName,
+                        }
+                    );
+                var evidence = SerializedScriptImpact.InspectText(original, scriptGuid, nameof(SerializedRenameFixture), members);
+                CollectionAssert.AreEquivalent(
+                    new[] { "oldCount", "OldClick" },
+                    evidence["members"].Where(row => (string)row["certainty"] == "confirmed_reference").Values<string>("name")
+                );
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+                AssetDatabase.DeleteAsset(asset);
+            }
         }
 
         [Test]

@@ -46,6 +46,7 @@ def declaration_changes(before, after):
             ]
             same = [row for row in candidates if row["name"] == old["name"]]
             reason = None
+            replacement = None
             if old["kind"] == "field":
                 if same:
                     if len(same) != 1:
@@ -65,6 +66,8 @@ def declaration_changes(before, after):
                         if len(aliases) == 1 and aliases[0]["type"] == old["type"]
                         else "field_removed_or_renamed"
                     )
+                    if reason == "field_renamed_with_alias":
+                        replacement = aliases[0]["name"]
             elif not any(row["signature"] == old["signature"] for row in same):
                 reason = "method_signature_changed" if same else "method_removed_or_renamed"
             if reason:
@@ -73,7 +76,10 @@ def declaration_changes(before, after):
                     for path, identity in new_files.items()
                     if identity == old_files[old["path"]]
                 )
-                changes.append({**old, "path": path, "change": reason})
+                change = {**old, "path": path, "change": reason}
+                if replacement:
+                    change["replacement_name"] = replacement
+                changes.append(change)
         return {"complete": True, "changes": changes, "reason": None}
     except (KeyError, TypeError, ValueError):
         return unavailable

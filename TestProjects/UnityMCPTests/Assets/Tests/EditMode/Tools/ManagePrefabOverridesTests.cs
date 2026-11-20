@@ -183,6 +183,72 @@ namespace MCPForUnity.Tests.EditMode.Tools
             Assert.IsTrue(collider.isTrigger);
         }
 
+        [Test]
+        public void ReopenedVariantInstanceInheritsBaseChangeAndKeepsExplicitOverrides()
+        {
+            Assert.IsTrue(EditorSceneManager.SaveScene(scene, Folder + "/" + scene.name + ".unity"));
+            instance.name = "Unsaved unrelated edit";
+            EditorSceneManager.MarkSceneDirty(scene);
+            Scene owned = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                string variantPath = Folder + "/ShopVariant.prefab";
+                string instancePath = Folder + "/ShopScene.unity";
+                var source = AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath);
+                var variantRoot = (GameObject)PrefabUtility.InstantiatePrefab(source, owned);
+                var variantCollider = variantRoot.GetComponentInChildren<BoxCollider>();
+                variantCollider.isTrigger = true;
+                PrefabUtility.RecordPrefabInstancePropertyModifications(variantCollider);
+                var variant = PrefabUtility.SaveAsPrefabAsset(variantRoot, variantPath);
+                Assert.AreEqual(PrefabAssetType.Variant, PrefabUtility.GetPrefabAssetType(variant));
+                Object.DestroyImmediate(variantRoot);
+                var placed = (GameObject)PrefabUtility.InstantiatePrefab(variant, owned);
+                var placedCollider = placed.GetComponentInChildren<BoxCollider>();
+                placedCollider.center = Vector3.up;
+                PrefabUtility.RecordPrefabInstancePropertyModifications(placedCollider);
+                Assert.IsTrue(EditorSceneManager.SaveScene(owned, instancePath));
+                Assert.IsTrue(EditorSceneManager.CloseScene(owned, true));
+
+                var contents = PrefabUtility.LoadPrefabContents(PrefabPath);
+                try
+                {
+                    contents.GetComponentInChildren<BoxCollider>().size = new Vector3(2, 3, 4);
+                    Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(contents, PrefabPath));
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(contents);
+                }
+                owned = EditorSceneManager.OpenScene(instancePath, OpenSceneMode.Additive);
+                var reopened = owned.GetRootGameObjects().Single();
+                var collider = reopened.GetComponentInChildren<BoxCollider>();
+                Assert.AreEqual(variantPath, PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(reopened));
+                Assert.AreEqual(new Vector3(2, 3, 4), collider.size);
+                Assert.IsTrue(collider.isTrigger);
+                Assert.AreEqual(Vector3.up, collider.center);
+                // The public command resolves scene targets in the active scene.
+                if (SceneManager.GetActiveScene() != owned)
+                    Assert.IsTrue(SceneManager.SetActiveScene(owned));
+                var report = JObject.FromObject(
+                    ManagePrefabs.HandleCommand(new JObject { ["action"] = "list_overrides", ["target"] = reopened.GetInstanceIDCompat() })
+                );
+                Assert.IsTrue(report.Value<bool>("success"), report.ToString());
+                var paths = report["data"]["entries"].Select(entry => entry.Value<string>("propertyPath")).Where(path => path != null).ToArray();
+                Assert.IsTrue(paths.Any(path => path.StartsWith("m_Center", StringComparison.Ordinal)), report.ToString());
+                Assert.IsFalse(paths.Any(path => path.StartsWith("m_Size", StringComparison.Ordinal) || path == "m_IsTrigger"), report.ToString());
+                Assert.IsFalse(owned.isDirty);
+                Assert.IsTrue(scene.isLoaded && scene.isDirty);
+                Assert.AreEqual("Unsaved unrelated edit", instance.name);
+            }
+            finally
+            {
+                if (scene.IsValid() && scene.isLoaded && SceneManager.GetActiveScene() != scene)
+                    SceneManager.SetActiveScene(scene);
+                if (owned.IsValid() && owned.isLoaded)
+                    EditorSceneManager.CloseScene(owned, true);
+            }
+        }
+
         [TestCase("revert_overrides")]
         [TestCase("REVERT_OVERRIDES")]
         [TestCase("Revert_Overrides")]
