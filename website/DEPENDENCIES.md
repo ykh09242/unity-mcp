@@ -22,6 +22,19 @@ Treat configured glob patterns and build plugins as trusted build inputs. The li
 
 ## November 20, 2026
 
+### PR reproduction follow-up
+
+npm 12.2.3 resolved eight further transitive updates across the 1,319 lock entries including the root. All 13 direct dependencies and the explicit overrides retained their versions. An offline repeat produced a byte-identical lock. These checks used lock-only resolution with lifecycle scripts and registry audit disabled. The site build and route contracts run in the consuming commit's CI.
+
+| Updated packages | Upstream change |
+| --- | --- |
+| `mdast-util-directive` 3.2.1, `mdast-util-find-and-replace` 3.0.5 | Handle empty text directives before a colon and terminate replacement on empty matches. [Directive change](https://github.com/syntax-tree/mdast-util-directive/compare/3.2.0...3.2.1) · [Replacement change](https://github.com/syntax-tree/mdast-util-find-and-replace/compare/3.0.4...3.0.5) |
+| `mdast-util-gfm-autolink-literal` 2.1.2, `mdast-util-to-markdown` 2.2.4 | Correct escaping for URL prefixes and Markdown destinations beginning with a less-than sign. [Autolinks](https://github.com/syntax-tree/mdast-util-gfm-autolink-literal/compare/2.1.0...2.1.2) · [Destinations](https://github.com/syntax-tree/mdast-util-to-markdown/compare/2.2.3...2.2.4) |
+| `mdast-util-mdx-jsx` 3.2.2, `stringify-entities` 4.0.5 | Preserve ampersands in MDX attribute values and entity terminators before a literal semicolon. [MDX attributes](https://github.com/syntax-tree/mdast-util-mdx-jsx/compare/3.2.1...3.2.2) · [Entities](https://github.com/wooorm/stringify-entities/compare/4.0.4...4.0.5) |
+| `terser` 5.51.3, `webpack-dev-middleware` 8.6.2 | Terser corrects source content disclosure when processing input source maps and handles two minification edge cases. The development middleware now precompiles its options validator. [Terser changelog](https://github.com/terser/terser/blob/v5.51.3/CHANGELOG.md) · [Middleware changelog](https://github.com/webpack/webpack-dev-middleware/blob/v8.6.2/CHANGELOG.md) |
+
+### Earlier qualification
+
 The npm registry audit reports zero vulnerabilities. GitHub withdrew the `picomatch` advisory on November 18, and the lockfile still resolves the official 2.3.2 and 4.0.7 releases required by the existing glob consumers. The advisory withdrawal accounts for the disappearance of the November 18 findings. [GitHub advisory record](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) · [picomatch releases](https://github.com/micromatch/picomatch/releases)
 
 The compatible lock refresh updates webpack to 5.113.0, webpack-sources to 3.7.1, Autoprefixer to 10.7.0 and hast-util-raw to 9.2.1. Webpack improves hot updates and tracks ESM build dependencies without `es-module-lexer`. Webpack-sources preserves source buffers restored from webpack's filesystem cache. Autoprefixer fixes CSS value matching and compound feature queries in the PostCSS pipeline. The Markdown raw HTML converter now requires parse5 8.1, which the previous lockfile already resolved. [Webpack release](https://github.com/webpack/webpack/releases/tag/v5.113.0) · [Webpack-sources release](https://github.com/webpack/webpack-sources/releases/tag/v3.7.1) · [Autoprefixer release](https://github.com/postcss/autoprefixer/releases/tag/10.7.0) · [hast-util-raw release](https://github.com/syntax-tree/hast-util-raw/releases/tag/9.2.1)
