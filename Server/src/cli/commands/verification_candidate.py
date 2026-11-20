@@ -5,12 +5,16 @@ from pathlib import Path
 
 import click
 
+from cli.commands.verification_input_chunks import input_chunks
 from cli.utils.play_scenario_analysis_io import write_new
 
 
 @click.group("verification-candidate")
 def verification_candidate():
     """Review source evidence and manage local Player candidate registrations."""
+
+
+verification_candidate.add_command(input_chunks)
 
 
 @verification_candidate.command("draft")

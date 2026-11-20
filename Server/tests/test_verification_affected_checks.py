@@ -1,6 +1,8 @@
 import unittest
 
-from services.verification.affected_checks import select_affected_checks
+import pytest
+
+from services.verification.affected_checks import bounded_selection, select_affected_checks
 
 
 def test_mapped_test_and_saved_scenario_retain_distinct_change_reasons():
@@ -55,3 +57,29 @@ def test_no_broader_check_leaves_partial_coverage_outstanding():
     assert result["outstanding"] == ["impact_coverage_incomplete"]
     assert not result["mapping_complete"]
     assert select_affected_checks([], [])["outstanding"] == ["no_affected_paths"]
+
+
+def test_explanation_limit_preserves_complete_mapping_coverage():
+    paths = [f"Assets/{'Garden/' * 30}Plant{i}.cs" for i in range(100)]
+    names = ["Plant.Ready", "Plant.Move", "Plant.Refresh", "Plant.Save"]
+    selection = bounded_selection(
+        select_affected_checks(
+            paths, [{"path": path, "tests": names} for path in paths], broader_check="full"
+        )
+    )
+    assert selection["evidence_truncated"] and selection["mapping_complete"]
+    assert selection["outstanding"] == [] and selection["unmapped_path_count"] == 0
+    assert {row["id"] for row in selection["checks"]} == set(names)
+    assert all(
+        row["reasons_truncated"] and row["reason_count"] == 100 for row in selection["checks"]
+    )
+
+
+def test_irreducible_selection_size_refuses_partial_execution():
+    paths = [f"Assets/Plant{i}.cs" for i in range(32)]
+    mappings = [
+        {"path": path, "tests": [f"Inventory.Seasonal.Plant{index}.Test{i}" for i in range(32)]}
+        for index, path in enumerate(paths)
+    ]
+    with pytest.raises(ValueError, match="candidate_selected_check_ids_limit"):
+        bounded_selection(select_affected_checks(paths, mappings))

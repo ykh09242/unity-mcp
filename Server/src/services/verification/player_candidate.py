@@ -1,24 +1,35 @@
 """Explicit, operator-admitted Player inputs for source-linked verification."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 import os
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, PrivateAttr, TypeAdapter, field_validator, model_validator
 
 from cli.utils.play_scenario_analysis_io import read_bytes, safe_local_path
 from models.play_scenarios import JobId, ScenarioName
 from models.script_quality import QualityOptions
 from services.script_quality.pages import encoded_size
-from services.verification.affected_checks import select_affected_checks
+from services.verification.affected_checks import bounded_selection, select_affected_checks
+from services.verification.input_chunks import (
+    CHUNK_BYTES,
+    ChunkIndex,
+    Digest,
+    Inputs,
+    LoadedChunk,
+    SourcePath,
+    SourceSample,
+    decode_object,
+    load_chunks,
+    source_revision,
+    validate_input_paths,
+)
 
-Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Text = Annotated[str, Field(min_length=1, max_length=512)]
 Scalar = Text | int | bool | None
 StateValues = Annotated[dict[Text, Scalar], Field(max_length=64)]
-SourcePath = Annotated[str, Field(min_length=1, max_length=512)]
 
 
 class StateCheck(QualityOptions):
@@ -32,17 +43,10 @@ class CheckMapping(QualityOptions):
     scenarios: Annotated[list[ScenarioName], Field(max_length=32)] = Field(default_factory=list)
 
 
-def source_revision(inputs):
-    manifest = "".join(f"{path}\n{inputs[path]}\n" for path in sorted(inputs))
-    return sha256(manifest.encode()).hexdigest()
-
-
-class PlayerCandidateManifest(QualityOptions):
-    schema_version: Literal[1]
+class CandidateFields(QualityOptions):
     project: Annotated[str, Field(min_length=1, max_length=4096)]
     scenario: ScenarioName
     source_revision: Digest
-    inputs: Annotated[dict[SourcePath, Digest], Field(min_length=1, max_length=128)]
     assets: Annotated[dict[SourcePath, JobId], Field(max_length=64)] = Field(default_factory=dict)
     observations: StateValues = Field(default_factory=dict)
     build_id: JobId
@@ -51,69 +55,116 @@ class PlayerCandidateManifest(QualityOptions):
     mappings: Annotated[list[CheckMapping], Field(max_length=128)] = Field(default_factory=list)
     broader_check: ScenarioName | None = None
 
+    def validate_capture(self, inputs):
+        if source_revision(inputs) != self.source_revision:
+            raise ValueError("candidate_input_revision_mismatch")
+        if any(path not in inputs or path + ".meta" not in inputs for path in self.assets):
+            raise ValueError("candidate_asset_requires_source_and_metadata")
+        if len(set(self.assets.values())) != len(self.assets):
+            raise ValueError("candidate_ambiguous_asset_guid")
+
+
+class PlayerCandidateManifest(CandidateFields):
+    schema_version: Literal[1]
+    inputs: Inputs
+
     @field_validator("inputs")
     @classmethod
     def allowed_inputs(cls, inputs):
-        for path in inputs:
-            parts = path.split("/")
-            if (
-                parts[0] not in {"Assets", "Packages"}
-                or any(
-                    not part or part.startswith(".") or part.endswith((" ", ".", "~"))
-                    for part in parts
-                )
-                or any(ord(char) < 32 or char in ':*?"<>|\\' for char in path)
-                or Path(path.removesuffix(".meta")).suffix.lower()
-                not in {
-                    ".cs",
-                    ".prefab",
-                    ".unity",
-                    ".asset",
-                    ".asmdef",
-                    ".asmref",
-                    ".controller",
-                    ".mat",
-                    ".shader",
-                }
-            ):
-                raise ValueError("candidate_source_path_outside_scope")
-        if len(inputs) != len({path.casefold() for path in inputs}):
-            raise ValueError("candidate_duplicate_source_path")
+        validate_input_paths(inputs)
         return inputs
 
     @model_validator(mode="after")
     def valid_capture(self):
-        if source_revision(self.inputs) != self.source_revision:
-            raise ValueError("candidate_input_revision_mismatch")
-        if any(
-            path not in self.inputs or path + ".meta" not in self.inputs for path in self.assets
-        ):
-            raise ValueError("candidate_asset_requires_source_and_metadata")
-        if len(set(self.assets.values())) != len(self.assets):
-            raise ValueError("candidate_ambiguous_asset_guid")
+        self.validate_capture(self.inputs)
         return self
 
 
-def read_manifest(root, candidate_id, project):
-    path = root / candidate_id / "candidate.json"
-    content = read_bytes(path, 64 * 1024)
-    manifest = PlayerCandidateManifest.model_validate_json(content)
+class ChunkedCandidate(CandidateFields, ChunkIndex):
+    schema_version: Literal[2]
+    _inputs: dict = PrivateAttr(default_factory=dict)
+    _loaded: list[LoadedChunk] = PrivateAttr(default_factory=list)
+
+    @property
+    def inputs(self):
+        return self._inputs
+
+    @property
+    def complete(self):
+        return len(self._loaded) == len(self.input_chunks) and all(
+            row.state == "verified" for row in self._loaded
+        )
+
+    def resolve(self, directory, allow_partial, read):
+        self._inputs, self._loaded = load_chunks(directory, self.input_chunks, read)
+        if self.complete:
+            self.validate_capture(self.inputs)
+        elif not allow_partial:
+            raise ValueError("candidate_chunk_inventory_incomplete")
+
+    def inventory(self, live):
+        chunks = []
+        for row in self._loaded:
+            snapshot = {path: live[path] for path in row.paths if path in live}
+            state = "unknown"
+            if row.state == "verified":
+                if len(snapshot) < len(row.paths):
+                    state = "missing"
+                elif any(digest != self.inputs[path] for path, digest in snapshot.items()):
+                    state = "stale"
+                else:
+                    state = "matched"
+            chunks.append(
+                {
+                    **row.ref.model_dump(),
+                    "registration_state": row.state,
+                    "live_state": state,
+                    "live_count": len(snapshot),
+                    "live_revision": source_revision(snapshot) if row.state == "verified" else None,
+                }
+            )
+        return {
+            "complete": self.complete,
+            "source_revision": self.source_revision,
+            "path_count": sum(ref.count for ref in self.input_chunks),
+            "verified_path_count": len(self.inputs),
+            "chunks": chunks,
+        }
+
+
+def parse_manifest(
+    content: bytes, directory: Path, project: Path, *, allow_partial=False, read=read_bytes
+):
+    if len(content) > CHUNK_BYTES:
+        raise ValueError("candidate_manifest_size_limit")
+    data = decode_object(content)
+    model = ChunkedCandidate if data.get("schema_version") == 2 else PlayerCandidateManifest
+    manifest = model.model_validate(data)
     if Path(manifest.project) != project:
         raise ValueError("candidate_project_mismatch")
+    if isinstance(manifest, ChunkedCandidate):
+        manifest.resolve(directory, allow_partial, read)
+    return manifest
+
+
+def read_manifest(root, candidate_id, project, *, allow_partial=False, read=read_bytes):
+    directory = root / TypeAdapter(ScenarioName).validate_python(candidate_id)
+    content = read(directory / "candidate.json", CHUNK_BYTES)
+    manifest = parse_manifest(content, directory, project, allow_partial=allow_partial, read=read)
     return manifest, sha256(content).hexdigest()
 
 
-def live_sources(project, paths):
+def live_sources(project, paths, *, read=read_bytes):
     sources = {}
     total = 0
     for path in sorted(paths):
+        # Each manifest rejects aliases. The union can contain both sides of a case-only rename.
+        validate_input_paths([path])
         try:
-            content = read_bytes(project / path, 4 * 1024 * 1024)
+            content = read(project / path, min(4 * 1024 * 1024, 32 * 1024 * 1024 - total))
         except FileNotFoundError:
             continue
         total += len(content)
-        if total > 32 * 1024 * 1024:
-            raise ValueError("candidate_source_bytes_limit")
         sources[path] = sha256(content).hexdigest()
     return sources
 
@@ -124,11 +175,29 @@ class PreparedCandidate:
     project: Path
     candidate_id: str
     baseline_candidate_id: str | None
-    candidate: PlayerCandidateManifest
-    baseline: PlayerCandidateManifest | None
+    candidate: PlayerCandidateManifest | ChunkedCandidate
+    baseline: PlayerCandidateManifest | ChunkedCandidate | None
     manifest_digest: str
     baseline_digest: str | None
     live: dict
+    changed_paths: list[str] | None = field(init=False, default=None)
+    selected_checks: dict = field(init=False)
+
+    def __post_init__(self):
+        if self.baseline and self.complete:
+            self.changed_paths = sorted(
+                path
+                for path in self.paths
+                if self.baseline.inputs.get(path) != self.candidate.inputs.get(path)
+            )
+        self.selected_checks = bounded_selection(
+            select_affected_checks(
+                self.changed_paths or [],
+                [row.model_dump() for row in self.candidate.mappings],
+                broader_check=self.candidate.broader_check,
+                impact_complete=self.baseline is not None and self.complete,
+            )
+        )
 
     @property
     def paths(self):
@@ -136,43 +205,56 @@ class PreparedCandidate:
             self.baseline.inputs.keys() if self.baseline else set()
         )
 
+    @property
+    def complete(self):
+        return all(
+            not isinstance(item, ChunkedCandidate) or item.complete
+            for item in (self.candidate, self.baseline)
+        )
+
+    def inventories(self):
+        return {
+            name: manifest.inventory(self.live)
+            for name, manifest in (("candidate", self.candidate), ("baseline", self.baseline))
+            if isinstance(manifest, ChunkedCandidate)
+        }
+
     def comparison(self):
         current, baseline = self.candidate, self.baseline
-        changed = None
+        changed = self.changed_paths
         moves = []
-        if baseline:
-            changed = sorted(
-                path for path in self.paths if baseline.inputs.get(path) != current.inputs.get(path)
-            )
+        if baseline and self.complete:
             original = {guid: path for path, guid in baseline.assets.items()}
             moves = [
                 {"guid": guid, "from": original[guid], "to": path}
                 for path, guid in current.assets.items()
                 if guid in original and original[guid] != path
             ]
-        selection = select_affected_checks(
-            changed or [],
-            [row.model_dump() for row in current.mappings],
-            broader_check=current.broader_check,
-            impact_complete=baseline is not None,
-        )
-        if encoded_size(selection) > 64 * 1024:
-            selection = {"mapping_complete": False, "outstanding": ["selection_evidence_limit"]}
+        inventories = self.inventories()
+        bounded_changes = changed
+        if inventories and encoded_size(changed) > 32 * 1024:
+            bounded_changes = None
         return {
             "baseline_status": "captured"
             if baseline
             else ("missing" if self.baseline_candidate_id else "not_requested"),
             "baseline_candidate_id": self.baseline_candidate_id,
             "baseline_source_revision": baseline.source_revision if baseline else None,
-            "baseline_inputs": baseline.inputs if baseline else None,
+            "baseline_inputs": baseline.inputs
+            if isinstance(baseline, PlayerCandidateManifest)
+            else None,
             "baseline_observations": baseline.observations if baseline else None,
             "source_revision": current.source_revision,
-            "candidate_inputs": current.inputs,
+            "candidate_inputs": current.inputs
+            if isinstance(current, PlayerCandidateManifest)
+            else None,
             "candidate_observations": current.observations,
             "asset_moves": moves,
-            "changed_paths": changed,
-            "selected_checks": selection,
-            "live_matches_candidate": self.live == current.inputs,
+            "changed_paths": bounded_changes,
+            **({"changed_path_count": len(changed)} if inventories and changed is not None else {}),
+            **({"input_inventory": inventories} if inventories else {}),
+            "selected_checks": self.selected_checks,
+            "live_matches_candidate": self.complete and self.live == current.inputs,
             "manifest_sha256": self.manifest_digest,
             "baseline_manifest_sha256": self.baseline_digest,
         }
@@ -188,16 +270,20 @@ def prepare_candidate(project_info, selection):
         raise ValueError("verification_selected_project_unavailable")
     project = safe_local_path(Path(selected))
     identity = selection["candidate_id"]
-    candidate, digest = read_manifest(root, identity, project)
+    sample = SourceSample()
+    candidate, digest = read_manifest(root, identity, project, allow_partial=True, read=sample.read)
     baseline_id = selection.get("baseline_candidate_id")
     baseline = baseline_digest = None
     if baseline_id:
         try:
-            baseline, baseline_digest = read_manifest(root, baseline_id, project)
+            baseline, baseline_digest = read_manifest(
+                root, baseline_id, project, allow_partial=True, read=sample.read
+            )
         except FileNotFoundError:
             pass
     prepared = PreparedCandidate(
         root, project, identity, baseline_id, candidate, baseline, digest, baseline_digest, {}
     )
-    prepared.live = live_sources(project, prepared.paths)
+    prepared.live = live_sources(project, prepared.paths, read=sample.read)
+    sample.finish()
     return prepared

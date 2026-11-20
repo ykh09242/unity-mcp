@@ -134,6 +134,13 @@ class PlayerVerificationRunner(VerificationRunner):
         fresh = await asyncio.to_thread(
             prepare_candidate, {"projectRoot": str(self.prepared.project)}, self.selection
         )
+        inventories = fresh.inventories()
+        if inventories:
+            self.report["latest_input_inventory"] = inventories
+        self.source_check_state = "stale"
+        if not self.prepared.complete or not fresh.complete:
+            self.source_check_state = "incomplete"
+            return False
         return fresh == self.prepared and (
             self.selection["source_mode"] == "frozen" or fresh.live == fresh.candidate.inputs
         )
@@ -142,11 +149,17 @@ class PlayerVerificationRunner(VerificationRunner):
         try:
             await self.check()
             if not await self.current():
-                self.stage("candidate_inputs", "stale", {"reason": "candidate_inputs_changed"})
+                self.stage(
+                    "candidate_inputs",
+                    self.source_check_state,
+                    {"reason": "candidate_inputs_changed_or_incomplete"},
+                )
             else:
                 await self.execute_candidate()
                 await self.check()
-                self.stage("final_source", "passed" if await self.current() else "stale")
+                self.stage(
+                    "final_source", "passed" if await self.current() else self.source_check_state
+                )
         except VerificationCanceled:
             self.stage("cancellation", "canceled")
         except (OSError, ValueError, RuntimeError, TimeoutError) as error:
