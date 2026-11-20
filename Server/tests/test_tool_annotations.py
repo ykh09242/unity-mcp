@@ -46,6 +46,8 @@ READ_ONLY = {
     # Fixed reads of the existing Game View and the saved graph file; neither refreshes the Editor.
     "get_game_view_size",
     "inspect_shader_graph",
+    # Reads the existing Shader Graph window's backing fields and never opens or saves an asset.
+    "inspect_open_shader_graph",
     "inspect_editor_state",
     "inspect_scene_cameras",
     "inspect_ugui_hit_order",

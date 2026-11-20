@@ -32,6 +32,8 @@ namespace MCPForUnity.Editor.Tools
             string action = @params["action"]?.ToString()?.ToLowerInvariant();
             if (action == "inspect_graph")
                 return ShaderGraphInspection.Inspect(@params);
+            if (action == "inspect_open_graph")
+                return OpenShaderGraphInspection.Inspect(@params);
             if (action == "diagnostics" || action == "compile_variant")
                 return ShaderDiagnostics.Handle(@params, action == "compile_variant");
             string name = @params["name"]?.ToString();

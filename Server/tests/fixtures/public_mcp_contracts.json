@@ -7126,6 +7126,43 @@
             "type": "object"
           }
         },
+        "inspect_open_shader_graph": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "inspect_scene_cameras": {
           "annotations": {
             "destructiveHint": false,
@@ -19965,6 +20002,7 @@
                   "update",
                   "delete",
                   "inspect_graph",
+                  "inspect_open_graph",
                   "diagnostics",
                   "compile_variant"
                 ],
@@ -34177,6 +34215,43 @@
             "type": "object"
           }
         },
+        "inspect_open_shader_graph": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "inspect_scene_cameras": {
           "annotations": {
             "destructiveHint": false,
@@ -47016,6 +47091,7 @@
                   "update",
                   "delete",
                   "inspect_graph",
+                  "inspect_open_graph",
                   "diagnostics",
                   "compile_variant"
                 ],

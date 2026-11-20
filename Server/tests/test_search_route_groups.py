@@ -102,6 +102,8 @@ def test_cli_group_selects_callers_surface_and_preserves_legacy_matches(
             "search",
             "--required-value",
             "nodeCount",
+            "--observation-source",
+            "asset_file",
             "--route-surfaces",
             surface,
         ],
@@ -147,7 +149,7 @@ def test_unrelated_reads_with_the_same_fact_names_stay_independent(observation_i
     }
 
     result = search_catalog(
-        SearchRequest(required_values=["nodeCount"], limit=2),
+        SearchRequest(observation_source="asset_file", required_values=["nodeCount"], limit=2),
         tools,
         resources=[*resources, another_read],
     )
@@ -176,7 +178,9 @@ def test_conflicting_evidence_on_the_exact_resource_is_a_separate_choice(observa
     }
 
     result = search_catalog(
-        SearchRequest(required_values=["nodeCount"], limit=2), tools, resources=[conflicting]
+        SearchRequest(observation_source="asset_file", required_values=["nodeCount"], limit=2),
+        tools,
+        resources=[conflicting],
     )
 
     assert result["total_route_groups"] == 2
@@ -191,7 +195,7 @@ def test_conflicting_evidence_on_the_exact_resource_is_a_separate_choice(observa
 @pytest.mark.parametrize(
     "selectors",
     [
-        {"observation_source": "editor_live", "required_values": ["nodeCount"]},
+        {"observation_source": "editor_live", "required_values": ["nodes"]},
         {"observation_source": "asset_file", "required_values": ["unsaved_graph_structure"]},
         {"intent": "edit", "required_values": ["render_size.width"]},
     ],
@@ -224,6 +228,7 @@ async def test_live_search_requires_an_advertised_route_and_can_execute_its_read
         args = {
             "action": "search",
             "required_values": ["nodeCount", "edgeCount"],
+            "observation_source": "asset_file",
             "route_surfaces": "tools",
             "limit": 1,
             **TARGET,
@@ -263,7 +268,7 @@ async def test_live_search_requires_an_advertised_route_and_can_execute_its_read
     [
         ({"required_values": ["contents", "encodedContents"]}, "incompatible_combination"),
         ({"required_values": ["nodeCount", "contents"]}, "incompatible_combination"),
-        ({"required_values": ["nodeCount"], "observation_source": "editor_live"}, "wrong_source"),
+        ({"required_values": ["nodes"], "observation_source": "editor_live"}, "wrong_source"),
         (
             {"required_values": ["active_scene.path"], "route_surfaces": "resources"},
             "no_visible_route",
@@ -363,7 +368,19 @@ async def test_no_match_wire_and_cli_text_preserve_alternative_source_and_bindin
 def test_cli_flat_graph_binding_and_lexical_match_before_intent_filter():
     runner = CliRunner()
     graph = runner.invoke(
-        cli, ["--format", "json", "tool", "search", "--required-value", "nodeCount", "--limit", "1"]
+        cli,
+        [
+            "--format",
+            "json",
+            "tool",
+            "search",
+            "--required-value",
+            "nodeCount",
+            "--observation-source",
+            "asset_file",
+            "--limit",
+            "1",
+        ],
     )
     assert graph.exit_code == 0, graph.output
     payload = json.loads(graph.stdout)

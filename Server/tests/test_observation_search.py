@@ -120,7 +120,7 @@ def test_cli_structured_first_search_is_independent_of_optional_original_text(qu
 @pytest.mark.parametrize(
     ("source", "facts"),
     [
-        ("editor_live", COUNTS),
+        ("editor_live", ["nodeCount", "nodes"]),
         ("asset_file", ["nodeCount", "contents"]),
         ("asset_file", ["contents", "encodedContents"]),
         ("asset_file", ["unsaved_graph_structure"]),

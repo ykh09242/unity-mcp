@@ -187,8 +187,9 @@ UI Toolkit (UXML, USS, UIDocument, optional PanelRenderer) and Canvas-based uGUI
 - **[`ui_inspect`](./ui/ui_inspect.md)** — Inspect the visual tree or diagnose UI Toolkit layout and text.
 - **[`ui_source`](./ui/ui_source.md)** — Create, read or edit UXML/USS assets, link stylesheets or preview source patches.
 
-## `vfx` &nbsp; (4 tools)
+## `vfx` &nbsp; (5 tools)
 Visual effects – VFX Graph, shaders, procedural textures
+- **[`inspect_open_shader_graph`](./vfx/inspect_open_shader_graph.md)** — Read nodeCount and edgeCount, including unsaved edits, from one already-open Shader Graph window matching a project-owned Assets/*.shadergraph path.
 - **[`inspect_shader_graph`](./vfx/inspect_shader_graph.md)** — Read a saved Shader Graph file through the selected Unity Editor.
 - **[`manage_shader`](./vfx/manage_shader.md)** — Manages shader source, graph structure and compiler diagnostics.
 - **[`manage_texture`](./vfx/manage_texture.md)** — Procedural texture generation for Unity.

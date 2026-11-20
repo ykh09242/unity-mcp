@@ -21,6 +21,7 @@ _tool_registry: list[dict[str, Any]] = []
 FIXED_OBSERVATION_ACTIONS: Final = {
     "get_game_view_size": ("manage_editor", "get_game_view_size"),
     "inspect_shader_graph": ("manage_shader", "inspect_graph"),
+    "inspect_open_shader_graph": ("manage_shader", "inspect_open_graph"),
     "inspect_ugui_hit_order": ("manage_ugui", "diagnose_raycast"),
 }
 

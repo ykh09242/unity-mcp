@@ -41,6 +41,7 @@ from services.registry.action_catalog import (
     tool_capability,
     tool_description,
 )
+from services.registry.open_shader_graph_observation import OPEN_GRAPH_OBSERVATION
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 from services.registry.capability_catalog import CAMERA_INVENTORY_TOOL, CAMERA_INVENTORY_URI
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
@@ -224,6 +225,7 @@ _EQUIVALENT_READS: Final = (
     ),
     EquivalentRead("inspect_editor_state", "mcpforunity://editor/state", EDITOR_STATE_OBSERVATION),
     EquivalentRead("inspect_ugui_hit_order", None, POINTER_ORDER_OBSERVATION),
+    EquivalentRead("inspect_open_shader_graph", None, OPEN_GRAPH_OBSERVATION, path="path"),
     EquivalentRead(
         "scene_inspect",
         None,
@@ -243,9 +245,6 @@ _EQUIVALENT_READS: Final = (
     ),
 )
 _READ_BY_ROUTE: Final = {key: read for read in _EQUIVALENT_READS for key in read.bindings()}
-_REVIEWED_ACTIONS: Final = {
-    name: action or None for kind, name, action in _READ_BY_ROUTE if kind == "tool"
-}
 
 
 def _route_key(route: SearchRoute) -> RouteKey:
@@ -543,11 +542,12 @@ def search_catalog(
     for entry in entries:
         name = entry["name"]
         result = tool_capability(entry, visible_names=visible_names)
-        if name in _REVIEWED_ACTIONS and result["advertised"] is not False:
-            action = _REVIEWED_ACTIONS[name]
-            if action in (result["actions"] or [None]):
+        if result["advertised"] is not False:
+            for action in result["actions"] or [None]:
                 key: RouteKey = ("tool", name, action or "")
-                read = _READ_BY_ROUTE[key]
+                read = _READ_BY_ROUTE.get(key)
+                if read is None:
+                    continue
                 route = _tool_route(result, action, action_guidance(entry, action))
                 binding = _equivalent_binding(route, read)
                 if binding and read.allowed(unavailable_parents):

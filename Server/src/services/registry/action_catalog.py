@@ -38,6 +38,7 @@ from services.registry.action_guidance_types import (
 from services.registry.capability_catalog import CAPABILITIES, READ_ONLY_EFFECTS
 from services.registry.editor_action_guidance import EDITOR_ACTIONS
 from services.registry.integration_action_guidance import INTEGRATION_ACTIONS
+from services.registry.open_shader_graph_observation import OPEN_GRAPH_OBSERVATION
 from services.registry.tool_registry import TOOL_GROUPS, ToolMaturity
 
 
@@ -260,7 +261,8 @@ GAME_VIEW_READ: Final = (
 SHADER_GRAPH_READ: Final = (
     "The read-only tool inspect_shader_graph and this tool's inspect_graph action read the "
     "saved .shadergraph file through the selected Editor. "
-    "Unsaved graph-window edits are unavailable. Resource clients can read "
+    "Unsaved node and edge counts are available through inspect_open_shader_graph or inspect_open_graph. "
+    "Resource clients can read the saved graph at "
     "mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}. "
     "Encode the full asset path as one URI segment."
 )
@@ -491,6 +493,13 @@ TOOL_GUIDANCE: Final = {
                     "unavailable. Use diagnostics for imported pass and compiler information."
                 ),
                 observation=GRAPH_FILE_OBSERVATION,
+            ),
+            "inspect_open_graph": ActionGuidance(
+                "Read live node and edge counts, including unsaved edits, from an existing Shader Graph window.",
+                ("path",),
+                READ_ONLY_EFFECTS,
+                evidence_limit="Counts require one matching window with status=open_model.",
+                observation=OPEN_GRAPH_OBSERVATION,
             ),
             "diagnostics": ActionGuidance(
                 "Read cached compiler messages and list imported subshader/pass indexes, stage "

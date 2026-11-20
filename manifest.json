@@ -191,12 +191,20 @@
       "description": "Read the selected Editor snapshot, its freshness, active scene and current compilation activity."
     },
     {
+      "name": "inspect_open_shader_graph",
+      "description": "Read node and edge counts from a matching open Shader Graph window, including unsaved edits."
+    },
+    {
+      "name": "inspect_scene_cameras",
+      "description": "Read the selected Editor's Unity and Cinemachine camera inventories, including depth, field of view and brain state."
+    },
+    {
       "name": "inspect_serialized_object",
       "description": "Inspect one exact Component or ScriptableObject instance ID through SerializedObject. The initial Unity ID lookup MAY load a previously unloaded asset and invoke OnEnable or serialization callbacks before type/context admission. (group: scripting_ext)"
     },
     {
       "name": "inspect_shader_graph",
-      "description": "Inspect nodes, edges and properties in a saved project-owned Shader Graph file. Unsaved graph-window edits are unavailable."
+      "description": "Inspect nodes, edges and properties in a saved project-owned Shader Graph file."
     },
     {
       "name": "inspect_ugui_hit_order",

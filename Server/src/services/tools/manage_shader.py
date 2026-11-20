@@ -61,14 +61,21 @@ async def manage_shader(
     ctx: Context,
     action: Annotated[
         Literal[
-            "create", "read", "update", "delete", "inspect_graph", "diagnostics", "compile_variant"
+            "create",
+            "read",
+            "update",
+            "delete",
+            "inspect_graph",
+            "inspect_open_graph",
+            "diagnostics",
+            "compile_variant",
         ],
         "Shader CRUD, graph inspection, cached diagnostics or one explicit variant compilation.",
     ],
     name: Annotated[str, "Shader name without extension; required only for CRUD."] | None = None,
     path: Annotated[
         str,
-        "Shader directory for CRUD; full asset path for inspect_graph/diagnostics/compile_variant.",
+        "Shader directory for CRUD; full asset path for graph inspection, diagnostics or compilation.",
     ] = "Assets/",
     contents: Annotated[str, "Shader code for 'create'/'update'"] | None = None,
     page_size: Annotated[int | str, "inspect_graph page size, 1-100 (default 50)."] | None = None,
@@ -104,7 +111,7 @@ async def manage_shader(
                 params["variant"] = ShaderVariantOptions.model_validate(variant).model_dump()
             except ValidationError as exc:
                 return {"success": False, "message": str(exc)}
-        elif action != "diagnostics" and not name:
+        elif action not in {"diagnostics", "inspect_open_graph"} and not name:
             return {"success": False, "message": f"Action '{action}' requires parameter 'name'."}
 
         if action == "read":

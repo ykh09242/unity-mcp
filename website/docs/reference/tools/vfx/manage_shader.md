@@ -14,15 +14,15 @@ description: "Manages shader source, graph structure and compiler diagnostics."
 
 ## Description
 
-Manages shader source, graph structure and compiler diagnostics. The read-only tool inspect_shader_graph and this tool's inspect_graph action read the saved .shadergraph file through the selected Editor. Unsaved graph-window edits are unavailable. Resource clients can read mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}. Encode the full asset path as one URI segment. read returns a bounded .shader source page (64 KiB by default); follow data.nextOffset with read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. inspect_graph takes a full Assets/*.shadergraph path and returns nodeCount, edgeCount and paged nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 16 MiB files; at most 100 results per collection per page). diagnostics reads cached messages for a full .shader/.shadergraph path. compile_variant compiles one explicit variant in idle Edit Mode and returns outcome, bytecode size and up to 100 bounded messages. Empty bytecode reports no_program. Platform/target support depends on the installed Editor.
+Manages shader source, graph structure and compiler diagnostics. The read-only tool inspect_shader_graph and this tool's inspect_graph action read the saved .shadergraph file through the selected Editor. Unsaved node and edge counts are available through inspect_open_shader_graph or inspect_open_graph. Resource clients can read the saved graph at mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}. Encode the full asset path as one URI segment. read returns a bounded .shader source page (64 KiB by default); follow data.nextOffset with read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. inspect_graph takes a full Assets/*.shadergraph path and returns nodeCount, edgeCount and paged nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 16 MiB files; at most 100 results per collection per page). diagnostics reads cached messages for a full .shader/.shadergraph path. compile_variant compiles one explicit variant in idle Edit Mode and returns outcome, bytecode size and up to 100 bounded messages. Empty bytecode reports no_program. Platform/target support depends on the installed Editor.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['create', 'read', 'update', 'delete', 'inspect_graph', 'diagnostics', 'compile_variant']` | yes | Shader CRUD, graph inspection, cached diagnostics or one explicit variant compilation. |
+| `action` | `Literal['create', 'read', 'update', 'delete', 'inspect_graph', 'inspect_open_graph', 'diagnostics', 'compile_variant']` | yes | Shader CRUD, graph inspection, cached diagnostics or one explicit variant compilation. |
 | `name` | `str \| None` | — | Shader name without extension; required only for CRUD. |
-| `path` | `str` | — | Shader directory for CRUD; full asset path for inspect_graph/diagnostics/compile_variant. |
+| `path` | `str` | — | Shader directory for CRUD; full asset path for graph inspection, diagnostics or compilation. |
 | `contents` | `str \| None` | — | Shader code for 'create'/'update' |
 | `page_size` | `int \| str \| None` | — | inspect_graph page size, 1-100 (default 50). |
 | `page_number` | `int \| str \| None` | — | inspect_graph page number, 1-based. |

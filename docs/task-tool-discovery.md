@@ -130,10 +130,9 @@ Editor and client selection. The graph tool takes a required `path` and optional
 | Shader source text | `manage_shader.read` | `asset_file`. Reads one source page from a named `.shader` file. |
 | Imported shader passes and compiler messages | `manage_shader.diagnostics` | `imported_asset`. Reads imported pass information and Unity's cached compiler observations. |
 
-If the request specifically requires unsaved Shader Graph edits, report that the
-graph inspection action and template cannot observe the open window's in-memory
-model. A disk read, including one performed by the Editor, supplies only the saved
-version. Inspect that version when it satisfies the requested evidence.
+For unsaved Shader Graph node and edge counts, select the `editor_live` source
+and the existing-window read described below. The saved graph action and resource
+template supply the serialized structure.
 
 Intent guidance is targeted at routes where the action name obscures different
 outcomes. Build cards distinguish observing a non-profile `plan`, repeating its
@@ -188,7 +187,9 @@ Game View dimensions maps to this first call:
 
 Every returned route declares the selected origin and all requested fields.
 A saved graph search can require `nodeCount`, `edgeCount` and `nodes` together.
-Requiring `unsaved_graph_structure` yields no match in the current catalog.
+For counts from an open Shader Graph, select `editor_live` and request
+`nodeCount` and `edgeCount`. Inspecting the identities or properties of
+unsaved nodes still exceeds what the live reader exposes.
 The optional original `query` is retained as context. Evidence selection is
 independent of its wording and of `catalog_query`. Structured responses report
 `matching="observation"` and `matched_query=null`. In a live request, tool
@@ -239,7 +240,8 @@ group. When several tool bindings give the same evidence, a host-confirmed
 tool takes precedence over an unknown tool. Otherwise the dedicated read
 precedes the bound parent operation where both are advertised.
 
-Search groups the declared equivalent Game View and saved Shader Graph reads
+Search groups declared equivalent reads, including the camera inventory,
+Game View size and the saved and open Shader Graph inspections,
 before applying `limit`. `total_route_groups` and `route_groups_truncated`
 describe the bounded group page. A live search omits unadvertised tools from
 groups and omits an equivalent resource when its registered parent tool is
@@ -334,3 +336,19 @@ required inputs. The classification is conservative: review the actual diff
 before treating an addition as compatible or a reported change as intentional.
 After reviewing a deliberate contract change, regenerate with the existing
 generator and commit the generated fixture with the source change.
+
+## Inspecting an open Shader Graph
+
+`inspect_open_shader_graph(path)` and `manage_shader(action="inspect_open_graph", path=...)`
+take the full project-owned `Assets/*.shadergraph` path. They inspect existing
+windows in the selected Editor without opening, focusing, importing or saving a graph.
+The selected asset GUID and the in-memory model GUID must agree.
+
+| Status | Evidence |
+| --- | --- |
+| `open_model` | `nodeCount` and `edgeCount` from the matching in-memory model, including unsaved edits. `hasUnsavedChanges` is the window's reported flag. |
+| `no_matching_window` | The asset path has no current GUID or no open window matches it. |
+| `open_model_unavailable` | A matching window exists, but its model is unreadable or ambiguous. |
+| `window_lookup_unavailable` | The installed APIs or window-search limit prevent identifying a matching window. |
+
+For saved, paged node and edge identities, use `inspect_shader_graph` with the same path.
