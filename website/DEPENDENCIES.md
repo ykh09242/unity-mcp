@@ -20,6 +20,12 @@ GitHub withdrew the advisory for `braces` 3.0.3 on 2026-10-23. The November 5 np
 
 Treat configured glob patterns and build plugins as trusted build inputs. The library's optional `maxLength` check is covered as an API contract. Docusaurus's glob-based watchers use their ordinary defaults.
 
+## November 20, 2026
+
+The npm registry audit reports zero vulnerabilities. GitHub withdrew the `picomatch` advisory on November 18, and the lockfile still resolves the official 2.3.2 and 4.0.7 releases required by the existing glob consumers. The advisory withdrawal accounts for the disappearance of the November 18 findings. [GitHub advisory record](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) · [picomatch releases](https://github.com/micromatch/picomatch/releases)
+
+The compatible lock refresh updates webpack to 5.113.0, webpack-sources to 3.7.1, Autoprefixer to 10.7.0 and hast-util-raw to 9.2.1. Webpack improves hot updates and tracks ESM build dependencies without `es-module-lexer`. Webpack-sources preserves source buffers restored from webpack's filesystem cache. Autoprefixer fixes CSS value matching and compound feature queries in the PostCSS pipeline. The Markdown raw HTML converter now requires parse5 8.1, which the previous lockfile already resolved. [Webpack release](https://github.com/webpack/webpack/releases/tag/v5.113.0) · [Webpack-sources release](https://github.com/webpack/webpack-sources/releases/tag/v3.7.1) · [Autoprefixer release](https://github.com/postcss/autoprefixer/releases/tag/10.7.0) · [hast-util-raw release](https://github.com/syntax-tree/hast-util-raw/releases/tag/9.2.1)
+
 ## November 18, 2026
 
 The minimum `postcss-selector-parser` override is 7.2.1. CSS Modules now keeps an escaped identifier consistent between the emitted selector and the JavaScript class export. The dependency test exercises the same PostCSS scoping plugin used in the production build. [Selector parser changelog](https://github.com/postcss/postcss-selector-parser/blob/main/CHANGELOG.md#721---2026-11-10)
