@@ -21,6 +21,7 @@ from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
 SpriteAction = Literal[
+    "resolve_reference",
     "get_info",
     "slice_sheet",
     "setup_clips",
@@ -139,6 +140,7 @@ def _sprite_image_result(result: dict[str, Any], image_base64: str) -> ToolResul
         "names = trigger states that fire from any state, other names = plain states); "
         "full_setup runs slice → clips → controller in one call. "
         "get_geometry reads paged exact Sprite identities, rect, pivot, border and render outlines. "
+        "resolve_reference compares a serialized texture guid/file_id with the imported Sprite and a loaded scene_target's SpriteRenderer or uGUI Image. "
         "set_geometry edits an existing Multiple TextureImporter sprite using guid, sprite_id, file_id and expected_revision. "
         "It preserves omitted fields, names, siblings, physics outlines and AnimationClip references. "
         "Geometry requires optional 2D Sprite providers; capability_mode distinguishes advertised flags from the verified built-in legacy provider. "
@@ -222,12 +224,17 @@ async def manage_sprite(
         "A missing, unmatched or ambiguous target fails at step 'add_to_scene', after the clips and "
         "controller are written.",
     ] = None,
-    guid: Annotated[StrictStr | None, "set_geometry: exact texture GUID from get_geometry."] = None,
+    guid: Annotated[StrictStr | None, "Texture GUID for resolve_reference or set_geometry."] = None,
     sprite_id: Annotated[
         StrictStr | None, "set_geometry: exact SpriteRect sprite ID; names are not selectors."
     ] = None,
     file_id: Annotated[
-        StrictStr | None, "set_geometry: exact persistent local fileID string from get_geometry."
+        StrictStr | None,
+        "Exact signed persistent local fileID string for resolve_reference or set_geometry.",
+    ] = None,
+    expected_rect: Annotated[
+        list[JsonValue] | None,
+        "resolve_reference: optional previously observed source-pixel rectangle [x,y,width,height].",
     ] = None,
     expected_revision: Annotated[
         StrictStr | None, "Geometry write or continuation: revision from the identical fresh read."
@@ -260,6 +267,35 @@ async def manage_sprite(
         return {
             "success": False,
             "message": f"Unknown action '{action}'. Valid: {', '.join(VALID_ACTIONS)}",
+        }
+
+    if action_lower == "resolve_reference" and (
+        not path
+        or not re.fullmatch(r"[0-9a-fA-F]{32}", guid or "")
+        or not re.fullmatch(r"-?[1-9][0-9]{0,18}", file_id or "")
+        or not -(2**63) <= int(file_id) < 2**63
+        or not scene_target
+        or len(scene_target) > 256
+    ):
+        return {
+            "success": False,
+            "message": "Supply path, guid, signed nonzero file_id and scene_target (up to 256 characters).",
+        }
+
+    if expected_rect is not None and (
+        action_lower != "resolve_reference"
+        or not isinstance(expected_rect, list)
+        or len(expected_rect) != 4
+        or any(
+            type(value) not in (int, float) or not 0 <= value <= 3.402823466e38
+            for value in expected_rect
+        )
+        or expected_rect[2] <= 0
+        or expected_rect[3] <= 0
+    ):
+        return {
+            "success": False,
+            "message": "resolve_reference accepts expected_rect as four finite source coordinates with positive width and height.",
         }
 
     # Python-side validation
@@ -306,6 +342,7 @@ async def manage_sprite(
     # ones in nulls on the wire.
     optional = {
         "path": path,
+        "expected_rect": expected_rect,
         "guid": guid,
         "sprite_id": sprite_id,
         "file_id": file_id,

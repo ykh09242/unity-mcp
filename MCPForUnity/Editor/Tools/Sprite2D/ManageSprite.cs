@@ -8,6 +8,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
     {
         private static readonly string[] ValidActions =
         {
+            "resolve_reference",
             "get_info",
             "slice_sheet",
             "setup_clips",
@@ -29,6 +30,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             {
                 switch (action)
                 {
+                    case "resolve_reference":
+                        return SpriteReferenceObservation.Read(@params, diagnostics);
                     case "get_geometry":
                         return SpriteGeometry.Handle(@params, false, diagnostics);
                     case "set_geometry":

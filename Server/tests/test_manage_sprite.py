@@ -186,6 +186,7 @@ class TestSpriteImageContent:
 
 def test_actions_are_the_documented_seven():
     assert set(VALID_ACTIONS) == {
+        "resolve_reference",
         "get_info",
         "slice_sheet",
         "setup_clips",
@@ -194,6 +195,20 @@ def test_actions_are_the_documented_seven():
         "get_geometry",
         "set_geometry",
     }
+
+
+def test_resolve_reference_preserves_signed_64_bit_identity(mock_unity):
+    fields = {
+        "path": "Assets/Sheet.png",
+        "guid": "1" * 32,
+        "file_id": "-9223372036854775808",
+        "scene_target": "Icon",
+    }
+    assert call(action="resolve_reference", **fields)["success"]
+    assert mock_unity["params"] == {"action": "resolve_reference", **fields}
+    for invalid in ("9223372036854775808", "0", "01"):
+        assert not call(action="resolve_reference", **{**fields, "file_id": invalid})["success"]
+    assert mock_unity["calls"] == 1
 
 
 class TestManageSpriteValidation:

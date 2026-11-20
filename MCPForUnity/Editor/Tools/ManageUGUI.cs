@@ -1250,13 +1250,14 @@ namespace MCPForUnity.Editor.Tools
                 throw new ArgumentException("Target is inactive; set include_inactive=true.");
         }
 
-        private static IEnumerable<GameObject> SceneObjects(bool includeInactive)
+        internal static IEnumerable<GameObject> SceneObjects(bool includeInactive)
         {
             var stage = PrefabStageUtility.GetCurrentPrefabStage();
             if (stage != null)
             {
-                foreach (var go in Descendants(stage.prefabContentsRoot, includeInactive))
-                    yield return go;
+                if (stage.prefabContentsRoot != null)
+                    foreach (var go in Descendants(stage.prefabContentsRoot, includeInactive))
+                        yield return go;
                 yield break;
             }
 

@@ -6,7 +6,9 @@ using MCPForUnity.Editor.Tools.Sprite2D;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -27,7 +29,7 @@ namespace MCPForUnityTests.Editor.Tools
             path = folder + "/Sheet.png";
             clipPath = folder + "/Motion.anim";
             var texture = new Texture2D(64, 32, TextureFormat.RGBA32, false);
-            texture.SetPixels32(Enumerable.Repeat<Color32>(Color.white, 64 * 32).ToArray());
+            texture.SetPixels32(Enumerable.Range(0, 64 * 32).Select(index => (Color32)(index % 64 < 32 ? Color.red : Color.blue)).ToArray());
             texture.Apply();
             File.WriteAllBytes(Full(path), texture.EncodeToPNG());
             UnityEngine.Object.DestroyImmediate(texture);
@@ -145,6 +147,144 @@ namespace MCPForUnityTests.Editor.Tools
                 ((TextureImporter)AssetImporter.GetAtPath(path)).SaveAndReimport();
             }
             return rows.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        [Test]
+        public void ResolveReferenceIdentifiesWrongSiblingAndUnavailableTarget()
+        {
+            var target = new GameObject("Icon_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var sprites = Sprites();
+                var renderer = target.AddComponent<SpriteRenderer>();
+                Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(sprites[0], out string guid, out long id));
+                var request = new JObject
+                {
+                    ["guid"] = guid,
+                    ["file_id"] = id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["scene_target"] = target.name,
+                };
+                renderer.sprite = sprites[1];
+                JObject result = Send("resolve_reference", request);
+                Assert.AreEqual(false, result.Value<bool?>("identity_matches"), result.ToString());
+                Assert.AreEqual(guid, result["assigned_sprite"].Value<string>("guid"));
+                Assert.AreNotEqual(request["file_id"], result["assigned_sprite"]["file_id"]);
+                Assert.IsTrue(JToken.DeepEquals(result["serialized_sprite"], result["assigned_sprite"]));
+                request["file_id"] = long.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                JObject missing = Send("resolve_reference", request);
+                Assert.AreEqual("file_id_missing", missing.Value<string>("import_state"));
+                Assert.IsNull(missing.Value<bool?>("identity_matches"));
+                request["scene_target"] = "absent_" + Guid.NewGuid().ToString("N");
+                Assert.AreEqual("not_loaded", Send("resolve_reference", request).Value<string>("target_state"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(target);
+            }
+        }
+
+        [Test]
+        public void ResolveReferenceChecksUniquenessAcrossLoadedAdditiveScenes()
+        {
+            Scene original = SceneManager.GetActiveScene();
+            Scene primary = default;
+            Scene additive = default;
+            try
+            {
+                primary = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+                additive = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+                Assert.IsTrue(SceneManager.SetActiveScene(additive));
+                string name = "AdditiveIcon_" + Guid.NewGuid().ToString("N");
+                var imported = Sprites()[0];
+                new GameObject(name).AddComponent<SpriteRenderer>().sprite = imported;
+                Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(imported, out string guid, out long id));
+                var request = new JObject
+                {
+                    ["scene_target"] = name,
+                    ["guid"] = guid,
+                    ["file_id"] = id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                };
+                Assert.IsTrue(SceneManager.SetActiveScene(primary));
+                JObject unique = Send("resolve_reference", request);
+                Assert.AreEqual("loaded_scenes", unique.Value<string>("target_scope"));
+                Assert.AreEqual(true, unique.Value<bool?>("identity_matches"), unique.ToString());
+                var duplicate = new GameObject(name);
+                duplicate.SetActive(false);
+                JObject ambiguous = Send("resolve_reference", request);
+                Assert.AreEqual("ambiguous", ambiguous.Value<string>("target_state"));
+                Assert.IsNull(ambiguous.Value<bool?>("identity_matches"));
+            }
+            finally
+            {
+                SceneManager.SetActiveScene(original);
+                if (additive.IsValid())
+                    EditorSceneManager.CloseScene(additive, true);
+                if (primary.IsValid())
+                    EditorSceneManager.CloseScene(primary, true);
+            }
+        }
+
+        [Test, Explicit("Requires a graphics device, built-in render pipeline, and installed 2D Sprite data provider.")]
+        public void ResliceRetainsFileIdButChangesAndRestoresRenderedIcon()
+        {
+            Assert.AreNotEqual(UnityEngine.Rendering.GraphicsDeviceType.Null, SystemInfo.graphicsDeviceType);
+            var go = new GameObject("VisibleIcon_" + Guid.NewGuid().ToString("N"));
+            var cameraOwner = new GameObject("IconCamera");
+            var surface = new RenderTexture(32, 32, 24);
+            var pixel = new Texture2D(1, 1);
+            RenderTexture previous = RenderTexture.active;
+            try
+            {
+                var camera = cameraOwner.AddComponent<Camera>();
+                camera.enabled = false;
+                go.transform.position = new Vector3(1234, 2345, 0);
+                cameraOwner.transform.position = go.transform.position + Vector3.back * 2;
+                camera.orthographic = true;
+                camera.orthographicSize = 0.25f;
+                camera.clearFlags = CameraClearFlags.SolidColor;
+                camera.backgroundColor = Color.black;
+                camera.targetTexture = surface;
+                var renderer = go.AddComponent<SpriteRenderer>();
+                renderer.sprite = Sprites()[0];
+                var first = Read();
+                var selected = First(first);
+                var request = new JObject
+                {
+                    ["guid"] = first["guid"],
+                    ["file_id"] = selected["file_id"],
+                    ["expected_rect"] = selected["geometry"]["rect"],
+                    ["scene_target"] = go.name,
+                };
+                Color Frame()
+                {
+                    camera.Render();
+                    RenderTexture.active = surface;
+                    pixel.ReadPixels(new Rect(16, 16, 1, 1), 0, 0);
+                    pixel.Apply();
+                    return pixel.GetPixel(0, 0);
+                }
+                Assert.Greater(Frame().r, 0.8);
+                var changed = Write(first, new JObject { ["rect"] = new JArray(32, 0, 32, 32) });
+                Assert.IsTrue(changed.Value<bool>("success"), changed.ToString());
+                var observed = Send("resolve_reference", request);
+                Assert.AreEqual(true, observed.Value<bool?>("identity_matches"), observed.ToString());
+                Assert.AreEqual(false, observed.Value<bool?>("assigned_rect_matches"));
+                Assert.AreEqual(32, observed["assigned_sprite"]["rect"][0].Value<int>());
+                Assert.Greater(Frame().b, 0.8);
+                var restored = Write(Read(), new JObject { ["rect"] = selected["geometry"]["rect"] });
+                Assert.IsTrue(restored.Value<bool>("success"), restored.ToString());
+                Assert.AreEqual(true, Send("resolve_reference", request).Value<bool?>("assigned_rect_matches"));
+                Assert.Greater(Frame().r, 0.8);
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                UnityEngine.Object.DestroyImmediate(cameraOwner);
+                UnityEngine.Object.DestroyImmediate(go);
+                UnityEngine.Object.DestroyImmediate(pixel);
+                surface.Release();
+                UnityEngine.Object.DestroyImmediate(surface);
+            }
         }
 
         [Test]

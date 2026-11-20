@@ -27,6 +27,35 @@ def sprite():
     pass
 
 
+@sprite.command("resolve-reference")
+@click.argument("path")
+@click.option("--guid", required=True)
+@click.option("--file-id", required=True, help="Serialized local fileID, as signed decimal text.")
+@click.option("--scene-target", required=True, help="Unique loaded GameObject name.")
+@click.option(
+    "--expected-rect",
+    nargs=4,
+    type=float,
+    default=None,
+    help="Baseline x y width height in source pixels.",
+)
+@handle_unity_errors
+def resolve_reference(
+    path: str, guid: str, file_id: str, scene_target: str, expected_rect: tuple[float, ...] | None
+):
+    """Compare the serialized identity, imported Sprite and current scene assignment."""
+    config = get_config()
+    params = _params(
+        "resolve_reference",
+        path=path,
+        guid=guid,
+        file_id=file_id,
+        scene_target=scene_target,
+        expected_rect=list(expected_rect) if expected_rect else None,
+    )
+    click.echo(format_output(run_command("manage_sprite", params, config), config.format))
+
+
 def _geometry_command(action: str, path: str, **values: Any) -> None:
     """Reuse the frozen wrapper's strict geometry contract before CLI transport."""
     from services.tools.manage_sprite import _geometry_error
