@@ -3446,12 +3446,24 @@
                 "default": true,
                 "type": "boolean"
               },
+              "scene_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "scene_scope": {
                 "default": "legacy",
                 "enum": [
                   "legacy",
                   "active",
-                  "all_loaded"
+                  "all_loaded",
+                  "exact"
                 ],
                 "type": "string"
               },
@@ -7430,6 +7442,534 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "preview_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "string"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "string"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "string"
+                    },
+                    "source_prefab": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id",
+                    "settings_path",
+                    "group_guid",
+                    "source_prefab",
+                    "prefab_path"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "create_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "register_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "prefab_status"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "cancel_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "reconcile_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "replan_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "pattern": "^[0-9a-f]{64}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id",
+                    "previous_operation_id",
+                    "expected_observation"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "type": "string"
@@ -7446,6 +7986,17 @@
                 "default": null
               },
               "entry_guid": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "expected_observation": {
                 "anyOf": [
                   {
                     "type": "string"
@@ -7520,6 +8071,17 @@
                 "type": "integer"
               },
               "prefab_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "previous_operation_id": {
                 "anyOf": [
                   {
                     "type": "string"
@@ -13733,6 +14295,7 @@
                                 "set_active_scene",
                                 "click_ui",
                                 "wait_object",
+                                "wait_ui_focus",
                                 "reset_state",
                                 "wait_state",
                                 "input",
@@ -14893,6 +15456,7 @@
                                 "set_active_scene",
                                 "click_ui",
                                 "wait_object",
+                                "wait_ui_focus",
                                 "reset_state",
                                 "wait_state",
                                 "input",
@@ -15756,6 +16320,7 @@
                                 "set_active_scene",
                                 "click_ui",
                                 "wait_object",
+                                "wait_ui_focus",
                                 "reset_state",
                                 "wait_state",
                                 "input",
@@ -20434,6 +20999,7 @@
             "properties": {
               "action": {
                 "enum": [
+                  "resolve_reference",
                   "get_info",
                   "slice_sheet",
                   "setup_clips",
@@ -20511,6 +21077,18 @@
                 "anyOf": [
                   {
                     "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "expected_rect": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
                   },
                   {
                     "type": "null"
@@ -30631,12 +31209,24 @@
                 "default": true,
                 "type": "boolean"
               },
+              "scene_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "scene_scope": {
                 "default": "legacy",
                 "enum": [
                   "legacy",
                   "active",
-                  "all_loaded"
+                  "all_loaded",
+                  "exact"
                 ],
                 "type": "string"
               },
@@ -34615,6 +35205,534 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "preview_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "string"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "string"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "string"
+                    },
+                    "source_prefab": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id",
+                    "settings_path",
+                    "group_guid",
+                    "source_prefab",
+                    "prefab_path"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "create_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "register_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "prefab_status"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "cancel_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "reconcile_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "type": "null"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "type": "null"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "replan_prefab"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "address": {
+                      "type": "null"
+                    },
+                    "entry_guid": {
+                      "type": "null"
+                    },
+                    "expected_observation": {
+                      "pattern": "^[0-9a-f]{64}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "expected_revision": {
+                      "type": "null"
+                    },
+                    "group_guid": {
+                      "type": "null"
+                    },
+                    "include_preflight": {
+                      "type": "null"
+                    },
+                    "layout_path": {
+                      "type": "null"
+                    },
+                    "operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "page_number": {
+                      "const": 1
+                    },
+                    "page_size": {
+                      "const": 50
+                    },
+                    "prefab_path": {
+                      "type": "null"
+                    },
+                    "previous_operation_id": {
+                      "pattern": "^[0-9a-f]{32}(?![\\s\\S])",
+                      "type": "string"
+                    },
+                    "profile_id": {
+                      "type": "null"
+                    },
+                    "section": {
+                      "type": "null"
+                    },
+                    "settings_path": {
+                      "type": "null"
+                    },
+                    "source_prefab": {
+                      "type": "null"
+                    },
+                    "value": {
+                      "type": "null"
+                    },
+                    "variable_name": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "operation_id",
+                    "previous_operation_id",
+                    "expected_observation"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "type": "string"
@@ -34631,6 +35749,17 @@
                 "default": null
               },
               "entry_guid": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "expected_observation": {
                 "anyOf": [
                   {
                     "type": "string"
@@ -34705,6 +35834,17 @@
                 "type": "integer"
               },
               "prefab_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "previous_operation_id": {
                 "anyOf": [
                   {
                     "type": "string"
@@ -40918,6 +42058,7 @@
                                 "set_active_scene",
                                 "click_ui",
                                 "wait_object",
+                                "wait_ui_focus",
                                 "reset_state",
                                 "wait_state",
                                 "input",
@@ -42078,6 +43219,7 @@
                                 "set_active_scene",
                                 "click_ui",
                                 "wait_object",
+                                "wait_ui_focus",
                                 "reset_state",
                                 "wait_state",
                                 "input",
@@ -42941,6 +44083,7 @@
                                 "set_active_scene",
                                 "click_ui",
                                 "wait_object",
+                                "wait_ui_focus",
                                 "reset_state",
                                 "wait_state",
                                 "input",
@@ -47619,6 +48762,7 @@
             "properties": {
               "action": {
                 "enum": [
+                  "resolve_reference",
                   "get_info",
                   "slice_sheet",
                   "setup_clips",
@@ -47696,6 +48840,18 @@
                 "anyOf": [
                   {
                     "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "expected_rect": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
                   },
                   {
                     "type": "null"

@@ -14,7 +14,7 @@ description: "Create, import, modify, duplicate, move or delete assets and folde
 
 ## Description
 
-Create, import, modify, duplicate, move or delete assets and folders. Action inputs: import: requires path. create: requires path, asset_type. modify: requires path, properties. delete: requires path. duplicate: requires path. move: requires path, destination; success data includes path, verification. rename: requires path, destination; excludes non-null reference_revision; success data includes path, verification. create_folder: requires path.
+Create, import, modify, duplicate, move or delete assets and folders. Action inputs: import: requires path. create: requires path, asset_type. modify: requires path, properties. delete: requires path. duplicate: requires path. move: requires path, destination; success data includes path, verification. rename: requires path, destination; excludes non-null reference_revision; alias of move; success data includes path, verification. create_folder: requires path.
 
 ## Parameters
 

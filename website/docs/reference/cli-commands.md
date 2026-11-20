@@ -1691,7 +1691,7 @@ Duplicate a GameObject. Examples: unity-mcp gameobject duplicate "Player" unity-
 
 ## `unity-mcp gameobject find`
 
-Find GameObjects by search criteria. Examples: unity-mcp gameobject find "Player" unity-mcp gameobject find "Enemy" --method by_tag unity-mcp gameobject find --method by_id -- "-81840" unity-mcp gameobject find "Rigidbody" --method by_component unity-mcp gameobject find "/Canvas/Panel" --method by_path
+Find GameObjects by search criteria. Examples: unity-mcp gameobject find "Player" unity-mcp gameobject find "Enemy" --method by_tag unity-mcp gameobject find --method by_id -- "-81840" unity-mcp gameobject find "Rigidbody" --method by_component unity-mcp gameobject find "/Canvas/Panel" --method by_path unity-mcp gameobject find "Door" --scene-scope exact --scene-path Assets/Levels/East.unity --include-handle
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1699,7 +1699,9 @@ Find GameObjects by search criteria. Examples: unity-mcp gameobject find "Player
 | --method / -m | choice: by_name, by_path, by_id, by_tag, by_layer, by_component | optional | nargs=1 | "by_name" | — | Search method. |
 | --include-inactive / -i | boolean | optional | nargs=1, flag | — | — | Include inactive GameObjects. |
 | --limit / -l | integer | optional | nargs=1 | 50 | — | Maximum results to return. |
-| --scene-scope | choice: legacy, active, all_loaded | optional | nargs=1 | "legacy" | — | Scene selection; active/all_loaded use opaque continuation cursors. |
+| --scene-scope | choice: legacy, active, all_loaded, exact | optional | nargs=1 | "legacy" | — | Scene selection; scoped modes use opaque continuation cursors. |
+| --scene-path | text | optional | nargs=1 | — | — | Exact loaded Assets/ or Packages/ scene path with --scene-scope exact. |
+| --include-handle | boolean | optional | nargs=1, flag | — | — | Project session handles for the returned IDs. |
 | --cursor / -c | text | optional | nargs=1 | — | — | Legacy numeric offset or scoped opaque 32-hex continuation token. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -3020,6 +3022,11 @@ Replay verified controls and remove steps preserving the first observed state fa
 | --output | text | required | nargs=1 | — | — |  |
 | --timeout | integer range: [1..3600] | optional | nargs=1 | 60 | — |  |
 | --max-trials | integer range: [1..128] | optional | nargs=1 | 24 | — |  |
+| --grouped | boolean | optional | nargs=1, flag | — | — | Try event dependencies and contiguous chunks before single steps. |
+| --delete-group | text | optional | nargs=1, repeatable | — | — | Try deleting comma-separated original step indices together. Enables grouped search. |
+| --seed | integer range: [-2147483648..2147483647] | optional | nargs=1 | — | — | Initialize UnityEngine.Random before scenario execution. |
+| --start-delay-frames | integer range: [0..120] | optional | nargs=1 | 0 | — | Delay engine start by Player updates. Requires --seed. |
+| --attempts-per-candidate | integer range: [1..128] | optional | nargs=1 | 1 | — |  |
 | --graphical | boolean | optional | nargs=1, flag | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -3149,6 +3156,23 @@ Observe a suite once; this command never waits.
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | suite_id | text | required | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp play-scenario trial-replay`
+
+Measure a state failure and its repaired control across one-factor Player trials.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --broken | text | required | nargs=1 | — | — |  |
+| --repaired | text | required | nargs=1 | — | — |  |
+| --plan | text | required | nargs=1 | — | — |  |
+| --reduced-pair | text | optional | nargs=2 | — | — | Reduced broken and repaired builds corresponding to the plan's kept_indices. |
+| --candidate-pair | text | optional | nargs=2, repeatable | — | — | Prepared input-variant builds for either phase. |
+| --output | text | required | nargs=1 | — | — |  |
+| --timeout | integer range: [1..3600] | optional | nargs=1 | 60 | — |  |
+| --max-trials | integer range: [1..128] | optional | nargs=1 | 128 | — |  |
+| --graphical | boolean | optional | nargs=1, flag | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp prefab`
@@ -4173,6 +4197,19 @@ Show a sheet's import settings, size and slices. The tool also sends the sheet a
 | --cursor | integer | optional | nargs=1 | — | — | Slice index to start at; pass back next_cursor. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp sprite resolve-reference`
+
+Compare the serialized identity, imported Sprite and current scene assignment.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| path | text | required | nargs=1 | — | — |  |
+| --guid | text | required | nargs=1 | — | — |  |
+| --file-id | text | required | nargs=1 | — | — | Serialized local fileID, as signed decimal text. |
+| --scene-target | text | required | nargs=1 | — | — | Unique loaded GameObject name. |
+| --expected-rect | float | optional | nargs=4 | — | — | Baseline x y width height in source pixels. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp sprite set-geometry`
 
 Change only supplied rect/pivot/border/render outlines using exact observed guards.
@@ -4470,6 +4507,133 @@ Prepare source-linked checks and observe runs without automatically replaying wo
 | --- | --- | --- | --- | --- | --- | --- |
 | action | choice: profiles, set_profile, prepare, run, status, cancel, report | required | nargs=1 | — | — |  |
 | --options | text | optional | nargs=1 | "&#123;&#125;" | — | Action options as JSON, @file or - for stdin. Run/status/report use the returned owned IDs. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate`
+
+Review source evidence and manage local Player candidate registrations.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate draft`
+
+Compare selected Unity source bytes with a Git baseline and emit a reviewable JSON draft.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | text | required | nargs=1 | — | — |  |
+| --baseline | text | optional | nargs=1 | "HEAD" | — | Git commit or revision. |
+| --selection | choice: working-tree, staged | required | nargs=1 | — | — |  |
+| --output | text | optional | nargs=1 | — | — | New JSON file. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate export`
+
+Export source and build identities from a trusted local registration.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | text | required | nargs=1 | — | — |  |
+| --candidate-id | text | required | nargs=1 | — | — |  |
+| --output | text | required | nargs=1 | — | — | New proof JSON file. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate input-chunks`
+
+Capture and assemble a large explicit input selection.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate input-chunks capture`
+
+Publish one immutable source chunk and print its descriptor.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --candidate-id | text | required | nargs=1 | — | — |  |
+| --project | text | required | nargs=1 | — | — |  |
+| --path | text | required | nargs=1, repeatable | — | — | Repeat for each selected source or metadata file. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate input-chunks index`
+
+Print registration fields for a complete ordered list of captured chunks.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --candidate-id | text | required | nargs=1 | — | — |  |
+| --chunk | text | required | nargs=1, repeatable | — | — | Repeat in globally sorted path order. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate register`
+
+Verify local sources and the installed Player before creating a local registration.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --candidate-id | text | required | nargs=1 | — | — | ID of the operator-provisioned local build. |
+| --sha256 | text | required | nargs=1 | — | — | Expected proof digest from a trusted source. |
+| --proof | text | required | nargs=1 | — | — |  |
+| --project | text | required | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate verify`
+
+Check pinned evidence against the current checkout's source bytes.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --sha256 | text | required | nargs=1 | — | — | Expected proof digest from a trusted source. |
+| --proof | text | required | nargs=1 | — | — |  |
+| --project | text | required | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence`
+
+Compare retained results and their input identities without starting Unity.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence compare`
+
+Classify new, existing, repaired and unexecuted checks on the reviewed PR pair.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --baseline | text | required | nargs=2 | — | — |  |
+| --candidate | text | required | nargs=2 | — | — |  |
+| --output | text | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence first-failure`
+
+Locate the first failing archived build, or report observed bounds and missing trials.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| history_manifest | text | required | nargs=1 | — | — |  |
+| --kind | choice: scenario, test, profile, observation, stage | required | nargs=1 | — | — |  |
+| --id | text | required | nargs=1 | — | — | Exact named check from the verification reports. |
+| --output | text | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence selection`
+
+Measure missed regressions, unnecessary checks and observed elapsed time.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --selected | text | required | nargs=1 | — | — | Narrow Unity NUnit XML. |
+| --full | text | required | nargs=1 | — | — | Independently executed full cohort. |
+| --fallback | text | optional | nargs=1 | — | — | Independently executed broader fallback. |
+| --affected-test | text | optional | nargs=1, repeatable | — | — | Known affected test in the fault fixture. |
+| --output | text | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp vfx`

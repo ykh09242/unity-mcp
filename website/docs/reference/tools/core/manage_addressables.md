@@ -1,7 +1,7 @@
 ---
 title: manage_addressables
 sidebar_label: manage_addressables
-description: "Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing native build-layout report for duplicate…"
+description: "Use capabilities without a settings asset for per-action provider availability."
 ---
 
 # `manage_addressables`
@@ -14,7 +14,7 @@ description: "Inspect existing optional Addressables settings (groups, explicit 
 
 ## Description
 
-Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing native build-layout report for duplicated content. Settings actions require compatible installed APIs and stored profile schema 1. Layout reports must declare their Addressables producer and match the installed serialized schema. Content Directory coverage is unsupported: reports whose native schema declares ContentDirectories require an empty array, and nonempty or malformed group ContentDirectoryName values are refused, including managed-reference data. Reads never create settings, evaluate arbitrary static profile properties or start content builds. Guarded set_address/move_entry/set_profile_value preserve existing GUIDs/labels. Supply explicit settings_path and exact expected_revision for edits/continuation pages. A receipt-protected prefab workflow previews copying a source prefab and registering its new GUID. Use the same operation_id for create_prefab, register_prefab, prefab_status or cancel_prefab. Caps128groups/4096entries/32profiles/64variables,256preflightentries,100rows/256KiB per response. Native layout files are bounded to16MiB.
+Use capabilities without a settings asset for per-action provider availability. Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing native build-layout report for duplicated content. Settings actions require compatible installed APIs and stored profile schema 1. Layout reports must declare their Addressables producer and match the installed serialized schema. Content Directory coverage is unsupported: reports whose native schema declares ContentDirectories require an empty array, and nonempty or malformed group ContentDirectoryName values are refused, including managed-reference data. Reads never create settings, evaluate arbitrary static profile properties or start content builds. Guarded set_address/move_entry/set_profile_value preserve existing GUIDs/labels. Supply explicit settings_path and exact expected_revision for edits/continuation pages. A receipt-protected prefab workflow previews copying a source prefab and registering its new GUID. Use the same operation_id for create_prefab, register_prefab, prefab_status or cancel_prefab. Caps128groups/4096entries/32profiles/64variables,256preflightentries,100rows/256KiB per response. Native layout files are bounded to16MiB. Action inputs: preview_prefab: accepts only operation_id, settings_path, group_guid, source_prefab, prefab_path. create_prefab: accepts only operation_id. register_prefab: accepts only operation_id. prefab_status: accepts only operation_id. cancel_prefab: accepts only operation_id. reconcile_prefab: accepts only operation_id. replan_prefab: accepts only operation_id, previous_operation_id, expected_observation.
 
 ## Parameters
 
@@ -37,6 +37,8 @@ Inspect existing optional Addressables settings (groups, explicit entries and ra
 | `operation_id` | `str \| None` | — |  |
 | `source_prefab` | `str \| None` | — |  |
 | `prefab_path` | `str \| None` | — |  |
+| `previous_operation_id` | `str \| None` | — |  |
+| `expected_observation` | `str \| None` | — |  |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
