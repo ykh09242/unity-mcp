@@ -50,3 +50,18 @@ def selection(selected, full, fallback, affected_test, output):
         return result, 0 if result["state"] == "measured" else 2
 
     emit_result(analyze, output)
+
+
+@verification_evidence.command("compare")
+@click.option("--baseline", type=FILE, nargs=2, required=True, metavar="VERIFICATION NATIVE_RUN")
+@click.option("--candidate", type=FILE, nargs=2, required=True, metavar="VERIFICATION NATIVE_RUN")
+@click.option("--output", type=OUTPUT)
+def compare(baseline, candidate, output):
+    """Classify new, existing, repaired and unexecuted checks on the reviewed PR pair."""
+    from cli.utils.verification_change import compare_runs, read_run
+
+    def analyze():
+        result = compare_runs(read_run(*baseline), read_run(*candidate))
+        return result, {"no_new_failures": 0, "regressed": 1}.get(result["state"], 2)
+
+    emit_result(analyze, output)
