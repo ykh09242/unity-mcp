@@ -21,20 +21,23 @@ FENCES = re.compile(r"^```([^\n]*)\n(.*?)^```\s*$", re.MULTILINE | re.DOTALL)
 LINKS = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 
 
-def action_sequence(expression, tree, path, resolving=frozenset()):
-    """Resolve only static string sequences; never execute product code or imports."""
-    if isinstance(expression, (ast.List, ast.Tuple)):
+def static_metadata(expression, tree, path, *, sequence=False, resolving=frozenset()):
+    """Resolve declared strings or action lists from source without executing imports."""
+    kind = "action" if sequence else "metadata"
+    if not sequence and isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+        return expression.value
+    if sequence and isinstance(expression, (ast.List, ast.Tuple)):
         values = [ast.literal_eval(value) for value in expression.elts]
         if all(isinstance(value, str) for value in values):
             return values
     elif isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
-        return action_sequence(expression.left, tree, path, resolving) + action_sequence(
-            expression.right, tree, path, resolving
-        )
+        return static_metadata(
+            expression.left, tree, path, sequence=sequence, resolving=resolving
+        ) + static_metadata(expression.right, tree, path, sequence=sequence, resolving=resolving)
     elif isinstance(expression, ast.Name):
         key = (path.resolve(), expression.id)
         if key in resolving:
-            raise ValueError(f"Cyclic action declaration: {expression.id}")
+            raise ValueError(f"Cyclic {kind} declaration: {expression.id}")
         resolving = resolving | {key}
         for statement in tree.body:
             targets = (
@@ -47,23 +50,31 @@ def action_sequence(expression, tree, path, resolving=frozenset()):
             if any(
                 isinstance(target, ast.Name) and target.id == expression.id for target in targets
             ):
-                return action_sequence(statement.value, tree, path, resolving)
+                return static_metadata(
+                    statement.value, tree, path, sequence=sequence, resolving=resolving
+                )
             if not isinstance(statement, ast.ImportFrom) or statement.level or not statement.module:
                 continue
             for alias in statement.names:
                 if (alias.asname or alias.name) != expression.id:
                     continue
-                # Resolve source AST only for repository-local tool helper modules.
                 parts = statement.module.split(".")
-                if parts[:2] != ["services", "tools"] or len(parts) != 3:
-                    raise ValueError(f"Unsupported action import: {statement.module}")
-                folder = (ROOT / "Server/src/services/tools").resolve()
+                folders = ("tools",) if sequence else ("tools", "registry", "resources")
+                if len(parts) != 3 or parts[0] != "services" or parts[1] not in folders:
+                    raise ValueError(f"Unsupported {kind} import: {statement.module}")
+                folder = (ROOT / "Server/src/services" / parts[1]).resolve()
                 imported = (folder / (parts[2] + ".py")).resolve()
                 if not imported.is_relative_to(folder) or not imported.is_file():
-                    raise ValueError(f"Missing contained action declaration: {statement.module}")
+                    raise ValueError(f"Missing contained {kind} declaration: {statement.module}")
                 imported_tree = ast.parse(imported.read_text(encoding="utf-8"))
-                return action_sequence(ast.Name(id=alias.name), imported_tree, imported, resolving)
-    raise ValueError(f"Unsupported static action expression: {ast.dump(expression)}")
+                return static_metadata(
+                    ast.Name(id=alias.name),
+                    imported_tree,
+                    imported,
+                    sequence=sequence,
+                    resolving=resolving,
+                )
+    raise ValueError(f"Unsupported static {kind} expression: {ast.dump(expression)}")
 
 
 def literal_values(annotation, tree, path):
@@ -74,7 +85,7 @@ def literal_values(annotation, tree, path):
     values = set()
     for member in members:
         if isinstance(member, ast.Starred):
-            values.update(action_sequence(member.value, tree, path))
+            values.update(static_metadata(member.value, tree, path, sequence=True))
         else:
             values.add(ast.literal_eval(member))
     return values
@@ -95,10 +106,14 @@ def registered_contracts():
                         continue
                     metadata = {kw.arg: kw.value for kw in decorator.keywords}
                     if decorator.func.id == "mcp_for_unity_resource":
-                        resources.append(ast.literal_eval(metadata["uri"]))
+                        resources.append(static_metadata(metadata["uri"], tree, path))
                     if decorator.func.id != "mcp_for_unity_tool":
                         continue
-                    name = ast.literal_eval(metadata["name"]) if "name" in metadata else node.name
+                    name = (
+                        static_metadata(metadata["name"], tree, path)
+                        if "name" in metadata
+                        else node.name
+                    )
                     args = node.args.posonlyargs + node.args.args
                     required_count = len(args) - len(node.args.defaults)
                     required = {arg.arg for arg in args[:required_count]} - {"ctx"}
@@ -122,7 +137,8 @@ def registered_contracts():
             continue
         if node.func.id != "_feature":
             continue
-        name, source, _, _, actions, parameters = map(ast.literal_eval, node.args[:6])
+        name, source = map(ast.literal_eval, node.args[:2])
+        actions, parameters = map(ast.literal_eval, node.args[4:6])
         allowed, required, literals = tools[source]
         admitted = {"action", *parameters.split()}
         tools[name] = (
@@ -164,6 +180,27 @@ def validate_request(request, tools):
 
 
 class LiteralMetadataParserTests(unittest.TestCase):
+    def test_resource_uri_follows_a_registry_alias_without_executing_the_module(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            registry = root / "Server/src/services/registry"
+            registry.mkdir(parents=True)
+            (registry / "catalog.py").write_text(
+                'raise RuntimeError("must not execute")\nPREFIX = "mcpforunity://"\n'
+                'URI: str = PREFIX + "scene/inventory"\n',
+                encoding="utf-8",
+            )
+            tree = ast.parse("from services.registry.catalog import URI as INVENTORY\nINVENTORY")
+            with patch(__name__ + ".ROOT", root):
+                self.assertEqual(
+                    static_metadata(tree.body[-1].value, tree, root / "resource.py"),
+                    "mcpforunity://scene/inventory",
+                )
+        for source in ("get_uri()", '["unexpected"]', "from external import URI\nURI"):
+            tree = ast.parse(source)
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                static_metadata(tree.body[-1].value, tree, Path(__file__))
+
     def test_starred_metadata_resolves_lists_concatenation_and_local_import_without_execution(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
