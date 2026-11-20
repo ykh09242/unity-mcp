@@ -21,12 +21,28 @@ SYNTHETIC_CHILD = """
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 request_path, bundle_path = map(Path, sys.argv[1:3])
 fault = sys.argv[3]
 request = json.loads(request_path.read_bytes())
 bundle = json.loads(bundle_path.read_bytes())
+identity = {
+    key: request[key]
+    for key in ('build_id', 'payload_hash', 'build_source_revision', 'definition_hash')
+}
+if fault != 'no-heartbeat':
+    progress = {
+        **identity, 'schema_version': 1, 'job_id': request['job_id'],
+        'process_id': os.getpid(), 'sequence': 1,
+        'main_loop_sequence': 1, 'heartbeat_unix_ms': int(time.time() * 1000),
+        'elapsed_ms': 1, 'phase': 'running', 'iteration': 1, 'stage': 'steps',
+        'step_index': 0, 'status': 'running',
+    }
+    temporary = request_path.with_name('progress.tmp')
+    temporary.write_text(json.dumps(progress), encoding='utf-8')
+    temporary.replace(request_path.with_name('progress.json'))
 storage = Path(os.environ['UNITY_MCP_VERIFICATION_SAVE_DIRECTORY'])
 assert storage == request_path.parents[2] / 'storage'
 save = storage / 'owned.json'
@@ -55,14 +71,14 @@ else:
 if previous or (fault != 'no-state' and not unrelated):
     print('SAVE ' + json.dumps(state), flush=True)
 code = int(failed)
-identity = {key: request[key] for key in ('build_id', 'payload_hash', 'build_source_revision', 'definition_hash', 'source_revision')}
 report = {
     'job_id': request['job_id'], 'scenario': bundle['definition'],
     'repeat_count': request['repeat_count'], 'timeout_seconds': request['timeout_seconds'],
     'status': 'failed' if failed else 'succeeded', 'execution_environment': 'player',
     'finalization_state': 'completed', 'runner_resources_released': True,
     'exit_code': code, 'started_unix_ms': 1, 'finished_unix_ms': 2, 'player_schema_version': 2,
-    'reproduction': {**identity, 'unity_version': bundle['unity_version'],
+    'reproduction': {**identity, 'source_revision': request['source_revision'],
+                      'unity_version': bundle['unity_version'],
                       'package_version': bundle['package_version'], 'payload_verification': 'launcher_admission'},
     'steps': [{'stage': 'main', 'name': 'persisted', 'action': 'wait_state',
                'status': 'failed' if failed else 'passed'}],
@@ -126,6 +142,7 @@ def _prepare_upgrade(review):
         ("migration-failure", "migration_failed", 1),
         ("duplicate", "migration_failed", 1),
         ("lost", "migration_failed", 1),
+        ("no-heartbeat", "unavailable", 2),
         ("no-save", "unavailable", 2),
         ("no-state", "unavailable", 2),
         ("candidate-scene-failure", "unavailable", 2),
@@ -166,10 +183,23 @@ def test_save_upgrade_verdict_uses_fresh_processes_and_disk_state(
     result = invoke(
         "save-upgrade", review[0], "--manifest", manifest, "--sha256", pin, "--output", output
     )
-    assert result.exit_code == code, (result.output, result.exception)
+    assert result.exit_code == code, (
+        result.output,
+        result.exception,
+        [json.loads(path.read_bytes()) for path in output.glob("*/*/diagnostics.json")],
+    )
     report = json.loads((output / "save-upgrade.json").read_bytes())
     assert report["status"] == status
     runs = report["runs"]
+    if fault == "no-heartbeat":
+        assert list(runs) == ["baseline"]
+        diagnostics = json.loads(
+            (output / runs["baseline"]["artifacts"] / "diagnostics.json").read_bytes()
+        )
+        assert diagnostics["cleanup_state"] == "native_finalized"
+        assert diagnostics["heartbeat_observed"] is False and diagnostics["process_exit_code"] == 0
+        assert report["reason"] == "reproduction_native_identity_or_finalization_mismatch"
+        return
     if fault == "no-save":
         assert list(runs) == ["baseline"]
         assert runs["baseline"]["save"]["status"] == "missing"
