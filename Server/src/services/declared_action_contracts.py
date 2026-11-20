@@ -44,7 +44,8 @@ ASSET_MOVE_CONTRACTS: Final = {
         False,
         ("edit", "run"),
         "Move path to destination through the AssetDatabase and preserve its GUID. Supply reference_revision from preview_move "
-        "to recheck the same scan options, require complete scan coverage and reject reference drift before mutation.",
+        "to recheck the same scan options, require complete scan coverage and reject reference drift before mutation. "
+        "The revision is optional, and omitting it performs an unguarded move.",
         result=_MOVE_RESULT,
         wire_aliases=ASSET_REFERENCE_FIELDS,
     ),
@@ -62,7 +63,7 @@ ASSET_MOVE_CONTRACTS: Final = {
         _MOVE_FIELDS,
         True,
         ("read",),
-        "Inspect bounded references and destination risks for a proposed asset move. "
+        "Inspect bounded references and destination risks without moving the asset. "
         "Use referenceRevision as reference_revision for a guarded move and check scan coverage before relying on it.",
         result=(
             ("path", "string"),
