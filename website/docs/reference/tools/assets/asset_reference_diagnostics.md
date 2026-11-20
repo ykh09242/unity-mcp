@@ -14,7 +14,7 @@ description: "Inspect dependencies and reverse references, or preview asset move
 
 ## Description
 
-Inspect dependencies and reverse references, or preview asset moves and deletion. Read-only inspection; results can change with Unity state.
+Inspect dependencies and reverse references, or preview asset moves and deletion. Read-only inspection; results can change with Unity state. Action inputs: preview_move: requires path, destination; success data includes path, guid, destination, referenceRevision, scanComplete.
 
 ## Parameters
 

@@ -1,0 +1,28 @@
+{
+  "preview": {
+    "tool": "asset_reference_diagnostics",
+    "action": "preview_move",
+    "permissions": ["read"],
+    "readOnly": true,
+    "result": {"path": "string", "guid": "string", "destination": "string", "referenceRevision": "string", "scanComplete": "boolean"}
+  },
+  "move": {
+    "tool": "asset_edit",
+    "action": "move",
+    "permissions": ["edit", "run"],
+    "readOnly": false,
+    "result": {"path": "string", "verification": "object"}
+  },
+  "inputs": [
+    {"id": "valid", "arguments": {"action": "move", "path": "SRC", "destination": "DST"}, "valid": true},
+    {"id": "rename alias", "arguments": {"action": "rename", "path": "SRC", "destination": "DST"}, "valid": true},
+    {"id": "missing path", "arguments": {"action": "move", "destination": "DST"}, "valid": false},
+    {"id": "null path", "arguments": {"action": "move", "path": null, "destination": "DST"}, "valid": false},
+    {"id": "missing destination", "arguments": {"action": "move", "path": "SRC"}, "valid": false},
+    {"id": "null destination", "arguments": {"action": "rename", "path": "SRC", "destination": null}, "valid": false},
+    {"id": "numeric destination", "arguments": {"action": "move", "path": "SRC", "destination": 12}, "valid": false},
+    {"id": "empty destination", "arguments": {"action": "move", "path": "SRC", "destination": ""}, "valid": false},
+    {"id": "malformed path and destination", "arguments": {"action": "move", "path": {}, "destination": []}, "valid": false},
+    {"id": "guard on rename alias", "arguments": {"action": "rename", "path": "SRC", "destination": "DST", "reference_revision": "mcp-ref-v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "valid": false}
+  ]
+}

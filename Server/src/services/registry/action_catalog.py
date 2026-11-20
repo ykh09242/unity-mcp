@@ -23,6 +23,7 @@ from pydantic import (
     model_validator,
 )
 
+from services.operation_permissions import required_permissions
 from services.reference_graph.action_options import GRAPH_ACTION_OPTIONS
 from services.registry.action_contracts import ACTION_RULES
 from services.registry.action_guidance_types import (
@@ -1055,6 +1056,17 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
             )
         ),
         "forbidden_parameters": list(rules.forbidden) if rules else [],
+        **(
+            {
+                "success_data_schema": rules.success_data_schema(),
+                "required_permissions": sorted(
+                    permission.value
+                    for permission in required_permissions(entry["name"], rules.example_arguments())
+                ),
+            }
+            if rules and rules.success_fields
+            else {}
+        ),
         **({"options_schema": graph_options.schema()} if graph_options else {}),
         "input_contract": "Inspect the full tool schema and parameter descriptions for conditional requirements.",
         "effects": effects,

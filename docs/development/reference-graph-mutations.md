@@ -40,6 +40,22 @@ dispatch, and read-back recovery retain `unknown` rather than proving causation
 from an observed file. Native writes are never replayed to repair graph tracking.
 Failed operations may have partial effects and can still be synchronized.
 
+## Moving an imported asset
+
+`asset_reference_diagnostics.preview_move` requires a read grant and returns
+the source GUID, destination, `scanComplete` and `referenceRevision`. To guard
+the write, pass that revision as `reference_revision` to `asset_edit.move`
+with the same paths and scan options. Remote admission requires both `edit`
+and `run` for a move because an import can trigger compilation. Inspect the
+returned destination path and its `verification` record after the write.
+
+The focused `asset_edit` and compatibility `manage_asset` handlers share
+`AssetMoveRequest` and `AssetMoveOperation` for both `move` and `rename`.
+The native handler checks consent and any revision guard before applying the
+typed source and destination. The `rename` alias accepts an unguarded path
+pair. The Python SDK and native EditMode fixtures exercise the same
+[input and result cases](../../TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/asset-move-contract.json).
+
 ## Explicit batches
 
 Use the following `manage_reference_graph` actions to bracket an external AI

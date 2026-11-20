@@ -149,19 +149,30 @@ namespace MCPForUnity.Editor.Tools
                     if (consentError != null)
                         return consentError;
                 }
-                // Bundle inspection does not use path; validate only parameters used by this action.
-                bool usesPath = action != "list_asset_bundles" && action != "get_bundle_assets" && action != "get_bundle_dependencies";
-                var pathToken = @params["path"];
-                if (usesPath && pathToken != null && pathToken.Type != JTokenType.Null && pathToken.Type != JTokenType.String)
-                    return new ErrorResponse("'path' must be a string or null.");
-                var destinationToken = @params["destination"];
-                if (
-                    (action == "duplicate" || action == "move" || action == "rename")
-                    && destinationToken != null
-                    && destinationToken.Type != JTokenType.Null
-                    && destinationToken.Type != JTokenType.String
-                )
-                    return new ErrorResponse("'destination' must be a string or null.");
+                bool moving = action == "move" || action == "rename";
+                AssetMoveRequest move = default;
+                if (moving)
+                {
+                    var error = AssetMoveRequest.Decode(@params, out move);
+                    if (error != null)
+                        return error;
+                }
+                else
+                {
+                    // Bundle inspection does not consume path.
+                    bool usesPath = action != "list_asset_bundles" && action != "get_bundle_assets" && action != "get_bundle_dependencies";
+                    var pathToken = @params["path"];
+                    if (usesPath && pathToken != null && pathToken.Type != JTokenType.Null && pathToken.Type != JTokenType.String)
+                        return new ErrorResponse("'path' must be a string or null.");
+                    var destinationToken = @params["destination"];
+                    if (
+                        action == "duplicate"
+                        && destinationToken != null
+                        && destinationToken.Type != JTokenType.Null
+                        && destinationToken.Type != JTokenType.String
+                    )
+                        return new ErrorResponse("'destination' must be a string or null.");
+                }
                 if (guardedReferenceMutation)
                 {
                     var referenceError = AssetReferenceDiagnostics.GuardMutation(@params);
@@ -182,9 +193,9 @@ namespace MCPForUnity.Editor.Tools
                         return DeleteAsset(path);
                     case "duplicate":
                         return DuplicateAsset(path, @params["destination"]?.ToString());
-                    case "move": // Often same as rename if within Assets/
+                    case "move":
                     case "rename":
-                        return MoveOrRenameAsset(path, @params["destination"]?.ToString());
+                        return AssetMoveOperation.Apply(move);
                     case "search":
                         return SearchAssets(@params);
                     case "search_metadata_v1":
@@ -469,7 +480,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static SuccessResponse SavedAssetResponse(string path, string message)
+        internal static SuccessResponse SavedAssetResponse(string path, string message)
         {
             JObject data;
             try
@@ -734,59 +745,6 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static object MoveOrRenameAsset(string path, string destinationPath)
-        {
-            if (string.IsNullOrEmpty(path))
-                return new ErrorResponse("'path' is required for move/rename.");
-            if (string.IsNullOrEmpty(destinationPath))
-                return new ErrorResponse("'destination' path is required for move/rename.");
-
-            string sourcePath = AssetPathUtility.GetContainedAssetPath(path);
-            string destPath = AssetPathUtility.GetContainedAssetPath(destinationPath);
-
-            if (!AssetExists(sourcePath))
-                return new ErrorResponse($"Source asset not found at path: {sourcePath}");
-            if (AssetExists(destPath))
-                return new ErrorResponse($"An asset already exists at the destination path: {destPath}");
-
-            try
-            {
-                var consentError = RequireScriptConsent(sourcePath, destPath);
-                if (consentError != null)
-                    return consentError;
-                using var folders = new AssetFolderScope();
-                folders.EnsureParentDirectory(destPath);
-                // Validate will return an error string if failed, null if successful
-                AssetPathUtility.GetFullAssetPath(sourcePath);
-                AssetPathUtility.GetFullAssetPath(destPath);
-                string error = AssetDatabase.ValidateMoveAsset(sourcePath, destPath);
-                if (!string.IsNullOrEmpty(error))
-                {
-                    return new ErrorResponse($"Failed to move/rename asset from '{sourcePath}' to '{destPath}': {error}");
-                }
-
-                AssetPathUtility.GetFullAssetPath(sourcePath);
-                AssetPathUtility.GetFullAssetPath(destPath);
-                AssetSearchSnapshots.Invalidate();
-                string moveError = AssetDatabase.MoveAsset(sourcePath, destPath);
-                if (string.IsNullOrEmpty(moveError))
-                {
-                    // AssetDatabase.Refresh(); // MoveAsset usually handles refresh
-                    var response = SavedAssetResponse(destPath, $"Asset moved/renamed from '{sourcePath}' to '{destPath}'.");
-                    folders.Complete();
-                    return response;
-                }
-                else
-                {
-                    return new ErrorResponse($"Failed to move/rename asset from '{sourcePath}' to '{destPath}': {moveError}");
-                }
-            }
-            catch (Exception e)
-            {
-                return new ErrorResponse($"Error moving/renaming asset '{sourcePath}': {e.Message}");
-            }
-        }
-
         private static object SearchAssets(JObject @params, bool metadataOnly = false)
         {
             string searchPattern = @params["searchPattern"]?.ToString();
@@ -1030,7 +988,7 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>
         /// Checks if an asset exists at the given path (file or folder).
         /// </summary>
-        private static bool AssetExists(string sanitizedPath)
+        internal static bool AssetExists(string sanitizedPath)
         {
             // AssetDatabase APIs are generally preferred over raw File/Directory checks for assets.
             // Check if it's a known asset GUID.

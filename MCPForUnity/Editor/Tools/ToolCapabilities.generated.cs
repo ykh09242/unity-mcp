@@ -440,7 +440,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("asset_edit", AutoRegister = false, Group = "assets",
-        DisplayName = "Create, Change & Move Assets", Description = "Create, import, modify, duplicate, move or delete assets and folders. Action inputs: import: requires path. create: requires path, asset_type. modify: requires path, properties. delete: requires path. duplicate: requires path. move: requires path, destination. rename: requires path, destination. create_folder: requires path.")]
+        DisplayName = "Create, Change & Move Assets", Description = "Create, import, modify, duplicate, move or delete assets and folders. Action inputs: import: requires path. create: requires path, asset_type. modify: requires path, properties. delete: requires path. duplicate: requires path. move: requires path, destination; success data includes path, verification. rename: requires path, destination; excludes non-null reference_revision; success data includes path, verification. create_folder: requires path.")]
     public static class AssetEdit
     {
         private static readonly string[] Actions = { "import", "create", "modify", "delete", "duplicate", "move", "rename", "create_folder" };
@@ -451,7 +451,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("asset_reference_diagnostics", AutoRegister = false, Group = "assets",
-        DisplayName = "Asset References & Change Previews", Description = "Inspect dependencies and reverse references, or preview asset moves and deletion. Read-only inspection; results can change with Unity state.")]
+        DisplayName = "Asset References & Change Previews", Description = "Inspect dependencies and reverse references, or preview asset moves and deletion. Read-only inspection; results can change with Unity state. Action inputs: preview_move: requires path, destination; success data includes path, guid, destination, referenceRevision, scanComplete.")]
     public static class AssetReferenceDiagnostics
     {
         private static readonly string[] Actions = { "get_dependencies", "get_reverse_references", "preview_move", "preview_delete" };

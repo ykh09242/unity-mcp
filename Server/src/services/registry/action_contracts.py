@@ -11,9 +11,18 @@ class ActionRule:
     required: tuple[str, ...] = ()
     forbidden: tuple[str, ...] = ()
     example: tuple[tuple[str, Any], ...] = ()
+    # Guaranteed fields on the native success data, including fallback responses.
+    success_fields: tuple[tuple[str, str], ...] = ()
 
     def example_arguments(self) -> dict:
         return {"action": self.action, **deepcopy(dict(self.example))}
+
+    def success_data_schema(self) -> dict:
+        return {
+            "type": "object",
+            "required": [name for name, _ in self.success_fields],
+            "properties": {name: {"type": kind} for name, kind in self.success_fields},
+        }
 
 
 _ASSET_REQUIREMENTS = {
@@ -62,9 +71,32 @@ ACTION_RULES: dict[str, tuple[ActionRule, ...]] = {
     ),
     "asset_edit": tuple(
         ActionRule(
-            action, required, example=tuple((name, _ASSET_EXAMPLES[name]) for name in required)
+            action,
+            required,
+            forbidden=("reference_revision",) if action == "rename" else (),
+            example=tuple((name, _ASSET_EXAMPLES[name]) for name in required),
+            success_fields=(("path", "string"), ("verification", "object"))
+            if action in {"move", "rename"}
+            else (),
         )
         for action, required in _ASSET_REQUIREMENTS.items()
+    ),
+    "asset_reference_diagnostics": (
+        ActionRule(
+            "preview_move",
+            ("path", "destination"),
+            example=(
+                ("path", _ASSET_EXAMPLES["path"]),
+                ("destination", _ASSET_EXAMPLES["destination"]),
+            ),
+            success_fields=(
+                ("path", "string"),
+                ("guid", "string"),
+                ("destination", "string"),
+                ("referenceRevision", "string"),
+                ("scanComplete", "boolean"),
+            ),
+        ),
     ),
     "prefab_contents": (
         ActionRule(
@@ -140,6 +172,10 @@ def action_help(name: str) -> str:
             parts.append("requires " + ", ".join(rule.required))
         if rule.forbidden:
             parts.append("excludes non-null " + ", ".join(rule.forbidden))
+        if rule.success_fields:
+            parts.append(
+                "success data includes " + ", ".join(name for name, _ in rule.success_fields)
+            )
         rows.append(rule.action + ": " + ("; ".join(parts) or "no action-specific required inputs"))
     return "Action inputs: " + ". ".join(rows) + "."
 
@@ -247,6 +283,7 @@ def action_input_schema(name: str, schema: dict) -> dict:
                 # selected by anyOf. Objects retain their declared constraints.
                 declared.update(minLength=1, pattern=r"\S")
                 properties[field] = declared
+            properties.update({field: {"type": "null"} for field in rule.forbidden})
             variants.append(
                 {"type": "object", "properties": properties, "required": ["action", *rule.required]}
             )

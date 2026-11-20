@@ -10,6 +10,10 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 VALIDATIONS = [
     ("python-tests.yml", "tools/lint_python.py"),
+    (
+        "python-tests.yml",
+        "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/asset-move-contract.json",
+    ),
     ("unity-tests.yml", "MCPForUnity/Editor/Tools/ManageBuild.cs"),
     ("unity-tests.yml", "tools/release_execution.py"),
     ("compile-check.yml", "MCPForUnity/Editor/Tools/ManageBuild.cs"),
