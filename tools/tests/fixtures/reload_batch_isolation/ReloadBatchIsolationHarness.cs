@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Services.Transport.Transports;
 
 // All Unity/process-wide boundaries are in-memory stand-ins. Both handler types
 // (including their full static constructors) are the unchanged production sources.
@@ -181,8 +183,15 @@ namespace MCPForUnity.Editor.Services.Transport
 
     public sealed class TransportManager
     {
+        private readonly HashSet<TransportMode> connectionIntents = new HashSet<TransportMode>();
         public static int Calls;
-        public bool StdioRunning;
+        public bool StdioRunning { get; private set; }
+
+        public bool HasConnectionIntent(TransportMode mode)
+        {
+            Calls++;
+            return connectionIntents.Contains(mode);
+        }
 
         public bool IsRunning(TransportMode mode)
         {
@@ -193,19 +202,23 @@ namespace MCPForUnity.Editor.Services.Transport
         public void ForceStop(TransportMode mode)
         {
             Calls++;
+            connectionIntents.Remove(mode);
+            if (mode == TransportMode.Stdio)
+                StdioRunning = false;
         }
+
+        public Task StopStdioForReloadAsync() => StopAsync(TransportMode.Stdio);
 
         public Task StopAsync(TransportMode mode)
         {
-            Calls++;
-            if (mode == TransportMode.Stdio)
-                StdioRunning = false;
+            ForceStop(mode);
             return Task.CompletedTask;
         }
 
         public Task<bool> StartAsync(TransportMode mode)
         {
             Calls++;
+            connectionIntents.Add(mode);
             if (mode == TransportMode.Stdio)
                 StdioRunning = true;
             return Task.FromResult(true);
@@ -223,9 +236,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 {
     public static class StdioBridgeHost
     {
-        public static bool IsRunning => false;
+        public static bool IsRunning { get; set; }
+        public static bool IsExplicitlyStopped { get; private set; }
 
-        public static void Stop() { }
+        public static void Stop()
+        {
+            IsExplicitlyStopped = true;
+            IsRunning = false;
+        }
+
+        public static void StopForReload() => IsRunning = false;
 
         public static void WriteHeartbeat(bool running, string state) { }
     }
@@ -236,6 +256,7 @@ namespace MCPForUnity.Editor.Services
     public static class MCPServiceLocator
     {
         public static readonly Transport.TransportManager TransportManager = new Transport.TransportManager();
+        public static Transport.TransportManager ExistingTransportManager => TransportManager;
     }
 }
 
@@ -300,7 +321,8 @@ public static class ReloadBatchIsolationHarness
             UnityEditor.SessionState.Values[Migrated] = true;
             UnityEditor.SessionState.Values[StdioMigrated] = true;
         }
-        bool pendingStdio = scenario == "interactive-stdio-pending" || scenario == "interactive-stdio-switch";
+        bool stopped = scenario == "interactive-stdio-stopped";
+        bool pendingStdio = scenario == "interactive-stdio-pending" || scenario == "interactive-stdio-switch" || stopped;
         if (pendingStdio)
             UnityEditor.SessionState.Values[StdioResume] = true;
 
@@ -352,13 +374,19 @@ public static class ReloadBatchIsolationHarness
         {
             var transport = MCPForUnity.Editor.Services.MCPServiceLocator.TransportManager;
             bool switched = scenario == "interactive-stdio-switch";
-            bool stopped = scenario == "interactive-stdio-stopped";
             bool active = scenario == "interactive-stdio-active";
             MCPForUnity.Editor.Helpers.EditorConfigurationCache.Instance.UseHttpTransport = switched;
-            transport.StdioRunning = active;
+            if (active)
+            {
+                transport.StartAsync(TransportMode.Stdio).GetAwaiter().GetResult();
+                StdioBridgeHost.IsRunning = true;
+            }
+            if (stopped)
+                StdioBridgeHost.Stop();
             UnityEditor.AssemblyReloadEvents.RaiseBefore();
             Check(UnityEditor.SessionState.Values.ContainsKey(StdioResume) == (!switched && !stopped), "first reload preserves only requested stdio resume");
             Check(!transport.StdioRunning, "old stdio bridge stops before reload");
+            Check(!StdioBridgeHost.IsRunning, "old directly started stdio host stops before reload");
             UnityEditor.AssemblyReloadEvents.RaiseBefore();
             Check(
                 UnityEditor.SessionState.Values.ContainsKey(StdioResume) == (!switched && !stopped),

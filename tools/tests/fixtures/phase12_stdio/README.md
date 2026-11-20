@@ -1,6 +1,12 @@
 # Focused Unity stdio regression fixture
 
-Run from the repository root in PowerShell:
+For current stdio behavior, run `StdioFrameBudgetTests` and `StdioQueueAllocationTests`
+in Unity EditMode. The historical standalone reader and queue probes predate the
+current authenticated session, frame-budget and command-admission contracts.
+`RunStdioRegression.ps1` and `RunIdleQueueBenchmark.ps1` fail to compile against
+current production sources before either harness runs.
+
+The historical PowerShell command ran from the repository root.
 
 ```powershell
 & tools/tests/fixtures/phase12_stdio/RunStdioRegression.ps1 `
@@ -11,7 +17,7 @@ Run from the repository root in PowerShell:
 
 Add `-HostSourcePath <snapshot.cs>` to run the identical fixture against an earlier host source. The retained Phase 12 baseline is `reports/CS-20261006-mcp-usability/phase12/unity-stdio/before-StdioBridgeHost.cs`.
 
-The runner compiles the complete production `StdioBridgeHost.cs`, `Command.cs` and `TransportCommandResponse.cs` with Roslyn against Unity Mono reference assemblies. Only the timeout field initialization is substituted with 80 ms in an owned temporary compile copy. Both tested methods are unchanged. The runner prints and saves source SHA256 hashes and confirms inputs stayed unchanged during the run.
+The historical runner compiled the complete `StdioBridgeHost.cs`, `Command.cs` and `TransportCommandResponse.cs` with Roslyn against Unity Mono reference assemblies. It substituted the timeout field initialization with 80 ms in an owned temporary compile copy and preserved both tested methods. The runner prints and saves source SHA256 hashes and confirms inputs stay unchanged during the run.
 
 The token-observing NetworkStream subclass requires a real connected socket and therefore owns an ephemeral loopback pair. Its overrides hold header or payload writes deterministically and register the production token. Additional tests exercise the actual installed Mono NetworkStream with a pending send-buffer fill, silent/partial-payload reads, fragmented reads and successful stream reuse. A 2000 ms operation watchdog fails a timeout that never fires, then closes the exact owned stream and awaits both its frame operation and any prefill task in finally. Socket calls run behind Task.Run because some can block before returning their Task. A 45000 ms process watchdog operates against only the exact child object launched by the runner. These are correctness bounds, not latency benchmarks.
 

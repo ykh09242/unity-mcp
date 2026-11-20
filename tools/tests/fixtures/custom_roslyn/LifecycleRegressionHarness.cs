@@ -290,7 +290,8 @@ internal static class LifecycleRegressionHarness
             var target = new GameObject("AttachmentTarget");
             Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "First attachment failed");
             var first = target.Components.Single();
-            Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Second attachment failed");
+            Require(Execute(compiler, ReplacementComponentSource, "GeneratedComponent", target, true), "Second attachment failed");
+            Require(compiler.EntryType != first.GetType(), "Recompile reused the original Type");
             Require(
                 first.Destroyed && target.Components.Count(c => !c.Destroyed) == 1,
                 "Fresh assembly Type retained old component; live count=" + target.Components.Count(c => !c.Destroyed)
@@ -318,7 +319,8 @@ internal static class LifecycleRegressionHarness
             compiler.entryTypeName = "GeneratedComponent";
             Require(compiler.CompileInMemory(out string diagnostics), "External Type compilation failed");
             var external = target.AddComponent(compiler.EntryType);
-            Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Tracked attachment failed");
+            Require(Execute(compiler, ReplacementComponentSource, "GeneratedComponent", target, true), "Tracked attachment failed");
+            Require(compiler.EntryType != external.GetType(), "Recompile reused the untracked Type");
             Require(!external.Destroyed && target.Components.Count(c => !c.Destroyed) == 2, "Replacement removed an untracked same-name component");
         });
         Check("component replacement preserves other targets and classes", () =>
@@ -351,7 +353,8 @@ internal static class LifecycleRegressionHarness
                 string typeB = switchTarget ? "GeneratedComponent" : "OtherComponent";
                 Require(Execute(compiler, sourceB, typeB, targetB, true), "B attachment failed");
                 var componentB = targetB.Components.Last();
-                Require(Execute(compiler, ComponentSource, "GeneratedComponent", targetA, true), "Final A attachment failed");
+                Require(Execute(compiler, ReplacementComponentSource, "GeneratedComponent", targetA, true), "Final A attachment failed");
+                Require(compiler.EntryType != firstA.GetType(), "Final A recompile reused the original Type");
                 Require(
                     firstA.Destroyed && !componentB.Destroyed && targetA.Components.Count(c => !c.Destroyed && c.GetType().Name == "GeneratedComponent") == 1,
                     "Returning to A leaked its prior component or destroyed B"
@@ -365,11 +368,12 @@ internal static class LifecycleRegressionHarness
                 Require(Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Seed attachment failed");
                 var previous = target.Components.Single();
                 target.FailAdd = throwOnAdd ? "throw" : "null";
-                Require(!Execute(compiler, ComponentSource, "GeneratedComponent", target, true), "Failed AddComponent reported success");
+                Require(!Execute(compiler, ReplacementComponentSource, "GeneratedComponent", target, true), "Failed AddComponent reported success");
+                Require(compiler.EntryType != null && compiler.EntryType != previous.GetType(), "Replacement did not compile a distinct Type");
                 Require(!previous.Destroyed, "Failed addition removed prior valid component");
                 target.FailAdd = null;
                 Require(
-                    Execute(compiler, ComponentSource, "GeneratedComponent", target, true)
+                    Execute(compiler, ReplacementComponentSource, "GeneratedComponent", target, true)
                         && previous.Destroyed
                         && target.Components.Count(c => !c.Destroyed) == 1,
                     "Failed addition forgot prior valid component ownership"
@@ -557,6 +561,7 @@ internal static class LifecycleRegressionHarness
 
     private const string StaticSource = "public class StaticProgram { public static void Run() { RuntimeProbe.Calls++; } }";
     private const string ComponentSource = "public class GeneratedComponent : UnityEngine.MonoBehaviour {}";
+    private const string ReplacementComponentSource = "public class GeneratedComponent : UnityEngine.MonoBehaviour { public int Revision() => 2; }";
     private const string CoroutineSource =
         "public class CoroutineProgram { public static System.Collections.IEnumerator Run(UnityEngine.GameObject target) { RuntimeProbe.Calls++; RuntimeProbe.Target = target; return new object[0].GetEnumerator(); } }";
 

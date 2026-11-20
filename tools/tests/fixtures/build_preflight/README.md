@@ -1,6 +1,12 @@
 # Build preflight regression
 
-This Windows managed harness compiles the production build command, runner, mapping,
+For the current Editor implementation, run `BuildPlanIntegrityTests`,
+`BuildPreparationIntegrityTests` and `BuildQueueCheckpointTests` in Unity EditMode.
+The historical standalone source list predates durable build queue checkpoints and
+operation activity tracking. A build against current sources fails before the
+standalone harness starts.
+
+This Windows managed harness originally compiled the build command, runner, mapping,
 job and parameter sources against observable Unity API substitutes. It checks that
 invalid option names, malformed option arrays and invalid subtargets are rejected
 before backend changes, job registration, callbacks, platform changes or output
@@ -10,8 +16,8 @@ omitted/null subtarget preservation, and recovery when the switch returns false
 or throws. The managed switch seam records the selected subtarget at invocation;
 this does not establish native Unity reimport or compilation behavior.
 
-Run from the repository root with existing Unity Mono reference assemblies and a
-.NET SDK. The script downloads nothing and does not start the Unity Editor.
+Historical invocations used Unity Mono reference assemblies and a .NET SDK from
+the repository root. The script downloads nothing and does not start the Unity Editor.
 Override `-UnityData`, `-SdkPath` and `-DotnetPath` for local installations.
 
 ```powershell

@@ -1,12 +1,20 @@
 # Phase12 WebSocket settlement regression
 
+For current transport and dispatch behavior, run `WebSocketTransportClientTests`
+and `TransportCommandDispatcherTests` in Unity EditMode. The historical standalone
+runner's source list predates the current command ownership, tool settings and
+Unity Test Framework dependencies. A build against current sources fails before
+the standalone harness starts.
+
+The historical command ran in PowerShell.
+
 ```powershell
 & tools/tests/fixtures/phase12_websocket/RunPhase12WebSocket.ps1 `
   -Evidence reports/CS-20261006-mcp-usability/phase12/websocket/check `
   -Case all
 ```
 
-The runner compiles current production WebSocket transport, dispatcher, registry, command
+The historical runner compiles the WebSocket transport, dispatcher, registry, command
 ownership, response projection and large-result writer with the installed Unity Mono reference
 assemblies and runs on Unity Mono. It starts no Unity Editor, touches no saved preferences or
 credentials, and opens only ephemeral loopback WebSocket peers. The existing Unity boundary
