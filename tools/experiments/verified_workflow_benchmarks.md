@@ -80,6 +80,11 @@ outside that sample. The mismatch control stops at the doctor diagnosis.
 
 ## Paired native comparisons
 
+For a blinded evaluation on two projects excluded from tuning, use the
+[held-out native study](heldout_unity_workflows.md). Its preparation, admission
+and scoring commands bind each project, trace and teammate replay to a frozen
+allocation. The receipt format below remains available for existing comparisons.
+
 Use matching Unity 6 Editor versions and independently prepared copies of each
 fixture. The official arm uses the `unity mcp` stdio server connected to a
 project with the Pipeline package. Use an exact `--project-path` and a fresh
