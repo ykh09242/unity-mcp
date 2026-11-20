@@ -8,7 +8,7 @@ import inspect
 import re
 from collections.abc import Callable, Collection
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import replace
 from typing import Final, Literal, NotRequired, TypedDict, get_args, get_origin
 
 from mcp.types import ToolAnnotations
@@ -25,43 +25,19 @@ from pydantic import (
 
 from services.reference_graph.action_options import GRAPH_ACTION_OPTIONS
 from services.registry.action_contracts import ACTION_RULES
-from services.registry.capability_catalog import CAPABILITIES, CapabilityEffects, READ_ONLY_EFFECTS
-from services.registry.observation_predicates import EvidencePredicates
+from services.registry.action_guidance_types import (
+    ActionGuidance,
+    ActionIntent,
+    Observation,
+    ToolGuidance,
+)
+from services.registry.action_guidance_types import (
+    ObservationSource as ObservationSource,
+    ObservationValue as ObservationValue,
+)
+from services.registry.capability_catalog import CAPABILITIES, READ_ONLY_EFFECTS
+from services.registry.editor_action_guidance import EDITOR_ACTIONS
 from services.registry.tool_registry import TOOL_GROUPS, ToolMaturity
-
-
-ActionIntent = Literal["observe", "interact", "edit"]
-ObservationSource = Literal["editor_live", "asset_file", "imported_asset", "compile_job"]
-ObservationValue = Literal[
-    "render_size.width",
-    "render_size.height",
-    "current_size",
-    "view_instance_id",
-    "presets",
-    "rendered_image",
-    "pointer_hit_order",
-    "active_scene.name",
-    "active_scene.path",
-    "compilation.is_compiling",
-    "compile_job.outcome",
-    "nodeCount",
-    "edgeCount",
-    "nodes",
-    "edges",
-    "properties",
-    "keywords",
-    "unsaved_graph_structure",
-    "property_values",
-    "shader_source",
-    "contents",
-    "encodedContents",
-    "nextOffset",
-    "shader_graph_structure",
-    "unsaved_source",
-    "compilation",
-    "passes",
-    "subshader_count",
-]
 
 
 class CatalogEntry(TypedDict):
@@ -77,23 +53,6 @@ class CatalogEntry(TypedDict):
 class SkillLink(TypedDict):
     name: str
     url: str
-
-
-class Observation(TypedDict):
-    """Data origin and selected result fields that a successful read can supply."""
-
-    source: ObservationSource
-    values: list[ObservationValue]
-    unavailable: list[ObservationValue]
-    # Stable value IDs normally use the same wire path. Explicit mappings describe
-    # equivalent facts with different response shapes and conditional evidence.
-    wire_paths: NotRequired[dict[str, str]]
-    conditions: NotRequired[str]
-    predicates: NotRequired[EvidencePredicates]
-    required_parameters: NotRequired[list[str]]
-    related_values: NotRequired[dict[str, list[ObservationValue]]]
-    fixed_arguments: NotRequired[dict[str, bool]]
-    mutually_exclusive_values: NotRequired[list[list[ObservationValue]]]
 
 
 OBSERVATION_META: Final = "io.github.ykh09242.unity-mcp/observation"
@@ -283,23 +242,6 @@ class CatalogTool(TypedDict):
     official_skills: list[SkillLink]
 
 
-@dataclass(frozen=True, slots=True)
-class ActionGuidance:
-    purpose: str
-    required: tuple[str, ...] = ()
-    effects: CapabilityEffects | None = None
-    evidence_limit: str = ""
-    intent: ActionIntent | None = None
-    observation: Observation | None = None
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class ToolGuidance:
-    skills: tuple[str, ...] = ()
-    requirements: tuple[str, ...] = ()
-    actions: dict[str, ActionGuidance] = field(default_factory=dict)
-
-
 # Paths and frontmatter verified in the official tree at this revision. Links are
 # guidance only: a skill's prerequisites do not establish a tool's runtime support.
 OFFICIAL_SKILLS_REVISION: Final = "089bedebab64e9e75943b19a364c7aec2162a7e7"
@@ -356,37 +298,6 @@ _PREFAB_CONTENTS: Final = ToolGuidance(
         ),
     }
 )
-_ASSET_REFERENCES: Final = ToolGuidance(
-    actions={
-        "get_dependencies": ActionGuidance(
-            "Find assets referenced by the selected asset.", ("path",)
-        ),
-        "get_reverse_references": ActionGuidance(
-            "Find project assets that refer to the selected asset, including usages of a prefab.",
-            ("path",),
-        ),
-        "preview_move": ActionGuidance(
-            "Observe bounded reference impact of moving path to destination without moving it. Return referenceRevision for an optional move with reference_revision; inspect scan coverage before relying on the result.",
-            ("path", "destination"),
-        ),
-        "preview_delete": ActionGuidance(
-            "Observe bounded references and deletion impact for path without deleting it. Return referenceRevision for an optional delete with reference_revision; inspect scan coverage before relying on the result.",
-            ("path",),
-        ),
-    }
-)
-_ASSET_MUTATIONS: Final = {
-    "move": ActionGuidance(
-        "Move path to destination through the AssetDatabase. Supply reference_revision from preview_move to recheck the same scan options, require complete scan coverage and reject reference drift before mutation; omitting it performs an unguarded move.",
-        ("path", "destination"),
-        intent="edit",
-    ),
-    "delete": ActionGuidance(
-        "Delete the asset at path through the AssetDatabase. Supply reference_revision from preview_delete to recheck the same scan options, require complete scan coverage and reject reference drift before mutation; omitting it performs an unguarded delete.",
-        ("path",),
-        intent="edit",
-    ),
-}
 TOOL_GUIDANCE: Final = {
     **{item.name: _PHYSICS for item in CAPABILITIES if item.group == "physics"},
     **{item.name: _UITK for item in CAPABILITIES if item.group == "ui"},
@@ -736,9 +647,6 @@ TOOL_GUIDANCE: Final = {
             ),
         },
     ),
-    "asset_reference_diagnostics": _ASSET_REFERENCES,
-    "asset_edit": ToolGuidance(actions=_ASSET_MUTATIONS),
-    "manage_asset": ToolGuidance(actions={**_ASSET_REFERENCES.actions, **_ASSET_MUTATIONS}),
     "prefab_contents": _PREFAB_CONTENTS,
     "manage_prefabs": _PREFAB_CONTENTS,
     "manage_build": ToolGuidance(
@@ -887,7 +795,9 @@ TOOL_GUIDANCE: Final = {
     ),
     "manage_packages": ToolGuidance(skills=("unity-package-management",)),
     "manage_probuilder": ToolGuidance(requirements=("com.unity.probuilder",)),
-    "manage_cinemachine": ToolGuidance(requirements=("com.unity.cinemachine",)),
+    "manage_cinemachine": ToolGuidance(
+        requirements=("ping checks availability; other actions require com.unity.cinemachine",)
+    ),
     "manage_project_auditor": ToolGuidance(
         skills=("project-auditor-fixes",),
         requirements=(
@@ -923,6 +833,20 @@ TOOL_GUIDANCE: Final = {
         ),
     ),
 }
+# Focused adapters share the source tool's dispatcher and server preflight.
+for source, actions in EDITOR_ACTIONS.items():
+    TOOL_GUIDANCE[source] = replace(TOOL_GUIDANCE.get(source, ToolGuidance()), actions=actions)
+for capability in CAPABILITIES:
+    if capability.source in EDITOR_ACTIONS:
+        TOOL_GUIDANCE[capability.name] = replace(
+            TOOL_GUIDANCE.get(capability.name, ToolGuidance()),
+            actions={
+                name: EDITOR_ACTIONS[capability.source][name]
+                for name in capability.actions
+                if name in EDITOR_ACTIONS[capability.source]
+            },
+        )
+
 # The focused adapter forwards get_active to the same implementation and preflight.
 TOOL_GUIDANCE["scene_inspect"] = ToolGuidance(
     actions={"get_active": TOOL_GUIDANCE["manage_scene"].actions["get_active"]}

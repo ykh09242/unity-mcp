@@ -189,6 +189,81 @@ def test_read_actions_and_callback_risks_are_distinct(entries):
     assert action_card(ugui, "diagnose_raycast")["effects"]["readOnlyHint"] is False
 
 
+def test_asset_discovery_distinguishes_import_load_and_reference_index(entries):
+    from services.registry.action_catalog import action_card, tool_capability
+
+    by_name = {entry["name"]: entry for entry in entries}
+    for name in ("asset_inspect", "manage_asset"):
+        search = action_card(by_name[name], "search")
+        assert search["intent"] == "observe"
+        assert search["effects"]["readOnlyHint"] is False
+        assert "metadata_only" in search["purpose"]
+        assert "import" in search["evidence_limit"]
+    labels = action_card(by_name["asset_labels"], "get_labels")
+    assert labels["intent"] == "observe" and not labels["effects"]["readOnlyHint"]
+    assert "load" in labels["evidence_limit"]
+    for action in ("preview_move", "get_bundle_assets"):
+        assert action_card(by_name["manage_asset"], action)["effects"]["readOnlyHint"]
+    assert not tool_capability(by_name["manage_asset"])["effects"]["readOnlyHint"]
+    write = action_card(by_name["manage_asset"], "set_labels")
+    assert "revision" in write["purpose"] and write["intent"] == "edit"
+    assert write["required_parameters"] == ["labels"]
+
+
+def test_camera_discovery_separates_package_presence_existing_brain_and_attachment(entries):
+    from services.registry.action_catalog import CatalogRequest, action_card, browse_catalog
+
+    by_name = {entry["name"]: entry for entry in entries}
+    for name in ("manage_camera", "manage_cinemachine"):
+        reads = browse_catalog(CatalogRequest(tool=name, intent="observe"), entries)["actions"]
+        assert {"ping", "get_brain_status"} <= {row["action"] for row in reads}
+        assert "ensure_brain" not in {row["action"] for row in reads}
+        assert action_card(by_name[name], "ping")["effects"]["readOnlyHint"]
+        status = action_card(by_name[name], "get_brain_status")
+        assert "absent" in status["purpose"] and "blend" in status["purpose"]
+        ensure = action_card(by_name[name], "ensure_brain")
+        assert "properties.camera" in ensure["purpose"] and not ensure["effects"]["readOnlyHint"]
+    capture = action_card(by_name["capture_camera"], "screenshot_multiview")
+    assert not capture["effects"]["readOnlyHint"] and "PNG" in capture["purpose"]
+
+
+def test_ui_discovery_separates_file_panel_and_live_edits(entries):
+    from services.registry.action_catalog import action_card
+
+    by_name = {entry["name"]: entry for entry in entries}
+    for name in ("manage_ui", "ui_source"):
+        read = action_card(by_name[name], "read")
+        assert read["effects"]["readOnlyHint"] and "saved" in read["purpose"]
+        patch = action_card(by_name[name], "patch_source")
+        assert "preview" in patch["purpose"] and "expected_source_hash" in patch["purpose"]
+        assert not patch["effects"]["readOnlyHint"]
+        assert "expected_source_hash" not in patch["required_parameters"]
+    tree = action_card(by_name["ui_inspect"], "get_visual_tree")
+    assert tree["intent"] == "observe" and not tree["effects"]["readOnlyHint"]
+    assert "callback" in tree["evidence_limit"] and "not_initialized" in tree["evidence_limit"]
+    edit = action_card(by_name["ui_element"], "modify_visual_element")
+    assert "live" in edit["purpose"] and not edit["effects"]["readOnlyHint"]
+    attach = action_card(by_name["ui_document"], "attach_ui_document")
+    assert "PanelSettings" in attach["purpose"] and attach["intent"] == "edit"
+
+
+def test_focused_editor_actions_share_the_reviewed_native_contract(entries):
+    from services.registry.action_catalog import action_card, declared_actions
+    from services.registry.capability_catalog import CAPABILITIES
+
+    by_name = {entry["name"]: entry for entry in entries}
+    for capability in CAPABILITIES:
+        if capability.source not in {"manage_asset", "manage_camera", "manage_ui"}:
+            continue
+        for action in declared_actions(by_name[capability.name]):
+            focused = action_card(by_name[capability.name], action)
+            legacy = action_card(by_name[capability.source], action)
+            assert focused["purpose_source"] == "declared"
+            assert focused["effects_scope"] == "action"
+            for key in ("purpose", "intent", "required_parameters", "effects", "evidence_limit"):
+                assert focused.get(key) == legacy.get(key), (capability.name, action, key)
+
+
 def test_build_plan_observation_is_distinct_from_guarded_and_unguarded_execution(entries):
     from services.registry.action_catalog import action_card
 
