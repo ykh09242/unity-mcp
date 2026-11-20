@@ -1,0 +1,43 @@
+name: Prospective PR test selection
+run-name: Cohort ${{ github.event_name }} ${{ github.event.before }} ${{ github.sha }}
+
+on:
+  workflow_run:
+    workflows: [Enroll opening beta PR, Prospective PR controls]
+    types: [completed]
+  push:
+    branches: [beta]
+    paths:
+      - .github/workflows/prospective-*.yml
+      - tools/prospective_*.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cohort:
+    if: github.event_name == 'workflow_run' || github.ref == 'refs/heads/beta'
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+      pull-requests: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: List first three beta PRs including absent reports
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/prospective_pr.py cohort "$RUNNER_TEMP/cohort.json"
+          jq . "$RUNNER_TEMP/cohort.json" | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: prospective-cohort-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cohort.json
+          if-no-files-found: error
+          retention-days: 90

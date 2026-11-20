@@ -24,8 +24,21 @@ def workflow(name: str) -> dict:
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)
 def test_workflow_defaults_are_explicit_and_read_only(path: Path) -> None:
     config = workflow(path.name)
-    expected = {} if path.name == "github-repo-stats.yml" else {"contents": "read"}
+    no_default_token = {"github-repo-stats.yml", "prospective-enrollment.yml"}
+    expected = {} if path.name in no_default_token else {"contents": "read"}
     assert config["permissions"] == expected
+
+
+def test_opening_receipt_is_metadata_only():
+    config = workflow("prospective-enrollment.yml")
+    triggers = config.get("on", config.get(True))
+    assert triggers == {"pull_request_target": {"branches": ["beta"], "types": ["opened"]}}
+    assert set(config["jobs"]) == {"opening"}
+    job = config["jobs"]["opening"]
+    assert not job.get("permissions") and not job.get("env") and "uses" not in job
+    assert job["steps"] == [
+        {"run": "echo 'Opening event retained in the workflow run title and ordinal.'"}
+    ]
 
 
 def test_write_permissions_are_limited_to_jobs_that_need_them() -> None:

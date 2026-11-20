@@ -154,7 +154,9 @@ class Archives:
         return inputs
 
 
-def _trial(archives, row, cutoff, commit, budget):
+def prepare_plans(archives, row, cutoff, commit, budget):
+    """Compute both plans from the information available at the cutoff."""
+
     def capture(field, **options):
         return archives.load(row[field], cutoff, commit, **options)
 
@@ -172,7 +174,12 @@ def _trial(archives, row, cutoff, commit, budget):
         name: plan_budget(BudgetInputs(parse_ranking(ranking), tuple(history), budget))
         for name, ranking in (("automatic", automatic), ("manual", capture("manual_ranking")))
     }
-    full = capture("full", result=True, xml=True)
+    return inputs, automatic, plans
+
+
+def _trial(archives, row, cutoff, commit, budget):
+    inputs, automatic, plans = prepare_plans(archives, row, cutoff, commit, budget)
+    full = archives.load(row["full"], cutoff, commit, result=True, xml=True)
     for path, expected in inputs.items():
         observed = full.fixture.inputs.get(path)
         if observed is not None and observed[1] != expected:
@@ -184,7 +191,7 @@ def _trial(archives, row, cutoff, commit, budget):
     for name, plan in plans.items():
         selected = None
         if row.get(name) is not None:
-            selected = capture(name, result=True, xml=True)
+            selected = archives.load(row[name], cutoff, commit, result=True, xml=True)
             if selected.fixture.execution_id in ids:
                 raise AnalysisError("Automatic, manual and full controls must be independent")
             ids.add(selected.fixture.execution_id)

@@ -1,0 +1,16 @@
+name: Enroll opening beta PR
+run-name: Opening ${{ github.event.pull_request.base.ref }} ${{ github.event.pull_request.number }} ${{ github.event.pull_request.created_at }} ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}
+
+on:
+  pull_request_target:
+    branches: [beta]
+    types: [opened]
+
+# The opening receipt is GitHub run metadata. No checkout, secrets or PR code.
+permissions: {}
+
+jobs:
+  opening:
+    runs-on: ubuntu-26.04
+    steps:
+      - run: echo 'Opening event retained in the workflow run title and ordinal.'
