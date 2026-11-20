@@ -1,6 +1,7 @@
 """Check the installed server's adapter gates and a real MCP schema exchange."""
 
 import asyncio
+from dataclasses import is_dataclass
 from importlib.metadata import distributions
 from importlib.util import find_spec
 import json
@@ -10,6 +11,7 @@ import sys
 from tempfile import TemporaryDirectory
 
 from fastmcp import Client, FastMCP
+from fastmcp.utilities.json_schema_type import json_schema_to_type_adapter
 
 from core.config import config
 from core.sdk_compatibility import runtime_sdk_report
@@ -86,6 +88,7 @@ async def probe_tool_result():
     schema = direct_object_output_schema(
         {"x-fastmcp-wrap-result": True, "properties": {"result": result_object}}
     )
+    serializer = json_schema_to_type_adapter(schema)
     server = FastMCP("inventory-schema-fixture")
 
     @server.tool(output_schema=schema)
@@ -108,7 +111,11 @@ async def probe_tool_result():
                     }
                 }
                 assert not result.is_error and result.structured_content == wire
-                data = result.data.model_dump(mode="json") if result.data is not None else None
+                data = None
+                if result.data is not None:
+                    # FastMCP hydrates the root as a dataclass with a typed nested model.
+                    assert is_dataclass(result.data), type(result.data)
+                    data = serializer.dump_python(result.data, mode="json", warnings="error")
                 cases[name] = {"wire": wire, "hydrated": data}
             outcomes[mode] = cases
     return outcomes
