@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <NoWarn>$(NoWarn);CS0649</NoWarn>
+    <Transport>$(PackageRoot)/Editor/Services/Transport</Transport>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(MSBuildSDKsPath)/../Newtonsoft.Json.dll</HintPath>
+    </Reference>
+    <Compile Include="$(PackageRoot)/Editor/Constants/ProductInfo.cs" />
+    <Compile Include="$(PackageRoot)/Editor/Models/Command.cs" />
+    <Compile Include="$(PackageRoot)/Editor/Services/ToolOperationPolicy.generated.cs" />
+    <Compile Include="$(Transport)/BoundedResponseJson.cs" />
+    <Compile Include="$(Transport)/CommandResumeJournal.cs" />
+    <Compile Include="$(Transport)/LargeResultWriter.cs" />
+    <Compile Include="$(Transport)/NativeCommandArbitrator.cs" />
+    <Compile Include="$(Transport)/PlainObjectJsonWriter.cs" />
+    <Compile Include="$(Transport)/TransportCommandResponse.cs" />
+    <Compile Include="$(Transport)/TransportJson.cs" />
+  </ItemGroup>
+</Project>

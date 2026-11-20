@@ -3,7 +3,13 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOWS = ("python-tests.yml", "compile-check.yml", "unity-tests.yml", "unity-player-tests.yml")
+WORKFLOWS = (
+    "python-tests.yml",
+    "compile-check.yml",
+    "unity-tests.yml",
+    "unity-player-tests.yml",
+    "transport-wire-compatibility.yml",
+)
 
 
 @pytest.mark.parametrize("name", WORKFLOWS)
@@ -36,6 +42,49 @@ def test_candidate_is_attested_after_each_checkout(name):
                 assert "git rev-parse HEAD" in evidence["run"]
                 assert "GITHUB_STEP_SUMMARY" in evidence["run"]
                 assert 'test "$actual" = "$CANDIDATE_REF"' in evidence["run"]
+
+
+def test_wire_comparison_uses_full_history_and_retains_failed_evidence() -> None:
+    name = "transport-wire-compatibility.yml"
+    workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text(encoding="utf-8"))
+    triggers = workflow.get("on", workflow.get(True))
+    assert set(triggers["pull_request"]["branches"]) == {"main", "beta"}
+    assert triggers["push"]["branches"] == ["beta"]
+    assert triggers["push"]["paths"] == triggers["pull_request"]["paths"]
+    assert {
+        "MCPForUnity/Editor/Services/Transport/**",
+        "MCPForUnity/package.json",
+        "Server/src/**",
+        "Server/uv.lock",
+        "tools/check_transport_wire.py",
+        "tools/tests/fixtures/transport_wire/**",
+        f".github/workflows/{name}",
+    } <= set(triggers["push"]["paths"])
+    assert {"workflow_dispatch", "workflow_call"} <= set(triggers)
+    assert workflow["permissions"] == {"contents": "read"}
+    steps = workflow["jobs"]["wire"]["steps"]
+    checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"]["fetch-depth"] == 0
+    dotnet = next(
+        step for step in steps if step.get("uses", "").startswith("actions/setup-dotnet@")
+    )
+    assert dotnet["with"]["dotnet-version"] == "11.0.100"
+    comparison = next(
+        step for step in steps if "tools/check_transport_wire.py" in step.get("run", "")
+    )
+    assert comparison["run"] == (
+        "uv run --project Server --locked python tools/check_transport_wire.py "
+        '--output "$RUNNER_TEMP/transport-wire"'
+    )
+    assert not comparison.get("continue-on-error")
+    archive = next(
+        step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert archive["if"] == "always()"
+    assert archive["with"]["path"].splitlines() == [
+        "${{ runner.temp }}/transport-wire/comparison.json",
+        "${{ runner.temp }}/transport-wire/reproducer.json",
+    ]
 
 
 @pytest.mark.parametrize(
