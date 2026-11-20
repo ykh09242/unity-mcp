@@ -1,5 +1,5 @@
 DATA/Managed/UnityEditor.Graphs.dll
-DATA/Managed/System.CodeDom.dll
+DATA/Managed/UnityEngine/System.CodeDom.dll
 DATA/Managed/UnityEngine/Unity.Scripting.dll
 DATA/Managed/UnityEngine/UnityEngine.EntitiesModule.dll
 DATA/Managed/UnityEngine/UnityEditor.CoreModule.dll

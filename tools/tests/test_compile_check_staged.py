@@ -60,6 +60,7 @@ def test_unity7_compiles_bundled_ui_before_all_consumers_without_template_cache(
         assert f'/{platform}/UnityEngine.UI.dll"' in editor
         assert "Unity.Scripting.dll" in editor
         assert "UnityEngine.EntitiesModule.dll" in editor
+        assert '/Managed/UnityEngine/System.CodeDom.dll"' in editor
     assert not (harness.data / "Resources/PackageManager/ProjectTemplates/libcache").exists()
 
 
