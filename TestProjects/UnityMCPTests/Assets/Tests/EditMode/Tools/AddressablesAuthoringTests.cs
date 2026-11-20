@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Editor.Tools.Addressables;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -409,6 +410,91 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(after, out string nextGuid, out long nextId));
             Assert.AreEqual(guid, nextGuid);
             Assert.AreEqual(id, nextId);
+        }
+
+        [Test]
+        public void LegacyProviderReadsSettingsAndRefusesUnavailableLayout()
+        {
+            if (settingsType.Assembly.GetType("UnityEditor.AddressableAssets.Build.Layout.BuildLayout") != null)
+                Assert.Ignore("This profile exercises the installed provider without a native JSON BuildLayout.");
+            var readOnlyGroup = Invoke(settings, "CreateGroup", "OwnedReadOnly", false, true, false, null, Array.Empty<Type>());
+            string groupGuid = (string)Get(readOnlyGroup, "m_GUID");
+            Assert.IsTrue(Read("groups")["items"].Single(g => g.Value<string>("guid") == groupGuid).Value<bool>("read_only"));
+            CheckRefusalPreservesNativeSettings(before =>
+            {
+                JObject response = JObject.FromObject(
+                    ManageAddressables.HandleCommand(
+                        new JObject { ["action"] = "analyze_layout", ["layout_path"] = "Library/MCPForUnity/Addressables/layout.json" }
+                    )
+                );
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual("addressables_api_unsupported", response.Value<string>("code"), response.ToString());
+                StringAssert.Contains("analyze_layout", response["data"].Value<string>("message"));
+                var move = Call(
+                    "move_entry",
+                    new JObject
+                    {
+                        ["entry_guid"] = assetGuid,
+                        ["group_guid"] = groupGuid,
+                        ["expected_revision"] = before["revision"],
+                    }
+                );
+                Assert.IsFalse(move.Value<bool>("success"), move.ToString());
+                Assert.AreEqual("addressables_read_only", move.Value<string>("code"), move.ToString());
+            });
+        }
+
+        // Only the mutation receiver is reduced. The snapshot, backing assets and providers remain native.
+        private sealed class EntryWithoutWriter
+        {
+            private readonly object native;
+
+            internal EntryWithoutWriter(object native) => this.native = native;
+
+            public bool ReadOnly => (bool)Get(native, "ReadOnly");
+            public object parentGroup => Get(native, "parentGroup");
+        }
+
+        [Test]
+        public void MissingEntryWriterPreservesNativeSettingsAndUndo()
+        {
+            CheckRefusalPreservesNativeSettings(before =>
+            {
+                var request = new JObject
+                {
+                    ["action"] = "set_address",
+                    ["settings_path"] = settingsPath,
+                    ["expected_revision"] = before["revision"],
+                    ["entry_guid"] = assetGuid,
+                    ["address"] = "owned/changed",
+                };
+                var state = AddressablesState.Capture(request);
+                Assert.AreSame(entry, state.Entries[assetGuid]);
+                state.Entries[assetGuid] = new EntryWithoutWriter(entry);
+                var error = Assert.Throws<AddressablesException>(() => AddressablesEdit.Apply(state, request));
+                Assert.AreEqual("addressables_api_unsupported", error.Code);
+                StringAssert.Contains("set_address", error.Message);
+                StringAssert.Contains("SetAddress", error.Message);
+            });
+        }
+
+        private void CheckRefusalPreservesNativeSettings(Action<JObject> attempt)
+        {
+            var before = Read();
+            var bytes = Directory.GetFiles(root, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes);
+            var dirty = new[] { (UnityEngine.Object)settings, (UnityEngine.Object)first }.ToDictionary(obj => obj, EditorUtility.IsDirty);
+            int undo = Undo.GetCurrentGroup();
+            attempt(before);
+            Assert.AreEqual(undo, Undo.GetCurrentGroup(), "Refusal must precede Undo registration.");
+            Assert.IsTrue(JToken.DeepEquals(before, Read()));
+            Assert.AreSame(entry, Invoke(settings, "FindAssetEntry", assetGuid));
+            SameAsset((UnityEngine.Object)settings, AssetDatabase.LoadMainAssetAtPath(settingsPath));
+            SameAsset((UnityEngine.Object)first, (UnityEngine.Object)Get(entry, "parentGroup"));
+            foreach (var pair in dirty)
+                Assert.AreEqual(pair.Value, EditorUtility.IsDirty(pair.Key));
+            CollectionAssert.AreEquivalent(bytes.Keys, Directory.GetFiles(root, "*", SearchOption.AllDirectories));
+            foreach (var pair in bytes)
+                CollectionAssert.AreEqual(pair.Value, File.ReadAllBytes(pair.Key), pair.Key);
         }
 
         [Test]
