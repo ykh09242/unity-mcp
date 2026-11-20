@@ -41,6 +41,25 @@ def test_unity7_compiles_bundled_ui_before_all_consumers_without_template_cache(
                 target = (harness.data if prefix == "DATA" else harness.extra) / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.touch()
+    extensions = "BCLExtensions/TargetingPacks/netstandard2.1/ref"
+    vendor_references = {
+        "Microsoft.Bcl.AsyncInterfaces.dll",
+        "System.Collections.Immutable.dll",
+        "System.IO.Pipelines.dll",
+        "System.Reflection.Metadata.dll",
+        "System.Runtime.CompilerServices.Unsafe.dll",
+        "System.Text.Encodings.Web.dll",
+        "System.Text.Json.dll",
+    }
+    (harness.data / extensions).mkdir(parents=True)
+    for name in vendor_references:
+        (harness.data / extensions / name).touch()
+    vendor_manifest = profile / "EditorTestRunner.txt"
+    shutil.copyfile(ROOT / vendor_manifest, harness.repo / vendor_manifest)
+    (harness.data / "Managed/StandardApi.dll").touch()
+    (harness.repo / "tools/compile-refs/BCL/Runtime.txt").write_text(
+        "DATA/Managed/StandardApi.dll\n", encoding="utf-8"
+    )
     # When all target defines compile, uGUI must come from sources before any consumer.
     for platform in ("win", "osx"):
         (harness.output / platform).mkdir()
@@ -56,6 +75,24 @@ def test_unity7_compiles_bundled_ui_before_all_consumers_without_template_cache(
             assert ("-define:PACKAGE_UITOOLKIT" in rsp) == (name == "UnityEngine.UI")
             assert '/Managed/UnityEngine/UnityEngine.TypeRegistryModule.dll"' in rsp
         editor = (harness.output / platform / "MCPForUnity.Editor.rsp").read_text(encoding="utf-8")
+        editor_runner = (harness.output / platform / "UnityEditor.TestRunner.rsp").read_text(
+            encoding="utf-8"
+        )
+        engine_runner = (harness.output / platform / "UnityEngine.TestRunner.rsp").read_text(
+            encoding="utf-8"
+        )
+        assert '/Managed/StandardApi.dll"' in editor_runner
+        assert '/Managed/StandardApi.dll"' in editor
+        runner_references = [
+            line.rsplit("/", 1)[-1].rstrip('"')
+            for line in editor_runner.splitlines()
+            if f"/{extensions}/" in line
+        ]
+        assert sorted(runner_references) == sorted(vendor_references)
+        assert "/ref/net10.0/" not in editor_runner
+        assert extensions not in editor and extensions not in engine_runner
+        assert "-define:UNITY_MODULE_IMGUI" in engine_runner
+        assert "-define:UNITY_MODULE_IMGUI" not in editor_runner
         assert f'/{platform}/UnityEditor.UI.dll"' in editor
         assert f'/{platform}/UnityEngine.UI.dll"' in editor
         assert "Unity.Scripting.dll" in editor

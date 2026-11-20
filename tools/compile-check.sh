@@ -379,6 +379,11 @@ compile() {
     *:Unity.ResourceManager|*:Unity.Addressables|*:Unity.ScriptableBuildPipeline|*:MCPForUnity.Addressables.Diagnostics|*:MCPForUnity.CatalogMarkerPlayer) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
     7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:MCPForUnity.PlayScenarios.Integration.Runtime|*:MCPForUnity.ScenarioPlayerFixture|*:MCPForUnityTests.UI16CaretRuntime|*:TestAsmdef|*:Assembly-CSharp|*:LifecycleSample.Runtime|*:IndependentExtension.Runtime) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
   esac
+  local reference_manifests=("$bcl" "$manifest")
+  if [ "$UNITY_VERSION:$name" = "7000.0.0a20:UnityEditor.TestRunner" ]; then
+    # UTF 1.9.0 uses portable PDB and JSON APIs from Unity's .NET Standard BCL extension pack.
+    reference_manifests+=("$REFS_PROFILE/EditorTestRunner.txt")
+  fi
   if [[ "$srcdir" == *.cs && -f "$srcdir" ]]; then
     sources="$srcdir"
   elif [ -d "$srcdir" ] && load_assembly_sources "$srcdir" && [ -n "$assembly_source_list" ]; then
@@ -393,7 +398,7 @@ compile() {
   while IFS= read -r f; do
     [ -f "$f" ] || { echo "::error::assembly source not found: $f" >&2; return 1; }
   done <<< "$sources"
-  for required in "$bcl" "$manifest"; do
+  for required in "${reference_manifests[@]}"; do
     [ -f "$required" ] || { echo "::error::reference manifest not found: $required" >&2; return 1; }
   done
   local ignored_warnings=CS1701,CS1702 # benign netstandard facade version unification
@@ -436,6 +441,10 @@ compile() {
       Unity.Addressables.Editor) echo -define:NONRECURSIVE_DEPENDENCY_DATA ;;
     esac
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
+    if [ "$UNITY_VERSION:$name" = "7000.0.0a20:UnityEngine.TestRunner" ]; then
+      # The a20 Runtime asmdef defines this when the required IMGUI module is installed.
+      echo "-define:UNITY_MODULE_IMGUI"
+    fi
     case "$name" in
       MCPForUnity.*|MCPForUnityTests.*|TestAsmdef|Assembly-CSharp|LifecycleSample.*|UntouchedUpmSmoke.Editor.Tests|IndependentExtension.*)
         owned=1
@@ -484,7 +493,7 @@ compile() {
     module_enabled screencapture && echo "-define:MCP_FOR_UNITY_SCREEN_CAPTURE"
     version_defines
     platform_defines "$platform"
-    for reference_manifest in "$bcl" "$manifest"; do
+    for reference_manifest in "${reference_manifests[@]}"; do
       while read -r entry; do
         entry=${entry%$'\r'}
         [ -n "$entry" ] || continue

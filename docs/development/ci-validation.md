@@ -574,6 +574,16 @@ The Unity 7 profile uses the archive's bundled SDK and .NET Standard 2.1 referen
 Editor and runtime assemblies. It compiles the bundled uGUI runtime and Editor sources before
 their consumers. Its cache validates those source inputs, and its defines select CoreCLR.
 
+Unity 7 a20 ships Test Framework 1.9.0. Its Editor test runner reads portable PDBs and writes
+test protocol JSON using Unity's .NET Standard 2.1 BCL extensions. The cache copies the
+published `BCLExtensions/TargetingPacks/netstandard2.1/ref` directory, validates the required
+DLLs, and binds the [TestRunner reference manifest](../../tools/compile-refs/7000.0/EditorTestRunner.txt)
+to the a20 cache key. Only the vendor Editor TestRunner compile includes these references.
+When advancing the alpha pin, inspect the new bundled Test Framework asmdefs and the
+targeting pack's `FrameworkList.xml`, verify the extension DLL dependencies against the
+base references, and update the qualified version after license-free compilation.
+[Unity compilation pipeline](https://github.com/Unity-Technologies/UnityCsReference/blob/7000.0/Editor/Mono/Scripting/ScriptCompilation/CompilationPipeline.cs)
+
 The native-execution policy and license gate stay explicit. A skipped licensed-test job is
 not runtime test evidence, and a successful compile is not proof that an Editor session was
 executed.

@@ -1,0 +1,7 @@
+DATA/BCLExtensions/TargetingPacks/netstandard2.1/ref/Microsoft.Bcl.AsyncInterfaces.dll
+DATA/BCLExtensions/TargetingPacks/netstandard2.1/ref/System.Collections.Immutable.dll
+DATA/BCLExtensions/TargetingPacks/netstandard2.1/ref/System.IO.Pipelines.dll
+DATA/BCLExtensions/TargetingPacks/netstandard2.1/ref/System.Reflection.Metadata.dll
+DATA/BCLExtensions/TargetingPacks/netstandard2.1/ref/System.Runtime.CompilerServices.Unsafe.dll
+DATA/BCLExtensions/TargetingPacks/netstandard2.1/ref/System.Text.Encodings.Web.dll
+DATA/BCLExtensions/TargetingPacks/netstandard2.1/ref/System.Text.Json.dll

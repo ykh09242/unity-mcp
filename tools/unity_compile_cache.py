@@ -22,9 +22,12 @@ SCHEMA = 1
 PLATFORM = "linux/amd64"
 RECEIPT = "receipt.json"
 IMAGE_DATA = "/opt/unity/Editor/Data"
+STANDARD_BCL_EXTENSIONS = "BCLExtensions/TargetingPacks/netstandard2.1/ref"
+A20_TEST_RUNNER_REFS = Path(__file__).with_name("compile-refs") / "7000.0/EditorTestRunner.txt"
 DIRECTORIES = (
     "Managed",
     "NetStandard",
+    STANDARD_BCL_EXTENSIONS,
     "UnityReferenceAssemblies",
     "DotNetSdkRoslyn",
     "NetCoreRuntime",
@@ -48,7 +51,7 @@ ROSLYN_REFERENCES = tuple(
 INVENTORY = """set -eu
 d=/opt/unity/Editor/Data
 test -d "$d"
-for p in Managed NetStandard UnityReferenceAssemblies DotNetSdkRoslyn NetCoreRuntime Tools/Compilation/ApiUpdater Tools/ScriptUpdater; do
+for p in Managed NetStandard BCLExtensions/TargetingPacks/netstandard2.1/ref UnityReferenceAssemblies DotNetSdkRoslyn NetCoreRuntime Tools/Compilation/ApiUpdater Tools/ScriptUpdater; do
   if [ -d "$d/$p" ]; then printf '%s\\n' "$d/$p"; fi
 done
 for p in MonoBleedingEdge/lib/mono/4.5/Microsoft.CodeAnalysis.dll MonoBleedingEdge/lib/mono/4.5/Microsoft.CodeAnalysis.CSharp.dll MonoBleedingEdge/lib/mono/4.5/System.Collections.Immutable.dll MonoBleedingEdge/lib/mono/4.5/System.Reflection.Metadata.dll; do
@@ -77,6 +80,10 @@ def identity(manifest: unity_ci.Manifest, version: str) -> dict:
         "source": source,
         "extractor_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
     }
+    if version == "7000.0.0a20":
+        provenance["test_runner_references_sha256"] = hashlib.sha256(
+            A20_TEST_RUNNER_REFS.read_bytes()
+        ).hexdigest()
     digest = hashlib.sha256(
         json.dumps(provenance, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -221,6 +228,12 @@ def _check_inputs(data: Path, directories: list[str], version: str) -> None:
     )
     if (not old and not modern) or (version.startswith("7000.0.") and not modern):
         raise ValueError("Complete bundled compiler and .NET runtime missing")
+    if version == "7000.0.0a20":
+        references = A20_TEST_RUNNER_REFS.read_text(encoding="utf-8").splitlines()
+        if STANDARD_BCL_EXTENSIONS not in directories or not all(
+            (data / reference.removeprefix("DATA/")).is_file() for reference in references
+        ):
+            raise ValueError("Bundled .NET Standard BCL extension references missing")
     if not any(value.startswith(BUILTINS + "/com.unity.modules.") for value in directories):
         raise ValueError("Bundled Unity module metadata missing")
     if version.startswith("7000.0."):

@@ -284,6 +284,35 @@ def test_selected_editor_identity_and_extractor_change_key(environment, monkeypa
     assert cache.identity(manifest, VERSION)["cache_key"] != initial
 
 
+def test_unity7_test_runner_reference_changes_invalidate_only_the_qualified_preview(
+    environment, tmp_path, monkeypatch
+):
+    # Given a current preview and an older LTS row with the same reference manifest on disk.
+    _, manifest, _ = environment
+    version = "7000.0.0a20"
+    download = unity_ci.EditorDownload(
+        "https://download.unity3d.com/download_unity/f4e960bd2f88/LinuxEditorInstaller/Unity-7000.0.0a20.tar.xz",
+        "a" * 32,
+        42,
+    )
+    row = unity_ci.Version(version, "alpha", None, download, None, ())
+    manifest = replace(manifest, versions=(*manifest.versions, row))
+    references = tmp_path / "EditorTestRunner.txt"
+    references.write_bytes(cache.A20_TEST_RUNNER_REFS.read_bytes())
+    monkeypatch.setattr(cache, "A20_TEST_RUNNER_REFS", references)
+    preview_key = cache.identity(manifest, version)["cache_key"]
+    lts_key = cache.identity(manifest, VERSION)["cache_key"]
+
+    # When the qualified TestRunner inputs change, only that SDK cache must be repopulated.
+    references.write_text(
+        "DATA/BCLExtensions/TargetingPacks/netstandard2.1/ref/System.Text.Json.dll\n",
+        encoding="utf-8",
+    )
+
+    assert cache.identity(manifest, version)["cache_key"] != preview_key
+    assert cache.identity(manifest, VERSION)["cache_key"] == lts_key
+
+
 def test_preview_identity_uses_only_verified_editor_archive(environment, monkeypatch):
     _, manifest, _ = environment
     version = "6000.7.0b2"
