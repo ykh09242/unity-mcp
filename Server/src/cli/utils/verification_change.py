@@ -195,6 +195,10 @@ class CapturedRun:
     scenario: str
     selection_gaps: list
     inputs_confirmed: bool
+    finished_at_unix_ms: int | None = None
+    reference_impact: dict | None = None
+    loader_observations: dict | None = None
+    native_loader_capture: dict | None = None
 
     def observed_jobs(self):
         jobs = {self.job_id}
@@ -398,6 +402,7 @@ def read_run(report_path: Path, native_path: Path) -> CapturedRun:
             "required", True
         ):
             checks[("stage", name)] = {"state": stage.get("state"), "target": "verification"}
+    finished = report.get("finished_at_unix_ms")
     return CapturedRun(
         _name(report.get("run_id"), "run id"),
         job,
@@ -416,6 +421,10 @@ def read_run(report_path: Path, native_path: Path) -> CapturedRun:
         and not native_unreliable
         and parent_state not in ("stale", "canceled")
         and "interruption" not in stages,
+        finished if type(finished) is int and finished > 0 else None,
+        stages.get("reference_impact"),
+        stages.get("loader_observations"),
+        native.get("loader_capture"),
     )
 
 
