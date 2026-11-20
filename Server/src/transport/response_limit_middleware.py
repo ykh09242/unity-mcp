@@ -26,6 +26,7 @@ from models.response_limits import (
     response_limit_error,
 )
 from services.tools.response_work import needs_response_worker, response_work
+from transport.protocol import internal_resource_read_target
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
 from transport.stdio_response_delivery import stdio_delivery
 from transport.test_job_tasks import CreateWaitTaskResult
@@ -130,6 +131,17 @@ class ResponseLimitMiddleware(ResponseCatalogLimits):
     """Measure both text and structured content before the final MCP serializer."""
 
     async def on_message(self, context: MiddlewareContext, call_next: CallNext) -> Any:
+        enclosing_owner = response_owner.get()
+        if (
+            enclosing_owner is not None
+            and context.method == "resources/read"
+            and internal_resource_read_target(context.fastmcp_context, str(context.message.uri))
+            is not None
+        ):
+            # A nested read runs the resource middleware under the outer wire ID.
+            if enclosing_owner.released:
+                raise RuntimeError("Enclosing MCP response ownership expired")
+            return await call_next(context)
         owner = ResponseOwner()
         token = response_owner.set(owner)
         task = asyncio.current_task()

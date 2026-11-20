@@ -13,6 +13,7 @@ from fastmcp.server.middleware import Middleware
 from mcp.shared.exceptions import MCPError
 
 from core.config import config
+from models.response_limits import response_owner
 from services.credential_lease import bind_credential_lease
 from services.resources import register_all_resources
 from services.resources import cameras
@@ -22,6 +23,8 @@ from tests.http.test_remote_permissions import permission_service
 from tests.test_http_command_outcome import command_hub  # pylint: disable=unused-import
 from transport.models import CommandResultMessage
 from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
+from transport.response_limit_middleware import ResponseLimitMiddleware
+from transport.stdio_response_delivery import StdioResponseDelivery, stdio_delivery
 from transport.unity_instance_middleware import UnityInstanceMiddleware
 
 
@@ -154,9 +157,12 @@ async def test_stdio_fixed_read_uses_the_explicitly_selected_editor(monkeypatch)
         ]
 
     dispatches = []
+    delivery = StdioResponseDelivery()
 
     async def selected_editor(command, params, *, instance_id):
         dispatches.append((command, params, instance_id))
+        assert len(delivery.pending) == 1
+        assert response_owner.get() is next(iter(delivery.pending.values())).owner
         return {
             "success": (command, params, instance_id) == ("get_cameras", {}, "Fixture@hash"),
             "data": INVENTORY,
@@ -164,16 +170,24 @@ async def test_stdio_fixed_read_uses_the_explicitly_selected_editor(monkeypatch)
 
     monkeypatch.setattr(UnityInstanceMiddleware, "_discover_instances", discover)
     monkeypatch.setattr(cameras, "async_send_command_with_retry", selected_editor)
-    async with Client(inventory_server(monkeypatch), mode="legacy", cache=False) as client:
-        with pytest.raises(ToolError):
-            await client.call_tool(TOOL, {})
-        assert dispatches == []
-        fixed = (
-            await client.call_tool(TOOL, SELECT, meta={"unity_instance": "Other@other"})
-        ).structured_content
-        assert dispatches == [("get_cameras", {}, "Fixture@hash")]
-        assert fixed == await read_inventory(client)
-        assert fixed["success"] is True and fixed["data"] == INVENTORY
+    server = inventory_server(monkeypatch)
+    server.add_middleware(ResponseLimitMiddleware())
+    token = stdio_delivery.set(delivery)
+    try:
+        async with Client(server, mode="legacy", cache=False) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool(TOOL, {})
+            assert dispatches == []
+            fixed = (
+                await client.call_tool(TOOL, SELECT, meta={"unity_instance": "Other@other"})
+            ).structured_content
+            assert dispatches == [("get_cameras", {}, "Fixture@hash")]
+            assert fixed == await read_inventory(client)
+            assert fixed["success"] is True and fixed["data"] == INVENTORY
+            assert delivery.pending == {}
+    finally:
+        delivery.close()
+        stdio_delivery.reset(token)
 
 
 @pytest.mark.asyncio
@@ -199,6 +213,7 @@ async def test_hosted_inventory_respects_resource_policy_and_both_credentials(
     await command_hub.registry.unregister("session")
     await command_hub.registry.register("session", "Fixture", "hash", "6000", user_id="alice")
     server = inventory_server(monkeypatch)
+    server.add_middleware(ResponseLimitMiddleware())
 
     class CameraResourcePolicy(Middleware):
         async def on_list_resources(self, context, call_next):
@@ -295,7 +310,11 @@ async def test_hosted_inventory_respects_resource_policy_and_both_credentials(
                     and resource_policy in {"allow", "native_disabled", "redacted"}
                 ):
                     wire_methods.clear()
-                    fixed = (await client.call_tool(TOOL, SELECT)).structured_content
+                    fixed = (
+                        await client.call_tool(
+                            TOOL, SELECT, raise_on_error=resource_policy != "native_disabled"
+                        )
+                    ).structured_content
                     assert "tools/call" in wire_methods and "resources/read" not in wire_methods
                     assert [(sent["name"], sent["params"]) for sent in command_hub.sent] == [
                         ("get_cameras", {})

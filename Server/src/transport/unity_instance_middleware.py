@@ -60,7 +60,11 @@ from transport.plugin_hub import (
     http_request_budget,
 )
 from transport.tool_input_validation import validate_tool_arguments
-from transport.protocol import is_internal_resource_list, is_sessionless
+from transport.protocol import (
+    internal_resource_read_target,
+    is_internal_resource_list,
+    is_sessionless,
+)
 from transport.response_delivery import response_lookup_selector
 from transport.session_state_store import SessionStateCapacityError
 
@@ -1127,11 +1131,11 @@ class UnityInstanceMiddleware(Middleware):
         """Inject active Unity instance into resource context if available."""
         uri = str(getattr(context.message, "uri", ""))
         await authorize_remote_resource(uri)
-        if uri == CAMERA_INVENTORY_URI:
-            from services.resources.cameras import projected_camera_target
-
-            if projected_camera_target(context.fastmcp_context) is not None:
-                return await call_next(context)
+        if (
+            uri == CAMERA_INVENTORY_URI
+            and internal_resource_read_target(context.fastmcp_context, uri) is not None
+        ):
+            return await call_next(context)
         if uri == "mcpforunity://instances":
             # Discovery needs the principal, even if the session's selected Editor is offline.
             await self._inject_request_identity(context.fastmcp_context)
