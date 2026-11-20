@@ -51,6 +51,30 @@ set, and both optional adapters with private temporary stores, without opening a
 network listener or starting Unity. Candidate checkout installs also run that
 probe before the locked test suite, covering the published dependency metadata.
 
+## Tool registration on FastMCP 4.2.3
+
+The supported SDK floor and current SDK are the same exact package set:
+FastMCP 4.2.3, MCP 2.3.0 and MCP Types 2.3.0. The Python Tests server matrix
+installs the lock on Python 3.11 through 3.15. Its registration regression uses
+both `legacy` and `2026-07-28` clients on each interpreter. It registers the
+original handlers on one server first, then discovers and calls the derived
+tools on a second server. The request must supply the required public arguments
+and the SDK must inject the context for the second server. The fixture checks
+the GameObject command and the Game View, uGUI and Shader Graph reads at the
+Unity transport boundary. [Registration regression](../Server/tests/test_functional_tool_registration.py) · [CI matrix](../.github/workflows/python-tests.yml)
+
+FastMCP adds a dependency default to the handler's injected context and can
+move it behind required positional-or-keyword arguments. Focused tools that
+call an admitted parent pass `ctx` by name so the parent's captured signature
+can bind the action and context independently. [FastMCP context injection](https://github.com/PrefectHQ/fastmcp/blob/v4.2.3/fastmcp_slim/fastmcp/server/dependencies.py)
+
+FastMCP 4.2.3 corrects schema conversion for non-object defaults and positional
+arrays. Its OpenAPI route validation and opt-in background span parenting apply
+to the OpenAPI and background worker integrations. This server registers Python
+handlers and runs its own Tasks adapter. The separate platformdirs 4.14.8 lock
+update strengthens runtime-directory lookup and creation on Unix and macOS and
+validates Windows UNC overrides. [FastMCP 4.2.3 release](https://github.com/PrefectHQ/fastmcp/releases/tag/v4.2.3) · [platformdirs 4.14.8 release](https://github.com/tox-dev/platformdirs/releases/tag/4.14.8)
+
 
 ## Skills and scene-input installation
 
