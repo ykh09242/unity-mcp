@@ -6,6 +6,7 @@
     "MCPForUnity.Input.InputSystem.Editor",
     "Unity.InputSystem",
     "Unity.InputSystem.TestFramework",
+    "UnityEngine.UI",
     "UnityEngine.TestRunner",
     "UnityEditor.TestRunner",
     "MCPForUnity.Runtime",
@@ -31,6 +32,11 @@
       "name": "com.unity.inputsystem",
       "expression": "1.0.0",
       "define": "MCP_INPUT_SYSTEM"
+    },
+    {
+      "name": "com.unity.ugui",
+      "expression": "",
+      "define": "MCP_INPUT_UGUI"
     }
   ],
   "noEngineReferences": false

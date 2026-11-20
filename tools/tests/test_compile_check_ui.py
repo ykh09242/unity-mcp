@@ -402,6 +402,30 @@ def test_selected_input_system_compiles_runtime_editor_and_tests_in_order(
     )
     assert '/Unity.InputSystem.TestFramework.dll"' in tests
     assert '/MCPForUnity.Input.InputSystem.Runtime.dll"' in tests
+    assert "-define:MCP_INPUT_UGUI" not in tests.splitlines()
+
+
+def test_combined_input_profile_compiles_native_ugui_focus_fixture(
+    harness: CompileHarness,
+    ugui_sources: tuple[Path, Path],
+    input_system_sources: tuple[Path, Path],
+) -> None:
+    project, framework = ugui_sources
+    assert input_system_sources == (project, framework)
+    result = harness.run(
+        "6000.0.84f1", test_project=project, framework=framework, ugui=True, input_system=True
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    response = (harness.output / "linux" / f"{INPUT_SYSTEM_ASSEMBLIES[2]}.rsp").read_text(
+        encoding="utf-8"
+    )
+    assert "/InputSystem/UguiNavigationInputTests.cs" in response
+    assert {
+        "-define:MCP_INPUT_SYSTEM",
+        "-define:ENABLE_INPUT_SYSTEM",
+        "-define:MCP_INPUT_UGUI",
+    } <= set(response.splitlines())
+    assert '/UnityEngine.UI.dll"' in response
 
 
 def test_input_system_absent_path_excludes_optional_sources(

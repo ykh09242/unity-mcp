@@ -9,7 +9,11 @@ using UnityEngine.UI;
 namespace MCPForUnity.Editor.Tools.Input
 {
     /// <summary>Direct uGUI event dispatch, independent of the project's raw input backend.</summary>
-    public sealed partial class UguiScenarioDispatch : IUguiInputSimulationBackend, IUguiScenarioClickBackend, IUguiScenarioRaycastClickBackend
+    public sealed partial class UguiScenarioDispatch
+        : IUguiInputSimulationBackend,
+            IUguiScenarioClickBackend,
+            IUguiScenarioRaycastClickBackend,
+            IUguiScenarioFocusBackend
     {
 #if MCP_FOR_UNITY_PLAY_SCENARIOS && !UNITY_EDITOR
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -38,6 +42,14 @@ namespace MCPForUnity.Editor.Tools.Input
             result = Dispatch(target, context);
             detail = "Dispatched uGUI pointer click.";
             return true;
+        }
+
+        public bool TryGetCurrentFocus(out GameObject selected)
+        {
+            EventSystem system = EventSystem.current;
+            bool available = system != null && system.isActiveAndEnabled;
+            selected = available ? system.currentSelectedGameObject : null;
+            return available;
         }
 
         private static bool TryPrepare(GameObject target, bool waitForReady, out ClickContext context, out string detail)

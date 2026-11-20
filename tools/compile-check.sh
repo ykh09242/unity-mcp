@@ -433,6 +433,10 @@ compile() {
     esac
     case "$name" in MCPForUnity.Input.UGUI.*|MCPForUnity.PlayScenarios.Integration.*|MCPForUnity.ScenarioPlayerFixture*) echo "-define:MCP_INPUT_UGUI" ;; esac
     case "$name" in MCPForUnity.Input.InputSystem.*) echo "-define:MCP_INPUT_SYSTEM"; echo "-define:ENABLE_INPUT_SYSTEM" ;; esac
+    if [ "$name" = MCPForUnity.Input.InputSystem.Tests ] && [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
+      # Match the test asmdef's uGUI versionDefine. Editor.txt already supplies UnityEngine.UI.
+      echo "-define:MCP_INPUT_UGUI"
+    fi
     case "$name" in MCPForUnity.CustomTools.RoslynOn) echo "-define:USE_ROSLYN" ;; esac
     if [ "$name" = MCPForUnity.Editor ] && [ -n "$UNITY_ANALYZER_DLL" ] && [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
       # The full profile carries the VFXModule and Unity's matching Roslyn assemblies.

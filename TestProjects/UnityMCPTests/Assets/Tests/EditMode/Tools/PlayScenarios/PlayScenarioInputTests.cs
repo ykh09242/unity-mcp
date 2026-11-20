@@ -96,6 +96,28 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             );
 
         [Test]
+        public void FocusStepRequiresOneExactSelectorAndRejectsClickModes()
+        {
+            var wire = JObject.Parse(
+                @"{'name':'focus-check','steps':[
+                    {'name':'Load','action':'load_scene','scene':'Assets/Menu.unity'},
+                    {'name':'Focus','action':'wait_ui_focus','scene':'Assets/Menu.unity','target':'Canvas/Confirm','stable_for_ms':150}
+                ]}"
+            );
+            PlayScenarioDefinition parsed = PlayScenarioDefinition.Parse(wire);
+            Assert.That(parsed.Steps[1].Target, Is.EqualTo("Canvas/Confirm"));
+            Assert.That(parsed.Steps[1].StableForMs, Is.EqualTo(150));
+            Assert.That(parsed.UsesExplicitSceneSemantics, Is.True);
+
+            var focus = (JObject)wire["steps"][1];
+            focus["click_mode"] = "raycast";
+            Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(wire));
+            focus.Remove("click_mode");
+            focus["target_id"] = "confirm";
+            Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(wire));
+        }
+
+        [Test]
         public void EditorAndPlayerWaitForActualUpdatesWithoutReplayingDispatch()
         {
             var editor = new UnityPlayScenarioHost();

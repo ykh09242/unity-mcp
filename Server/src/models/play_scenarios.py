@@ -58,6 +58,7 @@ StepAction = Literal[
     "set_active_scene",
     "click_ui",
     "wait_object",
+    "wait_ui_focus",
     "reset_state",
     "wait_state",
     "input",
@@ -707,6 +708,7 @@ class ScenarioStep(BaseModel):
                 | "set_active_scene"
                 | "click_ui"
                 | "wait_object"
+                | "wait_ui_focus"
                 | "input"
             ):
                 if "reset_ids" in self.model_fields_set:
@@ -753,7 +755,7 @@ class ScenarioStep(BaseModel):
                 if self.property is not None and self.component is None:
                     message = "Property conditions require component"
                     raise ValueError(message)
-            case "wait_scene" | "wait_state":
+            case "wait_scene" | "wait_state" | "wait_ui_focus":
                 if authored_fields & object_fields:
                     message = "Object conditions are only valid for wait_object"
                     raise ValueError(message)
@@ -780,7 +782,7 @@ class ScenarioStep(BaseModel):
             case "load_scene" | "wait_scene" | "unload_scene" | "set_active_scene":
                 if self.scene is None or self.model_fields_set & {"target", "target_id"}:
                     raise ValueError("Scene steps require scene and do not accept target")
-            case "click_ui" | "wait_object":
+            case "click_ui" | "wait_object" | "wait_ui_focus":
                 if (self.target is None) == (self.target_id is None):
                     message = "Object steps require exactly one target or target_id"
                     raise ValueError(message)

@@ -122,6 +122,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     return ObserveScene(step.Scene);
                 case "wait_object":
                 case "click_ui":
+                case "wait_ui_focus":
                     PrepareTarget(step, firstPoll);
                     bool toolkit =
                         step.Action == "click_ui"
@@ -150,6 +151,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     PlayScenarioObservation observation = PlayScenarioObjectCondition.Observe(step, matches, componentType);
                     if (!observation.Ready || step.Action == "wait_object")
                         return observation;
+                    if (step.Action == "wait_ui_focus")
+                        return PlayScenarioPlayerInput.ObserveFocus(step, matches.Target, ManageInput.UguiBackend);
                     if (toolkit)
                         return UIToolkitScenarioInputAdapter.EvaluateForScenario(
                             matches.Target,

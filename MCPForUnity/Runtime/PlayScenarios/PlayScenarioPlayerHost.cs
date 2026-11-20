@@ -144,7 +144,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     "Active Player scene: " + scene.path + "; expected: " + step.Scene + "."
                 );
             }
-            if (step.Action != "wait_object" && step.Action != "click_ui")
+            if (step.Action != "wait_object" && step.Action != "click_ui" && step.Action != "wait_ui_focus")
                 throw new ArgumentException("Unsupported Player host action.");
             if (step.Property != null)
                 throw new InvalidOperationException("Player property capability must be rejected before execution.");
@@ -236,6 +236,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 return Pending(step, detail + " Waiting for component " + step.Component + ".", "condition_unmet");
             if (step.Action == "wait_object")
                 return new PlayScenarioObservation(true, detail);
+            if (step.Action == "wait_ui_focus")
+                return PlayScenarioPlayerInput.ObserveFocus(step, target, PlayScenarioPlayerInput.Backend);
             if (toolkit)
                 return UIToolkitScenarioInputAdapter.EvaluateForScenario(target, step.ElementName, step.ElementPath, step.ClickMode, logPolicy, ref counts);
             if (step.ClickMode == "raycast")

@@ -1,5 +1,7 @@
 using System;
+using System.Globalization;
 using MCPForUnity.Editor.Services.PlayScenarios;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.Input
@@ -34,6 +36,11 @@ namespace MCPForUnity.Editor.Tools.Input
     {
         bool TryRaycastClick(GameObject target, out object result, out string detail);
     }
+
+    public interface IUguiScenarioFocusBackend
+    {
+        bool TryGetCurrentFocus(out GameObject selected);
+    }
 }
 
 namespace MCPForUnity.Runtime.PlayScenarios
@@ -42,6 +49,52 @@ namespace MCPForUnity.Runtime.PlayScenarios
     {
         public static MCPForUnity.Editor.Tools.Input.IUguiInputSimulationBackend Backend { get; set; }
         public static Func<MCPForUnity.Editor.Tools.Input.IScenarioInputSimulationBackend> CreateInputBackend { get; set; }
+
+        internal static PlayScenarioObservation ObserveFocus(
+            PlayScenarioStep step,
+            GameObject target,
+            MCPForUnity.Editor.Tools.Input.IUguiInputSimulationBackend backend
+        )
+        {
+            string selector = step.TargetId ?? step.Target;
+            const string capability = "wait_ui_focus requires the optional uGUI focus backend.";
+            if (!(backend is MCPForUnity.Editor.Tools.Input.IUguiScenarioFocusBackend focus))
+                throw new PlayScenarioException(
+                    new PlayScenarioFailure
+                    {
+                        Code = "capability_unavailable",
+                        Target = selector,
+                        Message = capability,
+                    }
+                );
+            bool available = focus.TryGetCurrentFocus(out GameObject selected);
+            string actual =
+                !available ? "no active EventSystem"
+                : selected == null ? "no selected GameObject"
+                : "GameObject '"
+                    + PlayScenarioEngine.Bounded(selected.name, 192)
+                    + "' (instance ID "
+                    + selected.GetInstanceIDCompat().ToString(CultureInfo.InvariantCulture)
+                    + ") in scene '"
+                    + PlayScenarioEngine.Bounded(selected.scene.path, 512)
+                    + "'";
+            bool ready = selected != null && selected == target;
+            string detail = ready ? "uGUI focus reached " + actual + "." : "Current uGUI focus: " + actual + ".";
+            return new PlayScenarioObservation(
+                ready,
+                detail,
+                ready
+                    ? null
+                    : new PlayScenarioFailure
+                    {
+                        Code = "condition_unmet",
+                        Target = selector,
+                        Expected = PlayScenarioEngine.Bounded(target.scene.path, 512) + " / " + PlayScenarioEngine.Bounded(selector, 500),
+                        Actual = actual,
+                        Message = detail,
+                    }
+            );
+        }
     }
 
     public interface IPlayScenarioInputHost

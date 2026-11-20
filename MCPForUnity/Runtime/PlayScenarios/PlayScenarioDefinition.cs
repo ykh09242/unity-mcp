@@ -78,7 +78,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     || step.SceneState != null
                     || step.Action == "unload_scene"
                     || step.Action == "set_active_scene"
-                    || ((step.Action == "wait_object" || step.Action == "click_ui") && step.Scene != null)
+                    || ((step.Action == "wait_object" || step.Action == "click_ui" || step.Action == "wait_ui_focus") && step.Scene != null)
                 );
 
         public static void ValidateName(string name)
@@ -373,6 +373,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         break;
                     case "click_ui":
                     case "wait_object":
+                    case "wait_ui_focus":
                         if (step.Property("scene") != null)
                         {
                             parsed.Scene = Text(step, "scene", 4096);
@@ -407,7 +408,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     parsed.ClickMode = "direct";
                 if (step.Property("stable_for_ms") != null)
                 {
-                    if (parsed.Action != "wait_object" && parsed.Action != "wait_scene")
+                    if (parsed.Action != "wait_object" && parsed.Action != "wait_scene" && parsed.Action != "wait_ui_focus")
                         throw new ArgumentException("stable_for_ms is permitted only on wait actions.");
                     parsed.StableForMs = Integer(step, "stable_for_ms", 0, 600000, 0);
                     if (parsed.StableForMs >= parsed.TimeoutSeconds * 1000)

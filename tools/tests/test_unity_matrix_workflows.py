@@ -598,6 +598,7 @@ def test_optional_matrix_outputs_include_reviewed_suite_manifest():
         "probuilder",
         "input-system",
         "input-pause",
+        "input-ugui-focus",
         "vfx-graph",
         "volumes",
     } <= {suite["id"] for suite in OPTIONAL_SUITES}

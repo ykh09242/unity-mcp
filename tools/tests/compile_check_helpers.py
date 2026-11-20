@@ -284,7 +284,7 @@ def ugui_sources(harness: CompileHarness, staged_tests: tuple[Path, Path]) -> tu
         shutil.copy2(original, directory / f"{assembly}.asmdef")
     for root, relative in (
         (harness.repo, "MCPForUnity/Runtime/OtherOptional"),
-        (harness.repo, "MCPForUnity/Editor/Tools/Input/InputSystem"),
+        (harness.repo, "MCPForUnity/Editor/Tools/Input/OtherOptional"),
     ):
         directory = root / relative
         directory.mkdir(parents=True)
@@ -333,4 +333,6 @@ def input_system_sources(
         shutil.copy2(original, directory / f"{assembly}.asmdef")
     for name in ("Unity.InputSystem.dll", "Unity.InputSystem.TestFramework.dll"):
         (harness.extra / name).touch()
+    relative = Path("Assets/Tests/EditMode/Tools/Input/InputSystem/UguiNavigationInputTests.cs")
+    shutil.copy2(ROOT / "TestProjects/UnityMCPTests" / relative, project / relative)
     return project, framework

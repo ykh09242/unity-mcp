@@ -149,6 +149,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                             throw new InvalidOperationException("uGUI scenario UI clicks require the optional uGUI input backend.");
                         if (!toolkit && step.ClickMode == "raycast" && !(ManageInput.UguiBackend is IUguiScenarioRaycastClickBackend))
                             throw UnityPlayScenarioHost.CapabilityFailure(step, "The optional uGUI backend does not support raycast-verified clicks.");
+                        if (step.Action == "wait_ui_focus" && !(ManageInput.UguiBackend is IUguiScenarioFocusBackend))
+                            throw new InvalidOperationException("wait_ui_focus requires the optional uGUI focus backend.");
                         if (step.Scene != null)
                         {
                             UnityPlayScenarioHost.RequireSceneAsset(step.Scene);
@@ -190,6 +192,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                                             : " Click dispatch is deferred; no input was sent."
                                     )
                             );
+                        else if (step.Action == "wait_ui_focus")
+                            Add(stage, index, step.Name, "deferred", "EventSystem focus is evaluated at runtime; no input was sent.");
                         else if (!observation.Ready || step.StableForMs.GetValueOrDefault() > 0)
                             Add(
                                 stage,

@@ -76,6 +76,69 @@ def test_scene_definition_roundtrip_omits_absent_fields():
     ) == model.model_dump(exclude_none=True)
 
 
+def test_navigation_scenario_keeps_move_focus_submit_and_game_state_assertion():
+    scenario = {
+        "name": "navigation-route",
+        "steps": [
+            {"name": "Load menu", "action": "load_scene", "scene": "Assets/Menu.unity"},
+            {
+                "name": "Right",
+                "action": "input",
+                "input": {"action": "key", "key": "RightArrow", "frames": 1},
+            },
+            {
+                "name": "Focus",
+                "action": "wait_ui_focus",
+                "scene": "Assets/Menu.unity",
+                "target": "Canvas/Confirm",
+                "stable_for_ms": 150,
+            },
+            {
+                "name": "Submit",
+                "action": "input",
+                "input": {"action": "key", "key": "Enter", "frames": 1},
+            },
+            {
+                "name": "Game state",
+                "action": "wait_state",
+                "state_id": "confirmation_complete",
+                "state_equals": True,
+            },
+        ],
+    }
+    saved = PlayScenario.model_validate(scenario).model_dump(mode="json", exclude_none=True)
+    assert [step["action"] for step in saved["steps"]] == [
+        "load_scene",
+        "input",
+        "wait_ui_focus",
+        "input",
+        "wait_state",
+    ]
+    assert saved["steps"][2] == {**scenario["steps"][2], "timeout_seconds": 30}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"count": 0},
+        {"active": False},
+        {"click_mode": "raycast"},
+        {"ui_backend": "uitoolkit", "element_name": "Confirm"},
+        {"target": None},
+        {"target_id": "confirm"},
+        {"scene": None},
+        {"stable_for_ms": 30_000},
+    ],
+)
+def test_focus_rejects_non_focus_fields_and_ambiguous_selectors(change):
+    value = definition()
+    value["steps"] = [
+        {"name": "Focus", "action": "wait_ui_focus", "target": "Canvas/Confirm", **change}
+    ]
+    with pytest.raises(ValidationError):
+        PlayScenario.model_validate(value)
+
+
 @pytest.mark.parametrize(
     "change",
     [

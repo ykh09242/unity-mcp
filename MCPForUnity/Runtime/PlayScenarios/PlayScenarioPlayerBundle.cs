@@ -480,7 +480,9 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 }
                 if (step.Action == "click_ui" && !toolkit && !uguiAvailable)
                     throw Unsupported("uGUI click_ui requires the optional runtime uGUI backend.");
-                if (step.Action == "wait_object" || step.Action == "click_ui")
+                if (step.Action == "wait_ui_focus" && !uguiAvailable)
+                    throw Unsupported("wait_ui_focus requires the optional runtime uGUI backend.");
+                if (step.Action == "wait_object" || step.Action == "click_ui" || step.Action == "wait_ui_focus")
                 {
                     int count = step.Count ?? 1;
                     if (

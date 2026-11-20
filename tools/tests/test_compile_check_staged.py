@@ -389,6 +389,7 @@ def test_test_assembly_inventory_matches_declared_graph() -> None:
                 "MCPForUnity.Input.InputSystem.Runtime",
                 "Unity.InputSystem",
                 "Unity.InputSystem.TestFramework",
+                "UnityEngine.UI",
                 "UnityEngine.TestRunner",
                 "UnityEditor.TestRunner",
             },

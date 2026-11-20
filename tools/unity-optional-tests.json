@@ -107,6 +107,13 @@
       ]
     },
     {
+      "id": "input-ugui-focus",
+      "filter": "MCPForUnityTests.EditMode.Tools.Input.UguiNavigationInputTests",
+      "requiredTests": [
+        "MCPForUnityTests.EditMode.Tools.Input.UguiNavigationInputTests.PointerReachableButtonRequiresRepairedDirectionBeforeKeyboardAndGamepadSubmit"
+      ]
+    },
+    {
       "id": "vfx-graph",
       "filter": "MCPForUnityTests.EditMode.Tools.VfxGraphIntegrityTests",
       "requiredTests": [

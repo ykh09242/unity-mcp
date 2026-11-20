@@ -7,13 +7,19 @@ using UnityEngine;
 namespace MCPForUnity.Editor.Tools.Input
 {
     [InitializeOnLoad]
-    public sealed class UguiInputSimulationBackend : IUguiInputSimulationBackend, IUguiScenarioClickBackend, IUguiScenarioRaycastClickBackend
+    public sealed class UguiInputSimulationBackend
+        : IUguiInputSimulationBackend,
+            IUguiScenarioClickBackend,
+            IUguiScenarioRaycastClickBackend,
+            IUguiScenarioFocusBackend
     {
         private readonly UguiScenarioDispatch dispatch = new UguiScenarioDispatch();
 
         static UguiInputSimulationBackend() => ManageInput.UguiBackend = new UguiInputSimulationBackend();
 
         public object Click(GameObject target) => Wrap(dispatch.Click(target));
+
+        public bool TryGetCurrentFocus(out GameObject selected) => dispatch.TryGetCurrentFocus(out selected);
 
         public bool TryClick(GameObject target, out object result, out string detail)
         {

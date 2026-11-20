@@ -12,7 +12,7 @@ execution success verdict.
 
 See [repeatable scenario workflows](play-scenario-workflows.md) for profile execution, complete
 history/UI snapshots, persisted input actions and recording to a review-required draft. The existing
-stable `target_id` remains the selector for registered `wait_object`/`click_ui` targets; input steps
+stable `target_id` is available to `wait_object`, `click_ui` and `wait_ui_focus`; input steps
 use bounded virtual-device commands.
 
 Select the intended Unity instance. If needed, activate the `testing` group with
@@ -142,6 +142,33 @@ can be versioned. Storage accepts at most 1000 definitions, each at most 1 MiB.
 See [resource limits](development/resource-limits.md) for steps, suites, repetition, input and evidence budgets.
 
 ## Readiness and error policies
+
+Use `wait_ui_focus` to check which GameObject the active uGUI EventSystem selected after normal
+navigation input. It accepts one exact `target` or stable `target_id`, optional exact `scene`
+scope, and optional `stable_for_ms`. It samples selection without moving it or invoking an event.
+A focus mismatch reports the actual selected object and its scene. The Editor and standalone Player
+hosts require the optional uGUI backend. For keyboard or gamepad replay, the project must route
+Input System actions to its UI module.
+
+The following steps assume the loaded scene initially selects the control to the left of
+`Canvas/Confirm` and registers a Boolean state provider named `confirmation_complete`. Prefix them
+with the scene load and any game-specific setup needed to establish that initial state.
+
+```json
+[
+  {"name":"Move right","action":"input","input":{"action":"key","key":"RightArrow","frames":1}},
+  {"name":"Confirm has focus","action":"wait_ui_focus","target":"Canvas/Confirm","timeout_seconds":2},
+  {"name":"Submit","action":"input","input":{"action":"key","key":"Enter","frames":1}},
+  {"name":"Confirmation completed","action":"wait_state","state_id":"confirmation_complete","state_equals":true}
+]
+```
+
+For the gamepad route, use the same assertions with `input.action: "gamepad"` and
+`control: "dpadRight"` and `control: "buttonSouth"` in the two input steps. Run a separate
+`click_ui` step with `click_mode: "raycast"` when you also need pointer reachability evidence.
+If only pointer activation passes, inspect the initial selection and directional links on its
+uGUI Selectable. Correct the relevant link, reset to the same starting state, and replay
+the same input definition. Check both the focus step and the subsequent game state assertion.
 
 For `wait_object`, omitted `count` requires a unique path; duplicate paths fail as ambiguous. Explicit
 `count` counts all exact-path matches, including inactive ones. All matches must satisfy the requested

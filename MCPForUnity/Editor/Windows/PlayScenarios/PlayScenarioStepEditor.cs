@@ -22,6 +22,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             "click_ui",
             "wait_scene",
             "wait_object",
+            "wait_ui_focus",
             "reset_state",
             "wait_state",
             "input",
@@ -32,6 +33,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             : action == "click_ui" ? "Click a UI element"
             : action == "wait_scene" ? "Wait for a scene"
             : action == "wait_object" ? "Wait for an object"
+            : action == "wait_ui_focus" ? "Wait for uGUI focus"
             : action == "reset_state" ? "Reset registered state"
             : action == "wait_state" ? "Wait for a state value"
             : action == "input" ? "Send input"
@@ -42,6 +44,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             : action == "click_ui" ? "Choose the exact UI target to click."
             : action == "wait_scene" ? "Continue when the expected scene is active."
             : action == "wait_object" ? "Continue when the target is present and matches any optional conditions."
+            : action == "wait_ui_focus" ? "Continue when the exact object holds EventSystem focus."
             : action == "reset_state" ? "Ask registered reset handlers to prepare the next repeat."
             : action == "wait_state" ? "Continue when a registered state value matches the expected value."
             : "Send a keyboard, pointer or gamepad command.";
@@ -113,12 +116,14 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     BuildSceneFields(card, step, suffix, edit);
                 else
                     BuildTargetFields(card, step, suffix, edit, setMessage);
+                if (step.Action == "wait_ui_focus")
+                    BuildSceneFields(card, step, suffix, edit, optional: true);
                 if (step.Action == "click_ui")
                     BuildClickFields(card, step, suffix, edit);
                 var timeout = new IntegerField("Timeout (s)") { name = "stepTimeout" + suffix, value = step.TimeoutSeconds };
                 timeout.RegisterValueChangedCallback(evt => edit(() => step.TimeoutSeconds = evt.newValue));
                 card.Add(timeout);
-                if (step.Action == "wait_scene" || step.Action == "wait_object" || step.Action == "wait_state")
+                if (step.Action == "wait_scene" || step.Action == "wait_object" || step.Action == "wait_state" || step.Action == "wait_ui_focus")
                     OptionalInteger(card, "Stable duration (ms)", "stepStable" + suffix, step.StableForMs, value => edit(() => step.StableForMs = value));
                 if (step.Action == "wait_object")
                     BuildConditionFields(card, step, suffix, edit);
@@ -150,7 +155,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 Performance = step.Performance,
                 Screenshot = step.Screenshot,
                 Scene = IsSceneAction(action) ? "" : null,
-                Target = action == "click_ui" || action == "wait_object" ? "" : null,
+                Target = action == "click_ui" || action == "wait_object" || action == "wait_ui_focus" ? "" : null,
                 ResetIds = action == "reset_state" ? new List<string>() : null,
                 StateId = action == "wait_state" ? "" : null,
                 StateEquals = action == "wait_state" ? new JValue("") : null,
@@ -396,9 +401,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private static bool IsSceneAction(string action) => action == "load_scene" || action == "wait_scene";
 
-        private static void BuildSceneFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit)
+        private static void BuildSceneFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit, bool optional = false)
         {
-            var scene = new ObjectField("Scene asset")
+            var scene = new ObjectField(optional ? "Scene scope (optional)" : "Scene asset")
             {
                 name = "stepSceneAsset" + index,
                 objectType = typeof(SceneAsset),
@@ -416,12 +421,12 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             scene.RegisterValueChangedCallback(evt =>
             {
                 string value = evt.newValue == null ? "" : AssetDatabase.GetAssetPath(evt.newValue);
-                edit(() => step.Scene = value);
+                edit(() => step.Scene = optional && value.Length == 0 ? null : value);
                 path.SetValueWithoutNotify(value);
             });
             path.RegisterValueChangedCallback(evt =>
             {
-                edit(() => step.Scene = evt.newValue);
+                edit(() => step.Scene = optional && string.IsNullOrEmpty(evt.newValue) ? null : evt.newValue);
                 // Clear an old picker value when the manually entered path changes.
                 scene.SetValueWithoutNotify(null);
             });
