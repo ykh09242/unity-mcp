@@ -431,3 +431,165 @@ the current scene name and path from Editor state on business call five.
 The independent before/after observations matched in both turns. Neither actor
 searched (0/2), leaving zero eligible search responses for conditional ranking
 or link exposure. These two turns stay outside the ten matched pairs.
+
+### Source-matched classification and camera trials
+
+The follow-up used an isolated Unity 6000.0.69f1 Editor with the unchanged scene
+and GUID metadata from the running game's active scene. The fixture contained
+one allowlisted game scene and its recorded Editor version. Its native camera
+inventory agreed with the running game. Missing game dependencies and the
+batch-mode window environment limit conclusions about the full game or its
+interactive desktop.
+The original Editor's package and server both reported `8fdc71f69`. Its
+independent camera observation is a source and scene check outside the trial
+denominators.
+
+The classification comparison used `11ee734d70ba0eaba563b0b95a0f44f4034ea481`
+and `90c3eca13718476b86456b72bac4e6c9fa932109`. The camera comparison used
+that classification revision and `c445b98189c2971c788de07e122f9c86a78e338d`.
+Each server ran from a separate Git archive. Unity reported the loaded package
+path for the command registry assembly. All 1,554 archived native package
+files matched that installed package in every condition. The same running
+Editor handled the narrowly admitted RPCs through its command registry.
+The fixture supplied a positive declaration-list read for the Frame Debugger
+and a unique maximum camera depth. Its native permission setting denied
+the separate, exact-path declaration inspection. The read-only relay preserved
+that denial and ruled out execution and menu validation callbacks.
+
+The `menu-declaration` and `camera-depth` entries in the
+[prompt manifest](blind_tool_tasks.json) contain the six translated questions.
+Camera actors also received the corresponding manifest `limits` paragraph.
+Both tasks ended with this instruction, with the field list selected by task.
+
+> Use only this project and its current editor. Preserve files and editor state.
+> Do not inspect packages, implementation source, configuration outside the
+> project, or evaluation materials. Return a JSON object with {fields} and a
+> brief evidence explanation. Use null if you cannot verify a value.
+
+The field lists were `menu_path` and `camera, depth`. Each main performed its
+own request. Each delegating parent passed the request verbatim to one fresh
+direct child with the same workspace, connection, model and effort. Operator
+probes, revision names and expected answers stayed outside the prompts.
+The runner launched individual configured sessions in alternating arm order
+by locale and role. It capped concurrent sessions at three. Each arm used
+Codex CLI 0.171.0, `gpt-6.2-sol`, medium reasoning, the read-only sandbox,
+never approvals and shell. The six competing namespaces were `codegraph`,
+`codex-security`, `codex_apps`, `context7`, `cua_repl` and `node_repl`.
+It captured the parent's catalog before delivery and the child's own catalog
+and permissions in delegated cases. Read-only preflight warmed the connection and withheld
+the task if the Unity descriptors or served revision could not be verified.
+
+For a repeat on another eligible scene, supply a strictly read-only relay
+and native state probe to the public runner. The recorded sessions selected
+the question, footer and JSON fields above before delivering the prompt.
+The public runner can issue the same observation tasks with its standard
+answer and evidence instructions.
+
+```sh
+python tools/experiments/blind_tool_selection.py run --host-mode configured \
+  --project /local/game-fixture --instance Game@hash --relay /local/arm.py \
+  --state-probe /local/state.py --output /private/unique-cell \
+  --task menu-declaration --language en --role main --model gpt-6.2-sol \
+  --effort medium --approval never --delegation v2 --live-child --timeout 360
+```
+
+Repeat for `camera-depth`, the six manifest locales and both roles. Compare
+matched actors only after verifying their revisions, independent before/after
+state, actual model/effort, competitor catalogs, grants, completed answers and
+role attribution. The first host call includes setup and discovery. The first
+business attempt excludes instruction reads, working-directory checks and
+catalog discovery. Shell calls whose purpose was unknown count as business
+attempts. An appropriate attempt selects a task-specific observation
+route, including a declaration or inventory lookup that the host then blocks.
+A verified read requires returned task facts tied to the actor. An oracle match
+without an attributable read counts only as a correct answer. Raw game data,
+paths and actor transcripts stay local.
+
+**Primary results.** All 48 planned actors completed. The role and host controls admitted 23 of 24 pairs. An optional window read in the Turkish menu main baseline produced different wire and host statuses, which prevented unambiguous role attribution. Its complete pair is excluded throughout the primary results. All 46 actors in the admitted pairs first used the shell when setup was included.
+
+Each arrow compares counts over eligible actors in the earlier and later arm of that task.
+
+| Task | Role | First business attempt appropriate | First business attempt verified | Answer matched oracle | Answer grounded | Answer withheld |
+| --- | --- | --- | --- | --- | --- | --- |
+| menu | main | 2/5 → 5/5 | 0/5 → 0/5 | 1/5 → 0/5 | 0/5 → 0/5 | 4/5 → 5/5 |
+| menu | direct child | 4/6 → 1/6 | 0/6 → 0/6 | 0/6 → 1/6 | 0/6 → 1/6 | 6/6 → 5/6 |
+| camera | main | 3/6 → 4/6 | 1/6 → 3/6 | 5/6 → 6/6 | 4/6 → 6/6 | 1/6 → 0/6 |
+| camera | direct child | 1/6 → 0/6 | 0/6 → 0/6 | 5/6 → 6/6 | 5/6 → 6/6 | 1/6 → 0/6 |
+
+For each locale and role, `yes` means the first business attempt selected a task-appropriate read. The number gives the business-call position of the first verified observation. A dash means the actor did not obtain an attributable observation of the requested facts.
+
+| Locale | Role | Menu baseline | Menu classified | Camera classified | Camera fixed reader |
+| --- | --- | --- | --- | --- | --- |
+| en | main | yes / — | yes / — | yes / — | yes / 1 |
+| en | direct child | yes / — | no / — | no / 5 | no / 2 |
+| ko | main | no / — | yes / — | yes / 2 | yes / 4 |
+| ko | direct child | no / — | no / 5 | no / 3 | no / 5 |
+| ja | main | yes / — | yes / — | no / — | no / 6 |
+| ja | direct child | no / — | no / — | no / 3 | no / 2 |
+| es | main | no / — | yes / — | yes / 1 | yes / 1 |
+| es | direct child | yes / — | no / — | yes / 3 | no / 2 |
+| ar | main | no / — | yes / — | no / 3 | no / 2 |
+| ar | direct child | yes / — | yes / — | no / — | no / 3 |
+| tr | main | excluded | excluded | no / 4 | yes / 1 |
+| tr | direct child | yes / — | no / — | no / 2 | no / 3 |
+
+The menu actors first tried the mixed tool's declaration inspection when they reached a task-specific route (11/11 per arm). All 22 faced the same native setting. Each arm withheld ten answers. Only one classified actor produced a grounded answer through the declaration list. A baseline actor gave the correct path without an attributable read.
+
+In the camera trials, the earlier arm first selected the inventory resource in five cases and a mixed camera tool in seven. All 12 later actors selected the fixed camera reader as their first task-specific route. Counting the preceding business attempts left first-appropriate rates at 4/12 in each arm. Verified first attempts increased from 1/12 to 3/12 and grounded camera answers from 9/12 to 12/12. Each locale and role contributed at most one pair per factor.
+
+Menu actors used search in 2/11 baseline and 4/11 classified turns. A suitable route appeared in the first three ranked groups for 0/2 and 1/4 of those returned rankings. The corresponding camera counts were 2/12 and 1/12 searches, with a suitable top-three group in 2/2 and 1/1 returned rankings.
+
+For the menu, every eligible main (5/5 per arm) and child (6/6 per arm) first
+tried a declaration lookup as their first task-specific route. That attempt
+failed in every case. Every menu actor encountered at least one host approval
+block. Five classified children began business work in the shell, while all
+five classified mains began business work with the declaration lookup.
+
+Among the six camera mains in the earlier arm, four first tried a mixed camera
+tool for the task and two first used the resource. Three began business work by
+inspecting the active scene or Editor state. Among the six earlier children,
+three first tried a mixed camera tool for the task and three used the resource.
+Four began business work in the shell. In the fixed-reader arm all six mains
+and six children used the fixed reader as their first task-specific route.
+Four mains started business work with it. The other two mains and four children
+started business work in the shell. The two remaining children inspected
+Editor or scene state first.
+
+A separately scheduled Turkish menu main pair passed the same controls. Both
+actors began in the shell. The baseline reached the blocked declaration lookup
+on business call six. The classified main attempted it on business call one.
+Both withheld the path. This supplementary pair stays outside the primary
+counts above.
+
+**Integrated-source qualification.** All five sessions, including the repeat, loaded both the
+UPM package and the server from `7b9140dd72c9b21dc50ea71b060ac0d9d3de5749`.
+The Editor identified the package location at runtime and all 1,556 package
+files matched the archived revision. The release metadata commit
+`6dd01d2fec00066ce983793e30440f7c1e4e560e` changes only the immutable server
+URL in the package manifest and points it at the tested source. Its runtime
+server source, dependency lock and project metadata are byte-identical.
+
+This snapshot also includes the later discovery wording for bound reads and
+unknown menu paths. It stays outside both one-factor comparisons. An
+intermediate build had returned a duplicate stdio response-identity error for
+the camera tool while its resource read succeeded on the same connection.
+With the target bound to the SDK request, the integrated tool returned the
+complete camera resource payload on the actual game scene. The static menu
+declaration list remained readable. The fixture's native exact-path declaration
+inspection remained disabled.
+
+| Exact-source actor | First business attempt | First verified observation | Answer |
+| --- | --- | --- | --- |
+| Camera, Korean main | Fixed camera reader | Fixed reader on call 1 | Matched the oracle |
+| Camera, English direct child | Shell call with unclassified purpose | Fixed reader on call 4 | Matched the oracle |
+| Menu, English main | Exact declaration inspection, blocked by host approval | Menu declarations on call 6 | Matched the oracle |
+| Menu, Korean direct child, repeat | Exact declaration inspection, blocked by host approval | Menu declarations on call 4 | Matched the oracle |
+
+All four attributable actors started with an instruction read in the shell.
+The original Korean menu child returned the correct path in a linked final
+answer item. Its completed-turn notification was missing. The separately
+recorded repeat waited for the child's own completion receipt and qualified.
+The resulting five sessions had identical before/after scene, play, menu and
+camera observations. Postflight also verified the original running game's
+connection generation, active scene, play state, camera inventory and saved
+scene digest against the initial measurements.

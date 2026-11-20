@@ -20,7 +20,7 @@ The native runner exercises the current checkout in small, disposable EditMode p
 | `auditor-integrated` | Run the Editor Auditor module with its distributed rules archive 1.0.1 and require the source fixture diagnostic. |
 | `auditor-integrated-no-rules` | Require the Editor module to reject an audit before starting when rules are absent. |
 
-The camera profiles compare the public inventory tool with the cameras resource. They check component identities, serialized values, object dirtiness and scene dirtiness before and after reads, including a missing legacy pipeline and a scene without a Brain. The package matrix records the [official releases](https://packages.unity.com/com.unity.cinemachine) by SHA-256 in [the registry pins](../../tools/unity-registry-pins.json). The two provider releases declare Unity 2022.3 as their package minimum. The MCP package retains its independent Unity 2021.3 floor.
+The camera profiles call the native `ManageCameras.HandleCommand` with `list_cameras` and compare it with `CamerasResource.HandleCommand` in each Editor. They check component identities, serialized values, object dirtiness and scene dirtiness before and after reads, including a missing legacy pipeline and a scene without a Brain. The package matrix records the [official releases](https://packages.unity.com/com.unity.cinemachine) by SHA-256 in [the registry pins](../../tools/unity-registry-pins.json). The two provider releases declare Unity 2022.3 as their package minimum. The MCP package retains its independent Unity 2021.3 floor.
 
 The Cinemachine 3 fixture uses Mathematics 1.3.3 on the two LTS builds. Unity 6000.6.4f1 provides Mathematics types in the engine, so its fixture uses the Editor's built-in Mathematics 1.4.0 package.
 
