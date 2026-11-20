@@ -395,6 +395,9 @@ compile() {
     # The sample's MCP runner stages this source into the same test asmdef.
     sources+=$'\n'"$REPO/tools/fixtures/play_scenario_mcp/TransportScenarioTests.cs"
   fi
+  if [ "$name" = MCPForUnity.CatalogMarkerPlayer ]; then
+    sources+=$'\n'"$REPO/tools/native_api_shapes/CatalogMarkerScreenConsumer.cs"
+  fi
   while IFS= read -r f; do
     [ -f "$f" ] || { echo "::error::assembly source not found: $f" >&2; return 1; }
   done <<< "$sources"
@@ -582,7 +585,7 @@ compile_catalog_fixture() {
   local provider=("$dir/Unity.Addressables.dll" "$dir/Unity.ResourceManager.dll")
   compile MCPForUnity.Addressables.Diagnostics "$REPO/MCPForUnity/Runtime/Addressables" "$platform" "$refs" "${provider[@]}" || return 1
   compile MCPForUnity.CatalogMarkerPlayer "$REPO/tools/native_api_shapes/CatalogMarkerPlayer.cs" "$platform" "$refs" \
-    "${provider[@]}" "$dir/MCPForUnity.Addressables.Diagnostics.dll" || return 1
+    "${provider[@]}" "$dir/MCPForUnity.Runtime.dll" "$dir/MCPForUnity.Addressables.Diagnostics.dll" || return 1
   if [ "$compile_profile" = editor ]; then
     compile Unity.ScriptableBuildPipeline "$sbp/Runtime" "$platform" "$refs" || return 1
     compile Unity.ScriptableBuildPipeline.Editor "$sbp/Editor" "$platform" "$refs" "$dir/Unity.ScriptableBuildPipeline.dll" || return 1
@@ -626,9 +629,6 @@ for platform in $PLATFORMS; do
       "$REFS_PROFILE/Editor.txt" "$OUT/$platform/UnityEngine.TestRunner.dll" \
       "${cecil_refs[@]}" || { failed=1; continue; }
   fi
-  if [ "${COMPILE_ADDRESSABLES:-0}" = 1 ] && [ "$platform" = win ]; then
-    compile_catalog_fixture "$platform" || { failed=1; continue; }
-  fi
   if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ] && [ -n "$INPUT_SYSTEM_SOURCE" ]; then
     # Build reference inputs from the registry-verified package. No Editor or license is used.
     case "$UNITY_VERSION" in 6000.0.*) ;; *) die "Input System source profile requires Unity 6000.0" ;; esac
@@ -640,6 +640,9 @@ for platform in $PLATFORMS; do
   fi
   compile MCPForUnity.Runtime "$REPO/MCPForUnity/Runtime" "$platform" \
     "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
+  if [ "${COMPILE_ADDRESSABLES:-0}" = 1 ] && [ "$platform" = win ]; then
+    compile_catalog_fixture "$platform" || { failed=1; continue; }
+  fi
   if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
     compile MCPForUnity.Input.UGUI.Runtime "$REPO/MCPForUnity/Runtime/PlayScenarios/UGUI" "$platform" \
       "$REFS_PROFILE/Runtime.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
@@ -740,12 +743,12 @@ for platform in $PLATFORMS; do
     fi
   fi
   for compile_profile in player player-scenarios; do
-    if [ "${COMPILE_ADDRESSABLES:-0}" = 1 ] && [ "$platform" = win ] && [ "$compile_profile" = player ]; then
-      compile_catalog_fixture "$platform" || { failed=1; continue; }
-    fi
     player_dir="$OUT/$platform/$compile_profile"
     compile MCPForUnity.Runtime "$REPO/MCPForUnity/Runtime" "$platform" \
       "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
+    if [ "${COMPILE_ADDRESSABLES:-0}" = 1 ] && [ "$platform" = win ] && [ "$compile_profile" = player ]; then
+      compile_catalog_fixture "$platform" || { failed=1; continue; }
+    fi
     if [ -n "${PUBLIC_API_INPUTS:-}" ] && [ "$platform" = "${PLATFORMS%% *}" ]; then
       check_public_api "$player_dir" || { failed=1; continue; }
     fi

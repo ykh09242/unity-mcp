@@ -34,6 +34,37 @@ namespace MCPForUnity.Runtime
                 Publish(new ReferenceGraphRuntimeEvent("release", "", "", token, null, ""));
         }
 
+        /// <summary>Observe instrumented handle ownership within a caller-controlled lifetime. Callbacks run on the publishing thread.</summary>
+        public static IDisposable ObserveHandles(Action<HandleObservation> listener)
+        {
+            if (listener == null)
+                throw new ArgumentNullException(nameof(listener));
+            return Observe(entry =>
+            {
+                if (entry.Kind == "acquire" || entry.Kind == "release")
+                    listener(new HandleObservation(entry));
+            });
+        }
+
+        /// <summary>A release carries the same token as its acquisition. No native resource is retained.</summary>
+        public readonly struct HandleObservation
+        {
+            public readonly string Kind,
+                Scheme,
+                Key,
+                Token,
+                OwnerPath;
+
+            internal HandleObservation(ReferenceGraphRuntimeEvent entry)
+            {
+                Kind = entry.Kind;
+                Scheme = entry.Scheme;
+                Key = entry.Key;
+                Token = entry.Handle;
+                OwnerPath = entry.OwnerPath;
+            }
+        }
+
         internal static IDisposable Observe(Action<ReferenceGraphRuntimeEvent> action)
         {
             if (action == null)

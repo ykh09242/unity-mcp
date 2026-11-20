@@ -165,6 +165,25 @@ public sealed class CatalogMarkerPlayer : MonoBehaviour
                 throw new InvalidOperationException("Could not open the owned fixture cache.");
             Caching.currentCacheForWriting = cache;
             bool apply = Environment.GetEnvironmentVariable("MCP_CATALOG_APPLY") == "1";
+            if (initialization == "screen-handles")
+            {
+                var lifecycle = await CatalogMarkerScreenConsumer.Run(session);
+                File.WriteAllText(
+                    Path.Combine(directory, "observation.json"),
+                    JsonConvert.SerializeObject(
+                        new
+                        {
+                            session,
+                            build_guid = Application.buildGUID,
+                            unity_version = Application.unityVersion,
+                            initialization,
+                            lifecycle,
+                        }
+                    )
+                );
+                Application.Quit(0);
+                return;
+            }
             if (initialization == "selective" || initialization.StartsWith("torn-", StringComparison.Ordinal))
             {
                 object result = initialization == "selective" ? await SelectiveUpdate(session) : await TornDeployment(session, initialization);

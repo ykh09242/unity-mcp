@@ -31,6 +31,23 @@ events do not prove correct resource ownership; missing releases can also mean
 incomplete instrumentation or a capture ending before the release. Unmatched
 releases remain visible. Addressables itself is optional.
 
+Standalone instrumentation can subscribe with `ReferenceGraphRuntime.ObserveHandles(listener)`.
+The listener receives a scalar `HandleObservation` on the publishing thread. On acquisition,
+save its `Token`, `OwnerPath`, `Scheme` and `Key`. Match each release to that acquisition by
+token. Dispose the subscription when the observed gameplay interval ends.
+
+The [Windows content-update fixture](addressables-content-update.md) runs a screen
+ownership control against its original installed Player. In each of four additive scenes,
+two GameObjects load the same Addressables text asset independently. After the first
+GameObject closes, the second reads its own still-valid native handle. Unloading the
+scene normally releases the second handle. One control skips that release in the second
+scene. Each subsequent scene-close checkpoint must identify the same outstanding owner
+until explicit cleanup releases its token. The balanced control closes every scene at
+zero. `result.json` includes the subscriber events, per-checkpoint owner balances and
+Unity's sampled total allocated bytes. A null sample means the counter was unavailable.
+This process-wide memory counter covers other allocations as well. The owner diagnosis
+uses the instrumented acquisition/release history.
+
 When disabled, calls take a subscription check and allocate no per-call token or
 event storage. Callers should guard expensive key construction with `Enabled`.
 The opt-in Editor sink resolves asset GUIDs on the main thread; background hooks

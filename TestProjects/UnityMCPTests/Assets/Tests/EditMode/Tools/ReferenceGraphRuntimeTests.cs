@@ -67,6 +67,26 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void HandleSubscriberPairsConsumersByTokenAndStopsAtDisposal()
+        {
+            var observed = new List<ReferenceGraphRuntime.HandleObservation>();
+            string first;
+            string second;
+            using (ReferenceGraphRuntime.ObserveHandles(observed.Add))
+            {
+                ReferenceGraphRuntime.Load("addressables", "shared");
+                first = ReferenceGraphRuntime.Acquire("addressables", "shared", ownerPath: "screen/first");
+                second = ReferenceGraphRuntime.Acquire("addressables", "shared", ownerPath: "screen/second");
+                ReferenceGraphRuntime.Release(first);
+            }
+            ReferenceGraphRuntime.Release(second);
+            CollectionAssert.AreEqual(new[] { "acquire", "acquire", "release" }, observed.Select(row => row.Kind));
+            CollectionAssert.AreEqual(new[] { first, second, first }, observed.Select(row => row.Token));
+            CollectionAssert.AreEqual(new[] { "screen/first", "screen/second", "" }, observed.Select(row => row.OwnerPath));
+            Assert.AreNotEqual(first, second);
+        }
+
+        [Test]
         public void IndependentCapturesKeepPagedHistoryAndStopSeparately()
         {
             string first = Start(),

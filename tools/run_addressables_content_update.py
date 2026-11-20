@@ -1,4 +1,4 @@
-"""Verify installed Addressables content and rollback in a disposable Windows Player."""
+"""Verify installed Addressables content, recovery and handle lifetimes in a disposable Windows Player."""
 
 import argparse
 from functools import partial
@@ -10,6 +10,7 @@ import shutil
 from threading import Thread
 from uuid import uuid4
 
+from addressables_handle_lifecycle import verify_lifecycle
 from player_e2e_artifacts import digest, read_json, write_json
 from player_e2e_process import Invocation, execute
 from run_native_package_shapes import verify_lock
@@ -356,6 +357,9 @@ def run(options):
         extra_packages=profile,
         fixture_sources={
             "Assets/CatalogMarkerPlayer.cs": fixtures / "CatalogMarkerPlayer.cs",
+            "Assets/CatalogMarkerScreenConsumer.cs": fixtures / "CatalogMarkerScreenConsumer.cs",
+            "Assets/CatalogMarkerScreenConsumer.cs.meta": fixtures
+            / "CatalogMarkerScreenConsumer.cs.meta",
             "Assets/Editor/CatalogMarkerBuild.cs": fixtures / "CatalogMarkerBuild.cs",
         },
     )
@@ -526,6 +530,19 @@ def run(options):
                     "http_gets_before_switch": source["before_switch"],
                     "http_gets_with_retained_check": source["retained_gets"],
                 }
+                if name == "old-cached":
+                    source.update(requests=[], responses=[])
+                    lifecycle = launch_player(
+                        player, root / "screen-handles", env, "screen-handles"
+                    )
+                    history = verify_lifecycle(
+                        lifecycle, session, expected_build, options.unity_version
+                    )
+                    observations["screen-handles"] = {
+                        "player": lifecycle,
+                        "history": history,
+                        "http": source["responses"],
+                    }
             if bundle_hashes["old"] == bundle_hashes["new"]:
                 raise ValueError(
                     "Loaded old and new marker bundles must have distinct native hashes"
