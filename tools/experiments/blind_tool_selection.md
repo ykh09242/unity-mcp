@@ -593,3 +593,18 @@ The resulting five sessions had identical before/after scene, play, menu and
 camera observations. Postflight also verified the original running game's
 connection generation, active scene, play state, camera inventory and saved
 scene digest against the initial measurements.
+
+**Launch-pinned package retest.** Two fresh camera actors used UPM
+`2d909c0e0ebb84585d6969533c05c46adbec5a44` and its declared server
+`7b9140dd72c9b21dc50ea71b060ac0d9d3de5749`. The Editor resolved the native
+assembly to that package. All 1,556 package files and 449 server source,
+project metadata and lock files matched their respective archives. The
+compiled assembly contained the corrected camera description. The fixed
+tool and resource returned equal live camera inventories. Both actors had
+the same prompts, permissions, competing services and host binary as their
+corresponding integrated-source actors above.
+
+| Camera actor | First host call | First business attempt | First verified observation | Answer |
+| --- | --- | --- | --- | --- |
+| Korean main | Shell instruction read | Fixed camera reader | Fixed reader on call 1 | Matched the oracle |
+| English direct child | Shell instruction read | Editor state | Fixed reader on call 2 | Matched the oracle |
