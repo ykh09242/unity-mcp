@@ -6,6 +6,7 @@ using System.Threading;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.Cameras;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
@@ -110,7 +111,7 @@ namespace MCPForUnityTests.Editor.Tools
                 observedHeight = rendering.targetTexture.height;
                 observedProjection = rendering.projectionMatrix;
             }
-            Camera.onPreRender += Observe;
+            var subscription = new CameraRenderSubscription(CameraRenderSubscription.Stage.BeforeRendering, Observe);
             bool allocationCounterAvailable = false;
             string allocationCounterUnavailableReason = null;
             long? ReadAllocationCounter()
@@ -360,7 +361,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                Camera.onPreRender -= Observe;
+                subscription.Dispose();
                 camera.targetTexture = null;
                 RenderTexture.active = priorActive;
                 RenderTexture.ReleaseTemporary(originalTarget);
@@ -561,22 +562,25 @@ namespace MCPForUnityTests.Editor.Tools
             using var cancel = new CancellationTokenSource();
             var budget = new ScreenshotUtility.CaptureBatchBudget(cancel.Token);
             var before = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceIDCompat()).ToArray();
+            int renders = 0;
             void Change(Camera rendering)
             {
                 if (rendering != camera)
                     return;
+                renders++;
                 if (cancelAfterRender)
                     cancel.Cancel();
                 else
                     rendering.targetTexture = originalTarget;
             }
-            Camera.onPostRender += Change;
+            var subscription = new CameraRenderSubscription(CameraRenderSubscription.Stage.AfterRendering, Change);
             try
             {
                 if (cancelAfterRender)
                     Assert.Throws<OperationCanceledException>(() => ScreenshotUtility.RenderOwnedCameraTileToTexture(camera, 64, budget));
                 else
                     Assert.Throws<InvalidOperationException>(() => ScreenshotUtility.RenderOwnedCameraTileToTexture(camera, 64, budget));
+                Assert.AreEqual(1, renders, "The failure must come from the owned camera's actual render.");
                 Assert.AreSame(originalTarget, camera.targetTexture);
                 Assert.AreSame(priorActive, RenderTexture.active);
                 Assert.AreEqual(projection, camera.projectionMatrix);
@@ -584,7 +588,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                Camera.onPostRender -= Change;
+                subscription.Dispose();
                 camera.targetTexture = null;
                 RenderTexture.active = priorActive;
                 RenderTexture.ReleaseTemporary(originalTarget);
@@ -602,16 +606,21 @@ namespace MCPForUnityTests.Editor.Tools
             camera.targetTexture = target;
             var budget = new ScreenshotUtility.CaptureBatchBudget();
             budget.AdmitFrame(8192, 4096, 1, 1);
+            var priorActive = RenderTexture.active;
             int renders = 0;
             void Observe(Camera rendering)
             {
                 if (rendering == camera)
                     renders++;
             }
-            Camera.onPreRender += Observe;
-            var textures = UnityEngine.Resources.FindObjectsOfTypeAll<RenderTexture>().Select(t => t.GetInstanceIDCompat()).ToArray();
+            var subscription = new CameraRenderSubscription(CameraRenderSubscription.Stage.BeforeRendering, Observe);
             try
             {
+                camera.Render();
+                Assert.Greater(renders, 0, "The render observer must see the owned camera before checking admission.");
+                renders = 0;
+                RenderTexture.active = priorActive;
+                var textures = UnityEngine.Resources.FindObjectsOfTypeAll<RenderTexture>().Select(t => t.GetInstanceIDCompat()).ToArray();
                 Assert.Throws<ArgumentException>(() => ScreenshotUtility.RenderCameraToTexture(camera, 16, budget));
                 Assert.AreEqual(0, renders);
                 Assert.AreSame(target, camera.targetTexture);
@@ -622,8 +631,9 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                Camera.onPreRender -= Observe;
+                subscription.Dispose();
                 camera.targetTexture = null;
+                RenderTexture.active = priorActive;
                 RenderTexture.ReleaseTemporary(target);
                 Object.DestroyImmediate(owner);
             }
@@ -636,17 +646,19 @@ namespace MCPForUnityTests.Editor.Tools
             using var cancel = new CancellationTokenSource();
             var textures = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceIDCompat()).ToArray();
             int renders = 0;
+            string temporaryCameraName = cameraTool ? "__MCP_MultiAngle_Temp_Camera__" : "__MCP_OrbitCapture_Temp_Camera__";
+            Assert.IsNull(GameObject.Find(temporaryCameraName), "An unowned capture camera is already present.");
             Camera persistent = Camera.main;
             string persistentState = persistent != null ? UnityEditor.EditorJsonUtility.ToJson(persistent) : null;
             Matrix4x4 persistentProjection = persistent != null ? persistent.projectionMatrix : default;
             void Cancel(Camera camera)
             {
-                if (!camera.name.StartsWith("__MCP_", StringComparison.Ordinal))
+                if (camera == null || camera.gameObject.name != temporaryCameraName)
                     return;
                 renders++;
                 cancel.Cancel();
             }
-            Camera.onPostRender += Cancel;
+            var subscription = new CameraRenderSubscription(CameraRenderSubscription.Stage.AfterRendering, Cancel);
             try
             {
                 var command = new JObject
@@ -681,7 +693,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                Camera.onPostRender -= Cancel;
+                subscription.Dispose();
             }
         }
 

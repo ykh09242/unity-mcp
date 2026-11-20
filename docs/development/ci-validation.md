@@ -584,6 +584,13 @@ targeting pack's `FrameworkList.xml`, verify the extension DLL dependencies agai
 base references, and update the qualified version after license-free compilation.
 [Unity compilation pipeline](https://github.com/Unity-Technologies/UnityCsReference/blob/7000.0/Editor/Mono/Scripting/ScriptCompilation/CompilationPipeline.cs)
 
+Camera render fixtures subscribe to the active pipeline's events. Unity 7 uses the
+Scriptable Render Pipeline's per-camera begin and end hooks. Earlier Editors also use the
+Built-in Render Pipeline callbacks when that pipeline is active. The fixtures count
+renders from the camera under test and verify that the observer sees a real render before
+using it to assert the absence of rendering.
+[Unity render pipeline callbacks](https://docs.unity.com/en-us/engine/7000.0/script-reference/unityengine/rendering/renderpipeline/render)
+
 The native-execution policy and license gate stay explicit. A skipped licensed-test job is
 not runtime test evidence, and a successful compile is not proof that an Editor session was
 executed.

@@ -33,15 +33,13 @@ namespace MCPForUnityTests.Editor.Helpers
             string folder = "Temp/McpBatchPreflight-" + Guid.NewGuid().ToString("N");
             string absoluteFolder = Path.Combine(Path.GetDirectoryName(Application.dataPath), folder);
             int renderEvents = 0;
-            Camera.CameraCallback onRender = camera =>
+            void OnRender(Camera camera)
             {
                 if (camera != null && camera.gameObject.name == temporaryCameraName)
                     renderEvents++;
-            };
-            Action<ScriptableRenderContext, Camera> onPipelineRender = (context, camera) => onRender(camera);
+            }
             var originalActive = RenderTexture.active;
-            Camera.onPreRender += onRender;
-            RenderPipelineManager.beginCameraRendering += onPipelineRender;
+            var subscription = new CameraRenderSubscription(CameraRenderSubscription.Stage.BeforeRendering, OnRender);
             try
             {
                 _batchSceneFixture.Create("McpBatchPreflight_", Guid.NewGuid().ToString("N"));
@@ -76,8 +74,7 @@ namespace MCPForUnityTests.Editor.Helpers
             }
             finally
             {
-                Camera.onPreRender -= onRender;
-                RenderPipelineManager.beginCameraRendering -= onPipelineRender;
+                subscription.Dispose();
                 _batchSceneFixture.Close();
             }
         }

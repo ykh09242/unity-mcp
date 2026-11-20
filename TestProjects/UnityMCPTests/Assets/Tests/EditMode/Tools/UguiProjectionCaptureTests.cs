@@ -6,6 +6,7 @@ using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -23,7 +24,7 @@ namespace MCPForUnityTests.EditMode.Tools
         private RenderTexture target;
         private int pixelChecks;
         private int renderCallbacks;
-        private Camera.CameraCallback renderCallback;
+        private CameraRenderSubscription renderSubscription;
 
         private void Build(bool backbuffer = false)
         {
@@ -32,12 +33,11 @@ namespace MCPForUnityTests.EditMode.Tools
             var cameraObject = new GameObject("UI07CaptureCamera", typeof(Camera));
             owned.Add(cameraObject);
             camera = cameraObject.GetComponent<Camera>();
-            renderCallback = observed =>
+            renderSubscription = new CameraRenderSubscription(CameraRenderSubscription.Stage.BeforeCulling, observed =>
             {
                 if (observed == camera)
                     renderCallbacks++;
-            };
-            Camera.onPreCull += renderCallback;
+            });
             camera.enabled = backbuffer;
             camera.clearFlags = CameraClearFlags.SolidColor;
             camera.backgroundColor = Color.black;
@@ -83,9 +83,8 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             finally
             {
-                if (renderCallback != null)
-                    Camera.onPreCull -= renderCallback;
-                renderCallback = null;
+                renderSubscription?.Dispose();
+                renderSubscription = null;
                 owned.Clear();
             }
         }

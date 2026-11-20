@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Threading;
@@ -226,8 +227,6 @@ namespace MCPForUnityTests.Editor.Helpers
         {
             if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
                 Assert.Ignore("The actual screenshot tool requires a graphics device.");
-            if (GraphicsSettings.currentRenderPipeline != null)
-                Assert.Ignore("The fallback cancellation checkpoint uses the built-in Camera.onPostRender callback.");
             yield return new EnterPlayMode();
             // Create the callback closure after the domain reload. An event lambda captured
             // directly in this iterator would leave its display class behind during reload.
@@ -248,14 +247,32 @@ namespace MCPForUnityTests.Editor.Helpers
             var target = RenderTexture.GetTemporary(16, 16, 24);
             camera.targetTexture = target;
             int rendered = 0;
-            Camera.CameraCallback afterRender = renderedCamera =>
+            void AfterRender(Camera renderedCamera)
             {
+                if (renderedCamera != camera || renderedCamera.targetTexture == target)
+                    return;
                 rendered++;
                 cancel.Cancel();
-            };
-            Camera.onPostRender += afterRender;
+            }
+            var previousMainCameras = new List<Camera>();
+            CameraRenderSubscription subscription = null;
             try
             {
+                if (Application.isBatchMode)
+                {
+                    // Camera.main only returns enabled cameras. Own the fallback selection and
+                    // count the render into the helper's temporary target, not a background frame.
+                    foreach (var activeCamera in Camera.allCameras)
+                    {
+                        if (!activeCamera.CompareTag("MainCamera"))
+                            continue;
+                        previousMainCameras.Add(activeCamera);
+                        activeCamera.enabled = false;
+                    }
+                    camera.enabled = true;
+                    Assert.AreSame(camera, Camera.main);
+                    subscription = new CameraRenderSubscription(CameraRenderSubscription.Stage.AfterRendering, AfterRender);
+                }
                 var capture = ManageScene.HandleCommand(
                     new JObject
                     {
@@ -294,7 +311,11 @@ namespace MCPForUnityTests.Editor.Helpers
             }
             finally
             {
-                Camera.onPostRender -= afterRender;
+                subscription?.Dispose();
+                camera.enabled = false;
+                foreach (var previousMainCamera in previousMainCameras)
+                    if (previousMainCamera != null)
+                        previousMainCamera.enabled = true;
                 camera.targetTexture = null;
                 RenderTexture.ReleaseTemporary(target);
                 Object.DestroyImmediate(cameraObject);
