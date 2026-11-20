@@ -14,10 +14,12 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
   package:
+    permissions:
+      contents: read
+      actions: read
     if: github.repository == 'ykh09242/unity-mcp' && github.ref == 'refs/heads/beta'
     runs-on: windows-2022
     timeout-minutes: 20

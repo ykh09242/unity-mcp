@@ -18,11 +18,13 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
   collect:
     name: Collect native fixture evidence
+    permissions:
+      contents: read
+      actions: read
     if: >-
       github.repository == 'ykh09242/unity-mcp' &&
       (github.event_name == 'pull_request' || github.ref == 'refs/heads/beta')

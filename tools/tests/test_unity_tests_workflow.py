@@ -65,9 +65,17 @@ def test_native_actions_have_fresh_distinct_reservation_and_observation_lineage(
             assert observer["if"].startswith("always()")
             assert observer["env"]["RUNNER_OUTCOME"] == f"${{{{ steps.{runner['id']}.outcome }}}}"
             assert "exit_code" not in observer["run"]
-        artifacts = next(
-            step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")
-        )
+        evidence_name = {
+            "testAllModes": "Test results for ",
+            "optionalIntegrations": "optional-results-",
+            "untouchedUpmInstall": "untouched-upm-",
+        }[job_name]
+        (artifacts,) = [
+            step
+            for step in steps
+            if step.get("uses", "").startswith("actions/upload-artifact@")
+            and step["with"]["name"].startswith(evidence_name)
+        ]
         assert ".release-evidence/" in artifacts["with"]["path"]
         assert artifacts["with"]["include-hidden-files"] is True
 

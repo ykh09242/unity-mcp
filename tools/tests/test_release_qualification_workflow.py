@@ -480,7 +480,7 @@ def test_qualified_player_keeps_existing_license_ownership_and_required_executio
     assert required["if"] == "always() && inputs.require_player_e2e"
     assert player["if"] == "needs.license.outputs.unity_ok == 'true'"
     prerequisites = jobs["license"]["steps"][-1]
-    assert prerequisites["if"] == "inputs.require_player_e2e"
+    assert prerequisites["if"] == "inputs.require_player_e2e || inputs.produce_prefab_pair"
     assert all(not step.get("continue-on-error") for step in player["steps"])
     evidence = next(step for step in player["steps"] if step.get("id") == "evidence")
     assert evidence["if"] == "always()"
