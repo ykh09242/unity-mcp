@@ -79,6 +79,8 @@ def child(monkeypatch, tmp_path):
         "if request['schema_version'] == 2:\n"
         " report['reproduction'].update({key:request[key] for key in ('build_id','payload_hash','build_source_revision')})\n"
         " report['reproduction']['payload_verification']='launcher_admission'\n"
+        "if 'replay_seed' in request and mode != 'ignore-replay-settings':\n"
+        " report['reproduction'].update({key:request[key] for key in ('replay_seed','start_delay_frames')})\n"
         "report.pop('schema_version');report.pop('scenario_name');report.pop('definition_hash')\n"
         "if mode == 'wrong-id': report['job_id']='f'*32\n"
         "if mode == 'wrong-hash': report['reproduction']['definition_hash']='f'*64\n"

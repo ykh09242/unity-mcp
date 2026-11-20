@@ -249,8 +249,21 @@ class PlayerRunOptions:
     expected_scenario: str | None = None
     cancel_requested: Callable[[], bool] | None = None
     dispatch: PlayerDispatch | None = field(default=None, compare=False, repr=False)
+    replay_seed: int | None = None
+    start_delay_frames: int = 0
 
     def __post_init__(self) -> None:
+        if type(self.start_delay_frames) is not int or not 0 <= self.start_delay_frames <= 120:
+            raise PlayerLaunchError("Replay start delay must be between 0 and 120 frames")
+        if self.replay_seed is None and self.start_delay_frames:
+            raise PlayerLaunchError("A replay start delay requires an explicit seed")
+        if self.replay_seed is not None and (
+            type(self.replay_seed) is not int
+            or not -(2**31) <= self.replay_seed < 2**31
+            or self.repeat_count != 1
+            or self.soak is not None
+        ):
+            raise PlayerLaunchError("Controlled replay requires one run and a signed 32-bit seed")
         if type(self.graphical) is not bool:
             raise PlayerLaunchError("Player graphical option must be a boolean")
         if self.soak is not None and self.repeat_count != 1:
@@ -405,6 +418,8 @@ def _run_player(options: PlayerRunOptions, dispatch: PlayerDispatch) -> PlayerOu
     if options.expected_scenario is not None and bundle.scenario_name != options.expected_scenario:
         raise PlayerLaunchError("Player scenario does not match the selected candidate")
     payload = bundle.payload
+    if options.replay_seed is not None and payload is None:
+        raise PlayerLaunchError("Controlled replay requires a verified v2 Player payload")
     if options.soak is not None and payload is None:
         raise PlayerLaunchError("Player soak requires a verified v2 Player payload")
     if options.require_verified_payload and payload is None:
@@ -468,6 +483,9 @@ def _run_player(options: PlayerRunOptions, dispatch: PlayerDispatch) -> PlayerOu
         )
     if command.source_revision is not None:
         request["source_revision"] = command.source_revision
+    if options.replay_seed is not None:
+        request["replay_seed"] = options.replay_seed
+        request["start_delay_frames"] = options.start_delay_frames
     if options.soak is not None:
         request["soak"] = options.soak.model_dump(mode="json")
     request_path.write_text(json.dumps(request, ensure_ascii=True) + "\n", encoding="utf-8")
@@ -680,6 +698,16 @@ def _run_player(options: PlayerRunOptions, dispatch: PlayerDispatch) -> PlayerOu
         ):
             raise PlayerLaunchError(
                 "Player final report does not match the owned request or process exit"
+            )
+        if options.replay_seed is not None and any(
+            type(report.reproduction.get(key)) is not int or report.reproduction[key] != value
+            for key, value in (
+                ("replay_seed", options.replay_seed),
+                ("start_delay_frames", options.start_delay_frames),
+            )
+        ):
+            raise PlayerLaunchError(
+                "Player did not apply the requested replay seed and frame delay"
             )
         if payload is not None and (
             report.player_schema_version != 2

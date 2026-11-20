@@ -46,7 +46,9 @@ class Build:
 
 
 def _definition_key(definition):
-    return definition.model_dump_json(exclude_none=True)
+    return json.dumps(
+        definition.model_dump(mode="json", exclude_none=True), sort_keys=True, separators=(",", ":")
+    )
 
 
 def _read_pair(paths, full=None):
@@ -68,7 +70,7 @@ def _read_pair(paths, full=None):
     return pair
 
 
-def _launch(build, output, graphical, timeout):
+def _launch(build, output, graphical, timeout, seed=None, start_delay_frames=0):
     manifest = build.manifest
     result = run_player(
         PlayerRunOptions(
@@ -80,6 +82,9 @@ def _launch(build, output, graphical, timeout):
             require_verified_payload=True,
             expected_build_revision=manifest.build_source_revision,
             expected_build_id=manifest.build_id,
+            expected_payload_hash=manifest.payload_hash,
+            replay_seed=seed,
+            start_delay_frames=start_delay_frames,
         )
     )
     report = result.report
@@ -198,6 +203,29 @@ def state_oracle(definition, broken, repaired):
     }
 
 
+def deletion_candidates(definition, kept, pinned, groups):
+    """Try declared dependencies, mark/read groups and successively finer contiguous chunks."""
+    removable = [index for index in kept if index not in pinned]
+    marks = {}
+    for index in kept:
+        step = definition.steps[index]
+        if step.event_mark:
+            marks[step.event_mark] = [index]
+        elif step.event_since in marks:
+            marks[step.event_since].append(index)
+    available = set(removable)
+    for group in (*groups, *marks.values()):
+        if len(group) > 1 and available.issuperset(group):
+            yield tuple(i for i in kept if i not in group)
+    # Partition only deletable steps so pinned checkpoints can divide a dependency group.
+    size = len(removable)
+    while size:
+        for start in range(0, len(removable), size):
+            chunk = set(removable[start : start + size])
+            yield tuple(i for i in kept if i not in chunk)
+        size = (size + 1) // 2 if size > 1 else 0
+
+
 def reduce_replay(
     broken,
     repaired,
@@ -208,12 +236,28 @@ def reduce_replay(
     graphical=False,
     timeout=60,
     max_trials=24,
+    groups=(),
+    grouped=False,
+    seed=None,
+    start_delay_frames=0,
+    attempts=1,
 ):
-    """Try single deletions to a fixed point, retaining setup, cleanup and the observed oracle."""
+    """Delete groups and single steps while preserving the original state oracle."""
     if len(candidate_pairs) > 128 or not 1 <= max_trials <= 128:
         raise ValueError("Reduction admits at most 128 prepared pairs and trials")
+    if not 1 <= attempts <= max_trials:
+        raise ValueError("Attempts per candidate must be within the total paired trial budget")
+    if start_delay_frames and seed is None:
+        raise ValueError("A replay start delay requires an explicit seed")
     full = _read_pair((broken, repaired))
     definition = full[0].manifest.definition
+    if len(groups) > 128 or any(
+        not 2 <= len(group) <= len(definition.steps)
+        or len(set(group)) != len(group)
+        or any(type(i) is not int or not 0 <= i < len(definition.steps) for i in group)
+        for group in groups
+    ):
+        raise ValueError("Supply up to 128 groups of unique, in-range original step indices")
     sources = {}
     for paths in candidate_pairs:
         pair = _read_pair(paths, full)
@@ -233,7 +277,10 @@ def reduce_replay(
 
     def trial(pair, kept):
         nonlocal environment
-        outcomes = [_launch(build, output / "runs", graphical, timeout) for build in pair]
+        outcomes = [
+            _launch(build, output / "runs", graphical, timeout, seed, start_delay_frames)
+            for build in pair
+        ]
         environments = [_environment(run) for run in outcomes]
         if environments[0] != environments[1] or environment not in (None, environments[0]):
             raise ValueError("Observed runtime environment changed between replay controls")
@@ -252,7 +299,11 @@ def reduce_replay(
         return result
 
     kept = list(range(len(definition.steps)))
-    original = trial(full, kept)
+    original = None
+    for _ in range(attempts):
+        original = trial(full, kept)
+        if original is not None:
+            break
     if original is None:
         raise ValueError(
             "Original pair did not reproduce an observed state mismatch and its passing repair"
@@ -264,14 +315,20 @@ def reduce_replay(
     pinned.update(i for i, step in enumerate(definition.steps) if step.screenshot)
     tested = set()
     unavailable = []
-    chosen = trials[0]
-    stop = "single_deletion_fixed_point"
+    before = chosen = trials[-1]
+    stop = "group_deletion_fixed_point" if grouped or groups else "single_deletion_fixed_point"
+    missing = set()
     while True:
         changed = False
-        for index in kept:
-            if index in pinned:
-                continue
-            indices = tuple(i for i in kept if i != index)
+        incomplete = False
+        candidates = (
+            deletion_candidates(definition, kept, pinned, groups)
+            if grouped or groups
+            else (tuple(i for i in kept if i != index) for index in kept if index not in pinned)
+        )
+        for indices in candidates:
+            if indices in missing:
+                incomplete = True
             if indices in tested:
                 continue
             tested.add(indices)
@@ -300,28 +357,40 @@ def reduce_replay(
                 if _definition_key(pair[0].manifest.definition) != key:
                     raise ValueError("Builder returned a different replay definition")
             if pair is None:
+                incomplete = True
+                missing.add(indices)
                 unavailable.append(list(indices))
                 continue
-            result = trial(pair, indices)
-            if result and indices[result[0]] == failing_index and result[1] == identity:
-                kept, chosen = list(indices), trials[-1]
-                changed = True
+            for _ in range(attempts):
+                if len(trials) >= max_trials:
+                    stop = "trial_limit"
+                    break
+                result = trial(pair, indices)
+                if result and indices[result[0]] == failing_index and result[1] == identity:
+                    kept, chosen = list(indices), trials[-1]
+                    changed = True
+                    break
+            if changed or stop == "trial_limit":
                 break
         if not changed:
             break
-    if unavailable and stop != "trial_limit":
+    if incomplete and stop != "trial_limit":
         stop = "candidate_builds_unavailable"
     report = {
         "schema_version": 1,
         "status": "reduced" if len(kept) < len(definition.steps) else "unchanged",
         "stop": stop,
         "pinned_indices": sorted(pinned),
+        "deletion_groups": [list(group) for group in groups],
         "unavailable_candidates": unavailable,
         "environment": dict(zip(ENVIRONMENT_FIELDS, environment, strict=True)),
         "graphical": graphical,
         "timeout_seconds": timeout,
         "max_trials": max_trials,
-        "before": trials[0],
+        "attempts_per_candidate": attempts,
+        "replay_seed": seed,
+        "start_delay_frames": start_delay_frames,
+        "before": before,
         "after": chosen,
         "trials": trials,
     }

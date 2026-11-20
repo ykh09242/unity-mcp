@@ -209,3 +209,106 @@ def test_actual_cli_generates_subsequence_and_requires_both_controls(
         == 'State weather.phase: "snow"; expected: "snow".'
     )
     assert (output / report["after"]["broken"]["report"]).with_name("junit.xml").exists()
+
+
+@pytest.fixture
+def replay_controls(tmp_path, monkeypatch, verified_bundle):
+    """Use real bundle admission, CLI and reports with deterministic simulated process outcomes."""
+    _, _, template = verified_bundle
+    manifests = {}
+    launches = []
+
+    def pair(label, scenario):
+        paths = []
+        for source in ("broken", "repaired"):
+            path = tmp_path / f"{label}-{source}"
+            path.mkdir()
+            raw = json.dumps(scenario)
+            manifest = deepcopy(template)
+            manifest.update(
+                scenario_name=scenario["name"],
+                definition=scenario,
+                definition_json=raw,
+                definition_hash=sha256(raw.encode()).hexdigest(),
+                scene_paths=["Assets/Observatory.unity"],
+                build_id=uuid4().hex,
+                build_source_revision=source,
+            )
+            (path / "scenario-bundle.json").write_text(json.dumps(manifest))
+            manifests[path] = manifest
+            paths.append(str(path))
+        return paths
+
+    def simulate(observation):
+        def launch(options):
+            manifest = manifests[options.build_directory]
+            report = observation(manifest, options)
+            directory = options.output_directory / uuid4().hex
+            directory.mkdir(parents=True)
+            reproduction = {
+                key: manifest[key]
+                for key in ("build_id", "build_source_revision", "payload_hash", "definition_hash")
+            }
+            reproduction.update(
+                environment=dict.fromkeys(replay.ENVIRONMENT_FIELDS, "fixture"),
+                replay_seed=options.replay_seed,
+                start_delay_frames=options.start_delay_frames,
+            )
+            report.update(job_id=directory.name, reproduction=reproduction)
+            (directory / "run.json").write_text(json.dumps(report))
+            launches.append(options)
+            return PlayerOutcome(report, directory, report["exit_code"])
+
+        monkeypatch.setattr(replay, "run_player", launch)
+
+    return pair, simulate, launches
+
+
+def test_event_dependencies_cross_pinned_steps_and_respect_original_indices():
+    scenario = definition()
+    scenario["steps"][1:1] = [
+        {"name": "Mark", "action": "mark_events", "event_id": "weather", "event_mark": "begin"},
+        {
+            **scenario["steps"][1],
+            "name": "Capture",
+            "screenshot": {"name": "sky", "width": 16, "height": 16},
+        },
+        {
+            "name": "Read events",
+            "action": "wait_events",
+            "event_since": "begin",
+            "event_name": "snow",
+            "event_count": 1,
+        },
+    ]
+    parsed = PlayScenario.model_validate(scenario)
+    candidates = list(replay.deletion_candidates(parsed, [0, 1, 2, 3, 4, 5], {0, 2, 5}, [(1, 4)]))
+    assert candidates[:2] == [(0, 2, 3, 5), (0, 2, 4, 5)]
+    assert all({0, 2, 5}.issubset(kept) for kept in candidates)
+
+
+def test_removing_a_dependent_pair_can_preserve_failure_when_either_single_deletion_loses_it(
+    tmp_path, replay_controls
+):
+    pair, simulate, launches = replay_controls
+    full = definition()
+    full["steps"].insert(2, {**full["steps"][1], "name": "Read sky again"})
+    broken, repaired = pair("full", full)
+    arguments = ["reduce-replay", "--broken", broken, "--repaired", repaired]
+    for indices in ([0, 1, 3], [0, 2, 3], [0, 3]):
+        value = {**full, "steps": [full["steps"][i] for i in indices]}
+        arguments.extend(["--candidate-pair", *pair("".join(map(str, indices)), value)])
+    simulate(
+        lambda m, _: observe(
+            m["definition"],
+            m["build_source_revision"] == "broken" and len(m["definition"]["steps"]) != 3,
+        )
+    )
+    for mode, extra, kept in (("single", [], [0, 1, 2, 3]), ("group", ["--grouped"], [0, 3])):
+        output = tmp_path / mode
+        cli = CliRunner().invoke(play_scenario, [*arguments, *extra, "--output", str(output)])
+        assert cli.exit_code == 0, (cli.output, cli.exception)
+        report = json.loads((output / "reduction.json").read_bytes())
+        assert report["after"]["kept_indices"] == kept
+        assert report["after"]["checkpoint"]["original_index"] == 3
+    assert len(launches) == 10

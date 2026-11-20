@@ -123,6 +123,30 @@ namespace MCPForUnityTests
             };
 
         [Test]
+        public void ControlledReplayRequiresOneVerifiedSeededRunWithBoundedFrameDelay()
+        {
+            JObject request = Request();
+            request["repeat_count"] = 1;
+            request["replay_seed"] = int.MinValue;
+            request["start_delay_frames"] = 120;
+            Assert.Throws<ArgumentException>(() => PlayScenarioPlayerRequest.Parse(request.ToString()));
+            request["schema_version"] = 2;
+            request["build_id"] = new string('c', 32);
+            request["build_source_revision"] = "trial-source";
+            request["payload_hash"] = new string('d', 64);
+            var parsed = PlayScenarioPlayerRequest.Parse(request.ToString());
+            Assert.AreEqual(int.MinValue, parsed.ReplaySeed);
+            Assert.AreEqual(120, parsed.StartDelayFrames);
+            request["repeat_count"] = 2;
+            Assert.Throws<ArgumentException>(() => PlayScenarioPlayerRequest.Parse(request.ToString()));
+            request["repeat_count"] = 1;
+            request["start_delay_frames"] = 121;
+            Assert.Throws<ArgumentException>(() => PlayScenarioPlayerRequest.Parse(request.ToString()));
+            request.Remove("start_delay_frames");
+            Assert.Throws<ArgumentException>(() => PlayScenarioPlayerRequest.Parse(request.ToString()));
+        }
+
+        [Test]
         public void EarlyCancellationIsOwnedAndFinishesWithoutScenarioEffects()
         {
             string directory = Path.Combine(Path.GetTempPath(), "mcp-early-cancel-" + Guid.NewGuid().ToString("N"));

@@ -34,6 +34,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private string soakStopStatus;
         private string soakStopError;
         private bool iterationRecorded;
+        private int delayedFrames;
+        private bool replaySeedApplied;
         private long checkpointBytes;
         private PlayScenarioEnvironment environment;
         private readonly PlayScenarioPlayerPersistence persistence = new PlayScenarioPlayerPersistence();
@@ -222,6 +224,16 @@ namespace MCPForUnity.Runtime.PlayScenarios
                         Complete(1);
                         return;
                     }
+                    if (delayedFrames < request.StartDelayFrames)
+                    {
+                        delayedFrames++;
+                        return;
+                    }
+                    if (request.ReplaySeed.HasValue)
+                    {
+                        UnityEngine.Random.InitState(request.ReplaySeed.Value);
+                        replaySeedApplied = true;
+                    }
                     StartEngine();
                 }
                 Drain();
@@ -396,6 +408,11 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 JsonSerializer.Create(new JsonSerializerSettings { NullValueHandling = NullValueHandling.Include, TypeNameHandling = TypeNameHandling.None })
             );
             request.AddReproduction(report, bundle);
+            if (replaySeedApplied)
+            {
+                report["reproduction"]["replay_seed"] = request.ReplaySeed.Value;
+                report["reproduction"]["start_delay_frames"] = delayedFrames;
+            }
             report["progress_error"] = progressError;
             report["finalization_state"] = "completed";
             report["exit_code"] = exitCode;

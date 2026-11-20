@@ -1,8 +1,8 @@
 # Scenario regression evidence
 
 Use saved evidence to compare known baselines, inspect intermittent failures and export a portable
-report. The offline commands below do not launch Unity, retry failed runs, discover history or
-change the original scenario result. Start with [scenario authoring](play-scenarios.md),
+report. The replay commands launch explicitly selected standalone Players. The comparison and
+export commands read saved evidence. Start with [scenario authoring](play-scenarios.md),
 [standalone execution](play-scenario-execution.md) and
 [Player assurance](play-scenario-player-assurance.md).
 
@@ -37,8 +37,15 @@ initial scene anchor, first failing step, named screenshot steps and all setup
 and cleanup steps. It accepts a deletion only if the same original step still
 fails with the same observed value, and its repaired counterpart now observes
 the requested value. Each accepted deletion starts another pass. This finds a
-fixed point for single deletions under these constraints. Interactions requiring
-two simultaneous deletions and intermittent failures need separate trials.
+fixed point for single deletions under these constraints.
+
+Use `--grouped` to try deleting an event mark with its dependent waits, then
+progressively smaller chunks of removable steps, down to individual steps.
+Use repeatable `--delete-group 2,5` to try project-specific dependencies first.
+Indices are zero-based positions in the original main stage. Removing both
+steps can preserve a failure even when either single deletion loses it. Each
+candidate still requires the matching broken and repaired observations. A
+group fixed point covers the generated candidates and supplied groups.
 
 An existing verified pair can serve a generated definition through repeatable
 `--candidate-pair` options. To build missing pairs automatically, supply
@@ -56,7 +63,68 @@ hashes, and per-run JSON, JUnit and HTML evidence. The default budget is 24
 paired trials including the full controls. Exit 0 means the single-deletion
 search finished, including when the original replay was already irreducible.
 Exit 2 with `trial_limit` or `candidate_builds_unavailable` leaves a partial
-result and identifies the untested scope.
+result and identifies the untested scope. Grouped search reports
+`group_deletion_fixed_point` when it finishes. For intermittent cases,
+`--attempts-per-candidate 3` permits up to three fresh pairs per candidate
+within the same total trial budget. Use `--seed` and `--start-delay-frames`
+to replay a condition previously measured by the trial command.
+
+## Measure a failure across controlled replay trials
+
+`play-scenario trial-replay` launches a fresh broken and repaired process for
+every observation. It first measures the original builds and can repeat the
+same conditions on a reduced pair. Select the original main-stage
+`wait_state` equality checkpoint in a local JSON plan. This example assumes
+the original input step is at index 2 and the checkpoint at index 3. Input
+variants must act before the selected checkpoint so the broken Player reaches
+the varied action.
+
+```json
+{
+  "checkpoint_index": 3,
+  "seed": 7,
+  "start_delay_frames": 0,
+  "attempts": 3,
+  "variants": [
+    {"axis": "seed", "value": 8},
+    {"axis": "start_delay_frames", "value": 3},
+    {"axis": "input", "step_index": 2, "field": "key", "value": "b"}
+  ],
+  "kept_indices": [0, 2, 3]
+}
+```
+
+```sh
+unity-mcp --format json play-scenario trial-replay \
+  --broken builds/broken --repaired builds/repaired --plan trials.json \
+  --reduced-pair builds/short-broken builds/short-repaired \
+  --candidate-pair builds/key-b-broken builds/key-b-repaired \
+  --candidate-pair builds/short-key-b-broken builds/short-key-b-repaired \
+  --output reports/trials
+```
+
+Copy `kept_indices` from `reduction.json`'s accepted `after` entry. Omit both
+`kept_indices` and `--reduced-pair` to measure the original alone. The reduced
+builds must execute that exact subsequence, including the selected input step.
+Each variant changes one setting from the baseline. The native runner waits
+the specified number of updates (0 through 120) and initializes
+`UnityEngine.Random` with the signed 32-bit seed immediately before starting
+the scenario engine. The launcher verifies both values in the native report.
+This controls the Unity random stream from that point onward. For input
+variants, prepare a broken and repaired build with exactly the selected input
+field changed. The command checks their definitions and source revisions.
+
+Each condition runs 2 through 32 times per phase. A plan may contain up to 15
+variants plus the baseline. The entire plan must fit `--max-trials` (up to
+128 broken/repaired pairs). `replay-trials.json` records counts, denominators
+and report paths with hashes. A matching failure requires the same original
+checkpoint, expected and actual values, and a passing repaired observation.
+A condition is marked intermittent when it yields both a matching failure and
+a successful broken observation with a passing repair. Reproduction after
+reduction requires the same condition to reproduce in both phases. Missing
+input builds have zero trials and a null rate. Exit 2 indicates incomplete
+coverage, a missing original failure signature or an unconfirmed shortened
+replay. Without a reduced pair, post-reduction reproduction is unmeasured.
 
 For a graphical regression profile with named visual checks, its standard
 `regression.json`, `report.html` and `junit.xml` include the first failed step,

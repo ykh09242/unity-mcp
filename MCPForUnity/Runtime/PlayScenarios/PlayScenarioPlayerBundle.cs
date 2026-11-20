@@ -290,6 +290,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public int TimeoutSeconds { get; private set; }
         public string SourceRevision { get; private set; }
         public PlayScenarioPlayerSoakOptions Soak { get; private set; }
+        public int? ReplaySeed { get; private set; }
+        public int StartDelayFrames { get; private set; }
 
         public static PlayScenarioPlayerRequest Parse(string json)
         {
@@ -300,7 +302,9 @@ namespace MCPForUnity.Runtime.PlayScenarios
             string[] fields = { "schema_version", "job_id", "scenario_name", "definition_hash", "repeat_count", "timeout_seconds", "source_revision" };
             PlayScenarioPlayerBundle.Fields(
                 value,
-                schema == 1 ? fields : fields.Concat(new[] { "build_id", "build_source_revision", "payload_hash", "soak" }).ToArray()
+                schema == 1
+                    ? fields
+                    : fields.Concat(new[] { "build_id", "build_source_revision", "payload_hash", "soak", "replay_seed", "start_delay_frames" }).ToArray()
             );
             string buildId = null,
                 buildRevision = null,
@@ -333,6 +337,15 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     throw new ArgumentException("Player soak requires schema 2, repeat_count 1 and an options object.");
                 soak = PlayScenarioPlayerSoakOptions.Parse(options);
             }
+            int? replaySeed = null;
+            int startDelayFrames = 0;
+            if (value.Property("replay_seed") != null || value.Property("start_delay_frames") != null)
+            {
+                if (repeatCount != 1 || soak != null)
+                    throw new ArgumentException("Controlled replay requires one fresh Player run.");
+                replaySeed = Integer(value, "replay_seed", int.MinValue, int.MaxValue);
+                startDelayFrames = Integer(value, "start_delay_frames", 0, 120);
+            }
             return new PlayScenarioPlayerRequest
             {
                 SchemaVersion = schema,
@@ -346,6 +359,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 TimeoutSeconds = Integer(value, "timeout_seconds", 1, 86400),
                 SourceRevision = revision,
                 Soak = soak,
+                ReplaySeed = replaySeed,
+                StartDelayFrames = startDelayFrames,
             };
         }
 
