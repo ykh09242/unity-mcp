@@ -3007,6 +3007,22 @@ Run all frozen children from one verified build, with child and suite JUnit. Fre
 | --graphical | boolean | optional | nargs=1, flag | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp play-scenario reduce-replay`
+
+Replay verified controls and remove steps preserving the first observed state failure.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --broken | text | required | nargs=1 | — | — |  |
+| --repaired | text | required | nargs=1 | — | — |  |
+| --candidate-pair | text | optional | nargs=2, repeatable | — | — | Prepared broken and repaired builds for a candidate. May be repeated. |
+| --builder | text | optional | nargs=1 | — | — | Project-owned executable for missing candidates, taking definition, broken output and repaired output. |
+| --output | text | required | nargs=1 | — | — |  |
+| --timeout | integer range: [1..3600] | optional | nargs=1 | 60 | — |  |
+| --max-trials | integer range: [1..128] | optional | nargs=1 | 24 | — |  |
+| --graphical | boolean | optional | nargs=1, flag | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp play-scenario regression-run`
 
 Run one explicit profile: exit 0 passed, 1 failed, 2 unavailable, 130 cancelled. Output must be new. Build/policy/reference paths are relative to the profile file. Every Player requires verified payload provenance. Baselines are never repinned.
@@ -4379,8 +4395,8 @@ Search the offline local catalog by task purpose, without a Unity connection. Ad
 | --limit | integer range: [1..20] | optional | nargs=1 | 5 | — |  |
 | --catalog-query | text | optional | nargs=1 | — | — | Optional alternate terms for literal search, such as a known API identifier. |
 | --intent | choice: observe, interact, edit | optional | nargs=1 | — | — | Filter routes by the requested outcome. |
-| --observation-source | choice: editor_live, asset_file, imported_asset, compile_job | optional | nargs=1 | — | — | Select the origin of the requested evidence. A text query is optional. |
-| --required-value | choice: unityCameras, cinemachineCameras, cinemachineInstalled, render_size.width, render_size.height, current_size, view_instance_id, presets, rendered_image, pointer_hit_order, active_scene.name, active_scene.path, compilation.is_compiling, compile_job.outcome, nodeCount, edgeCount, nodes, edges, properties, keywords, unsaved_graph_structure, property_values, shader_source, contents, encodedContents, nextOffset, shader_graph_structure, unsaved_source, compilation, passes, subshader_count, navigation.module_available, navigation.package_available, project_auditor.api_supported, project_auditor.rules_available | optional | nargs=1, repeatable | — | — | Require a declared result field. Repeat to require every field. |
+| --observation-source | choice: editor_live, asset_file, imported_asset, compile_job, scenario_job | optional | nargs=1 | — | — | Select the origin of the requested evidence. A text query is optional. |
+| --required-value | choice: unityCameras, cinemachineCameras, cinemachineInstalled, render_size.width, render_size.height, current_size, view_instance_id, presets, rendered_image, pointer_hit_order, active_scene.name, active_scene.path, compilation.is_compiling, compile_job.outcome, scenario_job.outcome, nodeCount, edgeCount, nodes, edges, properties, keywords, unsaved_graph_structure, property_values, shader_source, contents, encodedContents, nextOffset, shader_graph_structure, unsaved_source, compilation, passes, subshader_count, navigation.module_available, navigation.package_available, project_auditor.api_supported, project_auditor.rules_available | optional | nargs=1, repeatable | — | — | Require a declared result field. Repeat to require every field. |
 | --route-surfaces | choice: both, tools, resources | optional | nargs=1 | "both" | — | Select which invocation surfaces can appear in grouped routes. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 

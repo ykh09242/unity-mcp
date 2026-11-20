@@ -7500,6 +7500,17 @@
                 ],
                 "default": null
               },
+              "operation_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "page_number": {
                 "default": 1,
                 "type": "integer"
@@ -7507,6 +7518,17 @@
               "page_size": {
                 "default": 50,
                 "type": "integer"
+              },
+              "prefab_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "profile_id": {
                 "anyOf": [
@@ -7531,6 +7553,17 @@
                 "default": null
               },
               "settings_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "source_prefab": {
                 "anyOf": [
                   {
                     "type": "string"
@@ -21630,7 +21663,8 @@
                       "editor_live",
                       "asset_file",
                       "imported_asset",
-                      "compile_job"
+                      "compile_job",
+                      "scenario_job"
                     ],
                     "type": "string"
                   },
@@ -21689,6 +21723,7 @@
                         "active_scene.path",
                         "compilation.is_compiling",
                         "compile_job.outcome",
+                        "scenario_job.outcome",
                         "nodeCount",
                         "edgeCount",
                         "nodes",
@@ -25610,7 +25645,8 @@
                       "editor_live",
                       "asset_file",
                       "imported_asset",
-                      "compile_job"
+                      "compile_job",
+                      "scenario_job"
                     ],
                     "type": "string"
                   },
@@ -25651,6 +25687,7 @@
                         "active_scene.path",
                         "compilation.is_compiling",
                         "compile_job.outcome",
+                        "scenario_job.outcome",
                         "nodeCount",
                         "edgeCount",
                         "nodes",
@@ -34648,6 +34685,17 @@
                 ],
                 "default": null
               },
+              "operation_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "page_number": {
                 "default": 1,
                 "type": "integer"
@@ -34655,6 +34703,17 @@
               "page_size": {
                 "default": 50,
                 "type": "integer"
+              },
+              "prefab_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "profile_id": {
                 "anyOf": [
@@ -34679,6 +34738,17 @@
                 "default": null
               },
               "settings_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "source_prefab": {
                 "anyOf": [
                   {
                     "type": "string"
@@ -48778,7 +48848,8 @@
                       "editor_live",
                       "asset_file",
                       "imported_asset",
-                      "compile_job"
+                      "compile_job",
+                      "scenario_job"
                     ],
                     "type": "string"
                   },
@@ -48837,6 +48908,7 @@
                         "active_scene.path",
                         "compilation.is_compiling",
                         "compile_job.outcome",
+                        "scenario_job.outcome",
                         "nodeCount",
                         "edgeCount",
                         "nodes",
@@ -52758,7 +52830,8 @@
                       "editor_live",
                       "asset_file",
                       "imported_asset",
-                      "compile_job"
+                      "compile_job",
+                      "scenario_job"
                     ],
                     "type": "string"
                   },
@@ -52799,6 +52872,7 @@
                         "active_scene.path",
                         "compilation.is_compiling",
                         "compile_job.outcome",
+                        "scenario_job.outcome",
                         "nodeCount",
                         "edgeCount",
                         "nodes",
