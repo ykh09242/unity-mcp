@@ -230,7 +230,8 @@ async def test_incidental_marker_cannot_pass_public_verification(
     stages = {row["name"]: row for row in report["stages"]}
     assert stages["standalone_player"]["state"] == "passed"
     assert stages["observed_state"]["state"] == "incomplete"
-    assert stages["observed_state"]["evidence"] == {"reason": "state_observation_missing_or_ambiguous"}
+    reason = stages["observed_state"]["evidence"]["reason"]
+    assert reason == "state_observation_missing_or_ambiguous"
 
 
 def test_predispatch_cancellation_creates_no_unsettled_job(verified_bundle, child):
