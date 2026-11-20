@@ -171,3 +171,26 @@ variants and the two native cohort records above and is explicitly partial: this
 validation did not rerun every manifest scenario. The 84 focused Python checks
 also cover PID identity, process-window evidence binding, empty/truncated/wrong-unit
 recorders, callback cleanup and the distinct memory metrics.
+
+## First verified scene page and subsequent Editor updates
+
+Select `GameObjectResourceReadTests.ChildrenPaging_LargeSceneUpdateIntervalsAndFirstVerifiedPage`
+in the disposable EditMode project for the 10,000-child cohort. The fixture records
+each child's instance ID before paging and waits for the setup hierarchy notifications
+to settle. Every Editor update invokes the native GameObject resource once with the
+previous opaque cursor and verifies 100 ordered IDs. Each of three full enumerations
+ends at 10,000 children. Appending a child after a new first page must invalidate that
+cursor. Each `LARGE_SCENE_PAGE_RECEIPT` in the NUnit output retains 100 per-update work
+durations and 100 observed callback intervals, including the one after the final page.
+
+Measured in a Windows 10 batch Editor, Unity 6000.0.69f1, warm project Library,
+Ryzen 9 5900X and 65,447 MiB of system memory. The resource and verifier run on
+the Editor thread. First-page time includes waiting for the initial update. Callback
+intervals include scheduling and the surrounding Editor loop. Rendering and transport
+latency were unmeasured.
+
+| Round | First verified page | Longest page work | Longest Editor update interval |
+| ---: | ---: | ---: | ---: |
+| 1 | 35.12 ms | 34.08 ms | 34.60 ms |
+| 2 | 1.19 ms | 4.87 ms | 5.04 ms |
+| 3 | 1.20 ms | 5.87 ms | 5.99 ms |

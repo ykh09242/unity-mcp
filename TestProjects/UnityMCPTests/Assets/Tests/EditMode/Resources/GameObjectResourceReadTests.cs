@@ -162,6 +162,109 @@ namespace MCPForUnityTests.Editor.Resources
             Assert.AreEqual(0, _first.GetterCalls + _second.GetterCalls);
         }
 
+        [UnityTest, Explicit("Owned 10,000-child scene workload with actual Editor update callbacks.")]
+        public System.Collections.IEnumerator ChildrenPaging_LargeSceneUpdateIntervalsAndFirstVerifiedPage()
+        {
+            const int count = 10000;
+            const int pageSize = 100;
+            var expected = new int[count];
+            for (int i = 0; i < count; i++)
+                expected[i] = AddPagingChild("Child" + i).GetInstanceIDCompat();
+            // Defer timing until the Editor has delivered the setup's hierarchy notifications.
+            var quiet = System.Diagnostics.Stopwatch.StartNew();
+            EditorApplication.hierarchyChanged += quiet.Restart;
+            try
+            {
+                while (quiet.ElapsedMilliseconds < 500)
+                    yield return null;
+            }
+            finally
+            {
+                EditorApplication.hierarchyChanged -= quiet.Restart;
+            }
+            for (int round = 0; round < 3; round++)
+            {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                var work = new List<double>();
+                var intervals = new List<double>();
+                int consumed = 0;
+                string cursor = null;
+                double previousUpdate = -1;
+                double firstVerified = 0;
+                bool done = false;
+                Exception failure = null;
+                void Update()
+                {
+                    if (done)
+                        return;
+                    try
+                    {
+                        double entered = timer.Elapsed.TotalMilliseconds;
+                        if (previousUpdate >= 0)
+                            intervals.Add(entered - previousUpdate);
+                        previousUpdate = entered;
+                        if (consumed == count)
+                        {
+                            done = true;
+                            return;
+                        }
+                        JObject response = ReadChildrenPage(pageSize, cursor);
+                        Assert.IsTrue(response.Value<bool>("success"), $"Round {round + 1} at child {consumed}: {response}");
+                        JToken data = response["data"];
+                        Assert.AreEqual(count, data.Value<int>("childrenTotal"));
+                        var entries = (JArray)data["children"];
+                        Assert.AreEqual(pageSize, entries.Count);
+                        foreach (int id in entries.Values<int>())
+                            Assert.AreEqual(expected[consumed++], id);
+                        cursor = data.Value<string>("childrenNextCursor");
+                        Assert.AreEqual(consumed < count, cursor != null);
+                        double verified = timer.Elapsed.TotalMilliseconds;
+                        work.Add(verified - entered);
+                        if (consumed == pageSize)
+                            firstVerified = verified;
+                    }
+                    catch (Exception error)
+                    {
+                        failure = error;
+                        done = true;
+                    }
+                }
+                EditorApplication.update += Update;
+                try
+                {
+                    while (!done)
+                        yield return null;
+                }
+                finally
+                {
+                    EditorApplication.update -= Update;
+                }
+                if (failure != null)
+                    throw failure;
+                Assert.AreEqual(100, work.Count);
+                Assert.AreEqual(100, intervals.Count);
+                var receipt = new JObject
+                {
+                    ["round"] = round + 1,
+                    ["unity"] = Application.unityVersion,
+                    ["cpu"] = SystemInfo.processorType,
+                    ["memory_mib"] = SystemInfo.systemMemorySize,
+                    ["verified_children"] = consumed,
+                    ["first_verified_page_ms"] = firstVerified,
+                    ["work_per_update_ms"] = new JArray(work),
+                    ["interval_after_each_page_ms"] = new JArray(intervals),
+                    ["worst_editor_update_interval_ms"] = intervals.Max(),
+                };
+                TestContext.WriteLine("LARGE_SCENE_PAGE_RECEIPT " + receipt.ToString(Formatting.None));
+            }
+            string oldCursor = ReadChildrenPage(pageSize)["data"].Value<string>("childrenNextCursor");
+            Assert.IsNotEmpty(oldCursor);
+            AddPagingChild("InterveningEdit");
+            var stale = ReadChildrenPage(pageSize, oldCursor);
+            Assert.IsFalse(stale.Value<bool>("success"));
+            StringAssert.Contains("stale_cursor", stale.ToString());
+        }
+
         [TestCase("reorder")]
         [TestCase("reparent")]
         [TestCase("replace")]
