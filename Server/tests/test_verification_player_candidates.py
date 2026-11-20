@@ -193,7 +193,9 @@ async def test_edit_during_standalone_run_supersedes_success(
 def test_observed_state_requires_matching_typed_native_fields(tmp_path, lines, state):
     (tmp_path / "player.log").write_text("\n".join(lines), encoding="utf-8")
     check = StateCheck(log_marker="STATE ", expected={"visible": True})
-    assert _state_result(tmp_path, check)[0] == state
+    outcome, evidence = _state_result(tmp_path, check)
+    assert outcome == state
+    assert evidence["expected"] == check.expected
 
 
 def test_partial_log_cannot_prove_complete_state_observation(tmp_path):
@@ -202,7 +204,10 @@ def test_partial_log_cannot_prove_complete_state_observation(tmp_path):
     prefix = b'STATE {"visible":true}\n'
     (tmp_path / "player.log").write_bytes(prefix.ljust(PROCESS_LOG_LIMIT, b" "))
     check = StateCheck(log_marker="STATE ", expected={"visible": True})
-    assert _state_result(tmp_path, check) == ("incomplete", {"reason": "state_log_retention_limit"})
+    assert _state_result(tmp_path, check) == (
+        "incomplete",
+        {"expected": check.expected, "reason": "state_log_retention_limit"},
+    )
 
 
 @pytest.mark.asyncio

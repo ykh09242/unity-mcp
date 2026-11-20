@@ -86,7 +86,7 @@ def _reference_evidence(prepared):
 def _state_result(directory, check):
     content = read_bytes(directory / "player.log", PROCESS_LOG_LIMIT)
     if len(content) == PROCESS_LOG_LIMIT:
-        return "incomplete", {"reason": "state_log_retention_limit"}
+        return "incomplete", {"expected": check.expected, "reason": "state_log_retention_limit"}
     log = content.decode("utf-8", errors="replace")
     values = []
     for line in log.split("\n"):
@@ -104,7 +104,10 @@ def _state_result(directory, check):
         json.dumps(row, sort_keys=True) != json.dumps(values[0], sort_keys=True)
         for row in values[1:]
     ):
-        return "incomplete", {"reason": "state_observation_missing_or_ambiguous"}
+        return "incomplete", {
+            "expected": check.expected,
+            "reason": "state_observation_missing_or_ambiguous",
+        }
     matched = json.dumps(values[0], sort_keys=True) == json.dumps(check.expected, sort_keys=True)
     return "passed" if matched else "failed", {"expected": check.expected, "observed": values[0]}
 
@@ -291,7 +294,10 @@ class PlayerVerificationRunner(VerificationRunner):
                     _state_result, outcome.directory, manifest.state_check
                 )
             except (OSError, ValueError) as error:
-                state, evidence = "incomplete", {"reason": str(error)[:256]}
+                state, evidence = (
+                    "incomplete",
+                    {"expected": manifest.state_check.expected, "reason": str(error)[:256]},
+                )
             self.stage("observed_state", state, evidence)
 
     def player_settled(self, job_id):

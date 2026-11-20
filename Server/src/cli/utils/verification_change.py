@@ -309,7 +309,6 @@ def read_run(report_path: Path, native_path: Path) -> CapturedRun:
     )
     observed = stages.get("observed_state", {})
     observation = _object(observed.get("evidence", {}), "observation evidence")
-    conditions["expected_state"] = observation.get("expected")
     signature = _object(
         native.get("failure") if native.get("failure") is not None else {}, "native failure"
     )
@@ -345,6 +344,7 @@ def read_run(report_path: Path, native_path: Path) -> CapturedRun:
         checks[("observation", scenario)] = {
             "state": observed.get("state"),
             "target": "standalone_player",
+            "expected_state": observation.get("expected"),
             "signature": observation.get("observed") if observed.get("state") == "failed" else None,
         }
     selection = _object(comparison.get("selected_checks"), "candidate selection")
@@ -460,10 +460,18 @@ def compare_runs(before: CapturedRun, after: CapturedRun):
     for kind, key in sorted(before.checks.keys() | after.checks.keys()):
         old = before.checks.get((kind, key), {"state": "not_run"})
         new = after.checks.get((kind, key), {"state": "not_run"})
+        expected_changed = (
+            kind == "observation"
+            and old.get("expected_state") is not None
+            and new.get("expected_state") is not None
+            and not same_json(old["expected_state"], new["expected_state"])
+        )
+        if expected_changed:
+            result["different_conditions"].append("expected_state")
         if source_blocked or old["state"] not in _OBSERVED or new["state"] not in _OBSERVED:
             status = "not_run" if "not_run" in (old["state"], new["state"]) else "incomplete"
             partial = True
-        elif any(
+        elif expected_changed or any(
             old.get(field) != new.get(field) for field in ("target", "mode", "definition_hash")
         ):
             status = "not_comparable"

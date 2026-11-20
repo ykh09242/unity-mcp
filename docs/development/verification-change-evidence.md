@@ -37,8 +37,10 @@ coverage remains visible in the JSON even when a new failure sets exit 1.
 The comparison includes outstanding selection reasons such as an unmapped
 changed path. Missing final source confirmation, incomplete input chunks and
 Player reporting errors prevent the affected run from establishing a regression.
-An unrelated incomplete Editor check leaves an independently observed Player
-regression visible. Two failed results need comparable failure signatures
+An incomplete Editor check or missing state marker leaves an independently
+observed Player regression visible. The observation's expected values apply
+to that observation when comparing reports or finding the first failing build.
+Two failed results need comparable failure signatures
 to distinguish a changed failure from an existing one.
 
 ## Find the first failing archived build

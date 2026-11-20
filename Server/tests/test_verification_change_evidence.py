@@ -314,6 +314,48 @@ def test_mismatched_observation_types_do_not_compare_equal(tmp_path):
         read_run(*captures[-1])
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_missing_marker_preserves_independent_native_regression(tmp_path, legacy):
+    from cli.utils.verification_history import inspect_history
+    from services.verification.player_candidate import StateCheck
+    from services.verification.player_runner import _state_result
+
+    baseline = make_capture(tmp_path, 1)
+    before = read_run(*baseline)
+    candidate = make_capture(
+        tmp_path, 2, "failed", base_manifest=before.manifest, base_source=before.source
+    )
+    check = StateCheck(log_marker="STATE ", expected={"open": True})
+    builds = []
+    for pair, log in ((baseline, 'STATE {"open":true}'), (candidate, "no marker")):
+        (tmp_path / "player.log").write_text(log, encoding="utf-8")
+        state, evidence = _state_result(tmp_path, check)
+        assert evidence["expected"] == check.expected
+        if legacy and state == "incomplete":
+            del evidence["expected"]
+        report = json.loads(pair[0].read_text())["data"]
+        report["stages"].append({"name": "observed_state", "state": state, "evidence": evidence})
+        pair[0].write_text(json.dumps(report))
+        builds.append(
+            {
+                "build_id": report["stages"][0]["evidence"]["build_id"],
+                "source_revision": report["source_token"],
+                "runs": [{"verification": pair[0].name, "native": pair[1].name}],
+            }
+        )
+    result = compare_runs(read_run(*baseline), read_run(*candidate))
+    assert result["state"] == "regressed" and result["coverage_complete"] is False
+    assert {row["kind"]: row["classification"] for row in result["checks"]} == {
+        "observation": "incomplete",
+        "scenario": "new_failure",
+        "stage": "unchanged_pass",
+    }
+    history = tmp_path / "history.json"
+    history.write_text(json.dumps({"schema": "verification_build_history@1", "builds": builds}))
+    assert inspect_history(history, "scenario", "doors")["state"] == "first_failure"
+    assert inspect_history(history, "observation", "doors")["state"] == "incomplete"
+
+
 @pytest.mark.parametrize(
     ("old", "new", "label", "code"),
     [

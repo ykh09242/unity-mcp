@@ -87,6 +87,7 @@ def inspect_history(manifest: Path, kind: str, name: str):
                     check.get("target"),
                     check.get("mode"),
                     check.get("definition_hash"),
+                    check.get("expected_state"),
                 )
                 if reference_conditions is None:
                     reference_conditions = conditions
