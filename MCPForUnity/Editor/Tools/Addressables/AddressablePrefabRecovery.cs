@@ -149,7 +149,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     }
                 );
             if (prior.session == CommandResumeState.SessionId)
-                return Report(prior, "blocked", "This checkpoint belongs to the current Editor. Use prefab_status.");
+                return Report(previous, action, prior, "blocked", "This checkpoint belongs to the current Editor. Use prefab_status.");
             if (approving && active != null)
             {
                 if (active.approvedObservation != expected || active.approvedSource != AddressablesState.Hash(previous, ""))
@@ -188,9 +188,16 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 observation["observed_entry_group_guid"] = entry?["group_guid"];
                 observation["observed_entry_address"] = entry?["address"];
                 if (unsettled)
-                    return Report(prior, "unknown", "The original native step has no confirmed settlement.", reconciliation: observation);
+                    return Report(previous, action, prior, "unknown", "The original native step has no confirmed settlement.", reconciliation: observation);
                 if (prior.phase == "cancelled")
-                    return Report(prior, approving ? "blocked" : "cancelled", "The original operation was cancelled.", reconciliation: observation);
+                    return Report(
+                        previous,
+                        action,
+                        prior,
+                        approving ? "blocked" : "cancelled",
+                        "The original operation was cancelled.",
+                        reconciliation: observation
+                    );
                 var conflict = Conflict(prior, settings, (string)observation["observed_settings_revision"]);
                 if (
                     conflict == null
@@ -199,20 +206,29 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 )
                     conflict = Difference("group_dirty", false, true, "Target group has unsaved edits.");
                 if (conflict != null)
-                    return Report(prior, "conflict", (string)conflict["detail"], conflict, observation);
+                    return Report(previous, action, prior, "conflict", (string)conflict["detail"], conflict, observation);
                 if (prior.phase == "registered")
-                    return Report(prior, approving ? "blocked" : "registered", "Registration already completed.", reconciliation: observation);
+                    return Report(
+                        previous,
+                        action,
+                        prior,
+                        approving ? "blocked" : "registered",
+                        "Registration already completed.",
+                        reconciliation: observation
+                    );
                 if (prior.phase != "created" && prior.phase != "planned")
-                    return Report(prior, "unknown", "No confirmed continuation exists for this phase.", reconciliation: observation);
+                    return Report(previous, action, prior, "unknown", "No confirmed continuation exists for this phase.", reconciliation: observation);
                 if (prior.successor != null)
                     return Report(
+                        previous,
+                        action,
                         prior,
                         approving ? "blocked" : prior.phase,
                         "An approved continuation already owns this work. Inspect its operation ID.",
                         reconciliation: observation
                     );
                 if (prior.phase == "created" && (string)observation["observed_prefab_hash"] != prior.hash)
-                    return Report(prior, "conflict", "The created prefab could not be verified.", reconciliation: observation);
+                    return Report(previous, action, prior, "conflict", "The created prefab could not be verified.", reconciliation: observation);
 
                 string digest = Signature(
                     previous,
@@ -222,9 +238,11 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 observation["replan_available"] = true;
                 observation["observation"] = digest;
                 if (!approving)
-                    return Report(prior, prior.phase, reconciliation: observation);
+                    return Report(previous, action, prior, prior.phase, reconciliation: observation);
                 if (digest != expected)
                     return Report(
+                        previous,
+                        action,
                         prior,
                         "conflict",
                         "Approval does not match the current observation.",
@@ -242,15 +260,22 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 Write(key, prior, previous, (string)record["signature"]);
                 observation["replan_available"] = false;
                 observation["continuation_claimed"] = true;
-                return Report(prior, prior.phase, reconciliation: observation);
+                return Report(key, action, prior, prior.phase, reconciliation: observation);
             }
             catch (AddressablesException error)
             {
-                return Report(prior, unsettled ? "unknown" : "conflict", error.Code + ": " + error.Message, reconciliation: observation);
+                return Report(previous, action, prior, unsettled ? "unknown" : "conflict", error.Code + ": " + error.Message, reconciliation: observation);
             }
             catch (IOException)
             {
-                return Report(prior, unsettled ? "unknown" : "conflict", "A recorded asset or metadata file could not be read.", reconciliation: observation);
+                return Report(
+                    previous,
+                    action,
+                    prior,
+                    unsettled ? "unknown" : "conflict",
+                    "A recorded asset or metadata file could not be read.",
+                    reconciliation: observation
+                );
             }
         }
     }

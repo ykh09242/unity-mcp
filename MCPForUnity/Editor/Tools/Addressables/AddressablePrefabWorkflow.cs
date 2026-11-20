@@ -107,15 +107,15 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     plan.cancellationRequested = true;
                     Write(key, plan);
                 }
-                return Report(plan, Running.Contains(key) ? "running" : "unknown", "Native invocation fenced; settlement has not been confirmed.");
+                return Report(key, action, plan, Running.Contains(key) ? "running" : "unknown", "Native invocation fenced; settlement has not been confirmed.");
             }
             if (plan.phase == "cancelled")
-                return Report(plan, "cancelled");
+                return Report(key, action, plan, "cancelled");
             if (action == "cancel_prefab" && plan.phase != "registered")
             {
                 plan.phase = "cancelled";
                 Write(key, plan);
-                return Report(plan, plan.phase);
+                return Report(key, action, plan, plan.phase);
             }
             AddressablesState settings;
             JObject conflict;
@@ -126,25 +126,32 @@ namespace MCPForUnity.Editor.Tools.Addressables
             }
             catch (AddressablesException error)
             {
-                return Report(plan, "conflict", error.Code + ": " + error.Message);
+                return Report(key, action, plan, "conflict", error.Code + ": " + error.Message);
             }
             catch (IOException)
             {
-                return Report(plan, "conflict", "The expected asset or metadata file could not be read.");
+                return Report(key, action, plan, "conflict", "The expected asset or metadata file could not be read.");
             }
             if (conflict != null)
-                return Report(plan, "conflict", (string)conflict["detail"], conflict);
+                return Report(key, action, plan, "conflict", (string)conflict["detail"], conflict);
             if (action == "preview_prefab" || action == "prefab_status" || plan.phase == "registered" || (action == "create_prefab" && plan.phase == "created"))
-                return Report(plan, plan.phase);
+                return Report(key, action, plan, plan.phase);
             if (action == "register_prefab" && plan.phase != "created")
-                return Report(plan, "blocked", "Registration depends on the confirmed created prefab GUID.");
+                return Report(key, action, plan, "blocked", "Registration depends on the confirmed created prefab GUID.");
             if (EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling || EditorApplication.isUpdating)
-                return Report(plan, "blocked", "Asset editing requires stable Edit Mode.");
+                return Report(key, action, plan, "blocked", "Asset editing requires stable Edit Mode.");
             bool create = action == "create_prefab";
             Object group = (Object)settings.Groups[(string)plan.intent["group_guid"]];
             MethodInfo registration = create ? null : Registration(settings, group);
             if (!create && EditorUtility.IsDirty(group))
-                return Report(plan, "conflict", "Target group has unsaved edits.", Difference("group_dirty", false, true, "Target group has unsaved edits."));
+                return Report(
+                    key,
+                    action,
+                    plan,
+                    "conflict",
+                    "Target group has unsaved edits.",
+                    Difference("group_dirty", false, true, "Target group has unsaved edits.")
+                );
             plan.phase = create ? "creating" : "registering";
             Write(key, plan);
             Running.Add(key);
@@ -154,11 +161,11 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 if (create)
                 {
                     if (!AssetDatabase.CopyAsset((string)plan.intent["source_prefab"], path))
-                        return Report(plan, "unknown", "Prefab copy did not confirm its result.");
+                        return Report(key, action, plan, "unknown", "Prefab copy did not confirm its result.");
                     ObserveDurableWrite("prefab_saved");
                     string guid = AssetDatabase.AssetPathToGUID(path);
                     if (string.IsNullOrEmpty(guid) || guid == plan.sourceGuid || AssetDatabase.LoadAssetAtPath<GameObject>(path) == null)
-                        return Report(plan, "unknown", "Unity did not confirm a new prefab GUID.");
+                        return Report(key, action, plan, "unknown", "Unity did not confirm a new prefab GUID.");
                     plan.guid = guid;
                     plan.hash = Hash(path);
                     plan.cancellationRequested = Read()[key].cancellationRequested;
@@ -174,25 +181,25 @@ namespace MCPForUnity.Editor.Tools.Addressables
                         || (plan.settingsFiles != null && DiskHash((string)plan.intent["settings_path"]) != plan.settingsFiles)
                         || !OnlyPlannedEntryAdded(plan, settings, applied)
                     )
-                        return Report(plan, "unknown", "Native registration changed unexpected fields. Inspect the group before saving.");
+                        return Report(key, action, plan, "unknown", "Native registration changed unexpected fields. Inspect the group before saving.");
                     EditorUtility.SetDirty(group);
                     AssetDatabase.SaveAssetIfDirty(group);
                     ObserveDurableWrite("registration_saved");
                     var savedState = AddressablesState.Capture(plan.intent);
                     if (EditorUtility.IsDirty(group) || savedState.Revision != appliedRevision)
-                        return Report(plan, "unknown", "The target group did not confirm the saved entry.");
+                        return Report(key, action, plan, "unknown", "The target group did not confirm the saved entry.");
                     plan.stableRevision = StableRevision(savedState);
                     plan.groupFiles = DiskHash(plan.groupPath);
                     plan.cancellationRequested = Read()[key].cancellationRequested;
                     plan.phase = "registered";
                 }
                 Write(key, plan);
-                return Report(plan, plan.phase);
+                return Report(key, action, plan, plan.phase);
             }
             catch (Exception)
             {
                 // Read the last stored fence, never report tentative local fields as settled.
-                return Report(Read()[key], "unknown", "Native settlement could not be proven. Inspect the target before another edit.");
+                return Report(key, action, Read()[key], "unknown", "Native settlement could not be proven. Inspect the target before another edit.");
             }
             finally
             {
@@ -350,7 +357,15 @@ namespace MCPForUnity.Editor.Tools.Addressables
             return JToken.DeepEquals(before.Document, after.Document);
         }
 
-        private static object Report(Plan plan, string state, string detail = null, JObject conflict = null, JObject reconciliation = null)
+        private static object Report(
+            string key,
+            string action,
+            Plan plan,
+            string state,
+            string detail = null,
+            JObject conflict = null,
+            JObject reconciliation = null
+        )
         {
             var completed = new List<string>();
             if (plan.guid != null)
@@ -375,10 +390,22 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 dependency = "register_prefab.entry_guid = create_prefab.prefab_guid",
                 completed_steps = completed,
                 outstanding_steps = new[] { "create_prefab", "register_prefab" }.Except(completed).ToArray(),
+                handoff = new
+                {
+                    version = 1,
+                    action,
+                    phase = plan.phase,
+                    workflow_id = HandoffIdentity(AddressablesState.Hash(key, "")),
+                    previous_workflow_id = HandoffIdentity(plan.approvedSource),
+                    observation_id = HandoffIdentity((string)reconciliation?["observation"]),
+                    approved_observation_id = HandoffIdentity(plan.approvedObservation),
+                },
             };
             if (state == "unknown" || state == "conflict" || state == "blocked")
                 return new ErrorResponse("prefab_" + state, data);
             return new SuccessResponse("Prefab workflow " + state, data);
         }
+
+        private static string HandoffIdentity(string lookup) => lookup == null ? null : AddressablesState.Hash("handoff.prefab.v1\n" + lookup, "");
     }
 }

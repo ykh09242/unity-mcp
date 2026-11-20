@@ -41,6 +41,65 @@ def pack_selection(selected, full, fallback, affected_test, withhold, bundle):
     emit_result(lambda: (pack("selection", inputs, withhold, affected_test, bundle), 0), None)
 
 
+@team.command("pack-impact")
+@click.option("--asset-guid", required=True, help="GUID of the reviewed asset within the scene.")
+@click.option("--baseline", type=Path, help="Baseline dependency-scan JSONL inventory.")
+@click.option("--candidate", type=Path, help="Candidate dependency-scan JSONL inventory.")
+@click.option("--mappings", type=Path, help="Player candidate manifest with scene test mappings.")
+@click.option(
+    "--mapping-chunk",
+    type=Path,
+    multiple=True,
+    help="A pinned input chunk from a version-two manifest.",
+)
+@click.option("--selected", type=Path, help="Instrumented selected NUnit capture.")
+@click.option(
+    "--withhold",
+    multiple=True,
+    type=click.Choice(["baseline", "candidate", "mappings", "selected"]),
+)
+@click.option("--bundle", type=Path, required=True, help="New shareable file.")
+def pack_impact(
+    asset_guid, baseline, candidate, mappings, mapping_chunk, selected, withhold, bundle
+):
+    """Share a changed asset's dependency route and selected test observations."""
+    from .commands import emit_result
+
+    supplied = {
+        "baseline": baseline,
+        "candidate": candidate,
+        "mappings": mappings,
+        "selected": selected,
+    }
+    inputs = {role: (path,) if path else () for role, path in supplied.items()}
+
+    def export():
+        if mapping_chunk:
+            if not mappings:
+                raise ValueError("Supply --mappings with its --mapping-chunk files")
+            inputs["mappings"] = (mappings, *mapping_chunk)
+        return pack("impact", inputs, withhold, (), bundle, subject=asset_guid), 0
+
+    emit_result(export, None)
+
+
+@team.command("pack-recovery")
+@click.option(
+    "--reconcile", type=Path, help="Receipt-owned reconciliation of the interrupted operation."
+)
+@click.option("--replan", type=Path, help="Receipt-owned approval of the successor operation.")
+@click.option("--resumed", type=Path, help="Receipt-owned result of the successor write.")
+@click.option("--withhold", multiple=True, type=click.Choice(["reconcile", "replan", "resumed"]))
+@click.option("--bundle", type=Path, required=True, help="New shareable file.")
+def pack_recovery(reconcile, replan, resumed, withhold, bundle):
+    """Share the confirmed prefab write checkpoint and its successor execution."""
+    from .commands import emit_result
+
+    supplied = {"reconcile": reconcile, "replan": replan, "resumed": resumed}
+    inputs = {role: (path,) if path else () for role, path in supplied.items()}
+    emit_result(lambda: (pack("recovery", inputs, withhold, (), bundle), 0), None)
+
+
 @team.command("replay")
 @click.argument("bundle", type=Path)
 @click.option(
