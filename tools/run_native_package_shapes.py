@@ -6,11 +6,23 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import xml.etree.ElementTree as ET
 
 from check_unity_test_results import check_results
 from player_e2e_process import Invocation, execute
+from player_e2e_artifacts import read_json as read_artifact, write_json
+from prefab_crash_recovery import (
+    CUTS,
+    OBSERVER,
+    STAGED_OBSERVER,
+    admit_source,
+    disk_observation,
+    publish_case,
+    terminate_at_cut,
+    verify_reopened,
+)
 from unity_ci_packages import PROFILES as PACKAGE_CONFIG
 from unity_ci_packages import PackageSpec, PreparationError, ROOT, prepare, read_json
 
@@ -110,6 +122,7 @@ PROFILES = {
             ),
             ("PrefabCheckpointSurvivesDomainReload",),
             ("ReplacementEditorRefusesPriorPrefabCheckpoint",),
+            *((method,) for cut in CUTS for method in (cut.crash, cut.reopen)),
         ),
         NATIVE_PACKAGES["addressables-legacy"],
         (
@@ -117,6 +130,7 @@ PROFILES = {
             TESTS / "Tools/AddressablesReferenceFixture.cs",
             TESTS / "Services/StdioBridgeReconnectTests.Peer.cs",
             TESTS / "Helpers/PrefabTestSceneFixture.cs",
+            SHAPES / "PrefabPersistenceTests.cs",
         ),
     ),
     "auditor-package": auditor(
@@ -168,6 +182,15 @@ def phase_name(methods: tuple[str, ...]) -> str:
     return methods[0] if len(methods) == 1 else "EditMode"
 
 
+def phase_evidence(methods: tuple[str, ...]) -> tuple[str, ...]:
+    common = ("launch.json", "process.log")
+    if any(methods == (cut.crash,) for cut in CUTS):
+        return (*common, "boundary.json", "disk.json")
+    if any(methods == (cut.reopen,) for cut in CUTS):
+        return (*common, "results.xml", "reopened.json")
+    return (*common, "results.xml")
+
+
 def run_phase(
     editor: Path,
     version: str,
@@ -201,6 +224,28 @@ def run_phase(
         str(log),
     ]
     print(f"Running {directory.name}: {', '.join(required)}", flush=True)
+    for cut in CUTS:
+        if methods == (cut.crash,):
+            terminate_at_cut(command, directory, cut)
+            verify_editor_version(log, version)
+            marker = read_artifact(directory / "boundary.json", 8192)
+            write_json(
+                directory / "disk.json", disk_observation(project, marker, cut, intervene=True)
+            )
+            return
+        if methods == (cut.reopen,):
+            marker = read_artifact(directory.parent / cut.crash / "boundary.json", 8192)
+            launch = execute(
+                Invocation(
+                    command,
+                    directory,
+                    timeout=900,
+                    environment={"MCP_PREFAB_FIXTURE_RUN": marker["run_id"]},
+                )
+            )
+            verify_phase_result(directory, version, required, launch)
+            verify_reopened(project, directory, cut, launch)
+            return
     launch = execute(Invocation(command, directory, timeout=15 * 60))
     verify_phase_result(directory, version, required, launch)
 
@@ -226,6 +271,10 @@ def verify_phase_result(directory: Path, version: str, required: list[str], laun
         or set(cases) != set(required)
     ):
         raise PreparationError(f"Unexpected native test selection: {cases}")
+    verify_editor_version(log, version)
+
+
+def verify_editor_version(log: Path, version: str) -> None:
     with log.open(encoding="utf-8", errors="replace") as stream:
         if not re.search(
             rf"(?m)^Built from '[^'\r\n]+' branch; Version is '{re.escape(version)} \(",
@@ -262,19 +311,44 @@ def run(
     for name, profile in selected.items():
         print(f"Preparing {name}", flush=True)
         directory = output / name
+        fixtures = fixture_sources(profile)
+        recovery_source = None
+        source_root = ROOT
+        profiles_path = PACKAGE_CONFIG
+        if name == "addressables-legacy":
+            recovery_source = admit_source(
+                ROOT, directory / "source", fixtures, os.environ.get("GITHUB_SHA")
+            )
+            source_root = recovery_source.archive_root
+            fixtures = {
+                target: source_root / path.relative_to(ROOT) for target, path in fixtures.items()
+            }
+            profiles_path = source_root / PACKAGE_CONFIG.relative_to(ROOT)
+            if read_json(profiles_path) != CONFIG:
+                raise PreparationError(
+                    "Package settings changed since the runner loaded its profiles"
+                )
         prepared = prepare(
             version,
             data,
             directory / "prepared",
             extra_packages=profile.packages | overrides.get(name, {}),
-            fixture_sources=fixture_sources(profile),
+            fixture_sources=fixtures,
+            repo=source_root,
+            profiles_path=profiles_path,
         )
         project = ROOT / prepared.project_path
+        if recovery_source is not None:
+            # Only this disposable package copy implements the partial persistence observer.
+            shutil.copyfile(source_root / OBSERVER, project.parent / STAGED_OBSERVER)
+            recovery_source.verify(project.parent)
         dependencies = json.loads((project / "Packages/manifest.json").read_bytes())["dependencies"]
         for methods in profile.phases:
             phase = phase_name(methods)
             run_phase(editor, version, project, directory / phase, profile, methods)
             verify_lock(project, dependencies)
+        if recovery_source is not None:
+            publish_case(directory, recovery_source)
 
 
 def main() -> int:

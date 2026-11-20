@@ -546,6 +546,10 @@ def test_package_shapes_use_exact_beta_without_exposing_credentials_to_the_runne
         *(f"{path_prefix}/*/{file}" for file in ("results.xml", "launch.json", "process.log")),
         f"{path_prefix}/prepared/resolved-packages.json",
         f"{path_prefix}/prepared/project/Packages/packages-lock.json",
+        "${{ env.PACKAGE_SHAPE_OUTPUT }}/addressables-legacy/Crash*/boundary.json",
+        "${{ env.PACKAGE_SHAPE_OUTPUT }}/addressables-legacy/Crash*/disk.json",
+        "${{ env.PACKAGE_SHAPE_OUTPUT }}/addressables-legacy/Reopen*/reopened.json",
+        "${{ env.PACKAGE_SHAPE_OUTPUT }}/addressables-legacy/process-death.json",
     }
     provision = named["retainProvision"]
     assert provision["if"] == "always()"
@@ -568,6 +572,10 @@ def test_package_shapes_use_exact_beta_without_exposing_credentials_to_the_runne
         ("integrated", "cinemachine-2/LegacyProvider/results.xml"),
         ("package", "atlas-v2/ReopenV2/results.xml"),
         ("package", "addressables-legacy/EditMode/process.log"),
+        ("package", "addressables-legacy/CrashAfterPrefabSave/boundary.json"),
+        ("package", "addressables-legacy/CrashAfterCreationJournal/disk.json"),
+        ("package", "addressables-legacy/ReopenAfterRegistrationSave/reopened.json"),
+        ("package", "addressables-legacy/process-death.json"),
         ("package", "cinemachine-2/LegacyProvider/results.xml"),
         ("package", "cinemachine-3/ModernProvider/launch.json"),
         ("package", "cinemachine-3/prepared/project/Packages/packages-lock.json"),
@@ -586,12 +594,18 @@ def test_complete_package_shape_evidence_is_required_after_success(tmp_path, sui
         if suite in spec.suites:
             expected.add(f"{profile}/prepared/resolved-packages.json")
             expected.add(f"{profile}/prepared/project/Packages/packages-lock.json")
+            if profile == "addressables-legacy":
+                expected.add(f"{profile}/process-death.json")
             for methods in spec.phases:
                 phase = methods[0] if len(methods) == 1 else "EditMode"
-                expected.update(
-                    f"{profile}/{phase}/{file}"
-                    for file in ("results.xml", "launch.json", "process.log")
-                )
+                files = ["launch.json", "process.log"]
+                if profile == "addressables-legacy" and phase.startswith("Crash"):
+                    files += ["boundary.json", "disk.json"]
+                else:
+                    files.append("results.xml")
+                if profile == "addressables-legacy" and phase.startswith("Reopen"):
+                    files.append("reopened.json")
+                expected.update(f"{profile}/{phase}/{file}" for file in files)
     assert expected
     if missing == "provision-only":
         expected.clear()

@@ -182,7 +182,9 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 var settings = AddressablesState.Capture(prior.intent);
                 observation["observed_settings_guid"] = AssetDatabase.AssetPathToGUID((string)prior.intent["settings_path"]);
                 observation["observed_settings_revision"] = StableRevision(settings);
-                var entry = settings.Document["entries"].FirstOrDefault(row => (string)row["guid"] == guid);
+                var entries = settings.Document["entries"].Where(row => (string)row["guid"] == guid).ToArray();
+                observation["observed_entry_count"] = entries.Length;
+                var entry = entries.FirstOrDefault();
                 observation["observed_entry_group_guid"] = entry?["group_guid"];
                 observation["observed_entry_address"] = entry?["address"];
                 if (unsettled)

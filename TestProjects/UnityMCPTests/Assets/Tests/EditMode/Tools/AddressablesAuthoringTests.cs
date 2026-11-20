@@ -265,7 +265,7 @@ namespace MCPForUnityTests.Editor.Tools
     }
 
     [Parallelizable(ParallelScope.None)]
-    public class AddressablesAuthoringTests
+    public partial class AddressablesAuthoringTests
     {
         private readonly PrefabTestSceneFixture scenes = new PrefabTestSceneFixture();
         private string root,

@@ -23,6 +23,9 @@ namespace MCPForUnity.Editor.Tools.Addressables
 
         internal static bool IsAction(string action) => DeclaredActionContracts.IsPrefabAction(action);
 
+        // Only the disposable process-death fixture supplies an implementation.
+        static partial void ObserveDurableWrite(string boundary);
+
         private sealed class Plan
         {
             public JObject intent;
@@ -65,6 +68,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 AddressablesState.Fail("prefab_checkpoint_capacity", "64 unexpired prefab workflows are retained.");
             plans[key] = plan;
             PersistEvidence(key, plan, previous, expectedSignature);
+            ObserveDurableWrite(plan.phase);
             SessionState.SetString(Store, JsonConvert.SerializeObject(plans));
         }
 
@@ -151,6 +155,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 {
                     if (!AssetDatabase.CopyAsset((string)plan.intent["source_prefab"], path))
                         return Report(plan, "unknown", "Prefab copy did not confirm its result.");
+                    ObserveDurableWrite("prefab_saved");
                     string guid = AssetDatabase.AssetPathToGUID(path);
                     if (string.IsNullOrEmpty(guid) || guid == plan.sourceGuid || AssetDatabase.LoadAssetAtPath<GameObject>(path) == null)
                         return Report(plan, "unknown", "Unity did not confirm a new prefab GUID.");
@@ -172,6 +177,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                         return Report(plan, "unknown", "Native registration changed unexpected fields. Inspect the group before saving.");
                     EditorUtility.SetDirty(group);
                     AssetDatabase.SaveAssetIfDirty(group);
+                    ObserveDurableWrite("registration_saved");
                     var savedState = AddressablesState.Capture(plan.intent);
                     if (EditorUtility.IsDirty(group) || savedState.Revision != appliedRevision)
                         return Report(plan, "unknown", "The target group did not confirm the saved entry.");
