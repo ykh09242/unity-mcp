@@ -18,9 +18,10 @@ from cli.utils.play_scenario_player import (
 )
 from models.play_scenarios import JobId, ScenarioName
 from models.script_quality import QualityOptions
+from services.verification.checkout_diagnostics import CheckoutDivergence, CheckoutInputs
 from services.verification.git_draft import _Git, _blob_ids, _snapshot
 from services.verification.input_chunks import Digest, SourceSample, decode_object, source_revision
-from services.verification.player_candidate import StateCheck, live_sources
+from services.verification.player_candidate import StateCheck
 from services.verification.player_runner import _state_result
 from services.verification.portable_candidate import _check_build, read_portable_candidate
 
@@ -57,7 +58,7 @@ def _head(git):
     return git.read("rev-parse", "--verify", "HEAD^{commit}").strip().decode("ascii")
 
 
-def _unchanged(git, build_commit, checkout_commit, paths):
+def _unchanged(git, build_commit, checkout_commit, paths, *, require_clean=True):
     for commit in (build_commit, checkout_commit):
         resolved = git.read("rev-parse", "--verify", commit + "^{commit}").strip().decode("ascii")
         if resolved != commit:
@@ -70,7 +71,9 @@ def _unchanged(git, build_commit, checkout_commit, paths):
     ]
     if not trees[0] or trees[0] != trees[1]:
         raise ValueError(f"new_player_build_required: {build_commit} -> {checkout_commit}")
-    if git.read("status", "--porcelain=v1", "-z", "--untracked-files=normal", "--", *paths):
+    if require_clean and git.read(
+        "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--", *paths
+    ):
         raise ValueError("reproduction_requires_clean_checkout")
 
 
@@ -119,8 +122,13 @@ def _admit(project, directory, pair, side, sample, current):
     closure = _check_closure(sample.read(directory / "closure.json", 2 * 1024**2), side, manifest)
     git = _Git(project)
     blobs = _blob_ids(git, side.project_commit, sorted(manifest.inputs))
+    checkout_inputs = CheckoutInputs(project, manifest.inputs, sample) if current else None
     with git.blobs(blobs) as files:
-        inputs, assets, configuration = _snapshot(files)
+        inputs, assets, configuration = _snapshot(
+            checkout_inputs.compare(files) if checkout_inputs else files
+        )
+    if checkout_inputs:
+        checkout_inputs.check()
     if inputs != manifest.inputs or any(
         assets.get(path) != guid for path, guid in manifest.assets.items()
     ):
@@ -131,15 +139,6 @@ def _admit(project, directory, pair, side, sample, current):
         != manifest.package_lock_evidence.model_dump()
     ):
         raise ValueError("reproduction_package_lock_mismatch")
-    if current:
-        observed = live_sources(project, inputs, read=sample.read)
-        for path, digest in inputs.items():
-            if observed.get(path) != digest:
-                raise ValueError(
-                    f"reproduction_checked_out_inputs_mismatch: {path}. "
-                    "Check Git line endings and checkout filters. On Windows use a fresh clone "
-                    "with core.autocrlf=false."
-                )
     _, recheck = _check_build(
         directory, manifest, sample, bundle_digest, definition_hash=pair.definition_hash
     )
@@ -319,7 +318,7 @@ def reproduce_pair(project, manifest_path, expected_sha256, artifacts, output):
 
         # The baseline stays pinned to its own historical commit; the candidate represents
         # the selected checkout and requires the native package in the verifier checkout.
-        def check_revisions():
+        def check_revisions(*, require_clean=True):
             if _head(_Git(project)) != checkout or _head(_Git(verifier)) != verifier_commit:
                 raise ValueError("reproduction_checkout_changed")
             _unchanged(
@@ -327,6 +326,7 @@ def reproduce_pair(project, manifest_path, expected_sha256, artifacts, output):
                 pair.candidate.project_commit,
                 checkout,
                 ("Assets", "Packages", "ProjectSettings"),
+                require_clean=require_clean,
             )
             _unchanged(
                 _Git(verifier),
@@ -338,7 +338,7 @@ def reproduce_pair(project, manifest_path, expected_sha256, artifacts, output):
                 _Git(verifier), pair.candidate.package_commit, verifier_commit, ("MCPForUnity",)
             )
 
-        check_revisions()
+        check_revisions(require_clean=False)
         sample = SourceSample()
         checks = []
         report["admissions"] = {}
@@ -350,6 +350,8 @@ def reproduce_pair(project, manifest_path, expected_sha256, artifacts, output):
             report["admissions"][name] = admission
         for check in checks:
             check()
+        check_revisions()
+        sample.finish()
         for name in SIDES:
             job = uuid4().hex
             report["runs"][name] = {
@@ -367,6 +369,9 @@ def reproduce_pair(project, manifest_path, expected_sha256, artifacts, output):
             report["status"], code = "reproduced", 0
         else:
             report["status"], code = "expectation_mismatch", 1
+    except CheckoutDivergence as error:
+        report["reason"] = str(error)[:1024]
+        report["checkout_diagnostics"] = error.findings
     except (OSError, ValueError, RuntimeError, TimeoutError) as error:
         report["reason"] = str(error)[:1024]
     write_new(output / "reproduction.json", (json.dumps(report, indent=2) + "\n").encode("utf-8"))

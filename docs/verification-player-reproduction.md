@@ -8,7 +8,16 @@ On Windows, both the approved build producer and the team member reproducing the
 git -c core.autocrlf=false clone --config core.autocrlf=false <repository-url> <new-directory>
 ```
 
-The verifier hashes the exact committed and working-tree bytes, including Unity `.meta` files. A checkout filter or explicit `.gitattributes` rule that changes those bytes can leave Git status clean while the proof fails. The mismatch identifies the affected project-relative path. The hosted Windows jobs configure their disposable runner before checkout.
+The verifier hashes the exact committed and working-tree bytes, including Unity `.meta` files. A checkout filter or explicit `.gitattributes` rule that changes those bytes can leave Git status clean while the proof fails. The hosted Windows jobs configure their disposable runner before checkout.
+
+An unavailable reproduction can include `checkout_diagnostics` before either Player starts. Each row gives the project-relative path, the reviewed SHA-256, the committed blob's SHA-256 and the checkout SHA-256 when available. The verifier reports these differences without rewriting inputs or downloading objects.
+
+| Diagnostic | What to re-materialize or review |
+| --- | --- |
+| `line_endings` | The files agree after LF/CRLF normalization. Recreate the checkout with byte-preserving Git settings and matching `.gitattributes`. |
+| `unhydrated_lfs_pointer` | The checkout contains the committed Git LFS pointer for the reviewed object's SHA-256. Provision that object through the trusted LFS workflow and verify the proof and commit are compatible with exact-byte admission. |
+| `content_mismatch` | The checked-out bytes differ beyond LF/CRLF. Compare the reported digests and materialize the reviewed source or restore the build producer's checkout rules. |
+| `missing`, `committed_mismatch` | Restore the missing input or review the source proof against the recorded commit's Git blob. |
 
 ```sh
 uv run --project Server --locked unity-mcp --no-project-context verification-candidate reproduce --project /checkouts/game --manifest /trusted/transfer/pair.json --sha256 <independently-reviewed-pair-sha256> --output /new/evidence
