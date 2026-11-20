@@ -184,7 +184,7 @@ namespace MCPForUnity.Runtime.Content
                         return observation;
                     }
                     observation.bundles_before = Bundles(selected);
-                    observation.download_bytes_before = await Read(Provider.GetDownloadSizeAsync(markerAddress), bytes => bytes);
+                    observation.download_bytes_before = await Read(Provider.GetDownloadSizeAsync(selected), bytes => bytes);
                     observation.stage = "load_marker";
                     observation.loaded_marker = await Read(Provider.LoadAssetAsync<TextAsset>(selected), asset =>
                     {
@@ -194,7 +194,7 @@ namespace MCPForUnity.Runtime.Content
                     });
                     observation.stage = "cache_after";
                     observation.bundles_after = Bundles(selected);
-                    observation.download_bytes_after = await Read(Provider.GetDownloadSizeAsync(markerAddress), bytes => bytes);
+                    observation.download_bytes_after = await Read(Provider.GetDownloadSizeAsync(selected), bytes => bytes);
                 }
                 finally
                 {

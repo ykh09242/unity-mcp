@@ -8,6 +8,8 @@ The default call checks for pending updates and loads the current marker. Pass `
 
 ## Controlled Windows Player fixture
 
+The marker text and an unrelated texture share one label but occupy separate bundles. The probe resolves exactly one text location and measures its dependencies before and after loading. Each Player also measures the entire label and the texture's own address. Both must still report the same positive download size after the selected marker's remaining size reaches zero.
+
 Run with a licensed Unity 6000.0.69f1 Windows Editor and Windows standalone build support. Use a fresh output directory. Package preparation uses the reviewed 1.21.17 Addressables archive and Scriptable Build Pipeline 1.23.4. An optional `--registry-cache` points to an existing package cache.
 
 ```powershell

@@ -12,6 +12,22 @@ using UnityEngine.ResourceManagement.AsyncOperations;
 
 public sealed class CatalogMarkerPlayer : MonoBehaviour
 {
+    private static async Task<long> RemainingBytes(string key)
+    {
+        var handle = Addressables.GetDownloadSizeAsync(key);
+        try
+        {
+            await handle.Task;
+            if (handle.Status != AsyncOperationStatus.Succeeded)
+                throw new InvalidOperationException("Fixture key size query failed.");
+            return handle.Result;
+        }
+        finally
+        {
+            Addressables.Release(handle);
+        }
+    }
+
     private static async Task SignalOrigin(string origin, string phase, string session)
     {
         using var signal = UnityWebRequest.Put(origin + "/" + phase + "/" + session, Array.Empty<byte>());
@@ -98,6 +114,10 @@ public sealed class CatalogMarkerPlayer : MonoBehaviour
                 if (initialization != "auto-release" && host.IsValid())
                     Addressables.Release(host);
             }
+            long unrelatedBytes = await RemainingBytes("marker-unrelated");
+            long sharedLabelBytes = await RemainingBytes("catalog-marker");
+            if (unrelatedBytes <= 0 || sharedLabelBytes != unrelatedBytes)
+                throw new InvalidOperationException("The unrelated bundle sharing the marker label must remain downloadable.");
             using (var file = new FileStream(Path.Combine(directory, "observation.json"), FileMode.CreateNew, FileAccess.Write))
             using (var writer = new StreamWriter(file))
                 writer.WriteLine(
@@ -109,6 +129,8 @@ public sealed class CatalogMarkerPlayer : MonoBehaviour
                             unity_version = Application.unityVersion,
                             initialization,
                             retained_observation = retainedObservation,
+                            unrelated_bytes_after = unrelatedBytes,
+                            shared_label_bytes_after = sharedLabelBytes,
                             observed,
                         }
                     )

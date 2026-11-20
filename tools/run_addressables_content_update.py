@@ -224,6 +224,13 @@ def run(options):
                 receipt = read_json(directory / "observation.json", 16384)
                 if receipt.get("initialization") != initialization:
                     raise ValueError("Missing host initialization ownership evidence")
+                if (
+                    receipt["unrelated_bytes_after"] <= 0
+                    or receipt["unrelated_bytes_after"] != receipt["shared_label_bytes_after"]
+                ):
+                    raise ValueError(
+                        "The shared label must still include the separately packed, unloaded texture"
+                    )
                 if retained:
                     before_switch = source["before_switch"]
                     retained_gets = source["retained_gets"]
