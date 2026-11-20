@@ -167,8 +167,11 @@ def publish_rows(output, rows):
         with temporary.open("xb") as stream:
             for row in rows:
                 encoded = (json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n").encode()
+                if stream.write(encoded) != len(encoded):
+                    raise OSError("Short dependency report write")
                 digest.update(encoded)
-                stream.write(encoded)
                 rows_written += 1
+            stream.flush()
+            os.fsync(stream.fileno())
         os.link(temporary, safe_local_path(path))
     return {"rows": rows_written, "sha256": digest.hexdigest()}

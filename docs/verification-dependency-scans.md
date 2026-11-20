@@ -47,6 +47,15 @@ change requires fresh pages from page 1 for that root in a new checkpoint.
 The opposite side remains available. A graph whose native collection is
 behind the Editor requires a refresh and fresh capture.
 
+If a checkpoint write runs out of space, free space on the checkpoint volume
+and inspect the same checkpoint without `--graph-page`. Resume with the page
+following the last committed sequence. If exporting the inventory fails after
+the final page commits, rerun with the same checkpoint and `--output` alone
+alongside the required project, commit and root options. Export does not
+rehash project assets. Inventory and comparison files are published under
+their requested names only after all rows have been written and synchronized.
+Previously published files remain available under their original names.
+
 Each input page is limited to 4 MiB. Git reads use batches with a 4 MiB
 per-file bound. SQLite stores the complete relation set, reachability queue,
 and reverse index on disk. Exports stream in deterministic order. A complete
