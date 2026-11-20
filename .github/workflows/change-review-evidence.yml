@@ -1,0 +1,71 @@
+name: Change review evidence
+
+on:
+  push:
+    branches: [beta]
+    paths:
+      - Server/**
+      - MCPForUnity/**
+      - docs/development/verification-pr-inventory.json
+      - tools/collect_change_review_evidence.py
+      - .github/workflows/change-review-evidence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    name: Hosted Git, graph and historical replay observations
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    env:
+      UNITY_MCP_DISABLE_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Record the checked-out revision
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/change-review-evidence"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/candidate-sha.txt"
+          test "$(cat "$evidence/candidate-sha.txt")" = "$GITHUB_SHA"
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: '0.13.9'
+          python-version: '3.14'
+          enable-cache: false
+      - name: Install locked test dependencies
+        id: install
+        run: uv sync --project Server --python 3.14 --locked --extra dev
+      - name: Run offline Git and generated graph controls
+        id: fixtures
+        env:
+          # Keep generated Git fixtures content-addressable across reruns.
+          GIT_AUTHOR_DATE: '2026-10-20T00:00:00Z'
+          GIT_COMMITTER_DATE: '2026-10-20T00:00:00Z'
+        run: |
+          uv run --project Server --no-sync python -m pytest -q -o junit_family=xunit1 \
+            --junitxml "$RUNNER_TEMP/change-review-evidence/pytest-junit.xml" \
+            Server/tests/test_verification_dependency_scan.py \
+            Server/tests/test_verification_git_merge.py \
+            Server/tests/test_verification_checkout_diagnostics.py \
+            Server/tests/test_verification_pr_replay.py
+      - name: Run installed historical replay and summarize observations
+        if: always() && steps.install.outcome == 'success'
+        env:
+          FIXTURE_OUTCOME: ${{ steps.fixtures.outcome }}
+        run: >-
+          uv run --project Server --no-sync python tools/collect_change_review_evidence.py
+          "$RUNNER_TEMP/change-review-evidence" Server/.venv/bin/unity-mcp
+      - name: Retain exact-revision evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: change-review-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/change-review-evidence/
+          if-no-files-found: error
+          retention-days: 30

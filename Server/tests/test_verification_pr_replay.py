@@ -3,6 +3,7 @@
 import json
 from hashlib import sha256
 from pathlib import Path
+from time import perf_counter
 
 import pytest
 from services.verification.git_draft_artifacts import pack_inputs
@@ -154,8 +155,11 @@ def test_rank_uses_scene_mapping_preserves_unmapped_and_feeds_existing_budget(tm
     assert plan["test_names"] == [PRIMARY]
 
 
-def test_paired_replay_shares_truth_and_reports_actual_overrun_and_miss(tmp_path):
-    code, report = offline("budget-replay", put(tmp_path, "history.json", replay_fixture(tmp_path)))
+def test_paired_replay_shares_truth_and_reports_actual_overrun_and_miss(tmp_path, request):
+    inventory = put(tmp_path, "history.json", replay_fixture(tmp_path))
+    started = perf_counter()
+    code, report = offline("budget-replay", inventory)
+    seconds = perf_counter() - started
     assert code == 0 and report["paired_prs"] == report["total_prs"] == 1
     assert report["summary"]["automatic"] == {
         "full_failures": 1,
@@ -171,6 +175,23 @@ def test_paired_replay_shares_truth_and_reports_actual_overrun_and_miss(tmp_path
         "seconds_saved": 32,
         "budget_overruns": 0,
     }
+    request.node.user_properties.append(
+        (
+            "paired_replay_observation",
+            json.dumps(
+                {
+                    "exit_code": code,
+                    "seconds": round(seconds, 6),
+                    "cohort_kind": report["cohort_kind"],
+                    "budget_ms": report["budget_ms"],
+                    "total_prs": report["total_prs"],
+                    "paired_prs": report["paired_prs"],
+                    "summary": report["summary"],
+                },
+                sort_keys=True,
+            ),
+        )
+    )
 
 
 @pytest.mark.parametrize(

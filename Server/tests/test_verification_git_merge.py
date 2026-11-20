@@ -1,15 +1,15 @@
 """Verify an isolated real Git merge and its static Resources evidence through the CLI."""
 
-from contextlib import contextmanager
 import json
+from contextlib import contextmanager
+from time import perf_counter
 
-from click.testing import CliRunner
 import pytest
-
 from cli.main import cli
+from click.testing import CliRunner
 from services.verification.merge_resources import compare_resources
-from .test_verification_git_draft import git
 
+from .test_verification_git_draft import git
 
 _GUID = "e" * 32
 _BEFORE = "Assets/Resources/UI/Shop.prefab"
@@ -59,7 +59,7 @@ def _invoke(project):
 
 @pytest.mark.parametrize(("lookup", "key"), [("Load", "UI/Shop"), ("LoadAll", "UI")])
 def test_reports_only_merged_resource_regression_from_actual_merged_blob(
-    repo, tmp_path, lookup, key
+    repo, tmp_path, lookup, key, request
 ):
     script = repo / _SCRIPT
     original = script.read_bytes()
@@ -97,7 +97,9 @@ def test_reports_only_merged_resource_regression_from_actual_merged_blob(
         )
     }
 
+    started = perf_counter()
     code, report = _invoke(repo)
+    seconds = perf_counter() - started
 
     assert code == 1 and report["status"] == "regression", report
     assert report["commits"] == revisions
@@ -120,6 +122,24 @@ def test_reports_only_merged_resource_regression_from_actual_merged_blob(
     assert untracked.read_bytes() == b"// untracked content\n"
     assert git(repo, "rev-parse", "HEAD").decode().strip() == revisions["head"]
     assert sorted(path.relative_to(objects) for path in objects.rglob("*")) == original_objects
+    request.node.user_properties.append(
+        (
+            "merge_observation",
+            json.dumps(
+                {
+                    "exit_code": code,
+                    "status": report["status"],
+                    "seconds": round(seconds, 6),
+                    "lookup": lookup,
+                    "commits": report["commits"],
+                    "trees": report["trees"],
+                    "snapshots": sides,
+                    "regressions": resources["regressions"],
+                },
+                sort_keys=True,
+            ),
+        )
+    )
 
 
 def test_reports_git_conflict_without_treating_marker_tree_as_source(repo):

@@ -1,18 +1,21 @@
 """Exercise classified checkout divergence at the pair admission boundary."""
 
-from hashlib import sha256
 import json
+from hashlib import sha256
 from time import perf_counter
 
 import pytest
-
 from services.verification import reproduce
+
 from .test_play_scenario_player import bundle  # noqa: F401 - imported fixture
 from .test_play_scenario_player_assurance import verified_bundle  # noqa: F401 - imported fixture
 from .test_verification_git_draft import git
 from .test_verification_player_candidates import registered  # noqa: F401 - imported fixture
-from .test_verification_reproduce import review  # noqa: F401 - imported fixture
-from .test_verification_reproduce import run, write
+from .test_verification_reproduce import (
+    review,  # noqa: F401 - imported fixture
+    run,
+    write,
+)
 
 
 @pytest.mark.parametrize(

@@ -1,12 +1,11 @@
 """Exercise resumable dependency analysis through the ordinary candidate CLI."""
 
-from hashlib import sha256
 import json
+from hashlib import sha256
 from time import perf_counter
 
-from click.testing import CliRunner
-
 from cli.main import cli
+from click.testing import CliRunner
 from services.reference_graph.queries import GraphQueries, encode_cursor
 from services.reference_graph.store import Edge, GraphScope, GraphStore
 from services.reference_graph.workspace import GraphWorkspace
@@ -120,7 +119,7 @@ def _material(index):
     ).encode()
 
 
-def test_diff_follows_old_and_current_consumers_and_identifies_explicit_retarget(tmp_path):
+def test_diff_follows_old_and_current_consumers_and_identifies_explicit_retarget(tmp_path, request):
     paths = [
         "Assets/Room.unity",
         "Assets/Door.prefab",
@@ -144,6 +143,7 @@ def test_diff_follows_old_and_current_consumers_and_identifies_explicit_retarget
     _ok(_scan(project, baseline_commit, paths[0], old, baseline))
     _ok(_scan(project, candidate_commit, paths[0], new, candidate))
     output = tmp_path / "diff.jsonl"
+    started = perf_counter()
     _ok(
         _run(
             "dependency-diff",
@@ -155,6 +155,7 @@ def test_diff_follows_old_and_current_consumers_and_identifies_explicit_retarget
             str(output),
         )
     )
+    seconds = perf_counter() - started
     header, *rows = [json.loads(line) for line in output.read_bytes().splitlines()]
     assert header["baseline"]["commit"] == baseline_commit
     assert header["candidate"]["commit"] == candidate_commit
@@ -180,6 +181,23 @@ def test_diff_follows_old_and_current_consumers_and_identifies_explicit_retarget
     assert ("baseline", paths[6], paths[1]) in consumers
     assert ("candidate", paths[2], paths[0]) in consumers
     assert not any(path == paths[5] for _, _, path in consumers)
+    request.node.user_properties.append(
+        (
+            "dependency_diff_observation",
+            json.dumps(
+                {
+                    "seconds": round(seconds, 6),
+                    "baseline": header["baseline"],
+                    "candidate": header["candidate"],
+                    "relations": sorted(changes),
+                    "retarget": retarget,
+                    "consumers": sorted(consumers),
+                    "output_sha256": sha256(output.read_bytes()).hexdigest(),
+                },
+                sort_keys=True,
+            ),
+        )
+    )
 
 
 def test_policy_hidden_target_is_unknown_but_other_visible_changes_remain_comparable(tmp_path):
@@ -317,6 +335,8 @@ def test_interrupted_1000_assets_5000_links_equals_uninterrupted_inventory(tmp_p
     assert first["closure_source_revision"] == source_revision(expected_hashes)
     request.node.user_properties.extend(
         (
+            ("fixture_commit", commit),
+            ("closure_source_revision", first["closure_source_revision"]),
             ("reachable_assets", first["reachable_assets"]),
             ("scanned_edges", first["scanned_edges"]),
             ("pages", first["pages"]),
@@ -324,6 +344,7 @@ def test_interrupted_1000_assets_5000_links_equals_uninterrupted_inventory(tmp_p
             ("uninterrupted_inventory_sha256", first["inventory"]["sha256"]),
             ("resumed_inventory_sha256", second["inventory"]["sha256"]),
             ("inventory_bytes", out_all.stat().st_size),
+            ("inventory_rows", first["inventory"]["rows"]),
             ("uninterrupted_seconds", round(uninterrupted_seconds, 3)),
             ("two_scan_calls_seconds", round(resumed_seconds, 3)),
         )
