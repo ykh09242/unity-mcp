@@ -39,7 +39,7 @@ def test_prefab_move_preserves_serialized_guid_and_separates_unobserved_dynamic_
     source = """using UnityEngine;
 class Inventory {
     const string Badge = "Inventory/Badge";
-    Object Open() => Resources.Load(Badge);
+    Object Open() { var asset = Resources.Load(Badge); Record("resources", Badge, asset); return asset; }
     Object Preview(string runtimeKey) => Resources.Load(runtimeKey);
 }"""
     yaml = f"%YAML 1.1\n--- !u!114 &72\nMonoBehaviour:\n  badge: {{fileID: 1, guid: {guid}, type: 3}}\n"

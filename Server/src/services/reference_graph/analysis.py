@@ -37,7 +37,7 @@ from services.reference_graph.store import Edge, _hash
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 14
+ANALYSIS_VERSION = 15
 # Limit both the semantic value and nonliteral representation before allocating
 # expanded storage. Source size alone cannot bound repeated constant expansion.
 MAX_EXPRESSION_CHARS = 65536
@@ -630,6 +630,7 @@ def parse_csharp(
         }
     usings, aliases = imports[""]["usings"], imports[""]["aliases"]
     candidates = []
+    bare_arguments = set()
     declarations = {}
     type_arguments = _type_argument_openings(tokens, pairs, check)
     lambda_headers = (
@@ -696,6 +697,18 @@ def parse_csharp(
             )
         else:
             candidates.append((i, name, start, end))
+            # A bare argument after a comma uses a name; it does not declare a
+            # comma-separated local/field. Inspect only this call's top level.
+            position = i + 1
+            while position < end:
+                check()
+                if (
+                    tokens[position].kind == "id"
+                    and tokens[position - 1].text == ","
+                    and tokens[position + 1].text in (",", ")")
+                ):
+                    bare_arguments.add(position)
+                position = max(position, pairs.get(position, position)) + 1
     method_ranges = sorted(declarations.values(), key=lambda item: item[3])
     local_names = {}
     inside_method = [False] * len(tokens)
@@ -705,7 +718,7 @@ def parse_csharp(
         for i in range(method[3] + 1, min(method[4], len(tokens))):
             check()
             inside_method[i] = True
-            if i in lambda_headers or tokens[i].lambda_parameter:
+            if i in bare_arguments or i in lambda_headers or tokens[i].lambda_parameter:
                 continue
             if (
                 i + 1 < len(tokens)
@@ -790,6 +803,7 @@ def parse_csharp(
                 initializer_bodies.discard(body)
         if (
             not inside_method[i]
+            and i not in bare_arguments
             and i not in parameter_positions
             and i not in lambda_headers
             and not tokens[i].lambda_parameter
