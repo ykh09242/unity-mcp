@@ -15,9 +15,7 @@ Resources are read-only state surfaces exposed to MCP clients. Tools mutate; res
 
 **URI:** `mcpforunity://scene/cameras`
 
-List all cameras in the scene (Unity Camera + CinemachineCamera) with status. Includes Brain state, Cinemachine camera priorities, pipeline components, follow/lookAt targets, and Unity Camera info.
-
-URI: mcpforunity://scene/cameras
+Read the current scene camera inventory. Count the unityCameras and cinemachineCameras entries and read their names. Includes brain state, Cinemachine priorities, pipeline components, follow/lookAt targets and Unity Camera info.
 
 
 ## `connection_doctor`

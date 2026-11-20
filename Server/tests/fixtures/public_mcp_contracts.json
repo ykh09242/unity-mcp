@@ -21505,6 +21505,9 @@
                   {
                     "items": {
                       "enum": [
+                        "unityCameras",
+                        "cinemachineCameras",
+                        "cinemachineInstalled",
                         "render_size.width",
                         "render_size.height",
                         "current_size",
@@ -25417,6 +25420,9 @@
                   {
                     "items": {
                       "enum": [
+                        "unityCameras",
+                        "cinemachineCameras",
+                        "cinemachineInstalled",
                         "render_size.width",
                         "render_size.height",
                         "current_size",
@@ -48426,6 +48432,9 @@
                   {
                     "items": {
                       "enum": [
+                        "unityCameras",
+                        "cinemachineCameras",
+                        "cinemachineInstalled",
                         "render_size.width",
                         "render_size.height",
                         "current_size",
@@ -52338,6 +52347,9 @@
                   {
                     "items": {
                       "enum": [
+                        "unityCameras",
+                        "cinemachineCameras",
+                        "cinemachineInstalled",
                         "render_size.width",
                         "render_size.height",
                         "current_size",
