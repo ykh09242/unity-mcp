@@ -14,7 +14,7 @@ description: "Create or list cameras, select targets and configure lenses or pri
 
 ## Description
 
-Create or list cameras, select targets and configure lenses or priority. For read-only camera inventory, read the MCP resource mcpforunity://scene/cameras.
+Create or list cameras, select targets and configure lenses or priority. For a read-only inventory, call inspect_scene_cameras or read mcpforunity://scene/cameras.
 
 ## Parameters
 

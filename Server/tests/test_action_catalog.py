@@ -163,6 +163,8 @@ def test_unknown_catalog_selection_is_an_error(entries, selector):
         ("prefab_contents", "apply_preview", "preview", "preview_id"),
         ("manage_profiler", "window_start", "frame", None),
         ("manage_ugui", "diagnose_raycast", "pointer", None),
+        ("manage_localization", "set_string_entry", "exactly one of key_id or key_name", "value"),
+        ("manage_localization", "set_fallbacks", "empty list", "fallback_locale_paths"),
     ],
 )
 def test_action_cards_explain_distinct_outcomes(entries, tool, action, phrase, required):
@@ -374,6 +376,8 @@ def test_camera_inventory_search_offers_the_published_resource_to_read_only_clie
     for entry in (row for row in entries if row["name"] in names):
         card = action_card(entry, "list_cameras")
         assert uri in card["purpose"] and uri in tool_capability(entry)["description"]
+        assert "inspect_scene_cameras" in card["purpose"]
+        assert "inspect_scene_cameras" in tool_capability(entry)["description"]
         assert not card["effects"]["readOnlyHint"]
     result = search_catalog(
         SearchRequest(query="camera inventory", intent="observe"),

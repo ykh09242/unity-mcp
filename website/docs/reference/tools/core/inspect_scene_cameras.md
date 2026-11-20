@@ -1,7 +1,7 @@
 ---
 title: inspect_scene_cameras
 sidebar_label: inspect_scene_cameras
-description: "Read the selected Editor's scene camera inventory."
+description: "Read the selected Editor's scene camera inventory. unityCameras includes each camera's name, depth, fieldOfView and brain attachment. cinemachineCameras includes names, priorities, pipeline components and follow/lookAt targets."
 ---
 
 # `inspect_scene_cameras`
@@ -14,7 +14,7 @@ description: "Read the selected Editor's scene camera inventory."
 
 ## Description
 
-Read the selected Editor's scene camera inventory. Count entries and read names in unityCameras and cinemachineCameras. Includes brain state, lens information, Cinemachine priorities, pipeline components and follow/lookAt targets. With Cinemachine installed, reads provider methods and component getters. Equivalent to mcpforunity://scene/cameras.
+Read the selected Editor's scene camera inventory. unityCameras includes each camera's name, depth, fieldOfView and brain attachment. cinemachineCameras includes names, priorities, pipeline components and follow/lookAt targets. With Cinemachine installed, reads provider methods and component getters. Equivalent to mcpforunity://scene/cameras.
 
 ## Parameters
 

@@ -194,13 +194,13 @@ INTEGRATION_ACTIONS: Final = {
             "table_paths",
         ),
         "set_string_entry": _edit(
-            "Update an existing string entry using the installed key identity and the table revision.",
+            "Update an existing string entry using exactly one of key_id or key_name and the observed table revision.",
             "table_path",
             "value",
             "expected_revision",
         ),
         "set_fallbacks": _edit(
-            "Replace a locale's ordered fallback references using its observed revision.",
+            "Replace a locale's ordered fallback references using its observed revision. An empty list clears all fallbacks.",
             "locale_path",
             "fallback_locale_paths",
             "expected_revision",

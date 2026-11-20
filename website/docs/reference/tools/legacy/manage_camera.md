@@ -14,7 +14,7 @@ description: "Manage cameras (Unity Camera + Cinemachine)."
 
 ## Description
 
-Manage cameras (Unity Camera + Cinemachine). Works without Cinemachine using basic Camera; unlocks presets, pipelines, and blending when Cinemachine is installed. Authoring writes include bounded verification of the affected camera or component. Activation and blend completion have separate observations. Use ping to check Cinemachine availability. For read-only camera inventory, read the MCP resource mcpforunity://scene/cameras.
+Manage cameras (Unity Camera + Cinemachine). Works without Cinemachine using basic Camera; unlocks presets, pipelines, and blending when Cinemachine is installed. Authoring writes include bounded verification of the affected camera or component. Activation and blend completion have separate observations. Use ping to check Cinemachine availability. For a read-only inventory, call inspect_scene_cameras or read mcpforunity://scene/cameras.
 
 SETUP:
 - ping: Check if Cinemachine is available
