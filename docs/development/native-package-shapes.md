@@ -4,12 +4,17 @@ The native runner exercises the current checkout in small, disposable EditMode p
 
 | Suite | Editor | Profile | Native assertion |
 | --- | --- | --- | --- |
+| `package` | 6000.0.69f1 | `cinemachine-2` | Create a 2.10.7 virtual camera with its child pipeline, operate the Brain, and reject the unavailable Decollider extension. |
+| `package` | 6000.0.69f1 | `cinemachine-3` | Create a 3.1.7 camera with its component pipeline, operate the Brain, and attach the native Decollider extension. |
+| `package` | 6000.0.69f1 | `cinemachine-absent` | Verify the basic Unity camera and lens fallback, missing-package readiness, and refusal of Cinemachine actions. |
 | `package` | 6000.0.69f1 | `atlas-v1`, `atlas-v2` | Create an atlas with the Editor's 2D Sprite package, then reopen the same project in a second Editor process and verify persisted assets. |
 | `package` | 6000.0.69f1 | `addressables-legacy` | With Addressables 1.1.5 and Scriptable Build Pipeline 1.23.4, check unavailable layout data, missing entry writes, and guarded address/group moves with Undo. |
 | `package` | 6000.0.69f1 | `auditor-package` | With Project Auditor and its rules at 3.2.0 and Mono.Cecil 1.11.4, require the native audit to report the source fixture diagnostic. |
 | `package` | 6000.0.69f1 | `auditor-absent` | Require the missing provider result on an Editor without the integrated module or standalone package. |
 | `integrated` | 6000.6.4f1 | `auditor-integrated` | Run the Editor Auditor module with its distributed rules archive 1.0.1 and require the source fixture diagnostic. |
 | `integrated` | 6000.6.4f1 | `auditor-integrated-no-rules` | Require the Editor module to reject an audit before starting when rules are absent. |
+
+The camera profiles compare the public inventory tool with the cameras resource. They check component identities, serialized values, object dirtiness and scene dirtiness before and after reads, including a missing legacy pipeline and a scene without a Brain. The package matrix records the [official releases](https://packages.unity.com/com.unity.cinemachine) by SHA-256 in [the registry pins](../../tools/unity-registry-pins.json). The two provider releases declare Unity 2022.3 as their package minimum. The MCP package retains its independent Unity 2021.3 floor.
 
 Run from the repository root with a licensed Editor installation, access to Unity's official package registry, and a new output directory. Atlas phases require a graphics device. A Linux runner needs a working display for those phases.
 

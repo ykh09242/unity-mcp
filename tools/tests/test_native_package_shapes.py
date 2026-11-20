@@ -18,6 +18,9 @@ def test_profiles_cover_exact_native_shapes():
         "addressables-legacy",
         "auditor-package",
         "auditor-absent",
+        "cinemachine-2",
+        "cinemachine-3",
+        "cinemachine-absent",
     }
     assert {name for name, p in shapes.PROFILES.items() if p.suite == "integrated"} == {
         "auditor-integrated",
@@ -27,6 +30,15 @@ def test_profiles_cover_exact_native_shapes():
         profile = shapes.PROFILES[f"atlas-{version.lower()}"]
         assert profile.graphics and profile.phases == ((f"Author{version}",), (f"Reopen{version}",))
         assert "com.unity.2d.sprite" in profile.packages
+    for name, version, method in [
+        ("cinemachine-2", "2.10.7", "LegacyProvider"),
+        ("cinemachine-3", "3.1.7", "ModernProvider"),
+        ("cinemachine-absent", None, "AbsentProvider"),
+    ]:
+        profile = shapes.PROFILES[name]
+        assert profile.packages.get("com.unity.cinemachine", {}).get("version") == version
+        assert profile.phases == ((method,),)
+        assert shapes.fixture_sources(profile)["Assets/Tests/CinemachineShapeTests.cs"].is_file()
     for name in ("auditor-absent", "auditor-integrated-no-rules"):
         profile = shapes.PROFILES[name]
         assert not profile.packages

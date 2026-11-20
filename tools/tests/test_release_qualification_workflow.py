@@ -91,6 +91,9 @@ def test_qualification_requires_the_selected_server_suite_at_the_server_sha(
         "TestProjects/UnityMCPTests/Assets/Tests/EditMode/AssetGen/AssetGenJobReloadTests.cs",
         "tools/run_windows_vfx_tests.py",
         "tools/run_native_package_shapes.py",
+        "tools/native_api_shapes/CinemachineShapeTests.cs",
+        "tools/unity-ci-packages.json",
+        "tools/unity-registry-pins.json",
         "tools/unity-windows-integrated-auditor.json",
         "tools/local_harness.py",
         "tools/tests/test_assetgen_reload_workflow.py",
@@ -540,6 +543,7 @@ def test_package_shapes_use_exact_beta_without_exposing_credentials_to_the_runne
     assert paths == {
         *(f"{path_prefix}/*/{file}" for file in ("results.xml", "launch.json", "process.log")),
         f"{path_prefix}/prepared/resolved-packages.json",
+        f"{path_prefix}/prepared/project/Packages/packages-lock.json",
     }
     provision = named["retainProvision"]
     assert provision["if"] == "always()"
@@ -558,6 +562,10 @@ def test_package_shapes_use_exact_beta_without_exposing_credentials_to_the_runne
         ("integrated", None),
         ("package", "atlas-v2/ReopenV2/results.xml"),
         ("package", "addressables-legacy/EditMode/process.log"),
+        ("package", "cinemachine-2/LegacyProvider/results.xml"),
+        ("package", "cinemachine-3/ModernProvider/launch.json"),
+        ("package", "cinemachine-3/prepared/project/Packages/packages-lock.json"),
+        ("package", "cinemachine-absent/AbsentProvider/process.log"),
         ("integrated", "auditor-integrated/prepared/resolved-packages.json"),
         ("integrated", "provision-only"),
     ],
@@ -571,6 +579,7 @@ def test_complete_package_shape_evidence_is_required_after_success(tmp_path, sui
     for profile, spec in PROFILES.items():
         if spec.suite == suite:
             expected.add(f"{profile}/prepared/resolved-packages.json")
+            expected.add(f"{profile}/prepared/project/Packages/packages-lock.json")
             for methods in spec.phases:
                 phase = methods[0] if len(methods) == 1 else "EditMode"
                 expected.update(

@@ -57,7 +57,20 @@ def auditor(suite: str, method: str, packages: dict[str, PackageSpec]) -> Profil
     )
 
 
+def cinemachine(method: str, packages: dict[str, PackageSpec]) -> Profile:
+    return Profile(
+        "package",
+        "CinemachineShapeTests",
+        ((method,),),
+        packages,
+        (SHAPES / "CinemachineShapeTests.cs", TESTS / "Helpers/PrefabTestSceneFixture.cs"),
+    )
+
+
 PROFILES = {
+    "cinemachine-2": cinemachine("LegacyProvider", NATIVE_PACKAGES["cinemachine-2"]),
+    "cinemachine-3": cinemachine("ModernProvider", NATIVE_PACKAGES["cinemachine-3"]),
+    "cinemachine-absent": cinemachine("AbsentProvider", {}),
     "atlas-v1": atlas("V1"),
     "atlas-v2": atlas("V2"),
     "addressables-legacy": Profile(

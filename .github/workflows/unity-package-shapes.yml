@@ -21,7 +21,7 @@ jobs:
   packageShapes:
     name: Windows ${{ matrix.suite }} package shapes (${{ matrix.unity_version }})
     runs-on: windows-2022
-    timeout-minutes: 205
+    timeout-minutes: 250
     outputs:
       checked_sha: ${{ steps.verify.outputs.checked_sha }}
     concurrency:
@@ -93,7 +93,7 @@ jobs:
         run: python tools/unity_windows_ci.py activate "$env:UNITY_EDITOR"
       - name: Run and require native package shape cases
         id: execute
-        timeout-minutes: 130
+        timeout-minutes: 175
         run: |
           python tools/run_native_package_shapes.py --suite $env:PACKAGE_SHAPE_SUITE --editor "$env:UNITY_EDITOR" --unity-version $env:UNITY_VERSION --output "$env:PACKAGE_SHAPE_OUTPUT"
           if ($LASTEXITCODE -ne 0) { throw 'Required Windows native package shape cases failed.' }
@@ -120,6 +120,7 @@ jobs:
                   continue
               directory = Path(name)
               required.append(directory / 'prepared' / 'resolved-packages.json')
+              required.append(directory / 'prepared' / 'project' / 'Packages' / 'packages-lock.json')
               for methods in profile.phases:
                   phase = directory / phase_name(methods)
                   required.extend(phase / filename for filename in ('results.xml', 'launch.json', 'process.log'))
@@ -140,6 +141,7 @@ jobs:
             ${{ env.PACKAGE_SHAPE_OUTPUT }}/*/*/launch.json
             ${{ env.PACKAGE_SHAPE_OUTPUT }}/*/*/process.log
             ${{ env.PACKAGE_SHAPE_OUTPUT }}/*/prepared/resolved-packages.json
+            ${{ env.PACKAGE_SHAPE_OUTPUT }}/*/prepared/project/Packages/packages-lock.json
       - name: Retain Windows Editor provisioning evidence
         id: retainProvision
         if: always()
