@@ -336,7 +336,16 @@ def _route_evidence(
     ]
     terms = sorted(words & _words(" ".join([*identifiers, route["purpose"]])))
     route["matched_terms"] = terms
-    route["distinctive_terms"] = [word for word in terms if word in distinctive]
+    identifier_words = _words(" ".join(identifiers))
+    # Short words in English catalog prose can coincide with fragments of an
+    # untranslated request. Keep the match, but corroborate a short Latin
+    # abbreviation such as UI or ID with the route's own identifiers.
+    route["distinctive_terms"] = [
+        word
+        for word in terms
+        if word in distinctive
+        and (word in identifier_words or len(word) > 2 or not (word.isascii() and word.isalpha()))
+    ]
     if any(query == _normalized(identifier) for identifier in identifiers):
         return "exact_identifier"
     if len(route["distinctive_terms"]) >= 2:

@@ -44,6 +44,16 @@ def test_common_catalog_words_do_not_corroborate_an_incidental_match(query):
     assert len(observed["routes"][0]["distinctive_terms"]) <= 1
 
 
+def test_short_identifier_words_still_corroborate_a_match():
+    from services.registry.task_search import _route_evidence
+
+    route = {"kind": "tool", "tool": "inspect_ui_id", "purpose": "Read UI ID on a panel."}
+    words = {"ui", "id", "on"}
+    assert _route_evidence(route, "ui id on", words, words) == "multiple_terms"
+    assert route["matched_terms"] == ["id", "on", "ui"]
+    assert route["distinctive_terms"] == ["id", "ui"]
+
+
 def test_domain_navigation_distinguishes_hit_order_from_dispatch_without_shared_words():
     response = result("search", "画面中央ではどの要素が入力を受けますか", "--intent", "observe")
     assert response["recommended_action"] == "browse_catalog"
