@@ -505,6 +505,11 @@ class GraphQueries:
                     "edges": edges,
                     "visited_nodes": visited,
                     "direction": direction,
+                    **(
+                        {"node": node, "max_depth": max_depth, "page_sequence": job["sequence"] + 1}
+                        if target is None
+                        else {}
+                    ),
                     "sources": self._sources(connection),
                     **detail,
                 },

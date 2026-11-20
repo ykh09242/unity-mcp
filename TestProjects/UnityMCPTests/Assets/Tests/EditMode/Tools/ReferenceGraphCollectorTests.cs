@@ -9,7 +9,9 @@ using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
@@ -811,6 +813,42 @@ namespace MCPForUnityTests.EditMode.Tools
             File.WriteAllText(path, value);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
             return path;
+        }
+
+        [Test]
+        public void SavedScenePrefabMaterialAndTextureExposeThreeDirectDependencyEdges()
+        {
+            string[] chain = { root + "/Room.unity", root + "/Door.prefab", root + "/Door.mat", root + "/Oak.asset" };
+            var texture = new Texture2D(1, 1);
+            AssetDatabase.CreateAsset(texture, chain[3]);
+            var shader = Shader.Find("Sprites/Default");
+            Assert.IsNotNull(shader);
+            var material = new Material(shader) { mainTexture = texture };
+            AssetDatabase.CreateAsset(material, chain[2]);
+            Scene previous = SceneManager.GetActiveScene();
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                var source = new GameObject("Door");
+                SceneManager.MoveGameObjectToScene(source, scene);
+                source.AddComponent<MeshRenderer>().sharedMaterial = material;
+                GameObject prefab = PrefabUtility.SaveAsPrefabAsset(source, chain[1]);
+                UnityEngine.Object.DestroyImmediate(source);
+                Assert.IsNotNull(PrefabUtility.InstantiatePrefab(prefab, scene));
+                Assert.IsTrue(EditorSceneManager.SaveScene(scene, chain[0]));
+                AssetDatabase.SaveAssets();
+                for (int index = 0; index < chain.Length - 1; index++)
+                {
+                    JObject page = Call("dependencies", "guid", AssetDatabase.AssetPathToGUID(chain[index]));
+                    CollectionAssert.Contains(page["targets"].Values<string>().ToArray(), AssetDatabase.AssetPathToGUID(chain[index + 1]), chain[index]);
+                }
+            }
+            finally
+            {
+                if (previous.IsValid() && previous.isLoaded)
+                    SceneManager.SetActiveScene(previous);
+                EditorSceneManager.CloseScene(scene, true);
+            }
         }
 
         [Test]

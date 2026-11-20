@@ -1744,6 +1744,8 @@ class GraphWorkspace:
                     "revision": current,
                     "coverage": [],
                     "issues": [],
+                    "node": owner,
+                    "offset": offset,
                     "next_offset": None,
                     "next_cursor": None,
                     "excluded": True,
@@ -1810,6 +1812,8 @@ class GraphWorkspace:
                 "revision": connection.execute("SELECT revision FROM graph_meta").fetchone()[0],
                 "coverage": coverage,
                 "issues": issues,
+                "node": owner,
+                "offset": offset,
                 "next_offset": offset + len(issues) if more else None,
                 "next_cursor": encode_cursor(
                     self.store.scope.key,
