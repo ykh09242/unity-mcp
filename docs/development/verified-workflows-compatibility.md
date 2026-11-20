@@ -4,7 +4,7 @@ The [Unity CI version matrix](../../tools/unity-versions.json) sets exact Editor
 
 ## Configured Editor roles
 
-Each cell is **C / E / P** for Unity Personal. `open` means matching local evidence is outstanding. `—` marks a boundary where the feature has no observable behavior. A patch outside this table cannot fill a pinned row. The local Editor inventory included Unity `6000.0.69f1` and `6000.0.63f1` from the Unity CLI, and the Hub directory also contained `6000.0.57f1`.
+Each cell is **C / E / P** for the indicated Editor role. `open` means a matching feature receipt is outstanding. `—` marks a boundary where the feature has no observable behavior. Use license-free CI for its covered compilation and tooling checks. Native Editor and Player outcomes require the corresponding execution receipts for that patch.
 
 | Editor and role | Shop asset move and state | Pointer routing and localization | Optional Addressables and recovery | URP renderer binding | Physics triggers | Stable scenario/profile/report read | Android IL2CPP fixture |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -22,7 +22,7 @@ The open rows need the exact Editor and target build module, a valid license for
 
 The paths in this section identify generated files in the original test workspace. The [reproduction guide](verified-change-walkthrough.md) explains how to generate the corresponding reports in a fresh checkout.
 
-The following artifacts were produced on Windows with Unity `6000.0.69f1`. Paths lead to the local checkout's ignored evidence directories. The receipts contain the exact source, output identity and observed result for each run. The shop, Addressables, stable-upgrade and Android build logs identify `Product: Unity Pro`. The Unity Personal cells remain open, including the corresponding local Editor patch.
+The following artifacts were produced on Windows with Unity `6000.0.69f1`. The receipts contain the exact source, output identity and observed result for each run. The Editor and build logs identify `Product: Unity Pro`. License-free CI can run the hermetic checks and compile the package for its configured Editor roles.
 
 | Feature | C | E | P | Receipt and source |
 | --- | --- | --- | --- | --- |

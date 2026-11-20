@@ -86,8 +86,8 @@ as evidence.
 
 ## Reproduce a loader regression
 
-Run from the repository root with Unity 6000.0.69f1, an active Unity Personal entitlement
-and Windows Mono build support. Record the license tier with the Editor run. Use a fresh
+For native reproduction, run from the repository root with an activated Unity 6000.0.69f1
+Editor and Windows Mono build support. Use a fresh
 directory under `.unity-ci` for each experiment. The preparation copies the maintained test
 project and local package, and the experiment changes only its disposable copy.
 
@@ -201,8 +201,7 @@ the unattributed remainder. If the summary identifies missing or bounded detail,
 retained sections and report the remaining coverage gap. [Build report tool contract](../../website/docs/reference/tools/core/manage_build.md)
 · [Retained build reports](../build-report-storage.md)
 
-The recorded development controls used Unity 6000.0.69f1 with Unity Pro. Repeat them with
-Unity Personal to qualify the requested license tier. The loader and replay evidence comes
+The recorded development controls used Unity 6000.0.69f1 with Unity Pro. The loader and replay evidence comes
 from Windows x64 Mono Players. The pointer fixture ran in a graphical Editor and a Windows
 Mono Player. The localized layout evidence comes from the graphical Editor. The recovery
 command uses Addressables 1.1.5 on the same Editor. See the feature matrix for separate
@@ -210,24 +209,12 @@ compilation, native Editor and native Player results across Editor roles, stable
 the Android pilot.
 [Compatibility evidence](verified-workflows-compatibility.md)
 
-For CI qualification, record the exact pushed commit, Editor version and license tier
-alongside the compile, Editor and Player receipts. Check which jobs ran for that commit
-and inspect the native artifacts for this workflow before using a CI result to approve it.
-Keep locally generated evidence in the private fixture output directory and use the
-workflow's artifact store for CI evidence.
+### Verify the pushed revision without a Unity license
+
+Locate the exact pushed SHA in GitHub Actions. Open **Compile Check (no license)** for the
+managed package compilation results and **Fork Beta Tool Tests** for the selected Python,
+contract and tooling checks. Record each job's conclusion, including skipped native jobs.
+The native observations above have their own source, build and process receipts. A new
+native observation needs a matching Editor or Player run. Keep local evidence in the
+fixture output directory and use the workflow's artifact store for CI evidence.
 [CI validation](ci-validation.md)
-
-### Record Unity Personal evidence
-
-Check each actual native test or build log and retain its redacted edition receipt with
-the corresponding test or Player artifacts. Use `--active` for an optional host preflight
-with the Unity CLI.
-
-~~~powershell
-python tools/check_unity_personal_evidence.py --editor-log '<actual-build-editor.log>' --output '<new-redacted.json>'
-python tools/check_unity_personal_evidence.py --active --output '<new-host-preflight.json>'
-~~~
-
-A Personal-targeted CI job qualifies after it runs with matching Editor and license evidence.
-The preflight checks entitlement availability. The test or build log identifies the edition
-used by that native process.
