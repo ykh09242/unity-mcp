@@ -20109,6 +20109,7 @@
                 "enum": [
                   "preview",
                   "apply",
+                  "undo",
                   "preview_structure",
                   "apply_structure"
                 ],
@@ -20302,6 +20303,19 @@
                 "default": null
               },
               "preview_id": {
+                "anyOf": [
+                  {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "receipt_id": {
                 "anyOf": [
                   {
                     "maxLength": 64,
@@ -47898,6 +47912,7 @@
                 "enum": [
                   "preview",
                   "apply",
+                  "undo",
                   "preview_structure",
                   "apply_structure"
                 ],
@@ -48091,6 +48106,19 @@
                 "default": null
               },
               "preview_id": {
+                "anyOf": [
+                  {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "receipt_id": {
                 "anyOf": [
                   {
                     "maxLength": 64,

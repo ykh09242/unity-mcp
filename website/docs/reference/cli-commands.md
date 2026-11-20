@@ -4029,6 +4029,15 @@ Preview the JSON array in EDITS_FILE without mutating scene values.
 | edits_file | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp scene-edit undo`
+
+Restore unchanged fields from a scene or prefab property receipt.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| receipt_id | text | required | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp script`
 
 Script operations - create, read, edit C# scripts.
@@ -4553,6 +4562,18 @@ Freeze a registered native build and its current clean source commits together.
 | --output | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp verification-candidate compare-loads`
+
+Compare the native job directories of two runs of the same registered build.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | text | required | nargs=1 | — | — |  |
+| --registration | text | required | nargs=1 | — | — |  |
+| --before | text | required | nargs=1 | — | — |  |
+| --after | text | required | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp verification-candidate configuration-diff`
 
 Compare two native configuration observations and optional matched Player pixel runs.
@@ -4628,6 +4649,17 @@ Validate a Git draft side, transfer its chunks, and print registration fields.
 | --side | choice: baseline, candidate | required | nargs=1 | — | — |  |
 | --candidate-id | text | required | nargs=1 | — | — |  |
 | --chunk-directory | text | optional | nargs=1 | — | — | Parent of input-chunks. Defaults to the draft file's directory. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate enum-value-diff`
+
+Compare native enum reads of the original serialized prefab component.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| baseline | text | required | nargs=1 | — | — |  |
+| candidate | text | required | nargs=1 | — | — |  |
+| --repaired | text | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp verification-candidate export`
@@ -4717,6 +4749,19 @@ Create a save with the older Player, then verify migration and a fresh restart.
 | --sha256 | text | required | nargs=1 | — | — | Manifest digest from an independent review. |
 | --artifacts | text | optional | nargs=1 | — | — | Trusted pair directory. Defaults to the manifest's parent. |
 | --output | text | required | nargs=1 | — | — | New directory for the isolated save slot and native evidence. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate scene-index-diff`
+
+Resolve numeric scene loads in project snapshots and optional Standalone runs.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| baseline | text | required | nargs=1 | — | — |  |
+| candidate | text | required | nargs=1 | — | — |  |
+| --source | text | required | nargs=1 | — | — | Project-relative C# source in both snapshots. |
+| --repaired | text | optional | nargs=1 | — | — |  |
+| --player-line | integer range: [1..None] | optional | nargs=1 | — | — | Match retained Player observations to this call. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp verification-candidate verify`
@@ -4947,6 +4992,35 @@ Pack admitted, pseudonymized observations from a reviewed change.
 | --baseline | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=2 | — | — |  |
 | --candidate | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=2 | — | — |  |
 | --withhold | choice: baseline, candidate | optional | nargs=1, repeatable | — | — |  |
+| --bundle | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | New shareable file. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence team pack-impact`
+
+Share a changed asset's dependency route and selected test observations.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --asset-guid | text | required | nargs=1 | — | — | GUID of the reviewed asset within the scene. |
+| --baseline | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Baseline dependency-scan JSONL inventory. |
+| --candidate | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Candidate dependency-scan JSONL inventory. |
+| --mappings | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Player candidate manifest with scene test mappings. |
+| --mapping-chunk | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1, repeatable | — | — | A pinned input chunk from a version-two manifest. |
+| --selected | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Instrumented selected NUnit capture. |
+| --withhold | choice: baseline, candidate, mappings, selected | optional | nargs=1, repeatable | — | — |  |
+| --bundle | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | New shareable file. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence team pack-recovery`
+
+Share the confirmed prefab write checkpoint and its successor execution.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --reconcile | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Receipt-owned reconciliation of the interrupted operation. |
+| --replan | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Receipt-owned approval of the successor operation. |
+| --resumed | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Receipt-owned result of the successor write. |
+| --withhold | choice: reconcile, replan, resumed | optional | nargs=1, repeatable | — | — |  |
 | --bundle | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | New shareable file. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 

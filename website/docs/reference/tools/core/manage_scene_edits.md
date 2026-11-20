@@ -14,18 +14,19 @@ description: "Preview or apply 1-1000 allowlisted native Transform, BoxCollider,
 
 ## Description
 
-Preview or apply 1-1000 allowlisted native Transform, BoxCollider, SphereCollider, Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene. Preview returns before/after values and a one-attempt token valid for 10 minutes. Apply accepts preview_id, or edits with expected_old for every field. Rejects drift before mutation; one named Undo restores supported recorded component values. No arbitrary transaction or filesystem, build, package, custom callback, dirty-flag rollback is promised. preview_structure takes an integer scene-root target scope and 1-256 ordered create/delete/reparent operations. Only ordinary Transform-only subtrees are supported; prefab instances and custom/native component subtrees are refused. create assigns a $temporary ID that later operations may reference. reparent preserves local transforms. apply_structure requires the preview token and rejects hierarchy/state drift before its one Undo group.
+Preview or apply 1-1000 allowlisted native Transform, BoxCollider, SphereCollider, Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene. Preview returns before/after values and a one-attempt token valid for 10 minutes. Apply accepts preview_id, or edits with expected_old for every field. Rejects drift before mutation; apply returns receipt_id. Use undo with this receipt to restore unchanged applied fields and report conflicts with before, applied and current values. Also accepts a receipt from prefab_contents apply_preview. No arbitrary transaction or filesystem, build, package, custom callback, dirty-flag rollback is promised. preview_structure takes an integer scene-root target scope and 1-256 ordered create/delete/reparent operations. Only ordinary Transform-only subtrees are supported; prefab instances and custom/native component subtrees are refused. create assigns a $temporary ID that later operations may reference. reparent preserves local transforms. apply_structure requires the preview token and rejects hierarchy/state drift before its one Undo group.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['preview', 'apply', 'preview_structure', 'apply_structure']` | yes |  |
+| `action` | `Literal['preview', 'apply', 'undo', 'preview_structure', 'apply_structure']` | yes |  |
 | `edits` | `list[SceneEdit] \| None` | — |  |
 | `preview_id` | `str \| None` | — |  |
 | `undo_name` | `str` | — |  |
 | `target` | `int \| None` | — |  |
 | `operations` | `list[StructureCreate \| StructureReparent \| StructureDelete] \| None` | — |  |
+| `receipt_id` | `str \| None` | — |  |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
