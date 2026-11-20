@@ -34,6 +34,9 @@ namespace VerificationFixtures
         [SetUp]
         public void IdentifyInputs()
         {
+            TestContext.WriteLine(
+                $"MCP_VERIFICATION_CONTEXT {Application.unityVersion}|{EditorUserBuildSettings.activeBuildTarget}|EditMode|{SystemInfo.operatingSystemFamily}"
+            );
             foreach (string path in new[] { Map, Route })
             {
                 using var hash = SHA256.Create();

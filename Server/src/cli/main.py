@@ -365,6 +365,8 @@ def register_commands():
         ("cli.commands.blender", "blender"),
         ("cli.commands.script", "script"),
         ("cli.commands.verification", "verification"),
+        ("cli.commands.verification_evidence", "verification_evidence"),
+        ("cli.commands.verification_evidence", "verification_evidence"),
         ("cli.commands.code", "code"),
         ("cli.commands.editor", "editor"),
         ("cli.commands.play_scenario", "play_scenario"),
