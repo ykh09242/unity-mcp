@@ -78,7 +78,10 @@ adapter resolves each concrete manifest URI under the caller's current transform
 and uses the reviewed SDK's Skills read policy before returning the manifest.
 A hidden, replaced or unauthorized reference omits the entry from `skills/list`
 and makes `skills/get` return the same error as an unknown URI. These checks avoid
-reading file bodies. An unavailable SDK read-policy hook disables the optional adapter.
+reading file bodies. Hosted discovery applies the same URI permission as a direct
+resource read. An explicitly scoped `read` credential can read the runtime doctor,
+while the packaged `skill://` URI is outside its permitted routes. An unavailable
+SDK read-policy hook disables the optional adapter.
 
 The packaged adapter validates the sealed metadata before registration and
 serves the recorded source revision, original UTF-8 file bytes and private zero-TTL

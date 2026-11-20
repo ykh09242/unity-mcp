@@ -14,7 +14,7 @@ import time
 
 import anyio
 from fastmcp.server.middleware import Middleware, MiddlewareContext
-from fastmcp.exceptions import ToolError, ValidationError
+from fastmcp.exceptions import AuthorizationError, ToolError, ValidationError
 from fastmcp.tools.base import ToolResult
 from pydantic import TypeAdapter
 
@@ -1114,6 +1114,13 @@ class UnityInstanceMiddleware(Middleware):
         if tool_name in FIXED_OBSERVATION_ACTIONS:
             names = (FIXED_OBSERVATION_ACTIONS[tool_name][0],)
         return await PluginHub.has_tool_for_identity(identity, project_hashes[0], user_id, names)
+
+    async def check_resource_access(self, context: MiddlewareContext) -> None:
+        """Apply the hosted URI grant to SDK metadata checks without selecting an Editor."""
+        try:
+            await authorize_remote_resource(str(context.message.uri))
+        except OperationPermissionError as exc:
+            raise AuthorizationError(str(exc)) from exc
 
     async def on_read_resource(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into resource context if available."""

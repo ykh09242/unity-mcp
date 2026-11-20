@@ -391,6 +391,60 @@ async def test_hosted_guidance_is_static_across_credentials_without_an_editor(
 
 
 @pytest.mark.asyncio
+async def test_hosted_skill_discovery_uses_the_callers_resource_permissions(
+    hosted_catalog, monkeypatch
+):
+    from services.api_key_service import ApiKeyService, ValidationResult
+
+    app, _ = hosted_catalog
+
+    async def validate(key):
+        claims = {"unity_mcp_permissions": ["read"]} if key == "scoped-read" else None
+        return ValidationResult(valid=True, user_id="same-user", metadata=claims)
+
+    monkeypatch.setattr(ApiKeyService.get_instance(), "_validate_external", validate)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://fixture",
+            headers={"Accept": "application/json, text/event-stream"},
+        ) as client:
+            for key in ("unscoped", "scoped-read", "unscoped"):
+                headers = {"x-api-key": key}
+                read = _message(
+                    await skill_request(
+                        client, "resources/read", {"uri": SKILL_URI}, headers=headers
+                    )
+                )
+                listed = complete_result(
+                    await skill_request(client, "skills/list", headers=headers)
+                )
+                fetched = _message(
+                    await skill_request(client, "skills/get", {"uri": SKILL_URI}, headers=headers)
+                )
+                if key == "scoped-read":
+                    assert "error" in read
+                    admitted_uri = "mcpforunity://doctor/runtime"
+                    admitted = complete_result(
+                        await skill_request(
+                            client, "resources/read", {"uri": admitted_uri}, headers=headers
+                        )
+                    )
+                    assert admitted["contents"][0]["uri"] == admitted_uri
+                    assert listed["skills"] == []
+                    missing = _message(
+                        await skill_request(
+                            client, "skills/get", {"uri": SKILL_URI + ".missing"}, headers=headers
+                        )
+                    )
+                    assert fetched["error"] == missing["error"]
+                    assert fetched["error"]["code"] == -32602
+                else:
+                    assert read["result"]["contents"][0]["uri"] == SKILL_URI
+                    assert listed["skills"] == [fetched["result"]["skill"]]
+
+
+@pytest.mark.asyncio
 async def test_explicit_legacy_keeps_resource_fallback_without_skills_methods(skills_server):
     # Given: an explicitly legacy initialized caller using existing authenticated HTTP.
     async with skills_http(skills_server) as client:
