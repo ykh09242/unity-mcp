@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using MCPForUnity.Runtime.Content;
 using Newtonsoft.Json;
@@ -39,6 +40,74 @@ public sealed class CatalogMarkerPlayer : MonoBehaviour
             throw new InvalidOperationException("Catalog fixture origin rejected phase " + phase + ".");
     }
 
+    private static async Task<object> SelectiveUpdate(string session)
+    {
+        string origin = Environment.GetEnvironmentVariable("MCP_CATALOG_ORIGIN");
+        string path = Environment.GetEnvironmentVariable("MCP_CATALOG_SECONDARY");
+        var host = Addressables.InitializeAsync(false);
+        try
+        {
+            await host.Task;
+            if (host.Status != AsyncOperationStatus.Succeeded)
+                throw new InvalidOperationException("Fixture initialization failed.");
+            string primaryId = AddressableCatalogDiagnostics.GetCatalogId(host.Result);
+            var load = Addressables.LoadContentCatalogAsync(origin + "/" + path, false);
+            string secondaryId;
+            string secondaryLocatorId;
+            try
+            {
+                await load.Task;
+                if (load.Status != AsyncOperationStatus.Succeeded)
+                    throw new InvalidOperationException("Secondary catalog load failed.");
+                secondaryId = AddressableCatalogDiagnostics.GetCatalogId(load.Result);
+                secondaryLocatorId = load.Result.LocatorId;
+            }
+            finally
+            {
+                Addressables.Release(load);
+            }
+            // A cold additional catalog may start with a provider-generated offline hash.
+            var secondaryBefore = await AddressableCatalogDiagnostics.ObserveAsync("secondary-marker");
+            if (secondaryBefore.pending_catalog_ids?.Contains(secondaryId) == true)
+                secondaryBefore = await AddressableCatalogDiagnostics.ApplySelectedUpdateAsync("secondary-marker", secondaryId);
+            var primaryBefore = await AddressableCatalogDiagnostics.ObserveAsync("catalog-marker");
+            await SignalOrigin(origin, "switch", session);
+            var ambiguous = await AddressableCatalogDiagnostics.ObserveAsync("secondary-marker", true);
+            var unknown = await AddressableCatalogDiagnostics.ApplySelectedUpdateAsync("secondary-marker", new string('0', 64));
+            var duplicate = new ResourceLocationMap(secondaryLocatorId);
+            Addressables.AddResourceLocator(duplicate);
+            CatalogObservation duplicateSelection;
+            try
+            {
+                duplicateSelection = await AddressableCatalogDiagnostics.ApplySelectedUpdateAsync("secondary-marker", secondaryId);
+            }
+            finally
+            {
+                Addressables.RemoveResourceLocator(duplicate);
+            }
+            var selected = await AddressableCatalogDiagnostics.ApplySelectedUpdateAsync("secondary-marker", secondaryId);
+            var repeated = await AddressableCatalogDiagnostics.ApplySelectedUpdateAsync("secondary-marker", secondaryId);
+            var primaryAfter = await AddressableCatalogDiagnostics.ObserveAsync("catalog-marker");
+            return new
+            {
+                primary_id = primaryId,
+                secondary_id = secondaryId,
+                primary_before = primaryBefore,
+                secondary_before = secondaryBefore,
+                ambiguous,
+                unknown,
+                duplicate = duplicateSelection,
+                selected,
+                repeated,
+                primary_after = primaryAfter,
+            };
+        }
+        finally
+        {
+            Addressables.Release(host);
+        }
+    }
+
     private async void Start()
     {
         int exit = 1;
@@ -64,6 +133,25 @@ public sealed class CatalogMarkerPlayer : MonoBehaviour
             Caching.currentCacheForWriting = cache;
             bool apply = Environment.GetEnvironmentVariable("MCP_CATALOG_APPLY") == "1";
             string initialization = Environment.GetEnvironmentVariable("MCP_CATALOG_INIT");
+            if (initialization == "selective")
+            {
+                var selective = await SelectiveUpdate(session);
+                File.WriteAllText(
+                    Path.Combine(directory, "observation.json"),
+                    JsonConvert.SerializeObject(
+                        new
+                        {
+                            session,
+                            build_guid = Application.buildGUID,
+                            unity_version = Application.unityVersion,
+                            initialization,
+                            selective,
+                        }
+                    )
+                );
+                Application.Quit(0);
+                return;
+            }
             AsyncOperationHandle<IResourceLocator> host = default;
             AsyncOperationHandle<List<string>> hostCheck = default;
             CatalogObservation observed;

@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using UnityEngine;
+using UnityEngine.AddressableAssets.ResourceLocators;
 using UnityEngine.ResourceManagement;
 using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.ResourceManagement.ResourceLocations;
@@ -21,6 +22,9 @@ namespace MCPForUnity.Runtime.Content
         public int update_count = -1;
         public int updated_catalog_count;
         public string[] catalog_ids;
+        public string[] pending_catalog_ids;
+        public string updated_catalog_id;
+        public string installed_hash_id;
         public int location_count = -1;
         public string location_id;
         public long download_bytes_before = -1;
@@ -91,8 +95,22 @@ namespace MCPForUnity.Runtime.Content
             return result.ToArray();
         }
 
+        /// <summary>Get the opaque catalog ID for an application-owned native locator.</summary>
+        public static string GetCatalogId(IResourceLocator locator) => Identifier((locator ?? throw new ArgumentNullException(nameof(locator))).LocatorId);
+
         /// <summary>Call on Unity's main thread. An explicit update applies the sole pending catalog before loading its marker.</summary>
-        public static async Task<CatalogObservation> ObserveAsync(string markerAddress, bool applySoleUpdate = false)
+        public static Task<CatalogObservation> ObserveAsync(string markerAddress, bool applySoleUpdate = false) =>
+            Observe(markerAddress, applySoleUpdate, null);
+
+        /// <summary>Update exactly the pending catalog identified by GetCatalogId and load its own marker.</summary>
+        public static Task<CatalogObservation> ApplySelectedUpdateAsync(string markerAddress, string catalogId)
+        {
+            if (catalogId == null || catalogId.Length != 64 || catalogId.Any(c => !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f')))
+                throw new ArgumentException("Supply the lowercase SHA-256 catalog ID.", nameof(catalogId));
+            return Observe(markerAddress, true, catalogId);
+        }
+
+        private static async Task<CatalogObservation> Observe(string markerAddress, bool apply, string catalogId)
         {
             if (string.IsNullOrWhiteSpace(markerAddress) || markerAddress.Length > 512)
                 throw new ArgumentException("Supply a marker address of 1 through 512 characters.", nameof(markerAddress));
@@ -106,13 +124,34 @@ namespace MCPForUnity.Runtime.Content
                 var current = Provider.ResourceLocators.Take(65).ToArray();
                 if (current.Length > 64)
                     throw new InvalidOperationException("Locator count exceeds 64.");
-                var updates = new List<string>();
-                string updateHash = null;
+                var localHashes = current.Select(locator => Provider.GetLocatorInfo(locator)?.LocalHash).ToArray();
+                bool SameInstallation(IResourceLocator original = null, IResourceLocator replacement = null, string replacementHash = null)
+                {
+                    var installed = Provider.ResourceLocators.Take(65).ToArray();
+                    if (installed.Length != current.Length)
+                        return false;
+                    for (int i = 0; i < current.Length; i++)
+                    {
+                        bool selected = ReferenceEquals(current[i], original);
+                        if (
+                            !ReferenceEquals(installed[i], selected ? replacement : current[i])
+                            || Provider.GetLocatorInfo(installed[i])?.LocalHash != (selected ? replacementHash : localHashes[i])
+                        )
+                            return false;
+                    }
+                    return true;
+                }
+                var updates = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (var locator in current)
                 {
                     var info = Provider.GetLocatorInfo(locator);
                     if (info == null || !info.CanUpdateContent)
                         continue;
+                    if (current.Count(other => other.LocatorId == locator.LocatorId) != 1)
+                    {
+                        observation.error = "ambiguous_catalog_id";
+                        return observation;
+                    }
                     var location = info.HashLocation;
                     var hostManager = Provider.ResourceManager;
                     var textProvider = hostManager.GetResourceProvider(typeof(string), location);
@@ -133,49 +172,77 @@ namespace MCPForUnity.Runtime.Content
                     if (string.IsNullOrEmpty(remoteHash))
                         throw new InvalidOperationException("Missing catalog hash.");
                     if (remoteHash != info.LocalHash)
-                    {
-                        updates.Add(locator.LocatorId);
-                        updateHash = remoteHash;
-                    }
+                        updates.Add(locator.LocatorId, remoteHash);
+                }
+                if (!SameInstallation())
+                {
+                    observation.error = "catalog_installation_changed";
+                    return observation;
                 }
                 observation.update_count = updates.Count;
-                if (applySoleUpdate && updates.Count > 0)
+                observation.pending_catalog_ids = updates.Keys.Select(Identifier).ToArray();
+                IResourceLocator original = null;
+                IResourceLocator updated = null;
+                string updateHash = null;
+                if (apply && (updates.Count > 0 || catalogId != null))
                 {
                     observation.stage = "update_catalog";
-                    if (updates.Count != 1)
+                    if (catalogId == null && updates.Count != 1)
                     {
                         observation.error = "multiple_pending_catalogs";
                         return observation;
                     }
-                    var update = Provider.UpdateCatalogs(updates, true);
+                    var candidates = current.Where(c => catalogId == null ? updates.ContainsKey(c.LocatorId) : GetCatalogId(c) == catalogId).ToArray();
+                    if (candidates.Length > 1)
+                    {
+                        observation.error = "ambiguous_catalog_id";
+                        return observation;
+                    }
+                    original = candidates.SingleOrDefault();
+                    if (original == null || !updates.TryGetValue(original.LocatorId, out updateHash))
+                    {
+                        observation.error = original == null ? "catalog_not_found" : "catalog_not_pending";
+                        return observation;
+                    }
+                    var update = Provider.UpdateCatalogs(new[] { original.LocatorId }, true);
                     // Some providers return an existing in-flight update. Hold only our own reference while reading its result.
                     Provider.ResourceManager.Acquire(update);
-                    int matched = await Read(update, locators => locators.Count(locator => locator.LocatorId == updates[0]));
-                    if (matched != 1 || Provider.GetLocatorInfo(updates[0])?.LocalHash != updateHash)
+                    updated = await Read(update, locators => locators?.Count == 1 ? locators[0] : null);
+                    if (updated?.LocatorId != original.LocatorId || !SameInstallation(original, updated, updateHash))
                     {
                         observation.error = "catalog_update_unconfirmed";
                         return observation;
                     }
-                    observation.updated_catalog_count = matched;
+                    observation.updated_catalog_count = 1;
+                    observation.updated_catalog_id = GetCatalogId(updated);
+                    observation.installed_hash_id = Identifier(updateHash);
                 }
                 observation.stage = "locate_marker";
                 var catalogs = Provider.ResourceLocators.Take(65).ToArray();
                 if (catalogs.Length > 64)
                     throw new InvalidOperationException("Locator count exceeds 64.");
                 observation.catalog_ids = catalogs.Select(locator => Identifier(locator.LocatorId)).ToArray();
-                var locations = Provider.LoadResourceLocationsAsync(markerAddress, typeof(TextAsset));
+                AsyncOperationHandle<IList<IResourceLocation>> lookup = default;
                 try
                 {
-                    await locations.Task;
-                    if (locations.Status != AsyncOperationStatus.Succeeded)
-                        throw new InvalidOperationException("Marker lookup failed.");
-                    observation.location_count = locations.Result.Count;
+                    IList<IResourceLocation> locations;
+                    if (catalogId != null)
+                        updated.Locate(markerAddress, typeof(TextAsset), out locations);
+                    else
+                    {
+                        lookup = Provider.LoadResourceLocationsAsync(markerAddress, typeof(TextAsset));
+                        await lookup.Task;
+                        if (lookup.Status != AsyncOperationStatus.Succeeded)
+                            throw new InvalidOperationException("Marker lookup failed.");
+                        locations = lookup.Result;
+                    }
+                    observation.location_count = locations?.Count ?? 0;
                     if (observation.location_count != 1)
                     {
                         observation.error = observation.location_count == 0 ? "marker_not_found" : "ambiguous_marker";
                         return observation;
                     }
-                    var selected = locations.Result[0];
+                    var selected = locations[0];
                     observation.location_id = Identifier(selected.InternalId);
                     observation.stage = "cache_before";
                     if (!Caching.ready)
@@ -198,8 +265,13 @@ namespace MCPForUnity.Runtime.Content
                 }
                 finally
                 {
-                    if (locations.IsValid())
-                        Provider.Release(locations);
+                    if (lookup.IsValid())
+                        Provider.Release(lookup);
+                }
+                if (updated != null && !SameInstallation(original, updated, updateHash))
+                {
+                    observation.error = "catalog_installation_changed";
+                    return observation;
                 }
                 observation.stage = "complete";
             }

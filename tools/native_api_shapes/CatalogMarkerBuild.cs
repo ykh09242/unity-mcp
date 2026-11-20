@@ -36,13 +36,7 @@ public static class CatalogMarkerBuild
         settings.UniqueBundleIds = true;
         settings.profileSettings.SetValue(settings.activeProfileId, AddressableAssetSettings.kRemoteBuildPath, "CatalogFixture/remote");
         settings.profileSettings.SetValue(settings.activeProfileId, AddressableAssetSettings.kRemoteLoadPath, origin);
-        var group = settings.CreateGroup("Marker-" + session, false, false, false, null, typeof(BundledAssetGroupSchema), typeof(ContentUpdateGroupSchema));
-        var schema = group.GetSchema<BundledAssetGroupSchema>();
-        schema.BuildPath.SetVariableByName(settings, AddressableAssetSettings.kRemoteBuildPath);
-        schema.LoadPath.SetVariableByName(settings, AddressableAssetSettings.kRemoteLoadPath);
-        schema.UseAssetBundleCache = true;
-        schema.BundleMode = BundledAssetGroupSchema.BundlePackingMode.PackSeparately;
-        group.GetSchema<ContentUpdateGroupSchema>().StaticContent = false;
+        var group = MarkerGroup(settings, "Marker-" + session);
         const string markerPath = "Assets/CatalogMarker.txt";
         File.WriteAllText(markerPath, "old-" + session);
         AssetDatabase.ImportAsset(markerPath, ImportAssetOptions.ForceSynchronousImport);
@@ -66,7 +60,7 @@ public static class CatalogMarkerBuild
         RequireBuild(original);
         string state = Path.Combine(output, "original-state.bin");
         File.Copy(ContentUpdateScript.GetContentStateDataPath(false), state);
-        Snapshot(output, "old");
+        Snapshot(output, "remote", "old");
         var player = BuildPipeline.BuildPlayer(
             new BuildPlayerOptions
             {
@@ -81,7 +75,40 @@ public static class CatalogMarkerBuild
         File.WriteAllText(markerPath, "new-" + session);
         AssetDatabase.ImportAsset(markerPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
         RequireBuild(ContentUpdateScript.BuildContentUpdate(settings, state));
-        Snapshot(output, "new");
+        Snapshot(output, "remote", "new");
+
+        // Build an independent downloadable catalog after the original Player is sealed.
+        settings.RemoveGroup(group);
+        settings.OverridePlayerVersion = "secondary-" + session;
+        settings.profileSettings.SetValue(settings.activeProfileId, AddressableAssetSettings.kRemoteBuildPath, "CatalogFixture/secondary-remote");
+        settings.profileSettings.SetValue(settings.activeProfileId, AddressableAssetSettings.kRemoteLoadPath, origin + "/secondary");
+        var secondary = MarkerGroup(settings, "Secondary-" + session);
+        const string secondaryPath = "Assets/SecondaryMarker.txt";
+        File.WriteAllText(secondaryPath, "secondary-old-" + session);
+        AssetDatabase.ImportAsset(secondaryPath, ImportAssetOptions.ForceSynchronousImport);
+        settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(secondaryPath), secondary).SetAddress("secondary-marker", false);
+        AssetDatabase.SaveAssets();
+        AddressableAssetSettings.BuildPlayerContent(out AddressablesPlayerBuildResult secondaryBuild);
+        RequireBuild(secondaryBuild);
+        string secondaryState = Path.Combine(output, "secondary-state.bin");
+        File.Copy(ContentUpdateScript.GetContentStateDataPath(false), secondaryState);
+        Snapshot(output, "secondary-remote", "old/secondary");
+        File.WriteAllText(secondaryPath, "secondary-new-" + session);
+        AssetDatabase.ImportAsset(secondaryPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+        RequireBuild(ContentUpdateScript.BuildContentUpdate(settings, secondaryState));
+        Snapshot(output, "secondary-remote", "new/secondary");
+    }
+
+    private static AddressableAssetGroup MarkerGroup(AddressableAssetSettings settings, string name)
+    {
+        var group = settings.CreateGroup(name, false, false, false, null, typeof(BundledAssetGroupSchema), typeof(ContentUpdateGroupSchema));
+        var schema = group.GetSchema<BundledAssetGroupSchema>();
+        schema.BuildPath.SetVariableByName(settings, AddressableAssetSettings.kRemoteBuildPath);
+        schema.LoadPath.SetVariableByName(settings, AddressableAssetSettings.kRemoteLoadPath);
+        schema.UseAssetBundleCache = true;
+        schema.BundleMode = BundledAssetGroupSchema.BundlePackingMode.PackSeparately;
+        group.GetSchema<ContentUpdateGroupSchema>().StaticContent = false;
+        return group;
     }
 
     private static void RequireBuild(AddressablesPlayerBuildResult result)
@@ -90,10 +117,10 @@ public static class CatalogMarkerBuild
             throw new InvalidOperationException("Native Addressables content build failed: " + result?.Error);
     }
 
-    private static void Snapshot(string output, string name)
+    private static void Snapshot(string output, string source, string name)
     {
         string destination = Directory.CreateDirectory(Path.Combine(output, name)).FullName;
-        foreach (string path in Directory.GetFiles(Path.Combine(output, "remote")))
+        foreach (string path in Directory.GetFiles(Path.Combine(output, source)))
             if (Path.GetExtension(path) == ".bundle" || Path.GetExtension(path) == ".json" || Path.GetExtension(path) == ".hash")
                 File.Copy(path, Path.Combine(destination, Path.GetFileName(path)));
     }

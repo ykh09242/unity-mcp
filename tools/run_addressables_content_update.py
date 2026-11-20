@@ -2,6 +2,7 @@
 
 import argparse
 from functools import partial
+import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import re
@@ -48,7 +49,7 @@ class CatalogServer(BaseHTTPRequestHandler):
 
     def do_GET(self):
         name = self.path.partition("?")[0].removeprefix("/")
-        if not re.fullmatch(r"[\w.-]{1,200}\.(?:json|hash|bundle)", name):
+        if not re.fullmatch(r"(?:secondary/)?[\w.-]{1,200}\.(?:json|hash|bundle)", name):
             self.send_error(404)
             return
         self.source["requests"].append(name)
@@ -105,6 +106,112 @@ def checked(command, directory, env, timeout):
     result = execute(Invocation(command, directory, timeout=timeout, environment=env))
     if result["forced_termination"] or result["actual_exit_code"] != 0:
         raise ValueError(f"Native process failed. See {directory}")
+
+
+def catalog_generations(content, subdirectory=""):
+    generations = {}
+    for generation in ("old", "new"):
+        hashes = list((content / generation / subdirectory).glob("*.hash"))
+        if len(hashes) != 1 or not hashes[0].with_suffix(".json").is_file():
+            raise ValueError(f"Expected one native {generation} catalog and hash in {subdirectory}")
+        generations[generation] = {
+            "name": hashes[0].relative_to(content / generation).as_posix(),
+            "published_hash": hashes[0].read_text(encoding="ascii").strip(),
+            "catalog_sha256": digest(hashes[0].with_suffix(".json")),
+        }
+    old, new = generations["old"], generations["new"]
+    if (
+        old["name"] != new["name"]
+        or old["published_hash"] == new["published_hash"]
+        or old["catalog_sha256"] == new["catalog_sha256"]
+    ):
+        raise ValueError(
+            "Content update must publish changed catalog bytes and hash at the original URL"
+        )
+    return generations
+
+
+def require_selective_observation(data, session, old_primary_bundle, catalogs, before, after):
+    primary, secondary = data["primary_id"], data["secondary_id"]
+    both = {primary, secondary}
+    if len(both) != 2 or not all(re.fullmatch(r"[0-9a-f]{64}", key) for key in both):
+        raise ValueError("Expected two distinct catalog IDs")
+
+    def marker(item, name):
+        if (
+            item["stage"] != "complete"
+            or item.get("error")
+            or item["location_count"] != 1
+            or not both.issubset(item["catalog_ids"])
+            or item["loaded_marker"] != name + "-" + session
+            or len(item["bundles_before"]) != 1
+            or len(item["bundles_after"]) != 1
+            or item["bundles_before"][0]["hash"] != item["bundles_after"][0]["hash"]
+            or item["bundles_after"][0]["cached"] is not True
+            or item["download_bytes_after"] != 0
+        ):
+            raise ValueError("Missing catalog marker or bundle-generation evidence")
+        bundle = item["bundles_after"][0]["hash"]
+        if not re.fullmatch(r"[0-9a-fA-F]{32}", bundle):
+            raise ValueError("Missing native bundle hash")
+        return bundle
+
+    selected = data["selected"]
+    retained = data["primary_after"]
+    duplicate = data["duplicate"]
+    if (
+        duplicate["stage"] != "check_catalogs"
+        or duplicate["error"] != "ambiguous_catalog_id"
+        or duplicate["updated_catalog_count"] != 0
+    ):
+        raise ValueError("Duplicate catalog identities must fail before update")
+    secondary_new = catalogs["secondary"]["new"]
+    if (
+        marker(data["primary_before"], "old") != old_primary_bundle
+        or marker(retained, "old") != old_primary_bundle
+        or marker(data["secondary_before"], "secondary-old") == marker(selected, "secondary-new")
+        or data["primary_before"]["update_count"] != 0
+        or set(selected["pending_catalog_ids"]) != both
+        or selected["update_count"] != 2
+        or selected["updated_catalog_count"] != 1
+        or selected["updated_catalog_id"] != secondary
+        or selected["installed_hash_id"]
+        != hashlib.sha256(secondary_new["published_hash"].encode()).hexdigest()
+        or selected["download_bytes_before"] <= 0
+        or selected["bundles_before"][0]["cached"] is not False
+        or retained["update_count"] != 1
+        or retained["pending_catalog_ids"] != [primary]
+        or retained["updated_catalog_count"] != 0
+        or retained["download_bytes_before"] != 0
+        or retained["bundles_before"][0]["cached"] is not True
+    ):
+        raise ValueError(
+            "Selective update did not install the chosen generation and preserve the other"
+        )
+    for key, error, pending in (
+        ("ambiguous", "multiple_pending_catalogs", both),
+        ("unknown", "catalog_not_found", both),
+        ("repeated", "catalog_not_pending", {primary}),
+    ):
+        rejected = data[key]
+        if (
+            rejected["stage"] != "update_catalog"
+            or rejected["error"] != error
+            or rejected["updated_catalog_count"] != 0
+            or set(rejected["pending_catalog_ids"]) != pending
+        ):
+            raise ValueError("Unexpected selection rejection or installation")
+    primary_hash = catalogs["primary"]["new"]["name"]
+    secondary_hash = secondary_new["name"]
+    secondary_json = secondary_hash.removesuffix(".hash") + ".json"
+    if (
+        secondary_json not in before
+        or not any(p.startswith("secondary/") and p.endswith(".bundle") for p in before)
+        or not {primary_hash, secondary_hash, secondary_json}.issubset(after)
+        or not any(p.startswith("secondary/") and p.endswith(".bundle") for p in after)
+        or any(not p.startswith("secondary/") and p.endswith((".json", ".bundle")) for p in after)
+    ):
+        raise ValueError("Missing isolated catalog and bundle HTTP evidence")
 
 
 def run(options):
@@ -164,25 +271,9 @@ def run(options):
                 1800,
             )
             verify_lock(project, dependencies)
-            catalogs = {}
-            for generation in ("old", "new"):
-                hashes = list((content / generation).glob("*.hash"))
-                if len(hashes) != 1 or not hashes[0].with_suffix(".json").is_file():
-                    raise ValueError(f"Expected one native {generation} catalog and hash")
-                catalogs[generation] = {
-                    "name": hashes[0].name,
-                    "published_hash": hashes[0].read_text(encoding="ascii").strip(),
-                    "catalog_sha256": digest(hashes[0].with_suffix(".json")),
-                }
+            catalogs = catalog_generations(content)
+            secondary = catalog_generations(content, "secondary")
             old, new = catalogs["old"], catalogs["new"]
-            if (
-                old["name"] != new["name"]
-                or old["published_hash"] == new["published_hash"]
-                or old["catalog_sha256"] == new["catalog_sha256"]
-            ):
-                raise ValueError(
-                    "Content update must publish changed catalog bytes and hash at the original URL"
-                )
             player = content / "Player/Catalog.exe"
             expected_build = None
             bundle_hashes = {}
@@ -191,6 +282,7 @@ def run(options):
                 ("old-cold", "old", "old", True, {0, 1}, True, "cold"),
                 ("old-cached", "old", "old", False, {0}, False, "in-flight"),
                 ("old-stale", "old", "old", False, {1}, False, "retained"),
+                ("two-pending", "old", "secondary-new", True, {2}, True, "selective"),
                 ("new-update", "old", "new", True, {1}, True, "retained"),
                 ("new-cached", "new", "new", False, {0}, False, "auto-release"),
             ):
@@ -200,7 +292,9 @@ def run(options):
                     directory=content / generation,
                     requests=[],
                     deny_bundles=not cold,
-                    switch_to=content / "new" if retained else None,
+                    switch_to=content / "new"
+                    if retained or initialization == "selective"
+                    else None,
                     before_switch=None,
                     retained_gets=None,
                 )
@@ -218,12 +312,38 @@ def run(options):
                         "MCP_CATALOG_RUN": str(directory),
                         "MCP_CATALOG_APPLY": str(int(apply)),
                         "MCP_CATALOG_INIT": initialization,
+                        "MCP_CATALOG_SECONDARY": secondary["old"]["name"].removesuffix(".hash")
+                        + ".json",
                     },
                     120,
                 )
                 receipt = read_json(directory / "observation.json", 16384)
                 if receipt.get("initialization") != initialization:
                     raise ValueError("Missing host initialization ownership evidence")
+                if initialization == "selective":
+                    if (
+                        receipt["session"] != session
+                        or receipt["unity_version"] != options.unity_version
+                        or receipt["build_guid"] != expected_build
+                    ):
+                        raise ValueError("Selective receipt must come from the original Player")
+                    prior = source["before_switch"]
+                    if prior is None or source["switch_to"] is not None:
+                        raise ValueError("Missing in-process catalog generation switch")
+                    require_selective_observation(
+                        receipt["selective"],
+                        session,
+                        bundle_hashes["old"],
+                        {"primary": catalogs, "secondary": secondary},
+                        prior,
+                        source["requests"][len(prior) :],
+                    )
+                    observations[name] = {
+                        "player": receipt,
+                        "http_gets": source["requests"],
+                        "http_gets_before_switch": prior,
+                    }
+                    continue
                 if (
                     receipt["unrelated_bytes_after"] <= 0
                     or receipt["unrelated_bytes_after"] != receipt["shared_label_bytes_after"]
@@ -294,8 +414,10 @@ def run(options):
                     "session": session,
                     "player_sha256": digest(player),
                     "content_state_sha256": digest(content / "original-state.bin"),
+                    "secondary_content_state_sha256": digest(content / "secondary-state.bin"),
                     "package_lock_sha256": digest(project / "Packages/packages-lock.json"),
                     "catalogs": catalogs,
+                    "secondary_catalogs": secondary,
                     "package_profile": profile,
                     "observations": observations,
                 },
