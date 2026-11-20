@@ -19,6 +19,7 @@ from cli.commands.verification_merge import anticipate_merge
 from cli.commands.verification_pair_transfer import capture_pair_side, pack_pair_command
 from cli.commands.verification_reproduce import reproduce_candidate
 from cli.commands.verification_save_upgrade import save_upgrade_candidate
+from cli.commands.verification_scene_index import scene_index_diff
 from cli.utils.play_scenario_analysis_io import safe_local_path, write_new
 
 
@@ -41,6 +42,7 @@ verification_candidate.add_command(capture_pair_side)
 verification_candidate.add_command(pack_pair_command)
 verification_candidate.add_command(save_upgrade_candidate)
 verification_candidate.add_command(loader_compare)
+verification_candidate.add_command(scene_index_diff)
 
 
 @verification_candidate.command("draft")
