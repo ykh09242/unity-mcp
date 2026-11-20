@@ -40,12 +40,14 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Vector3? position;
             Vector3? rotation;
             Vector3? scale;
+            bool? isStatic;
             GameObjectTransformOptions transformOptions;
             try
             {
                 position = ManageGameObjectCommon.ReadOptionalVector3(@params, "position");
                 rotation = ManageGameObjectCommon.ReadOptionalVector3(@params, "rotation");
                 scale = ManageGameObjectCommon.ReadOptionalVector3(@params, "scale");
+                isStatic = @params["isStatic"]?.ReadScalar<bool?>();
                 transformOptions = GameObjectTransformOptions.Read(@params, targetGo);
                 var plannedTypes = ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: true, componentSource: targetGo);
                 var propertyError = GameObjectComponentHelpers.ValidateModifyPropertyTargets(targetGo, @params["componentProperties"] as JObject, plannedTypes);
@@ -74,7 +76,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             ErrorResponse failure;
             try
             {
-                object result = Apply(@params, targetGo, name, layerId, transformOptions, position, rotation, scale, ref createdTag, observations);
+                object result = Apply(@params, targetGo, name, layerId, isStatic, transformOptions, position, rotation, scale, ref createdTag, observations);
                 failure = result as ErrorResponse;
                 if (failure == null)
                 {
@@ -126,6 +128,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             GameObject targetGo,
             string name,
             int layerId,
+            bool? isStatic,
             GameObjectTransformOptions transformOptions,
             Vector3? position,
             Vector3? rotation,
@@ -194,7 +197,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 modified = true;
             }
 
-            bool? isStatic = @params["isStatic"]?.ReadScalar<bool?>();
             if (isStatic.HasValue)
             {
                 var desiredFlags = isStatic.Value ? (StaticEditorFlags)~0 : 0;

@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
@@ -12,7 +11,6 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -167,6 +165,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(shader);
             var material = new Material(shader);
             AssetDatabase.CreateAsset(material, assetRoot + "/Shared.mat");
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(material, out string guid, out long localId));
             Assert.IsTrue(material.HasProperty("_Color"));
             var first = target.AddComponent<MeshRenderer>();
             var second = reference.AddComponent<MeshRenderer>();
@@ -174,6 +173,18 @@ namespace MCPForUnityTests.Editor.Tools
             second.sharedMaterial = material;
             Color before = material.color;
             Color after = before == Color.red ? Color.blue : Color.red;
+            void AssertSharedMaterial(Color expected)
+            {
+                foreach (var renderer in new[] { first, second })
+                {
+                    var shared = renderer.sharedMaterial;
+                    Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(shared, out string currentGuid, out long currentId), renderer.name);
+                    Assert.AreEqual(guid, currentGuid, renderer.name);
+                    Assert.AreEqual(localId, currentId, renderer.name);
+                    Assert.AreEqual(expected, shared.color, renderer.name);
+                }
+            }
+            AssertSharedMaterial(before);
             Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
             try
@@ -194,15 +205,13 @@ namespace MCPForUnityTests.Editor.Tools
                     first
                 );
                 Assert.IsNull(result);
-                Assert.AreEqual(after, second.sharedMaterial.color);
-                Assert.AreSame(material, first.sharedMaterial);
+                AssertSharedMaterial(after);
                 Undo.FlushUndoRecordObjects();
                 Undo.CollapseUndoOperations(group);
                 Undo.PerformUndo();
-                Assert.AreEqual(before, first.sharedMaterial.color);
-                Assert.AreEqual(before, second.sharedMaterial.color);
+                AssertSharedMaterial(before);
                 Undo.PerformRedo();
-                Assert.AreEqual(after, material.color);
+                AssertSharedMaterial(after);
             }
             finally
             {
@@ -247,11 +256,22 @@ namespace MCPForUnityTests.Editor.Tools
                 options["setActive"] = false;
             if (earlierField == "transform")
                 options["position"] = new JArray(1, 2, 3);
+            string previousReferenceName = reference.name;
+            Undo.IncrementCurrentGroup();
+            Undo.RecordObject(reference, "Rename reference before rejected edit");
+            reference.name = previousReferenceName + "Renamed";
+            Undo.FlushUndoRecordObjects();
+            Undo.IncrementCurrentGroup();
+            ClearOwnedSceneDirtiness(targetScene);
             var before = Snapshot();
-            LogAssert.Expect(LogType.Error, new Regex("\\[ManageGameObject\\] Action 'modify' failed:"));
             var response = Send("modify", options);
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
-            Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
+            StringAssert.Contains("isStatic", response.Value<string>("error"));
+            var actual = Snapshot();
+            Assert.IsTrue(JToken.DeepEquals(before, actual), $"Rejected edit changed state. Before: {before} After: {actual}");
+            Assert.AreEqual(previousReferenceName + "Renamed", reference.name);
+            Undo.PerformUndo();
+            Assert.AreEqual(previousReferenceName, reference.name, "The preceding user edit must still be the next Undo step.");
         }
 
         [TestCase(false)]
@@ -504,7 +524,31 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("look_at")]
         public void InactiveTarget_ExactIdSupportsEditsWithinActiveScene(string action)
         {
+            AssertInactiveTargetEdit(action);
+        }
+
+        [TestCase("modify")]
+        [TestCase("duplicate")]
+        [TestCase("move_relative")]
+        [TestCase("look_at")]
+        public void InactiveTarget_ExactIdSupportsEditsOutsideActiveScene(string action)
+        {
+            SceneManager.MoveGameObjectToScene(target, activeScene);
+            Assert.AreNotEqual(SceneManager.GetActiveScene(), target.scene);
+            AssertInactiveTargetEdit(action);
+        }
+
+        private void AssertInactiveTargetEdit(string action)
+        {
+            string originalName = target.name;
+            var control = Owned("Control", SceneManager.GetActiveScene());
+            control.name = originalName;
+            var controlPosition = new Vector3(-2, 4, 8);
+            control.transform.position = controlPosition;
+            var offset = new Vector3(1, 2, 3);
+            var lookAt = new Vector3(4, 5, 6);
             target.SetActive(false);
+            int rootsBefore = target.scene.rootCount;
             var selected = Selection.objects;
             var activeSelection = Selection.activeObject;
             JObject response;
@@ -528,41 +572,29 @@ namespace MCPForUnityTests.Editor.Tools
             }
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.IsFalse(target.activeSelf);
+            Assert.AreEqual(originalName, control.name);
+            Assert.AreEqual(controlPosition, control.transform.position);
+            Assert.AreEqual(Quaternion.identity, control.transform.rotation);
+            Assert.AreEqual(rootsBefore + (action == "duplicate" ? 1 : 0), target.scene.rootCount);
             if (action == "modify")
                 Assert.AreEqual("RenamedInactive", target.name);
             else if (action == "duplicate")
             {
                 Assert.AreEqual(target.GetInstanceIDCompat(), response["data"].Value<int>("originalId"));
-                Assert.AreNotEqual(target.GetInstanceIDCompat(), response["data"]["duplicatedObject"].Value<int>("instanceID"));
+                int duplicateId = response["data"]["duplicatedObject"].Value<int>("instanceID");
+                var clone = Array.Find(target.scene.GetRootGameObjects(), go => go.GetInstanceIDCompat() == duplicateId);
+                Assert.IsNotNull(clone, "The duplicate must exist in the source object's scene.");
+                Assert.AreNotEqual(target.GetInstanceIDCompat(), duplicateId);
+                Assert.IsFalse(clone.activeSelf);
+                Assert.AreEqual("RenamedInactive", clone.name);
+                Assert.AreEqual(target.transform.position + offset, clone.transform.position);
+                Assert.AreEqual(originalName, target.name);
+                objects.Add(clone);
             }
             else if (action == "move_relative")
-                Assert.AreEqual(reference.transform.position + new Vector3(1, 2, 3), target.transform.position);
+                Assert.AreEqual(reference.transform.position + offset, target.transform.position);
             else if (action == "look_at")
-                Assert.Greater(Quaternion.Angle(Quaternion.identity, target.transform.rotation), 1f);
-        }
-
-        [TestCase("modify")]
-        [TestCase("duplicate")]
-        [TestCase("move_relative")]
-        [TestCase("look_at")]
-        public void InactiveTarget_ExactIdOutsideActiveSceneIsRejected(string action)
-        {
-            SceneManager.MoveGameObjectToScene(target, activeScene);
-            target.SetActive(false);
-            string name = target.name;
-            var response = Send(
-                action,
-                new JObject
-                {
-                    ["newName"] = "ShouldNotRename",
-                    ["reference_object"] = reference.GetInstanceIDCompat(),
-                    ["offset"] = new JArray(1, 2, 3),
-                    ["look_at_target"] = new JArray(4, 5, 6),
-                }
-            );
-            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
-            Assert.AreEqual(name, target.name);
-            Assert.IsFalse(target.activeSelf);
+                Assert.Less(Vector3.Distance(target.transform.forward, (lookAt - target.transform.position).normalized), 0.00001f);
         }
 
         [Test]
