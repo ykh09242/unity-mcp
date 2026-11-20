@@ -36,7 +36,7 @@ Place global options before subcommands. HTTP tokens are discovered automaticall
 
 ## Command groups
 
-Registered groups include `instance`, `scene`, `scene_edit`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `play_scenario`, `scenario_recording`, `prefab`, `material`, `lighting`, `animation`, `sprite`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `doctor`, `physics`, `profiler`, `project_auditor`, `verification`, `receipt`, `tool`, and `custom_tool`. Optional module-load failures can change available groups; installed help is authoritative.
+Registered groups include `instance`, `scene`, `scene_edit`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `play_scenario`, `scenario_recording`, `prefab`, `material`, `lighting`, `animation`, `sprite`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `doctor`, `physics`, `profiler`, `project_auditor`, `verification`, `verification_candidate`, `verification_evidence`, `receipt`, `tool`, and `custom_tool`. Installed help shows which optional groups loaded.
 
 CLI verbs/flags are not automatically generated from MCP tool parameters. Use exact help:
 
@@ -44,6 +44,8 @@ CLI verbs/flags are not automatically generated from MCP tool parameters. Use ex
 unity-mcp --help
 unity-mcp scene --help
 unity-mcp scene load --help
+unity-mcp verification-candidate --help
+unity-mcp verification-evidence --help
 ```
 
 Root commands also include `status`, `instances`, and `raw`. Raw parameters must be a JSON object. Tool discovery, request targeting, consent and budgets still apply. `instance set` deliberately cannot persist a target; `batch` is not a universal atomic transaction or rollback mechanism.
