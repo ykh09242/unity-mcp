@@ -12,6 +12,34 @@ from services.registry import get_registered_tools
 
 
 @pytest.mark.asyncio
+async def test_trace_property_uses_exact_leaf_and_preserves_dirty_state(mock_unity, monkeypatch):
+    guard = AsyncMock(return_value=None)
+    monkeypatch.setattr("services.tools.manage_prefabs.preflight", guard)
+    ctx = SimpleNamespace()
+    result = await manage_prefabs(
+        ctx, action="trace_property", target=314, object_id=315, property_path="m_Intensity"
+    )
+    assert result["success"]
+    assert mock_unity["params"] == {
+        "action": "trace_property",
+        "target": 314,
+        "objectId": 315,
+        "propertyPath": "m_Intensity",
+    }
+    guard.assert_awaited_once_with(ctx, wait_for_no_compile=True, refresh_if_dirty=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", [None, "", " ", "x" * 513])
+async def test_trace_requires_a_single_bounded_path(mock_unity, path):
+    result = await manage_prefabs(
+        SimpleNamespace(), action="trace_property", target=1, property_path=path
+    )
+    assert result["success"] is False
+    assert "params" not in mock_unity
+
+
+@pytest.mark.asyncio
 async def test_contents_preview_forwards_flag_and_preserves_edit_payload(mock_unity):
     properties = {"RectTransform": {"m_AnchoredPosition": {"x": 12, "y": 34}}}
     result = await manage_prefabs(

@@ -57,7 +57,7 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
         server = FastMCP("prefab-texture-contracts")
         server.add_middleware(FixtureUnityState())
         register_all_tools(server)
-        server.enable(names={'manage_prefabs', 'manage_texture', 'prefab_contents'}, components={"tool"})
+        server.enable(names={'manage_prefabs', 'manage_texture', 'prefab_contents', 'prefab_overrides'}, components={"tool"})
 
         invalid_texture = [
             {"width": 0}, {"fill_color": [1, 2]}, {"palette": "not-json"},
@@ -158,6 +158,14 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
                     await invalid(client, "prefab_contents", {"action": "modify_contents", "prefab_path": "Assets/Fixture.prefab", "preview_only": True, "preview_scope": "components", "set_active": False, "component_properties": {"Rigidbody": {"mass": 2}}}, "component preview refuses broader edits")
                     await invalid(client, "prefab_contents", {"action": "apply_preview", "preview_id": "token", "preview_scope": "components"}, "preview scope cannot apply")
                     await invalid(client, "prefab_contents", {"action": "apply_preview", "preview_id": "token", "preview_only": True}, "preview flag cannot apply")
+                    overrides_schema = next(tool for tool in await client.list_tools() if tool.name == "prefab_overrides").input_schema
+                    check("trace_property" in overrides_schema["properties"]["action"]["enum"], "focused overrides tool publishes trace action")
+                    check("property_path" in overrides_schema["properties"], "focused overrides tool publishes exact path parameter")
+                    for key in counts: counts[key] = 0
+                    result = await client.call_tool("prefab_overrides", {"action": "trace_property", "target": 42, "object_id": 43, "property_path": "m_AnchorMin.x"})
+                    check(result.structured_content == reply and sent[-1] == ("prefab_overrides", {"action": "trace_property", "target": 42, "objectId": 43, "propertyPath": "m_AnchorMin.x"}), "property trace survives focused SDK adapter")
+                    check(counts == {"state": 1,"refresh": 0,"preflight": 1,"send": 1}, "property trace does not automatically refresh")
+                    await invalid(client, "prefab_overrides", {"action": "trace_property", "target": 42}, "trace requires exact property path")
                     for payload in (
                         {"action": "create_from_gameobject", "prefab_path": "Assets/Fixture.prefab", "target": "0", "allow_overwrite": False, "search_inactive": False, "unlink_if_instance": False},
                         {"action": "create_from_gameobject", "prefab_path": "Assets/Fixture.prefab", "name": "NameAlias"},

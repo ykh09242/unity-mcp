@@ -23,6 +23,7 @@ REQUIRED_PARAMS = {
     "apply_preview": ["preview_id"],
     "open_prefab_stage": ["prefab_path"],
     "list_overrides": ["target"],
+    "trace_property": ["target", "property_path"],
     "revert_overrides": ["target", "override_ids"],
     "apply_overrides": ["target", "prefab_path", "override_ids"],
 }
@@ -63,7 +64,9 @@ REQUIRED_PARAMS = {
         "name to the asset filename. It returns before/after impact and a source/dependency hash. "
         "apply_preview accepts only its one-attempt token; source or dependency drift rejects "
         "before saving. Asset saves do not promise Undo or callback rollback. For scene prefab "
-        "instances, list_overrides returns paged entries and groups with explicit overrideId "
+        "instances, trace_property follows one exact serialized leaf through its source variants "
+        "and reports per-layer values, override flags and the supplying layer. "
+        "list_overrides returns paged entries and groups with explicit overrideId "
         "values, property paths/current and prefab values, and added/removed components and "
         "GameObjects. revert_overrides/apply_overrides require override_ids from that listing; "
         "apply also requires the returned prefab_path. The nearest nested instance root defines the"
@@ -92,6 +95,7 @@ async def manage_prefabs(
             "save_prefab_stage",
             "close_prefab_stage",
             "list_overrides",
+            "trace_property",
             "revert_overrides",
             "apply_overrides",
         ],
@@ -170,7 +174,7 @@ async def manage_prefabs(
     ]
     | None = None,
     object_id: Annotated[
-        int, "list_overrides: filter by scene GameObject or component instance ID."
+        int, "list_overrides filter, or exact component ID on the trace_property target."
     ]
     | None = None,
     property_filter: Annotated[
@@ -198,6 +202,7 @@ async def manage_prefabs(
     max_depth: Annotated[
         int, "get_hierarchy inclusive depth scope, root=0; default 64, maximum 128."
     ] = 64,
+    property_path: Annotated[str | None, "trace_property only: exact serialized leaf path."] = None,
 ) -> dict[str, Any]:
     if action not in {*REQUIRED_PARAMS, "save_prefab_stage", "close_prefab_stage"}:
         return {"success": False, "message": f"Unknown prefab action: '{action}'."}
@@ -329,7 +334,14 @@ async def manage_prefabs(
                 "message": f"Action '{action}' requires parameter '{param_name}'.",
             }
 
-    if action in {"list_overrides", "revert_overrides", "apply_overrides"}:
+    if property_path is not None and (
+        action != "trace_property" or type(property_path) is not str or len(property_path) > 512
+    ):
+        return {
+            "success": False,
+            "message": "property_path requires trace_property and 1-512 characters.",
+        }
+    if action in {"list_overrides", "revert_overrides", "apply_overrides", "trace_property"}:
         if type(target) not in (int, str) or (
             type(target) is int and not -(2**31) <= target < 2**31
         ):
@@ -401,6 +413,11 @@ async def manage_prefabs(
 
         if target is not None:
             params["target"] = target
+
+        if action == "trace_property":
+            params["propertyPath"] = property_path
+            if object_id is not None:
+                params["objectId"] = object_id
 
         if action in {"list_overrides", "revert_overrides", "apply_overrides"}:
             params["offset"] = offset
@@ -556,7 +573,11 @@ async def manage_prefabs(
         # Send command to Unity
         unity_instance = await get_unity_instance_from_context(ctx)
         try:
-            gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=not preview_only)
+            gate = await preflight(
+                ctx,
+                wait_for_no_compile=True,
+                refresh_if_dirty=not preview_only and action != "trace_property",
+            )
             if gate is not None:
                 return gate.model_dump()
         except Exception as exc:

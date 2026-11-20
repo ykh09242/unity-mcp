@@ -63,7 +63,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             + ACTION_SAVE_PREFAB_STAGE
             + ", "
             + ACTION_CLOSE_PREFAB_STAGE
-            + ", list_overrides, revert_overrides, apply_overrides, preview_modify_contents, apply_preview";
+            + ", list_overrides, trace_property, revert_overrides, apply_overrides, preview_modify_contents, apply_preview";
 
         public static object HandleCommand(JObject @params)
         {
@@ -102,6 +102,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         return PrefabSourcePlans.Preview(@params);
                     case "apply_preview":
                         return PrefabSourcePlans.Apply(@params);
+                    case "trace_property":
                     case "list_overrides":
                     case "revert_overrides":
                     case "apply_overrides":
@@ -114,6 +115,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                             return new ErrorResponse(error);
                         if (instance == null)
                             return new ErrorResponse($"Scene target '{target}' not found.");
+                        if (action == "trace_property")
+                            return PrefabInstanceOverrides.TraceProperty(instance, @params);
                         return PrefabInstanceOverrides.Handle(instance, action, @params);
                     }
                     case ACTION_CREATE_FROM_GAMEOBJECT:

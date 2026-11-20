@@ -475,6 +475,109 @@ namespace MCPForUnityTests.Editor.Tools
             return prefabPath;
         }
 
+        [Test]
+        public void TraceProperty_PreservesVariantOriginsAfterSceneReopen()
+        {
+            var owned = SceneManager.GetActiveScene();
+            string basePath = tempDirectory + "/Base.prefab";
+            string aPath = tempDirectory + "/VariantA.prefab";
+            string bPath = tempDirectory + "/VariantB.prefab";
+            var prototype = new GameObject("Base", typeof(Light));
+            prototype.GetComponent<Light>().intensity = 1;
+            var source = PrefabUtility.SaveAsPrefabAsset(prototype, basePath);
+            Object.DestroyImmediate(prototype);
+
+            GameObject Variant(GameObject parent, string path, Action<Light> edit)
+            {
+                var clone = (GameObject)PrefabUtility.InstantiatePrefab(parent, owned);
+                try
+                {
+                    edit(clone.GetComponent<Light>());
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(clone.GetComponent<Light>());
+                    var variant = PrefabUtility.SaveAsPrefabAsset(clone, path);
+                    Assert.AreEqual(PrefabAssetType.Variant, PrefabUtility.GetPrefabAssetType(variant));
+                    return variant;
+                }
+                finally
+                {
+                    Object.DestroyImmediate(clone);
+                }
+            }
+
+            var a = Variant(source, aPath, light =>
+            {
+                light.intensity = 2;
+                light.range = 21;
+            });
+            var b = Variant(a, bPath, light =>
+            {
+                light.intensity = 3;
+                light.spotAngle = 47;
+            });
+            var instance = (GameObject)PrefabUtility.InstantiatePrefab(b, owned);
+            instance.GetComponent<Light>().intensity = 4;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(instance.GetComponent<Light>());
+            EditorSceneManager.MarkSceneDirty(owned);
+            var other = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                SceneManager.SetActiveScene(other);
+                var unsaved = new GameObject("Unrelated changes");
+                string otherPath = tempDirectory + "/Other.unity";
+                Assert.IsTrue(EditorSceneManager.SaveScene(other, otherPath));
+                byte[] otherBytes = File.ReadAllBytes(otherPath);
+                unsaved.name = "Keep this edit";
+                EditorSceneManager.MarkSceneDirty(other);
+                Selection.activeObject = unsaved;
+                SceneManager.SetActiveScene(owned);
+
+                void Check(GameObject target, bool dirty)
+                {
+                    var light = target.GetComponent<Light>();
+                    JArray Trace(string property, int origin)
+                    {
+                        var response = ToJObject(
+                            ManagePrefabs.HandleCommand(
+                                new JObject
+                                {
+                                    ["action"] = "trace_property",
+                                    ["target"] = target.GetInstanceIDCompat(),
+                                    ["objectId"] = light.GetInstanceIDCompat(),
+                                    ["propertyPath"] = property,
+                                }
+                            )
+                        );
+                        Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                        var data = response["data"];
+                        Assert.AreEqual(origin, (int)data["originIndex"], response.ToString());
+                        Assert.AreEqual(dirty, (bool)data["sceneDirty"]);
+                        var layers = (JArray)data["layers"];
+                        CollectionAssert.AreEqual(new[] { "", bPath, aPath, basePath }, layers.Select(layer => (string)layer["assetPath"]));
+                        return layers;
+                    }
+                    var intensities = Trace("m_Intensity", 0);
+                    CollectionAssert.AreEqual(new[] { 4f, 3f, 2f, 1f }, intensities.Select(layer => (float)layer["value"]));
+                    CollectionAssert.AreEqual(new[] { "override", "override", "override", "defined" }, intensities.Select(layer => (string)layer["status"]));
+                    Assert.AreEqual(light.spotAngle, (float)Trace("m_SpotAngle", 1)[0]["value"]);
+                    Assert.AreEqual(light.range, (float)Trace("m_Range", 2)[0]["value"]);
+                    Assert.AreEqual(light.bounceIntensity, (float)Trace("m_BounceIntensity", 3)[0]["value"]);
+                    Assert.AreSame(unsaved, Selection.activeObject);
+                    Assert.AreEqual("Keep this edit", unsaved.name);
+                    Assert.IsTrue(other.isDirty);
+                    CollectionAssert.AreEqual(otherBytes, File.ReadAllBytes(otherPath));
+                }
+                Check(instance, true);
+                Assert.IsTrue(EditorSceneManager.SaveScene(owned));
+                var reopened = sceneFixture.ReopenSavedScene();
+                Check(reopened.GetRootGameObjects().Single(), false);
+            }
+            finally
+            {
+                if (other.IsValid() && other.isLoaded)
+                    EditorSceneManager.CloseScene(other, true);
+            }
+        }
+
         [TestCase("save_prefab_stage", "prefabPath")]
         [TestCase("close_prefab_stage", "path")]
         public void StageOperations_RespectExpectedPrefabPath(string action, string key)

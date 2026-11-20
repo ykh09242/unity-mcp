@@ -17362,6 +17362,7 @@
                   "save_prefab_stage",
                   "close_prefab_stage",
                   "list_overrides",
+                  "trace_property",
                   "revert_overrides",
                   "apply_overrides"
                 ],
@@ -17617,6 +17618,17 @@
                 "default": null
               },
               "property_filter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "property_path": {
                 "anyOf": [
                   {
                     "type": "string"
@@ -24160,6 +24172,7 @@
               "action": {
                 "enum": [
                   "list_overrides",
+                  "trace_property",
                   "revert_overrides",
                   "apply_overrides"
                 ],
@@ -24217,6 +24230,17 @@
                 "default": null
               },
               "property_filter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "property_path": {
                 "anyOf": [
                   {
                     "type": "string"
@@ -45125,6 +45149,7 @@
                   "save_prefab_stage",
                   "close_prefab_stage",
                   "list_overrides",
+                  "trace_property",
                   "revert_overrides",
                   "apply_overrides"
                 ],
@@ -45380,6 +45405,17 @@
                 "default": null
               },
               "property_filter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "property_path": {
                 "anyOf": [
                   {
                     "type": "string"
@@ -51923,6 +51959,7 @@
               "action": {
                 "enum": [
                   "list_overrides",
+                  "trace_property",
                   "revert_overrides",
                   "apply_overrides"
                 ],
@@ -51980,6 +52017,17 @@
                 "default": null
               },
               "property_filter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "property_path": {
                 "anyOf": [
                   {
                     "type": "string"

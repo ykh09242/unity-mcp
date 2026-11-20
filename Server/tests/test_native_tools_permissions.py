@@ -96,6 +96,7 @@ CASES = [
         ),
         ("manage_localization", "capabilities list_locales list_tables inspect", READ),
         ("manage_localization", "set_string_entry set_fallbacks set_asset_entry", EDIT),
+        ("manage_prefabs", "trace_property", READ),
         ("manage_addressables", "inspect preflight analyze_layout", READ),
         ("manage_addressables", "set_address move_entry set_profile_value", EDIT),
         ("manage_timeline", "capabilities read read_director", READ),

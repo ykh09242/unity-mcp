@@ -325,8 +325,8 @@ CAPABILITIES: tuple[Capability, ...] = (
         "manage_prefabs",
         "prefabs",
         "Prefab Overrides",
-        "list_overrides revert_overrides apply_overrides",
-        "target prefab_path override_ids object_id property_filter offset page_size",
+        "list_overrides trace_property revert_overrides apply_overrides",
+        "target prefab_path override_ids object_id property_filter property_path offset page_size",
     ),
     _feature(
         "scene_lifecycle",
@@ -515,7 +515,10 @@ CAPABILITY_DESCRIPTIONS = {
     "prefab_create": "Create a prefab asset from an existing GameObject.",
     "prefab_contents": "Edit prefab contents, inspect whole-prefab or selected-component changes without saving with modify_contents preview_only and preview_scope, or preview and apply a guarded transform change.",
     "prefab_stage": "Open, save or close the Prefab Stage.",
-    "prefab_overrides": "List, apply or revert explicitly selected prefab overrides.",
+    "prefab_overrides": (
+        "List prefab overrides, trace a serialized property through variants, "
+        "or apply or revert selected overrides."
+    ),
     "scene_lifecycle": "Create, load, save or close scenes and organize loaded scene objects.",
     "scene_inspect": "Inspect loaded scenes, hierarchy and build settings, or frame the Scene view.",
     "scene_validate": "Validate the scene, with optional explicit repair.",

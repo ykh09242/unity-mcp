@@ -69,7 +69,7 @@ namespace MCPForUnity.Editor.Services
             { "prefab_contents", new Partition("manage_prefabs", new[] { "modify_contents", "preview_modify_contents", "apply_preview" }) },
             { "prefab_create", new Partition("manage_prefabs", new[] { "create_from_gameobject" }) },
             { "prefab_inspect", new Partition("manage_prefabs", new[] { "get_info", "get_hierarchy" }) },
-            { "prefab_overrides", new Partition("manage_prefabs", new[] { "list_overrides", "revert_overrides", "apply_overrides" }) },
+            { "prefab_overrides", new Partition("manage_prefabs", new[] { "list_overrides", "trace_property", "revert_overrides", "apply_overrides" }) },
             { "prefab_stage", new Partition("manage_prefabs", new[] { "open_prefab_stage", "save_prefab_stage", "close_prefab_stage" }) },
             { "query_physics", new Partition("manage_physics", new[] { "raycast", "raycast_all", "linecast", "shapecast", "overlap" }) },
             { "scene_inspect", new Partition("manage_scene", new[] { "get_hierarchy", "get_active", "get_build_settings", "get_loaded_scenes", "scene_view_frame" }) },

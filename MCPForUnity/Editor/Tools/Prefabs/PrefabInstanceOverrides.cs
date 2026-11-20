@@ -79,6 +79,84 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
         public static object Handle(GameObject target, string action, JObject args) => Handle(target, action, args, NativeRemovedObjects);
 
+        internal static object TraceProperty(GameObject target, JObject args)
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode || EditorUtility.IsPersistent(target) || PrefabStageUtility.GetPrefabStage(target) != null)
+                return new ErrorResponse("Trace a connected scene prefab instance in Edit Mode.");
+            if (PrefabUtility.GetPrefabInstanceStatus(target) != PrefabInstanceStatus.Connected)
+                return new ErrorResponse("Target must belong to a connected prefab instance.");
+            var token = args["propertyPath"];
+            if (token?.Type != JTokenType.String || string.IsNullOrWhiteSpace((string)token) || ((string)token).Length > 512)
+                return new ErrorResponse("Provide an exact serialized propertyPath of 1-512 characters.");
+            string path = (string)token;
+            Object current = target;
+            if (args["objectId"] != null)
+            {
+                var id = args["objectId"];
+                if (id.Type != JTokenType.Integer || !int.TryParse(id.ToString(), out int objectId))
+                    return new ErrorResponse("objectId must be a 32-bit GameObject or component instance ID.");
+                current = UnityObjectIdCompat.InstanceIDToObjectCompat(objectId);
+                if (current != target && !(current is Component component && component.gameObject == target))
+                    return new ErrorResponse("objectId must identify the selected GameObject or one of its own components.");
+            }
+
+            var layers = new JArray();
+            int origin = -1;
+            var visited = new HashSet<int>();
+            while (current != null)
+            {
+                if (layers.Count >= 64 || !visited.Add(current.GetInstanceIDCompat()))
+                    return new ErrorResponse("The source chain is cyclic or exceeds 64 layers.");
+                if (PrefabUtility.GetPrefabInstanceStatus(current) == PrefabInstanceStatus.MissingAsset)
+                    return new ErrorResponse("A source prefab is missing; property origin is unavailable.");
+                Object source = PrefabUtility.GetCorrespondingObjectFromSource(current);
+                using var serialized = new SerializedObject(current);
+                using var property = serialized.FindProperty(path);
+                if (property == null)
+                    return new ErrorResponse($"Property '{path}' is absent on source layer {layers.Count}.");
+                if (property.propertyType != SerializedPropertyType.String && (property.hasChildren || property.isArray))
+                    return new ErrorResponse("Trace one leaf property. Compound properties can inherit different fields from different layers.");
+                if (property.propertyType == SerializedPropertyType.String && property.stringValue.Length > 4096)
+                    return new ErrorResponse("String exceeds the 4096-character property trace limit.");
+                JToken value = Value(property);
+                if (value is JObject detail && detail.Value<bool?>("valueAvailable") == false)
+                    return new ErrorResponse($"Unsupported leaf type '{property.type}' on layer {layers.Count}.");
+                bool overridden = source != null && property.prefabOverride;
+                bool storedHere = source == null || overridden;
+                if (origin < 0 && storedHere)
+                    origin = layers.Count;
+                layers.Add(
+                    new JObject
+                    {
+                        ["kind"] =
+                            !EditorUtility.IsPersistent(current) ? "scene"
+                            : PrefabUtility.GetPrefabAssetType(current) == PrefabAssetType.Variant ? "variant"
+                            : "prefab",
+                        ["assetPath"] = AssetDatabase.GetAssetPath(current),
+                        ["object"] = Describe(current),
+                        ["value"] = value,
+                        ["status"] =
+                            source == null ? "defined"
+                            : overridden ? "override"
+                            : "inherited",
+                        ["defaultOverride"] = source != null && property.isDefaultOverride,
+                    }
+                );
+                current = source;
+            }
+            return new SuccessResponse(
+                "Traced the selected serialized property through its immediate sources.",
+                new
+                {
+                    propertyPath = path,
+                    scenePath = target.scene.path,
+                    sceneDirty = target.scene.isDirty,
+                    originIndex = origin,
+                    layers,
+                }
+            );
+        }
+
         internal static object Handle(GameObject target, string action, JObject args, RemovedGameObjectApi removedObjects)
         {
             try

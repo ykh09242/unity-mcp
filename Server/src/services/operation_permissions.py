@@ -138,7 +138,9 @@ _ACTIONS: Final = {
         ),
     },
     "manage_prefabs": {
-        Permission.READ: _names("get_info get_hierarchy list_overrides preview_modify_contents"),
+        Permission.READ: _names(
+            "get_info get_hierarchy list_overrides trace_property preview_modify_contents"
+        ),
         Permission.EDIT: _names(
             "create_from_gameobject modify_contents open_prefab_stage save_prefab_stage close_prefab_stage revert_overrides apply_overrides apply_preview"
         ),

@@ -366,10 +366,10 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("prefab_overrides", AutoRegister = false, Group = "prefabs",
-        DisplayName = "Prefab Overrides", Description = "List, apply or revert explicitly selected prefab overrides.")]
+        DisplayName = "Prefab Overrides", Description = "List prefab overrides, trace a serialized property through variants, or apply or revert selected overrides.")]
     public static class PrefabOverrides
     {
-        private static readonly string[] Actions = { "list_overrides", "revert_overrides", "apply_overrides" };
+        private static readonly string[] Actions = { "list_overrides", "trace_property", "revert_overrides", "apply_overrides" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
