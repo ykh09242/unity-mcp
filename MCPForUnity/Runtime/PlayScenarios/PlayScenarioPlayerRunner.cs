@@ -37,6 +37,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private long checkpointBytes;
         private PlayScenarioEnvironment environment;
         private readonly PlayScenarioPlayerPersistence persistence = new PlayScenarioPlayerPersistence();
+        private PlayScenarioLoaderCapture loaderCapture;
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -44,7 +45,9 @@ namespace MCPForUnity.Runtime.PlayScenarios
         {
             var owner = new GameObject("MCP Scenario Player Runner");
             DontDestroyOnLoad(owner);
-            owner.AddComponent<PlayScenarioPlayerRunner>();
+            var runner = owner.AddComponent<PlayScenarioPlayerRunner>();
+            if (Environment.GetEnvironmentVariable("UNITY_MCP_PLAYER_REFERENCE_CAPTURE") == "1")
+                runner.loaderCapture = new PlayScenarioLoaderCapture();
         }
 
         private void Start()
@@ -467,6 +470,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     }
                     report["exit_code"] = exitCode;
                 }
+                if (loaderCapture != null && bundle?.BuildId != null)
+                    report["loader_capture"] = loaderCapture.Snapshot(request.JobId, bundle.BuildId, bundle.BuildSourceRevision, request.PayloadHash);
                 persistence.Attach(report);
                 persistence.Execute("final_report", null, () =>
                     PlayScenarioPlayerFiles.WriteNew(
@@ -495,6 +500,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         private void OnDestroy()
         {
+            loaderCapture?.Dispose();
             Close();
             soak?.Dispose();
         }

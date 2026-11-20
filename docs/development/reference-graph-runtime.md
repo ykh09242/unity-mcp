@@ -35,8 +35,25 @@ When disabled, calls take a subscription check and allocate no per-call token or
 event storage. Callers should guard expensive key construction with `Enabled`.
 The opt-in Editor sink resolves asset GUIDs on the main thread; background hooks
 record scalar keys without calling Unity object APIs. No asset object is retained
-after a callback. These captures currently cover the connected Editor and its
-Play Mode, not a standalone Player transport.
+after a callback. The Editor capture actions cover the connected Editor and its
+Play Mode.
+
+### Standalone scenario Player
+
+Set `UNITY_MCP_PLAYER_REFERENCE_CAPTURE=1` on a version-2 scenario Player to
+record instrumented load and acquire calls in its final `run.json`. The runner
+subscribes before the first scene loads. Each observation records its sequence,
+scheme, key, owner path and whether the hook supplied a loaded object. Background
+hooks retain an unknown object outcome. The main thread can also record the
+object name. A Player object name alone cannot establish an asset GUID.
+
+The capture holds up to 128 observations and 32 KiB of serialized rows.
+Over-limit calls increment `dropped`. A change report checks the job, build ID,
+build source revision and executable payload hash against its selected run
+before accepting the capture. Reimporting an identical capture preserves each
+sequence once. A different capture for an already imported identity is a conflict.
+The coverage lists unobserved expected keys, dropped rows and missing capture
+data. Uninstrumented loads remain outside its coverage.
 
 ## Capture and read in pages
 
