@@ -26,6 +26,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
     internal static class AddressablesCompatibility
     {
         private static Type checkedSettings;
+        private static Func<object, object> readLabels;
 
         internal static void RequireSnapshot(Type settings, string action)
         {
@@ -68,6 +69,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             Stored(variable, "m_Name", typeof(string));
             Stored(value, "m_Id", typeof(string));
             Stored(value, "m_Value", typeof(string));
+            readLabels = LabelReader(settings, action);
             checkedSettings = settings;
         }
 
@@ -86,9 +88,9 @@ namespace MCPForUnity.Editor.Tools.Addressables
 
         internal static MethodInfo RequireMethod(object target, string action, string name, Type result, params Type[] parameters)
         {
-            MethodInfo[] methods = target
-                ?.GetType()
-                .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            Type owner = target as Type ?? target?.GetType();
+            MethodInfo[] methods = owner
+                ?.GetMethods(BindingFlags.Instance | BindingFlags.Public)
                 .Where(m =>
                     m.Name == name
                     && !m.ContainsGenericParameters
@@ -104,15 +106,26 @@ namespace MCPForUnity.Editor.Tools.Addressables
             return methods[0];
         }
 
+        private static Func<object, object> LabelReader(Type settings, string action)
+        {
+            if (settings.GetMethods(BindingFlags.Instance | BindingFlags.Public).Any(m => m.Name == "GetLabels"))
+            {
+                var getter = RequireMethod(settings, action, "GetLabels", typeof(List<string>));
+                return owner => getter.Invoke(owner, null);
+            }
+            Type table = settings.Assembly.GetType("UnityEditor.AddressableAssets.Settings.LabelTable");
+            var stored = RequireField(settings, action, "m_LabelTable", table, true);
+            var names = RequireField(table, action, "m_LabelNames", typeof(List<string>), true);
+            return owner =>
+                names.GetValue(
+                    stored.GetValue(owner) ?? throw new AddressablesException("addressables_settings_invalid", "Stored Addressables labels are missing.")
+                );
+        }
+
         internal static object Labels(object settings, string action)
         {
-            if (settings.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public).Any(m => m.Name == "GetLabels"))
-                return RequireMethod(settings, action, "GetLabels", typeof(List<string>)).Invoke(settings, null);
-            Type tableType = settings.GetType().Assembly.GetType("UnityEditor.AddressableAssets.Settings.LabelTable");
-            object table = RequireField(settings.GetType(), action, "m_LabelTable", tableType, true).GetValue(settings);
-            if (table == null)
-                throw new AddressablesException("addressables_settings_invalid", "Stored Addressables labels are missing.");
-            return RequireField(tableType, action, "m_LabelNames", typeof(List<string>), true).GetValue(table);
+            var reader = settings.GetType() == checkedSettings ? readLabels : LabelReader(settings.GetType(), action);
+            return reader(settings);
         }
 
         internal static FieldInfo RequireField(Type type, string action, string name, Type expected, bool nonPublic = false)
@@ -308,7 +321,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             if (Encoding.UTF8.GetByteCount(request.ToString(Formatting.None)) > 262144)
                 Fail("addressables_budget_exceeded", "Request exceeds256KiB.");
             RequirePackage(out Type type, out string version);
-            AddressablesCompatibility.RequireSnapshot(type, action);
+            AddressablesCapabilities.Require(type, action);
             string path = Path(request["settings_path"]);
             UnityEngine.Object settings = AssetDatabase.LoadAssetAtPath(path, type);
             if (settings == null)

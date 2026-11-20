@@ -52,10 +52,31 @@ def phase(
         raise ValueError(f"Addressables boundary Editor failed. See {log}")
     observed = read_json(evidence)
     expected = "addressables_settings_not_found" if provider else "addressables_unavailable"
+    capabilities = observed["capabilities"]
+    operations = capabilities["operations"]
+    for action in (
+        "inspect",
+        "preview_prefab",
+        "create_prefab",
+        "register_prefab",
+        "prefab_status",
+        "reconcile_prefab",
+        "replan_prefab",
+    ):
+        if operations[action]["available"] is not bool(provider):
+            raise ValueError(f"{action} availability differs from the controlled package shape")
+        if not provider and operations[action].get("code") != "addressables_unavailable":
+            raise ValueError(f"Missing provider reason absent for {action}")
+    if (
+        provider == "1.1.5"
+        and operations["analyze_layout"].get("code") != "addressables_api_unsupported"
+    ):
+        raise ValueError("Legacy report API must be refused independently of supported authoring")
     if (
         observed["session"] != session
         or observed["unity_version"] != version
         or observed["provider_version"] != provider
+        or capabilities["package_version"] != provider
         or observed["inspection_result"] != expected
         or any("Addressables" in name for name in observed["adapter_references"])
     ):
@@ -86,8 +107,12 @@ def run(options: argparse.Namespace, output: Path) -> None:
     archive(revision, source, "MCPForUnity")
     fixture = source / FIXTURE.name
     shutil.copyfile(FIXTURE, fixture)
-    legacy = read_json(PROFILES)["nativePackageSets"]["addressables-legacy"]
-    providers = {"absent": {}, "legacy": legacy}
+    profiles = read_json(PROFILES)
+    providers = {
+        "absent": {},
+        "legacy": profiles["nativePackageSets"]["addressables-legacy"],
+        "content-update": profiles["playerPackageSets"]["addressables-content-update"],
+    }
     runs = {}
     for name in options.shape:
         specs = providers[name]
@@ -141,7 +166,7 @@ def main() -> int:
     parser.add_argument("--editor", type=Path, required=True)
     parser.add_argument("--unity-version", required=True)
     parser.add_argument("--registry-cache", type=Path)
-    parser.add_argument("--shape", action="append", choices=("absent", "legacy"))
+    parser.add_argument("--shape", action="append", choices=("absent", "legacy", "content-update"))
     parser.add_argument("--output", type=Path, required=True)
     options = parser.parse_args()
     options.shape = tuple(dict.fromkeys(options.shape or ("absent", "legacy")))

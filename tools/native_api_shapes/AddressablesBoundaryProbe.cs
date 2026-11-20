@@ -29,6 +29,7 @@ public static class AddressablesBoundaryProbe
             ["provider_assembly"] = settings?.Assembly.GetName().Name,
             ["provider_version"] = settings == null ? null : PackageInfo.FindForAssembly(settings.Assembly)?.version,
             ["inspection_result"] = read["code"],
+            ["capabilities"] = JObject.FromObject(ManageAddressables.HandleCommand(new JObject { ["action"] = "capabilities" }))["data"],
         };
         using var stream = new FileStream(Argument(args, "--boundary-output"), FileMode.CreateNew, FileAccess.Write);
         using var writer = new StreamWriter(stream);

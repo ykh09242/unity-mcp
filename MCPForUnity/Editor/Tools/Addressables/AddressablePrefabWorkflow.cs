@@ -137,7 +137,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 return Report(plan, "blocked", "Asset editing requires stable Edit Mode.");
             bool create = action == "create_prefab";
             Object group = (Object)settings.Groups[(string)plan.intent["group_guid"]];
-            MethodInfo registration = Registration(settings, group);
+            MethodInfo registration = create ? null : Registration(settings, group);
             if (!create && EditorUtility.IsDirty(group))
                 return Report(plan, "conflict", "Target group has unsaved edits.");
             plan.phase = create ? "creating" : "registering";
@@ -211,16 +211,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
         private static MethodInfo Registration(AddressablesState state, Object group)
         {
             Type entry = state.Settings.GetType().Assembly.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetEntry");
-            return AddressablesCompatibility.RequireMethod(
-                state.Settings,
-                "register_prefab",
-                "CreateOrMoveEntry",
-                entry,
-                typeof(string),
-                group.GetType(),
-                typeof(bool),
-                typeof(bool)
-            );
+            return AddressablesCapabilities.Writer("register_prefab", state.Settings.GetType(), entry, group.GetType(), null);
         }
 
         private static Plan Preview(JObject intent)
@@ -250,7 +241,6 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     )
             )
                 AddressablesState.Fail("prefab_address_conflict", "The destination must be a directly addressable runtime asset.");
-            Registration(state, (Object)group);
             string groupPath = AssetDatabase.GetAssetPath((Object)group);
             return new Plan
             {

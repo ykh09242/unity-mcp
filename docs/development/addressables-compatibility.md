@@ -5,6 +5,10 @@ checks the members needed by each action. Package versions identify observations
 A new release or prerelease can use the same API and serialized report format.
 Each package retains its own Unity Editor requirement.
 
+Call `manage_addressables(action="capabilities")` without a settings asset to observe the loaded provider's API for individual actions. The response includes `package_version` and an `operations` object keyed by action. Each unavailable operation includes its error code and reason. Availability describes the package API. The selected settings, stored data, edit permissions, revision and recovery checkpoint are checked on use.
+
+Prefab inspection, preview, creation and reconciliation require the native snapshot members. Creation copies through Unity's asset database. Registration additionally requires the exact native `CreateOrMoveEntry` signature. A missing registration writer leaves preview, copy, status and reconciliation available on a compatible snapshot. Cancelling a pending session checkpoint uses the Editor session store. Package absence still permits capability discovery and reports `addressables_unavailable` for actions that need Addressables. The native boundary runner supports isolated `absent`, `legacy` and `content-update` shape probes.
+
 | Family | Official source audit representatives | Latest stable in the audited registry |
 | --- | --- | --- |
 | 1.x | 1.1.5, 1.28.2, 1.29.0 | [1.29.0](https://download.packages.unity.com/com.unity.addressables/-/com.unity.addressables-1.29.0.tgz), Unity 2021.3 minimum |

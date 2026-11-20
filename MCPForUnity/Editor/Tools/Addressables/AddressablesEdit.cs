@@ -95,42 +95,28 @@ namespace MCPForUnity.Editor.Tools.Addressables
             // Resolve the complete action signature before Undo, so an unsupported API cannot begin an edit.
             object mutationTarget;
             object[] mutationArguments;
-            MethodInfo mutation;
             if (action == "set_address")
             {
                 mutationTarget = entry;
                 mutationArguments = new object[] { address, true };
-                mutation = AddressablesCompatibility.RequireMethod(entry, action, "SetAddress", typeof(void), typeof(string), typeof(bool));
             }
             else if (action == "move_entry")
             {
                 mutationTarget = before.Settings;
                 mutationArguments = new object[] { (string)AddressablesState.Get(entry, "guid"), group, false, true };
-                mutation = AddressablesCompatibility.RequireMethod(
-                    before.Settings,
-                    action,
-                    "CreateOrMoveEntry",
-                    entry.GetType(),
-                    typeof(string),
-                    group.GetType(),
-                    typeof(bool),
-                    typeof(bool)
-                );
             }
             else
             {
                 mutationTarget = before.ProfilesObject;
                 mutationArguments = new object[] { profileId, variableName, value };
-                mutation = AddressablesCompatibility.RequireMethod(
-                    before.ProfilesObject,
-                    action,
-                    "SetValue",
-                    typeof(void),
-                    typeof(string),
-                    typeof(string),
-                    typeof(string)
-                );
             }
+            MethodInfo mutation = AddressablesCapabilities.Writer(
+                action,
+                before.Settings.GetType(),
+                entry?.GetType(),
+                group?.GetType(),
+                before.ProfilesObject.GetType()
+            );
             AddressablesState fresh = AddressablesState.Capture(request);
             if (fresh.Revision != expected || fresh.Settings != before.Settings)
                 AddressablesState.Fail("stale_addressables_revision", "Settings or native identity changed before Undo.");
@@ -197,12 +183,43 @@ namespace MCPForUnity.Editor.Tools.Addressables
             Prune();
             if (Records.Any(record => record.Settings.TryGetTarget(out UnityEngine.Object owner) && owner == settings))
                 return;
-            Action<UnityEngine.Object> clear = BindReset(settings.GetType(), action);
+            Action<UnityEngine.Object> clear = AddressablesLookupCache.BindReset(settings.GetType(), action);
             if (clear != null)
                 Records.Add(new Record { Settings = new WeakReference<UnityEngine.Object>(settings), Clear = clear });
         }
 
-        private static Action<UnityEngine.Object> BindReset(Type settings, string action)
+        private static void Prune() => Records.RemoveAll(record => !record.Settings.TryGetTarget(out UnityEngine.Object owner) || owner == null);
+
+        private static void Refresh()
+        {
+            Prune();
+            foreach (Record record in Records)
+                if (record.Settings.TryGetTarget(out UnityEngine.Object owner) && owner != null)
+                    try
+                    {
+                        // Group maps are restored by Undo. Discard only the transient lookup into their old entries.
+                        record.Clear(owner);
+                    }
+                    catch (TargetInvocationException)
+                    {
+                        Debug.LogWarning(
+                            "Addressables lookup cache could not refresh after Undo/Redo; inspect package API compatibility before further authoring."
+                        );
+                    }
+        }
+
+        private static void Release()
+        {
+            Records.Clear();
+            Undo.undoRedoPerformed -= Refresh;
+            AssemblyReloadEvents.beforeAssemblyReload -= Release;
+            EditorApplication.quitting -= Release;
+        }
+    }
+
+    internal static class AddressablesLookupCache
+    {
+        internal static Action<UnityEngine.Object> BindReset(Type settings, string action)
         {
             const BindingFlags instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             var assembly = settings.Assembly;
@@ -244,34 +261,6 @@ namespace MCPForUnity.Editor.Tools.Addressables
             )
                 return null;
             throw new AddressablesException("addressables_api_unsupported", action + " requires a compatible explicit-entry lookup and Undo cache contract.");
-        }
-
-        private static void Prune() => Records.RemoveAll(record => !record.Settings.TryGetTarget(out UnityEngine.Object owner) || owner == null);
-
-        private static void Refresh()
-        {
-            Prune();
-            foreach (Record record in Records)
-                if (record.Settings.TryGetTarget(out UnityEngine.Object owner) && owner != null)
-                    try
-                    {
-                        // Group maps are restored by Undo. Discard only the transient lookup into their old entries.
-                        record.Clear(owner);
-                    }
-                    catch (TargetInvocationException)
-                    {
-                        Debug.LogWarning(
-                            "Addressables lookup cache could not refresh after Undo/Redo; inspect package API compatibility before further authoring."
-                        );
-                    }
-        }
-
-        private static void Release()
-        {
-            Records.Clear();
-            Undo.undoRedoPerformed -= Refresh;
-            AssemblyReloadEvents.beforeAssemblyReload -= Release;
-            EditorApplication.quitting -= Release;
         }
     }
 }
