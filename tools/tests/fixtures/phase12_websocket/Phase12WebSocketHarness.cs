@@ -27,6 +27,19 @@ internal static class Phase12WebSocketHarness
 
     public static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         SynchronizationContext.SetSynchronizationContext(Context);
         TransportCommandDispatcher.ExecuteCommandJsonAsync("ping", CancellationToken.None).GetAwaiter().GetResult();
         string selection = args.Length == 0 ? "all" : args[0];

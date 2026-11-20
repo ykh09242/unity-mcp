@@ -13,6 +13,19 @@ internal static class FindFirstRegressionHarness
 
     private static int Main()
     {
+        try
+        {
+            return RunFixture();
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture()
+    {
         Check("unrelated lookups work before ordered lookup", CheckUnordered);
 #if MISSING_ORDERED_API
         Check("missing exact ordered overload fails loudly on each call", () =>

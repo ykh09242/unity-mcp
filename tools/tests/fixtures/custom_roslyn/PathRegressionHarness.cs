@@ -16,6 +16,19 @@ internal static class PathRegressionHarness
 
     private static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         Application.temporaryCachePath = args[0];
         foreach (var path in new[] { "MissingRoot/ExistingChild", "/MissingRoot/ExistingChild", "MissingRoot/Root/InactiveChild" })
         {
@@ -130,6 +143,19 @@ internal static class CompanionRegressionHarness
     private static int failures;
 
     private static int Main(string[] args)
+    {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
     {
         foreach (var target in new[] { "Missing", "MissingRoot/ExistingChild" })
         {
@@ -363,6 +389,13 @@ namespace UnityEngine
         public T GetComponent<T>()
             where T : class => null;
 
+        public bool TryGetComponent<T>(out T component)
+            where T : class
+        {
+            component = GetComponent<T>();
+            return component != null;
+        }
+
         public Component AddComponent(Type type)
         {
             AttachmentCount++;
@@ -434,6 +467,13 @@ namespace MCPForUnity.Editor.Tools
 
         public McpForUnityToolAttribute(string name) { }
     }
+
+#if !COMPANION_PROBE
+    public static class RoslynMCPHelper
+    {
+        public static RoslynRuntimeCompiler GetOrCreateCompiler() => RoslynRuntimeCompiler.Instance;
+    }
+#endif
 
     public sealed class RoslynRuntimeCompiler : MonoBehaviour
     {

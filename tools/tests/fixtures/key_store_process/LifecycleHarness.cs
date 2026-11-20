@@ -16,6 +16,19 @@ internal static class LifecycleHarness
 
     public static int Main()
     {
+        try
+        {
+            return RunFixture();
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture()
+    {
         var actions = new (string Name, Action Action, string TimeoutFailure)[]
         {
             ("linux availability", () => LinuxSecretToolKeyStore.IsAvailable(), null),

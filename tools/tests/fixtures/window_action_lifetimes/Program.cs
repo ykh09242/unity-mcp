@@ -18,6 +18,19 @@ public static partial class Program
 
     public static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         if (args.Length == 2 && args[0] == "--child")
         {
             var deadline = DateTime.UtcNow.AddSeconds(10);

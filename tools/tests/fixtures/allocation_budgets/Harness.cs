@@ -34,6 +34,19 @@ internal static class Harness
 
     private static int Main()
     {
+        try
+        {
+            return RunFixture();
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture()
+    {
         long before = GC.GetAllocatedBytesForCurrentThread();
         GC.KeepAlive(new byte[4096]);
         if (GC.GetAllocatedBytesForCurrentThread() - before < 4096)

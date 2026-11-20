@@ -42,6 +42,19 @@ internal static class CodecHarness
 
     public static async Task<int> Main(string[] args)
     {
+        try
+        {
+            return await RunFixtureAsync(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static async Task<int> RunFixtureAsync(string[] args)
+    {
         byte[] source = File.ReadAllBytes(args[0]);
         string text = Encoding.UTF8.GetString(source);
         string mode = args.Length > 2 ? args[2] : "bytes";

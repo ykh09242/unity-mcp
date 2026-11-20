@@ -24,6 +24,19 @@ internal static class ExecuteCodeRegressionHarness
 
     private static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         work = args[0];
         filter = args.Length > 1 ? args[1] : null;
         Console.WriteLine("RUNTIME: " + typeof(object).Assembly.FullName + "; Unity=" + typeof(UnityEngine.Vector3).Assembly.FullName);

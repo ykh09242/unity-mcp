@@ -14,6 +14,19 @@ internal static class Program
 
     private static int Main()
     {
+        try
+        {
+            return RunFixture();
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture()
+    {
         Check("queued refresh blocks admission before native compilation", () =>
         {
             RefreshDebounce.Schedule("Assets/One.cs", TimeSpan.Zero);
@@ -498,12 +511,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
     internal static class PlayScenarioService
     {
-        internal static bool IsBusy;
+        internal static NativeRecoveryDetails CleanupRecovery => null;
+
+        internal static bool HasForeignNativeOwner(string jobId) => false;
     }
 
     internal static class PlayScenarioSuiteService
     {
-        internal static bool IsBusy;
+        internal static bool HasForeignNativeOwner(string childId) => false;
     }
 }
 

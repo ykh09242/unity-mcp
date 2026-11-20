@@ -13,10 +13,10 @@ using MCPForUnity.Editor.Services.Transport.Transports;
 internal static class StdioRegressionHarness
 {
     private const BindingFlags PrivateStatic = BindingFlags.Static | BindingFlags.NonPublic;
-    private static readonly Type Host = typeof(StdioBridgeHost);
-    private static readonly MethodInfo Write = Host.GetMethod("WriteFrameAsync", PrivateStatic, null, new[] { typeof(NetworkStream), typeof(byte[]) }, null);
-    private static readonly MethodInfo Pump = Host.GetMethod("ProcessCommands", PrivateStatic);
-    private static readonly MethodInfo Read = Host.GetMethod("ReadFrameAsUtf8Async", PrivateStatic);
+    private static Type Host => typeof(StdioBridgeHost);
+    private static MethodInfo Write;
+    private static MethodInfo Pump;
+    private static MethodInfo Read;
     private static int passed,
         failed;
 
@@ -758,11 +758,27 @@ internal static class StdioRegressionHarness
 
     public static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         if (args.Length != 1)
         {
             Console.WriteLine("FAIL: original host source path required");
             return 1;
         }
+        Write = Host.GetMethod("WriteFrameAsync", PrivateStatic, null, new[] { typeof(NetworkStream), typeof(byte[]) }, null);
+        Pump = Host.GetMethod("ProcessCommands", PrivateStatic);
+        Read = Host.GetMethod("ReadFrameAsUtf8Async", PrivateStatic);
         Test("header write timeout cancels and cleans up", () => TimeoutAsync(1).GetAwaiter().GetResult());
         Test("payload write timeout cancels and cleans up", () => TimeoutAsync(2).GetAwaiter().GetResult());
         Test("timeout CTS lives through pending write and disposes after success", () => LifetimeAsync().GetAwaiter().GetResult());

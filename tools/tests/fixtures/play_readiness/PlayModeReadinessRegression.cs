@@ -13,6 +13,19 @@ internal static class PlayModeReadinessRegression
 
     private static int Main()
     {
+        try
+        {
+            return RunFixture();
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture()
+    {
         Check("deferred raw compilation flag allows a loaded scene", () =>
         {
             EditorApplication.isCompiling = true;

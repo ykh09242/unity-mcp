@@ -12,6 +12,12 @@ namespace UnityEditor
         public static void SetDirty(UnityEngine.Object value) => throw new NotSupportedException("Editor mutation is excluded.");
     }
 
+    public static class PrefabUtility
+    {
+        public static void RecordPrefabInstancePropertyModifications(UnityEngine.Object value) =>
+            throw new NotSupportedException("Editor mutation is excluded.");
+    }
+
     public static class AssetDatabase
     {
         public static UnityEngine.Object LoadAssetAtPath(string path, Type type) =>

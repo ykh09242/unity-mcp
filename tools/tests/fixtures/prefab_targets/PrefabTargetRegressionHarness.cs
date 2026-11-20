@@ -221,6 +221,19 @@ public static class PrefabTargetRegression
 
     public static int Main()
     {
+        try
+        {
+            return RunFixture();
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture()
+    {
         var root = new GameObject("Parent", 1);
         var cube = new GameObject("McpProbeCube", -19340, root);
         SceneManager.Active.roots = new[] { root };

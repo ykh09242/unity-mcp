@@ -13,6 +13,19 @@ internal static class ToolScalarHarness
 
     private static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         Console.WriteLine("RUNTIME: " + typeof(object).Assembly.FullName + "; JSON=" + typeof(JToken).Assembly.FullName);
         foreach (
             var token in new JToken[]

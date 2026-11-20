@@ -15,7 +15,21 @@ internal static class Program
 
     private static QueuedCommand Prepare(string text, out Command command) => StdioBridgeHost.Prepare(text, out command, out _, out _, out _);
 
-    private static void Main(string[] args)
+    private static int Main(string[] args)
+    {
+        try
+        {
+            RunFixture(args);
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static void RunFixture(string[] args)
     {
         foreach (var text in new[] { "null", "true", "123", "\"text\"", "{", "{\"type\":", "{} {}", "{}/*tail*/" })
         {

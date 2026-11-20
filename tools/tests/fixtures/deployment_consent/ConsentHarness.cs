@@ -7,6 +7,19 @@ internal static class ConsentHarness
 {
     private static int Main()
     {
+        try
+        {
+            return RunFixture();
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture()
+    {
         int failures = 0;
         foreach (string action in new[] { "deploy_package", "restore_package" })
         {

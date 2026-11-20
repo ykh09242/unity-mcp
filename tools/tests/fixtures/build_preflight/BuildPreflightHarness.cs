@@ -356,6 +356,19 @@ internal static class BuildPreflightHarness
 
     public static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         outputRoot = Path.Combine(Path.GetFullPath(args[0]), "never-created-output");
         disablePlanGuardControl = args.Length == 2 && args[1] == "--disable-plan-guard-control";
         foreach (

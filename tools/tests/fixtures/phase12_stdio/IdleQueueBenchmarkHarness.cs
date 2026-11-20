@@ -14,6 +14,19 @@ internal static class IdleQueueBenchmarkHarness
 
     public static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         if (args.Length != 3)
             throw new ArgumentException("label iterations samples required");
         string label = args[0];

@@ -30,6 +30,19 @@ internal static class StdioCredentialRoundTripHarness
 
     public static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine("Owned credential fixture failed: " + error.GetType().Name);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         if (Environment.OSVersion.Platform != PlatformID.Win32NT || args.Length != 3)
         {
             Console.WriteLine("FAIL: Windows and three owned fixture paths are required");
@@ -116,7 +129,15 @@ internal static class StdioCredentialRoundTripHarness
                     child.Kill();
             }
             catch { }
-            child?.Dispose();
+            try
+            {
+                child?.Dispose();
+            }
+            catch (Exception error)
+            {
+                matched = false;
+                Console.WriteLine("FAIL: owned credential reader cleanup exception=" + error.GetType().Name);
+            }
             try
             {
                 published?.Dispose();

@@ -60,6 +60,10 @@ try {
     if ($WarningsAsErrors) { $arguments += '/warnaserror+' }
     $arguments += $references | ForEach-Object { '/reference:' + $_ }
     $shim = (Resolve-Path (Join-Path $PSScriptRoot '../../../../MCPForUnity/Runtime/Helpers/UnityFindObjectsCompat.cs')).Path
+    if (!$CompanionProbe) {
+        $arguments += Join-Path $PSScriptRoot '../../../../MCPForUnity/Runtime/Serialization/JsonScalarConversion.cs'
+        $arguments += Join-Path $PSScriptRoot '../../../../MCPForUnity/Editor/Helpers/ParamCoercion.cs'
+    }
     $arguments += @($source, $shim, (Join-Path $PSScriptRoot 'PathRegressionHarness.cs'))
     Write-Output ('SOURCE_SHA256: ' + (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash)
     Write-Output ('SHIM_SHA256: ' + (Get-FileHash -LiteralPath $shim -Algorithm SHA256).Hash)

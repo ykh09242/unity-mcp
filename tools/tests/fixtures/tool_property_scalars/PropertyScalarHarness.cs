@@ -58,6 +58,19 @@ internal static class PropertyScalarHarness
 
     private static int Main()
     {
+        try
+        {
+            return RunFixture();
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture()
+    {
         Console.WriteLine(
             "ACTUAL_PRODUCTION: PropertyConversion, UnityJsonSerializer, JsonScalarConversion, UnityTypeConverters, ParamCoercion, VectorParsing, TextureOps, RendererHelpers"
         );

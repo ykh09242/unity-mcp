@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -31,7 +32,21 @@ internal static class Program
             throw new InvalidOperationException(message);
     }
 
-    private static void Main()
+    private static int Main()
+    {
+        try
+        {
+            RunFixture();
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static void RunFixture()
     {
         string root = Path.Combine(AppContext.BaseDirectory, "cases-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);

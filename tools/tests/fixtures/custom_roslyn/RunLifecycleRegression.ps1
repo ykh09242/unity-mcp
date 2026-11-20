@@ -15,7 +15,7 @@ if (!$SourcePath) { $SourcePath = Join-Path $PSScriptRoot '../../../../CustomToo
 $source = (Resolve-Path -LiteralPath $SourcePath).Path
 if (!$ToolSourcePath) { $ToolSourcePath = Join-Path $PSScriptRoot '../../../../CustomTools/RoslynRuntimeCompilation/ManageRuntimeCompilation.cs' }
 $toolSource = (Resolve-Path -LiteralPath $ToolSourcePath).Path
-if (!$NewtonsoftPath) { $NewtonsoftPath = Join-Path $SdkPath 'TestHostNetFramework/Newtonsoft.Json.dll' }
+if (!$NewtonsoftPath) { $NewtonsoftPath = Join-Path $UnityData 'Managed/Newtonsoft.Json.dll' }
 $newtonsoft = (Resolve-Path -LiteralPath $NewtonsoftPath).Path
 $roslyn = Join-Path $UnityData 'MonoBleedingEdge/lib/mono/4.5'
 $framework = Join-Path $UnityData 'MonoBleedingEdge/lib/mono/4.8-api'
@@ -55,7 +55,9 @@ $arguments += $references | ForEach-Object { '/reference:' + $_ }
 $shim = (Resolve-Path (Join-Path $PSScriptRoot '../../../../MCPForUnity/Runtime/Helpers/UnityFindObjectsCompat.cs')).Path
 $scalar = (Resolve-Path (Join-Path $PSScriptRoot '../../../../MCPForUnity/Runtime/Serialization/JsonScalarConversion.cs')).Path
 $coercion = (Resolve-Path (Join-Path $PSScriptRoot '../../../../MCPForUnity/Editor/Helpers/ParamCoercion.cs')).Path
-$arguments += @($source, $toolSource, $shim, $scalar, $coercion, (Join-Path $PSScriptRoot 'LifecycleRegressionHarness.cs'))
+$cache = (Resolve-Path (Join-Path $PSScriptRoot '../../../../MCPForUnity/Runtime/Helpers/DynamicCompilationCache.cs')).Path
+$assemblies = (Resolve-Path (Join-Path $PSScriptRoot '../../../../MCPForUnity/Runtime/Helpers/UnityAssembliesCompat.cs')).Path
+$arguments += @($source, $toolSource, $shim, $scalar, $coercion, $cache, $assemblies, (Join-Path $PSScriptRoot 'LifecycleRegressionHarness.cs'))
 Write-Output ('SOURCE_SHA256: ' + (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash)
 Write-Output ('TOOL_SOURCE_SHA256: ' + (Get-FileHash -LiteralPath $toolSource -Algorithm SHA256).Hash)
 Write-Output ('HARNESS_SHA256: ' + (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'LifecycleRegressionHarness.cs') -Algorithm SHA256).Hash)

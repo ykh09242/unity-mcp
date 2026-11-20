@@ -13,7 +13,21 @@ internal static class CacheHarness
             throw new Exception(message);
     }
 
-    private static void Main()
+    private static int Main()
+    {
+        try
+        {
+            RunFixture();
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static void RunFixture()
     {
         double now = 0;
         int calls = 0;

@@ -7,6 +7,19 @@ internal static class PosixCredentialRoundTripHarness
 {
     public static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine("Owned credential fixture failed: " + error.GetType().Name);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         if (args.Length != 1)
             return 1;
         string generation = Console.ReadLine();

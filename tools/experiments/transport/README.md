@@ -42,7 +42,7 @@ The current recommendation is to retain all three as experimental evidence. Pair
 ## Verification and source documentation
 
 ```powershell
-dotnet build tools/experiments/transport/dotnet/TransportProbe.csproj -c Release --no-restore
+python tools/run_dotnet.py build tools/experiments/transport/dotnet/TransportProbe.csproj -c Release --no-restore
 basedpyright --pythonpath Server/.venv/Scripts/python.exe --project tools/experiments/transport/pyrightconfig.json
 Server/.venv/Scripts/python.exe -m compileall -q tools/experiments/transport
 ```

@@ -71,6 +71,19 @@ internal static class Harness
 
     public static int Main(string[] arguments)
     {
+        try
+        {
+            return RunFixture(arguments);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] arguments)
+    {
         Run("hide-flags setup failure", () => SetupFailure("hide-flags"));
         Run("persistence setup failure", () => SetupFailure("persist"));
         Run("component creation exception", () => SetupFailure("component-throw"));

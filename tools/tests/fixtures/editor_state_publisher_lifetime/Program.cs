@@ -18,8 +18,8 @@ internal static class Program
 {
     private static int _passed,
         _failed;
-    private static readonly FieldInfo Gate = typeof(EditorStatePublisher).GetField("_gate", BindingFlags.Instance | BindingFlags.NonPublic);
-    private static readonly FieldInfo Sending = typeof(EditorStatePublisher).GetField("_sending", BindingFlags.Instance | BindingFlags.NonPublic);
+    private static FieldInfo Gate;
+    private static FieldInfo Sending;
 
     private static void Require(bool condition, string message)
     {
@@ -94,6 +94,22 @@ internal static class Program
 
     public static int Main()
     {
+        try
+        {
+            return RunFixture();
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture()
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        Gate = typeof(EditorStatePublisher).GetField("_gate", flags);
+        Sending = typeof(EditorStatePublisher).GetField("_sending", flags);
         Case("cancel before synchronous initial callback", () =>
         {
             using var cts = new CancellationTokenSource();

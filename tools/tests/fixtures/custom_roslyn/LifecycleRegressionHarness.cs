@@ -16,6 +16,19 @@ internal static class LifecycleRegressionHarness
 
     private static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         Application.temporaryCachePath = args[0];
         Application.dataPath = args[0];
         foreach (var method in new[] { "OnEnable", "OnGUI" })
@@ -782,6 +795,13 @@ namespace UnityEngine
 
         public T GetComponent<T>()
             where T : Component => (T)GetComponent(typeof(T));
+
+        public bool TryGetComponent<T>(out T component)
+            where T : Component
+        {
+            component = GetComponent<T>();
+            return component != null;
+        }
     }
 
     public sealed class Transform : Component

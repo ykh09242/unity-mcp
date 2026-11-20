@@ -13,6 +13,19 @@ internal static class Program
 
     private static int Main()
     {
+        try
+        {
+            return RunFixture();
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture()
+    {
         foreach (bool native in new[] { false, true })
         {
             Check("burst yields and preserves FIFO, native=" + native, () =>

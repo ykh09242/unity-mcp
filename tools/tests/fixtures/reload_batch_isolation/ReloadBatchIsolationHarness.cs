@@ -268,6 +268,19 @@ public static class ReloadBatchIsolationHarness
 
     public static int Main(string[] args)
     {
+        try
+        {
+            return RunFixture(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunFixture(string[] args)
+    {
         string scenario = args[0];
         bool batch = scenario.StartsWith("batch-", StringComparison.Ordinal);
         string allow =

@@ -67,6 +67,19 @@ internal static class LargeResultHarness
 
     public static async Task<int> Main(string[] args)
     {
+        try
+        {
+            return await RunFixtureAsync(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static async Task<int> RunFixtureAsync(string[] args)
+    {
         byte[] bytes = File.ReadAllBytes(args[0]);
         string mode = args[1];
         _holdControlCaller = mode == "interleave-held-caller";
