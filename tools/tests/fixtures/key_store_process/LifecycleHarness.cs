@@ -170,7 +170,7 @@ internal static class LifecycleHarness
         catch (Exception ex)
         {
             failures++;
-            Console.WriteLine("FAIL: " + name + " -- " + ex.Message);
+            Console.Error.WriteLine("FAIL: " + name + " -- " + ex);
         }
     }
 
