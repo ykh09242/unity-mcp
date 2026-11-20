@@ -23335,7 +23335,9 @@
                   "run",
                   "status",
                   "cancel",
-                  "report"
+                  "report",
+                  "observe_assembly",
+                  "observe_texture"
                 ],
                 "type": "string"
               },
@@ -51122,7 +51124,9 @@
                   "run",
                   "status",
                   "cancel",
-                  "report"
+                  "report",
+                  "observe_assembly",
+                  "observe_texture"
                 ],
                 "type": "string"
               },

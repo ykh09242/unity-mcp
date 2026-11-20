@@ -2800,6 +2800,17 @@ Gate saved soak regression limits offline: 0 within, 1 exceeded, 2 not comparabl
 | --policy | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp play-scenario compare-pointer-traces`
+
+Compare a click in two saved traces. Exit 0 same, 1 diverged, 2 incomplete.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| baseline | text | required | nargs=1 | — | — |  |
+| candidate | text | required | nargs=1 | — | — |  |
+| --output | text | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp play-scenario compare-queries`
 
 Compare two saved native reports offline; exit 0 within limits, 1 exceeded, 2 invalid.
@@ -4505,7 +4516,7 @@ Prepare source-linked checks and observe runs without automatically replaying wo
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| action | choice: profiles, set_profile, prepare, run, status, cancel, report | required | nargs=1 | — | — |  |
+| action | choice: profiles, set_profile, prepare, run, status, cancel, report, observe_assembly, observe_texture | required | nargs=1 | — | — |  |
 | --options | text | optional | nargs=1 | "&#123;&#125;" | — | Action options as JSON, @file or - for stdin. Run/status/report use the returned owned IDs. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -4515,6 +4526,43 @@ Review source evidence and manage local Player candidate registrations.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate anticipate-merge`
+
+Check Resources references against Git's anticipated merge tree.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | text | required | nargs=1 | — | — |  |
+| --target | text | required | nargs=1 | — | — | Current receiving Git ref or commit. |
+| --head | text | required | nargs=1 | — | — | Proposed Git head ref or commit. |
+| --output | text | optional | nargs=1 | — | — | New JSON file. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate capture-pair-side`
+
+Freeze a registered native build and its current clean source commits together.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | text | required | nargs=1 | — | — |  |
+| --package-checkout | text | required | nargs=1 | — | — |  |
+| --candidate-id | text | required | nargs=1 | — | — |  |
+| --closure | text | required | nargs=1 | — | — |  |
+| --output | text | required | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate configuration-diff`
+
+Compare two native configuration observations and optional matched Player pixel runs.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| baseline | text | required | nargs=1 | — | — |  |
+| candidate | text | required | nargs=1 | — | — |  |
+| --baseline-run | text | optional | nargs=1 | — | — |  |
+| --candidate-run | text | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp verification-candidate dependency-closure`
@@ -4529,6 +4577,31 @@ Propose additional asset and metadata hashes from the selected commits.
 | --graph-page | text | required | nargs=1, repeatable | — | — | Outgoing impact page in original order. |
 | --diagnostics | tuple: text, text | optional | nargs=2, repeatable | — | — | Graph node and its diagnostics page. |
 | --output | text | optional | nargs=1 | — | — | New proposal JSON file. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate dependency-diff`
+
+Compare retained native references and their prior and current consumers.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --baseline | text | required | nargs=1 | — | — | Complete baseline scan checkpoint. |
+| --candidate | text | required | nargs=1 | — | — | Complete candidate scan checkpoint. |
+| --output | text | required | nargs=1 | — | — | New JSONL comparison and consumer list. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate dependency-scan`
+
+Record graph pages atomically and hash the corresponding committed assets and metadata.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | text | required | nargs=1 | — | — |  |
+| --commit | text | required | nargs=1 | — | — | Exact Git commit for this graph. |
+| --root | text | required | nargs=1 | — | — | Committed entry asset path. |
+| --checkpoint | text | required | nargs=1 | — | — | Local resumable SQLite file. |
+| --graph-page | text | optional | nargs=1, repeatable | — | — | Next saved outgoing impact page. |
+| --output | text | optional | nargs=1 | — | — | New JSONL inventory file, after the final page. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp verification-candidate draft`
@@ -4597,6 +4670,17 @@ Print registration fields for a complete ordered list of captured chunks.
 | --chunk | text | required | nargs=1, repeatable | — | — | Repeat in globally sorted path order. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp verification-candidate pack-pair`
+
+Verify both captures and publish a new pair.json for independent review.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | text | required | nargs=1 | — | — |  |
+| --artifacts | text | required | nargs=1 | — | — | Directory with baseline and candidate captures. |
+| --expectations | text | required | nargs=1 | — | — | Project-owned outcomes and optional shared references. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp verification-candidate register`
 
 Verify local sources and the installed Player before creating a local registration.
@@ -4620,6 +4704,19 @@ Verify Git inputs, dependency closures and builds, then run both Players.
 | --sha256 | text | required | nargs=1 | — | — | Pair manifest digest from an independent review. |
 | --artifacts | text | optional | nargs=1 | — | — | Trusted pair directory. Defaults to the manifest's parent. |
 | --output | text | required | nargs=1 | — | — | New directory for fresh native evidence and reproduction.json. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-candidate save-upgrade`
+
+Create a save with the older Player, then verify migration and a fresh restart.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --project | text | required | nargs=1 | — | — |  |
+| --manifest | text | required | nargs=1 | — | — |  |
+| --sha256 | text | required | nargs=1 | — | — | Manifest digest from an independent review. |
+| --artifacts | text | optional | nargs=1 | — | — | Trusted pair directory. Defaults to the manifest's parent. |
+| --output | text | required | nargs=1 | — | — | New directory for the isolated save slot and native evidence. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp verification-candidate verify`
@@ -4667,6 +4764,29 @@ Select ranked tests that fit an estimate derived from observed history.
 | --output | text | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp verification-evidence budget-rank`
+
+Propose an exact test ranking for budget-plan and show unmapped changes.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --draft | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | Committed base/head Git candidate draft. |
+| --mappings | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | Project check mapping document. |
+| --closure | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1, repeatable | — | — | Retained scene dependency closure. |
+| --history | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1, repeatable | — | — | Prior instrumented NUnit XML. |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence budget-replay`
+
+Compare automatic and manual budget plans against chronological full PR controls.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| manifest | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp verification-evidence compare`
 
 Classify new, existing, repaired and unexecuted checks on the reviewed PR pair.
@@ -4700,6 +4820,18 @@ Locate the first failing archived build, or report observed bounds and missing t
 | history_manifest | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
 | --kind | choice: scenario, test, profile, observation, stage | required | nargs=1 | — | — |  |
 | --id | text | required | nargs=1 | — | — | Exact named check from the verification reports. |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence import-official`
+
+Import retained NUnit and standalone Player facts from a connected unity mcp session.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| session | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --nunit | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Original Unity Test Framework NUnit XML. |
+| --player | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Original independent game-state JSON from the Player. |
 | --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -4786,6 +4918,61 @@ Measure missed regressions, unnecessary checks and observed elapsed time.
 | --fallback | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Independently executed broader fallback. |
 | --affected-test | text | optional | nargs=1, repeatable | — | — | Known affected test in the fault fixture. |
 | --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence shards`
+
+Merge retained NUnit splits, accounting for retries and missing coverage.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| manifest | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence team`
+
+Share the observations needed to recalculate verification results offline.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence team pack-change`
+
+Pack admitted, pseudonymized observations from a reviewed change.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --baseline | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=2 | — | — |  |
+| --candidate | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=2 | — | — |  |
+| --withhold | choice: baseline, candidate | optional | nargs=1, repeatable | — | — |  |
+| --bundle | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | New shareable file. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence team pack-selection`
+
+Pack the measured inputs of a test selection, with their original digests.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --selected | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Instrumented selected NUnit cohort. |
+| --full | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Independently executed full NUnit cohort. |
+| --fallback | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | Optional broader NUnit cohort. |
+| --affected-test | text | optional | nargs=1, repeatable | — | — |  |
+| --withhold | choice: selected, full, fallback | optional | nargs=1, repeatable | — | — |  |
+| --bundle | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — | New shareable file. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp verification-evidence team replay`
+
+Verify the bundle bytes and recompute the verdict independently of the sender.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| bundle | FuncParamType (custom/nonliteral conversion not validated) | required | nargs=1 | — | — |  |
+| --sha256 | text | required | nargs=1 | — | — | Independently supplied SHA-256 of the shared file. |
+| --output | FuncParamType (custom/nonliteral conversion not validated) | optional | nargs=1 | — | — | New local verdict file. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp vfx`
