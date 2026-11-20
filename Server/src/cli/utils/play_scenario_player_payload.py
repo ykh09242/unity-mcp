@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import stat
 import time
-from typing import Annotated, Final
+from typing import Annotated, Final, NamedTuple
 
 from models.play_scenarios import JobId, PlayScenarioCommand
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -132,11 +132,21 @@ def _regular_path(path: Path, root: Path) -> None:
         raise PlayerPayloadError("Player payload leaves the selected build directory")
 
 
-def _file_identity(info: os.stat_result) -> tuple[int, ...]:
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+class _FileStamp(NamedTuple):
+    identity: tuple[int, int, int, int, int | None]
+    ctime_ns: int
 
 
-def payload_file_stamps(root: Path, deadline: float | None) -> dict[str, tuple[int, ...]]:
+def _file_stamp(info: os.stat_result) -> _FileStamp:
+    # On Windows, lstat can return creation time in st_ctime_ns while fstat
+    # returns the metadata change time. Python 3.11 uses the legacy creation time.
+    birthtime = getattr(info, "st_birthtime_ns", info.st_ctime_ns) if os.name == "nt" else None
+    return _FileStamp(
+        (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, birthtime), info.st_ctime_ns
+    )
+
+
+def payload_file_stamps(root: Path, deadline: float | None) -> dict[str, _FileStamp]:
     """Observe membership and identity with the same traversal bounds as payload verification."""
     check_deadline(deadline)
     actual = {}
@@ -164,7 +174,7 @@ def payload_file_stamps(root: Path, deadline: float | None) -> dict[str, tuple[i
                     if not stat.S_ISREG(info.st_mode):
                         raise PlayerPayloadError("Player payload file changed during traversal")
                     PayloadFile(path=relative, size_bytes=info.st_size, sha256="0" * 64)
-                    actual[relative] = _file_identity(info)
+                    actual[relative] = _file_stamp(info)
                     if len(actual) > PAYLOAD_FILE_LIMIT:
                         raise PlayerPayloadError("Player payload contains too many files")
                 else:
@@ -174,7 +184,7 @@ def payload_file_stamps(root: Path, deadline: float | None) -> dict[str, tuple[i
 
 def verified_payload_files(
     root: Path, payload: PlayerPayload, deadline: float | None = None
-) -> dict[str, tuple[int, ...]]:
+) -> dict[str, _FileStamp]:
     """Hash every inventoried file, binding the opened bytes to their observed file identities."""
     actual = payload_file_stamps(root, deadline)
     if actual.keys() != {entry.path for entry in payload.payload_inventory}:
@@ -189,7 +199,10 @@ def verified_payload_files(
         total = 0
         with path.open("rb") as stream:
             stamp = actual[entry.path]
-            if _file_identity(os.fstat(stream.fileno())) != stamp:
+            opened = _file_stamp(os.fstat(stream.fileno()))
+            if opened.identity != stamp.identity or (
+                os.name != "nt" and opened.ctime_ns != stamp.ctime_ns
+            ):
                 raise PlayerPayloadError("Player payload changed before hashing")
             while chunk := stream.read(65536):
                 check_deadline(deadline)
@@ -197,7 +210,10 @@ def verified_payload_files(
                 if total > entry.size_bytes:
                     raise PlayerPayloadError("Player payload changed while being verified")
                 digest.update(chunk)
-            if _file_identity(os.fstat(stream.fileno())) != stamp:
+            if (
+                _file_stamp(os.fstat(stream.fileno())) != opened
+                or _file_stamp(path.lstat()) != stamp
+            ):
                 raise PlayerPayloadError("Player payload changed while being verified")
         if total != entry.size_bytes or digest.hexdigest() != entry.sha256:
             raise PlayerPayloadError("Player payload content fingerprint mismatch")

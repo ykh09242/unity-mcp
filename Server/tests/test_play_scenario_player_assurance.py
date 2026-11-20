@@ -147,6 +147,36 @@ def test_payload_failures_prevent_child_admission(verified_bundle, child, change
     assert child[1] == []
 
 
+def test_payload_excludes_file_replaced_after_inventory_even_with_matching_bytes(
+    verified_bundle, monkeypatch
+):
+    from cli.utils.play_scenario_player import PlayerBundle
+
+    build, output, manifest = verified_bundle
+    executable = build / manifest["executable"]
+    payload = PlayerBundle.model_validate(manifest).payload
+    assert payload is not None
+    # Give Windows a distinct file creation and modification time before admission.
+    original = executable.stat()
+    mtime = original.st_mtime_ns - 100_000_000_000
+    os.utime(executable, ns=(original.st_atime_ns, mtime))
+    inventory = payload_module.payload_file_stamps
+    assert payload_module.verified_payload_files(build, payload) == inventory(build, None)
+
+    replacement = output.parent / "replacement"
+    replacement.write_bytes(executable.read_bytes())
+    os.utime(replacement, ns=(original.st_atime_ns, mtime))
+
+    def inventory_then_replace(root, deadline):
+        frozen = inventory(root, deadline)
+        replacement.replace(executable)
+        return frozen
+
+    monkeypatch.setattr(payload_module, "payload_file_stamps", inventory_then_replace)
+    with pytest.raises(PlayerPayloadError, match="changed before hashing"):
+        payload_module.verified_payload_files(build, payload)
+
+
 @pytest.mark.parametrize(
     "value",
     [

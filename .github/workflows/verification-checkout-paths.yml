@@ -5,7 +5,9 @@ on:
     branches: [beta]
     paths:
       - .github/workflows/verification-checkout-paths.yml
+      - Server/src/cli/utils/play_scenario_player_payload.py
       - Server/src/services/verification/**
+      - Server/tests/test_play_scenario_player_assurance.py
       - Server/tests/test_verification_checkout_paths.py
       - Server/pyproject.toml
       - Server/uv.lock
@@ -51,7 +53,9 @@ jobs:
         shell: pwsh
         run: |
           $output = Join-Path $env:RUNNER_TEMP 'verification-checkout-paths/pytest-junit.xml'
-          uv run --no-sync python -m pytest -q -o junit_family=xunit1 --junitxml $output tests/test_verification_checkout_paths.py tests/test_verification_checkout_diagnostics.py
+          uv run --no-sync python -m pytest -q -o junit_family=xunit1 --junitxml $output `
+            tests/test_verification_checkout_paths.py tests/test_verification_checkout_diagnostics.py `
+            tests/test_play_scenario_player_assurance.py::test_payload_excludes_file_replaced_after_inventory_even_with_matching_bytes
       - name: Retain Git and filesystem observations
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
