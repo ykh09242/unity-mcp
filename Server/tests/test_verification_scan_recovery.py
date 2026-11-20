@@ -65,6 +65,14 @@ def test_report_failure_preserves_confirmed_export_and_resumes_without_inputs(
         page.unlink()
     output = tmp_path / "retry.jsonl"
     original_open = Path.open
+    # Keep the real generator reachable across the retry, just as a traceback can.
+    retained = []
+    inventory = dependency_diff.inventory
+
+    def retained_inventory(checkpoint):
+        rows = inventory(checkpoint)
+        retained.append(rows)
+        return rows
 
     @contextmanager
     def short_writer(path, mode):
@@ -80,12 +88,14 @@ def test_report_failure_preserves_confirmed_export_and_resumes_without_inputs(
         raise OSError(errno.ENOSPC, "No space left on device")
 
     with monkeypatch.context() as fault:
+        fault.setattr(dependency_diff, "inventory", retained_inventory)
         if failure == "short_write":
             fault.setattr(Path, "open", open_file)
         else:
             fault.setattr(dependency_diff.os, "fsync", full)
         failed = _scan(*scan, output=output)
     assert failed.exit_code == 1
+    assert len(retained) == 1
     assert (
         "Short dependency report write" if failure == "short_write" else "No space left"
     ) in failed.output

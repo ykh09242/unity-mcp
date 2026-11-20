@@ -1,6 +1,6 @@
 """Stream dependency inventories and compare upstream consumers in their original graph."""
 
-from contextlib import closing
+from contextlib import closing, nullcontext
 from hashlib import sha256
 import json
 import os
@@ -214,8 +214,11 @@ def publish_rows(output, rows):
     digest = sha256()
     with TemporaryDirectory(dir=path.parent) as staging:
         temporary = safe_local_path(Path(staging) / "report")
-        with temporary.open("xb") as stream:
-            for row in rows:
+        iterator = iter(rows)
+        # A suspended inventory or comparison holds a read transaction on its checkpoints.
+        source = closing(iterator) if hasattr(iterator, "close") else nullcontext(iterator)
+        with source as records, temporary.open("xb") as stream:
+            for row in records:
                 encoded = (json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n").encode()
                 if stream.write(encoded) != len(encoded):
                     raise OSError("Short dependency report write")
