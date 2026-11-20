@@ -132,12 +132,14 @@ def _regular_path(path: Path, root: Path) -> None:
         raise PlayerPayloadError("Player payload leaves the selected build directory")
 
 
-def verify_player_payload(
-    root: Path, payload: PlayerPayload, deadline: float | None = None
-) -> None:
-    """Stream actual file bytes and reject missing/extra files at each launch boundary."""
+def _file_identity(info: os.stat_result) -> tuple[int, ...]:
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def payload_file_stamps(root: Path, deadline: float | None) -> dict[str, tuple[int, ...]]:
+    """Observe membership and identity with the same traversal bounds as payload verification."""
     check_deadline(deadline)
-    actual: set[str] = set()
+    actual = {}
     pending = [root]
     directories = 1
     while pending:
@@ -158,13 +160,24 @@ def verify_player_payload(
                 elif path.is_file():
                     if relative == "scenario-bundle.json":
                         continue
-                    PayloadFile(path=relative, size_bytes=path.stat().st_size, sha256="0" * 64)
-                    actual.add(relative)
+                    info = path.lstat()
+                    if not stat.S_ISREG(info.st_mode):
+                        raise PlayerPayloadError("Player payload file changed during traversal")
+                    PayloadFile(path=relative, size_bytes=info.st_size, sha256="0" * 64)
+                    actual[relative] = _file_identity(info)
                     if len(actual) > PAYLOAD_FILE_LIMIT:
                         raise PlayerPayloadError("Player payload contains too many files")
                 else:
                     raise PlayerPayloadError("Player payload contains a nonregular file")
-    if actual != {entry.path for entry in payload.payload_inventory}:
+    return actual
+
+
+def verified_payload_files(
+    root: Path, payload: PlayerPayload, deadline: float | None = None
+) -> dict[str, tuple[int, ...]]:
+    """Hash every inventoried file, binding the opened bytes to their observed file identities."""
+    actual = payload_file_stamps(root, deadline)
+    if actual.keys() != {entry.path for entry in payload.payload_inventory}:
         raise PlayerPayloadError("Player payload contains missing or extra files")
     for entry in payload.payload_inventory:
         check_deadline(deadline)
@@ -175,11 +188,24 @@ def verify_player_payload(
         digest = sha256()
         total = 0
         with path.open("rb") as stream:
+            stamp = actual[entry.path]
+            if _file_identity(os.fstat(stream.fileno())) != stamp:
+                raise PlayerPayloadError("Player payload changed before hashing")
             while chunk := stream.read(65536):
                 check_deadline(deadline)
                 total += len(chunk)
                 if total > entry.size_bytes:
                     raise PlayerPayloadError("Player payload changed while being verified")
                 digest.update(chunk)
+            if _file_identity(os.fstat(stream.fileno())) != stamp:
+                raise PlayerPayloadError("Player payload changed while being verified")
         if total != entry.size_bytes or digest.hexdigest() != entry.sha256:
             raise PlayerPayloadError("Player payload content fingerprint mismatch")
+    return actual
+
+
+def verify_player_payload(
+    root: Path, payload: PlayerPayload, deadline: float | None = None
+) -> None:
+    """Stream actual file bytes and reject missing/extra files at each launch boundary."""
+    verified_payload_files(root, payload, deadline)

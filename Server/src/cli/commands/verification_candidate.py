@@ -5,6 +5,11 @@ from pathlib import Path
 
 import click
 
+from cli.commands.verification_candidate_portable import (
+    export_candidate,
+    register_candidate,
+    verify_candidate,
+)
 from cli.commands.verification_input_chunks import input_chunks
 from cli.utils.play_scenario_analysis_io import write_new
 
@@ -15,6 +20,9 @@ def verification_candidate():
 
 
 verification_candidate.add_command(input_chunks)
+verification_candidate.add_command(export_candidate)
+verification_candidate.add_command(verify_candidate)
+verification_candidate.add_command(register_candidate)
 
 
 @verification_candidate.command("draft")
