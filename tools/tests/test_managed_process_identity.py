@@ -21,9 +21,9 @@ def installed_versions(root):
     ]
 
 
-@pytest.mark.parametrize("role", ["launcher", "server"])
-@pytest.mark.parametrize("identity", ["reused", "current", "unknown", "legacy"])
-def test_managed_recovery_fences_creation_identity(tmp_path, role, identity):
+@pytest.fixture(scope="module")
+def identity_harness(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("identity-harness")
     dotnet = shutil.which("dotnet")
     if not dotnet:
         pytest.skip("Existing .NET SDK required for process identity regression")
@@ -98,8 +98,14 @@ def test_managed_recovery_fences_creation_identity(tmp_path, role, identity):
         ),
         "utf-8",
     )
+    return [dotnet, str(output)]
+
+
+@pytest.mark.parametrize("role", ["launcher", "server"])
+@pytest.mark.parametrize("identity", ["reused", "current", "unknown", "legacy"])
+def test_managed_recovery_fences_creation_identity(identity_harness, tmp_path, role, identity):
     result = subprocess.run(
-        [dotnet, str(output), str(tmp_path), role, identity],
+        [*identity_harness, str(tmp_path), role, identity],
         capture_output=True,
         text=True,
         timeout=20,
@@ -107,3 +113,21 @@ def test_managed_recovery_fences_creation_identity(tmp_path, role, identity):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"PASS {role} {identity}" in result.stdout
+
+
+def test_unusable_identity_directory_exits_with_diagnostic(identity_harness, tmp_path):
+    blocked_root = tmp_path / "file-in-place-of-directory"
+    blocked_root.touch()
+
+    result = subprocess.run(
+        [*identity_harness, str(blocked_root), "launcher", "current"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "at System.IO.Directory.CreateDirectory" in result.stderr
+    assert "at MCPForUnity.Editor.Services.Server.PidFileManager.GetPidFilePath" in result.stderr
+    assert "PASS" not in result.stdout

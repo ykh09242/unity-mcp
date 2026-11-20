@@ -10,19 +10,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize(
-    "scenario",
-    [
-        "retirement",
-        "replacement",
-        "verification",
-        "verification-compatibility",
-        "resume",
-        "resume-owner",
-        "resume-current-fault",
-    ],
-)
-def test_manager_and_locator_retire_previous_owners(tmp_path, scenario):
+@pytest.fixture(scope="module")
+def manager_harness(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("manager-harness")
     dotnet = shutil.which("dotnet")
     if not dotnet:
         pytest.skip("Existing .NET SDK required for the manager ownership regression")
@@ -85,8 +75,24 @@ def test_manager_and_locator_retire_previous_owners(tmp_path, scenario):
         ),
         encoding="utf-8",
     )
+    return [dotnet, str(output)]
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "retirement",
+        "replacement",
+        "verification",
+        "verification-compatibility",
+        "resume",
+        "resume-owner",
+        "resume-current-fault",
+    ],
+)
+def test_manager_and_locator_retire_previous_owners(manager_harness, scenario):
     result = subprocess.run(
-        [dotnet, str(output), scenario],
+        [*manager_harness, scenario],
         check=False,
         capture_output=True,
         text=True,
@@ -94,3 +100,19 @@ def test_manager_and_locator_retire_previous_owners(tmp_path, scenario):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"PASS manager and locator {scenario}" in result.stdout
+
+
+def test_unknown_manager_scenario_exits_with_diagnostic(manager_harness):
+    result = subprocess.run(
+        [*manager_harness, "unknown-scenario"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "System.ArgumentException" in result.stderr
+    assert "unknown-scenario" in result.stderr
+    assert "at ConnectionLifecycleHarness.RunAsync" in result.stderr
+    assert "PASS" not in result.stdout

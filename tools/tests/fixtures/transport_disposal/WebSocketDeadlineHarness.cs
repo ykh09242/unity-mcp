@@ -38,6 +38,19 @@ internal static class WebSocketDeadlineHarness
 {
     public static int Main()
     {
+        try
+        {
+            return RunTests();
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int RunTests()
+    {
         int failures = 0;
         Type type = typeof(MCPForUnityTests.Editor.Services.CooperativeCancellationTests);
         foreach (MethodInfo method in type.GetMethods())

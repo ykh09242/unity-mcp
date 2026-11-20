@@ -56,7 +56,21 @@ internal static class ManagerRetirementHarness
             throw new Exception(message);
     }
 
-    private static async Task Main(string[] args)
+    private static async Task<int> Main(string[] args)
+    {
+        try
+        {
+            await RunAsync(args);
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static async Task RunAsync(string[] args)
     {
         if (args.Length != 0 && args[0] != "retirement")
         {

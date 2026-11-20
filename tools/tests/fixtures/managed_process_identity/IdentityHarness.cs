@@ -84,7 +84,21 @@ internal sealed class RecoveryBoundary
 
 internal static class IdentityHarness
 {
-    private static void Main(string[] args)
+    private static int Main(string[] args)
+    {
+        try
+        {
+            Run(args);
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static void Run(string[] args)
     {
         const int port = 59981;
         const string token = "owned-identity-token";

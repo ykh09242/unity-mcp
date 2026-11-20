@@ -234,6 +234,19 @@ internal static class JournalHarness
 
     public static int Main(string[] args)
     {
+        try
+        {
+            return Run(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int Run(string[] args)
+    {
         if (args.Length == 3)
             return Child(args[0], args[1], args[2]);
         string root = Path.GetFullPath(args[0]);

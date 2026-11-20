@@ -37,7 +37,21 @@ internal sealed class SendDisposalHarness
         _forcedCommandSettlement = _cleanup.Task;
     }
 
-    private static async Task Main()
+    private static async Task<int> Main()
+    {
+        try
+        {
+            await RunAsync();
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static async Task RunAsync()
     {
         for (int iteration = 0; iteration < 25; iteration++)
         {

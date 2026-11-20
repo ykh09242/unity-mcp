@@ -12,6 +12,19 @@ internal static class ProcessHarness
 
     public static int Main(string[] args)
     {
+        try
+        {
+            return Run(args);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static int Run(string[] args)
+    {
         if (args.Length > 0 && args[0] == "--child")
             return Child(args);
         string workRoot = args[0];

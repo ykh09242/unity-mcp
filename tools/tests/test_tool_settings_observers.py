@@ -22,8 +22,9 @@ def stable_directories(root):
     ]
 
 
-@pytest.mark.parametrize("case", ["transitions", "dispose", "pending"])
-def test_status_observers_cannot_interrupt_owned_work(tmp_path, case):
+@pytest.fixture(scope="module")
+def observer_harness(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("observer-harness")
     dotnet = shutil.which("dotnet")
     if not dotnet:
         pytest.skip("Existing .NET SDK required for the tool-settings observer regression")
@@ -97,8 +98,25 @@ def test_status_observers_cannot_interrupt_owned_work(tmp_path, case):
         ),
         encoding="utf-8",
     )
+    return [dotnet, str(output)]
+
+
+@pytest.mark.parametrize("case", ["transitions", "dispose", "pending"])
+def test_status_observers_cannot_interrupt_owned_work(observer_harness, case):
     result = subprocess.run(
-        [dotnet, str(output), case], check=False, capture_output=True, text=True, timeout=20
+        [*observer_harness, case], check=False, capture_output=True, text=True, timeout=20
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"PASS {case}" in result.stdout
+
+
+def test_unknown_observer_case_exits_with_diagnostic(observer_harness):
+    result = subprocess.run(
+        [*observer_harness, "unknown-case"], check=False, capture_output=True, text=True, timeout=20
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "System.ArgumentException" in result.stderr
+    assert "unknown-case" in result.stderr
+    assert "at ObserverHarness." in result.stderr
+    assert "PASS" not in result.stdout

@@ -27,15 +27,36 @@ internal static class ObserverHarness
     private static JArray Tools => new(new JObject { ["name"] = "owned_probe" });
     private static JObject Enabled => new() { ["owned_probe"] = true };
 
-    private static async Task Main(string[] args)
+    private static async Task<int> Main(string[] args)
     {
-        if (args[0] == "transitions")
-            await Transitions();
-        else
-            await Registration(args[0] == "pending");
-        foreach (string warning in MCPForUnity.Editor.Helpers.McpLog.Warnings)
-            Require(!warning.Contains("owned-sensitive-marker"), "Observer diagnostics must not expose exception messages.");
-        Console.WriteLine("PASS " + args[0]);
+        try
+        {
+            if (args.Length != 1)
+                throw new ArgumentException("Expected one observer case: transitions, dispose, or pending.");
+            switch (args[0])
+            {
+                case "transitions":
+                    await Transitions();
+                    break;
+                case "dispose":
+                    await Registration(false);
+                    break;
+                case "pending":
+                    await Registration(true);
+                    break;
+                default:
+                    throw new ArgumentException("Unknown observer case: " + args[0]);
+            }
+            foreach (string warning in MCPForUnity.Editor.Helpers.McpLog.Warnings)
+                Require(!warning.Contains("owned-sensitive-marker"), "Observer diagnostics must not expose exception messages.");
+            Console.WriteLine("PASS " + args[0]);
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
     }
 
     private static async Task Transitions()
