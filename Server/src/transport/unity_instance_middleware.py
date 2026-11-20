@@ -39,7 +39,7 @@ from services.execution_receipt_identity import (
 from transport.local_project_context import full_hash
 from transport.local_http_target import configured_default, select_local_session
 from services.registry import get_registered_tools
-from services.registry.capability_catalog import CAMERA_INVENTORY_TOOL
+from services.registry.capability_catalog import CAMERA_INVENTORY_TOOL, CAMERA_INVENTORY_URI
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 from services.registry.operation_invocation import trusted_tool, wrap_tool
 from services.verification.edits import after_operation
@@ -1127,6 +1127,11 @@ class UnityInstanceMiddleware(Middleware):
         """Inject active Unity instance into resource context if available."""
         uri = str(getattr(context.message, "uri", ""))
         await authorize_remote_resource(uri)
+        if uri == CAMERA_INVENTORY_URI:
+            from services.resources.cameras import projected_camera_target
+
+            if projected_camera_target(context.fastmcp_context) is not None:
+                return await call_next(context)
         if uri == "mcpforunity://instances":
             # Discovery needs the principal, even if the session's selected Editor is offline.
             await self._inject_request_identity(context.fastmcp_context)

@@ -8,6 +8,7 @@ import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import AuthorizationError, ToolError
+from fastmcp.resources import ResourceResult
 from fastmcp.server.middleware import Middleware
 from mcp.shared.exceptions import MCPError
 
@@ -104,7 +105,10 @@ async def test_stdio_fixed_read_uses_the_explicitly_selected_editor(monkeypatch)
             SimpleNamespace(id="Fixture@hash", hash="hash", name="Fixture", port=6401),
         ]
 
+    dispatches = []
+
     async def selected_editor(command, params, *, instance_id):
+        dispatches.append((command, params, instance_id))
         return {
             "success": (command, params, instance_id) == ("get_cameras", {}, "Fixture@hash"),
             "data": INVENTORY,
@@ -113,7 +117,13 @@ async def test_stdio_fixed_read_uses_the_explicitly_selected_editor(monkeypatch)
     monkeypatch.setattr(UnityInstanceMiddleware, "_discover_instances", discover)
     monkeypatch.setattr(cameras, "async_send_command_with_retry", selected_editor)
     async with Client(inventory_server(monkeypatch), mode="legacy", cache=False) as client:
-        fixed = (await client.call_tool(TOOL, SELECT)).structured_content
+        with pytest.raises(ToolError):
+            await client.call_tool(TOOL, {})
+        assert dispatches == []
+        fixed = (
+            await client.call_tool(TOOL, SELECT, meta={"unity_instance": "Other@other"})
+        ).structured_content
+        assert dispatches == [("get_cameras", {}, "Fixture@hash")]
         assert fixed == await read_inventory(client)
         assert fixed["success"] is True and fixed["data"] == INVENTORY
 
@@ -127,6 +137,10 @@ async def test_stdio_fixed_read_uses_the_explicitly_selected_editor(monkeypatch)
         (True, False, "allow"),
         (True, True, "hidden"),
         (True, True, "denied"),
+        (True, True, "read_denied"),
+        (True, True, "redacted"),
+        (True, True, "scalar"),
+        (True, True, "retargeted"),
         (True, True, "native_disabled"),
     ],
 )
@@ -151,8 +165,26 @@ async def test_hosted_inventory_respects_resource_policy_and_both_credentials(
                 raise AuthorizationError("Camera resource denied by fixture")
 
         async def on_read_resource(self, context, call_next):
+            if str(context.message.uri) != URI:
+                return await call_next(context)
             await self.check_resource_access(context)
-            return await call_next(context)
+            if resource_policy == "read_denied":
+                raise AuthorizationError("Camera inventory denied at read time")
+            if resource_policy == "scalar":
+                return ResourceResult("null")
+            if resource_policy == "retargeted":
+                await context.fastmcp_context.set_state(
+                    "unity_instance", "Other@other", serializable=False
+                )
+            result = await call_next(context)
+            if resource_policy == "redacted":
+                (content,) = result.contents
+                filtered = json.loads(content.content)
+                filtered["data"]["unityCameras"] = []
+                del filtered["data"]["brain"]
+                filtered["policy"] = "redacted"
+                return ResourceResult(json.dumps(filtered))
+            return result
 
     server.add_middleware(CameraResourcePolicy())
     if resource_policy == "native_disabled":
@@ -176,9 +208,18 @@ async def test_hosted_inventory_respects_resource_policy_and_both_credentials(
         "plugin": {"unity_mcp_permissions": ["read" if plugin_read else "run"]},
     }
     app = server.http_app(stateless_http=True, json_response=True)
+    wire_methods = []
+
+    async def record_method(request):
+        if request.method == "POST":
+            wire_methods.append(json.loads(request.content)["method"])
 
     def client_factory(**kwargs):
-        return httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), **kwargs)
+        return httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
+            event_hooks={"request": [record_method]},
+            **kwargs,
+        )
 
     transport = StreamableHttpTransport("http://fixture/mcp", httpx_client_factory=client_factory)
     async with permission_service(monkeypatch, claims) as fixture:
@@ -194,16 +235,28 @@ async def test_hosted_inventory_respects_resource_policy_and_both_credentials(
                 if request_read:
                     names = {tool.name for tool in await client.list_tools()}
                     assert (TOOL in names) is (resource_policy not in {"hidden", "denied"})
-                if not request_read or resource_policy == "denied":
+                if not request_read or resource_policy in {"denied", "read_denied"}:
                     with pytest.raises(MCPError):
                         await read_inventory(client)
                 elif resource_policy == "hidden":
                     assert URI not in {str(item.uri) for item in await client.list_resources()}
 
-                if request_read and plugin_read and resource_policy in {"allow", "native_disabled"}:
+                if (
+                    request_read
+                    and plugin_read
+                    and resource_policy in {"allow", "native_disabled", "redacted"}
+                ):
+                    wire_methods.clear()
                     fixed = (await client.call_tool(TOOL, SELECT)).structured_content
+                    assert "tools/call" in wire_methods and "resources/read" not in wire_methods
+                    assert [(sent["name"], sent["params"]) for sent in command_hub.sent] == [
+                        ("get_cameras", {})
+                    ]
                     assert fixed == await read_inventory(client)
-                    assert fixed["success"] is (resource_policy == "allow")
+                    assert fixed["success"] is (resource_policy != "native_disabled")
+                    if resource_policy == "redacted":
+                        assert fixed["policy"] == "redacted"
+                        assert fixed["data"]["unityCameras"] == [] and "brain" not in fixed["data"]
                 else:
                     with pytest.raises((ToolError, MCPError)):
                         await client.call_tool(TOOL, SELECT)

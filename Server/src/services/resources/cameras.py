@@ -1,4 +1,8 @@
-from fastmcp import Context
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+from fastmcp import Context, FastMCP
 from fastmcp.exceptions import AuthorizationError
 
 from models import MCPResponse
@@ -11,6 +15,28 @@ from services.tools import get_unity_instance_from_context
 from transport.protocol import internal_resource_catalog
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+
+
+_projected_camera_target: ContextVar[tuple[FastMCP, str] | None] = ContextVar(
+    "projected_camera_target", default=None
+)
+
+
+@contextmanager
+def preserve_camera_inventory_target(server: FastMCP, instance: str) -> Iterator[None]:
+    """Keep the tool request's resolved target through the nested resource read."""
+    token = _projected_camera_target.set((server, instance))
+    try:
+        yield
+    finally:
+        _projected_camera_target.reset(token)
+
+
+def projected_camera_target(ctx: Context) -> str | None:
+    scoped = _projected_camera_target.get()
+    if scoped is not None and ctx.fastmcp is scoped[0]:
+        return scoped[1]
+    return None
 
 
 async def camera_inventory_available(ctx: Context) -> bool:
@@ -42,6 +68,9 @@ async def camera_inventory_available(ctx: Context) -> bool:
 async def get_cameras(ctx: Context) -> MCPResponse:
     """Get all cameras in the scene."""
     unity_instance = await get_unity_instance_from_context(ctx)
+    projected = projected_camera_target(ctx)
+    if projected is not None and projected != unity_instance:
+        raise AuthorizationError("Scene camera inventory target changed")
     response = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,

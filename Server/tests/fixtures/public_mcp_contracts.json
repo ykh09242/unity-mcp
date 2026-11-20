@@ -7152,70 +7152,7 @@
             "type": "object"
           },
           "outputSchema": {
-            "properties": {
-              "code": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "data": {
-                "anyOf": [
-                  {},
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "error": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "hint": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "message": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "success": {
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "success"
-            ],
+            "additionalProperties": true,
             "type": "object"
           }
         },
@@ -34266,70 +34203,7 @@
             "type": "object"
           },
           "outputSchema": {
-            "properties": {
-              "code": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "data": {
-                "anyOf": [
-                  {},
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "error": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "hint": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "message": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "success": {
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "success"
-            ],
+            "additionalProperties": true,
             "type": "object"
           }
         },
