@@ -49,7 +49,9 @@ candidate bytes must match any existing draft entry.
 
 Review `unresolved` for dynamic keys, unconfirmed edges, mismatched asset
 identities, unavailable diagnostics and partial traversal. Provider issues
-retain the asset path, reason and source line when available. Static graph
+retain the asset path, reason and source line when available. Edges
+with unsupported owners or owners outside the confirmed traversal remain
+unresolved under their recorded edge IDs. Static graph
 collection has partial coverage. The report records the original graph revision
 and scope, and identifies the unverified binding between that Editor capture and
 the Git commit. A graph capture can represent another Editor state with the

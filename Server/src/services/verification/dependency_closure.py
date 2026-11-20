@@ -192,8 +192,10 @@ def propose_dependency_closure(project: Path, evidence, root, pages, diagnostics
     paths = {root}
     for edge in edges:
         owner = edge.get("owner")
-        if isinstance(owner, str) and NODE.fullmatch(owner):
-            by_owner[owner].append(edge)
+        if not isinstance(owner, str) or not NODE.fullmatch(owner):
+            gaps.append({"edge_id": edge["id"], "reason": "unsupported_edge_owner"})
+            continue
+        by_owner[owner].append(edge)
         for path in (edge.get("source_path"), edge.get("target_path")):
             if _asset(path):
                 paths.add(path)
@@ -256,7 +258,7 @@ def propose_dependency_closure(project: Path, evidence, root, pages, diagnostics
         proposals.append({"path": root, "guid": root_node[6:], "kind": "explicit_root", "depth": 0})
     while queue:
         owner, parent_edge, depth = queue.popleft()
-        for edge in sorted(by_owner[owner], key=lambda row: row["id"]):
+        for edge in sorted(by_owner.pop(owner, ()), key=lambda row: row["id"]):
             source, target, path = selected[owner], edge.get("target"), edge.get("target_path")
             reason = None
             if edge.get("source_path") != source or edge.get("stale") is not False:
@@ -295,6 +297,9 @@ def propose_dependency_closure(project: Path, evidence, root, pages, diagnostics
                         proposals.append(traversal)
             if reason:
                 gaps.append({"path": source, "edge_id": edge["id"], "reason": reason})
+    for owner in sorted(by_owner):
+        for edge in sorted(by_owner[owner], key=lambda row: row["id"]):
+            gaps.append({"owner": owner, "edge_id": edge["id"], "reason": "unreachable_edge_owner"})
     gaps.extend(_diagnostics(diagnostics, identity, selected))
     expanded = {**evidence.inputs, **hashes}
     validate_input_paths(expanded)

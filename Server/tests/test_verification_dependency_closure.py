@@ -2,8 +2,10 @@
 
 import json
 from hashlib import sha256
+from types import SimpleNamespace
 
 from click.testing import CliRunner
+import pytest
 
 from cli.main import cli
 from services.reference_graph.queries import GraphQueries
@@ -11,10 +13,19 @@ from services.reference_graph.store import Edge, GraphScope, GraphStore
 from services.reference_graph.workspace import GraphWorkspace
 from services.verification.git_draft import git_draft
 from services.verification.input_chunks import source_revision
+from services.verification.reproduce import _check_closure
 from tests.test_verification_git_draft import git
 
 
-def test_committed_scene_closure_and_unresolved_dynamic_key(tmp_path):
+@pytest.mark.parametrize(
+    ("extra_owner", "reason"),
+    [
+        (None, "dynamic_key"),
+        ("external:other", "unsupported_edge_owner"),
+        ("asset:" + "a" * 32, "unreachable_edge_owner"),
+    ],
+)
+def test_committed_scene_closure_preserves_unresolved_evidence(tmp_path, extra_owner, reason):
     project = tmp_path / "project"
     (project / "Assets").mkdir(parents=True)
     paths = ["Assets/Room.unity", "Assets/Door.prefab", "Assets/Door.mat", "Assets/Oak.png"]
@@ -46,10 +57,11 @@ def test_committed_scene_closure_and_unresolved_dynamic_key(tmp_path):
             provider="unity",
             coverage="direct_asset_database_dependencies",
         )
-    generation = store.observe(nodes[0], "code", "fixture", path=paths[0])
-    workspace.publish_events(
-        "fixture", nodes[0], generation, [{"reason": "dynamic_key", "line": 25}]
-    )
+    if extra_owner is None:
+        generation = store.observe(nodes[0], "code", "fixture", path=paths[0])
+        workspace.publish_events(
+            "fixture", nodes[0], generation, [{"reason": "dynamic_key", "line": 25}]
+        )
     workspace.release("fixture")
     queries = GraphQueries(store)
     args = [
@@ -74,6 +86,8 @@ def test_committed_scene_closure_and_unresolved_dynamic_key(tmp_path):
     page_files = []
     for index in range(16):
         result = queries.impact(nodes[0], direction="outgoing", limit=1, cursor=cursor)
+        if extra_owner and result["edges"] and result["edges"][0]["depth"] == 2:
+            result["edges"].append({**result["edges"][0], "owner": extra_owner, "id": "extra-edge"})
         page_files.append(archive(f"page{index}", result))
         cursor = result["next_cursor"]
         if not cursor:
@@ -95,7 +109,14 @@ def test_committed_scene_closure_and_unresolved_dynamic_key(tmp_path):
     assert [row["path"] for row in rows] == paths[1:]
     assert [row["source_path"] for row in rows] == paths[:-1]
     assert [row["via"] for row in rows] == [None, rows[0]["edge_id"], rows[1]["edge_id"]]
-    assert report["unresolved"] == [{"path": paths[0], "reason": "dynamic_key", "line": 25}]
+    gap = (
+        {"path": paths[0], "reason": reason, "line": 25}
+        if extra_owner is None
+        else {"edge_id": "extra-edge", "reason": reason}
+    )
+    if reason == "unreachable_edge_owner":
+        gap["owner"] = extra_owner
+    assert report["unresolved"] == [gap]
     expected = {
         p: sha256((project / p).read_bytes()).hexdigest()
         for asset in paths[1:]
@@ -105,4 +126,13 @@ def test_committed_scene_closure_and_unresolved_dynamic_key(tmp_path):
     assert report["expanded_source_revision"] == source_revision(
         {**draft["candidate"]["inputs"], **expected}
     )
+    raw = full.output.encode()
+    side = SimpleNamespace(
+        closure_sha256=sha256(raw).hexdigest(),
+        project_commit=report["candidate_commit"],
+        source_revision=report["expanded_source_revision"],
+    )
+    manifest = SimpleNamespace(inputs={**draft["candidate"]["inputs"], **expected})
+    with pytest.raises(ValueError, match="^reproduction_dependency_closure_unresolved$"):
+        _check_closure(raw, side, manifest)
     assert run(page_files[:1] + page_files[2:]).exit_code != 0
