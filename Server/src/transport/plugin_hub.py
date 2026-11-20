@@ -2090,7 +2090,11 @@ class PluginHub(WebSocketEndpoint):
                 retained_bytes=prepared.retained_bytes,
                 control_reserve=control,
             )
-        ):
+        ) as granted:
+            if owner is None and config.phase_diagnostics:
+                phase_diagnostics.scheduler_granted(
+                    command_type, getattr(granted, "queue_ms", None)
+                )
             return await cls._send_command_response_admitted(
                 session_id,
                 command_type,

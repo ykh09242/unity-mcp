@@ -16,6 +16,7 @@ import uuid
 
 from core.config import config
 from core.phase_log_files import PhaseLogFile
+from core import verification_timing
 
 CAPABILITY = "phase_timing_v1"
 STAGES = ("admission", "preflight", "send", "response", "return")
@@ -252,8 +253,11 @@ offer = _sink.offer
 
 
 class Trace:
-    def __init__(self, command):
+    def __init__(self, command, *, sampled=True, verification=None):
         self.command = command
+        self.sampled = sampled
+        self.verification = verification
+        self.scheduler_queue_ms = None
         self.correlation = new_token()
         self.started = self.last = clock()
         self.stage = "admission"
@@ -275,20 +279,26 @@ class Trace:
         try:
             self.step(self.stage)
             self.closed = True
-            offer(
-                {
-                    "event": "server_phase_timing",
-                    "correlation": self.correlation,
-                    "sample_every": 64,
-                    "native_requested": self.native_requested,
-                    "outcome": outcome,
-                    "total_ms": (self.last - self.started) * 1000,
-                    **self.elapsed,
-                }
-            )
+            row = {
+                "correlation": self.correlation,
+                "native_requested": self.native_requested,
+                "outcome": outcome,
+                "total_ms": (self.last - self.started) * 1000,
+                **self.elapsed,
+            }
+            if self.verification is not None:
+                command_row = (
+                    row
+                    if self.scheduler_queue_ms is None
+                    else {**row, "scheduler_queue_ms": self.scheduler_queue_ms}
+                )
+                self.verification.command(self.command, command_row)
+            if self.sampled:
+                offer({"event": "server_phase_timing", "sample_every": 64, **row})
         finally:
             self.closed = True
             self.command = None
+            self.verification = None
             self.correlation = None
 
 
@@ -302,9 +312,12 @@ def invocation(command):
     # No clock/token/owner allocation when disabled or unsampled.
     trace = token = None
     try:
-        if config.phase_diagnostics and sample():
-            trace = Trace(command)
-            token = _owner.set(trace)
+        if config.phase_diagnostics:
+            sampled = sample()
+            verification = verification_timing.current()
+            if sampled or verification is not None:
+                trace = Trace(command, sampled=sampled, verification=verification)
+                token = _owner.set(trace)
     except Exception:
         trace = None
     if token is None and _owner.get() is not None:
@@ -335,6 +348,17 @@ def step(command, stage):
             trace.step(stage)
     except Exception:
         pass
+
+
+def scheduler_granted(command, queue_ms):
+    trace = current()
+    if (
+        trace is not None
+        and trace.verification is not None
+        and trace.command == command
+        and queue_ms is not None
+    ):
+        trace.scheduler_queue_ms = (trace.scheduler_queue_ms or 0) + queue_ms
 
 
 def request(command, negotiated):

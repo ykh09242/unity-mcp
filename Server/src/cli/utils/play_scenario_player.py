@@ -16,6 +16,7 @@ import time
 from typing import Annotated, Final, Literal
 from uuid import uuid4
 
+from core import verification_timing
 from models.play_scenarios import (
     JobId,
     PlayScenario,
@@ -492,6 +493,8 @@ def _run_player(options: PlayerRunOptions, dispatch: PlayerDispatch) -> PlayerOu
     (directory / "definition.json").write_text(bundle.definition_json + "\n", encoding="utf-8")
     check_deadline(options.deadline_monotonic)
     process_started_unix_ms = int(time.time() * 1000)
+    timing = verification_timing.current()
+    launch_clock = time.monotonic() if timing is not None else None
     dispatch.state = "dispatching"
     try:
         process = subprocess.Popen(
@@ -518,6 +521,8 @@ def _run_player(options: PlayerRunOptions, dispatch: PlayerDispatch) -> PlayerOu
             dispatch.state = "refused"
         raise
     dispatch.state = "started"
+    if timing is not None:
+        timing.record("process_spawn", (time.monotonic() - launch_clock) * 1000, command.job_id)
     log_capture = _LogCapture(process, directory / "player.log")
     capture = Thread(target=log_capture.drain, daemon=True)
     observer = (
@@ -559,6 +564,17 @@ def _run_player(options: PlayerRunOptions, dispatch: PlayerDispatch) -> PlayerOu
             try:
                 if observer is not None:
                     observer.observe(directory / "progress.json")
+                    if (
+                        timing is not None
+                        and launch_clock is not None
+                        and observer.last is not None
+                    ):
+                        timing.record(
+                            "launch_to_first_observed_progress",
+                            (time.monotonic() - launch_clock) * 1000,
+                            command.job_id,
+                        )
+                        launch_clock = None
                     if (
                         options.soak is not None
                         and not native_clock_observed
@@ -626,7 +642,8 @@ def _run_player(options: PlayerRunOptions, dispatch: PlayerDispatch) -> PlayerOu
             ).encode("utf-8")
             if len(encoded_evidence) > 65536:
                 raise PlayerLaunchError("Owned process evidence exceeds its byte bound", directory)
-            (directory / "process.json").write_bytes(encoded_evidence + b"\n")
+            with verification_timing.interval("process_evidence_write", command.job_id):
+                (directory / "process.json").write_bytes(encoded_evidence + b"\n")
         finally:
             if capture.ident is not None:
                 capture.join(timeout=5)
@@ -651,12 +668,13 @@ def _run_player(options: PlayerRunOptions, dispatch: PlayerDispatch) -> PlayerOu
         observer.observe(directory / "progress.json")
         diagnostics.update(observer.diagnostics())
     try:
-        if options.soak is not None:
-            from cli.utils.play_scenario_soak import read_soak_json
+        with verification_timing.interval("final_report_read", command.job_id):
+            if options.soak is not None:
+                from cli.utils.play_scenario_soak import read_soak_json
 
-            raw = read_soak_json(directory / "run.json", REPORT_LIMIT)
-        else:
-            raw = _read_json(directory / "run.json", REPORT_LIMIT)
+                raw = read_soak_json(directory / "run.json", REPORT_LIMIT)
+            else:
+                raw = _read_json(directory / "run.json", REPORT_LIMIT)
         report = PlayerFinalReport.model_validate(raw)
         if suite_identity is not None and raw.get("player_suite") != suite_identity:
             raise PlayerLaunchError("Player final report frozen suite child identity mismatch")

@@ -2,6 +2,7 @@
 
 import json
 import re
+from time import monotonic
 
 import anyio
 import click
@@ -72,11 +73,16 @@ async def send_composed_tool(name, action, options, config):
             # Legacy MCP wire avoids automatic schema negotiation re-dispatch.
             async with DiagnosticClient(config, "legacy", factory, headers) as client:
                 with anyio.fail_after(max(0.001, deadline - anyio.current_time())):
+                    read_report = name == "manage_verification" and action == "report"
+                    if read_report:
+                        requested = monotonic()
                     result = await client.call_tool_mcp(
                         name,
                         {"action": action, "options": options},
                         meta={"unity_instance": config.unity_instance},
                     )
+                    if read_report:
+                        response_ms = (monotonic() - requested) * 1000
         wire = result.structured_content
         if (
             wire is None
@@ -93,6 +99,12 @@ async def send_composed_tool(name, action, options, config):
                 if wire.get("success") is False
                 else {"success": False, "error": "MCP tool rejected the request."}
             )
+        if (
+            read_report
+            and isinstance(wire.get("data"), dict)
+            and isinstance(wire["data"].get("timing"), dict)
+        ):
+            wire["data"]["timing"]["client_report_roundtrip_ms"] = response_ms
         return wire
     except UnityCommandError:
         raise

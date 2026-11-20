@@ -1,6 +1,6 @@
 # Local phase diagnostics
 
-Set `UNITY_MCP_PHASE_DIAGNOSTICS=1` for the server process and enable the Editor's existing command log recording. Both are opt-in. Server admissions sample one in 64 invocations; the generated random token is carried only in the negotiated `phase_timing_v1` internal WebSocket envelope. Public tool parameters and results are unchanged. Legacy/stdio connections retain their existing local timing; cross-process joins currently require HTTP/WebSocket.
+Set `UNITY_MCP_PHASE_DIAGNOSTICS=1` for the server process and enable the Editor's existing command log recording. Both are opt-in. Server log admissions sample one in 64 invocations. The generated random token is carried in the negotiated `phase_timing_v1` internal WebSocket envelope. Verification reports can also carry run-owned observations. Legacy/stdio connections retain their existing local timing. Cross-process joins currently require HTTP/WebSocket.
 
 Each invocation owns its context and closes it on return, failure or cancellation. Readiness probes cannot claim the requested command's token. A shared read that outlives its originating observer cannot reopen that observer. Diagnostic records contain fixed phase names, scalar durations, outcomes and a random correlation, never arguments, code, exceptions, identities, paths or credentials. No external telemetry or metric label is added.
 
@@ -15,6 +15,50 @@ python tools/phase_timing_report.py phase-timing-1234-0123456789abcdef0123456789
 The report joins matching tokens and emits counts and p50/p95/max per measured phase without exporting tokens or input paths. It reports unmatched, duplicate/ambiguous, ignored and overflow records. `--max-traces` changes the default 10,000 retained diagnostic pairs; this limit never applies to Unity jobs or payloads. Input lines are read incrementally and oversized lines are skipped.
 
 Clocks are independent: compare durations, not absolute cross-process timestamps. Native import is nested in handler and server response wait overlaps native work, so do not sum all columns into a total. `returned` describes Python response availability, not tool success. Delivery and actual late execution settlement remain separate. Sampling and optional record loss make this an observation aid, not an authoritative job history or a profiler for every import.
+
+## Tracing a verification run
+
+With phase diagnostics enabled, a terminal `manage_verification` report includes a
+`timing` object. Its `run_id` groups the verification. Each observed HTTP/WebSocket
+command has its own random correlation for joining the Editor command log. Direct
+runs include inline preparation. Runs started with a preparation ID exclude that
+earlier preparation. The run retains up to 96 command observations and reports
+the count omitted. Regular server log sampling remains one in 64. A full
+verification report can omit optional timing to fit its existing size limit.
+
+The server measures each newly admitted WebSocket command's scheduler
+ticket-to-grant interval. A verification request that inherits a public
+operation can also report that outer lease's queue interval. The server measures scheduling
+the detached run until its first execution, orchestration until the runner
+returns, and cumulative time asleep between child job polls. Each launched
+Player is keyed by the actual child job ID. The launcher measures process
+creation, launch until the first valid progress snapshot it observes in the poll
+loop, writing process evidence, and reading the final report. The first observed
+progress includes polling delay. Editor queue, handler and response send use
+the Editor's local clock. An asynchronous handler can include waits. CLI
+`verification report` also records the MCP report-read round trip from entering
+the client call until it returns.
+
+For each trial, use the same project inputs, profile, launch configuration,
+machine and load. Record a setup label and the starting condition. For a cold
+trial, restore the same cache snapshot and restart the selected processes. For
+a warm trial, use the same warm-up procedure with those processes running.
+Export each distinct completed run once. For example:
+
+```sh
+unity-mcp --no-project-context --instance 'Game@0123456789abcdef' --format json verification report --options '{"run_id":"<returned-id>"}' > warm-1.json
+python tools/verification_timing_report.py --trial warm fixtureA warm-1.json --trial warm fixtureA warm-2.json --trial cold fixtureA cold-1.json --editor-log editor.jsonl --operations
+```
+
+The report groups by declared setup and cold/warm condition, observed project
+and source identity, selection, profile, installation, entry path and verdict.
+It reports sample counts, median and interpolated p95 in milliseconds. Each
+command metric samples individual invocations, so a run that polls more often
+contributes more poll samples. The optional `--operations` view shows each
+run ID, its command correlations, the matched Editor durations and Player job
+IDs. An unmatched or ambiguous native record leaves those durations unknown.
+Clocks have no measured offset. One-way network delivery and exact Player
+startup are unknown. Response waits can contain the entire Editor handler.
 
 ## Diagnostic file retention
 

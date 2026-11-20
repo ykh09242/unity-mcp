@@ -2,16 +2,19 @@
 
 import asyncio
 import contextvars
+from contextlib import nullcontext
 from dataclasses import dataclass
 from time import monotonic
 from uuid import uuid4
 
 from core.config import config
+from core import verification_timing
 from core.server_build import RUNNING_SERVER
 from models.script_quality import ScriptSelection
 from models.verification import VerificationProfile, parse_verification_options
 from services.credential_lease import bind_credential_lease, require_credential_lease
 from services.operation_permissions import authorize_remote_operation
+from services.registry.operation_context import current_operation
 from services.registry.operation_target import capture_target
 from services.registry.operation_scheduler import OperationScope
 from services.script_quality.service import ScriptQualityService
@@ -192,6 +195,19 @@ class VerificationService:
                 self.tasks.pop(identity, None)
 
     async def execute(self, ctx, action, options):
+        if action == "run" and config.phase_diagnostics and verification_timing.current() is None:
+            # A direct run includes its inline preparation. A separately prepared
+            # run starts here and does not inherit unrelated preparation traffic.
+            entry = (
+                "prepared"
+                if isinstance(options, dict) and "preparation_id" in options
+                else "direct"
+            )
+            with verification_timing.VerificationTiming(entry).bind():
+                return await self._execute(ctx, action, options)
+        return await self._execute(ctx, action, options)
+
+    async def _execute(self, ctx, action, options):
         try:
             parsed = parse_verification_options(action, options).model_dump(exclude_none=True)
         except ValueError as error:
@@ -415,8 +431,18 @@ class VerificationService:
         runner.emit = lambda report: self.store.update(run_id, owner, report)
         runner.publish()
         self.runners[run_id] = runner
+        timing = verification_timing.current()
+        if timing is None and config.phase_diagnostics:
+            timing = verification_timing.VerificationTiming()
+        scheduled = None
+        if timing is not None:
+            operation = current_operation.get()
+            if operation is not None and operation.queue_ms is not None:
+                timing.record("scheduler_queue", operation.queue_ms)
+            scheduled = monotonic()
         self.tasks[run_id] = asyncio.create_task(
-            self._run(run_id, owner, runner, lease), context=contextvars.Context()
+            self._run(run_id, owner, runner, lease, timing, scheduled),
+            context=contextvars.Context(),
         )
         return run_id
 
@@ -451,14 +477,21 @@ class VerificationService:
             )
         return self.read(identity, target.scope.key)
 
-    async def _run(self, identity, owner, runner, lease):
-        with bind_credential_lease(lease):
+    async def _run(self, identity, owner, runner, lease, timing=None, scheduled=None):
+        with bind_credential_lease(lease), timing.bind() if timing else nullcontext():
+            if timing is not None:
+                timing.record("task_dispatch", (monotonic() - scheduled) * 1000)
             try:
-                result = await runner.run()
+                with verification_timing.interval("orchestration"):
+                    result = await runner.run()
+                if timing is not None:
+                    result["timing"] = timing.finish()
                 self.store.finish(identity, owner, result, settled=result["native_settled"])
             except BaseException:
                 # Task cancellation does not release native ownership or authorize replay.
                 runner.report.update(state="incomplete", interruption="orchestrator_interrupted")
+                if timing is not None:
+                    runner.report["timing"] = timing.finish()
                 runner.publish()
                 self.store.finish(
                     identity, owner, runner.report, settled=runner.report["native_settled"]

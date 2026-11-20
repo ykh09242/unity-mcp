@@ -3,6 +3,7 @@
 import asyncio
 from time import monotonic, time
 
+from core.verification_timing import interval
 from services.script_quality.pages import encoded_size
 from services.verification.console import ConsoleObservation
 from services.verification.reports import final_verdict, test_settled, test_verdict
@@ -277,7 +278,8 @@ class VerificationRunner:
                         "get_test_job", {"job_id": child["job_id"]}, deadline
                     )
             except ConnectionError:
-                await asyncio.sleep(min(0.1, max(0, deadline - monotonic())))
+                with interval("child_poll_sleep"):
+                    await asyncio.sleep(min(0.1, max(0, deadline - monotonic())))
                 continue
             data = response.get("data") or {}
             if response.get("success") is True:
@@ -295,7 +297,8 @@ class VerificationRunner:
                     child["settled"] = True
                     self.publish()
                     return data
-            await asyncio.sleep(min(0.1, max(0, deadline - monotonic())))
+            with interval("child_poll_sleep"):
+                await asyncio.sleep(min(0.1, max(0, deadline - monotonic())))
         raise TimeoutError()
 
     async def impact(self, analysis_id):

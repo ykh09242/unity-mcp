@@ -171,7 +171,10 @@ class ReportStore:
         if row is None or row["owner"] != owner:
             raise ValueError("verification_not_found")
         if encoded_size(report) > 512 * 1024:
-            raise ValueError("verification_report_limit")
+            if "timing" in report:
+                report = {key: value for key, value in report.items() if key != "timing"}
+            if encoded_size(report) > 512 * 1024:
+                raise ValueError("verification_report_limit")
         row["report"] = copy.deepcopy(report)
 
     def finish(self, identity, owner, report, *, settled=True):

@@ -15,6 +15,7 @@ import logging
 import threading
 from typing import Literal, TypedDict
 
+from core.config import config
 from services.control_capacity import (
     CONTROL_BYTES,
     CONTROL_BYTES_PER_INSTANCE,
@@ -103,6 +104,7 @@ class OperationLease:
         self._references = 1
         self._reference_lock = threading.Lock()
         self.closed = False
+        self.queue_ms: float | None = None
 
     @property
     def request(self) -> OperationAdmission:
@@ -146,6 +148,7 @@ class _Ticket:
     request: OperationAdmission
     future: asyncio.Future[OperationLease]
     reserve: object | None = None
+    queued_at: float | None = None
 
 
 @dataclass(slots=True)
@@ -324,6 +327,8 @@ class OperationScheduler:
             self._forget(request, ticket.reserve)
             return
         owner = OperationLease(self, request, ticket.reserve)
+        if ticket.queued_at is not None:
+            owner.queue_ms = (asyncio.get_running_loop().time() - ticket.queued_at) * 1000
         state.active.add(owner)
         ticket.future.set_result(owner)
         _LOGGER.debug(
@@ -372,7 +377,12 @@ class OperationScheduler:
         reserve = object() if self._check_capacity(request) else None
         key = request.scope.key
         state = self._states.setdefault(key, _Instance())
-        ticket = _Ticket(request, loop.create_future(), reserve)
+        ticket = _Ticket(
+            request,
+            loop.create_future(),
+            reserve,
+            loop.time() if config.phase_diagnostics else None,
+        )
         if reserve is not None:
             self._controls[reserve] = request
         self._participants += 1
