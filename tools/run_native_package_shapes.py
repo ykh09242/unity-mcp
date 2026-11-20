@@ -70,6 +70,23 @@ def cinemachine(method: str, packages: dict[str, PackageSpec]) -> Profile:
 
 
 PROFILES = {
+    "timeline-rename": Profile(
+        ("package",),
+        "TimelineAuthoringTests",
+        (("HierarchyRename_RetainsDirectorBindingButLosesRelativeClipTargetDuringPlayback",),),
+        NATIVE_PACKAGES["timeline-rename"],
+        (TESTS / "Tools/TimelineAuthoringTests.cs", TESTS / "Helpers/PrefabTestSceneFixture.cs"),
+    ),
+    "managed-reference-migration": Profile(
+        ("package",),
+        "ManagedReferenceMigrationTests",
+        (("ManagedTypeMigration_DistinguishesNullAndMissingAndRecoversOwnedPayloadAfterReopen",),),
+        {},
+        (
+            TESTS / "Tools/ManagedReferenceMigrationTests.cs",
+            ASSETS / "Scripts/TestAsmdef/SerializedInspectionAsset.cs",
+        ),
+    ),
     "cinemachine-2": cinemachine("LegacyProvider", NATIVE_PACKAGES["cinemachine-2"]),
     "cinemachine-3": cinemachine("ModernProvider", NATIVE_PACKAGES["cinemachine-3"]),
     "cinemachine-absent": cinemachine("AbsentProvider", {}),

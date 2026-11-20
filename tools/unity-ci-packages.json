@@ -45,6 +45,9 @@
     "sprite-atlas": {
       "com.unity.2d.sprite": {"source": "editor", "version": "1.0.0"}
     },
+    "timeline-rename": {
+      "com.unity.timeline": {"source": "registry", "version": "1.8.13"}
+    },
     "addressables-legacy": {
       "com.unity.addressables": {"source": "registry", "version": "1.1.5"},
       "com.unity.scriptablebuildpipeline": {"source": "registry", "version": "1.23.4"}

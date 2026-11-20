@@ -236,6 +236,7 @@ namespace MCPForUnity.Editor.Helpers
             internal Object Instance;
             internal JObject Description;
             internal string Route;
+            internal ManagedReferenceMissingType[] MissingManagedTypes;
         }
 
         private static Target Resolve(int id, Budget budget)
@@ -673,6 +674,51 @@ namespace MCPForUnity.Editor.Helpers
             return report;
         }
 
+        private static void DescribeManagedReference(SerializedProperty property, Target target, string path, JObject record, Budget budget)
+        {
+            long id = budget.Read("value", path, () => property.managedReferenceId);
+            record["managed_reference_id"] = id.ToString(CultureInfo.InvariantCulture);
+            // Unity 2021.3 exposes RefIdNull (-2) in UnityEditor. Later versions moved the constant.
+            if (id != -2 && budget.Read("value", path, () => property.managedReferenceValue != null))
+            {
+                record["managed_reference_status"] = "resolved";
+                return;
+            }
+            target.MissingManagedTypes ??= budget.Read("meta", path, () => SerializationUtility.GetManagedReferencesWithMissingTypes(target.Instance));
+            if (id == -2 && target.MissingManagedTypes.Length == 0)
+            {
+                record["managed_reference_status"] = "null";
+                return;
+            }
+            record["managed_reference_status"] = "unknown";
+            if (id >= 0)
+            {
+                foreach (var missing in target.MissingManagedTypes)
+                {
+                    if (budget.Read("meta", path, () => missing.referenceId) != id)
+                        continue;
+                    record["managed_reference_status"] = "missing_type";
+                    record["missing_type"] = MissingTypeIdentity(missing);
+                    return;
+                }
+            }
+            if (target.MissingManagedTypes.Length > 0)
+            {
+                // A null field alone cannot attribute the host's retained data to this path.
+                record["host_missing_type_count"] = target.MissingManagedTypes.Length;
+                record["host_missing_types_sample"] = new JArray(target.MissingManagedTypes.Take(4).Select(MissingTypeIdentity));
+            }
+        }
+
+        private static JObject MissingTypeIdentity(ManagedReferenceMissingType missing) =>
+            new JObject
+            {
+                ["reference_id"] = missing.referenceId.ToString(CultureInfo.InvariantCulture),
+                ["assembly"] = Short(missing.assemblyName, 256),
+                ["namespace"] = Short(missing.namespaceName, 256),
+                ["class"] = Short(missing.className, 256),
+            };
+
         private static JObject Describe(SerializedProperty property, Target target, bool values, Budget budget)
         {
             string path = budget.Read("meta", "", () => property.propertyPath);
@@ -732,7 +778,7 @@ namespace MCPForUnity.Editor.Helpers
                 record["managed_reference_type"] = Short(budget.Read("meta", path, () => property.managedReferenceFullTypename), 256);
                 record["managed_reference_field_type"] = Short(budget.Read("meta", path, () => property.managedReferenceFieldTypename), 256);
                 if (values)
-                    record["managed_reference_id"] = budget.Read("value", path, () => property.managedReferenceId).ToString(CultureInfo.InvariantCulture);
+                    DescribeManagedReference(property, target, path, record, budget);
                 record["value_status"] = "managed_reference_not_expanded";
                 return record;
             }

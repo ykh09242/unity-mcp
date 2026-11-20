@@ -40,6 +40,7 @@ namespace MCPForUnityTests.Editor.Tools.Fixtures
     }
 
     [Serializable]
+    [UnityEngine.Scripting.APIUpdating.MovedFrom(true, "Prior.Fixture", "Prior.Fixture.Assembly", "PriorNode")]
     public sealed class SerializedInspectionNode
     {
         public int value = 41;

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -42,12 +43,16 @@ namespace MCPForUnity.Editor.Tools.Animation
             string revision = AnimationAssetAccess.Revision(path, new UnityEngine.Object[] { clip });
             if (action == "get_curves")
             {
+                GameObject root = null;
+                if (request["target"] != null)
+                    root = ObjectResolver.ResolveGameObject(request["target"], (string)request["searchMethod"])
+                        ?? throw new ArgumentException("Animation binding root was not found.");
                 return AnimationAssetAccess.Page(
                     bindings.Length,
                     index =>
                     {
                         var binding = bindings[index];
-                        return new JObject
+                        var row = new JObject
                         {
                             ["binding_id"] = binding.Id,
                             ["kind"] = binding.Objects ? "object" : "float",
@@ -56,6 +61,14 @@ namespace MCPForUnity.Editor.Tools.Animation
                             ["type"] = binding.Value.type.AssemblyQualifiedName,
                             ["clip_file_id"] = AnimationAssetAccess.Id(clip),
                         };
+                        if (root != null)
+                        {
+                            var animated = AnimationUtility.GetAnimatedObject(root, binding.Value);
+                            row["binding_root_instance_id"] = root.GetInstanceIDCompat();
+                            row["animated_object_status"] = animated != null ? "resolved" : "unresolved";
+                            row["animated_object_instance_id"] = animated != null ? new JValue(animated.GetInstanceIDCompat()) : JValue.CreateNull();
+                        }
+                        return row;
                     },
                     request,
                     revision,

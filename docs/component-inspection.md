@@ -63,3 +63,24 @@ and now uses safe inspection. Callers that require computed properties can use
 Response size, complexity and pagination limits are unchanged; large ordinary
 field arrays remain supported. Use matching server and Editor package versions
 when relying on the safe default.
+
+## Managed references after a type migration
+
+Use `inspect_serialized_object` with the host's current instance ID,
+`mode="value"` and the exact `property_path` of a `[SerializeReference]` field.
+With values enabled, `managed_reference_status` reports `resolved`, `null`,
+`missing_type`, or `unknown` when Unity cannot classify the reference.
+`managed_reference_id` is a decimal string scoped to the host. An unresolved
+type recorded by Unity includes its former assembly, namespace and class under
+`missing_type`. When a field exposes no matching ID but its host has missing
+types, `unknown` includes `host_missing_type_count` and up to four identities
+in `host_missing_types_sample`. Those identities belong to the host. The
+inspector leaves the retained serialized payload in place.
+
+When the project supplies a compatible type migration, reopen the owned asset
+and inspect it again using the new host instance ID. Verify the restored
+concrete type and the original data. The EditMode fixture
+`ManagedTypeMigration_DistinguishesNullAndMissingAndRecoversOwnedPayloadAfterReopen`
+checks a class, namespace and assembly move declared with `MovedFrom`.
+The licensed Windows `package` suite runs this fixture in the
+`managed-reference-migration` profile.

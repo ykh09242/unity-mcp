@@ -231,6 +231,79 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotEmpty(preview);
         }
 
+        private JObject ReadChildCurve()
+        {
+            var result = MCPForUnity.Editor.Tools.Animation.ManageAnimation.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "clip_get_curves",
+                    ["clip_path"] = AssetDatabase.GetAssetPath(animation),
+                    ["target"] = animator.gameObject.GetInstanceIDCompat(),
+                    ["search_method"] = "by_id",
+                }
+            );
+            return (JObject)Data(JObject.FromObject(result))["curves"].Single(row => (string)row["property"] == "m_LocalPosition.x");
+        }
+
+        private float PlayAndReadChildPosition()
+        {
+            // Set a known starting value before rebuilding each graph. A stale graph can keep its cached Transform.
+            child.localPosition = new Vector3(3, 0, 0);
+            Type type = director.GetType();
+            type.GetMethod("Play", Type.EmptyTypes).Invoke(director, null);
+            try
+            {
+                Set(director, "time", .5d);
+                type.GetMethod("Evaluate", Type.EmptyTypes).Invoke(director, null);
+                return child.localPosition.x;
+            }
+            finally
+            {
+                type.GetMethod("Stop", Type.EmptyTypes).Invoke(director, null);
+            }
+        }
+
+        [Test]
+        public void HierarchyRename_RetainsDirectorBindingButLosesRelativeClipTargetDuringPlayback()
+        {
+            JObject track = AddTrack("animation", "Motion");
+            AddClip(track, animation);
+            Bind(track, animator);
+            JObject before = ReadChildCurve();
+            Assert.AreEqual("Child", before.Value<string>("path"));
+            Assert.AreEqual("resolved", before.Value<string>("animated_object_status"));
+            Assert.AreEqual(child.GetInstanceIDCompat(), before.Value<int>("animated_object_instance_id"));
+            float beforeX = PlayAndReadChildPosition();
+            Assert.AreEqual(5f, beforeX, .05f);
+
+            child.name = "Renamed";
+            animator.name = "RenamedActor";
+            JObject after = ReadChildCurve();
+            Assert.AreEqual((string)before["binding_id"], (string)after["binding_id"]);
+            Assert.AreEqual("Child", after.Value<string>("path"));
+            Assert.AreEqual("unresolved", after.Value<string>("animated_object_status"));
+            Assert.AreEqual(JTokenType.Null, after["animated_object_instance_id"].Type);
+            var binding = DirectorRead()["bindings"].Single();
+            Assert.AreEqual((string)track["track_id"], (string)binding["track_id"]);
+            Assert.AreEqual(animator.GetInstanceIDCompat(), (int)binding["binding"]["instance_id"]);
+            float renamedX = PlayAndReadChildPosition();
+            Assert.AreEqual(3f, renamedX, .05f);
+
+            child.name = "Child";
+            float restoredX = PlayAndReadChildPosition();
+            Assert.AreEqual(5f, restoredX, .05f);
+            TestContext.Out.WriteLine(
+                new JObject
+                {
+                    ["before"] = before,
+                    ["renamed"] = after,
+                    ["director_binding"] = binding,
+                    ["sample_time"] = .5,
+                    ["local_x_before_renamed_restored"] = new JArray(beforeX, renamedX, restoredX),
+                }
+            );
+        }
+
         [Test]
         public void AnimationAudioTracksClipsBindings_PreserveAssetAndSourceIdentities()
         {

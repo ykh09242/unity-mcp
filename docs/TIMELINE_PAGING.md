@@ -62,6 +62,23 @@ the tool does not duplicate its serialized payload or impose a subasset cap.
 
 ## Native regression and benchmark fixture
 
+For a hierarchy rename, read the director's `bindings` with
+`manage_timeline(action="read_director", target=<director ID>, scene_handle=<scene handle>)`.
+Use the bound Animator's GameObject ID as `target` for
+`manage_animation(action="clip_get_curves", clip_path=<clip path>, target=<root ID>, search_method="by_id")`.
+Each returned curve includes its saved relative path, its binding root, and the
+current animated object's resolution status and instance ID. The clip revision
+covers the asset. The target lookup reflects the hierarchy at the time of each
+read. A track can keep the same component binding after a child rename while
+the clip's relative path no longer reaches the child.
+
+`HierarchyRename_RetainsDirectorBindingButLosesRelativeClipTargetDuringPlayback`
+starts a real director graph and samples the child's local X at the same time
+before and after a rename. Restoring the child name restores the sampled motion.
+The licensed Windows `package` suite runs this case in its isolated
+`timeline-rename` profile and records the resolved package identity with its
+native test results.
+
 Run the existing EditMode fixture `MCPForUnityTests.Editor.Tools.TimelineAuthoringTests`
 in the repository's isolated native test project with the Timeline package
 already enabled. The fixture creates and deletes only its unique owned Assets

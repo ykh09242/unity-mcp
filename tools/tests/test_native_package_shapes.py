@@ -21,7 +21,13 @@ def test_profiles_cover_exact_native_shapes():
     }
     extra = {
         "early-lts": {"auditor-absent"},
-        "package": {"auditor-package", "auditor-absent", "addressables-legacy"},
+        "package": {
+            "auditor-package",
+            "auditor-absent",
+            "addressables-legacy",
+            "timeline-rename",
+            "managed-reference-migration",
+        },
         "integrated": {"auditor-integrated", "auditor-integrated-no-rules"},
     }
     assert set(shapes.VERSIONS) == set(extra)

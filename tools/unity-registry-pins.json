@@ -22,6 +22,7 @@
     "com.unity.settings-manager@2.1.2": "f344d97c8f92d16c114242a3c0dd0b5fe46cf00b27d124e2fca0c87c743d188e",
     "com.unity.splines@2.9.2": "84f669f1e3e7f7fa961f12b7c20d352b7974876a193ed6b5262229516689c64d",
     "com.unity.test-framework@1.4.6": "9d1bcfea3f886c4e2b30a1014192b9ea78f9296b5172a3bf85e49aec2b784bf4",
-    "com.unity.test-framework.performance@3.7.0": "19c17d91a273deae12cff84a388963ac7d80799681df40797e29567f8f3457c6"
+    "com.unity.test-framework.performance@3.7.0": "19c17d91a273deae12cff84a388963ac7d80799681df40797e29567f8f3457c6",
+    "com.unity.timeline@1.8.13": "73c048d58f1849c802b44d58ac29a294692df593b11749ef62aaca2b1d79b50f"
   }
 }
