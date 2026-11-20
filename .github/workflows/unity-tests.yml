@@ -807,6 +807,7 @@ jobs:
             required+=(
               --require-test MCPForUnityTests.Editor.Resources.GetTestsTests.OmittedParameters_ReturnDefaultTestPage
               --require-test MCPForUnityTests.Editor.Tools.ComponentMutationIntegrityTests.RequiredComponentRemovalReportsRefusalAndPreservesCleanScene
+              --require-test MCPForUnityTests.Editor.Services.RepeatPlaySubscriptionTests.CollectingOnceAcrossTwoPlaySessionsExposesAndRepairsDuplicateCredit
               --require-test MCPForUnityTests.EditMode.Tools.SimulationProfileIntegrityTests.TimestepsIncreaseAcrossCurrentCeilingAndRestore
               --require-test MCPForUnityTests.EditMode.Tools.SimulationProfileIntegrityTests.TimestepsDecreaseAcrossCurrentFloorAndRestore
             )
