@@ -214,12 +214,18 @@ import socket
 
 @asynccontextmanager
 async def live_mcp(
-    server, trace, legacy_only=False, required_token=None, redirect_status=None, tool_page=None
+    server,
+    trace,
+    legacy_only=False,
+    required_token=None,
+    redirect_status=None,
+    tool_page=None,
+    legacy_events=True,
 ):
     """Serve actual loopback HTTP; record method names only, never request credentials."""
     from asyncio.trsock import TransportSocket
     import uvicorn
-    from starlette.responses import JSONResponse
+    from starlette.responses import JSONResponse, Response
     from uvicorn.protocols.http.h11_impl import H11Protocol
 
     class OwnedH11Protocol(H11Protocol):
@@ -243,6 +249,8 @@ async def live_mcp(
     app = server.http_app()
 
     async def traced(scope, receive, send):
+        if scope["type"] == "http" and scope["method"] == "GET" and not legacy_events:
+            return await Response(status_code=405)(scope, receive, send)
         if scope["type"] != "http" or scope["method"] != "POST":
             return await app(scope, receive, send)
         if redirect_status is not None:
@@ -269,8 +277,12 @@ async def live_mcp(
         method = request.get("method")
         trace.append(method)
         if tool_page is not None and method == "tools/list":
-            result = tool_page(request.get("params", {}), dict(scope["headers"]))
-            response = JSONResponse({"jsonrpc": "2.0", "id": request["id"], "result": result})
+            result = await tool_page(request, dict(scope["headers"]))
+            response = (
+                result
+                if isinstance(result, Response)
+                else JSONResponse({"jsonrpc": "2.0", "id": request["id"], "result": result})
+            )
             return await response(scope, receive, send)
         if legacy_only and method == "server/discover":
             response = JSONResponse(

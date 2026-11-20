@@ -1,7 +1,7 @@
 """One bounded public-SDK diagnostic connection, without desktop configuration discovery."""
 
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from importlib import metadata
 import ipaddress
@@ -35,6 +35,12 @@ class _ByteBudget:
     total: int = 0
 
 
+@dataclass(slots=True)
+class _LegacyCatalogStream:
+    active: bool = False
+    generation: int = 0
+
+
 class _BoundedStream(httpx2.AsyncByteStream):
     def __init__(
         self, response: httpx2.Response, budget: _ByteBudget, response_limit: int, total_limit: int
@@ -43,6 +49,7 @@ class _BoundedStream(httpx2.AsyncByteStream):
         self.budget = budget
         self.response_limit = response_limit
         self.total_limit = total_limit
+        self.legacy_watch: _LegacyCatalogStream | None = None
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         response_bytes = 0
@@ -54,6 +61,9 @@ class _BoundedStream(httpx2.AsyncByteStream):
             yield chunk
 
     async def aclose(self) -> None:
+        if self.legacy_watch is not None:
+            self.legacy_watch.active = False
+            self.legacy_watch = None
         await self.response.aclose()
 
 
@@ -85,12 +95,24 @@ class _BoundedTransport(httpx2.AsyncBaseTransport):
             for name, value in response.headers.multi_items()
             if name.lower() not in ("content-encoding", "content-length")
         ]
+        stream = _BoundedStream(
+            response, self.factory.budget, self.factory.response_limit, self.factory.total_limit
+        )
+        if (
+            request.method == "GET"
+            and "mcp-session-id" in request.headers
+            and response.status_code == 200
+            and response.headers.get("content-type", "").lower().split(";")[0]
+            == "text/event-stream"
+        ):
+            watch = self.factory.legacy_watch
+            watch.generation += 1
+            watch.active = True
+            stream.legacy_watch = watch
         return httpx2.Response(
             response.status_code,
             headers=headers,
-            stream=_BoundedStream(
-                response, self.factory.budget, self.factory.response_limit, self.factory.total_limit
-            ),
+            stream=stream,
             request=request,
         )
 
@@ -111,6 +133,7 @@ class DoctorHttpFactory:
         self.total_limit = total_limit
         self.deadline = deadline
         self.budget = _ByteBudget()
+        self.legacy_watch = _LegacyCatalogStream()
         self.failure: tuple[str, int, str] | None = None
 
     def remaining(self) -> float:
@@ -157,12 +180,10 @@ class DiagnosticClient:
         from mcp.client import Client
         from mcp.client.session import IncomingMessage
         from mcp.client.streamable_http import streamable_http_client
-        from mcp.types import ServerNotification
+        from mcp.types import ToolListChangedNotification
 
         async def observe_catalog_change(message: IncomingMessage) -> None:
-            if isinstance(message, ServerNotification) and (
-                message.root.method == "notifications/tools/list_changed"
-            ):
+            if isinstance(message, (ToolListChangedNotification, Exception)):
                 self.tool_inventory_epoch += 1
 
         async with AsyncExitStack() as stack:
@@ -202,6 +223,56 @@ class DiagnosticClient:
 
     def is_connected(self) -> bool:
         return self._client is not None
+
+    @property
+    def legacy_tool_inventory_stamp(self) -> int | None:
+        """A supported open legacy GET stream, with a distinct stamp after reconnecting."""
+        watch = self.factory.legacy_watch
+        if self._client is not None and watch.active:
+            tools = self._client.server_capabilities.tools
+            if tools is not None and tools.list_changed:
+                return watch.generation
+        return None
+
+    @asynccontextmanager
+    async def watch_modern_tool_inventory(self) -> AsyncIterator[bool]:
+        """Keep one acknowledged tools-list subscription live through a paginated scan."""
+        from mcp.client.subscriptions import SubscriptionLost
+        from mcp.shared.exceptions import MCPError
+
+        tools = self._client.server_capabilities.tools
+        if tools is None or not tools.list_changed:
+            yield False
+            return
+        async with AsyncExitStack() as stack:
+            subscription = None
+            try:
+                # Leave time for positive observations if a server stalls the optional watch.
+                with anyio.move_on_after(self.factory.remaining() / 2):
+                    subscription = await stack.enter_async_context(
+                        self._client.listen(tools_list_changed=True)
+                    )
+            except (DiagnosticLimit, MCPError, SubscriptionLost, TimeoutError):
+                subscription = None
+            if subscription is None or not subscription.honored.tools_list_changed:
+                yield False
+                return
+
+            async def observe_changes() -> None:
+                try:
+                    async for _ in subscription:
+                        self.tool_inventory_epoch += 1
+                except SubscriptionLost:
+                    pass
+                # Either type of server-side stream end loses coverage.
+                self.tool_inventory_epoch += 1
+
+            async with anyio.create_task_group() as watchers:
+                watchers.start_soon(observe_changes)
+                try:
+                    yield True
+                finally:
+                    watchers.cancel_scope.cancel()
 
     async def list_tools_mcp(self, *, cursor=None, meta=None):
         return await self._client.list_tools(

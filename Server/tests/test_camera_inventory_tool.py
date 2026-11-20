@@ -95,6 +95,54 @@ async def test_default_tools_only_client_can_find_and_read_the_same_inventory(
 
 
 @pytest.mark.asyncio
+async def test_equivalent_camera_routes_prefer_host_confirmed_tools(command_hub, monkeypatch):
+    server = inventory_server(monkeypatch, profile="full")
+    focused = "manage_cameras"
+    legacy = "manage_camera"
+    evidence = {"candidates": [focused], "present": [focused], "complete": False}
+    selectors = {"required_values": ["unityCameras"], "route_surfaces": "tools"}
+    async with Client(server, mode="legacy", cache=False) as client:
+        assert {TOOL, focused, legacy} <= {item.name for item in await client.list_tools()}
+        for report, expected in (
+            (None, [TOOL, focused, legacy]),
+            ({**evidence, "present": []}, [TOOL, focused, legacy]),
+            (evidence, [focused, TOOL, legacy]),
+        ):
+            args = {**selectors}
+            if report is not None:
+                args["host_tool_evidence"] = report
+            result = (await client.call_tool("search_unity_tools", args)).structured_content
+            (group,) = result["route_groups"]
+            routes = [group["representative"], *group["alternatives"]]
+            assert [route["tool"] for route in routes] == expected
+
+        args = {**selectors, "host_tool_evidence": evidence}
+        mixed = await client.call_tool("search_unity_tools", {**args, "route_surfaces": "both"})
+        (group,) = mixed.structured_content["route_groups"]
+        routes = [group["representative"], *group["alternatives"]]
+        assert [route.get("tool") or route["uri"] for route in routes] == [
+            focused,
+            URI,
+            TOOL,
+            legacy,
+        ]
+
+        no_match = await client.call_tool(
+            "search_unity_tools", {**args, "observation_source": "asset_file"}
+        )
+        (suggestion,) = no_match.structured_content["no_match"]["alternatives"]
+        assert suggestion["tool"] == focused
+
+        server.disable(names={focused}, components={"tool"})
+        result = (await client.call_tool("search_unity_tools", args)).structured_content
+        (group,) = result["route_groups"]
+        routes = [group["representative"], *group["alternatives"]]
+        assert [route["tool"] for route in routes] == [TOOL, legacy]
+        assert focused not in result["host_inventory"]["statuses"]
+    assert command_hub.sent == []
+
+
+@pytest.mark.asyncio
 async def test_stdio_fixed_read_uses_the_explicitly_selected_editor(monkeypatch):
     monkeypatch.setattr(config, "transport_mode", "stdio")
     monkeypatch.setattr(config, "http_remote_hosted", False)

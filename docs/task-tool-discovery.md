@@ -52,8 +52,10 @@ distinguishes `server_unavailable`, `host_filtered`, `host_advertised`, and
 `host_unknown`. Server absence does not reveal whether a declaration is hidden,
 denied, or missing. This caller-reported comparison cannot attest another host.
 `unity-mcp --instance PROJECT@HASH doctor --inspect-tool NAME` checks source
-and the actual SDK tools/list in the same diagnostic connection. An incomplete
-list produces `received: null`. A desktop host must inspect its own connection.
+and the actual SDK tools/list in the same diagnostic connection. A tool found
+on any current page is confirmed. A missing candidate stays unknown until the
+connection confirms a complete, consistent inventory. A desktop host must
+inspect its own connection.
 
 ## One catalog projection
 
@@ -233,8 +235,9 @@ Read `route_groups` in structured and lexical search. Each group contains a
 Choose `route_surfaces="tools"` for clients that can only call tools,
 `"resources"` for fixed URIs and resource templates, or `"both"` for both
 surfaces. The default is `"both"`. The strongest matching route ranks the
-group. Within the group, prefer the advertised dedicated read-only tool,
-then the bound operation on its parent tool, then the resource.
+group. When several tool bindings give the same evidence, a host-confirmed
+tool takes precedence over an unknown tool. Otherwise the dedicated read
+precedes the bound parent operation where both are advertised.
 
 Search groups the declared equivalent Game View and saved Shader Graph reads
 before applying `limit`. `total_route_groups` and `route_groups_truncated`

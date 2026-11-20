@@ -2,6 +2,7 @@
 
 import unicodedata
 from collections import Counter
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Annotated, Final, Literal, NotRequired, TypedDict
 
@@ -273,6 +274,7 @@ def _group_routes(
     ranked: list[RankedRoute],
     available: dict[RouteKey, SearchRoute],
     unavailable_parents: set[str],
+    confirmed_tools: Collection[str],
 ) -> list[SearchRouteGroup]:
     """Order a group by its strongest visible match, then choose a usable binding."""
     grouped: dict[RouteKey | str, SearchRouteGroup] = {}
@@ -296,6 +298,18 @@ def _group_routes(
             for binding in bindings
             if surfaces == "both" or (binding["kind"] == "tool") == (surfaces == "tools")
         ]
+        if confirmed_tools and len(bindings) > 1:
+            # Prefer confirmed tools within the same surface. Preserve resource slots
+            # and the declaration order within each group of equally callable tools.
+            tools = iter(
+                sorted(
+                    (binding for binding in bindings if binding["kind"] == "tool"),
+                    key=lambda binding: binding["tool"] not in confirmed_tools,
+                )
+            )
+            bindings = [
+                next(tools) if binding["kind"] == "tool" else binding for binding in bindings
+            ]
         if bindings:
             grouped.setdefault(
                 group_key, {"representative": bindings[0], "alternatives": bindings[1:]}
@@ -426,7 +440,14 @@ def _diagnose_miss(
 ) -> NoMatch:
     # Group only declarations surviving the same intent, surface, registration and parent caps
     # as the normal results. Never introspect other clients or the full local registry here.
-    groups = _group_routes(request.route_surfaces, observations, equivalents, unavailable_parents)
+    host_evidence = request.host_tool_evidence
+    groups = _group_routes(
+        request.route_surfaces,
+        observations,
+        equivalents,
+        unavailable_parents,
+        host_evidence.present if host_evidence is not None else (),
+    )
     needed = set(request.required_values or ())
     offered: set[ObservationValue] = set()
     excluded: set[ObservationValue] = set()
@@ -670,6 +691,7 @@ def search_catalog(
         sorted([*routes, *additional_routes], key=route_order),
         available_equivalents,
         unavailable_parents,
+        confirmed_tools,
     )
     # Words shared by more than a quarter of this inventory cannot independently
     # corroborate a route. This derives common vocabulary from the catalog itself.

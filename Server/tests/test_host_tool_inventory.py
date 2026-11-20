@@ -159,6 +159,7 @@ async def test_doctor_follows_pages_until_candidate_or_a_complete_miss(
 
     monkeypatch.setattr(DiagnosticClient, "__aenter__", enter)
     monkeypatch.setattr(DiagnosticClient, "list_tools_mcp", list_page)
+    monkeypatch.setattr(DiagnosticClient, "legacy_tool_inventory_stamp", 1)
     monkeypatch.setattr("cli.utils.doctor_connection._auth_headers", lambda _config: {})
     monkeypatch.setattr("cli.utils.doctor_connection._read", read)
     config = CLIConfig(unity_instance=TARGET)
@@ -224,6 +225,7 @@ async def test_candidate_scan_reaches_the_terminal_page_of_a_648_tool_catalog(
         )
 
     monkeypatch.setattr(client, "list_tools_mcp", list_page)
+    monkeypatch.setattr(DiagnosticClient, "legacy_tool_inventory_stamp", 1)
     evidence = await observe_host_tools(client, candidates, TARGET)
     assert [evidence.received(name) for name in candidates] == [True, True, False]
     assert evidence.complete
@@ -294,7 +296,8 @@ async def test_cli_doctor_checks_last_name_in_an_actual_sdk_listing(
     pages = [None, "empty", *(str(start) for start in range(20, 648, 20))]
     wire_catalog = [*builtins, *catalog]
 
-    def list_page(params: dict, headers: dict) -> dict:
+    async def list_page(request: dict, headers: dict) -> dict:
+        params = request["params"]
         cursor, session = params.get("cursor"), headers.get(b"mcp-session-id")
         assert params["_meta"]["unity_instance"] == TARGET and session
         page_requests.append((cursor, session))
