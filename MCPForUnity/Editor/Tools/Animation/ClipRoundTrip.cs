@@ -45,8 +45,11 @@ namespace MCPForUnity.Editor.Tools.Animation
             {
                 GameObject root = null;
                 if (request["target"] != null)
-                    root = ObjectResolver.ResolveGameObject(request["target"], (string)request["searchMethod"])
-                        ?? throw new ArgumentException("Animation binding root was not found.");
+                {
+                    root = ObjectResolver.ResolveGameObject(request["target"], (string)request["searchMethod"]);
+                    if (root == null)
+                        throw new ArgumentException("Animation binding root was not found.");
+                }
                 return AnimationAssetAccess.Page(
                     bindings.Length,
                     index =>
