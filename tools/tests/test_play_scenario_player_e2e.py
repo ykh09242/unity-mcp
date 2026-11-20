@@ -384,9 +384,19 @@ def test_ordinary_folder_names_are_allowed(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "policy,available,expected", [("false", "false", 1), ("true", "false", 1), ("true", "true", 0)]
+    "policy,available,options,expected",
+    [
+        ("false", "false", {}, 1),
+        ("true", "false", {}, 1),
+        ("true", "true", {}, 0),
+        ("true", "true", {"PLAYER_BACKEND": "il2cpp"}, 0),
+        ("true", "true", {"NATIVE_CONTROL": "shader-variant"}, 0),
+        ("true", "true", {"NATIVE_CONTROL": "shader-variant", "PLAYER_BACKEND": "il2cpp"}, 1),
+    ],
 )
-def test_required_prerequisite_script_executes_fail_closed(tmp_path, policy, available, expected):
+def test_required_prerequisite_script_executes_fail_closed(
+    tmp_path, policy, available, options, expected
+):
     import os
     import subprocess
 
@@ -397,6 +407,7 @@ def test_required_prerequisite_script_executes_fail_closed(tmp_path, policy, ava
         "SystemRoot": os.environ.get("SystemRoot", ""),
         "POLICY": policy,
         "AVAILABLE": available,
+        **options,
     }
     bash = shutil.which("bash") or "C:/Program Files/Git/bin/bash.exe"
     if not Path(bash).exists():

@@ -106,7 +106,7 @@ jobs:
             echo '::error::Required Windows Player assurance needs enabled execution policy and scoped serial/email/password credentials.'
             exit 1
           fi
-          if [ "$NATIVE_CONTROL" != 'none' ] && [ "$PLAYER_BACKEND" != 'mono' ]; then
+          if [ "${NATIVE_CONTROL:-none}" != 'none' ] && [ "${PLAYER_BACKEND:-mono}" != 'mono' ]; then
             echo '::error::The selected change control builds Windows Mono Players.'
             exit 1
           fi
