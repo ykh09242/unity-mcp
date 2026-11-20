@@ -1,25 +1,36 @@
 """Compare independently executed Unity NUnit selections on the same instrumented input."""
 
+import math
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from hashlib import sha256
-import math
 from pathlib import Path
-import re
 from xml.etree import ElementTree
 
 from cli.utils.play_scenario_analysis_io import read_bytes
 
-
 _ASSET = re.compile(r"(Assets/.+?) ([0-9a-f]{32}) ([0-9a-f]{64})")
 _CONTEXT = "MCP_VERIFICATION_CONTEXT "
-_TERMINAL = {"Passed", "Failed", "Skipped", "Inconclusive"}
+_EXECUTION = "MCP_VERIFICATION_EXECUTION "
+_EXPECTED_CASE = "MCP_VERIFICATION_EXPECTED_CASE "
+_EXECUTION_ID = re.compile(r"[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}")
+_DECISIVE = {"Passed", "Failed"}
+_TERMINAL = _DECISIVE | {"Skipped", "Inconclusive"}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
+class FixtureObservation:
+    execution_id: str
+    context: str
+    expected_cases: frozenset[str]
+    inputs: dict[str, tuple[str, str]]
+
+
+@dataclass(frozen=True, slots=True)
 class Cohort:
     digest: str
-    context: str
-    inputs: dict[str, tuple[str, str]]
+    fixture: FixtureObservation
     cases: dict[str, str]
     seconds: float
 
@@ -38,80 +49,113 @@ def read_cohort(path: Path) -> Cohort:
     seconds = float(root.get("duration", "nan"))
     if not math.isfinite(seconds) or seconds < 0:
         raise ValueError("Missing finite NUnit run duration")
-    reference_inputs = None
-    reference_context = None
+    fixture = None
     cases = {}
     for case in root.iter("test-case"):
-        name, result = case.get("fullname"), case.get("result")
+        name, result = case.get("fullname", ""), case.get("result", "")
         if not name or name in cases or result not in _TERMINAL:
             raise ValueError("Expected unique named terminal NUnit cases")
         cases[name] = result
         inputs = {}
-        contexts = set()
+        contexts = []
+        executions = []
+        expected = []
         for line in (case.findtext("output") or "").splitlines():
             if line.startswith(_CONTEXT):
-                contexts.add(line.removeprefix(_CONTEXT).strip())
+                contexts.append(line.removeprefix(_CONTEXT).strip())
+            elif line.startswith(_EXECUTION):
+                executions.append(line.removeprefix(_EXECUTION).strip())
+            elif line.startswith(_EXPECTED_CASE):
+                expected.append(line.removeprefix(_EXPECTED_CASE).strip())
             match = _ASSET.fullmatch(line)
             if match:
                 asset, guid, digest = match.groups()
                 if asset in inputs:
                     raise ValueError("Duplicate fixture input observation")
                 inputs[asset] = (guid, digest)
-        if not inputs or len(contexts) != 1 or not all(contexts):
-            raise ValueError("Each case needs fixture input digests and one execution context")
-        context = contexts.pop()
-        if reference_inputs is None:
-            reference_inputs, reference_context = inputs, context
-        if (inputs, context) != (reference_inputs, reference_context):
-            raise ValueError("Input or execution context changed within the NUnit run")
+        if result not in _DECISIVE and not (inputs or contexts or executions or expected):
+            continue  # NUnit can skip cases before the fixture records observations.
+        if len(executions) != 1 or not _EXECUTION_ID.fullmatch(executions[0]):
+            raise ValueError("Each instrumented case needs one fixture execution ID")
+        if not inputs or len(contexts) != 1 or not contexts[0]:
+            raise ValueError("Each instrumented case needs fixture input digests and one context")
+        if not expected or not all(expected) or len(set(expected)) != len(expected):
+            raise ValueError("Each instrumented case needs the complete fixture inventory")
+        observation = FixtureObservation(executions[0], contexts[0], frozenset(expected), inputs)
+        if fixture is not None and observation != fixture:
+            raise ValueError("Fixture observations changed within the NUnit run")
+        fixture = observation
     if not cases or len(cases) != int(root.get("total", "-1")):
         raise ValueError("Incomplete NUnit case inventory")
-    if root.get("result") not in {"Passed", "Failed"} or (
-        (root.get("result") == "Failed") != ("Failed" in cases.values())
-    ):
+    result = root.get("result", "").removesuffix("(Child)")
+    if result.startswith("Skipped:"):
+        result = "Skipped"
+    if result not in cases.values() or (result == "Failed") != ("Failed" in cases.values()):
         raise ValueError("Run outcome does not agree with individual case evidence")
-    return Cohort(sha256(raw).hexdigest(), reference_context, reference_inputs, cases, seconds)
+    if fixture is None or not cases.keys() <= fixture.expected_cases:
+        raise ValueError("Run must contain fixture observations and only declared fixture cases")
+    return Cohort(sha256(raw).hexdigest(), fixture, cases, seconds)
 
 
-def selection_quality(selected: Cohort, full: Cohort, affected, fallback: Cohort | None = None):
+def selection_quality(
+    selected: Cohort, full: Cohort, affected: Iterable[str], fallback: Cohort | None = None
+):
     cohorts = [selected, full] if fallback is None else [selected, full, fallback]
-    if len({row.digest for row in cohorts}) != len(cohorts):
-        raise ValueError("Independent NUnit runs are required")
-    if any((row.context, row.inputs) != (full.context, full.inputs) for row in cohorts):
-        raise ValueError("Input or execution context differs across cohorts")
+    if len({row.fixture.execution_id for row in cohorts}) != len(cohorts):
+        raise ValueError("Independent NUnit runs require distinct fixture execution IDs")
+    context = full.fixture.context
+    expected = full.fixture.expected_cases
+    inputs = full.fixture.inputs
+    if any(
+        (row.fixture.context, row.fixture.expected_cases, row.fixture.inputs)
+        != (context, expected, inputs)
+        for row in cohorts
+    ):
+        raise ValueError("Inputs, execution context, or fixture inventory differ across cohorts")
     truth = set(affected)
-    if not truth.issubset(full.cases):
-        raise ValueError("Declared affected checks must be present in the full run")
+    if not truth <= expected:
+        raise ValueError("Declared affected checks must be in the fixture inventory")
+    full_executed = {key for key, state in full.cases.items() if state in _DECISIVE}
+    full_unresolved = sorted(expected - full_executed)
     failed = {key for key, state in full.cases.items() if state == "Failed"}
 
-    def assess(run):
-        if not run.cases.keys() <= full.cases.keys():
-            raise ValueError("The selection contains cases outside the full run")
-        mismatched = sorted(k for k, state in run.cases.items() if full.cases[k] != state)
+    def assess(run: Cohort):
+        executed = {key for key, state in run.cases.items() if state in _DECISIVE}
+        unresolved = sorted(run.cases.keys() - executed)
+        mismatched = sorted(
+            key for key in executed & full_executed if full.cases[key] != run.cases[key]
+        )
         caught = {key for key in failed if run.cases.get(key) == "Failed"}
+        measured = not (full_unresolved or unresolved or mismatched)
         return {
             "artifact_sha256": run.digest,
-            "executed_count": len(run.cases),
+            "execution_id": run.fixture.execution_id,
+            "executed_count": len(executed),
+            "unresolved_checks": unresolved,
             "caught_failures": sorted(caught),
-            "missed_failures": sorted(failed - caught),
-            "unnecessary_checks": sorted(run.cases.keys() - truth) if truth else None,
+            "missed_failures": sorted(failed - caught) if measured else None,
+            "unnecessary_checks": sorted(executed - truth) if measured and truth else None,
             "divergent_results": mismatched,
             "duration_seconds": run.seconds,
-            "measured_seconds_saved": full.seconds - run.seconds,
+            "measured_seconds_saved": full.seconds - run.seconds if measured else None,
         }
 
     narrow = assess(selected)
     broader = assess(fallback) if fallback is not None else None
-    incomplete = any(value in {"Skipped", "Inconclusive"} for value in full.cases.values())
-    incomplete |= bool(narrow["divergent_results"] or (broader and broader["divergent_results"]))
+    measured = narrow["missed_failures"] is not None and (
+        broader is None or broader["missed_failures"] is not None
+    )
     return {
         "schema": "verification_selection_quality@1",
-        "state": "incomplete" if incomplete else "measured",
-        "context": full.context,
-        "input_count": len(full.inputs),
+        "state": "measured" if measured else "incomplete",
+        "context": context,
+        "input_count": len(inputs),
         "full": {
             "artifact_sha256": full.digest,
-            "executed_count": len(full.cases),
+            "execution_id": full.fixture.execution_id,
+            "expected_count": len(expected),
+            "executed_count": len(full_executed),
+            "unresolved_checks": full_unresolved,
             "failed_checks": sorted(failed),
             "duration_seconds": full.seconds,
         },

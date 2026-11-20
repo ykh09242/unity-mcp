@@ -13,12 +13,14 @@ namespace VerificationFixtures
         public const string Folder = "Assets/__McpNavigationCheckFixture";
         public const string Map = Folder + "/MapMarkers.mat";
         public const string Route = Folder + "/RouteArrows.mat";
+        private string executionId;
 
         [OneTimeSetUp]
         public void OpenFixture()
         {
             if (Environment.GetEnvironmentVariable("UNITY_MCP_UNMAPPED_CHECK_FIXTURE") != "1")
                 Assert.Ignore("Enable the navigation material fixture in an owned disposable project.");
+            executionId = Guid.NewGuid().ToString("N");
             if (!AssetDatabase.IsValidFolder(Folder))
             {
                 string guid = AssetDatabase.CreateFolder("Assets", "__McpNavigationCheckFixture");
@@ -34,15 +36,19 @@ namespace VerificationFixtures
         [SetUp]
         public void IdentifyInputs()
         {
-            TestContext.WriteLine(
-                $"MCP_VERIFICATION_CONTEXT {Application.unityVersion}|{EditorUserBuildSettings.activeBuildTarget}|EditMode|{SystemInfo.operatingSystemFamily}"
-            );
             foreach (string path in new[] { Map, Route })
             {
                 using var hash = SHA256.Create();
                 string digest = BitConverter.ToString(hash.ComputeHash(File.ReadAllBytes(path))).Replace("-", "").ToLowerInvariant();
                 TestContext.WriteLine(path + " " + AssetDatabase.AssetPathToGUID(path) + " " + digest);
             }
+            string fixture = typeof(NavigationMaterialChecks).FullName;
+            TestContext.WriteLine($"MCP_VERIFICATION_EXECUTION {executionId}");
+            TestContext.WriteLine($"MCP_VERIFICATION_EXPECTED_CASE {fixture}.{nameof(MapMarkersSupportInstancing)}");
+            TestContext.WriteLine($"MCP_VERIFICATION_EXPECTED_CASE {fixture}.{nameof(RouteArrowsSupportInstancing)}");
+            TestContext.WriteLine(
+                $"MCP_VERIFICATION_CONTEXT {Application.unityVersion}|{EditorUserBuildSettings.activeBuildTarget}|EditMode|{SystemInfo.operatingSystemFamily}"
+            );
         }
 
         [Test]
