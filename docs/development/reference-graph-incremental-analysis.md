@@ -73,3 +73,33 @@ python tools/experiments/reference_graph_incremental.py /absolute/path/to/unity-
 
 The control option loads the analyzer from the selected local Git revision; use
 only a trusted revision. No extra package, service, compiler or download is needed.
+
+## Retained one-leaf publication
+
+The storage cohort publishes 100 edges per source through `GraphStore.observe_batch` and
+`publish_batch`. For each of three edits it changes the last edge of one source, reopens
+the database and hashes every ordered semantic edge field. A separate empty database
+receives all sources with the same edit. Both digests must agree, the edge count must
+stay constant and the digest must differ from the previous version. The last operation
+cancels a production worker after its replacement transaction has inserted an edge.
+Reopening must find the previous published digest and exactly one pending leaf.
+
+```sh
+python tools/experiments/reference_graph_leaf.py --output .work/leaf-cohort
+```
+
+Windows 10 19045, Ryzen family 25/model 33, Python 3.14.10 and SQLite 3.50.4,
+using storage from `dae3cf82`. Cold means a new empty graph with initialized
+schema. The leaf path uses its retained database. Times include observation and
+publication of supplied rows. Source discovery and post-publication hash verification
+are outside the clock. The host was shared with other local verification work.
+
+| Semantic edges | Cold publication | One-leaf median (3) | Fresh rebuild median (3) | Published sources, leaf / full | Logical SQLite row changes, leaf / full | Write transactions, leaf / full | Database bytes, cold / after last edit |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1,000 | 92.61 ms | 17.64 ms | 42.13 ms | 1 / 10 | 205 / 1,050 | 2 / 2 | 684,032 / 696,320 |
+| 100,000 | 9,038.41 ms | 29.77 ms | 8,985.88 ms | 1 / 1,000 | 205 / 105,000 | 2 / 32 | 60,026,880 / 60,039,168 |
+
+All six digest pairs agreed. Both cancelled transactions preserved their last complete
+edge sets and left leaf generation 5 pending. Logical changed-row counts include
+metadata. Physical device I/O and OS cache state were unmeasured. Each run retains
+its databases and `results.json` in the requested fresh directory.
