@@ -294,12 +294,7 @@ class TestParameterForwarding:
         assert paged["cursor"] == 200
 
     def test_every_optional_argument_has_a_forwarding_branch(self, mock_unity):
-        """A parameter accepted at the surface but dropped before the bridge is silent.
-
-        Limitation: this drives every parameter through one action, so it assumes the
-        forwarder stays action-agnostic. Scoping any entry to its own action means
-        scoping this test with it.
-        """
+        """Exercise every optional parameter on an action that accepts it."""
         fn = getattr(manage_sprite, "fn", manage_sprite)
         # A value each parameter's annotation accepts. Booleans must be True: the
         # forwarder deliberately omits a False flag, so False would look like a
@@ -324,6 +319,7 @@ class TestParameterForwarding:
             "guid": "a" * 32,
             "sprite_id": "b" * 32,
             "file_id": "21300000",
+            "expected_rect": [4.5, 8.0, 16.0, 32.0],
             "expected_revision": "fresh",
             "geometry": {"pivot": [0, 1]},
         }
@@ -338,15 +334,39 @@ class TestParameterForwarding:
             "narrowing the guard"
         )
 
-        call(action="full_setup", **{k: sample[k] for k in optional})
-
-        forwarded = mock_unity["params"]
-        dropped = [n for n in optional if n not in forwarded]
-        assert not dropped, f"accepted at the surface but never sent to Unity: {dropped}"
-        # The value too, not only the key. An audit reproduced a branch that kept the key
-        # and replaced the caller's value; membership alone stayed green for it.
-        changed = {n: (sample[n], forwarded[n]) for n in optional if forwarded[n] != sample[n]}
-        assert not changed, f"forwarded under a different value than the caller sent: {changed}"
+        action_fields = {
+            "full_setup": (
+                "path",
+                "cols",
+                "rows",
+                "frame_width",
+                "frame_height",
+                "base_name",
+                "filter_mode",
+                "clips",
+                "animation_name",
+                "output_dir",
+                "controller_path",
+                "overwrite",
+                "add_to_scene",
+                "scene_target",
+            ),
+            "get_info": ("path", "page_size", "cursor"),
+            "set_geometry": (
+                "path",
+                "guid",
+                "sprite_id",
+                "file_id",
+                "expected_revision",
+                "geometry",
+            ),
+            "resolve_reference": ("path", "guid", "file_id", "scene_target", "expected_rect"),
+        }
+        assert {field for fields in action_fields.values() for field in fields} == set(optional)
+        for action, fields in action_fields.items():
+            arguments = {field: sample[field] for field in fields}
+            assert call(action=action, **arguments)["success"]
+            assert mock_unity["params"] == {"action": action, **arguments}
 
 
 # =============================================================================
@@ -478,6 +498,21 @@ class TestSpriteCLICommands:
         for args in (
             ["info", "Assets/a.png", "--page-size", "1", "--cursor", "1"],
             [
+                "resolve-reference",
+                "Assets/a.png",
+                "--guid",
+                "a" * 32,
+                "--file-id",
+                "-21300000",
+                "--scene-target",
+                "Hero",
+                "--expected-rect",
+                "4.5",
+                "8",
+                "16",
+                "32",
+            ],
+            [
                 "get-geometry",
                 "Assets/a.png",
                 "--page-size",
@@ -533,7 +568,17 @@ class TestSpriteCLICommands:
         ):
             result, mock_run = run_cli(args)
             assert result.exit_code == 0, result.output
-            sent |= set(mock_run.call_args.args[1])
+            params = mock_run.call_args.args[1]
+            if args[0] == "resolve-reference":
+                assert params == {
+                    "action": "resolve_reference",
+                    "path": "Assets/a.png",
+                    "guid": "a" * 32,
+                    "file_id": "-21300000",
+                    "scene_target": "Hero",
+                    "expected_rect": [4.5, 8.0, 16.0, 32.0],
+                }
+            sent |= set(params)
 
         fn = getattr(manage_sprite, "fn", manage_sprite)
         assert sent == set(inspect.signature(fn).parameters) - {"ctx"}
