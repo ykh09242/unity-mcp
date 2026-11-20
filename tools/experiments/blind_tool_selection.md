@@ -299,3 +299,24 @@ For a fixed competitor cohort, pass `--competitor NAME` for every required compe
 Supply `--existing-compile-id` only for a known earlier request. For a pointer trial supply a previously identified `--pointer-target` and `--pointer-position X Y`. Without the corresponding fixture the runner keeps the planned cell and withholds the prompt. For these two conditional tasks the state probe can return `observation_fixtures` keyed by task, each entry containing the scoped read’s `arguments` and decoded `reply`. Both pre-prompt receipts must establish the result to enter the positive selection denominator. Other cases retain their availability and evidence grades. Only searches that returned a captured ranking enter the top-three denominator.
 
 Report the actor's first business call and its first verified observation separately. For example, a shell command can precede the MCP call that supplies the answer.
+
+### Read-only action selection in a game project
+
+The November 2026 comparison used one running game project and separate read-only
+hosts for each revision. The prompts named neither tools nor resources. Main and
+direct child actors used the same model and reasoning setting in both arms.
+
+| Comparison | Eligible pairs | Current-state or saved-source answer supported by a captured observation |
+| --- | --- | --- |
+| Initial action descriptions, `41b81950a` to `386329d5e`, Korean/English/Japanese, camera and saved UI | 8 of 12 | Baseline 1/8, candidate 0/8. All 16 eligible answers matched the independent values. |
+| Read-only camera resource guidance, `6ef373ec1` to `1748931bb`, Korean/Spanish, camera only | 4 of 4 | Baseline 3/4, candidate 4/4. All eight answers matched the independent values. |
+
+Four pairs in the initial comparison lacked unambiguous attribution. Re-scoring
+the frozen receipts preserved those exclusions. In the follow-up each baseline
+actor first tried the mixed camera tool for the task, and each candidate actor
+first used the read-only camera resource. In the three pairs where both arms
+obtained the live observation, the candidate used two, six and six fewer
+preceding calls. All eight actors used the shell first when setup calls are
+included. No candidate actor used ranked search in this follow-up, so these
+sessions cannot isolate the effect of the ranking change. Raw game evidence
+remains local.
