@@ -16,13 +16,12 @@ namespace MCPForUnity.Editor.Tools.Addressables
 {
     // A command receipt owns one delivery. This checkpoint owns the dependency between
     // two separately receipted deliveries in this Editor process.
-    internal static class AddressablePrefabWorkflow
+    internal static partial class AddressablePrefabWorkflow
     {
         private const string Store = "MCPForUnity.AddressablePrefab.v1";
         private static readonly HashSet<string> Running = new HashSet<string>();
 
-        internal static bool IsAction(string action) =>
-            action == "preview_prefab" || action == "create_prefab" || action == "register_prefab" || action == "prefab_status" || action == "cancel_prefab";
+        internal static bool IsAction(string action) => DeclaredActionContracts.IsPrefabAction(action);
 
         private sealed class Plan
         {
@@ -36,6 +35,12 @@ namespace MCPForUnity.Editor.Tools.Addressables
             public string parentGuid;
             public string groupPath;
             public string groupFiles;
+            public string settingsGuid;
+            public string settingsFiles;
+            public string stableRevision;
+            public string approvedObservation;
+            public string approvedSource;
+            public string successor;
             public string guid;
             public string hash;
             public bool cancellationRequested;
@@ -49,7 +54,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             return JsonConvert.DeserializeObject<Dictionary<string, Plan>>(raw) ?? throw new InvalidDataException();
         }
 
-        private static void Write(string key, Plan plan)
+        private static void Write(string key, Plan plan, string previous = null, string expectedSignature = null)
         {
             // Read again because a native import or Addressables callback can be reentrant.
             var plans = Read();
@@ -59,31 +64,30 @@ namespace MCPForUnity.Editor.Tools.Addressables
             if (!plans.ContainsKey(key) && plans.Count >= 64)
                 AddressablesState.Fail("prefab_checkpoint_capacity", "64 unexpired prefab workflows are retained.");
             plans[key] = plan;
+            PersistEvidence(key, plan, previous, expectedSignature);
             SessionState.SetString(Store, JsonConvert.SerializeObject(plans));
         }
 
         internal static object Handle(JObject request, string action)
         {
-            string key = AddressablesState.Text(request["checkpoint"], "checkpoint", 64);
-            if (key.Length != 64 || !key.All(c => c >= '0' && c <= '9' || c >= 'a' && c <= 'f'))
-                AddressablesState.Fail("invalid_prefab_checkpoint", "A server-bound workflow checkpoint is required.");
-            var fields =
-                action == "preview_prefab"
-                    ? new[] { "action", "checkpoint", "source_prefab", "prefab_path", "group_guid", "settings_path" }
-                    : new[] { "action", "checkpoint" };
-            if (fields.Length != request.Count || fields.Any(name => request.Property(name) == null))
+            string key = HexField(request, DeclaredActionContracts.PrefabCheckpoint);
+            if (!DeclaredActionContracts.MatchesPrefabFields(request, action))
                 AddressablesState.Fail("invalid_prefab_request", "The supplied fields do not match this workflow action.");
             var plans = Read();
             plans.TryGetValue(key, out Plan plan);
             if (plan != null && (plan.expires <= DateTimeOffset.UtcNow.ToUnixTimeSeconds() || plan.session != CommandResumeState.SessionId))
                 plan = null;
+            if (action == "reconcile_prefab" || action == "replan_prefab")
+                return Recover(request, key, action, plan);
             if (action == "preview_prefab")
             {
                 var intent = (JObject)request.DeepClone();
                 intent.Remove("action");
-                intent.Remove("checkpoint");
+                intent.Remove(DeclaredActionContracts.PrefabCheckpoint);
                 if (plan == null)
                 {
+                    if (ReadEvidence(key) != null)
+                        return Unavailable();
                     plan = Preview(intent);
                     Write(key, plan);
                 }
@@ -91,10 +95,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     AddressablesState.Fail("prefab_intent_conflict", "This operation ID already belongs to a different plan.");
             }
             if (plan == null)
-                return new ErrorResponse(
-                    "prefab_checkpoint_unavailable",
-                    new { state = "unknown", message = "No current owner/project/process checkpoint. Inspect the original target." }
-                );
+                return Unavailable();
             if (plan.phase == "creating" || plan.phase == "registering")
             {
                 if (action == "cancel_prefab")
@@ -113,7 +114,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 return Report(plan, plan.phase);
             }
             AddressablesState settings;
-            string conflict;
+            JObject conflict;
             try
             {
                 settings = AddressablesState.Capture(plan.intent);
@@ -128,7 +129,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 return Report(plan, "conflict", "The expected asset or metadata file could not be read.");
             }
             if (conflict != null)
-                return Report(plan, "conflict", conflict);
+                return Report(plan, "conflict", (string)conflict["detail"], conflict);
             if (action == "preview_prefab" || action == "prefab_status" || plan.phase == "registered" || (action == "create_prefab" && plan.phase == "created"))
                 return Report(plan, plan.phase);
             if (action == "register_prefab" && plan.phase != "created")
@@ -139,7 +140,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             Object group = (Object)settings.Groups[(string)plan.intent["group_guid"]];
             MethodInfo registration = create ? null : Registration(settings, group);
             if (!create && EditorUtility.IsDirty(group))
-                return Report(plan, "conflict", "Target group has unsaved edits.");
+                return Report(plan, "conflict", "Target group has unsaved edits.", Difference("group_dirty", false, true, "Target group has unsaved edits."));
             plan.phase = create ? "creating" : "registering";
             Write(key, plan);
             Running.Add(key);
@@ -161,12 +162,21 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 else
                 {
                     registration.Invoke(settings.Settings, new object[] { plan.guid, group, false, true });
-                    if (DiskHash(plan.groupPath) != plan.groupFiles || !OnlyPlannedEntryAdded(plan, settings, AddressablesState.Capture(plan.intent)))
+                    var applied = AddressablesState.Capture(plan.intent);
+                    string appliedRevision = applied.Revision;
+                    if (
+                        DiskHash(plan.groupPath) != plan.groupFiles
+                        || (plan.settingsFiles != null && DiskHash((string)plan.intent["settings_path"]) != plan.settingsFiles)
+                        || !OnlyPlannedEntryAdded(plan, settings, applied)
+                    )
                         return Report(plan, "unknown", "Native registration changed unexpected fields. Inspect the group before saving.");
                     EditorUtility.SetDirty(group);
                     AssetDatabase.SaveAssetIfDirty(group);
-                    if (EditorUtility.IsDirty(group) || !MatchesEntry(plan, AddressablesState.Capture(plan.intent)))
+                    var savedState = AddressablesState.Capture(plan.intent);
+                    if (EditorUtility.IsDirty(group) || savedState.Revision != appliedRevision)
                         return Report(plan, "unknown", "The target group did not confirm the saved entry.");
+                    plan.stableRevision = StableRevision(savedState);
+                    plan.groupFiles = DiskHash(plan.groupPath);
                     plan.cancellationRequested = Read()[key].cancellationRequested;
                     plan.phase = "registered";
                 }
@@ -254,6 +264,9 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 parentGuid = AssetDatabase.AssetPathToGUID(parent),
                 groupPath = groupPath,
                 groupFiles = DiskHash(groupPath),
+                settingsGuid = AssetDatabase.AssetPathToGUID(settingsPath),
+                settingsFiles = DiskHash(settingsPath),
+                stableRevision = StableRevision(state),
             };
         }
 
@@ -267,26 +280,55 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     && (string)row["path"] == (string)plan.intent["prefab_path"]
                 );
 
-        private static string Conflict(Plan plan, AddressablesState state)
+        private static JObject Conflict(Plan plan, AddressablesState state, string persistentRevision = null)
         {
             string path = PrefabPath(plan.intent, "prefab_path");
-            if (AssetDatabase.AssetPathToGUID(path.Substring(0, path.LastIndexOf('/'))) != plan.parentGuid)
-                return "Destination parent GUID changed.";
+            string parentGuid = AssetDatabase.AssetPathToGUID(path.Substring(0, path.LastIndexOf('/')));
+            if (parentGuid != plan.parentGuid)
+                return Difference("parent_guid", plan.parentGuid, parentGuid, "Destination parent GUID changed.");
             if (plan.guid == null)
             {
                 string source = PrefabPath(plan.intent, "source_prefab");
                 if (AssetPathUtility.IsAssetDestinationOccupied(path))
-                    return "Prefab destination is now occupied.";
-                if (AssetDatabase.AssetPathToGUID(source) != plan.sourceGuid || Hash(source) != plan.sourceHash)
-                    return "Source prefab GUID or dependency hash changed.";
+                    return Difference("destination_vacant", true, false, "Prefab destination is now occupied.");
+                string sourceGuid = AssetDatabase.AssetPathToGUID(source);
+                if (sourceGuid != plan.sourceGuid)
+                    return Difference("source_guid", plan.sourceGuid, sourceGuid, "Source prefab GUID changed.");
+                string hash = Hash(source);
+                if (hash != plan.sourceHash)
+                    return Difference("source_hash", plan.sourceHash, hash, "Source prefab dependency or file hash changed.");
             }
-            else if (AssetDatabase.AssetPathToGUID(path) != plan.guid || Hash(path) != plan.hash)
-                return "Created prefab GUID or dependency hash changed.";
-            if (plan.phase == "registered")
-                return MatchesEntry(plan, state) ? null : "Registered entry group, address or asset path changed.";
-            if (DiskHash(plan.groupPath) != plan.groupFiles)
-                return "Saved Addressables group or metadata changed.";
-            return state.Revision != plan.revision ? "Addressables revision changed; expected " + plan.revision + ", observed " + state.Revision + "." : null;
+            else
+            {
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                if (guid != plan.guid)
+                    return Difference("prefab_guid", plan.guid, guid, "Created prefab GUID changed.");
+                string hash = Hash(path);
+                if (hash != plan.hash)
+                    return Difference("prefab_hash", plan.hash, hash, "Created prefab dependency or file hash changed.");
+            }
+            if (plan.phase == "registered" && !MatchesEntry(plan, state))
+                return Difference("registered_entry_matches", true, false, "Registered entry group, address or asset path changed.");
+            if (plan.phase == "registered" && persistentRevision == null)
+                return null;
+            string expected = persistentRevision != null ? plan.stableRevision : plan.revision;
+            string observed = persistentRevision ?? state.Revision;
+            if (observed != expected)
+                return Difference("settings_revision", expected, observed, "Addressables revision changed.");
+            if (plan.settingsGuid != null)
+            {
+                string settingsPath = (string)plan.intent["settings_path"];
+                string settingsGuid = AssetDatabase.AssetPathToGUID(settingsPath);
+                if (settingsGuid != plan.settingsGuid)
+                    return Difference("settings_guid", plan.settingsGuid, settingsGuid, "Settings asset GUID changed.");
+                string files = DiskHash(settingsPath);
+                if (files != plan.settingsFiles)
+                    return Difference("settings_files", plan.settingsFiles, files, "Saved Addressables settings or metadata changed.");
+            }
+            string groupFiles = DiskHash(plan.groupPath);
+            if (groupFiles != plan.groupFiles)
+                return Difference("group_files", plan.groupFiles, groupFiles, "Saved Addressables group or metadata changed.");
+            return null;
         }
 
         private static bool OnlyPlannedEntryAdded(Plan plan, AddressablesState before, AddressablesState after)
@@ -302,7 +344,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             return JToken.DeepEquals(before.Document, after.Document);
         }
 
-        private static object Report(Plan plan, string state, string detail = null)
+        private static object Report(Plan plan, string state, string detail = null, JObject conflict = null, JObject reconciliation = null)
         {
             var completed = new List<string>();
             if (plan.guid != null)
@@ -313,6 +355,8 @@ namespace MCPForUnity.Editor.Tools.Addressables
             {
                 state,
                 detail,
+                conflict,
+                reconciliation,
                 cancellation_requested = plan.cancellationRequested || plan.phase == "cancelled",
                 editor_session_id = plan.session,
                 prefab_guid = plan.guid,

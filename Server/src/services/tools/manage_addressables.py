@@ -8,7 +8,9 @@ from mcp.types import ToolAnnotations
 from pydantic import StrictInt
 
 from services.addressable_prefab import prefab_parameters
+from services.declared_action_contracts import PREFAB_PAGING_DEFAULTS
 from services.registry import mcp_for_unity_tool
+from services.registry.action_contracts import action_help
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
@@ -19,6 +21,8 @@ PREFAB_ACTIONS = (
     "register_prefab",
     "prefab_status",
     "cancel_prefab",
+    "reconcile_prefab",
+    "replan_prefab",
 )
 SETTINGS_AND_LAYOUT_ACTIONS = (
     "inspect",
@@ -28,7 +32,7 @@ SETTINGS_AND_LAYOUT_ACTIONS = (
     "set_profile_value",
     "analyze_layout",
 )
-ALL_ACTIONS = SETTINGS_AND_LAYOUT_ACTIONS + PREFAB_ACTIONS
+ALL_ACTIONS = ("capabilities",) + SETTINGS_AND_LAYOUT_ACTIONS + PREFAB_ACTIONS
 _GUID = re.compile(r"[0-9a-f]{32}\Z")
 
 
@@ -124,6 +128,7 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
 @mcp_for_unity_tool(
     group="core",
     description=(
+        "Use capabilities without a settings asset for per-action provider availability. "
         "Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), "
         "run bounded preflight for duplicate addresses/missing references/profile issues, or analyze "
         "an existing native build-layout report for duplicated content. Settings actions require compatible "
@@ -137,7 +142,7 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
         "A receipt-protected prefab workflow previews copying a source prefab and registering its new GUID. "
         "Use the same operation_id for create_prefab, register_prefab, prefab_status or cancel_prefab. "
         "Caps128groups/4096entries/32profiles/64variables,256preflightentries,100rows/256KiB per response. "
-        "Native layout files are bounded to16MiB."
+        "Native layout files are bounded to16MiB. " + action_help("manage_addressables")
     ),
     annotations=ToolAnnotations(
         title="Manage Addressables", destructiveHint=True, readOnlyHint=False
@@ -148,8 +153,8 @@ async def manage_addressables(
     action: Annotated[str, Literal[*ALL_ACTIONS], "Addressables action."],
     settings_path: str | None = None,
     section: str | None = None,
-    page_number: StrictInt = 1,
-    page_size: StrictInt = 50,
+    page_number: StrictInt = PREFAB_PAGING_DEFAULTS["page_number"],
+    page_size: StrictInt = PREFAB_PAGING_DEFAULTS["page_size"],
     expected_revision: str | None = None,
     entry_guid: str | None = None,
     group_guid: str | None = None,
@@ -162,6 +167,8 @@ async def manage_addressables(
     operation_id: str | None = None,
     source_prefab: str | None = None,
     prefab_path: str | None = None,
+    previous_operation_id: str | None = None,
+    expected_observation: str | None = None,
 ) -> dict[str, Any]:
     args = {
         k: v
@@ -183,11 +190,21 @@ async def manage_addressables(
             "operation_id": operation_id,
             "source_prefab": source_prefab,
             "prefab_path": prefab_path,
+            "previous_operation_id": previous_operation_id,
+            "expected_observation": expected_observation,
         }.items()
         if v is not None
     }
-    if args["action"] in PREFAB_ACTIONS:
-        if args.pop("page_number") != 1 or args.pop("page_size") != 50:
+    if args["action"] == "capabilities":
+        if (
+            type(page_number) is not int
+            or type(page_size) is not int
+            or args != {"action": "capabilities", "page_number": 1, "page_size": 50}
+        ):
+            return {"success": False, "message": "capabilities takes only the action."}
+        args = {"action": "capabilities"}
+    elif args["action"] in PREFAB_ACTIONS:
+        if any(args.pop(name) != value for name, value in PREFAB_PAGING_DEFAULTS.items()):
             return {"success": False, "message": "Prefab workflows do not support paging."}
         try:
             args = prefab_parameters(args)

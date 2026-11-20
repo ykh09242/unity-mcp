@@ -87,6 +87,47 @@ def test_prefab_recovery_cannot_supply_replacement_intent_or_private_checkpoint(
     wire[1].assert_not_awaited()
 
 
+def test_reconcile_and_approve_derive_both_checkpoint_keys_from_current_receipt(wire):
+    from services.execution_receipt_context import execution_owner
+
+    targets = {"d" * 32: "9" * 64, "e" * 32: "8" * 64}
+    owner = SimpleNamespace(prefab_checkpoint=targets.__getitem__)
+    old, fresh = targets
+    observed = "c" * 64
+    request = {
+        "action": "replan_prefab",
+        "operation_id": fresh,
+        "previous_operation_id": old,
+        "expected_observation": observed,
+    }
+    assert not invoke(wire, **request)["success"]
+    assert not invoke(wire, action="reconcile_prefab", operation_id=old)["success"]
+    token = execution_owner.set(owner)
+    try:
+        for overrides in (
+            {"operation_id": old},
+            {"previous_operation_id": targets[old]},
+            {"expected_observation": "bad"},
+            {"prefab_path": "Assets/Unapproved.prefab"},
+        ):
+            assert not invoke(wire, **(request | overrides))["success"]
+        wire[1].assert_not_awaited()
+        assert invoke(wire, action="reconcile_prefab", operation_id=old)["success"]
+        assert wire[1].await_args.args[3] == {
+            "action": "reconcile_prefab",
+            "checkpoint": targets[old],
+        }
+        assert invoke(wire, **request)["success"]
+        assert wire[1].await_args.args[3] == {
+            "action": "replan_prefab",
+            "checkpoint": targets[fresh],
+            "previous_checkpoint": targets[old],
+            "expected_observation": observed,
+        }
+    finally:
+        execution_owner.reset(token)
+
+
 @pytest.mark.parametrize(
     "action,extra",
     [

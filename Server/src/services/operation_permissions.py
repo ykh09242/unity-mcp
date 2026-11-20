@@ -194,9 +194,11 @@ _ACTIONS: Final = {
         Permission.EDIT: _names("set_string_entry set_fallbacks set_asset_entry"),
     },
     "manage_addressables": {
-        Permission.READ: _names("inspect preflight analyze_layout prefab_status"),
+        Permission.READ: _names(
+            "capabilities inspect preflight analyze_layout prefab_status reconcile_prefab"
+        ),
         Permission.EDIT: _names(
-            "set_address move_entry set_profile_value preview_prefab create_prefab register_prefab cancel_prefab"
+            "set_address move_entry set_profile_value preview_prefab create_prefab register_prefab cancel_prefab replan_prefab"
         ),
     },
     "manage_timeline": {

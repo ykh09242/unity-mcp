@@ -14,7 +14,7 @@ The native runner exercises the current checkout in small, disposable EditMode p
 | `cinemachine-3` | Create a 3.1.7 camera with its component pipeline, operate the Brain, and attach the native Decollider extension. |
 | `cinemachine-absent` | Verify the basic Unity camera and lens fallback, missing-package readiness, and refusal of Cinemachine actions. |
 | `atlas-v1`, `atlas-v2` | Create an atlas with the Editor's 2D Sprite package, then reopen the same project in a second Editor process and verify persisted assets. |
-| `addressables-legacy` | With Addressables 1.1.5 and Scriptable Build Pipeline 1.23.4, check unavailable layout data, guarded edits with Undo, and prefab registration after a lost response. Separate phases check domain reload and replacement-Editor isolation. |
+| `addressables-legacy` | With Addressables 1.1.5 and Scriptable Build Pipeline 1.23.4, check unavailable layout data, guarded edits with Undo, prefab registration after a lost response, and competing edits from two connected clients. Separate phases reload the domain, reopen the same project, reconcile a confirmed copy, approve a fresh plan, and keep an unconfirmed import fenced. |
 | `auditor-package` | With Project Auditor and its rules at 3.2.0 and Mono.Cecil 1.11.6, require the native audit to report the source fixture diagnostic. |
 | `auditor-absent` | Require the missing provider result on an Editor without the integrated module or standalone package. |
 | `auditor-integrated` | Run the Editor Auditor module with its distributed rules archive 1.0.1 and require the source fixture diagnostic. |

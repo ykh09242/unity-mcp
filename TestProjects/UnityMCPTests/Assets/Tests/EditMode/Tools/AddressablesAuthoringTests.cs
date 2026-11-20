@@ -459,13 +459,22 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static void SendWorkflow(TcpClient peer, string key, string action)
         {
-            var request = new JObject
-            {
-                ["type"] = "manage_addressables",
-                ["params"] = new JObject { ["action"] = action, ["checkpoint"] = key },
-            };
+            SendAddressables(peer, new JObject { ["action"] = action, ["checkpoint"] = key });
+        }
+
+        private static void SendAddressables(TcpClient peer, JObject args)
+        {
+            var request = new JObject { ["type"] = "manage_addressables", ["params"] = args };
             StdioPeer.SendFrame(peer.GetStream(), Encoding.UTF8.GetBytes(request.ToString(Newtonsoft.Json.Formatting.None)));
         }
+
+        private static Task<JObject> ReadWorkflow(TcpClient peer) =>
+            Task.Run(() =>
+            {
+                var wire = JObject.Parse(Encoding.UTF8.GetString(StdioPeer.ReadFrame(peer.GetStream(), 10000)));
+                Assert.AreEqual("success", wire.Value<string>("status"), wire.ToString());
+                return (JObject)wire["result"];
+            });
 
         private static IEnumerator WaitFor(Func<bool> predicate)
         {
@@ -558,6 +567,82 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNull(Invoke(settings, "FindAssetEntry", AssetDatabase.AssetPathToGUID(destination)));
         }
 
+        [UnityTest, Explicit("Requires two simultaneously authenticated clients in a disposable Editor.")]
+        public IEnumerator CompetingPrefabClientsPreserveOneCopyAndInterveningMetadataEdit()
+        {
+            string firstKey = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            string secondKey = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            string destination = PreviewPrefab(firstKey);
+            var preview = Workflow(
+                secondKey,
+                "preview_prefab",
+                new JObject
+                {
+                    ["source_prefab"] = root + "/Template.prefab",
+                    ["prefab_path"] = destination,
+                    ["settings_path"] = settingsPath,
+                    ["group_guid"] = (string)Get(first, "m_GUID"),
+                }
+            );
+            Assert.IsTrue(preview.Value<bool>("success"), preview.ToString());
+            string token = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            Assert.IsFalse(StdioBridgeHost.IsRunning);
+            StdioBridgeHost.StartOwned(0, token);
+            try
+            {
+                int port = StdioBridgeHost.GetCurrentPort();
+                var connections = Task.WhenAll(
+                    Task.Run(() => StdioPeer.ConnectProgressPeer(port, token, null, out _)),
+                    Task.Run(() => StdioPeer.ConnectProgressPeer(port, token, null, out _))
+                );
+                yield return WaitFor(() => connections.IsCompleted);
+                var clients = connections.GetAwaiter().GetResult();
+                using var a = clients[0];
+                using var b = clients[1];
+                SendWorkflow(a, firstKey, "create_prefab");
+                SendWorkflow(b, secondKey, "create_prefab");
+                var settled = Task.WhenAll(ReadWorkflow(a), ReadWorkflow(b));
+                yield return WaitFor(() => settled.IsCompleted);
+                var responses = settled.GetAwaiter().GetResult();
+                int winner = Array.FindIndex(responses, row => row.Value<bool>("success"));
+                Assert.AreNotEqual(-1, winner);
+                Assert.AreEqual("created", (string)responses[winner].SelectToken("data.state"));
+                Assert.AreEqual("destination_vacant", (string)responses[1 - winner].SelectToken("data.conflict.field"));
+                string guid = AssetDatabase.AssetPathToGUID(destination);
+                Assert.AreEqual(guid, (string)responses[winner].SelectToken("data.prefab_guid"));
+                SendAddressables(
+                    clients[1 - winner],
+                    new JObject
+                    {
+                        ["action"] = "set_address",
+                        ["settings_path"] = settingsPath,
+                        ["expected_revision"] = preview["data"]["settings_revision"],
+                        ["entry_guid"] = assetGuid,
+                        ["address"] = "manual/competing-client",
+                    }
+                );
+                var edit = ReadWorkflow(clients[1 - winner]);
+                yield return WaitFor(() => edit.IsCompleted);
+                var edited = edit.GetAwaiter().GetResult();
+                Assert.IsTrue(edited.Value<bool>("success"), edited.ToString());
+                SendWorkflow(clients[winner], winner == 0 ? firstKey : secondKey, "register_prefab");
+                var read = ReadWorkflow(clients[winner]);
+                yield return WaitFor(() => read.IsCompleted);
+                var refused = read.GetAwaiter().GetResult();
+                Assert.AreEqual("settings_revision", (string)refused.SelectToken("data.conflict.field"), refused.ToString());
+                Assert.AreEqual((string)preview.SelectToken("data.settings_revision"), (string)refused.SelectToken("data.conflict.expected"));
+                Assert.AreEqual((string)edited.SelectToken("data.revision"), (string)refused.SelectToken("data.conflict.observed"));
+                Assert.AreEqual("manual/competing-client", Get(Invoke(settings, "FindAssetEntry", assetGuid), "address"));
+                Assert.IsNull(Invoke(settings, "FindAssetEntry", guid));
+                Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(destination));
+                Assert.AreEqual(1, Directory.GetFiles(root, "Result*.prefab").Length);
+            }
+            finally
+            {
+                StdioBridgeHost.Stop();
+            }
+        }
+
         [Test]
         public void PrefabCancellationAndDestinationCollisionPreserveExistingAssets()
         {
@@ -600,6 +685,37 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [Test]
+        public void ReconciliationVerifiesSavedRegistrationWhenCancellationArrivedTooLate()
+        {
+            string key = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            string destination = PreviewPrefab(key);
+            Assert.AreEqual("created", (string)Workflow(key, "create_prefab").SelectToken("data.state"));
+            var saved = Workflow(key, "register_prefab");
+            Assert.AreEqual("registered", (string)saved.SelectToken("data.state"), saved.ToString());
+            // Model the terminal record with a late cancellation from a previous process. Keep the
+            // actual saved entry, GUID and digests so the public reconciliation must verify them.
+            var workflowType = typeof(ManageAddressables).Assembly.GetType("MCPForUnity.Editor.Tools.Addressables.AddressablePrefabWorkflow", true);
+            const BindingFlags PrivateStatic = BindingFlags.NonPublic | BindingFlags.Static;
+            object record = workflowType.GetMethod("ReadEvidence", PrivateStatic).Invoke(null, new object[] { key });
+            record.GetType().GetField("session").SetValue(record, Guid.NewGuid().ToString("N"));
+            record.GetType().GetField("cancellationRequested").SetValue(record, true);
+            workflowType.GetMethod("PersistEvidence", PrivateStatic).Invoke(null, new[] { key, record, null, null });
+            var observed = Workflow(key, "reconcile_prefab");
+            Assert.AreEqual("registered", (string)observed.SelectToken("data.state"), observed.ToString());
+            Assert.IsTrue((bool)observed.SelectToken("data.cancellation_requested"));
+            Assert.AreEqual(destination, (string)observed.SelectToken("data.reconciliation.observed_entry_address"));
+            CollectionAssert.AreEqual(new[] { "create_prefab", "register_prefab" }, observed.SelectToken("data.completed_steps").Values<string>());
+            Assert.IsFalse((bool)observed.SelectToken("data.reconciliation.replan_available"));
+
+            var savedEntry = Invoke(settings, "FindAssetEntry", (string)saved.SelectToken("data.prefab_guid"));
+            Invoke(savedEntry, "SetAddress", "manual/after-registration", true);
+            var changed = Workflow(key, "reconcile_prefab");
+            Assert.AreEqual("conflict", (string)changed.SelectToken("data.state"), changed.ToString());
+            Assert.AreEqual("registered_entry_matches", (string)changed.SelectToken("data.conflict.field"));
+            Assert.AreEqual("manual/after-registration", (string)Get(savedEntry, "address"));
+        }
+
         private static readonly string DomainIdentity = Guid.NewGuid().ToString("N");
         private static string RestartEvidence => Path.Combine(Application.dataPath, "..", "Library", "McpPrefabWorkflowRestart.json");
 
@@ -608,10 +724,63 @@ namespace MCPForUnityTests.Editor.Tools
         {
             Assert.IsTrue(Application.isBatchMode);
             Assert.IsFalse(File.Exists(RestartEvidence), "Preserve any existing restart evidence.");
+            foreach (var owned in new[] { first, second, settings }.Cast<UnityEngine.Object>())
+            {
+                EditorUtility.SetDirty(owned);
+                AssetDatabase.SaveAssetIfDirty(owned);
+            }
             string key = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
             string destination = PreviewPrefab(key);
             var created = Workflow(key, "create_prefab");
             Assert.AreEqual("created", (string)created["data"]["state"], created.ToString());
+            string uncertainKey = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            string uncertainPath = root + "/Uncertain.prefab";
+            Assert.IsTrue(
+                Workflow(
+                        uncertainKey,
+                        "preview_prefab",
+                        new JObject
+                        {
+                            ["source_prefab"] = root + "/Template.prefab",
+                            ["prefab_path"] = uncertainPath,
+                            ["settings_path"] = settingsPath,
+                            ["group_guid"] = (string)Get(first, "m_GUID"),
+                        }
+                    )
+                    .Value<bool>("success")
+            );
+            var workflowType = typeof(ManageAddressables).Assembly.GetType("MCPForUnity.Editor.Tools.Addressables.AddressablePrefabWorkflow", true);
+            const BindingFlags PrivateStatic = BindingFlags.NonPublic | BindingFlags.Static;
+            object fence = null;
+            PrefabWorkflowImportObserver.Imported = paths =>
+            {
+                if (paths.Contains(uncertainPath))
+                    fence = workflowType.GetMethod("ReadEvidence", PrivateStatic).Invoke(null, new object[] { uncertainKey });
+            };
+            try
+            {
+                Assert.AreEqual("created", (string)Workflow(uncertainKey, "create_prefab").SelectToken("data.state"));
+            }
+            finally
+            {
+                PrefabWorkflowImportObserver.Imported = null;
+            }
+            Assert.IsNotNull(fence, "Observe the durable pre-settlement fence during actual native import.");
+            Assert.AreEqual("creating", (string)fence.GetType().GetField("phase").GetValue(fence));
+            var records = (JObject)workflowType.GetMethod("ReadJournal", PrivateStatic).Invoke(null, null);
+            var record = records
+                .Properties()
+                .Select(p => (JObject)p.Value)
+                .Single(r => (string)JObject.Parse((string)r["payload"]).SelectToken("intent.prefab_path") == uncertainPath);
+            var verifier = workflowType.GetMethod("VerifyEvidence", PrivateStatic);
+            Assert.IsNotNull(verifier.Invoke(null, new object[] { uncertainKey, record }));
+            Assert.Throws<TargetInvocationException>(() => verifier.Invoke(null, new object[] { key, record }));
+            record["payload"] = (string)record["payload"] + " ";
+            var tampered = Assert.Throws<TargetInvocationException>(() => verifier.Invoke(null, new object[] { uncertainKey, record }));
+            StringAssert.Contains("integrity check", tampered.InnerException.Message);
+            // Reproduce a lost final journal write using the actual pre-settlement evidence, while
+            // leaving Unity's imported asset in place. No runtime crash or replay is required.
+            workflowType.GetMethod("PersistEvidence", PrivateStatic).Invoke(null, new[] { uncertainKey, fence, null, null });
             var marker = new JObject
             {
                 ["key"] = key,
@@ -619,6 +788,12 @@ namespace MCPForUnityTests.Editor.Tools
                 ["session"] = created["data"]["editor_session_id"],
                 ["guid"] = AssetDatabase.AssetPathToGUID(destination),
                 ["destination"] = destination,
+                ["hash"] = created["data"]["prefab_hash"],
+                ["root"] = root,
+                ["root_guid"] = rootGuid,
+                ["settings_path"] = settingsPath,
+                ["uncertain_key"] = uncertainKey,
+                ["uncertain_guid"] = AssetDatabase.AssetPathToGUID(uncertainPath),
             };
             SessionState.SetString(ReloadEvidence, marker.ToString());
             EditorUtility.RequestScriptReload();
@@ -629,13 +804,12 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual((string)marker["session"], (string)observed["data"]["editor_session_id"], observed.ToString());
             Assert.AreEqual((string)marker["guid"], (string)observed["data"]["prefab_guid"]);
             Assert.AreEqual("created", (string)observed["data"]["state"], observed.ToString());
-            var cancelled = Workflow((string)marker["key"], "cancel_prefab");
-            Assert.AreEqual("cancelled", (string)cancelled["data"]["state"]);
-            Assert.AreEqual("cancelled", (string)Workflow((string)marker["key"], "register_prefab")["data"]["state"]);
             using (var file = new FileStream(RestartEvidence, FileMode.CreateNew, FileAccess.Write))
             using (var writer = new StreamWriter(file))
                 writer.Write(marker.ToString());
             SessionState.EraseString(ReloadEvidence);
+            // The replacement Editor verifies and removes this exact fixture-owned root.
+            root = null;
         }
 
         [Test, Explicit("Second Editor process in the disposable prefab recovery profile.")]
@@ -645,14 +819,64 @@ namespace MCPForUnityTests.Editor.Tools
             var marker = JObject.Parse(File.ReadAllText(RestartEvidence));
             Assert.AreNotEqual((string)marker["session"], MCPForUnity.Editor.Services.Transport.CommandResumeState.SessionId);
             string currentKey = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
-            string destination = PreviewPrefab(currentKey);
-            var refused = Workflow((string)marker["key"], "register_prefab");
-            Assert.IsFalse(refused.Value<bool>("success"), refused.ToString());
-            Assert.AreEqual("unknown", (string)refused["data"]["state"], refused.ToString());
-            Assert.IsFalse(File.Exists(destination));
-            var created = Workflow(currentKey, "create_prefab");
-            Assert.AreEqual("created", (string)created["data"]["state"], created.ToString());
-            Assert.AreNotEqual((string)marker["guid"], AssetDatabase.AssetPathToGUID(destination));
+            string oldKey = (string)marker["key"];
+            string priorRoot = (string)marker["root"];
+            Assert.IsTrue(System.Text.RegularExpressions.Regex.IsMatch(priorRoot, @"\AAssets/__McpAddressables_[0-9a-f]{32}\z"));
+            Assert.AreEqual((string)marker["root_guid"], AssetDatabase.AssetPathToGUID(priorRoot));
+            string destination = priorRoot + "/Result.prefab";
+            string guid = (string)marker["guid"];
+            Assert.AreEqual(destination, (string)marker["destination"]);
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(destination));
+            var originalSettings = AssetDatabase.LoadAssetAtPath((string)marker["settings_path"], settingsType);
+            string uncertainKey = (string)marker["uncertain_key"];
+            string uncertainGuid = (string)marker["uncertain_guid"];
+            var uncertain = Workflow(uncertainKey, "reconcile_prefab");
+            Assert.AreEqual("unknown", (string)uncertain.SelectToken("data.state"), uncertain.ToString());
+            Assert.AreEqual(uncertainGuid, (string)uncertain.SelectToken("data.reconciliation.observed_prefab_guid"));
+            Assert.IsFalse((bool)uncertain.SelectToken("data.reconciliation.replan_available"));
+            Assert.IsFalse(
+                Workflow(currentKey, "replan_prefab", new JObject { ["previous_checkpoint"] = uncertainKey, ["expected_observation"] = new string('0', 64) })
+                    .Value<bool>("success")
+            );
+            Assert.AreEqual("unknown", (string)Workflow(uncertainKey, "create_prefab").SelectToken("data.state"));
+            Assert.AreEqual(uncertainGuid, AssetDatabase.AssetPathToGUID(priorRoot + "/Uncertain.prefab"));
+            Assert.IsNull(Invoke(originalSettings, "FindAssetEntry", uncertainGuid));
+            foreach (string action in new[] { "create_prefab", "register_prefab", "prefab_status" })
+                Assert.AreEqual("unknown", (string)Workflow(oldKey, action).SelectToken("data.state"));
+            var observed = Workflow(oldKey, "reconcile_prefab");
+            Assert.AreEqual("created", (string)observed.SelectToken("data.state"), observed.ToString());
+            Assert.AreEqual(guid, (string)observed.SelectToken("data.reconciliation.observed_prefab_guid"));
+            Assert.AreEqual((string)marker["hash"], (string)observed.SelectToken("data.reconciliation.observed_prefab_hash"));
+            Assert.AreEqual((string)marker["session"], (string)observed.SelectToken("data.reconciliation.recorded_editor_session_id"));
+            Assert.IsTrue((bool)observed.SelectToken("data.reconciliation.replan_available"));
+            Assert.IsNull(Invoke(originalSettings, "FindAssetEntry", guid));
+            string digest = (string)observed.SelectToken("data.reconciliation.observation");
+            var approval = new JObject { ["previous_checkpoint"] = oldKey, ["expected_observation"] = new string('0', 64) };
+            Assert.IsFalse(Workflow(currentKey, "replan_prefab", approval).Value<bool>("success"));
+            approval["expected_observation"] = digest;
+            Assert.IsFalse(Workflow(oldKey, "replan_prefab", approval).Value<bool>("success"));
+            Assert.AreEqual("unknown", (string)Workflow(currentKey, "register_prefab").SelectToken("data.state"));
+            var replanned = Workflow(currentKey, "replan_prefab", approval);
+            Assert.AreEqual("created", (string)replanned.SelectToken("data.state"), replanned.ToString());
+            Assert.IsNull(Invoke(originalSettings, "FindAssetEntry", guid), "Approval itself must not register an entry.");
+            string anotherKey = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            var duplicate = Workflow(anotherKey, "replan_prefab", approval);
+            Assert.AreEqual("blocked", (string)duplicate.SelectToken("data.state"), duplicate.ToString());
+            Assert.IsTrue((bool)duplicate.SelectToken("data.reconciliation.continuation_claimed"));
+            Assert.IsFalse((bool)Workflow(oldKey, "reconcile_prefab").SelectToken("data.reconciliation.replan_available"));
+            Assert.AreEqual("unknown", (string)Workflow(anotherKey, "register_prefab").SelectToken("data.state"));
+            Assert.AreEqual("created", (string)Workflow(currentKey, "replan_prefab", approval).SelectToken("data.state"));
+            Assert.AreEqual("unknown", (string)Workflow(oldKey, "register_prefab").SelectToken("data.state"));
+            Assert.AreEqual("created", (string)Workflow(currentKey, "create_prefab").SelectToken("data.state"));
+            Assert.AreEqual("registered", (string)Workflow(currentKey, "register_prefab").SelectToken("data.state"));
+            Assert.AreEqual(destination, (string)Get(Invoke(originalSettings, "FindAssetEntry", guid), "address"));
+            var stale = Workflow(anotherKey, "replan_prefab", approval);
+            Assert.AreEqual("conflict", (string)stale.SelectToken("data.state"), stale.ToString());
+            Assert.AreEqual("unknown", (string)Workflow(anotherKey, "create_prefab").SelectToken("data.state"));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(destination));
+            Assert.AreEqual(1, Directory.GetFiles(priorRoot, "Result*.prefab").Length);
+            Assert.AreEqual((string)marker["root_guid"], AssetDatabase.AssetPathToGUID(priorRoot));
+            Assert.IsTrue(AssetDatabase.DeleteAsset(priorRoot), "Only the previous phase's verified fixture-owned root is removed.");
         }
 
         private static void SameAsset(UnityEngine.Object before, UnityEngine.Object after)

@@ -106,24 +106,10 @@ SCENARIO_JOB_OBSERVATION: Final[Observation] = {
 
 INTEGRATION_ACTIONS: Final = {
     "manage_addressables": {
-        "preview_prefab": _edit(
-            "Prepare a receipt-scoped prefab copy and registration.",
-            "operation_id",
-            "settings_path",
-            "group_guid",
-            "source_prefab",
-            "prefab_path",
+        "capabilities": _observe(
+            "Inspect per-action Addressables provider support without a settings asset.",
+            effects=READ_ONLY_EFFECTS,
         ),
-        "create_prefab": _edit(
-            "Create the previewed prefab and checkpoint its actual GUID.", "operation_id"
-        ),
-        "register_prefab": _edit(
-            "Register the checkpointed prefab in its previewed group.", "operation_id"
-        ),
-        "prefab_status": _observe(
-            "Inspect the last confirmed step and outstanding work.", "operation_id"
-        ),
-        "cancel_prefab": _edit("Cancel outstanding prefab workflow steps.", "operation_id"),
         "inspect": _observe(
             "Page existing Addressables groups, entries or raw profile values and their settings revision.",
             "settings_path",
