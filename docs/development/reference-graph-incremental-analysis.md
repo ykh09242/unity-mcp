@@ -103,3 +103,27 @@ All six digest pairs agreed. Both cancelled transactions preserved their last co
 edge sets and left leaf generation 5 pending. Logical changed-row counts include
 metadata. Physical device I/O and OS cache state were unmeasured. Each run retains
 its databases and `results.json` in the requested fresh directory.
+
+## Retained graph across an A→B→A checkout sequence
+
+The **Reference graph checkout reuse** workflow creates two real Git commits and
+checks them out in the order A, B, A. A material retargets its serialized texture
+GUID and a C# constant switches the Resources key used by an unchanged caller.
+Both changed files retain their paths and metadata GUIDs. The retained run reuses
+one production `Reconciler` and its SQLite graph. At each step a new database and
+reconciler build an independent control from the same checked-out bytes.
+
+The test compares the complete semantic rows for nodes, edges, provider coverage,
+issues and observations. It verifies the material and caller targets independently
+and requires the returning A graph digest to match the first A. It records wall
+time for production reconciliation and its analysis phase, collector call counts
+and hydrated document rows. Timings exclude Git checkout, loading fixture inputs,
+schema creation and graph comparison. The fixture supplies collector responses
+from the checked-out C# and serialized material files. The measurements cover
+server graph processing with those inputs. Unity import and transport are outside
+the measured interval.
+
+On relevant `beta` pushes and manual dispatch the hosted Linux job retains
+`reference-graph-checkout-reuse-<sha>-<attempt>` with the tested revision and the
+`checkout_reuse_observation` JUnit property. Wall times are observational. Graph
+equality and work-count checks gate the run.

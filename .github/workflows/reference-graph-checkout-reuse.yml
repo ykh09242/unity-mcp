@@ -1,0 +1,60 @@
+name: Reference graph checkout reuse
+
+on:
+  push:
+    branches: [beta]
+    paths:
+      - .github/workflows/reference-graph-checkout-reuse.yml
+      - Server/src/services/reference_graph/**
+      - Server/src/services/verification/dependency_slots.py
+      - Server/tests/test_reference_graph_checkout_reuse.py
+      - Server/tests/test_reference_graph_reconcile.py
+      - Server/tests/test_verification_git_draft.py
+      - Server/pyproject.toml
+      - Server/uv.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checkout-reuse:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    env:
+      UNITY_MCP_DISABLE_TELEMETRY: '1'
+      GIT_AUTHOR_DATE: '2026-10-20T00:00:00Z'
+      GIT_COMMITTER_DATE: '2026-10-20T00:00:00Z'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Record the checked-out revision
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/reference-graph-checkout-reuse"
+          mkdir "$evidence"
+          git rev-parse HEAD > "$evidence/candidate-sha.txt"
+          test "$(cat "$evidence/candidate-sha.txt")" = "$GITHUB_SHA"
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: '0.13.9'
+          python-version: '3.14'
+          enable-cache: false
+      - name: Install locked test dependencies
+        run: uv sync --project Server --python 3.14 --locked --extra dev
+      - name: Compare retained graph to empty rebuilds
+        working-directory: Server
+        run: |
+          uv run --no-sync python -m pytest -q -o junit_family=xunit1 \
+            --junitxml "$RUNNER_TEMP/reference-graph-checkout-reuse/pytest-junit.xml" \
+            tests/test_reference_graph_checkout_reuse.py
+      - name: Retain graph comparison and cost observations
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reference-graph-checkout-reuse-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/reference-graph-checkout-reuse/
+          if-no-files-found: error
+          retention-days: 30
