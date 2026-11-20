@@ -506,7 +506,19 @@ class GraphQueries:
                     "visited_nodes": visited,
                     "direction": direction,
                     **(
-                        {"node": node, "max_depth": max_depth, "page_sequence": job["sequence"] + 1}
+                        {
+                            "node": node,
+                            "max_depth": max_depth,
+                            "page_sequence": job["sequence"] + 1,
+                            "native_asset_catalog_unfiltered": bool(
+                                connection.execute(
+                                    "SELECT ready AND EXISTS (SELECT 1 FROM sources "
+                                    "WHERE provider='unity' AND enabled=1) AND NOT EXISTS "
+                                    "(SELECT 1 FROM graph_excluded_nodes WHERE id>='asset:' "
+                                    "AND id<'asset;') FROM graph_admission WHERE id=1"
+                                ).fetchone()[0]
+                            ),
+                        }
                         if target is None
                         else {}
                     ),
