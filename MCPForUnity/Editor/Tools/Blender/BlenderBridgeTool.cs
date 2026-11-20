@@ -114,7 +114,7 @@ namespace MCPForUnity.Editor.Tools.Blender
                         JToken info = await BlenderSocketClient.SendAsync(
                             Endpoint,
                             "get_object_info",
-                            new JObject { ["object_name"] = objectName },
+                            new JObject { ["name"] = objectName },
                             timeout,
                             cancellationToken
                         );

@@ -4,12 +4,15 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Import;
+using MCPForUnity.Editor.Services.Blender;
 using MCPForUnity.Editor.Tools.Blender;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -21,8 +24,7 @@ using UnityEngine.TestTools;
 namespace MCPForUnityTests.Editor.Blender
 {
     /// <summary>
-    /// Parameter validation that happens before any socket or file I/O, plus the export-script
-    /// builder, so these run without Blender.
+    /// Bridge validation, loopback protocol checks, and export-script generation without Blender.
     /// </summary>
     public class BlenderBridgeToolTests
     {
@@ -83,12 +85,85 @@ namespace MCPForUnityTests.Editor.Blender
             StringAssert.Contains("'code'", (string)resp["error"]);
         }
 
-        [Test]
-        public void ObjectInfo_WithoutName_ReturnsError()
+        [TestCase("{\"action\":\"object_info\"}")]
+        [TestCase("{\"action\":\"object_info\",\"object_name\":\"  \"}")]
+        [TestCase("{\"action\":\"object_info\",\"name\":\"Cube\"}")]
+        public void ObjectInfo_WithoutObjectName_ReturnsError(string request)
         {
-            JObject resp = Call(new JObject { ["action"] = "object_info" });
-            Assert.AreEqual(false, (bool)resp["success"]);
-            StringAssert.Contains("'object_name'", (string)resp["error"]);
+            JObject response = CallWithoutReachableBlender(JObject.Parse(request));
+            Assert.IsFalse(response.Value<bool>("success"));
+            Assert.AreEqual("'object_name' is required for object_info.", response.Value<string>("error"));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public async Task ObjectInfo_SendsAddonNameAndPreservesResult(bool objectExists)
+        {
+            const string objectName = "Test Cube.001";
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            var savedEndpoint = BlenderBridgeTool.EndpointOverride;
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            listener.Start();
+            Task<object> command = null;
+            try
+            {
+                var endpoint = new BlenderEndpoint(IPAddress.Loopback.ToString(), ((IPEndPoint)listener.LocalEndpoint).Port);
+                BlenderBridgeTool.EndpointOverride = () => endpoint;
+                Task<TcpClient> accept = listener.AcceptTcpClientAsync();
+                command = BlenderBridgeTool.HandleCommand(new JObject { ["action"] = "object_info", ["object_name"] = objectName }, cancellation.Token);
+                Assert.AreSame(accept, await Task.WhenAny(accept, command), "The bridge must connect to the loopback addon.");
+                using TcpClient peer = await accept;
+                peer.ReceiveTimeout = 5000;
+                using NetworkStream stream = peer.GetStream();
+                JObject request = await Task.Run(() => ReadAddonRequest(stream));
+                Assert.AreEqual("get_object_info", request.Value<string>("type"));
+                Assert.That(JToken.DeepEquals(new JObject { ["name"] = objectName }, request["params"]), Is.True, request.ToString());
+
+                var objectInfo = new JObject { ["name"] = objectName, ["type"] = "MESH" };
+                string addonError = $"Object not found: {objectName}";
+                JObject addonResponse = objectExists
+                    ? new JObject { ["status"] = "success", ["result"] = objectInfo }
+                    : new JObject { ["status"] = "error", ["message"] = addonError };
+                byte[] payload = Encoding.UTF8.GetBytes(addonResponse.ToString(Formatting.None));
+                await stream.WriteAsync(payload, 0, payload.Length, cancellation.Token);
+                JObject response = JObject.Parse(JsonConvert.SerializeObject(await command));
+                Assert.AreEqual(objectExists, response.Value<bool>("success"));
+                if (objectExists)
+                    Assert.That(JToken.DeepEquals(objectInfo, response["data"]), Is.True, response.ToString());
+                else
+                    StringAssert.Contains(addonError, response.Value<string>("error"));
+            }
+            finally
+            {
+                cancellation.Cancel();
+                listener.Stop();
+                BlenderBridgeTool.EndpointOverride = savedEndpoint;
+                if (command != null)
+                {
+                    try
+                    {
+                        await command;
+                    }
+                    catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+                }
+            }
+        }
+
+        private static JObject ReadAddonRequest(NetworkStream stream)
+        {
+            const int requestLimit = 4096;
+            using var bytes = new MemoryStream();
+            var chunk = new byte[1024];
+            while (bytes.Length < requestLimit)
+            {
+                int read = stream.Read(chunk, 0, Math.Min(chunk.Length, requestLimit - (int)bytes.Length));
+                if (read == 0)
+                    break;
+                bytes.Write(chunk, 0, read);
+                if (BlenderSocketClient.TryParseResponse(bytes.GetBuffer(), (int)bytes.Length, out JObject request))
+                    return request;
+            }
+            throw new InvalidDataException($"The loopback addon did not receive a complete request within {requestLimit} bytes.");
         }
 
         [Test]
