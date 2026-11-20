@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 import click
+from unity_mcp_evidence.formatting import (
+    OUTPUT_FORMAT_TYPE,
+    ConfigurationFormat,
+)
 
 
 class ConfigurationIntRange(click.IntRange):
@@ -27,26 +31,8 @@ class ConfigurationIntRange(click.IntRange):
             ) from None
 
 
-class ConfigurationFormat(click.Choice):
-    """Output-format errors describe the allowed values without echoing rejected input."""
-
-    def convert(
-        self,
-        value: str | None,
-        param: click.Parameter | None,
-        ctx: click.Context | None,
-    ) -> str:
-        try:
-            return super().convert(value, param, ctx)
-        except click.BadParameter:
-            raise click.BadParameter(
-                "Choose text, json, or table (input omitted).", ctx=ctx, param=param
-            ) from None
-
-
 HTTP_PORT_TYPE = ConfigurationIntRange(1, 65535)
 TIMEOUT_TYPE = ConfigurationIntRange(min=1)
-OUTPUT_FORMAT_TYPE = ConfigurationFormat(["text", "json", "table"])
 
 
 @dataclass
@@ -110,3 +96,15 @@ def set_config(config: CLIConfig) -> None:
     """Set the CLI configuration."""
     global _config
     _config = config
+
+
+__all__ = [
+    "CLIConfig",
+    "ConfigurationFormat",
+    "ConfigurationIntRange",
+    "HTTP_PORT_TYPE",
+    "OUTPUT_FORMAT_TYPE",
+    "TIMEOUT_TYPE",
+    "get_config",
+    "set_config",
+]

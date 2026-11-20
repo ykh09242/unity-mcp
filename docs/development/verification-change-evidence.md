@@ -84,15 +84,68 @@ unity-mcp-evidence --format json compare \
   --candidate after/verification.json after/run.json
 ```
 
-The wheel needs Click. The installed command reads evidence offline with
-`compare`, `first-failure`, and `selection`. Use the same arguments and
-exit codes as the corresponding `unity-mcp verification-evidence` commands.
+The wheel needs Click and uses the same `unity_mcp_evidence` package bundled with
+the full server. The installed commands `compare`, `first-failure`, `selection`,
+and `shards` use the same arguments, output formats, and exit codes as the
+corresponding `unity-mcp verification-evidence` commands.
 NUnit selection checks the complete XML and computes SHA-256 from the original
 bytes while streaming a regular local file up to 16 MiB. The reader rejects
 linked paths, malformed or truncated XML, document types and entity declarations.
 
 The workflow artifact also includes the two clean environments' installed package
-bytes and end-to-end first-read times in `offline-install.json`. It checks complete
-JSON outputs and exit codes for synthetic saved JSON and NUnit captures.
+bytes, shared Python source digests, and end-to-end first-read times in
+`offline-install.json`. It compares complete JSON verdicts and exit codes for
+synthetic saved JSON and NUnit captures and checks text and table output parity.
 `nunit-reader.json` records verdict and digest parity, median read time, and
 traced peak Python allocations against the previous reader on the same runner.
+
+## Merge retained NUnit shards
+
+Keep a manifest with the full case inventory assigned to each split and recorded
+submission identities. Use exact NUnit `fullname` values, including arguments
+for parameterized tests. The manifest can refer to ordinary NUnit XML without the
+instrumentation required by `selection`.
+
+```json
+{
+  "schema": "verification_nunit_shards@1",
+  "run_id": "build-123/editmode",
+  "splits": [
+    {"split_id": "first", "cases": ["Doors.Opens(\"red\")"]},
+    {"split_id": "second", "cases": ["Doors.Opens(\"blue\")"]}
+  ],
+  "submissions": [
+    {
+      "run_id": "build-123/editmode",
+      "split_id": "first",
+      "attempt": 1,
+      "execution_id": "build-123/first/1",
+      "xml": "artifacts/first.xml"
+    }
+  ]
+}
+```
+
+```sh
+unity-mcp-evidence --format json shards shards.json
+unity-mcp --no-project-context --format json verification-evidence shards shards.json
+```
+
+The report has one outcome per planned case and a history of observed attempts.
+Use ascending attempt numbers for retries within one split. A partial retry updates
+the cases it reports. An identical submission of the same split attempt counts
+once, including a byte-identical copy at a second path. Conflicting bytes for one
+attempt, reused execution IDs or artifact digests across attempts, and cases outside
+the assigned split are rejected. Submission IDs are declared by the archive manifest
+and output digests identify the admitted XML bytes.
+
+Coverage uses all planned splits and cases as denominators, including unsubmitted
+splits. Only `Passed` and `Failed` cases count as executed. The report lists missing
+and incomplete splits and retains any earlier results when a retry's artifact is
+missing. Exit 0 means complete and passing, exit 1 means complete with failures,
+and exit 2 means incomplete coverage or invalid evidence. Use `--output PATH`
+to save a new JSON result for a readable manifest.
+
+XML paths are relative to the manifest directory. The same local-file and streaming
+limits apply to each shard. A merge accepts up to 128 splits, 256 submitted rows,
+65,536 planned cases, and 128 MiB of shard XML in total.

@@ -29,7 +29,17 @@ def test_session_counts_evicted_success_and_preserves_failure_trend(tmp_path):
 
 @pytest.mark.parametrize(
     "damage",
-    ["duplicate", "torn", "counter", "identity", "overlap", "escape", "infinity", "parent_success"],
+    [
+        "duplicate",
+        "duplicate_key",
+        "torn",
+        "counter",
+        "identity",
+        "overlap",
+        "escape",
+        "infinity",
+        "parent_success",
+    ],
 )
 def test_invalid_session_history_remains_unavailable(tmp_path, damage):
     # Given a formerly complete history with one forged or incomplete evidence boundary.
@@ -53,13 +63,19 @@ def test_invalid_session_history_remains_unavailable(tmp_path, damage):
         else:
             parent["status"] = "succeeded"
         _write(directory / "session.json", parent)
-    encoded = "".join(json.dumps(row) + "\n" for row in rows)
+    records = [json.dumps(row) for row in rows]
+    if damage == "duplicate_key":
+        session = json.dumps(rows[0]["session_id"])
+        records[0] = records[0][:-1] + f',"session_id":{session}}}'
+    encoded = "\n".join(records) + "\n"
     path.write_text(encoded[:-1] if damage == "torn" else encoded, encoding="utf-8")
     # When the explicitly selected parent is analyzed.
     result = analyze_history((directory / "session.json",))
     # Then evidence is unavailable rather than counted as a successful retained sample.
     assert result.status == "incomplete"
     assert result.groups == [] and len(result.unsupported_inputs) == 1
+    if damage == "duplicate_key":
+        assert "Duplicate JSON object keys" in result.unsupported_inputs[0]["error"]
 
 
 def test_soak_failed_parent_preserves_all_iteration_outcomes(tmp_path):

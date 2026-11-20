@@ -1,6 +1,22 @@
 """Independent synthetic receipts shaped like retained Unity captures."""
 
 import json
+from pathlib import Path
+from xml.etree import ElementTree
+
+
+def write_nunit(path: Path, cases: dict[str, str]) -> Path:
+    """Write plain NUnit leaves for a simulated runner submission."""
+    if "Failed" in cases.values():
+        result = "Failed(Child)"
+    else:
+        result = next(iter(cases.values()))
+    root = ElementTree.Element("test-run", total=str(len(cases)), result=result, duration="0.3")
+    suite = ElementTree.SubElement(root, "test-suite", type="Assembly", name="Game.Tests")
+    for name, outcome in cases.items():
+        ElementTree.SubElement(suite, "test-case", fullname=name, result=outcome, duration="0.1")
+    ElementTree.ElementTree(root).write(path, encoding="utf-8")
+    return path
 
 
 def make_capture(

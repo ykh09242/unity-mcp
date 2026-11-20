@@ -9,17 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 _SERVER = Path(__file__).resolve().parents[1] / "Server"
-_MODULES = (
-    "commands/verification_evidence.py",
-    "utils/config.py",
-    "utils/output.py",
-    "utils/play_scenario_analysis_io.py",
-    "utils/play_scenario_report_json.py",
-    "utils/verification_change.py",
-    "utils/verification_history.py",
-    "utils/verification_nunit_xml.py",
-    "utils/verification_selection.py",
-)
+_PACKAGE = "unity_mcp_evidence"
 
 
 def _metadata() -> str:
@@ -39,7 +29,7 @@ license-files = ["LICENSE"]
 dependencies = ["click=={click}"]
 
 [project.scripts]
-unity-mcp-evidence = "unity_mcp_evidence.commands.verification_evidence:offline_main"
+unity-mcp-evidence = "{_PACKAGE}.commands:offline_main"
 
 [build-system]
 requires = {json.dumps(backend["requires"])}
@@ -54,14 +44,11 @@ def build_wheel(output: Path) -> None:
     output = output.resolve()
     with TemporaryDirectory(prefix="unity-mcp-offline-evidence-") as name:
         project = Path(name)
-        package = project / "src" / "unity_mcp_evidence"
-        for folder in (package, package / "commands", package / "utils"):
-            folder.mkdir(parents=True, exist_ok=True)
-            (folder / "__init__.py").write_text(
-                '"""Offline Unity MCP verification evidence."""\n', encoding="utf-8"
-            )
-        for module in _MODULES:
-            shutil.copyfile(_SERVER / "src" / "cli" / module, package / module)
+        shutil.copytree(
+            _SERVER / "src" / _PACKAGE,
+            project / "src" / _PACKAGE,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
         (project / "pyproject.toml").write_text(_metadata(), encoding="utf-8")
         shutil.copyfile(_SERVER / "LICENSE", project / "LICENSE")
         subprocess.run(

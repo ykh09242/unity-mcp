@@ -28,7 +28,7 @@ def inert_type(original: click.ParamType) -> click.ParamType:
     # or call their overrides, and do not approve arbitrary Click subclasses.
     reviewed = {
         ("cli.utils.config", "ConfigurationIntRange"): click.IntRange,
-        ("cli.utils.config", "ConfigurationFormat"): click.Choice,
+        ("unity_mcp_evidence.formatting", "ConfigurationFormat"): click.Choice,
     }.get((declared_type.__module__, declared_type.__qualname__))
     kind = (
         reviewed

@@ -45,7 +45,7 @@ jobs:
           UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/server" uv sync --project Server --python 3.14 --locked --no-dev --no-editable
           uv venv --python 3.14 "$RUNNER_TEMP/offline"
           uv pip install --python "$RUNNER_TEMP/offline/bin/python" .tmp/offline-wheel/*.whl
-      - name: Compare installed verdicts, exit codes and first read
+      - name: Compare shared sources, installed verdicts, exit codes and first read
         shell: bash
         run: |
           set -euo pipefail

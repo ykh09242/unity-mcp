@@ -7,12 +7,14 @@ import runpy
 import subprocess
 import sys
 import time
+from hashlib import sha256
 from importlib.metadata import distributions
 from pathlib import Path
 from uuid import UUID
 from xml.etree import ElementTree
 
 _ROOT = Path(__file__).resolve().parents[1]
+_PACKAGE = "unity_mcp_evidence"
 
 
 def _write_capture(path: Path, execution: int) -> Path:
@@ -29,9 +31,8 @@ def _write_capture(path: Path, execution: int) -> Path:
 
 
 def _examples(folder: Path):
-    make_capture = runpy.run_path(str(_ROOT / "Server/tests/verification_artifact_fixtures.py"))[
-        "make_capture"
-    ]
+    fixtures = runpy.run_path(str(_ROOT / "Server/tests/verification_artifact_fixtures.py"))
+    make_capture = fixtures["make_capture"]
     baseline = make_capture(folder, 1)
     candidate = make_capture(
         folder,
@@ -59,6 +60,49 @@ def _examples(folder: Path):
     invalid.write_bytes(full.read_bytes()[:-2])
     invalid_json = folder / "invalid.json"
     invalid_json.write_text('{"duplicate":true,"duplicate":false}', encoding="utf-8")
+    first_case, second_case = 'Doors.Opens("red")', 'Doors.Opens("blue")'
+    first = fixtures["write_nunit"](folder / "shard-first.xml", {first_case: "Passed"})
+    second = fixtures["write_nunit"](folder / "shard-second.xml", {second_case: "Failed"})
+    first_submission = {
+        "run_id": "run-shards",
+        "split_id": "first",
+        "attempt": 1,
+        "execution_id": "exec-first",
+        "xml": first.name,
+    }
+    shard_plan = {
+        "schema": "verification_nunit_shards@1",
+        "run_id": "run-shards",
+        "splits": [
+            {"split_id": "first", "cases": [first_case]},
+            {"split_id": "second", "cases": [second_case]},
+        ],
+        "submissions": [first_submission, first_submission],
+    }
+    partial = folder / "partial-shards.json"
+    partial.write_text(json.dumps(shard_plan), encoding="utf-8")
+    shard_plan["submissions"].append(
+        {
+            "run_id": "run-shards",
+            "split_id": "second",
+            "attempt": 1,
+            "execution_id": "exec-second",
+            "xml": second.name,
+        }
+    )
+    complete = folder / "complete-shards.json"
+    complete.write_text(json.dumps(shard_plan), encoding="utf-8")
+    retry = fixtures["write_nunit"](folder / "shard-retry.xml", {second_case: "Passed"})
+    shard_plan["submissions"].append(
+        {
+            **shard_plan["submissions"][-1],
+            "attempt": 2,
+            "execution_id": "exec-second-retry",
+            "xml": retry.name,
+        }
+    )
+    recovered = folder / "recovered-shards.json"
+    recovered.write_text(json.dumps(shard_plan), encoding="utf-8")
     return [
         ("selection", 0, "measured", ["selection", "--selected", selected, "--full", full]),
         (
@@ -80,6 +124,9 @@ def _examples(folder: Path):
             "incomplete",
             ["compare", "--baseline", *baseline, "--candidate", invalid_json, candidate[1]],
         ),
+        ("partial_shards", 2, "incomplete", ["shards", partial]),
+        ("failed_shards", 1, "failed", ["shards", complete]),
+        ("recovered_shards", 0, "passed", ["shards", recovered]),
     ]
 
 
@@ -91,14 +138,30 @@ def _installation(executable: Path) -> dict:
             text=True,
         ).strip()
     )
+    package_files = sorted((package_root / _PACKAGE).rglob("*.py"))
+    packages = tuple(distributions(path=[str(package_root)]))
+    evidence_wheel = next(
+        (row for row in packages if row.metadata["Name"] == "ykh09242-unity-mcp-evidence"), None
+    )
+    if evidence_wheel is not None:
+        escaped_sources = [
+            str(file)
+            for file in evidence_wheel.files or ()
+            if file.suffix == ".py" and file.parts[0] != _PACKAGE
+        ]
+        if escaped_sources:
+            raise RuntimeError(
+                f"Offline wheel included Python outside {_PACKAGE}: {escaped_sources}"
+            )
     return {
         "site_packages_bytes": sum(
             path.stat().st_size for path in package_root.rglob("*") if path.is_file()
         ),
-        "distributions": sorted(
-            f"{row.metadata['Name']}=={row.version}"
-            for row in distributions(path=[str(package_root)])
-        ),
+        "distributions": sorted(f"{row.metadata['Name']}=={row.version}" for row in packages),
+        "reader_sources": {
+            path.relative_to(package_root).as_posix(): sha256(path.read_bytes()).hexdigest()
+            for path in package_files
+        },
     }
 
 
@@ -112,12 +175,24 @@ def compare_installations(full: Path, lean: Path, output: Path) -> dict:
     }
     if offline_packages != {"click", "ykh09242-unity-mcp-evidence"}:
         raise RuntimeError(f"Unexpected clean offline install contents: {offline_packages}")
+    sources = installs["offline"]["reader_sources"]
+    if not sources or sources != installs["server"]["reader_sources"]:
+        raise RuntimeError("The installed distributions do not contain the same shared sources")
     if installs["offline"]["site_packages_bytes"] >= installs["server"]["site_packages_bytes"]:
         raise RuntimeError("The offline environment did not reduce the installed package bytes")
-    commands = {
-        "server": [full, "--no-project-context", "--format", "json", "verification-evidence"],
-        "offline": [lean, "--format", "json"],
-    }
+
+    def commands(output_format: str) -> dict:
+        return {
+            "server": [
+                full,
+                "--no-project-context",
+                "--format",
+                output_format,
+                "verification-evidence",
+            ],
+            "offline": [lean, "--format", output_format],
+        }
+
     env = {
         name: value
         for name, value in os.environ.items()
@@ -129,7 +204,7 @@ def compare_installations(full: Path, lean: Path, output: Path) -> dict:
     for scenario, want_code, want_state, args in _examples(folder):
         verdicts = {}
         timings = {}
-        for name, command in commands.items():
+        for name, command in commands("json").items():
             start = time.perf_counter()
             response = subprocess.run(
                 command + args,
@@ -151,6 +226,32 @@ def compare_installations(full: Path, lean: Path, output: Path) -> dict:
         evidence.append(
             {"name": scenario, "exit": want_code, "state": want_state, "read_seconds": timings}
         )
+    for command in commands("json").values():
+        for action in (["selection"], ["shards"]):
+            subprocess.run(
+                command + action + ["--help"],
+                cwd=folder,
+                env=env,
+                capture_output=True,
+                check=True,
+            )
+    for output_format in ("text", "table"):
+        observed = [
+            subprocess.run(
+                command + ["shards", folder / "complete-shards.json"],
+                cwd=folder,
+                env=env,
+                capture_output=True,
+                check=False,
+                encoding="utf-8",
+            )
+            for command in commands(output_format).values()
+        ]
+        if (
+            any(row.returncode != 1 or not row.stdout or row.stderr for row in observed)
+            or observed[0].stdout != observed[1].stdout
+        ):
+            raise RuntimeError(f"Installed {output_format} output differs for failed NUnit shards")
     return {"installations": installs, "first_read": evidence[0], "parity_examples": evidence}
 
 
