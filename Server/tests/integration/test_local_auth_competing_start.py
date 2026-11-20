@@ -14,6 +14,7 @@ from websockets.sync.client import connect
 
 from cli.utils.config import CLIConfig
 from cli.utils.connection import run_list_instances
+from core.local_auth import local_http_sockets
 from tests.stdio_process import native_python
 from tests.timing import watchdog_timeout
 
@@ -25,16 +26,6 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
 ):
     server_dir = Path(__file__).resolve().parents[2]
     token_path = tmp_path / "token"
-    client_host = "127.0.0.1" if host == "localhost" else host
-    family = socket.AF_INET6 if client_host == "::1" else socket.AF_INET
-    try:
-        with socket.socket(family) as candidate:
-            candidate.bind((client_host, 0))
-            port = candidate.getsockname()[1]
-    except OSError:
-        if host == "::1":
-            pytest.skip("IPv6 loopback is unavailable")
-        raise
     monkeypatch.setenv("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", str(token_path))
     monkeypatch.delenv("UNITY_MCP_LOCAL_AUTH_TOKEN", raising=False)
     monkeypatch.setenv("NO_PROXY", "*")
@@ -59,9 +50,6 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
         "main.main()\n",
         encoding="utf-8",
     )
-    authority = f"[{client_host}]" if family == socket.AF_INET6 else client_host
-    base_url = f"http://{authority}:{port}"
-    url = f"{base_url}/api/instances"
     processes = []
 
     def wait_until(predicate, phase):
@@ -74,6 +62,20 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
         raise AssertionError(f"Timed out waiting for {phase}")
 
     with ExitStack() as resources:
+        # Reserve the same resolved listeners that both servers must acquire. Keep
+        # them through cold imports so another worker cannot take the chosen port.
+        reservation = resources.enter_context(ExitStack())
+        try:
+            listeners = reservation.enter_context(local_http_sockets(host, 0))
+        except OSError:
+            if host == "::1":
+                pytest.skip("IPv6 loopback is unavailable")
+            raise
+        endpoint = next((item for item in listeners if item.family == socket.AF_INET), listeners[0])
+        client_host, port = endpoint.getsockname()[:2]
+        authority = f"[{client_host}]" if endpoint.family == socket.AF_INET6 else client_host
+        base_url = f"http://{authority}:{port}"
+        url = f"{base_url}/api/instances"
         client = resources.enter_context(httpx.Client(trust_env=False, timeout=2))
 
         def start(project):
@@ -121,7 +123,8 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
             process.stdin.close()
 
         def ready():
-            assert any(process.poll() is None for process in processes), "all launches exited"
+            exit_codes = [process.poll() for process in processes]
+            assert None in exit_codes, f"All managed launches exited with codes {exit_codes}"
             try:
                 token = token_path.read_text().strip()
                 if client.get(url, headers={"X-Unity-MCP-Token": token}).status_code == 200:
@@ -146,6 +149,7 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
         try:
             launches = [start("project-a"), start("project-b")]
             wait_until(lambda: all(gated(launch) for launch in launches), "both launch gates")
+            reservation.close()
             for launch in launches:
                 release(launch)
             original = wait_until(ready, "authenticated server readiness")
@@ -205,14 +209,16 @@ def test_competing_server_preserves_discovery_and_restart_rotates(
             # also models the owning editor exiting while the peer still uses it.
             assert shutdown(loser).status_code == 403
             assert winner[0].poll() is None
+            # The replacement imports behind its gate while the winner still owns
+            # the listeners. Its actual launch occurs only after graceful shutdown.
+            replacement = start("project-restart")
+            wait_until(lambda: gated(replacement), "replacement launch gate")
             accepted = shutdown(winner)
             assert accepted.status_code == 200
             assert accepted.json() == {"success": True, "status": "shutdown_requested"}
             assert winner[0].wait(timeout=watchdog_timeout(15)) == 0
             assert not token_path.exists()
 
-            replacement = start("project-restart")
-            wait_until(lambda: gated(replacement), "replacement launch gate")
             release(replacement)
             renewed = wait_until(ready, "replacement readiness")
             assert renewed != original
