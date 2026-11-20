@@ -46,7 +46,7 @@ def test_build_exits_and_arguments_are_preserved(tmp_path, monkeypatch, command)
 
     def execute(argv, *, env, check):
         stage = Path(env["TMP"])
-        assert stage.parent == tmp_path and stage.is_dir()
+        assert stage == tmp_path and stage.is_dir()
         assert env["TMP"] == env["TEMP"] == env["TMPDIR"]
         assert env["MSBUILDDISABLENODEREUSE"] == "1" and env["UseSharedCompilation"] == "false"
         assert env["MSBUILDUSESERVER"] == "0"
@@ -62,8 +62,35 @@ def test_build_exits_and_arguments_are_preserved(tmp_path, monkeypatch, command)
     monkeypatch.setattr(subprocess, "run", execute)
     for _ in range(2):
         assert run_dotnet.main(["--temp-parent", str(tmp_path), command, *arguments]) == 7
-    assert observed[0] != observed[1] and all(not stage.exists() for stage in observed)
+    assert observed == [tmp_path, tmp_path]
+    assert list(tmp_path.iterdir()) == [artifacts]
     assert dict(os.environ) == original
+
+
+@pytest.mark.skipif(not shutil.which("dotnet"), reason="The .NET SDK is unavailable")
+def test_msbuild_uses_the_same_nuget_lock_directory_as_other_restores(tmp_path, monkeypatch):
+    for key in ("TMP", "TEMP", "TMPDIR"):
+        monkeypatch.setenv(key, str(tmp_path))
+    monkeypatch.delenv("NUGET_SCRATCH", raising=False)
+    command = ["dotnet", "nuget", "locals", "temp", "--list"]
+    expected = subprocess.check_output(command, text=True, timeout=30).strip().splitlines()[-1]
+    project = tmp_path / "cache.proj"
+    project.write_text(
+        '<Project><Target Name="Observe"><Exec Command="dotnet nuget locals temp --list" ConsoleToMSBuild="true">'
+        '<Output TaskParameter="ConsoleOutput" ItemName="Scratch" /></Exec>'
+        '<WriteLinesToFile File="$(Receipt)" Lines="@(Scratch)" Overwrite="true" />'
+        "</Target></Project>",
+        encoding="utf-8",
+    )
+    for index in range(2):
+        receipt = tmp_path / f"receipt-{index}.txt"
+        assert (
+            run_dotnet.main(
+                ["msbuild", str(project), "-t:Observe", f"-p:Receipt={receipt}", "-nologo"]
+            )
+            == 0
+        )
+        assert receipt.read_text(encoding="utf-8-sig").strip().splitlines()[-1] == expected
 
 
 @pytest.mark.skipif(not shutil.which("pwsh"), reason="PowerShell fixture runner is unavailable")

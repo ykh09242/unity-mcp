@@ -120,7 +120,8 @@ unsettled-process barrier when termination cannot be proven.
 
 Run the same locked restore and host tests as the compile workflow from the repository root.
 The SDK runner checks that temporary storage and the requested artifact directory accept
-a real write before starting MSBuild. Each SDK command gets its own temporary directory.
+a real write before starting MSBuild. Commands retain the selected temporary root
+so concurrent restores can use NuGet's shared package-cache locks.
 A build or assertion failure retains its diagnostics and exit status.
 
 ```sh
@@ -129,8 +130,10 @@ python tools/run_dotnet.py test tools/tests/fixtures/script_diagnostics_host/Scr
 ```
 
 If the inherited temporary directory is unavailable, pass `--temp-parent` and an existing
-writable directory before the SDK command. The Editor reports `analysis_temp_unwritable`
-when the analysis host cannot use its temporary directory.
+writable directory before the SDK command. Use the same temporary root or `NUGET_SCRATCH`
+for processes sharing a package cache. [NuGet cache directories](https://learn.microsoft.com/en-us/nuget/consume-packages/managing-the-global-packages-and-cache-folders#temp)
+
+The Editor reports `analysis_temp_unwritable` when the analysis host cannot use its temporary directory.
 
 ### Using the MCP CLI
 

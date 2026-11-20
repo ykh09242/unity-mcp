@@ -56,23 +56,24 @@ def run(command: str, arguments: Sequence[str], parent: Path) -> int:
         with tempfile.TemporaryFile(dir=stage) as probe:
             probe.write(b"1")
             probe.flush()
-        check_artifacts(command, arguments)
-        environment = {
-            **os.environ,
-            "TMP": stage,
-            "TEMP": stage,
-            "TMPDIR": stage,
-            "MSBUILDDISABLENODEREUSE": "1",
-            "MSBUILDUSESERVER": "0",
-            "UseSharedCompilation": "false",
-        }
-        options = [] if command == "msbuild" else ["--disable-build-servers"]
-        # dotnet run forwards unknown MSBuild switches to the application.
-        if command != "run":
-            options += ["-m:1", "-nr:false", "-p:UseSharedCompilation=false"]
-        return subprocess.run(
-            ["dotnet", command, *options, *arguments], env=environment, check=False
-        ).returncode
+    check_artifacts(command, arguments)
+    # NuGet uses the temporary root for cross-process locks on its shared package cache.
+    environment = {
+        **os.environ,
+        "TMP": str(parent),
+        "TEMP": str(parent),
+        "TMPDIR": str(parent),
+        "MSBUILDDISABLENODEREUSE": "1",
+        "MSBUILDUSESERVER": "0",
+        "UseSharedCompilation": "false",
+    }
+    options = [] if command == "msbuild" else ["--disable-build-servers"]
+    # dotnet run forwards unknown MSBuild switches to the application.
+    if command != "run":
+        options += ["-m:1", "-nr:false", "-p:UseSharedCompilation=false"]
+    return subprocess.run(
+        ["dotnet", command, *options, *arguments], env=environment, check=False
+    ).returncode
 
 
 def main(argv: Sequence[str] | None = None) -> int:
