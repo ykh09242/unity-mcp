@@ -69,6 +69,55 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static JObject Apply(string token) => Scene(new JObject { ["action"] = "apply_structure", ["preview_id"] = token });
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PrefabPropertyUndoPreservesLaterEditsAfterMove(bool editSameField)
+        {
+            string path = folder + "/Source.prefab";
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            string token = Token(
+                Prefab(
+                    new JObject
+                    {
+                        ["action"] = "preview_modify_contents",
+                        ["prefabPath"] = path,
+                        ["scale"] = new JArray(2, 2, 2),
+                        ["setActive"] = false,
+                    }
+                )
+            );
+            var applied = Prefab(new JObject { ["action"] = "apply_preview", ["preview_id"] = token });
+            Assert.IsTrue(applied.Value<bool>("success"), applied.ToString());
+            string moved = folder + "/Moved.prefab";
+            Assert.IsEmpty(AssetDatabase.MoveAsset(path, moved));
+            var contents = PrefabUtility.LoadPrefabContents(moved);
+            try
+            {
+                contents.transform.localPosition = Vector3.right;
+                if (editSameField)
+                    contents.transform.localScale = Vector3.one * 3;
+                PrefabUtility.SaveAsPrefabAsset(contents, moved);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+            var result = Scene(new JObject { ["action"] = "undo", ["receipt_id"] = applied["data"]["receipt_id"] });
+            Assert.AreEqual(!editSameField, result.Value<bool>("success"), result.ToString());
+            var asset = AssetDatabase.LoadAssetAtPath<GameObject>(moved);
+            Assert.AreEqual(Vector3.right, asset.transform.localPosition);
+            Assert.IsTrue(asset.activeSelf);
+            Assert.AreEqual(editSameField ? Vector3.one * 3 : Vector3.one, asset.transform.localScale);
+            if (editSameField)
+            {
+                var conflict = result["data"]["conflicts"][0];
+                Assert.AreEqual("m_LocalScale", (string)conflict["property"]);
+                CollectionAssert.AreEqual(new[] { 1f, 1f, 1f }, conflict["before"].ToObject<float[]>());
+                CollectionAssert.AreEqual(new[] { 2f, 2f, 2f }, conflict["applied"].ToObject<float[]>());
+                CollectionAssert.AreEqual(new[] { 3f, 3f, 3f }, conflict["current"].ToObject<float[]>());
+            }
+        }
+
         [Test]
         public void LargePrefabSourceHashUsesBoundedMemoryAndDetectsLateBytes()
         {

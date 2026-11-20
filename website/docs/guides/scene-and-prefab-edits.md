@@ -24,6 +24,27 @@ refused. Inspect the preview and pass its token to `apply_structure`. Each succe
 one named Undo group. Save the scene explicitly after reviewing the result; Undo does not provide
 filesystem or callback rollback.
 
+### Undo a property edit after further editing
+
+Keep the `receipt_id` from a successful property `apply` or prefab `apply_preview`.
+In the same Editor, invoke `manage_scene_edits` with
+`{"action":"undo","receipt_id":"YOUR_RECEIPT"}`, or run
+`unity-mcp scene-edit undo YOUR_RECEIPT`. The Editor retains its last 32 unconsumed
+receipts until an assembly reload or restart. Each receipt allows one undo attempt.
+
+For example, after MCP changes a prefab's scale, a teammate can move the prefab asset
+and edit its position. Undo resolves the asset by GUID, verifies its original root
+identity and restores only the scale. If the teammate also changed the scale, the
+response lists its `before`, `applied` and `current` values in `conflicts`.
+The teammate's value survives. Other eligible fields are restored and counted in
+`restored`, even when the response reports `property_undo_conflict`. That response
+includes a fresh `remaining_receipt_id` covering only the conflicted fields. Use it
+after resolving a conflict if you want to recheck those fields. A field already
+at its original value needs no write. Prefab recovery saves the current source with
+these field edits. Scene recovery needs the original live components, creates its
+own Unity Undo group and leaves scene saving explicit. Structural edits and indexed
+collection elements are outside the property receipt contract.
+
 ## Create a prefab from one object
 
 [`prefab_create`](../reference/tools/prefabs/prefab_create.md#examples) creates an asset from an

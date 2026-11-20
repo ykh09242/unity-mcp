@@ -58,6 +58,9 @@ async def test_hundreds_of_scene_edits_and_structure_operations_are_forwarded(br
     "arguments",
     [
         {"action": "preview", "edits": []},
+        {"action": "undo"},
+        {"action": "undo", "receipt_id": "token", "edits": [edit()]},
+        {"action": "apply", "receipt_id": "token", "edits": [edit()]},
         {"action": "preview", "edits": [edit()] * 1001},
         {"action": "preview", "preview_id": "token"},
         {"action": "apply", "preview_id": "token", "edits": [edit()]},
@@ -117,6 +120,20 @@ async def test_apply_token_is_forwarded_without_edits(bridge):
         "preview_id": "one-attempt",
         "undo_name": "Grouped edits",
     }
+
+
+@pytest.mark.asyncio
+async def test_property_undo_only_sends_receipt_and_preserves_native_conflicts(bridge):
+    send, _ = bridge
+    conflict = {
+        "property": "m_LocalScale",
+        "before": [1] * 3,
+        "applied": [2] * 3,
+        "current": [3] * 3,
+    }
+    send.return_value = {"success": False, "data": {"restored": 1, "conflicts": [conflict]}}
+    assert await tool.manage_scene_edits(None, "undo", receipt_id="token") == send.return_value
+    assert send.call_args.args[3] == {"action": "undo", "receipt_id": "token"}
 
 
 @pytest.fixture

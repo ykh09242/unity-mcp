@@ -80,7 +80,9 @@ _EDITS = TypeAdapter(list[SceneEdit])
         "Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene. Preview returns "
         "before/after values and a one-attempt token valid for 10 minutes. Apply accepts "
         "preview_id, or edits with expected_old for every field. Rejects drift before mutation; "
-        "one named Undo restores supported recorded component values. No arbitrary transaction "
+        "apply returns receipt_id. Use undo with this receipt to restore unchanged applied fields "
+        "and report conflicts with before, applied and current values. Also accepts a receipt from "
+        "prefab_contents apply_preview. No arbitrary transaction "
         "or filesystem, build, package, custom callback, dirty-flag rollback is promised. "
         "preview_structure takes an integer scene-root target scope and 1-256 ordered create/delete/reparent "
         "operations. Only ordinary Transform-only subtrees are supported; prefab instances and "
@@ -97,19 +99,31 @@ _EDITS = TypeAdapter(list[SceneEdit])
 )
 async def manage_scene_edits(
     ctx: Context,
-    action: Literal["preview", "apply", "preview_structure", "apply_structure"],
+    action: Literal["preview", "apply", "undo", "preview_structure", "apply_structure"],
     edits: list[SceneEdit] | None = None,
     preview_id: Annotated[str | None, Field(min_length=1, max_length=64)] = None,
     undo_name: Annotated[str, Field(min_length=1, max_length=80)] = "MCP Scene Edits",
     target: StrictInt | None = None,
     operations: list[StructureOperation] | None = None,
+    receipt_id: Annotated[str | None, Field(min_length=1, max_length=64)] = None,
 ):
     """Validate request shape locally; Unity owns resolution, drift and Undo validation."""
-    if action not in {"preview", "apply", "preview_structure", "apply_structure"}:
-        return {"success": False, "message": "action must be preview or apply."}
+    if action not in {"preview", "apply", "undo", "preview_structure", "apply_structure"}:
+        return {"success": False, "message": "Unknown scene edit action."}
+    if receipt_id is not None and action != "undo":
+        return {"success": False, "message": "receipt_id requires undo."}
     if not isinstance(undo_name, str) or not undo_name.strip() or len(undo_name) > 80:
         return {"success": False, "message": "undo_name must contain 1-80 characters."}
-    if action == "preview_structure":
+    if action == "undo":
+        if (
+            type(receipt_id) is not str
+            or not receipt_id.strip()
+            or len(receipt_id) > 64
+            or any(value is not None for value in (edits, preview_id, target, operations))
+        ):
+            return {"success": False, "message": "Property undo requires only receipt_id."}
+        params = {"action": action, "receipt_id": receipt_id}
+    elif action == "preview_structure":
         if preview_id is not None or edits is not None or type(target) is not int:
             return {
                 "success": False,

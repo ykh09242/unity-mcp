@@ -52,6 +52,14 @@ def preview(edits_file: str) -> None:
     _dispatch({"action": "preview", "edits": _read_edits(edits_file, False)})
 
 
+@scene_edit.command("undo")
+@click.argument("receipt_id")
+@handle_unity_errors
+def undo(receipt_id: str) -> None:
+    """Restore unchanged fields from a scene or prefab property receipt."""
+    _dispatch({"action": "undo", "receipt_id": receipt_id})
+
+
 @scene_edit.command("apply")
 @click.option(
     "--preview-id", type=click.STRING, help="Use a one-attempt token returned by preview."

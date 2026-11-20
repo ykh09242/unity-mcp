@@ -38,6 +38,20 @@ namespace MCPForUnity.Editor.Tools
             internal JToken Before;
             internal JToken After;
 
+            internal Edit Reverse()
+            {
+                var inverse = (Edit)MemberwiseClone();
+                inverse.Before = After;
+                inverse.After = Before;
+                // The retained Component is the identity. Rebind drift checks to its current
+                // placement so a later rename or same-type component reorder is preserved.
+                inverse.Parent = Target.transform.parent;
+                inverse.TargetPath = GameObjectLookup.GetGameObjectPath(Target);
+                inverse.ScenePath = Target.scene.path;
+                inverse.ComponentIndex = Array.IndexOf(Target.GetComponents(Component.GetType()), Component);
+                return inverse;
+            }
+
             internal JObject Describe() =>
                 new JObject
                 {
@@ -75,6 +89,10 @@ namespace MCPForUnity.Editor.Tools
                 string action = RequiredString(parameters, "action");
                 switch (action)
                 {
+                    case "undo":
+                        if (parameters.Properties().Any(p => p.Name != "receipt_id" && p.Name != "action"))
+                            throw new ArgumentException("Property undo accepts only receipt_id.");
+                        return PropertyUndoReceipts.Restore(RequiredString(parameters, "receipt_id"));
                     case "preview_structure":
                         return SceneStructurePlans.Preview(parameters);
                     case "apply_structure":
@@ -260,15 +278,48 @@ namespace MCPForUnity.Editor.Tools
                 )
                     throw new InvalidOperationException("Preview target identity, scene, or hierarchy drifted. Preview again.");
                 Component[] components = edit.Target.GetComponents(edit.Component.GetType());
-                if (edit.ComponentIndex >= components.Length || components[edit.ComponentIndex] != edit.Component)
+                if (edit.ComponentIndex < 0 || edit.ComponentIndex >= components.Length || components[edit.ComponentIndex] != edit.Component)
                     throw new InvalidOperationException("Preview component selection drifted. Preview again.");
                 using (var serialized = new SerializedObject(edit.Component))
-                    if (!JToken.DeepEquals(SceneEditValues.Read(serialized.FindProperty(edit.Property)), applied ? edit.After : edit.Before))
+                    if (!PropertyUndoReceipts.SameField(SceneEditValues.Read(serialized.FindProperty(edit.Property)), applied ? edit.After : edit.Before))
                         throw new InvalidOperationException($"Serialized value drift for '{edit.Property}' on '{edit.TargetPath}'.");
             }
         }
 
-        private static object Apply(Plan plan, string undoName)
+        private static object Restore(Plan original)
+        {
+            var conflicts = new JArray();
+            var inverse = new Plan { Edits = new List<Edit>() };
+            var pending = new Plan { Edits = new List<Edit>() };
+            foreach (var edit in original.Edits)
+            {
+                EnsureSceneTarget(edit.Target);
+                if (edit.Component == null || edit.Component.gameObject != edit.Target || edit.Target.scene != edit.Scene)
+                    throw new InvalidOperationException("The original scene component is no longer loaded.");
+                using var serialized = new SerializedObject(edit.Component);
+                var current = SceneEditValues.Read(serialized.FindProperty(edit.Property));
+                var identity = new JObject { ["component_id"] = edit.Component.GetInstanceIDCompat(), ["property"] = edit.Property };
+                switch (PropertyUndoReceipts.Compare(edit.Before, edit.After, current, identity, conflicts))
+                {
+                    case PropertyUndoReceipts.Decision.Restore:
+                        inverse.Edits.Add(edit.Reverse());
+                        break;
+                    case PropertyUndoReceipts.Decision.Conflict:
+                        pending.Edits.Add(edit);
+                        break;
+                }
+            }
+            if (inverse.Edits.Count > 0)
+            {
+                Verify(inverse, false);
+                var result = Apply(inverse, "Undo MCP property edits", false);
+                if (result is ErrorResponse)
+                    return result;
+            }
+            return PropertyUndoReceipts.Report(inverse.Edits.Count, conflicts, () => Restore(pending));
+        }
+
+        private static object Apply(Plan plan, string undoName, bool retainReceipt = true)
         {
             Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
@@ -297,6 +348,7 @@ namespace MCPForUnity.Editor.Tools
                     {
                         undo_name = undoName,
                         undo_group = group,
+                        receipt_id = retainReceipt ? PropertyUndoReceipts.Retain(() => Restore(plan)) : null,
                         edits = Describe(plan),
                         atomicity = "recorded_native_component_state",
                     }

@@ -253,7 +253,7 @@ _ACTIONS: Final = {
     },
     "manage_scene_edits": {
         Permission.READ: _names("preview preview_structure"),
-        Permission.EDIT: _names("apply apply_structure"),
+        Permission.EDIT: _names("apply apply_structure undo"),
     },
     "execute_code": {
         Permission.READ: _names("get_history"),

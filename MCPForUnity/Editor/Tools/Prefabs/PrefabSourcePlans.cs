@@ -139,6 +139,20 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             {
                 // Recheck after loading and before any isolated native field mutation.
                 Verify(plan);
+                var propertyPaths = plan
+                    .Fields.Properties()
+                    .Select(field =>
+                        field.Name switch
+                        {
+                            "setActive" => "m_IsActive",
+                            "position" => "m_LocalPosition",
+                            "rotation" => "m_LocalRotation",
+                            "scale" => "m_LocalScale",
+                            _ => throw new InvalidOperationException("Unsupported stored prefab field."),
+                        }
+                    )
+                    .ToArray();
+                var before = ReadProperties(contents, propertyPaths);
                 foreach (JProperty field in plan.Fields.Properties())
                     switch (field.Name)
                     {
@@ -166,11 +180,18 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         "Prefab save failed; inspect the source before retrying.",
                         new { save_attempted = true, atomicity = "compare_before_save" }
                     );
+                GameObject asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                var applied = ReadProperties(asset, propertyPaths);
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                string objectId = GlobalObjectId.GetGlobalObjectIdSlow(asset).ToString();
+                string transformId = GlobalObjectId.GetGlobalObjectIdSlow(asset.transform).ToString();
+                string receipt = PropertyUndoReceipts.Retain(() => Restore(guid, objectId, transformId, before, applied));
                 return new SuccessResponse(
                     "Previewed prefab root fields saved.",
                     new
                     {
                         prefab_path = path,
+                        receipt_id = receipt,
                         source_hash = plan.Hash,
                         impact = plan.Impact,
                         atomicity = "compare_before_save",
@@ -183,6 +204,80 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             {
                 if (contents != null)
                     PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
+        private static UnityEngine.Object Owner(GameObject root, string property) => property == "m_IsActive" ? (UnityEngine.Object)root : root.transform;
+
+        private static JObject ReadProperties(GameObject root, IEnumerable<string> names)
+        {
+            var values = new JObject();
+            foreach (string name in names)
+            {
+                using var serialized = new SerializedObject(Owner(root, name));
+                values[name] = SceneEditValues.Read(serialized.FindProperty(name));
+            }
+            return values;
+        }
+
+        private static object Restore(string guid, string objectId, string transformId, JObject before, JObject applied)
+        {
+            StableEditor();
+            string path = AssetPathUtility.GetContainedAssetPath(AssetDatabase.GUIDToAssetPath(guid));
+            if (string.IsNullOrEmpty(path) || !path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("The original prefab GUID no longer resolves to a prefab asset.");
+            string guard = SourceHash(path);
+            GameObject asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            ValidateSource(asset);
+            if (asset.GetComponentsInChildren<Component>(true).Any(c => EditorUtility.IsDirty(c) || EditorUtility.IsDirty(c.gameObject)))
+                throw new InvalidOperationException("The imported prefab has unsaved edits. Resolve them before a source save.");
+            if (
+                GlobalObjectId.GetGlobalObjectIdSlow(asset).ToString() != objectId
+                || GlobalObjectId.GetGlobalObjectIdSlow(asset.transform).ToString() != transformId
+            )
+                throw new InvalidOperationException("The recorded prefab root or transform was replaced.");
+
+            // Reload the CURRENT source. The receipt never contains a copy of the prefab file.
+            GameObject contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                var conflicts = new JArray();
+                var restored = new JObject();
+                var pending = new JObject();
+                var current = ReadProperties(contents, before.Properties().Select(p => p.Name));
+                foreach (var field in before.Properties())
+                {
+                    string name = field.Name;
+                    var identity = new JObject { ["asset_guid"] = guid, ["property"] = name };
+                    var decision = PropertyUndoReceipts.Compare(field.Value, applied[name], current[name], identity, conflicts);
+                    if (decision == PropertyUndoReceipts.Decision.Conflict)
+                        pending[name] = field.Value;
+                    if (decision != PropertyUndoReceipts.Decision.Restore)
+                        continue;
+                    using var serialized = new SerializedObject(Owner(contents, name));
+                    SceneEditValues.Write(serialized.FindProperty(name), field.Value);
+                    serialized.ApplyModifiedPropertiesWithoutUndo();
+                    restored[name] = field.Value;
+                }
+                if (restored.Count != 0)
+                {
+                    if (SourceHash(path) != guard)
+                        throw new InvalidOperationException("The prefab changed during property undo. No save was attempted.");
+                    PrefabUtility.SaveAsPrefabAsset(contents, path, out bool saved);
+                    if (
+                        !saved
+                        || !JToken.DeepEquals(
+                            restored,
+                            ReadProperties(AssetDatabase.LoadAssetAtPath<GameObject>(path), restored.Properties().Select(p => p.Name))
+                        )
+                    )
+                        return new ErrorResponse("Could not verify the saved property undo.", new { save_attempted = true });
+                }
+                return PropertyUndoReceipts.Report(restored.Count, conflicts, () => Restore(guid, objectId, transformId, pending, applied));
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
             }
         }
 

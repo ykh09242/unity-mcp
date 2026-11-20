@@ -746,6 +746,11 @@ TOOL_GUIDANCE: Final = {
     ),
     "manage_scene_edits": ToolGuidance(
         actions={
+            "undo": ActionGuidance(
+                "Restore recorded scene or prefab fields that still match their applied values. "
+                "Inspect reported before/applied/current conflicts.",
+                ("receipt_id",),
+            ),
             "preview": ActionGuidance(
                 "Observe before/after values for 1-1000 edits to allowlisted native Transform, BoxCollider, SphereCollider, CapsuleCollider or Rigidbody serialized fields in stable Edit Mode. Retain a one-attempt preview_id valid for 10 minutes without applying the edits.",
                 ("edits",),

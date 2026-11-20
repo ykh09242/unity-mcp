@@ -83,6 +83,42 @@ namespace MCPForUnityTests.Editor.Tools
             );
 
         [Test]
+        public void ReceiptRestoresOneFieldWithoutRewindingLaterUserChanges()
+        {
+            var target = Create("field-undo");
+            var result = Apply(Token(Preview(Edit(target, "localPosition", new JArray(1, 2, 3)))));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            target.transform.localScale = Vector3.one * 7;
+            target.name = "Later name";
+            var undo = Send(new JObject { ["action"] = "undo", ["receipt_id"] = result["data"]["receipt_id"] });
+            Assert.IsTrue(undo.Value<bool>("success"), undo.ToString());
+            Assert.AreEqual(Vector3.zero, target.transform.localPosition);
+            Assert.AreEqual("Later name", target.name);
+            Assert.AreEqual(Vector3.one * 7, target.transform.localScale);
+            Undo.PerformUndo();
+            Assert.AreEqual(new Vector3(1, 2, 3), target.transform.localPosition);
+            Assert.AreEqual(Vector3.one * 7, target.transform.localScale);
+        }
+
+        [Test]
+        public void ConflictRetryOnlyRechecksOutstandingFields()
+        {
+            var target = Create("field-conflict");
+            var applied = Apply(Token(Preview(Edit(target, "localPosition", new JArray(1, 0, 0)), Edit(target, "localScale", new JArray(2, 2, 2)))));
+            target.transform.localScale = Vector3.one * 3;
+            var partial = Send(new JObject { ["action"] = "undo", ["receipt_id"] = applied["data"]["receipt_id"] });
+            Assert.AreEqual("property_undo_conflict", (string)partial["code"]);
+            Assert.AreEqual(Vector3.zero, target.transform.localPosition);
+            Assert.AreEqual(Vector3.one * 3, target.transform.localScale);
+            target.transform.localPosition = Vector3.right;
+            target.transform.localScale = Vector3.one * 2;
+            var retried = Send(new JObject { ["action"] = "undo", ["receipt_id"] = partial["data"]["remaining_receipt_id"] });
+            Assert.IsTrue(retried.Value<bool>("success"), retried.ToString());
+            Assert.AreEqual(Vector3.one, target.transform.localScale);
+            Assert.AreEqual(Vector3.right, target.transform.localPosition);
+        }
+
+        [Test]
         public void HundredsOfEditsApplyAndUndoAsOnePlan()
         {
             var edits = new JObject[300];
