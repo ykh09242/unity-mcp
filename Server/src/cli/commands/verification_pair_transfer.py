@@ -1,5 +1,6 @@
 """Trusted build capture and review material for offline Player pair reproduction."""
 
+import argparse
 import json
 from pathlib import Path
 
@@ -8,6 +9,25 @@ import click
 
 _DIR = click.Path(path_type=Path, file_okay=False, exists=True)
 _FILE = click.Path(path_type=Path, dir_okay=False, exists=True)
+
+
+def resolve_project_command():
+    """Resolve the reviewed project for a standalone pair producer or consumer."""
+    from services.verification.pair_project import captured_project, reviewed_project
+
+    parser = argparse.ArgumentParser(description=resolve_project_command.__doc__)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--manifest", type=Path)
+    source.add_argument("--admitted-captures", type=Path)
+    parser.add_argument("--sha256")
+    parser.add_argument("--fallback", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    if args.manifest is not None:
+        project = reviewed_project(args.manifest, args.sha256, args.fallback, args.output)
+    else:
+        project = captured_project(args.admitted_captures, args.fallback, args.output)
+    click.echo(str(project))
 
 
 @click.command("capture-pair-side")

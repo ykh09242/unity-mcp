@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import runpy
+import subprocess
+import sys
 
 import pytest
 
@@ -18,6 +20,35 @@ from .test_verification_reproduce import (
     verified_bundle,
     write,
 )
+
+
+def test_captured_project_entrypoint_returns_only_the_reviewed_fallback(tmp_path):
+    fallback = tmp_path / "existing project"
+    fallback.mkdir()
+    received = tmp_path / "captures"
+    received.mkdir()
+    destination = tmp_path / "materialized"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "services.verification.pair_project",
+            "--admitted-captures",
+            str(received),
+            "--fallback",
+            str(fallback),
+            "--output",
+            str(destination),
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    assert result.stdout.splitlines() == [str(fallback)] and not result.stderr
+    assert not destination.exists()
 
 
 def native_stamp(project, package, source, row):

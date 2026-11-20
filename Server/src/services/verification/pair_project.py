@@ -1,8 +1,6 @@
 """Materialize an independently pinned, self-contained fixture project on a clean host."""
 
 from hashlib import sha256
-from pathlib import Path
-import argparse
 import os
 
 from cli.utils.play_scenario_analysis_io import open_artifact, read_bytes, safe_local_path
@@ -79,33 +77,23 @@ def reviewed_project(manifest, pin, fallback, destination):
     )
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--manifest", type=Path)
-    source.add_argument("--admitted-captures", type=Path)
-    parser.add_argument("--sha256")
-    parser.add_argument("--fallback", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
-    if args.manifest:
-        project = reviewed_project(args.manifest, args.sha256, args.fallback, args.output)
-    else:
-        from services.verification.reproduce import BuildCapture, SIDES
+def captured_project(folder, fallback, destination):
+    from services.verification.reproduce import BuildCapture, SIDES
 
-        folder = safe_local_path(args.admitted_captures)
-        project = safe_local_path(args.fallback)
-        if (folder / "project.bundle").exists():
-            commits = [
-                BuildCapture.model_validate(
-                    decode_object(read_bytes(folder / side / "capture.json", 65536))
-                ).project_commit
-                for side in SIDES
-            ]
-            digest = bundle_digest(folder / "project.bundle", *commits)
-            project = materialize(folder, *commits, digest, args.output)
-    print(project)
+    folder = safe_local_path(folder)
+    if not (folder / "project.bundle").exists():
+        return safe_local_path(fallback)
+    commits = [
+        BuildCapture.model_validate(
+            decode_object(read_bytes(folder / side / "capture.json", 65536))
+        ).project_commit
+        for side in SIDES
+    ]
+    digest = bundle_digest(folder / "project.bundle", *commits)
+    return materialize(folder, *commits, digest, destination)
 
 
 if __name__ == "__main__":
-    main()
+    from cli.commands.verification_pair_transfer import resolve_project_command
+
+    resolve_project_command()
