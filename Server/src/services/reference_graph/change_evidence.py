@@ -66,6 +66,7 @@ def explain_asset_references(
                         "path": path,
                         "line": edge.line,
                         "key": edge.key,
+                        "scheme": edge.kind.removesuffix("_load"),
                         "confidence": edge.confidence,
                         "guid": asset_guid.lower(),
                     }

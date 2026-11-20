@@ -28,7 +28,7 @@ def _resource_key(path):
     return None
 
 
-def _reference_evidence(prepared):
+def _reference_evidence(prepared, *, include_script_paths=False):
     manifest = prepared.candidate
     scripts, serialized = {}, {}
     coverage = []
@@ -80,7 +80,10 @@ def _reference_evidence(prepared):
         )
     if len(assets) > 4:
         coverage.append({"reason": "asset_analysis_limit"})
-    return {"assets": evidence, "coverage": coverage}
+    result = {"assets": evidence, "coverage": coverage}
+    if include_script_paths:
+        result["analyzed_scripts"] = sorted(scripts)
+    return result
 
 
 def _state_result(directory, check):
