@@ -911,3 +911,54 @@ and output equivalence checks. All three product migrations are deferred:
 stream microbenchmarks exclude Unity/MCP work, and the C# subset has different
 binding costs and substantial observed memory retention after large responses.
 The probes and measured limits are retained for a future justified decision.
+
+## Time to a verified scene read
+
+Use the server development Python environment with an explicitly selected local
+Editor and a known saved, loaded scene. The client uses the official MCP SDK
+and calls `scene_inspect(action="get_active")`. It checks the scene path and
+loaded state and hashes the complete structured result before stopping the timer.
+Keep the endpoint, project, Editor, server source and startup state with the receipt.
+
+```sh
+python tools/experiments/native_scene_read_latency.py --endpoint http://127.0.0.1:8080/mcp --instance Project@hash --scene Assets/DiscoveryInstall.unity --output http-scene.json
+python tools/experiments/native_scene_read_latency.py --stdio --instance Project@hash --scene Assets/DiscoveryInstall.unity --output stdio-scene.json
+```
+
+For stdio, start the selected Editor's stdio bridge first. The client launches
+the repository's Python server. HTTP uses an existing loopback server. Supply an
+unused output filename. Each arm makes one first call followed by 20 warm calls
+in the same client session, with explicit target selection and SDK caching disabled.
+First observation begins before entering the client context and does not include
+Editor launch. Median and nearest-rank p95 use the warm calls. Canonical UTF-8
+result bytes exclude protocol framing.
+
+| Native Windows Editor 6000.0.69f1 | First verified (client session) | Warm median | Warm p95 | Calls returning verified scene | Canonical bytes per call |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HTTP, existing server and Editor | 954.61 ms | 20.00 ms | 26.74 ms | 21 | 200 |
+| stdio, new server and existing Editor | 4,936.40 ms | 17.98 ms | 38.22 ms | 21 | 200 |
+
+Two task-owned projects contained the same named scene, with one project per
+transport. All 42 results matched the expected loaded scene and returned the
+same digest. The Ryzen 9 5900X host ran Windows 10 19045 and Python 3.14.10.
+Native queue, Editor work, protocol initialization RPCs, total wire bytes and
+delivery phases were unmeasured in these runs. Different startup conditions and
+concurrent host activity preclude attributing timing differences to the transport.
+
+The separately frozen product-adapter workload uses synthetic Unity peers and
+reports `client_verified_ms` alongside `client_total_ms`. The former includes
+semantic checks and output hashing, and the latter ends after retrieval and
+reassembly. Before this change, client verification time was absent from the
+adapter benchmark. The earlier state probe measured return latency alone
+(median/p95 4.63/5.65 ms stdio and 7.02/8.32 ms HTTP). A frozen `dae3cf82`
+server run with the extended probe collected 20 warm samples of its 3,572-byte
+state shape, following one first call and two warmups per transport:
+
+| Product adapter, synthetic peer | Verified median / p95 | Queue median | Synthetic peer work median | Result page retrieval median |
+| --- | ---: | ---: | ---: | ---: |
+| stdio | 10.52 / 35.14 ms | 0.013 ms | 0.027 ms | 0 ms |
+| HTTP | 14.78 / 19.08 ms | 0.019 ms | 0.316 ms | 0 ms |
+
+Each state observation used one public call and returned inline. Full adapter
+receipts retain every sample, peer-response bytes, actual retrieval calls,
+initial-response timing, output digests, versions and source fingerprints.

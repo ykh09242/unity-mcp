@@ -17,6 +17,7 @@ class Observation(BaseModel):
     workload: str
     phase: str
     client_total_ms: float
+    client_verified_ms: float | None = Field(default=None, ge=0)
     output_sha256: str
     output_bytes: int
     client_initial_response_ms: float = Field(default=0, ge=0)
@@ -119,7 +120,9 @@ def summarize(observations: list[Observation]) -> dict[str, JsonValue]:
             "output_sha256": sorted({item.output_sha256 for item in items}),
             "output_bytes": items[0].output_bytes,
             "stages_ms": {
-                field: distribution([getattr(item, field) for item in items]) for field in fields
+                field: distribution([getattr(item, field) for item in items])
+                for field in (*fields, "client_verified_ms")
+                if all(getattr(item, field) is not None for item in items)
             },
         }
         for name, items in grouped.items()

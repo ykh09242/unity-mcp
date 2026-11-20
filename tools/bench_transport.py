@@ -290,15 +290,28 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                     recovered = await delivery_reads.recover(response)
                     total = (time.perf_counter() - begin) * 1000
                     value = validate_output(recovered.result)
-                    if correlation.split(":", 1)[0] == "large":
+                    workload = correlation.split(":", 1)[0]
+                    if workload == "state":
+                        data = value.get("data") if isinstance(value, dict) else None
+                        if not isinstance(data, dict) or (
+                            data.get("scene"),
+                            data.get("object_count"),
+                            data.get("is_compiling"),
+                        ) != ("OwnedScene", 100, False):
+                            raise RuntimeError(
+                                "Returned state did not identify the expected owned scene"
+                            )
+                    if workload == "large":
                         validate_large_output(value, options.large_bytes)
                     digest, size = fingerprint(value)
+                    verified_ms = (time.perf_counter() - begin) * 1000
                     observations.append(
                         Observation(
                             correlation=correlation,
-                            workload=correlation.split(":", 1)[0],
+                            workload=workload,
                             phase=phase,
                             client_total_ms=total,
+                            client_verified_ms=verified_ms,
                             output_sha256=digest,
                             output_bytes=size,
                             client_initial_response_ms=initial_ms,
@@ -519,6 +532,7 @@ async def run(options: Options) -> dict[str, JsonValue]:
         "runtime": {
             "python": platform.python_version(),
             "platform": platform.platform(),
+            "processor": platform.processor(),
             "packages": {
                 name: importlib.metadata.version(name)
                 for name in (
@@ -555,6 +569,7 @@ async def run(options: Options) -> dict[str, JsonValue]:
         "limits": [
             "client_total_ms includes actual retained-result page RPCs and bounded page decoding/checksum/reassembly when needed; initial response and retrieval timing/RPC counts are recorded separately. Shared-handle release occurs only after the cohort settles, outside per-observation latency, with its RPC count and elapsed time reported in delivery_cleanup. Final public text/structured parity and canonical output hashing remain outside the measured span.",
             "Owned synthetic Unity peers; no actual Editor execution or Editor main-thread timing.",
+            "client_verified_ms includes client retrieval, text/structured parity, workload checks and canonical hash. The state check requires the selected fixture scene, object count and settled compilation. Bytes describe the canonical output and peer response; total MCP wire bytes and native Editor phases are unmeasured.",
             "HTTP peer negotiates plain large_result_v1 chunks only; large_result_gzip_v1 is excluded, so captures do not measure the new gzip path.",
             "UnityMCP subset uses actual product stdio adapter and response limits; main import included, full catalog registration/discovery excluded.",
             "Accounted bytes are reservations, not RSS or all transient allocations; stdio shared-read scope cannot prove legacy/SDK allocation peaks.",
