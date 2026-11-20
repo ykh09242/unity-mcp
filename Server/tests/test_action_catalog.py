@@ -165,6 +165,7 @@ def test_unknown_catalog_selection_is_an_error(entries, selector):
         ("manage_ugui", "diagnose_raycast", "pointer", None),
         ("manage_localization", "set_string_entry", "exactly one of key_id or key_name", "value"),
         ("manage_localization", "set_fallbacks", "empty list", "fallback_locale_paths"),
+        ("execute_menu_item", "inspect", "mcpforunity://menu-items", "menu_path"),
     ],
 )
 def test_action_cards_explain_distinct_outcomes(entries, tool, action, phrase, required):

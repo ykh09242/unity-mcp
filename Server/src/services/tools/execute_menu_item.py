@@ -10,6 +10,7 @@ from pydantic import Field, StrictInt, StrictStr
 
 from models import MCPResponse
 from services.registry import mcp_for_unity_tool
+from services.registry.integration_action_guidance import MENU_DECLARATIONS_READ
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -20,7 +21,8 @@ ALL_ACTIONS = ["execute", "inspect", "exists", "evaluate_availability"]
 @mcp_for_unity_tool(
     description=(
         "Inspect menu declarations or invoke a menu by exact path. inspect/exists never evaluate "
-        "validation callbacks. Opt into evaluate_availability to call Menu.GetEnabled, which can "
+        f"validation callbacks. {MENU_DECLARATIONS_READ} "
+        "Opt into evaluate_availability to call Menu.GetEnabled, which can "
         "run project validation callbacks and requires read, edit and run grants plus Editor consent. "
         "Default execution reports invocation only; arbitrary completion and modal handling "
         "are not guaranteed. Only Window/General/Console supports console_window_open observation. "

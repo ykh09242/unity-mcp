@@ -69,6 +69,11 @@ _ATLAS_ID = ("path", "guid", "file_id", "expected_revision")
 _TIMELINE_ID = ("path", "guid", "file_id", "expected_revision")
 _DIRECTOR_ID = ("scene_handle", "target", "expected_director_revision")
 
+MENU_DECLARATIONS_READ = (
+    "To discover an unknown path, mcpforunity://menu-items lists managed MenuItem declarations. "
+    "A match confirms that declaration. Some native menu entries may be absent."
+)
+
 INTEGRATION_ACTIONS: Final = {
     "manage_addressables": {
         "inspect": _observe(
@@ -315,7 +320,8 @@ INTEGRATION_ACTIONS: Final = {
     },
     "execute_menu_item": {
         "inspect": _observe(
-            "Read the declaration for an exact Editor menu path without invoking its validation callback.",
+            "Read the declaration for an exact Editor menu path without invoking its validation callback. "
+            + MENU_DECLARATIONS_READ,
             "menu_path",
             effects=READ_ONLY_EFFECTS,
         ),
