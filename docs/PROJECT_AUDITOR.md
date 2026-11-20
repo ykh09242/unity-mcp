@@ -76,39 +76,47 @@ and [Editor implementation](https://github.com/Unity-Technologies/UnityCsReferen
 
 `ProjectAuditorContractTests` covers missing rules versus empty success, duplicate
 requests, ownership, failures, reload, stable pagination and capture limits without the
-optional dependency. The real `ProjectAuditorNativeIntegrationTests` method is
-**Explicit** and requires a controlled fixture project. Merely installing Auditor does
-not opt ordinary EditMode runs into this test. Deliberately selecting it with missing
-packages or the wrong profile fails its prerequisites; it does not skip the required
-positive case.
+optional dependency. Each method in `ProjectAuditorNativeIntegrationTests` is
+**Explicit** and requires an isolated fixture project. Ordinary EditMode runs exclude
+these cases. The selected test fails if its profile prerequisites are missing.
 
-The fixture profile contains the current MCP package, Test Framework, NUnit,
-Editor Coroutines, uGUI, Newtonsoft JSON, Project Auditor, its Mono.Cecil dependency,
-any declared Project Auditor Rules package, and the Editor's built-in `com.unity.modules.*` packages. The observed
-Unity 6000.0.69f1 profile used Test Framework 1.6.0, NUnit 2.0.5, Editor Coroutines 1.1.0,
-uGUI 2.0.0, Newtonsoft 3.2.2 and Cecil 1.11.4. Keep other optional runtime packages out
-of this fixture's active manifest; preserve their cached source directories and restore
-the original manifest/lock after an isolated profile change. No package installation or
-profile change is performed by the test or production tool.
+All four profiles use a minimal base consisting of the current MCP package, Test
+Framework, NUnit, Editor Coroutines, uGUI, Newtonsoft JSON and built-in
+`com.unity.modules.*` packages. Keep other optional runtime packages outside these
+isolated projects. Prepare dependencies before running the tests.
 
-This restriction concerns the fixture's exact local-file oracle, not production
-availability. A real combined ProBuilder/URP run completed 11 modules and produced 12426
-diagnostics with 262 registered rules. Its 4096 retained rows included 1883 real `PAC2002`
-diagnostics from runtime packages, while the local fixture was outside that bounded
-prefix. `observation_truncated=true`, `diagnostic_count_exact=false` and `clean=null`
-correctly described that result. Full optional-package projects can legitimately
-truncate before a particular local file, so they cannot prove this exact fixture oracle.
-The production cap remains 4096 rows and 4 MiB.
+| Editor verified | Additional packages | Explicit method | Expected availability |
+| --- | --- | --- | --- |
+| 6000.0.69f1 | Auditor 3.2.0, Rules 3.2.0, Mono.Cecil 1.11.4 | `InstalledOfficialPackageProducesActualFixtureDiagnostic` | `package`, API and rules available |
+| 6000.6.4f1 | Editor-bundled Rules 1.0.1 | `IntegratedEditorProducesActualFixtureDiagnostic` | `editor`, API and rules available |
+| 6000.6.4f1 | Base only | `IntegratedEditorRequiresRulesBeforeStarting` | `editor`, API available, `rules_package_not_installed` |
+| 6000.0.69f1 | Base only | `EditorWithoutAuditorRejectsStart` | `none`, `package_not_installed` |
 
-Select the exact required method, and require it to execute and pass with zero skips:
+The Editor-integrated profiles omit the standalone Auditor dependency. The verified
+installation provides the rules archive in the Editor data directory at
+`Resources/PackageManager/Editor/com.unity.project-auditor-rules-1.0.1.tgz`.
+The standalone profile uses the official UPM distribution. Older official standalone
+Auditor releases with bundled rules can also run the standalone profile.
+
+Select the exact method for the prepared profile and require one pass with zero skips.
+For example, the Editor with Rules uses the following filter.
 
 ```text
--testFilter MCPForUnityTests.Editor.Tools.ProjectAuditorNativeIntegrationTests.InstalledOfficialPackageProducesActualFixtureDiagnostic
+-testFilter MCPForUnityTests.Editor.Tools.ProjectAuditorNativeIntegrationTests.IntegratedEditorProducesActualFixtureDiagnostic
 ```
 
-It starts the default production analysis and requires the real `PAC2002` diagnostic
-for `Assets/Scripts/ProjectAuditorAuditFixture.cs`, with its native category, severity,
-areas, path, line, description and recommendation. A terminal status alone cannot pass.
-The optional CI catalog (`tools/unity-optional-tests.json`) currently does not select
-this profile or method; its existing combined optional-package fixture must not gain
-this required test without preparing the separate controlled profile first.
+Each positive case starts the default production analysis and requires an exact
+diagnostic count and one real `PAC2002` for
+`Assets/Scripts/ProjectAuditorAuditFixture.cs`, with its native category, severity,
+areas, path, line, description and recommendation. Repeating the start with the same
+identity must return the original completed status. The negative cases require explicit
+start rejection before native invocation, with `clean=null`. Every case observes
+availability twice and checks that the package manifest, lockfile, Auditor settings and
+active build target remain unchanged.
+
+The isolated profiles keep the full diagnostic capture within its bounds. A combined
+ProBuilder/URP project produced 12426 diagnostics, with code diagnostics from runtime
+packages filling the 4096 retained rows before the local fixture. Its
+`observation_truncated=true`, `diagnostic_count_exact=false` and `clean=null` correctly
+marked the incomplete observation. Use the isolated profiles to verify the exact count
+and the fixture's diagnostic.
