@@ -13,8 +13,15 @@ from models.play_scenarios import JobId, ScenarioName
 from models.script_quality import QualityOptions
 from services.script_quality.pages import encoded_size
 from services.verification.affected_checks import bounded_selection, select_affected_checks
+from services.verification.project_configuration import (
+    LOCK_PATH,
+    PackageLockEvidence,
+    configuration_changes,
+    package_lock_evidence,
+)
 from services.verification.input_chunks import (
     CHUNK_BYTES,
+    MAX_INPUT_PATHS,
     ChunkIndex,
     Digest,
     Inputs,
@@ -30,6 +37,9 @@ from services.verification.input_chunks import (
 Text = Annotated[str, Field(min_length=1, max_length=512)]
 Scalar = Text | int | bool | None
 StateValues = Annotated[dict[Text, Scalar], Field(max_length=64)]
+# A chunked registration can name a GUID for every source/metadata pair, each
+# with a 512-character path. UTF-8 names and JSON escaping affect encoded size.
+CANDIDATE_MANIFEST_LIMIT = 2 * 1024 * 1024
 
 
 class StateCheck(QualityOptions):
@@ -54,6 +64,7 @@ class CandidateFields(QualityOptions):
     state_check: StateCheck | None = None
     mappings: Annotated[list[CheckMapping], Field(max_length=128)] = Field(default_factory=list)
     broader_check: ScenarioName | None = None
+    package_lock_evidence: PackageLockEvidence | None = None
 
     def validate_capture(self, inputs):
         if source_revision(inputs) != self.source_revision:
@@ -62,6 +73,11 @@ class CandidateFields(QualityOptions):
             raise ValueError("candidate_asset_requires_source_and_metadata")
         if len(set(self.assets.values())) != len(self.assets):
             raise ValueError("candidate_ambiguous_asset_guid")
+        if (
+            self.package_lock_evidence
+            and inputs.get(LOCK_PATH) != self.package_lock_evidence.raw_sha256
+        ):
+            raise ValueError("candidate_package_lock_digest_mismatch")
 
 
 class PlayerCandidateManifest(CandidateFields):
@@ -82,6 +98,9 @@ class PlayerCandidateManifest(CandidateFields):
 
 class ChunkedCandidate(CandidateFields, ChunkIndex):
     schema_version: Literal[2]
+    assets: Annotated[dict[SourcePath, JobId], Field(max_length=MAX_INPUT_PATHS // 2)] = Field(
+        default_factory=dict
+    )
     _inputs: dict = PrivateAttr(default_factory=dict)
     _loaded: list[LoadedChunk] = PrivateAttr(default_factory=list)
 
@@ -135,9 +154,11 @@ class ChunkedCandidate(CandidateFields, ChunkIndex):
 def parse_manifest(
     content: bytes, directory: Path, project: Path, *, allow_partial=False, read=read_bytes
 ):
-    if len(content) > CHUNK_BYTES:
+    if len(content) > CANDIDATE_MANIFEST_LIMIT:
         raise ValueError("candidate_manifest_size_limit")
     data = decode_object(content)
+    if data.get("schema_version") != 2 and len(content) > CHUNK_BYTES:
+        raise ValueError("candidate_manifest_size_limit")
     model = ChunkedCandidate if data.get("schema_version") == 2 else PlayerCandidateManifest
     manifest = model.model_validate(data)
     if Path(manifest.project) != project:
@@ -149,12 +170,12 @@ def parse_manifest(
 
 def read_manifest(root, candidate_id, project, *, allow_partial=False, read=read_bytes):
     directory = root / TypeAdapter(ScenarioName).validate_python(candidate_id)
-    content = read(directory / "candidate.json", CHUNK_BYTES)
+    content = read(directory / "candidate.json", CANDIDATE_MANIFEST_LIMIT)
     manifest = parse_manifest(content, directory, project, allow_partial=allow_partial, read=read)
     return manifest, sha256(content).hexdigest()
 
 
-def live_sources(project, paths, *, read=read_bytes):
+def live_sources(project, paths, *, read=read_bytes, lock_evidence=()):
     sources = {}
     total = 0
     for path in sorted(paths):
@@ -166,6 +187,12 @@ def live_sources(project, paths, *, read=read_bytes):
             continue
         total += len(content)
         sources[path] = sha256(content).hexdigest()
+        if path == LOCK_PATH:
+            matching = [row for row in lock_evidence if row and row.raw_sha256 == sources[path]]
+            if matching:
+                observed = package_lock_evidence(content)
+                if any(row != observed for row in matching):
+                    raise ValueError("candidate_package_lock_semantics_mismatch")
     return sources
 
 
@@ -182,6 +209,7 @@ class PreparedCandidate:
     live: dict
     changed_paths: list[str] | None = field(init=False, default=None)
     selected_checks: dict = field(init=False)
+    configuration_changes: list[dict] = field(init=False, default_factory=list)
 
     def __post_init__(self):
         if self.baseline and self.complete:
@@ -190,12 +218,24 @@ class PreparedCandidate:
                 for path in self.paths
                 if self.baseline.inputs.get(path) != self.candidate.inputs.get(path)
             )
+            self.configuration_changes = configuration_changes(
+                self.baseline.inputs,
+                self.candidate.inputs,
+                self.baseline.package_lock_evidence,
+                self.candidate.package_lock_evidence,
+            )
+        representation_changes = {
+            row["path"]
+            for row in self.configuration_changes
+            if row["effect"] == "representation_only"
+        }
         self.selected_checks = bounded_selection(
             select_affected_checks(
-                self.changed_paths or [],
+                set(self.changed_paths or []) - representation_changes,
                 [row.model_dump() for row in self.candidate.mappings],
                 broader_check=self.candidate.broader_check,
                 impact_complete=self.baseline is not None and self.complete,
+                known_no_effect=bool(representation_changes),
             )
         )
 
@@ -251,6 +291,11 @@ class PreparedCandidate:
             "candidate_observations": current.observations,
             "asset_moves": moves,
             "changed_paths": bounded_changes,
+            **(
+                {"configuration_changes": self.configuration_changes}
+                if self.configuration_changes
+                else {}
+            ),
             **({"changed_path_count": len(changed)} if inventories and changed is not None else {}),
             **({"input_inventory": inventories} if inventories else {}),
             "selected_checks": self.selected_checks,
@@ -284,6 +329,11 @@ def prepare_candidate(project_info, selection):
     prepared = PreparedCandidate(
         root, project, identity, baseline_id, candidate, baseline, digest, baseline_digest, {}
     )
-    prepared.live = live_sources(project, prepared.paths, read=sample.read)
+    prepared.live = live_sources(
+        project,
+        prepared.paths,
+        read=sample.read,
+        lock_evidence=[item.package_lock_evidence for item in (candidate, baseline) if item],
+    )
     sample.finish()
     return prepared

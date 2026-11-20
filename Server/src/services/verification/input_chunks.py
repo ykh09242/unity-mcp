@@ -3,7 +3,9 @@
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Annotated
 
 from pydantic import Field, field_validator
@@ -16,12 +18,19 @@ SourcePath = Annotated[str, Field(min_length=1, max_length=512)]
 CHUNK_BYTES = 64 * 1024
 CHUNK_PATHS = 128
 MAX_CHUNKS = 8
+MAX_INPUT_PATHS = CHUNK_PATHS * MAX_CHUNKS
 Inputs = Annotated[dict[SourcePath, Digest], Field(min_length=1, max_length=CHUNK_PATHS)]
+LOCK_PATH = "Packages/packages-lock.json"
+CONFIG_PATHS = frozenset(
+    {LOCK_PATH, "ProjectSettings/GraphicsSettings.asset", "ProjectSettings/QualitySettings.asset"}
+)
 
 
 def validate_input_paths(paths):
     paths = list(paths)
     for path in paths:
+        if path in CONFIG_PATHS:
+            continue
         parts = path.split("/")
         if (
             parts[0] not in {"Assets", "Packages"}
@@ -41,6 +50,10 @@ def validate_input_paths(paths):
                 ".controller",
                 ".mat",
                 ".shader",
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".tga",
             }
         ):
             raise ValueError("candidate_source_path_outside_scope")
@@ -94,6 +107,29 @@ class ChunkIndex(QualityOptions):
         if len(refs) != len({row.sha256 for row in refs}):
             raise ValueError("candidate_duplicate_input_chunk")
         return refs
+
+
+def encode_input_chunk(inputs):
+    content = json.dumps({"inputs": inputs}, separators=(",", ":"), ensure_ascii=False).encode()
+    ref = ChunkRef(sha256=sha256(content).hexdigest(), count=len(inputs), size_bytes=len(content))
+    return ref, content
+
+
+def publish_input_chunk(directory, ref, content, *, before_publish=None):
+    """Publish an immutable chunk, reusing an existing byte-identical copy."""
+    folder = safe_local_path(directory / "input-chunks")
+    folder.mkdir(parents=True, exist_ok=True)
+    destination = safe_local_path(folder / (ref.sha256 + ".json"))
+    with TemporaryDirectory(dir=folder) as staging:
+        temporary = Path(staging) / "chunk"
+        temporary.write_bytes(content)
+        if before_publish is not None:
+            before_publish()
+        try:
+            os.link(safe_local_path(temporary), safe_local_path(destination))
+        except FileExistsError:
+            if read_bytes(destination, CHUNK_BYTES) != content:
+                raise ValueError("candidate_existing_chunk_digest_mismatch") from None
 
 
 @dataclass

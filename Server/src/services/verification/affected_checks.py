@@ -52,7 +52,9 @@ def bounded_selection(selection):
     return result
 
 
-def select_affected_checks(affected_paths, mappings, *, broader_check=None, impact_complete=True):
+def select_affected_checks(
+    affected_paths, mappings, *, broader_check=None, impact_complete=True, known_no_effect=False
+):
     """Return the checks and their evidence. Selection does not execute a check."""
     checks = {}
     by_path = {}
@@ -76,7 +78,7 @@ def select_affected_checks(affected_paths, mappings, *, broader_check=None, impa
         reasons.append("unmapped_affected_paths")
     if not impact_complete:
         reasons.append("impact_coverage_incomplete")
-    if not checks and not reasons:
+    if not checks and not reasons and not known_no_effect:
         reasons.append("no_affected_paths")
     if broader_check and reasons:
         checks[("profile", broader_check)] = reasons

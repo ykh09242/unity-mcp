@@ -4,7 +4,6 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Annotated
 
 import click
@@ -23,7 +22,9 @@ from services.verification.input_chunks import (
     SourcePath,
     SourceSample,
     decode_object,
+    encode_input_chunk,
     load_chunks,
+    publish_input_chunk,
     source_revision,
     validate_input_paths,
 )
@@ -51,20 +52,8 @@ def capture_chunk(directory, project, paths):
     inputs = live_sources(project, paths, read=sample.read)
     if len(inputs) != len(paths):
         raise ValueError("candidate_capture_missing_source")
-    content = json.dumps({"inputs": inputs}, separators=(",", ":"), ensure_ascii=False).encode()
-    ref = ChunkRef(sha256=sha256(content).hexdigest(), count=len(inputs), size_bytes=len(content))
-    folder = safe_local_path(directory / "input-chunks")
-    folder.mkdir(parents=True, exist_ok=True)
-    destination = safe_local_path(folder / (ref.sha256 + ".json"))
-    with TemporaryDirectory(dir=folder) as staging:
-        temporary = Path(staging) / "chunk"
-        temporary.write_bytes(content)
-        sample.finish()
-        try:
-            os.link(safe_local_path(temporary), safe_local_path(destination))
-        except FileExistsError:
-            if read_bytes(destination, CHUNK_BYTES) != content:
-                raise ValueError("candidate_existing_chunk_digest_mismatch") from None
+    ref, content = encode_input_chunk(inputs)
+    publish_input_chunk(directory, ref, content, before_publish=sample.finish)
     return ref.model_dump()
 
 

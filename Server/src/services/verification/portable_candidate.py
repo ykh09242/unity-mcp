@@ -15,7 +15,12 @@ from cli.utils.play_scenario_player_payload import payload_file_stamps, verified
 from cli.utils.play_scenario_player_platform import executable_path
 from models.play_scenarios import ScenarioName
 from services.verification.input_chunks import SourceSample, decode_object
-from services.verification.player_candidate import Digest, live_sources, parse_manifest
+from services.verification.player_candidate import (
+    CANDIDATE_MANIFEST_LIMIT,
+    Digest,
+    live_sources,
+    parse_manifest,
+)
 
 
 def _encode(value):
@@ -32,7 +37,7 @@ def _directory(candidate_id):
     return safe_local_path(Path(root) / candidate_id)
 
 
-def _check_build(directory, manifest, sample, bundle_sha256=None):
+def _check_build(directory, manifest, sample, bundle_sha256=None, *, definition_hash=None):
     build = safe_local_path(directory / "build")
     raw = sample.read(build / "scenario-bundle.json", MANIFEST_LIMIT)
     digest = sha256(raw).hexdigest()
@@ -46,6 +51,7 @@ def _check_build(directory, manifest, sample, bundle_sha256=None):
         or manifest.payload_hash != bundle.payload_hash
         or manifest.source_revision != bundle.build_source_revision
         or manifest.scenario != bundle.scenario_name
+        or (definition_hash is not None and definition_hash != bundle.definition_hash)
     ):
         raise ValueError("candidate_build_identity_mismatch")
     executable_path(build, bundle.build_target)
@@ -61,7 +67,9 @@ def _check_build(directory, manifest, sample, bundle_sha256=None):
 
 
 def _check_sources(project, manifest, sample):
-    observed = live_sources(project, manifest.inputs, read=sample.read)
+    observed = live_sources(
+        project, manifest.inputs, read=sample.read, lock_evidence=[manifest.package_lock_evidence]
+    )
     for path, expected in sorted(manifest.inputs.items()):
         if path not in observed:
             raise ValueError(f"candidate_source_missing: {path}")
@@ -105,7 +113,7 @@ def export_candidate_inputs(project, candidate_id, output):
     project, output = safe_local_path(project), safe_local_path(output)
     directory = _directory(candidate_id)
     sample = SourceSample()
-    raw = sample.read(directory / "candidate.json", 64 * 1024)
+    raw = sample.read(directory / "candidate.json", CANDIDATE_MANIFEST_LIMIT)
     manifest = parse_manifest(raw, directory, project, read=sample.read)
     _check_sources(project, manifest, sample)
     digest, check_before_publication = _check_build(directory, manifest, sample)
@@ -127,10 +135,11 @@ def export_candidate_inputs(project, candidate_id, output):
     }
 
 
-def inspect_candidate_inputs(project, proof, expected_sha256, *, register_as=None):
+def read_portable_candidate(project, proof, expected_sha256, sample):
+    """Read the reviewed proof and its chunks without trusting the local Player."""
     TypeAdapter(Digest).validate_python(expected_sha256)
     project, proof = safe_local_path(project), safe_local_path(proof)
-    content = read_bytes(proof, 68 * 1024)
+    content = sample.read(proof, CANDIDATE_MANIFEST_LIMIT + 4 * 1024)
     if sha256(content).hexdigest() != expected_sha256:
         raise ValueError("candidate_proof_digest_mismatch")
     document = decode_object(content)
@@ -146,10 +155,18 @@ def inspect_candidate_inputs(project, proof, expected_sha256, *, register_as=Non
         raise ValueError("candidate_invalid_portable_proof")
     bundle_digest = TypeAdapter(Digest).validate_python(document["bundle_manifest_sha256"])
     raw = _encode({**document["registration"], "project": str(project)})
-    if len(raw) > 64 * 1024:
+    if document["registration"].get("schema_version") != 2 and len(content) > 68 * 1024:
         raise ValueError("candidate_registration_size_limit")
-    sample = SourceSample()
     manifest = parse_manifest(raw, proof.parent, project, read=sample.read)
+    return document, bundle_digest, raw, manifest
+
+
+def inspect_candidate_inputs(project, proof, expected_sha256, *, register_as=None):
+    project, proof = safe_local_path(project), safe_local_path(proof)
+    sample = SourceSample()
+    document, bundle_digest, raw, manifest = read_portable_candidate(
+        project, proof, expected_sha256, sample
+    )
     _check_sources(project, manifest, sample)
     result = {
         "proof_sha256": expected_sha256,

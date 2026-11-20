@@ -129,6 +129,7 @@ The project capture writes a JSON object with the following fields.
 | `inputs`, `source_revision` | Map each explicit project-relative input to its exact-byte SHA-256. Hash the UTF-8 concatenation of each sorted path, LF, lowercase digest and LF. Supply the resulting lowercase digest when building the Player. |
 | `assets`, `observations` | Optional maps from captured asset paths to Unity GUIDs and project-defined names to scalar observations. Include each identified asset and its metadata in `inputs`. |
 | `mappings`, `broader_check` | Each optional mapping has a `path` string and `tests` and `scenarios` arrays of IDs. An unmapped change identifies the configured broader profile or remains outstanding. |
+| `package_lock_evidence` | Optional raw and semantic SHA-256 receipt from the Git draft. It distinguishes JSON order changes from dependency changes when both registrations supply the receipt. See [project configuration and additional Player inputs](verification-dependency-closure.md). |
 | `state_check` | Optional `log_marker` and `expected` object. Start a dedicated Player log line with the marker, followed by a JSON object. The verifier compares named fields, retaining their JSON types. Missing or contradictory observations leave the check incomplete. |
 
 The capture may retain immutable copies of the selected sources at
