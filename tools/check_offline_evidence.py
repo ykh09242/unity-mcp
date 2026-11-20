@@ -227,7 +227,7 @@ def compare_installations(full: Path, lean: Path, output: Path) -> dict:
             {"name": scenario, "exit": want_code, "state": want_state, "read_seconds": timings}
         )
     for command in commands("json").values():
-        for action in (["selection"], ["shards"]):
+        for action in (["team", "replay"], ["shards"]):
             subprocess.run(
                 command + action + ["--help"],
                 cwd=folder,

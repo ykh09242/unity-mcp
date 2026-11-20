@@ -149,3 +149,8 @@ to save a new JSON result for a readable manifest.
 XML paths are relative to the manifest directory. The same local-file and streaming
 limits apply to each shard. A merge accepts up to 128 splits, 256 submitted rows,
 65,536 planned cases, and 128 MiB of shard XML in total.
+
+To share change or selection evidence with a teammate, export a redacted
+bundle and verify its digest on a separate machine. The
+[team handoff guide](../verification-team-handoff.md) covers the supported
+verdicts and how replay reports withheld inputs.

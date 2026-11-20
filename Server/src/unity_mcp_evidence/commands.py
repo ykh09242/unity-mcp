@@ -7,6 +7,7 @@ import click
 
 from .formatting import OUTPUT_FORMAT_TYPE, format_output
 from .play_scenario_analysis_io import write_new
+from .team_command import team
 from .verification_selection import read_cohort, selection_quality
 
 # Convert path spellings without letting Click follow links or reach remote paths.
@@ -102,7 +103,7 @@ def shards(manifest: Path, output: Path | None) -> None:
     emit_result(analyze, output)
 
 
-EVIDENCE_COMMANDS = (compare, first_failure, selection, shards)
+EVIDENCE_COMMANDS = (compare, first_failure, selection, shards, team)
 
 
 @click.group("unity-mcp-evidence", commands=EVIDENCE_COMMANDS)
