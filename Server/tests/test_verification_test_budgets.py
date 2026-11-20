@@ -16,7 +16,7 @@ INPUT = "Fixture.Suite.ButtonReceivesClick"
 FALLBACK = "Fixture.Suite.FallbackRuns"
 SUITE = (PRIMARY, SCENE, INPUT, FALLBACK)
 WITNESS = "Fixture.IndependentWitness.BadKey"
-ASSET = "Assets/PrimaryKey.txt"
+ASSET = "Assets/PrimaryKey.asset"
 
 
 @dataclass(frozen=True)
