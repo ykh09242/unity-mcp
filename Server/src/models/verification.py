@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
+from models.play_scenarios import ScenarioName
 from models.script_quality import QualityId, QualityOptions, ScriptSelection
 
 ProfileId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{0,63}$")]
@@ -79,6 +80,16 @@ class VerificationDirectRun(VerificationPrepare):
     wait_seconds: Annotated[float, Field(ge=0, le=5, allow_inf_nan=False)] = 0
 
 
+class CandidateSelection(QualityOptions):
+    candidate_id: ScenarioName
+    baseline_candidate_id: ScenarioName | None = None
+    source_mode: Literal["current", "frozen"] = "current"
+
+
+class CandidateDirectRun(CandidateSelection):
+    wait_seconds: Annotated[float, Field(ge=0, le=5, allow_inf_nan=False)] = 0
+
+
 class VerificationRunOptions(QualityOptions):
     run_id: QualityId
 
@@ -100,6 +111,10 @@ VerificationAction = Literal[
 
 
 def parse_verification_options(action, options):
+    if action in {"prepare", "run"} and isinstance(options, dict) and "candidate_id" in options:
+        return (CandidateDirectRun if action == "run" else CandidateSelection).model_validate(
+            options
+        )
     if action == "run" and isinstance(options, dict) and "preparation_id" not in options:
         return VerificationDirectRun.model_validate(options)
     models = {

@@ -2,6 +2,7 @@
 
 from models.play_scenario_limits import DEFINITION_BYTES, REPORT_BYTES
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import errno
 from hashlib import sha256
@@ -212,6 +213,18 @@ class PlayerFinalReport(BaseModel):
         return normalize_native_definition(value)
 
 
+@dataclass(slots=True)
+class PlayerDispatch:
+    """One caller's observation of the local worker and the OS process boundary."""
+
+    state: Literal["preparing", "dispatching", "started", "refused"] = "preparing"
+    worker_finished: bool = False
+
+    @property
+    def confirmed_not_started(self) -> bool:
+        return self.worker_finished and self.state in {"preparing", "refused"}
+
+
 @dataclass(frozen=True, slots=True)
 class PlayerRunOptions:
     """Caller-selected launch and bounded cancellation policy."""
@@ -232,6 +245,10 @@ class PlayerRunOptions:
     graphical: bool = False
     suite_child_name: str | None = None
     suite_manifest_hash: str | None = None
+    expected_payload_hash: str | None = None
+    expected_scenario: str | None = None
+    cancel_requested: Callable[[], bool] | None = None
+    dispatch: PlayerDispatch | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if type(self.graphical) is not bool:
@@ -355,6 +372,14 @@ def _publish_cancellation(directory: Path, job_id: str) -> None:
 
 def run_player(options: PlayerRunOptions) -> PlayerOutcome:
     """Run foreground, request cancellation once, and require fresh native finalization evidence."""
+    dispatch = options.dispatch or PlayerDispatch()
+    try:
+        return _run_player(options, dispatch)
+    finally:
+        dispatch.worker_finished = True
+
+
+def _run_player(options: PlayerRunOptions, dispatch: PlayerDispatch) -> PlayerOutcome:
     check_deadline(options.deadline_monotonic)
     root = options.build_directory.resolve(strict=True)
     manifest = root / "scenario-bundle.json"
@@ -377,6 +402,8 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
             "A suite child selector requires a frozen version-three suite build"
         )
     bundle = PlayerBundle.model_validate(manifest_value)
+    if options.expected_scenario is not None and bundle.scenario_name != options.expected_scenario:
+        raise PlayerLaunchError("Player scenario does not match the selected candidate")
     payload = bundle.payload
     if options.soak is not None and payload is None:
         raise PlayerLaunchError("Player soak requires a verified v2 Player payload")
@@ -392,6 +419,10 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
         payload is None or payload.build_id != options.expected_build_id
     ):
         raise PlayerLaunchError("Player embedded build ID does not match the expected ID")
+    if options.expected_payload_hash is not None and (
+        payload is None or payload.payload_hash != options.expected_payload_hash
+    ):
+        raise PlayerLaunchError("Player payload hash does not match the expected fingerprint")
     if payload is not None:
         output_root = options.output_directory.resolve()
         if output_root.is_relative_to(root):
@@ -413,6 +444,8 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
         timeout_seconds=options.timeout_seconds,
         source_revision=options.source_revision,
     )
+    if options.cancel_requested is not None and options.cancel_requested():
+        raise PlayerLaunchError("Player launch canceled before dispatch")
     options.output_directory.mkdir(parents=True, exist_ok=True)
     directory = options.output_directory.resolve() / str(command.job_id)
     directory.mkdir(exist_ok=False)
@@ -441,20 +474,32 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
     (directory / "definition.json").write_text(bundle.definition_json + "\n", encoding="utf-8")
     check_deadline(options.deadline_monotonic)
     process_started_unix_ms = int(time.time() * 1000)
-    process = subprocess.Popen(
-        [
-            str(executable),
-            "--mcp-scenario-request",
-            str(request_path),
-            *([] if options.graphical else ["-batchmode"]),
-            "-logFile",
-            "-",
-        ],
-        cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        shell=False,
-    )
+    dispatch.state = "dispatching"
+    try:
+        process = subprocess.Popen(
+            [
+                str(executable),
+                "--mcp-scenario-request",
+                str(request_path),
+                *([] if options.graphical else ["-batchmode"]),
+                "-logFile",
+                "-",
+            ],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            shell=False,
+        )
+    except OSError as error:
+        # A missing/inaccessible/invalid executable cannot have started the Player.
+        # Unclassified OS errors preserve the uncertain dispatch boundary.
+        if isinstance(error, (FileNotFoundError, NotADirectoryError, PermissionError)) or (
+            error.errno in {errno.ENOEXEC, errno.E2BIG}
+            or getattr(error, "winerror", None) in {193, 216, 740}
+        ):
+            dispatch.state = "refused"
+        raise
+    dispatch.state = "started"
     log_capture = _LogCapture(process, directory / "player.log")
     capture = Thread(target=log_capture.drain, daemon=True)
     observer = (
@@ -513,10 +558,11 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                 expired = time.monotonic() >= deadline or (
                     log_capture.error is not None and not cancellation_sent
                 )
-                if expired and not cancellation_sent:
+                requested = options.cancel_requested is not None and options.cancel_requested()
+                if (expired or requested) and not cancellation_sent:
                     _publish_cancellation(directory, str(command.job_id))
                     cancellation_sent = True
-                    deadline_reached = not interrupted
+                    deadline_reached = expired and not interrupted
                     # The soak deadline already includes cleanup; cancellation cannot extend it.
                     deadline = min(time.monotonic() + options.cleanup_wait_seconds, soak_deadline)
                 if cancellation_sent and time.monotonic() >= deadline:

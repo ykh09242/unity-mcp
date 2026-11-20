@@ -63,6 +63,12 @@ async def test_composition_uses_the_actual_sdk_wire_once(monkeypatch):
             {"paths": ["Assets/Example.cs"], "profile_id": "editmode-check"},
         ),
         (["verification"], "run", {"preparation_id": "c" * 32}),
+        (
+            ["verification"],
+            "prepare",
+            {"candidate_id": "wind-v2", "baseline_candidate_id": "wind-v1"},
+        ),
+        (["verification"], "run", {"candidate_id": "lighting-r2", "source_mode": "frozen"}),
         (["verification"], "report", {"run_id": "d" * 32}),
     ],
 )
@@ -103,6 +109,8 @@ def test_cli_uses_public_composition_schema(monkeypatch, command, action, option
     [
         (["script", "quality"], "analyze", {}),
         (["script", "quality"], "analyze", {"paths": ["../private.cs"]}),
+        (["verification"], "run", {"candidate_id": "../unregistered"}),
+        (["verification"], "run", {"candidate_id": "wind-v2", "executable": "other"}),
         (
             ["verification"],
             "set_profile",

@@ -15,7 +15,8 @@ from services.verification.service import VerificationService
     description=(
         "Run project verification with source-linked stage reports. profiles reads defaults and explicit project overrides without writing. "
         "set_profile requires profile_id, profile and expected_hash from profiles (missing for a new file). "
-        "prepare requires paths XOR change_set_id and accepts profile_id (script-check default), capture_baseline or baseline_id. "
+        "For scripts, prepare takes paths XOR change_set_id and optional profile_id, capture_baseline or baseline_id. "
+        "For registered local standalone builds, prepare or run takes candidate_id with optional baseline_candidate_id and source_mode (current or frozen). "
         "It freezes selection and profile; poll status with preparation_id until ready before editing after a requested baseline. "
         "run takes preparation_id, or paths XOR change_set_id with an optional profile_id/baseline_id to prepare and start together. "
         "wait_seconds (0..5, default 0) observes the original run without canceling it on expiry. "

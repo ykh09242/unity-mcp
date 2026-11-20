@@ -7,6 +7,7 @@ from time import monotonic
 from uuid import uuid4
 
 from core.config import config
+from core.server_build import RUNNING_SERVER
 from models.script_quality import ScriptSelection
 from models.verification import VerificationProfile, parse_verification_options
 from services.credential_lease import bind_credential_lease, require_credential_lease
@@ -24,6 +25,8 @@ from services.verification.profiles import (
 )
 from services.verification.reports import ReportStore, test_settled
 from services.verification.runner import VerificationRunner
+from services.verification.player_candidate import prepare_candidate
+from services.verification.player_runner import PlayerVerificationRunner
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
 
@@ -78,8 +81,11 @@ class VerificationIO:
             check = await target.authorize_public(name, params)
             check()
         names = ("read_console", "tail_console") if name == "tail_console" else (name,)
-        if target.public_available is not None and not await target.public_available(
-            names, self.ctx.fastmcp
+        # Project information is a resource. Tool inventories omit resource commands.
+        if (
+            name != "get_project_info"
+            and target.public_available is not None
+            and not await target.public_available(names, self.ctx.fastmcp)
         ):
             raise ValueError("verification_child_tool_unavailable")
         return target
@@ -241,15 +247,41 @@ class VerificationService:
                         "schema_version": 1,
                     },
                 }
-            profile = resolve_profile(parsed["profile_id"], document)
+            if "candidate_id" in parsed and config.http_remote_hosted:
+                return self.error("verification_local_operator_required")
+            project = await io.native("get_project_info", {}, deadline)
+            info = (project.get("data") or {}) if project.get("success") is True else {}
+            installation = {
+                "project_scope": owner[1],
+                "editor_generation": target.resume_generation or target.scope.generation,
+                "unity_version": info.get("unityVersion"),
+                "package": info.get("mcpPackage"),
+                "server": RUNNING_SERVER.command_metadata(),
+            }
             if (
                 len(self.preparations) >= 64
                 or sum(p["owner"] == owner for p in self.preparations.values()) >= 16
             ):
                 return self.error("verification_preparation_capacity")
-            selection = {key: parsed[key] for key in ("paths", "change_set_id") if key in parsed}
+            candidate = None
+            if "candidate_id" in parsed:
+                try:
+                    candidate = await asyncio.to_thread(prepare_candidate, info, parsed)
+                except (OSError, ValueError) as error:
+                    return self.error("candidate_preparation_unavailable", str(error)[:256])
+                profile_id = "standalone-player"
+                profile = VerificationProfile(
+                    refresh_policy="never", analysis_required=False, impact="off"
+                )
+                selection = parsed.copy()
+            else:
+                profile_id = parsed["profile_id"]
+                profile = resolve_profile(profile_id, document)
+                selection = {
+                    key: parsed[key] for key in ("paths", "change_set_id") if key in parsed
+                }
             baseline_id = parsed.get("baseline_id")
-            if parsed["capture_baseline"]:
+            if parsed.get("capture_baseline"):
                 await io.authorize("manage_script_quality", {"action": "capture_baseline"})
                 capture = await io.quality(
                     "capture_baseline",
@@ -267,11 +299,13 @@ class VerificationService:
                 "generation": target.scope.generation,
                 "preparation_id": identity,
                 "selection": selection,
+                "installation": installation,
+                "player_candidate": candidate,
                 "profile": profile,
-                "profile_id": parsed["profile_id"],
-                "profile_hash": data.get("byte_hash"),
+                "profile_id": profile_id,
+                "profile_hash": None if candidate else data.get("byte_hash"),
                 "baseline_id": baseline_id,
-                "ready": not parsed["capture_baseline"],
+                "ready": not parsed.get("capture_baseline"),
                 "state": "pending",
                 "run_id": None,
                 "expires": monotonic() + 1800,
@@ -312,10 +346,12 @@ class VerificationService:
                         preparation["selection"],
                         lease,
                         baseline_id=preparation["baseline_id"],
+                        player_candidate=preparation["player_candidate"],
                         metadata={
                             "preparation_id": preparation["preparation_id"],
                             "profile_id": preparation["profile_id"],
                             "profile_hash": preparation["profile_hash"],
+                            "installation": preparation["installation"],
                         },
                     )
                     preparation["run_id"] = run_id
@@ -354,17 +390,26 @@ class VerificationService:
         baseline_id=None,
         expected_sources=None,
         metadata=None,
+        player_candidate=None,
     ):
-        await io.authorize_profile(profile)
-        runner = VerificationRunner(
-            io, profile, selection, baseline_id=baseline_id, expected_sources=expected_sources
-        )
+        if player_candidate is None:
+            await io.authorize_profile(profile)
+            runner = VerificationRunner(
+                io, profile, selection, baseline_id=baseline_id, expected_sources=expected_sources
+            )
+            permissions = sorted(profile_permissions(profile))
+        else:
+            if config.http_remote_hosted:
+                raise ValueError("verification_local_operator_required")
+            await io.authorize("manage_play_scenario", {"action": "run"})
+            runner = PlayerVerificationRunner(io, profile, selection, player_candidate)
+            permissions = ["read", "run"]
         owner = io.owner
         run_id = self.store.create(owner, runner.report)
         runner.report.update(
             run_id=run_id,
             project_scope=owner[1],
-            required_permissions=sorted(profile_permissions(profile)),
+            required_permissions=permissions,
             **(metadata or {}),
         )
         runner.emit = lambda report: self.store.update(run_id, owner, report)
@@ -451,6 +496,10 @@ class VerificationService:
                         and data.get("job_id") == child["job_id"]
                         and test_settled(data)
                     )
+                elif child["kind"] == "standalone_player":
+                    child["settled"] = await asyncio.to_thread(
+                        runner.player_settled, child["job_id"]
+                    )
                 elif child["kind"] == "compile":
                     from services.tools.get_compile_job import CompileCoordination
 
@@ -481,11 +530,12 @@ class VerificationService:
 
     @staticmethod
     def preparation_view(preparation):
-        return {
+        view = {
             key: preparation[key]
             for key in (
                 "preparation_id",
                 "selection",
+                "installation",
                 "profile_id",
                 "profile_hash",
                 "baseline_id",
@@ -493,4 +543,9 @@ class VerificationService:
                 "state",
                 "run_id",
             )
-        } | {"profile": preparation["profile"].model_dump()}
+        }
+        if preparation["player_candidate"] is None:
+            view["profile"] = preparation["profile"].model_dump()
+        else:
+            view["comparison"] = preparation["player_candidate"].comparison()
+        return view

@@ -44,11 +44,54 @@ async def test_prepare_freezes_profile_and_selection_without_running_stages(serv
     data = response["data"]
     assert data["state"] == "pending" and data["ready"]
     assert data["profile"]["test_mode"] == "EditMode"
-    assert native.await_count == 1
-    assert native.call_args.args[2] == "manage_verification"
+    assert [call.args[2] for call in native.await_args_list] == [
+        "manage_verification",
+        "get_project_info",
+    ]
     target.scope.key = ("other", "p")
     hidden = await subject.execute(ctx, "status", {"preparation_id": data["preparation_id"]})
     assert hidden["code"] == "verification_not_found"
+
+
+@pytest.mark.asyncio
+async def test_report_identifies_actual_installed_components_and_target(service, monkeypatch):
+    from core.server_build import ServerBuild
+
+    subject, ctx, target, native = service
+    monkeypatch.setattr(
+        "services.verification.service.RUNNING_SERVER", ServerBuild("1.2", None, "server-process")
+    )
+    native.return_value["data"]["unityVersion"] = "2022.3.62f3"
+    native.return_value["data"]["mcpPackage"] = {
+        "name": "com.ykh09242.unity-mcp",
+        "version": "9.0.0",
+        "effectiveServerCommit": "b" * 40,
+    }
+    prepared = await subject.execute(ctx, "prepare", {"paths": ["Assets/A.cs"]})
+    identity = prepared["data"]["installation"]
+    assert identity["server"] == {
+        "version": "1.2",
+        "source_commit": None,
+        "server_id": "server-process",
+    }
+    assert identity["project_scope"] == "p"
+    assert identity["editor_generation"] == "process"
+    assert identity["package"] == native.return_value["data"]["mcpPackage"]
+    assert identity["unity_version"] == "2022.3.62f3"
+
+    async def work(self):
+        self.report.update(state="passed", source_token="starting-source")
+        return self.report
+
+    monkeypatch.setattr("services.verification.runner.VerificationRunner.run", work)
+    report = await subject.execute(
+        ctx, "run", {"preparation_id": prepared["data"]["preparation_id"], "wait_seconds": 1}
+    )
+    assert report["data"]["installation"] == identity
+    assert report["data"]["source_token"] == "starting-source"
+    target.scope.key = ("u", "second-project")
+    refused = await subject.execute(ctx, "report", {"run_id": report["data"]["run_id"]})
+    assert refused["code"] == "verification_not_found"
 
 
 @pytest.mark.asyncio
@@ -101,7 +144,7 @@ async def test_direct_run_prepares_selection_and_wait_expiry_keeps_original_job(
     assert len(subject.tasks) == 1 and not next(iter(subject.tasks.values())).cancelled()
     again = await subject.execute(ctx, "run", {"preparation_id": report["preparation_id"]})
     assert again["data"]["run_id"] == report["run_id"]
-    assert native.await_count == 1
+    assert native.await_count == 2
     release.set()
     await asyncio.gather(*subject.tasks.values())
     terminal = await subject.execute(ctx, "status", {"run_id": report["run_id"]})
@@ -126,7 +169,7 @@ async def test_live_permission_union_is_checked_before_starting_any_background_w
     with pytest.raises(PermissionError):
         await subject.execute(ctx, "run", {"preparation_id": prepared["data"]["preparation_id"]})
     assert not subject.tasks
-    assert native.await_count == 1
+    assert native.await_count == 2
 
 
 @pytest.mark.asyncio
