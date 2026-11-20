@@ -103,6 +103,13 @@ It is not a full C# compiler or whole-program proof: dynamic keys, reflection,
 unsupported overload/type flow, and generated runtime behavior can remain unknown.
 An empty query is **never** proof that deleting an asset is safe.
 
+When the Editor reports that Addressables is absent or has no configured
+settings, an otherwise unmatched address or label reports
+`provider_unavailable`. An unmatched key in an available catalog reports
+`key_not_found`. GUID-based asset identity remains independently queryable.
+Multi-target label operations list their matching entries. A single-target
+lookup with several matches reports `ambiguous_key`.
+
 ## External configuration
 
 External sources are read-only and opt-in. There are no application names,

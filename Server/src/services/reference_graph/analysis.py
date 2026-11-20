@@ -37,7 +37,7 @@ from services.reference_graph.store import Edge, _hash
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 13
+ANALYSIS_VERSION = 14
 # Limit both the semantic value and nonliteral representation before allocating
 # expanded storage. Source size alone cannot bound repeated constant expansion.
 MAX_EXPRESSION_CHARS = 65536
@@ -1132,7 +1132,8 @@ class Catalog:
     def unavailable(asset: dict) -> bool:
         return not asset.get("_excluded") and (
             bool(asset.get("addressables_error"))
-            or asset.get("addressables") in {"unavailable", "unsupported", "failed"}
+            or asset.get("addressables")
+            in {"not_installed", "not_configured", "unavailable", "unsupported", "failed"}
         )
 
     @classmethod
