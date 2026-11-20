@@ -94,9 +94,12 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                 InputActionMap actions = asset.AddActionMap("MixedUiFixture");
                 point = InputActionReference.Create(actions.AddAction("Point", InputActionType.PassThrough, "<Mouse>/position"));
                 press = InputActionReference.Create(actions.AddAction("Press", InputActionType.PassThrough, "<Mouse>/leftButton"));
-                var buttonInputs = new List<(string Device, int Id, bool Pressed)>();
+                var buttonInputs = new List<(string Device, int Id, string Control, bool Pressed, Vector2 Position)>();
                 press.action.performed += received =>
-                    buttonInputs.Add((received.control.device.name, received.control.device.deviceId, received.ReadValue<float>() > 0.5f));
+                {
+                    var mouse = (InputMouse)received.control.device;
+                    buttonInputs.Add((mouse.name, mouse.deviceId, received.control.name, received.ReadValue<float>() > 0.5f, mouse.position.ReadValue()));
+                };
                 GameObject eventsRoot = NewChild(roots, "MixedUiEvents");
                 eventsRoot.SetActive(false);
                 var events = eventsRoot.AddComponent<EventSystem>();
@@ -175,10 +178,12 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                     Assert.That(new Rect(0, 0, Screen.width, Screen.height).Contains(pointScreen), Is.True);
                     Assert.That(buttonRoot.GetComponent<UguiImage>().depth, Is.GreaterThanOrEqualTo(0));
                     Assert.That(point.action.enabled && press.action.enabled, Is.True);
+                    var viewport = new Vector2Int(Screen.width, Screen.height);
 
                     foreach (bool repaired in new[] { false, true })
                     {
                         inventory.OpenCount = 0;
+                        JObject gameStateBefore = ObserveInventory(inventory);
                         overlay.pickingMode = repaired ? PickingMode.Ignore : PickingMode.Position;
                         // Let the normal panel update invalidate its pick cache before reusing the same pixel.
                         yield return null;
@@ -216,25 +221,30 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                         TestContext.WriteLine(
                             new JObject
                             {
+                                ["schema_version"] = 1,
                                 ["fixture"] = "mixed-ui-pointer",
                                 ["unity_version"] = Application.unityVersion,
                                 ["input_source"] = "scenario_virtual_mouse",
+                                ["input_action"] = "mouse_left_click",
                                 ["scale"] = scale,
                                 ["canvas_scale"] = canvas.scaleFactor,
-                                ["viewport"] = new JArray(Screen.width, Screen.height),
+                                ["viewport"] = new JArray(viewport.x, viewport.y),
                                 ["repaired"] = repaired,
                                 ["screen_point"] = Coordinates(pointScreen),
                                 ["panel_point"] = Coordinates(pointPanel),
                                 ["toolkit_geometric_pick"] = geometricPick?.name,
                                 ["game_state_open"] = inventory.IsOpen,
                                 ["game_state_open_count"] = inventory.OpenCount,
+                                ["gameplay_state"] = new JObject { ["before"] = gameStateBefore, ["after"] = ObserveInventory(inventory) },
                                 ["trace_truncated"] = trace.Truncated,
                                 ["input_action_edges"] = new JArray(
                                     buttonInputs.Select(edge => new JObject
                                     {
                                         ["device"] = edge.Device,
                                         ["device_id"] = edge.Id,
+                                        ["control"] = edge.Control,
                                         ["pressed"] = edge.Pressed,
+                                        ["position"] = Coordinates(edge.Position),
                                     })
                                 ),
                                 ["events"] = new JArray(trace.Samples.Select(Sample)),
@@ -243,7 +253,10 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                         );
 
                         Assert.That(trace.Truncated, Is.False);
+                        Assert.That(new Vector2Int(Screen.width, Screen.height), Is.EqualTo(viewport));
                         Assert.That(buttonInputs.Select(edge => edge.Pressed), Is.EqualTo(new[] { true, false }));
+                        Assert.That(buttonInputs.Select(edge => edge.Control).Distinct(), Is.EqualTo(new[] { "leftButton" }));
+                        Assert.That(buttonInputs.All(edge => Near(edge.Position, pointScreen)), Is.True);
                         Assert.That(buttonInputs.Select(edge => edge.Device).Distinct(), Is.EqualTo(new[] { "MCPVirtualMouse" }));
                         Assert.That(buttonInputs.Select(edge => edge.Id).Distinct().Count(), Is.EqualTo(1));
                         Assert.That(InputApi.devices.Any(device => device.name == "MCPVirtualMouse"), Is.False);
@@ -297,6 +310,9 @@ namespace MCPForUnityTests.EditMode.Tools.Input
         private static bool Near(Vector2 a, Vector2 b) => Vector2.Distance(a, b) < 0.75f;
 
         private static JArray Coordinates(Vector2 point) => new JArray(point.x, point.y);
+
+        private static JObject ObserveInventory(Inventory inventory) =>
+            new JObject { ["inventory_open"] = inventory.IsOpen, ["inventory_open_count"] = inventory.OpenCount };
 
         private static JObject Sample(RoutedPointerSample sample) =>
             new JObject

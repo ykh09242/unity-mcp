@@ -97,10 +97,13 @@ on:
       - tools/check_unity_playmode_evidence.py
       - tools/check_play_scenario_evidence.py
       - tools/check_play_scenario_player_evidence.py
+      - tools/export_mixed_ui_pointer_traces.py
       - Server/src/cli/main.py
       - Server/pyproject.toml
       - Server/uv.lock
       - Server/src/cli/commands/play_scenario.py
+      - Server/src/cli/commands/play_scenario_pointer.py
+      - Server/src/cli/utils/play_scenario_pointer.py
       - Server/src/cli/utils/play_scenario_player*.py
       - Server/src/cli/utils/play_scenario_soak*.py
       - Server/src/cli/utils/play_scenario_reports.py
@@ -520,6 +523,60 @@ jobs:
           sys.exit(subprocess.call(arguments))
           PY
 
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        if: matrix.suite.id == 'mixed-ui-pointer'
+        with:
+          version: "0.13.9"
+          python-version: "3.14"
+          enable-cache: false
+
+      - name: Compare native pointer traces with the shipped CLI
+        if: matrix.suite.id == 'mixed-ui-pointer'
+        env:
+          RESULTS_XML: ${{ steps.native-output.outputs.results }}
+          UNITY_VERSION: ${{ matrix.unity.version }}
+        run: |
+          set -euo pipefail
+          traces=".unity-ci/pointer-evidence-$UNITY_VERSION"
+          python3 tools/export_mixed_ui_pointer_traces.py "$RESULTS_XML" "$traces"
+          uv sync --project Server --python 3.14 --locked
+          for scale in 1x 1.5x; do
+            report="$traces/$scale-comparison.json"
+            status=0
+            uv run --project Server --no-sync unity-mcp --no-project-context --format json play-scenario compare-pointer-traces \
+              "$traces/$scale-before.json" "$traces/$scale-after.json" --output "$report" || status=$?
+            test "$status" -eq 1
+            python3 - "$report" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert report["status"] == "diverged"
+          assert report["first_divergence"]["stage"] == "first_recipient"
+          assert report["raw_edge_counts"] == {"baseline": 2, "candidate": 2}
+          state = report["gameplay_state"]
+          assert state["baseline"]["before"] == state["candidate"]["before"]
+          assert state["baseline"]["after"] != state["candidate"]["after"]
+          for stage in ("first_recipient", "terminal_handler"):
+              assert report[stage]["baseline"]["backend"] == "uitoolkit"
+              assert report[stage]["candidate"]["backend"] == "ugui"
+          PY
+          done
+          printf '{"source_sha":"%s"}\n' "$(git rev-parse HEAD)" > "$traces/source.json"
+
+      - name: Upload source-bound mixed UI verdict
+        if: matrix.suite.id == 'mixed-ui-pointer'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-case-pointer-${{ matrix.unity.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .unity-ci/pointer-evidence-${{ matrix.unity.version }}/source.json
+            .unity-ci/pointer-evidence-${{ matrix.unity.version }}/1x-comparison.json
+            .unity-ci/pointer-evidence-${{ matrix.unity.version }}/1.5x-comparison.json
+          include-hidden-files: true
+          if-no-files-found: error
+
       - name: Upload optional integration evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -528,6 +585,7 @@ jobs:
           path: |
             .release-evidence/
             .unity-ci/optional-${{ matrix.unity.version }}/resolved-packages.json
+            .unity-ci/pointer-evidence-${{ matrix.unity.version }}/*.json
           include-hidden-files: true
           if-no-files-found: error
 
