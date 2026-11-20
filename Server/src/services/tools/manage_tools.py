@@ -19,6 +19,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 from transport.protocol import internal_resource_catalog, is_sessionless
 
+from models.host_tool_inventory import HostToolEvidence, HostToolNames
 from services.registry import (
     mcp_for_unity_tool,
     TOOL_GROUPS,
@@ -27,7 +28,7 @@ from services.registry import (
     get_registered_tools,
 )
 from services.registry.action_catalog import ActionIntent, CatalogResource, ObservationSource
-from services.registry.task_search import HostToolNames, RequiredValues, RouteSurfaces
+from services.registry.task_search import RequiredValues, RouteSurfaces
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -71,9 +72,16 @@ async def search_unity_tools(
         HostToolNames | None,
         "Complete callable tool names exposed by this host for this connection. Omit if unknown.",
     ] = None,
+    host_tool_evidence: Annotated[
+        HostToolEvidence | None,
+        "Bounded exact-name checks from this host on the same connection and target. "
+        "Use instead of host_tool_names. Incomplete misses stay unknown.",
+    ] = None,
 ) -> dict[str, Any]:
     from services.registry.task_search import SearchRequest, search_catalog
 
+    if host_tool_names is not None and host_tool_evidence is not None:
+        return {"success": False, "error": "Supply host_tool_names or host_tool_evidence."}
     try:
         request = SearchRequest(
             query=query,
@@ -84,6 +92,7 @@ async def search_unity_tools(
             required_values=required_values,
             route_surfaces=route_surfaces or "both",
             host_tool_names=host_tool_names,
+            host_tool_evidence=host_tool_evidence,
         )
     except ValidationError:
         return {
@@ -111,7 +120,8 @@ async def search_unity_tools(
         "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore configured profile), describe (full schema for one tool, optionally bind operation), "
         "catalog (choose a domain by purpose, then browse tools, actions or readable resources), "
-        "search (match declared observation_source and required_values directly from a task in any language, or search by text). "
+        "search (match declared observation_source and required_values directly from a task in any language, or search by text), "
+        "inspect_inventory (compare server advertisement with this host's exact-name evidence). "
         "Selection changes server tools/list; it does not confirm the client's callable inventory. "
         "Use sync after toggling tools in the Unity Editor GUI."
     ),
@@ -147,7 +157,7 @@ async def manage_tools(
     ] = None,
     tool: Annotated[
         str | None,
-        "Single tool name for activate/deactivate/describe/catalog. Discover names with catalog.",
+        "Single exact tool name for activate/deactivate/describe/catalog/inspect_inventory.",
     ] = None,
     query: Annotated[
         str | None,
@@ -200,6 +210,11 @@ async def manage_tools(
         HostToolNames | None,
         "For search or inspect_inventory, supply this host's complete callable tool names. Omit if unknown.",
     ] = None,
+    host_tool_evidence: Annotated[
+        HostToolEvidence | None,
+        "For search or inspect_inventory, check exact candidate names on this host's same connection "
+        "and target. Use instead of host_tool_names. Incomplete misses stay unknown.",
+    ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
@@ -207,23 +222,35 @@ async def manage_tools(
     modern = is_sessionless(ctx)
     if host_tool_names is not None and action not in {"search", "inspect_inventory"}:
         return {"success": False, "error": "host_tool_names requires search or inspect_inventory."}
+    if host_tool_evidence is not None and action not in {"search", "inspect_inventory"}:
+        return {
+            "success": False,
+            "error": "host_tool_evidence requires search or inspect_inventory.",
+        }
     if action == "inspect_inventory":
         if not tool or len(tool) > 128:
             return {"success": False, "error": "Inspect one exact tool name (1..128 characters)."}
+        if host_tool_names is not None and host_tool_evidence is not None:
+            return {"success": False, "error": "Supply host_tool_names or host_tool_evidence."}
         # Only report the queried name's membership. Catalog definitions include
         # selectable but denied entries and must never populate this receipt.
         advertised = any(item.name == tool for item in await _visible_tools(ctx))
+        received = None
+        if host_tool_evidence is not None:
+            received = host_tool_evidence.received(tool)
+        elif host_tool_names is not None:
+            received = tool in host_tool_names
         return {
             "scope": "current_mcp_request",
             "server_advertised": advertised,
-            "host_evidence": "caller_report" if host_tool_names is not None else "unknown",
+            "host_evidence": "caller_report" if received is not None else "unknown",
             "status": (
                 "server_unavailable"
                 if not advertised
                 else "host_unknown"
-                if host_tool_names is None
+                if received is None
                 else "host_advertised"
-                if tool in host_tool_names
+                if received
                 else "host_filtered"
             ),
         }
@@ -280,6 +307,7 @@ async def manage_tools(
             required_values=required_values,
             route_surfaces=route_surfaces,
             host_tool_names=host_tool_names,
+            host_tool_evidence=host_tool_evidence,
         )
     if action in ("activate", "deactivate", "reset") and modern:
         if discovery is None or await discovery.scope_key(ctx) is None:

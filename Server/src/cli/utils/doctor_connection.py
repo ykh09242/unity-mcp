@@ -151,10 +151,19 @@ class DiagnosticClient:
         self.headers = headers
         self._stack = None
         self._client = None
+        self.tool_inventory_epoch = 0
 
     async def __aenter__(self):
         from mcp.client import Client
+        from mcp.client.session import IncomingMessage
         from mcp.client.streamable_http import streamable_http_client
+        from mcp.types import ServerNotification
+
+        async def observe_catalog_change(message: IncomingMessage) -> None:
+            if isinstance(message, ServerNotification) and (
+                message.root.method == "notifications/tools/list_changed"
+            ):
+                self.tool_inventory_epoch += 1
 
         async with AsyncExitStack() as stack:
             # LIFO: close the MCP session and transport task groups before caller-owned HTTP.
@@ -172,6 +181,7 @@ class DiagnosticClient:
                     mode=self.protocol,
                     cache=None,
                     read_timeout_seconds=self.factory.remaining(),
+                    message_handler=observe_catalog_change,
                 )
             )
             self._client = client
@@ -559,33 +569,25 @@ async def diagnose(
             async with client:
                 with anyio.fail_after(max(0.001, deadline - anyio.current_time())):
                     receipt = await _read(client, config, protocol)
-                    if inspect_tool and receipt.connection_verified:
-                        from cli.utils.tool_description import _listing
+                if inspect_tool and receipt.connection_verified:
+                    from cli.utils.host_tool_inventory import observe_host_tools
 
-                        # Preserve the completed source/target receipt across an optional
-                        # inventory timeout, malformed page or SDK teardown failure.
-                        completed = receipt.model_copy(
-                            update={
-                                "tool_inventory": DoctorToolInventory(
-                                    tool=inspect_tool, received=None
-                                )
-                            }
-                        )
-                        listing = {"advertised": None, "tool": None}
-                        await _listing(
-                            client,
-                            inspect_tool,
-                            {"unity_instance": config.unity_instance},
-                            deadline,
-                            listing,
-                        )
-                        inventory = DoctorToolInventory(
-                            tool=inspect_tool, received=listing["advertised"]
-                        )
-                        completed = receipt = receipt.model_copy(
-                            update={"tool_inventory": inventory}
-                        )
-                    return receipt
+                    # Preserve source evidence across an optional inventory or teardown failure.
+                    completed = receipt.model_copy(
+                        update={
+                            "tool_inventory": DoctorToolInventory(tool=inspect_tool, received=None)
+                        }
+                    )
+                    listing = await observe_host_tools(
+                        client, (inspect_tool,), config.unity_instance
+                    )
+                    inventory = DoctorToolInventory(
+                        tool=inspect_tool,
+                        received=listing.received(inspect_tool),
+                        complete=listing.complete,
+                    )
+                    completed = receipt = receipt.model_copy(update={"tool_inventory": inventory})
+                return receipt
     except (ValidationError, ValueError, RecursionError) as error:
         if completed is not None:
             return completed

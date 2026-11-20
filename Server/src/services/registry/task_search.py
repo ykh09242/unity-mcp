@@ -15,6 +15,7 @@ from pydantic import (
     model_validator,
 )
 
+from models.host_tool_inventory import HostToolEvidence, HostToolNames
 from services.registry.action_catalog import (
     ACTIVE_SCENE_OBSERVATION,
     EDITOR_STATE_OBSERVATION,
@@ -45,8 +46,6 @@ from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATIO
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
-ToolName = Annotated[StrictStr, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")]
-HostToolNames = Annotated[list[ToolName], Field(max_length=512)]
 RouteSurfaces = Literal["both", "tools", "resources"]
 
 
@@ -61,11 +60,14 @@ class SearchRequest(BaseModel):
     required_values: RequiredValues | None = None
     route_surfaces: RouteSurfaces = "both"
     host_tool_names: HostToolNames | None = None
+    host_tool_evidence: HostToolEvidence | None = None
 
     @model_validator(mode="after")
     def has_search_input(self):
         if self.query is None and self.observation_source is None and self.required_values is None:
             raise ValueError("Supply query, observation_source or required_values.")
+        if self.host_tool_names is not None and self.host_tool_evidence is not None:
+            raise ValueError("Supply host_tool_names or host_tool_evidence.")
         return self
 
     @field_validator("query", "catalog_query")
@@ -90,6 +92,12 @@ MatchBasis = Literal[
 ]
 
 
+class SearchHostInventory(TypedDict):
+    source: Literal["caller_report"]
+    complete: bool
+    statuses: dict[str, Literal["host_advertised", "host_filtered", "host_unknown"]]
+
+
 class SearchResponse(TypedDict):
     scope: Literal["local_catalog", "mcp_context"]
     query: str | None
@@ -112,6 +120,7 @@ class SearchResponse(TypedDict):
     route_groups_truncated: bool
     navigation: dict
     no_match: NotRequired["NoMatch"]
+    host_inventory: NotRequired[SearchHostInventory]
     total_matches: int
     truncated: bool
     note: str
@@ -483,6 +492,13 @@ def search_catalog(
     observations: list[RankedRoute] = []
     available_equivalents: dict[RouteKey, SearchRoute] = {}
     structured = request.observation_source is not None or request.required_values is not None
+    host_evidence = request.host_tool_evidence
+    confirmed_tools = set(host_evidence.present) if host_evidence is not None else set()
+
+    def route_order(item: RankedRoute) -> tuple[int, bool, str, str]:
+        score, name, action, route = item
+        return score, route.get("tool") not in confirmed_tools, name, action
+
     unavailable_parents = (
         {entry["name"] for entry in entries} - visible_names if visible_names is not None else set()
     )
@@ -490,6 +506,13 @@ def search_catalog(
         # A host can narrow a live list. Its report never establishes server authority.
         allowed = set(request.host_tool_names).intersection(visible_names or ())
         entries = [entry for entry in entries if entry["name"] in allowed]
+    elif host_evidence is not None:
+        advertised = visible_names or set()
+        entries = [
+            entry
+            for entry in entries
+            if entry["name"] in advertised and host_evidence.received(entry["name"]) is not False
+        ]
     elif structured and visible_names is not None:
         entries = [entry for entry in entries if entry["name"] in visible_names]
     matched_query = None if structured else request.catalog_query or request.query
@@ -637,14 +660,14 @@ def search_catalog(
         if weight:
             routes.append((-weight, identifier, "", route))
     matched_before_filters = bool(matches or routes)
-    matches.sort(key=lambda item: (item[0], item[1]))
+    matches.sort(key=lambda item: (item[0], item[1] not in confirmed_tools, item[1]))
     if request.intent:
         routes = [item for item in routes if item[3].get("intent") == request.intent]
-    routes.sort(key=lambda item: item[:3])
+    routes.sort(key=route_order)
     selected_routes = [item[3] for item in routes[: request.limit]]
     groups = _group_routes(
         request.route_surfaces,
-        sorted([*routes, *additional_routes], key=lambda item: item[:3]),
+        sorted([*routes, *additional_routes], key=route_order),
         available_equivalents,
         unavailable_parents,
     )
@@ -700,6 +723,25 @@ def search_catalog(
             else {}
         ),
         "catalog_language": "en",
+        **(
+            {
+                "host_inventory": {
+                    "source": "caller_report",
+                    "complete": host_evidence.complete,
+                    "statuses": {
+                        name: "host_advertised"
+                        if name in confirmed_tools
+                        else "host_filtered"
+                        if host_evidence.complete
+                        else "host_unknown"
+                        for name in host_evidence.candidates
+                        if name in (visible_names or ())
+                    },
+                }
+            }
+            if host_evidence is not None
+            else {}
+        ),
         "next_action": next_action,
         "recommended_action": "inspect_candidates"
         if groups and basis in {"multiple_terms", "exact_identifier", "declared_observation"}

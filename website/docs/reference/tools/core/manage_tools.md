@@ -14,7 +14,7 @@ description: "Find Unity tools, actions and readable resources for a task; inspe
 
 ## Description
 
-Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups. Actions: list_groups (show all groups and their status), activate/deactivate (select exactly one group or tool), sync (refresh availability from Unity Editor's toggle states), reset (restore configured profile), describe (full schema for one tool, optionally bind operation), catalog (choose a domain by purpose, then browse tools, actions or readable resources), search (match declared observation_source and required_values directly from a task in any language, or search by text). Selection changes server tools/list; it does not confirm the client's callable inventory. Use sync after toggling tools in the Unity Editor GUI.
+Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups. Actions: list_groups (show all groups and their status), activate/deactivate (select exactly one group or tool), sync (refresh availability from Unity Editor's toggle states), reset (restore configured profile), describe (full schema for one tool, optionally bind operation), catalog (choose a domain by purpose, then browse tools, actions or readable resources), search (match declared observation_source and required_values directly from a task in any language, or search by text), inspect_inventory (compare server advertisement with this host's exact-name evidence). Selection changes server tools/list; it does not confirm the client's callable inventory. Use sync after toggling tools in the Unity Editor GUI.
 
 ## Parameters
 
@@ -22,7 +22,7 @@ Find Unity tools, actions and readable resources for a task; inspect schemas or 
 |------|------|----------|-------------|
 | `action` | `Literal['list_groups', 'activate', 'deactivate', 'sync', 'reset', 'describe', 'search', 'catalog', 'inspect_inventory']` | yes | Action to perform. |
 | `group` | `str \| None` | — | Group name for activate/deactivate/catalog. Catalog also supports resources for fixed URIs and resource_templates for parameterized Unity observations. Valid groups: animation, asset_gen, assets, camera, core, docs, graphics, legacy, physics, prefabs, probuilder, profiling, scene, scripting_ext, testing, ui, vfx |
-| `tool` | `str \| None` | — | Single tool name for activate/deactivate/describe/catalog. Discover names with catalog. |
+| `tool` | `str \| None` | — | Single exact tool name for activate/deactivate/describe/catalog/inspect_inventory. |
 | `query` | `str \| None` | — | Optional original task text when searching by observation, or a lexical query (1..512 characters). |
 | `limit` | `int` | — | Maximum search or catalog page entries (1..20). |
 | `include_schema` | `bool` | — | On single-tool activation, attach its schema and readiness lookup. |
@@ -34,6 +34,7 @@ Find Unity tools, actions and readable resources for a task; inspect schemas or 
 | `required_values` | `list[Literal['unityCameras', 'cinemachineCameras', 'cinemachineInstalled', 'render_size.width', 'render_size.height', 'current_size', 'view_instance_id', 'presets', 'rendered_image', 'pointer_hit_order', 'active_scene.name', 'active_scene.path', 'compilation.is_compiling', 'compile_job.outcome', 'nodeCount', 'edgeCount', 'nodes', 'edges', 'properties', 'keywords', 'unsaved_graph_structure', 'property_values', 'shader_source', 'contents', 'encodedContents', 'nextOffset', 'shader_graph_structure', 'unsaved_source', 'compilation', 'passes', 'subshader_count', 'navigation.module_available', 'navigation.package_available', 'project_auditor.api_supported', 'project_auditor.rules_available']] \| None` | — | For search, select every result field the request needs. Game View pixels use render_size.width and render_size.height; saved graph totals use nodeCount and edgeCount. A route must declare all selected values. No query or translation is needed. |
 | `route_surfaces` | `Literal['both', 'tools', 'resources'] \| None` | — | For search, choose both (default), tools, or resources for route_groups. Use tools for a tools-only client. Each group offers a representative and available alternatives. |
 | `host_tool_names` | `list[str] \| None` | — | For search or inspect_inventory, supply this host's complete callable tool names. Omit if unknown. |
+| `host_tool_evidence` | `HostToolEvidence \| None` | — | For search or inspect_inventory, check exact candidate names on this host's same connection and target. Use instead of host_tool_names. Incomplete misses stay unknown. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

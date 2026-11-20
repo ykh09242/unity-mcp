@@ -116,6 +116,7 @@ class DoctorToolInventory(DoctorModel):
     tool: Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")]
     scope: Literal["diagnostic_sdk_tools_list"] = "diagnostic_sdk_tools_list"
     received: bool | None
+    complete: bool = False
 
 
 class DoctorCLIReceipt(DoctorModel):

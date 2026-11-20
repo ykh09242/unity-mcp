@@ -34,6 +34,16 @@ filter, without connection prefixes. The list is limited to 512 names of 1..128
 characters and only restricts tools. An empty list permits only resource routes.
 Omit it if the host inventory is unknown or incomplete.
 
+For a larger inventory a host can report up to 20 specific names using
+`host_tool_evidence`. For example,
+`{"candidates":["manage_camera","inspect_scene_cameras"],"present":["inspect_scene_cameras"],"complete":false}`
+confirms the observed camera reader and leaves the mixed tool unknown. Set
+`complete=true` only after reaching the last page of the same connection's
+current tool inventory for this target. Reconnects and observed catalog
+changes invalidate the observation. Search retains unknown candidates and
+prefers equally relevant confirmed tools. Server visibility and read access
+still apply. Choose one of `host_tool_names` and `host_tool_evidence`.
+
 To investigate one missing tool, read `mcpforunity://doctor` for the selected
 target's observed package and running-server source comparison. On the **same
 connection and target**, call `manage_tools(action="inspect_inventory", tool=NAME,

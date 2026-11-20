@@ -213,7 +213,9 @@ import socket
 
 
 @asynccontextmanager
-async def live_mcp(server, trace, legacy_only=False, required_token=None, redirect_status=None):
+async def live_mcp(
+    server, trace, legacy_only=False, required_token=None, redirect_status=None, tool_page=None
+):
     """Serve actual loopback HTTP; record method names only, never request credentials."""
     from asyncio.trsock import TransportSocket
     import uvicorn
@@ -263,8 +265,13 @@ async def live_mcp(server, trace, legacy_only=False, required_token=None, redire
             if not message.get("more_body"):
                 break
         raw = b"".join(chunks)
-        method = json.loads(raw).get("method")
+        request = json.loads(raw)
+        method = request.get("method")
         trace.append(method)
+        if tool_page is not None and method == "tools/list":
+            result = tool_page(request.get("params", {}), dict(scope["headers"]))
+            response = JSONResponse({"jsonrpc": "2.0", "id": request["id"], "result": result})
+            return await response(scope, receive, send)
         if legacy_only and method == "server/discover":
             response = JSONResponse(
                 {
