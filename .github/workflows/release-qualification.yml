@@ -157,6 +157,16 @@ jobs:
       UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
       UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
 
+  package_shapes:
+    # The two pinned Windows Editors use the Player serial after its owner returns the seat.
+    needs: [identity, reload, windows_vfx, player]
+    if: ${{ !cancelled() && needs.identity.result == 'success' && (vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/unity-package-shapes.yml
+    secrets:
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+
   license_free:
     name: Report unavailable native qualification
     needs: [identity]
@@ -167,12 +177,12 @@ jobs:
     steps:
       - run: |
           echo 'Native release qualification is SKIPPED: licensed execution is disabled.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Ordinary license-free checks are not release qualification. No real bridge, reload, Windows VFX or standalone Player success is claimed.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Windows native package shapes are SKIPPED alongside the native bridge, reload, Windows VFX, and standalone Player. Ordinary license-free checks are not release qualification.' >> "$GITHUB_STEP_SUMMARY"
           echo 'Dispatch this workflow on reviewed beta with licensed execution enabled to require all evidence at that exact SHA.' >> "$GITHUB_STEP_SUMMARY"
 
   qualification:
     name: Require complete release qualification
-    needs: [identity, selected_server, bridge, reload, windows_vfx, player, distribution, upm]
+    needs: [identity, selected_server, bridge, reload, windows_vfx, player, package_shapes, distribution, upm]
     if: always() && (vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-26.04
     timeout-minutes: 5
@@ -189,19 +199,22 @@ jobs:
           import os
 
           results = json.loads(os.environ['JOB_RESULTS'])
-          required = ('identity', 'selected_server', 'bridge', 'reload', 'windows_vfx', 'player', 'distribution', 'upm')
+          required = ('identity', 'selected_server', 'bridge', 'reload', 'windows_vfx', 'player', 'package_shapes', 'distribution', 'upm')
           missing = [name for name in required if results.get(name, {}).get('result') != 'success']
           selected = results.get('identity', {}).get('outputs', {}).get('selected_server')
           if not selected or results.get('selected_server', {}).get('outputs', {}).get('tested_sha') != selected:
               missing.append('selected-server Python suite at the package-pinned SHA')
           if results.get('upm', {}).get('outputs', {}).get('checked_sha') != os.environ['QUALIFICATION_SHA']:
               missing.append('exact-SHA UPM installation')
+          if results.get('package_shapes', {}).get('outputs', {}).get('checked_sha') != os.environ['QUALIFICATION_SHA']:
+              missing.append('exact-SHA Windows native package shapes')
           if missing:
               raise SystemExit('Release is NOT qualified: required evidence failed, was skipped or is missing: ' + ', '.join(missing))
           message = (
               'Exact receiving SHA `' + os.environ['QUALIFICATION_SHA'] + '` passed '
               'the focused Python suite at selected server `' + selected + '`, its real Editor bridge, both real reload probes, Windows VFX, '
-              'Windows standalone Player (Mono, standard), untouched UPM installation on floor/current Editors and full distribution canary. '
+              'Windows standalone Player (Mono, standard), Windows native package shapes on both pinned Editors, '
+              'untouched UPM installation on floor/current Editors and full distribution canary. '
               'No publication was performed.'
           )
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:

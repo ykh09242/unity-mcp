@@ -104,3 +104,50 @@ def test_unknown_backend_is_refused_before_creating_install_root(tmp_path):
     with pytest.raises(ValueError, match="backend"):
         windows.provision(root, "unknown")
     assert not root.exists()
+
+
+def test_integrated_editor_uses_its_own_pin_without_requiring_a_player_module(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "editor"
+    calls = []
+
+    def verify(installer, url, size, integrity):
+        calls.append((installer, url, size, integrity))
+        return size
+
+    def install(invocation):
+        editor = root / "installed" / "Editor" / "Unity.exe"
+        editor.parent.mkdir(parents=True)
+        editor.touch()
+        return {"actual_exit_code": 0, "forced_termination": False}
+
+    monkeypatch.setattr(windows, "verified_installer", verify)
+    monkeypatch.setattr(windows, "execute", install)
+    windows.provision(root, unity_version="6000.6.4f1")
+    receipt = windows.read_json(root / "provision.json")
+    assert calls == [
+        (
+            root / "UnitySetup.exe",
+            "https://download.unity3d.com/download_unity/12bfff696524/Windows64EditorInstaller/UnitySetup64-6000.6.4f1.exe",
+            3851126776,
+            "md5-aKPa2Mx4GBqn0IjZdK3uzQ==",
+        )
+    ]
+    assert receipt["unity_version"] == "6000.6.4f1"
+    assert receipt["release_revision"] == "12bfff696524"
+    assert receipt["authenticode_verified"] is True
+    assert "windows_mono_verified" not in receipt
+
+
+@pytest.mark.parametrize("version,backend", [("6000.6.4f1", "il2cpp"), ("6000.6.99f1", "mono")])
+def test_unpinned_editor_or_module_combination_cannot_download(
+    tmp_path, monkeypatch, version, backend
+):
+    root = tmp_path / "editor"
+    monkeypatch.setattr(
+        windows, "verified_installer", lambda *_args: pytest.fail("Unexpected download")
+    )
+    with pytest.raises(ValueError, match="pinned"):
+        windows.provision(root, backend, unity_version=version)
+    assert not root.exists()

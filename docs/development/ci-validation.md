@@ -210,6 +210,14 @@ With `UNITY_RUN_LICENSED_TESTS=true`, qualification requires all of these jobs:
   Mono `standard` profile at the same receiving SHA. The reusable Player workflow receives
   `require_player_e2e=true`; unavailable policy or Windows serial credentials fail its
   prerequisite gate, and its independent checker must accept fresh persisted evidence.
+- [Windows native package shapes](../../.github/workflows/unity-package-shapes.yml) at the
+  exact receiving SHA. Unity 6000.0.69f1 exercises Sprite Atlas V1 and V2, Addressables
+  1.1.5 and Project Auditor with and without its UPM package. Unity 6000.6.4f1 exercises
+  the integrated Project Auditor with and without its optional rules package. Each
+  row requires fresh NUnit XML, launch records and bounded process logs for every
+  phase, plus each profile's package resolution receipt. The workflow retains the
+  available evidence after failures and uploads the signed Editor provisioning
+  receipts separately.
 - The complete five-row selected-server unlocked distribution canary described above.
 
 The final job runs even after dependency failure and requires every job to report actual
@@ -219,17 +227,21 @@ required gate checks both license admission and actual Player job success. A ski
 missing, cancelled or failed required job cannot qualify the commit. License seats are
 returned by the existing owners; qualification runs are not automatically cancelled on
 new pushes, and the Linux reload runs after the bridge has settled. Player qualification
-waits for both reload and protected Windows VFX completion, then uses the existing shared
-Windows license concurrency gate. Only complete success writes the qualified evidence
-summary, identifying the receiving SHA and the required Windows Mono `standard` profile.
+waits for both reload and protected Windows VFX completion. The two Windows package
+shape rows start after reload, Windows VFX and Player have settled. They run one at
+a time on fresh runners through the shared Windows license concurrency gate, attempt
+to return each activated seat even if tests fail and require success on both rows.
+Only complete success writes the qualified evidence summary, identifying the receiving
+SHA, the required Windows Mono `standard` profile and the Windows package shape coverage.
 
 An ordinary beta push with licensed execution disabled reports native qualification as
 **SKIPPED** and does not run the final qualification job. Its other license-free checks
 can still pass, but that is not release qualification. Explicit dispatch requests all
 evidence and fails when policy, credentials or native execution is unavailable. Linux
-callers forward only the four named Unity license secrets. The Player caller forwards only
-`UNITY_EMAIL`, `UNITY_PASSWORD` and `UNITY_SERIAL`; Linux ULF credentials do not satisfy its
-Windows prerequisites. The Windows VFX caller explicitly
+callers forward only the four named Unity license secrets. The Player and package shape
+callers forward only `UNITY_EMAIL`, `UNITY_PASSWORD` and `UNITY_SERIAL`. The package shape
+workflow passes them only to private activation after checking the beta event and checkout
+SHA. The Windows VFX caller explicitly
 passes only `WINDOWS_VFX_UNITY_EMAIL`, `WINDOWS_VFX_UNITY_PASSWORD` and
 `WINDOWS_VFX_UNITY_SERIAL`; the reusable contract requires all three names, and activation
 remains inside the protected `windows-vfx` environment. Required secret declarations

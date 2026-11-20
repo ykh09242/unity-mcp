@@ -29,6 +29,7 @@ def passing_qualification_results(gate):
     results["identity"]["outputs"] = {"selected_server": SERVER_COMMIT}
     results["selected_server"]["outputs"] = {"tested_sha": SERVER_COMMIT}
     results["upm"]["outputs"] = {"checked_sha": PACKAGE_COMMIT}
+    results["package_shapes"]["outputs"] = {"checked_sha": PACKAGE_COMMIT}
     return results
 
 
@@ -89,9 +90,12 @@ def test_qualification_requires_the_selected_server_suite_at_the_server_sha(
         "Server/src/transport/plugin_hub.py",
         "TestProjects/UnityMCPTests/Assets/Tests/EditMode/AssetGen/AssetGenJobReloadTests.cs",
         "tools/run_windows_vfx_tests.py",
+        "tools/run_native_package_shapes.py",
+        "tools/unity-windows-integrated-auditor.json",
         "tools/local_harness.py",
         "tools/tests/test_assetgen_reload_workflow.py",
         ".github/workflows/e2e-bridge.yml",
+        ".github/workflows/unity-package-shapes.yml",
     ],
 )
 def test_receiving_beta_inputs_select_qualification_without_pr_secrets(path):
@@ -142,6 +146,15 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
         "WINDOWS_VFX_UNITY_" + key: "${{ secrets.WINDOWS_VFX_UNITY_" + key + " }}"
         for key in ("EMAIL", "PASSWORD", "SERIAL")
     }
+    package_shapes = jobs["package_shapes"]
+    assert package_shapes["uses"] == "./.github/workflows/unity-package-shapes.yml"
+    assert package_shapes["needs"] == ["identity", "reload", "windows_vfx", "player"]
+    assert package_shapes["secrets"] == jobs["player"]["secrets"]
+    assert "with" not in package_shapes
+    assert "needs.identity.result == 'success'" in package_shapes["if"]
+    assert "!cancelled()" in package_shapes["if"]
+    assert "vars.UNITY_RUN_LICENSED_TESTS == 'true'" in package_shapes["if"]
+    assert "github.event_name == 'workflow_dispatch'" in package_shapes["if"]
     assert "secrets" not in jobs["distribution"]
     for name in ("bridge", "reload", "upm"):
         assert set(jobs[name]["secrets"]) == {
@@ -158,6 +171,7 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
         "reload",
         "windows_vfx",
         "player",
+        "package_shapes",
         "distribution",
         "upm",
     }
@@ -165,6 +179,7 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
     assert "vars.UNITY_RUN_LICENSED_TESTS == 'true'" in gate["if"]
     assert "github.event_name == 'workflow_dispatch'" in gate["if"]
     assert "not release qualification" in str(jobs["license_free"])
+    assert "Windows native package shapes are SKIPPED" in str(jobs["license_free"])
 
 
 def test_manual_qualification_requires_current_server_history(history):
@@ -300,6 +315,7 @@ def test_player_delegation_requires_the_qualification_commit():
         "reload",
         "windows_vfx",
         "player",
+        "package_shapes",
         "distribution",
         "upm",
     ],
@@ -323,11 +339,29 @@ def test_qualification_gate_requires_every_actual_success(monkeypatch, tmp_path,
         assert PACKAGE_COMMIT in text
         assert SERVER_COMMIT in text
         assert "Windows standalone Player (Mono, standard)" in text
+        assert "Windows native package shapes" in text
         assert "No publication was performed" in text
     else:
         with pytest.raises(SystemExit):
             exec(compile(program, "qualification-gate", "exec"), {})
         assert not summary.exists()
+
+
+@pytest.mark.parametrize("tested_sha", [None, "", SERVER_COMMIT])
+def test_qualification_requires_package_shape_evidence_at_receiving_sha(
+    monkeypatch, tmp_path, tested_sha
+):
+    gate = workflow("release-qualification.yml")["jobs"]["qualification"]
+    program = next(step["run"] for step in gate["steps"] if step.get("id") == "require")
+    results = passing_qualification_results(gate)
+    results["package_shapes"]["outputs"] = {} if tested_sha is None else {"checked_sha": tested_sha}
+    monkeypatch.setenv("JOB_RESULTS", json.dumps(results))
+    monkeypatch.setenv("QUALIFICATION_SHA", PACKAGE_COMMIT)
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    with pytest.raises(SystemExit, match="exact-SHA Windows native package shapes"):
+        exec(compile(program, "qualification-gate", "exec"), {})
+    assert not summary.exists()
 
 
 def test_bridge_required_gate_cannot_inherit_success_from_a_skipped_matrix(monkeypatch):
@@ -448,3 +482,229 @@ def test_qualified_player_keeps_existing_license_ownership_and_required_executio
     assert evidence["if"] == "always()"
     assert "check_play_scenario_player_evidence.py" in evidence["run"]
     assert "if ($env:RUNNER_OUTCOME -ne 'success')" in evidence["run"]
+
+
+def test_package_shapes_use_exact_beta_without_exposing_credentials_to_the_runner():
+    config = workflow("unity-package-shapes.yml")
+    call = config.get("on", config.get(True))
+    assert set(call) == {"workflow_call"}
+    assert "inputs" not in call["workflow_call"]
+    assert call["workflow_call"]["secrets"] == {
+        f"UNITY_{key}": {"required": True} for key in ("EMAIL", "PASSWORD", "SERIAL")
+    }
+    assert call["workflow_call"]["outputs"]["checked_sha"]["value"] == (
+        "${{ jobs.packageShapes.outputs.checked_sha }}"
+    )
+    job = config["jobs"]["packageShapes"]
+    assert job["runs-on"] == "windows-2022"
+    assert job["concurrency"] == workflow("unity-player-tests.yml")["jobs"]["player"]["concurrency"]
+    assert job["strategy"]["fail-fast"] is False
+    assert job["strategy"]["max-parallel"] == 1
+    assert job["strategy"]["matrix"]["include"] == [
+        {"suite": "package", "unity_version": "6000.0.69f1"},
+        {"suite": "integrated", "unity_version": "6000.6.4f1"},
+    ]
+    steps = job["steps"]
+    checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"] == {"ref": "${{ github.sha }}", "persist-credentials": False}
+    named = {step["id"]: step for step in steps if "id" in step}
+    activate = named["activate"]
+    assert [step for step in steps if "secrets." in str(step)] == [activate]
+    assert activate["env"] == {
+        key: "${{ secrets." + key + " }}" for key in call["workflow_call"]["secrets"]
+    }
+    release = next(step for step in steps if "unity_windows_ci.py return" in step.get("run", ""))
+    assert release["if"] == "always() && steps.activate.outcome != 'skipped'"
+    positions = [
+        steps.index(step)
+        for step in (
+            named["policy"],
+            checkout,
+            named["verify"],
+            activate,
+            named["execute"],
+            release,
+            named["evidence"],
+        )
+    ]
+    assert positions == sorted(positions)
+    assert all(not step.get("continue-on-error") for step in steps)
+    upload = named["retainNative"]
+    assert upload["if"] == "always()"
+    assert upload["with"]["if-no-files-found"] == (
+        "${{ steps.execute.outcome == 'success' && 'error' || 'ignore' }}"
+    )
+    assert named["evidence"]["if"] == "always() && steps.execute.outcome == 'success'"
+    paths = set(upload["with"]["path"].splitlines())
+    path_prefix = "${{ env.PACKAGE_SHAPE_OUTPUT }}/*"
+    assert paths == {
+        *(f"{path_prefix}/*/{file}" for file in ("results.xml", "launch.json", "process.log")),
+        f"{path_prefix}/prepared/resolved-packages.json",
+    }
+    provision = named["retainProvision"]
+    assert provision["if"] == "always()"
+    prefix = "${{ runner.temp }}/unity-package-shapes-editor/"
+    assert set(provision["with"]["path"].splitlines()) == {
+        prefix + "provision.json",
+        prefix + "install-evidence/launch.json",
+        prefix + "install-evidence/process.log",
+    }
+
+
+@pytest.mark.parametrize(
+    "suite,missing",
+    [
+        ("package", None),
+        ("integrated", None),
+        ("package", "atlas-v2/ReopenV2/results.xml"),
+        ("package", "addressables-legacy/EditMode/process.log"),
+        ("integrated", "auditor-integrated/prepared/resolved-packages.json"),
+        ("integrated", "provision-only"),
+    ],
+)
+def test_complete_package_shape_evidence_is_required_after_success(tmp_path, suite, missing):
+    from run_native_package_shapes import PROFILES
+
+    steps = workflow("unity-package-shapes.yml")["jobs"]["packageShapes"]["steps"]
+    program = next(step["run"] for step in steps if step.get("id") == "evidence")
+    expected = set()
+    for profile, spec in PROFILES.items():
+        if spec.suite == suite:
+            expected.add(f"{profile}/prepared/resolved-packages.json")
+            for methods in spec.phases:
+                phase = methods[0] if len(methods) == 1 else "EditMode"
+                expected.update(
+                    f"{profile}/{phase}/{file}"
+                    for file in ("results.xml", "launch.json", "process.log")
+                )
+    assert expected
+    if missing == "provision-only":
+        expected.clear()
+    elif missing:
+        expected.remove(missing)
+    other_files = {
+        "provision.json",
+        "unused/prepared/project/results.xml",
+        "unused/phase/editor.log",
+    }
+    for relative in expected | other_files:
+        artifact = tmp_path / relative
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.touch()
+    upload = next(step for step in steps if step.get("id") == "retainNative")
+    patterns = upload["with"]["path"].splitlines()
+    discovered = {
+        path.relative_to(tmp_path).as_posix()
+        for pattern in patterns
+        for path in tmp_path.glob(pattern.removeprefix("${{ env.PACKAGE_SHAPE_OUTPUT }}/"))
+    }
+    assert discovered == expected
+    result = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=ROOT,
+        env={**os.environ, "PACKAGE_SHAPE_SUITE": suite, "PACKAGE_SHAPE_OUTPUT": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if missing:
+        assert result.returncode == 1
+        expected_missing = (
+            "auditor-integrated/prepared/resolved-packages.json"
+            if missing == "provision-only"
+            else missing
+        )
+        assert expected_missing in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "ref,event,policy,head,success",
+    [
+        ("refs/heads/beta", "push", "true", PACKAGE_COMMIT, True),
+        ("refs/heads/beta", "workflow_dispatch", "true", PACKAGE_COMMIT, True),
+        ("refs/heads/beta", "pull_request_target", "true", PACKAGE_COMMIT, False),
+        ("refs/heads/main", "workflow_dispatch", "true", PACKAGE_COMMIT, False),
+        ("refs/heads/beta", "workflow_dispatch", "false", PACKAGE_COMMIT, False),
+        ("refs/heads/beta", "push", "true", SERVER_COMMIT, False),
+    ],
+)
+def test_package_shapes_admission_shell_requires_beta_policy_and_exact_head(
+    tmp_path, ref, event, policy, head, success
+):
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        pytest.skip("PowerShell 7 is required to exercise the hosted Windows shell")
+    steps = workflow("unity-package-shapes.yml")["jobs"]["packageShapes"]["steps"]
+    named = {step["id"]: step for step in steps if "id" in step}
+    script = "function git { $global:LASTEXITCODE = 0; $env:TEST_HEAD }\n"
+    script += named["policy"]["run"] + named["verify"]["run"]
+    output = tmp_path / "output.txt"
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-NonInteractive", "-Command", script],
+        env={
+            **os.environ,
+            "GITHUB_REF": ref,
+            "GITHUB_EVENT_NAME": event,
+            "GITHUB_SHA": PACKAGE_COMMIT,
+            "GITHUB_OUTPUT": str(output),
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
+            "LICENSED_EXECUTION": policy,
+            "TEST_HEAD": head,
+        },
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert (result.returncode == 0) == success
+    assert output.exists() == success
+    if success:
+        assert output.read_text().strip() == f"checked_sha={PACKAGE_COMMIT}"
+
+
+@pytest.mark.parametrize("exit_code", [0, 3])
+def test_package_shapes_hosted_shell_invokes_each_fixed_suite_and_propagates_failure(exit_code):
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        pytest.skip("PowerShell 7 is required to exercise the hosted Windows shell")
+    job = workflow("unity-package-shapes.yml")["jobs"]["packageShapes"]
+    run = next(step["run"] for step in job["steps"] if step.get("id") == "execute")
+    script = (
+        """function python {
+        ConvertTo-Json -InputObject $args -Compress
+        $global:LASTEXITCODE = [int]$env:FAKE_EDITOR_EXIT
+    }
+    """
+        + run
+    )
+    editor = "D:/Editor With Spaces/Unity.exe"
+    for row in job["strategy"]["matrix"]["include"]:
+        suite, version = row["suite"], row["unity_version"]
+        result = subprocess.run(
+            [pwsh, "-NoProfile", "-NonInteractive", "-Command", script],
+            env={
+                **os.environ,
+                "PACKAGE_SHAPE_SUITE": suite,
+                "PACKAGE_SHAPE_OUTPUT": f".unity-ci/package-shapes-{suite}",
+                "UNITY_VERSION": version,
+                "UNITY_EDITOR": editor,
+                "FAKE_EDITOR_EXIT": str(exit_code),
+            },
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        assert json.loads(result.stdout) == [
+            "tools/run_native_package_shapes.py",
+            "--suite",
+            suite,
+            "--editor",
+            editor,
+            "--unity-version",
+            version,
+            "--output",
+            f".unity-ci/package-shapes-{suite}",
+        ]
+        assert (result.returncode == 0) == (exit_code == 0)

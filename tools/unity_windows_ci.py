@@ -12,7 +12,11 @@ import urllib.request
 from player_e2e_artifacts import read_json, write_json
 from player_e2e_process import Invocation, execute
 
-MANIFEST = Path(__file__).with_name("unity-player-e2e.json")
+PLAYER_VERSION = "6000.0.69f1"
+EDITOR_MANIFESTS = {
+    PLAYER_VERSION: "unity-player-e2e.json",
+    "6000.6.4f1": "unity-windows-integrated-auditor.json",
+}
 
 
 def verified_installer(installer: Path, url: str, expected_size: int, integrity: str) -> int:
@@ -61,11 +65,19 @@ def verify_installer_signature(installer: Path) -> None:
         raise ValueError("Unity installer does not have a valid Unity publisher signature")
 
 
-def provision(root: Path, backend: str = "mono") -> None:
-    """Install the pinned Editor; the optional IL2CPP module requires explicit selection."""
+def provision(root: Path, backend: str = "mono", *, unity_version: str = PLAYER_VERSION) -> None:
+    """Install a pinned Editor; Windows Player support is checked where pinned."""
     if backend not in ("mono", "il2cpp"):
         raise ValueError("Windows backend must be mono or il2cpp")
-    manifest = read_json(MANIFEST)
+    if unity_version not in EDITOR_MANIFESTS or (
+        backend == "il2cpp" and unity_version != PLAYER_VERSION
+    ):
+        raise ValueError(
+            "Windows Editor or optional module is not pinned for the requested version"
+        )
+    manifest = read_json(Path(__file__).with_name(EDITOR_MANIFESTS[unity_version]))
+    if manifest["unity_version"] != unity_version:
+        raise ValueError("Windows Editor pin does not match the requested version")
     root.mkdir(parents=True, exist_ok=False)
     if " " in str(root.resolve()):
         raise ValueError("Silent Unity installation requires a path without spaces")
@@ -85,19 +97,22 @@ def provision(root: Path, backend: str = "mono") -> None:
     )
     if result["actual_exit_code"] or result["forced_termination"]:
         raise ValueError("Unity silent installation failed")
-    if not (root / "installed" / manifest["mono_module"]).is_dir():
+    if not (root / "installed" / "Editor" / "Unity.exe").is_file():
+        raise ValueError("Pinned Unity installation lacks its Editor executable")
+    mono_module = manifest.get("mono_module")
+    if mono_module and not (root / "installed" / mono_module).is_dir():
         raise ValueError("Pinned Unity installation lacks Windows Mono build support")
-    write_json(
-        root / "provision.json",
-        {
-            "unity_version": manifest["unity_version"],
-            "installer_url": manifest["installer_url"],
-            "installer_size_bytes": size,
-            "installer_integrity": manifest["installer_integrity"],
-            "authenticode_verified": True,
-            "windows_mono_verified": True,
-        },
-    )
+    receipt = {
+        "unity_version": unity_version,
+        "release_revision": manifest["release_revision"],
+        "installer_url": manifest["installer_url"],
+        "installer_size_bytes": size,
+        "installer_integrity": manifest["installer_integrity"],
+        "authenticode_verified": True,
+    }
+    if mono_module:
+        receipt["windows_mono_verified"] = True
+    write_json(root / "provision.json", receipt)
     if backend == "il2cpp":
         provision_il2cpp(root)
 
@@ -175,10 +190,11 @@ def main() -> int:
     parser.add_argument("action", choices=("provision", "activate", "return"))
     parser.add_argument("path", type=Path)
     parser.add_argument("--backend", choices=("mono", "il2cpp"), default="mono")
+    parser.add_argument("--unity-version", choices=EDITOR_MANIFESTS, default=PLAYER_VERSION)
     args = parser.parse_args()
     try:
         if args.action == "provision":
-            provision(args.path, args.backend)
+            provision(args.path, args.backend, unity_version=args.unity_version)
         else:
             license_command(args.path, args.action)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:

@@ -1,0 +1,154 @@
+name: Windows native package shapes
+
+on:
+  workflow_call:
+    outputs:
+      checked_sha:
+        description: Receiving beta commit checked by the Windows package suites.
+        value: ${{ jobs.packageShapes.outputs.checked_sha }}
+    secrets:
+      UNITY_EMAIL:
+        required: true
+      UNITY_PASSWORD:
+        required: true
+      UNITY_SERIAL:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  packageShapes:
+    name: Windows ${{ matrix.suite }} package shapes (${{ matrix.unity_version }})
+    runs-on: windows-2022
+    timeout-minutes: 205
+    outputs:
+      checked_sha: ${{ steps.verify.outputs.checked_sha }}
+    concurrency:
+      group: unity-windows-player-license-${{ github.repository }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - suite: package
+            unity_version: '6000.0.69f1'
+          - suite: integrated
+            unity_version: '6000.6.4f1'
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PACKAGE_SHAPE_SUITE: ${{ matrix.suite }}
+      PACKAGE_SHAPE_OUTPUT: .unity-ci/package-shapes-${{ matrix.suite }}
+      UNITY_VERSION: ${{ matrix.unity_version }}
+    steps:
+      - name: Require licensed execution on reviewed beta
+        id: policy
+        env:
+          LICENSED_EXECUTION: ${{ vars.UNITY_RUN_LICENSED_TESTS }}
+        run: |
+          if ($env:GITHUB_REF -cne 'refs/heads/beta' -or $env:GITHUB_EVENT_NAME -cnotin @('push', 'workflow_dispatch')) {
+            throw 'Windows native package shapes require a trusted beta qualification event.'
+          }
+          if ($env:LICENSED_EXECUTION -cne 'true') {
+            throw 'Set UNITY_RUN_LICENSED_TESTS to true for required Windows native package shape execution.'
+          }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify immutable beta revision
+        id: verify
+        run: |
+          $actual = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $env:GITHUB_SHA -cnotmatch '^[0-9a-f]{40}$' -or $actual -cne $env:GITHUB_SHA) {
+            throw 'Checked-out revision must equal the receiving beta commit.'
+          }
+          "checked_sha=$actual" >> $env:GITHUB_OUTPUT
+          "Windows $env:PACKAGE_SHAPE_SUITE package shapes source commit: $actual" >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+      - name: Verify and install official pinned Windows Editor
+        run: |
+          $installRoot = Join-Path $env:RUNNER_TEMP 'unity-package-shapes-editor'
+          python tools/unity_windows_ci.py provision $installRoot --unity-version $env:UNITY_VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'Verified Windows Editor installation failed.' }
+          $pin = Get-Content -LiteralPath (Join-Path $installRoot 'provision.json') -Raw | ConvertFrom-Json
+          $editor = Join-Path $installRoot 'installed\Editor\Unity.exe'
+          $editorVersion = (Get-Item -LiteralPath $editor).VersionInfo.ProductVersion
+          if ($pin.unity_version -cne $env:UNITY_VERSION -or $editorVersion -cne "$($pin.unity_version)_$($pin.release_revision)") {
+            throw 'The installed Windows Editor version does not match the pinned release.'
+          }
+          Remove-Item -LiteralPath (Join-Path $installRoot 'UnitySetup.exe')
+          "UNITY_EDITOR=$editor" >> $env:GITHUB_ENV
+      - name: Activate scoped Windows serial license
+        id: activate
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        run: python tools/unity_windows_ci.py activate "$env:UNITY_EDITOR"
+      - name: Run and require native package shape cases
+        id: execute
+        timeout-minutes: 130
+        run: |
+          python tools/run_native_package_shapes.py --suite $env:PACKAGE_SHAPE_SUITE --editor "$env:UNITY_EDITOR" --unity-version $env:UNITY_VERSION --output "$env:PACKAGE_SHAPE_OUTPUT"
+          if ($LASTEXITCODE -ne 0) { throw 'Required Windows native package shape cases failed.' }
+      - name: Return owned Windows license
+        if: always() && steps.activate.outcome != 'skipped'
+        run: python tools/unity_windows_ci.py return "$env:UNITY_EDITOR"
+      - name: Require persisted evidence for every native profile and phase
+        id: evidence
+        if: always() && steps.execute.outcome == 'success'
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+
+          sys.path.insert(0, str(Path('tools').resolve()))
+          from run_native_package_shapes import PROFILES, phase_name
+
+          suite = os.environ['PACKAGE_SHAPE_SUITE']
+          output = Path(os.environ['PACKAGE_SHAPE_OUTPUT'])
+          required = []
+          for name, profile in PROFILES.items():
+              if profile.suite != suite:
+                  continue
+              directory = Path(name)
+              required.append(directory / 'prepared' / 'resolved-packages.json')
+              for methods in profile.phases:
+                  phase = directory / phase_name(methods)
+                  required.extend(phase / filename for filename in ('results.xml', 'launch.json', 'process.log'))
+          missing = [path.as_posix() for path in required if not (output / path).is_file()]
+          if not required or missing:
+              raise SystemExit('Required native evidence unavailable: ' + ', '.join(missing or [suite]))
+      - name: Retain actual Editor evidence
+        id: retainNative
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-package-shapes-${{ matrix.suite }}-${{ github.sha }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          if-no-files-found: ${{ steps.execute.outcome == 'success' && 'error' || 'ignore' }}
+          retention-days: 14
+          path: |
+            ${{ env.PACKAGE_SHAPE_OUTPUT }}/*/*/results.xml
+            ${{ env.PACKAGE_SHAPE_OUTPUT }}/*/*/launch.json
+            ${{ env.PACKAGE_SHAPE_OUTPUT }}/*/*/process.log
+            ${{ env.PACKAGE_SHAPE_OUTPUT }}/*/prepared/resolved-packages.json
+      - name: Retain Windows Editor provisioning evidence
+        id: retainProvision
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-package-shapes-provision-${{ matrix.suite }}-${{ github.sha }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/unity-package-shapes-editor/provision.json
+            ${{ runner.temp }}/unity-package-shapes-editor/install-evidence/launch.json
+            ${{ runner.temp }}/unity-package-shapes-editor/install-evidence/process.log
