@@ -195,7 +195,7 @@ def test_read_actions_and_callback_risks_are_distinct(entries):
 @pytest.mark.parametrize(
     ("tool", "reads"),
     [
-        ("manage_addressables", {"inspect", "preflight", "analyze_layout"}),
+        ("manage_addressables", {"inspect", "preflight", "analyze_layout", "prefab_status"}),
         ("manage_project_auditor", {"availability", "status", "issues"}),
         ("manage_localization", {"capabilities", "list_locales", "list_tables", "inspect"}),
         (
