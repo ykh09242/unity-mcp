@@ -21,6 +21,11 @@ on:
         description: Build both reviewed prefab controls and package their complete source and native transfer
         type: boolean
         default: false
+      native_control:
+        description: Run an additional change on the installed Windows Mono Player
+        type: choice
+        options: [none, project-states, scene-index, enum-value, shader-variant, addressables]
+        default: none
   workflow_call:
     inputs:
       backend:
@@ -53,6 +58,7 @@ permissions:
 env:
   PLAYER_PROFILE: ${{ inputs.player_profile || 'standard' }}
   PLAYER_BACKEND: ${{ inputs.backend || 'mono' }}
+  NATIVE_CONTROL: ${{ inputs.native_control || 'none' }}
 
 jobs:
   license:
@@ -91,7 +97,7 @@ jobs:
             *) echo '::error::Unknown Player verification profile.'; exit 1 ;;
           esac
       - name: Require Windows Player prerequisites
-        if: inputs.require_player_e2e || inputs.produce_prefab_pair
+        if: inputs.require_player_e2e || inputs.produce_prefab_pair || env.NATIVE_CONTROL != 'none'
         env:
           POLICY: ${{ vars.UNITY_RUN_LICENSED_TESTS }}
           AVAILABLE: ${{ steps.detect.outputs.unity_ok || 'false' }}
@@ -100,13 +106,17 @@ jobs:
             echo '::error::Required Windows Player assurance needs enabled execution policy and scoped serial/email/password credentials.'
             exit 1
           fi
+          if [ "$NATIVE_CONTROL" != 'none' ] && [ "$PLAYER_BACKEND" != 'mono' ]; then
+            echo '::error::The selected change control builds Windows Mono Players.'
+            exit 1
+          fi
 
   player:
     name: Actual Windows ${{ inputs.backend || 'mono' }} build and Player cases (${{ inputs.player_profile || 'standard' }})
     needs: license
     if: needs.license.outputs.unity_ok == 'true'
     runs-on: windows-2022
-    timeout-minutes: ${{ inputs.produce_prefab_pair && 180 || 100 }}
+    timeout-minutes: ${{ (inputs.produce_prefab_pair || (inputs.native_control && inputs.native_control != 'none')) && 180 || 100 }}
     concurrency:
       group: unity-windows-player-license-${{ github.repository }}
       cancel-in-progress: false
@@ -203,6 +213,62 @@ jobs:
           if ($LASTEXITCODE) { throw 'Could not prepare isolated configuration controls' }
           uv run --project Server python TestProjects/UnityMCPTests/Verification/run_configuration_controls.py --editor "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe" --project .unity-ci/configuration-project/project --output .unity-ci/configuration-observations
           if ($LASTEXITCODE) { throw 'Configuration controls lack the required compiler or rendered Player evidence' }
+      - name: Build and observe the selected change
+        id: native_control
+        if: env.NATIVE_CONTROL != 'none'
+        run: |
+          $editor = Join-Path $env:UNITY_INSTALL_ROOT 'installed/Editor/Unity.exe'
+          $version = (Get-Content tools/unity-player-e2e.json -Raw | ConvertFrom-Json).unity_version
+          $output = '.unity-ci/change-observations'
+          if ($env:NATIVE_CONTROL -eq 'project-states') {
+            uv run --project Server --locked python TestProjects/VerificationProjects/run_projects.py --editor $editor --output $output
+            if ($LASTEXITCODE) { throw 'Independent project states did not match their own expectations.' }
+            uv run --project Server --locked python TestProjects/VerificationProjects/run_load_branches.py --control-directory $output
+            exit $LASTEXITCODE
+          }
+          if ($env:NATIVE_CONTROL -eq 'addressables') {
+            uv run --project Server --locked python tools/run_addressables_content_update.py --editor $editor --unity-version $version --output $output
+            exit $LASTEXITCODE
+          }
+          $driver = switch ($env:NATIVE_CONTROL) {
+            'scene-index' { 'TestProjects/UnityMCPTests/Verification/run_scene_index_control.py' }
+            'enum-value' { 'TestProjects/UnityMCPTests/Verification/run_enum_value_control.py' }
+            'shader-variant' { 'tools/run_shader_variant_pair.py' }
+            default { throw 'Unrecognized change control.' }
+          }
+          uv run --project Server --locked python tools/unity_ci_packages.py prepare --unity-version $version --unity-data "$env:UNITY_INSTALL_ROOT/installed/Editor/Data" --output .unity-ci/change-project
+          if ($LASTEXITCODE) { throw 'Could not prepare the isolated change project.' }
+          uv run --project Server --locked python $driver --editor $editor --project .unity-ci/change-project/project --output $output
+          exit $LASTEXITCODE
+      - name: Retain change observations and execution logs
+        if: always() && (steps.native_control.outcome == 'success' || steps.native_control.outcome == 'failure')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-${{ env.NATIVE_CONTROL }}-${{ github.sha }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            .unity-ci/change-observations/*.json
+            .unity-ci/change-observations/*.log
+            .unity-ci/change-observations/*/*.json
+            .unity-ci/change-observations/*/*.log
+            .unity-ci/change-observations/*/frame.png
+            .unity-ci/change-observations/*/editor-process/*.log
+            .unity-ci/change-observations/*/editor-process/launch.json
+            .unity-ci/change-observations/*/player-process/*.log
+            .unity-ci/change-observations/*/player-process/launch.json
+            .unity-ci/change-observations/*/runs/*/*.json
+            .unity-ci/change-observations/*/runs/*/player.log
+            .unity-ci/change-observations/*/editor-reference/observation.json
+            .unity-ci/change-observations/*/editor-reference/frame.png
+            .unity-ci/change-observations/*/capture/**
+            .unity-ci/change-observations/before/Assets/**
+            .unity-ci/change-observations/after/Assets/**
+            .unity-ci/change-observations/repaired/Assets/**
+            .unity-ci/change-observations/*/ProjectSettings/EditorBuildSettings.asset
+            .unity-ci/change-observations/load-branches/runs/*/*.json
+            .unity-ci/change-observations/load-branches/runs/*/player.log
       - name: Build and capture the maintained moved and repaired prefab Players
         if: inputs.produce_prefab_pair && github.repository == 'ykh09242/unity-mcp' && github.ref == 'refs/heads/beta'
         env:

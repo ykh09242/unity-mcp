@@ -481,12 +481,48 @@ def test_qualified_player_keeps_existing_license_ownership_and_required_executio
     assert required["if"] == "always() && inputs.require_player_e2e"
     assert player["if"] == "needs.license.outputs.unity_ok == 'true'"
     prerequisites = jobs["license"]["steps"][-1]
-    assert prerequisites["if"] == "inputs.require_player_e2e || inputs.produce_prefab_pair"
+    assert prerequisites["if"] == (
+        "inputs.require_player_e2e || inputs.produce_prefab_pair || env.NATIVE_CONTROL != 'none'"
+    )
     assert all(not step.get("continue-on-error") for step in player["steps"])
     evidence = next(step for step in player["steps"] if step.get("id") == "evidence")
     assert evidence["if"] == "always()"
     assert "check_play_scenario_player_evidence.py" in evidence["run"]
     assert "if ($env:RUNNER_OUTCOME -ne 'success')" in evidence["run"]
+
+
+def test_optional_player_change_controls_ship_runnable_drivers_and_retain_observations():
+    config = workflow("unity-player-tests.yml")
+    triggers = config.get("on", config.get(True))
+    selector = triggers["workflow_dispatch"]["inputs"]["native_control"]
+    assert selector["default"] == "none"
+    assert set(selector["options"]) == {
+        "none",
+        "project-states",
+        "scene-index",
+        "enum-value",
+        "shader-variant",
+        "addressables",
+    }
+    steps = config["jobs"]["player"]["steps"]
+    control = next(step for step in steps if step.get("id") == "native_control")
+    assert control["if"] == "env.NATIVE_CONTROL != 'none'"
+    for driver in (
+        "TestProjects/VerificationProjects/run_projects.py",
+        "TestProjects/UnityMCPTests/Verification/run_scene_index_control.py",
+        "TestProjects/UnityMCPTests/Verification/run_enum_value_control.py",
+        "tools/run_shader_variant_pair.py",
+        "tools/run_addressables_content_update.py",
+    ):
+        assert driver in control["run"] and (ROOT / driver).is_file()
+    archive = next(
+        step
+        for step in steps
+        if step.get("name") == "Retain change observations and execution logs"
+    )
+    assert "steps.native_control.outcome == 'failure'" in archive["if"]
+    assert archive["with"]["if-no-files-found"] == "error"
+    assert "${{ github.sha }}-${{ github.run_attempt }}" in archive["with"]["name"]
 
 
 def test_package_shapes_use_exact_beta_without_exposing_credentials_to_the_runner():
