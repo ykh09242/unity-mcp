@@ -376,7 +376,7 @@ compile() {
   # Initial Unity 7 uses CoreCLR with the .NET Standard 2.1 scripting API surface,
   # including Editor assemblies. The bundled .NET 10 SDK does not widen that surface.
   case "$ver_major.$ver_minor:$name" in
-    *:Unity.ResourceManager|*:Unity.Addressables|*:Unity.ScriptableBuildPipeline|*:MCPForUnity.Addressables.Diagnostics|*:MCPForUnity.CatalogMarkerPlayer) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
+      *:Unity.ResourceManager|*:Unity.Addressables|*:Unity.ScriptableBuildPipeline|*:MCPForUnity.Addressables.Diagnostics|*:MCPForUnity.CatalogMarkerPlayer|*:Harbor.Runtime|*:Observatory.Runtime) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
     7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:MCPForUnity.PlayScenarios.Integration.Runtime|*:MCPForUnity.ScenarioPlayerFixture|*:MCPForUnityTests.UI16CaretRuntime|*:TestAsmdef|*:Assembly-CSharp|*:LifecycleSample.Runtime|*:IndependentExtension.Runtime) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
   esac
   local reference_manifests=("$bcl" "$manifest")
@@ -751,6 +751,12 @@ for platform in $PLATFORMS; do
     fi
     if [ -n "${PUBLIC_API_INPUTS:-}" ] && [ "$platform" = "${PLATFORMS%% *}" ]; then
       check_public_api "$player_dir" || { failed=1; continue; }
+    fi
+    if [ "${COMPILE_VERIFICATION_PROJECTS:-0}" = 1 ] && [ "$platform" = win ] && [ "$compile_profile" = player-scenarios ]; then
+      for project in Harbor Observatory; do
+        compile "$project.Runtime" "$REPO/TestProjects/VerificationProjects/$project/Assets" "$platform" \
+          "$REFS_PROFILE/Runtime.txt" "$player_dir/MCPForUnity.Runtime.dll" || failed=1
+      done
     fi
     if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
       compile MCPForUnity.Input.UGUI.Runtime "$REPO/MCPForUnity/Runtime/PlayScenarios/UGUI" "$platform" \

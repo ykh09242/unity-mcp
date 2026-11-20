@@ -35,6 +35,7 @@ on:
       - MCPForUnity/package.json
       - CustomTools/RoslynRuntimeCompilation/**/*.cs
       - TestProjects/UnityMCPTests/**
+      - TestProjects/VerificationProjects/**
       - tools/compile-check.sh
       - tools/native_api_shapes/CatalogMarker*.cs
       - tools/run_dotnet.py
@@ -269,6 +270,7 @@ jobs:
           INPUT_SYSTEM_SOURCE: ${{ steps.packages.outputs.input_system_source }}
           COMPILE_INPUT_SYSTEM: ${{ startsWith(matrix.unity.version, '6000.0.') && '1' || '0' }}
           COMPILE_ADDRESSABLES: ${{ startsWith(matrix.unity.version, '6000.0.') && '1' || '0' }}
+          COMPILE_VERIFICATION_PROJECTS: ${{ startsWith(matrix.unity.version, '6000.0.') && '1' || '0' }}
           UNITY_ANALYZER_DLL: ${{ steps.unity_analyzers.outputs.dll }}
           ANALYZER_SDK_VERSION: ${{ steps.analyzer_sdk.outputs.dotnet-version }}
           PUBLIC_API_INPUTS: ${{ steps.public_api.outputs.inputs }}
@@ -285,6 +287,7 @@ jobs:
             -e COMPILE_INPUT_UGUI=1 \
             -e COMPILE_INPUT_SYSTEM="$COMPILE_INPUT_SYSTEM" \
             -e COMPILE_ADDRESSABLES \
+            -e COMPILE_VERIFICATION_PROJECTS \
             -e UNITY_ANALYZER_DLL \
             -e UNITY_ANALYZER_SDK="/analyzer-dotnet/sdk/$ANALYZER_SDK_VERSION" \
             -e PUBLIC_API_INPUTS -e PUBLIC_API_DOTNET=/analyzer-dotnet/dotnet \
