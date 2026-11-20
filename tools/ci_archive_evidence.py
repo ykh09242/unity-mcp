@@ -30,6 +30,7 @@ MEMBERS = {
     "report": {"install-report.json": 256 * 1024},
     "raw": RAW_FILES,
     "history": {"archive-attempts.json": ARCHIVE_LIMIT},
+    "reference-graph-checkout": {"reference-graph-checkout.json": 4096},
 }
 
 

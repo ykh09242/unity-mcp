@@ -148,8 +148,30 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-26.04, macos-26-intel]
         python: ["3.11", "3.15"]
+    defaults:
+      run:
+        shell: bash
+    env:
+      GRAPH_CORE_TESTS: >-
+        tests/test_reference_graph_native_spools.py
+        tests/test_reference_graph_store.py
+        tests/test_reference_graph_analysis.py
+        tests/test_reference_graph_semantics.py
+        tests/test_reference_graph_provenance.py
+        tests/test_reference_graph_queries.py
+        tests/test_reference_graph_mutations.py
+      GRAPH_SERVICE_TESTS: >-
+        tests/test_reference_graph_runtime.py
+        tests/test_reference_graph_operations.py
+        tests/test_reference_graph_external.py
+        tests/test_reference_graph_external_changes.py
+        tests/test_reference_graph_workspace.py
+        tests/test_reference_graph_policy_admission.py
+        tests/test_reference_graph_reconcile.py
+        tests/test_reference_graph_service.py
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout reference graph candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ inputs.ref || github.sha }}
@@ -161,6 +183,8 @@ jobs:
         shell: bash
         env:
           CANDIDATE_REF: ${{ inputs.ref || github.sha }}
+          GRAPH_OS: ${{ matrix.os }}
+          GRAPH_PYTHON: ${{ matrix.python }}
         run: |
           set -euo pipefail
           actual=$(git rev-parse HEAD)
@@ -168,8 +192,22 @@ jobs:
             test "$actual" = "$CANDIDATE_REF"
           fi
           printf 'Checked candidate: `%s` (requested `%s`)\n' "$actual" "$CANDIDATE_REF" >> "$GITHUB_STEP_SUMMARY"
+          printf '{"schema_version":1,"repository":"%s","run_id":%s,"run_attempt":%s,"job_key":"%s","checkout_sha":"%s","matrix_os":"%s","matrix_python":"%s"}\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB" "$actual" "$GRAPH_OS" "$GRAPH_PYTHON" \
+            > "$RUNNER_TEMP/reference-graph-checkout.json"
 
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Preserve reference graph checkout receipt
+        # Evidence storage outages should not suppress the validation phases.
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reference-graph-checkout-${{ matrix.os }}-python-${{ matrix.python }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/reference-graph-checkout.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Set up reference graph toolchain
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.13.9"
           python-version: ${{ matrix.python }}
@@ -178,13 +216,39 @@ jobs:
           cache-dependency-glob: |
             Server/pyproject.toml
             Server/uv.lock
-      - name: Install and exercise isolated reference graph
+      - name: Install locked reference graph dependencies
+        working-directory: Server
+        run: uv sync --python "${{ matrix.python }}" --locked --extra dev
+
+      - name: Collect reference graph tests
+        id: graph_collection
         working-directory: Server
         env:
-          UNITY_MCP_LOG_DIR: ${{ runner.temp }}/reference-graph-logs
+          UNITY_MCP_LOG_DIR: ${{ runner.temp }}/reference-graph-collection-logs
         run: |
-          uv sync --python "${{ matrix.python }}" --locked --extra dev
-          uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest tests/test_reference_graph_native_spools.py tests/test_reference_graph_store.py tests/test_reference_graph_analysis.py tests/test_reference_graph_semantics.py tests/test_reference_graph_provenance.py tests/test_reference_graph_queries.py tests/test_reference_graph_mutations.py tests/test_reference_graph_runtime.py tests/test_reference_graph_operations.py tests/test_reference_graph_external.py tests/test_reference_graph_external_changes.py tests/test_reference_graph_workspace.py tests/test_reference_graph_policy_admission.py tests/test_reference_graph_reconcile.py tests/test_reference_graph_service.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/reference-graph-tests"
+          read -r -a files <<< "$GRAPH_CORE_TESTS $GRAPH_SERVICE_TESTS"
+          uv run --no-sync --python "${{ matrix.python }}" python -W error -m pytest "${files[@]}" \
+            --collect-only -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/reference-graph-collection"
+
+      - name: Execute reference graph core tests
+        working-directory: Server
+        env:
+          UNITY_MCP_LOG_DIR: ${{ runner.temp }}/reference-graph-core-logs
+        run: |
+          read -r -a files <<< "$GRAPH_CORE_TESTS"
+          uv run --no-sync --python "${{ matrix.python }}" python -W error -m pytest "${files[@]}" \
+            -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/reference-graph-core-tests"
+
+      - name: Execute reference graph service tests
+        # Retain the previous pytest command's coverage when a core test fails.
+        if: ${{ !cancelled() && steps.graph_collection.outcome == 'success' }}
+        working-directory: Server
+        env:
+          UNITY_MCP_LOG_DIR: ${{ runner.temp }}/reference-graph-service-logs
+        run: |
+          read -r -a files <<< "$GRAPH_SERVICE_TESTS"
+          uv run --no-sync --python "${{ matrix.python }}" python -W error -m pytest "${files[@]}" \
+            -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/reference-graph-service-tests"
 
       - name: Verify Windows event-loop shutdown and bounded launch output
         if: runner.os == 'Windows'
@@ -193,7 +257,7 @@ jobs:
           UNITY_MCP_DISABLE_TELEMETRY: "1"
           UNITY_MCP_LOG_DIR: ${{ runner.temp }}/windows-launch-logs
         run: >-
-          uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest
+          uv run --no-sync --python "${{ matrix.python }}" python -W error -m pytest
           tests/test_windows_loop_startup.py tests/test_launch_output.py
           -q -o asyncio_default_fixture_loop_scope=function -p no:cacheprovider
           --basetemp "${{ runner.temp }}/windows-launch-tests"
@@ -203,7 +267,7 @@ jobs:
         env:
           UNITY_MCP_LOG_DIR: ${{ runner.temp }}/private-store-logs
         run: |
-          uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest tests/test_private_store_bootstrap.py tests/test_execution_receipts.py tests/http/test_mcp_test_wait_lifecycle.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/private-store-tests"
+          uv run --no-sync --python "${{ matrix.python }}" python -W error -m pytest tests/test_private_store_bootstrap.py tests/test_execution_receipts.py tests/http/test_mcp_test_wait_lifecycle.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/private-store-tests"
 
   server_bootstrap:
     name: Server Bootstrap (${{ matrix.os }})

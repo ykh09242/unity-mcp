@@ -121,7 +121,33 @@ and independently rehashes the local ZIP. Missing local content proof still fail
 
 Reference graph jobs allow 20 minutes on macOS to include cold cryptography source
 builds before test execution; Windows and Linux retain their 10-minute deadline.
-The test inventory, warning policy and dependency pins are unchanged.
+The workflow records locked installation, pytest collection, two execution shards,
+Windows launch checks and private-store initialization as distinct GitHub Actions
+steps. The shards run the original graph test files with fresh temporary directories.
+If a core test fails, the service shard still runs after successful collection and
+the job retains the failure. Test phases use the already-synced environment.
+
+Each matrix row uploads the exact checked revision before toolchain setup. The
+checkout artifact includes the workflow run ID, attempt number, OS and Python
+minor and is retained for 30 days. The attempt report reads Actions job and
+step metadata independently of job logs and verifies the checkout artifact
+when available. Validation continues when receipt storage is unavailable.
+A timeout or runner loss confirms only the phases Actions recorded as
+successful. Missing records leave later phases unknown.
+
+With GitHub CLI read access, run this from the repository root.
+
+```sh
+uv run --project Server --locked --extra dev python tools/ci_reference_graph_attempts.py \
+  --repository OWNER/REPO --run-id RUN_ID --through-attempt ATTEMPT --checked-sha FULL_SHA
+```
+
+The report retains each actual attempt and selects the latest recorded job for
+each matrix row. A retry of failed jobs leaves earlier successful rows attached
+to their original attempts. An unavailable later job inventory leaves the
+effective result uncertain. Older runs expose their combined step as
+`legacy_combined`, since their metadata does not distinguish installation,
+collection or execution. [GitHub Actions jobs API](https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run-attempt)
 
 [`distribution-canary.yml`](../../.github/workflows/distribution-canary.yml) runs Python
 3.11 probes on Linux, Windows and Intel macOS, plus Linux Python 3.14 and 3.15 probes, each Monday
