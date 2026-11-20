@@ -78,6 +78,7 @@ public static class AnalyzerRunner
         var failures = new ConcurrentQueue<string>();
         var primary = new List<DiagnosticRow>();
         var declarations = new List<DeclarationRow>();
+        var loaderBindings = new LoaderBindingCollector();
         var declarationGaps = new List<string>();
         var context = new List<DiagnosticRow>();
         string root = Path.GetFullPath(request.ProjectRoot);
@@ -95,6 +96,7 @@ public static class AnalyzerRunner
                 var project = projects[input.Name];
                 var compilation = await project.GetCompilationAsync(cancellation) ?? throw new InvalidDataException("compilation_context_unavailable");
                 CaptureDeclarations(compilation, root, selected, declarations, declarationGaps, cancellation);
+                loaderBindings.Capture(compilation, root, selected, cancellation);
                 var analysisOptions = new CompilationWithAnalyzersOptions(
                     project.AnalyzerOptions,
                     (exception, analyzer, _) => failures.Enqueue(analyzer.GetType().FullName + ": " + exception.Message),
@@ -184,6 +186,8 @@ public static class AnalyzerRunner
             Declarations = declarations.ToArray(),
             DeclarationsComplete = gaps.Count == 0 && failures.IsEmpty && declarationGaps.Count == 0,
             DeclarationCoverageGaps = declarationGaps.Distinct().ToArray(),
+            LoaderBindings = loaderBindings.Rows.ToArray(),
+            LoaderBindingCoverageGaps = loaderBindings.Gaps.Concat(gaps).Distinct().ToArray(),
         };
     }
 

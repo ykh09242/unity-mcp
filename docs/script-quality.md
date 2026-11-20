@@ -74,6 +74,17 @@ separately. Unsupported generator/options/context and unimported membership are
 coverage gaps. Broken current source may still be diagnosed even when native
 compilation failed. An unchanged old DLL is not a substitute for dependency source.
 
+The optional host also returns `loader_bindings` for selected call sites named
+`Load`, `LoadAll`, `LoadAsync`, `LoadAssetAsync`, `LoadAssetsAsync` or
+`LoadSceneAsync`. Each row locates the invocation and identifies its owning
+assembly, selected method signature and target assembly, including the original
+extension declaration. An unresolved overload retains its Roslyn candidate
+reason. These rows report C# method binding. Catalog evidence and runtime
+observations identify asset targets separately. At most 128 rows and 64 KiB
+are retained, with omissions reported in `loader_binding_coverage_gaps`.
+Without the optional host, the reference graph retains its conservative
+source analysis and reports unresolved calls.
+
 ## Baselines and impact
 
 Complete comparable baselines classify diagnostics as `introduced`, `existing`,

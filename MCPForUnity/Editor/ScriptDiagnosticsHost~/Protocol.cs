@@ -74,4 +74,8 @@ public sealed record AnalysisResult
     public DeclarationRow[] Declarations { get; init; } = [];
     public bool DeclarationsComplete { get; init; }
     public string[] DeclarationCoverageGaps { get; init; } = [];
+    public LoaderBinding[] LoaderBindings { get; init; } = [];
+    public string[] LoaderBindingCoverageGaps { get; init; } = [];
 }
+
+public sealed record LoaderBinding(string Path, int Line, int Column, string Assembly, string? TargetAssembly, string? Method, string? Reason);

@@ -24,6 +24,7 @@ namespace MCPForUnity.Editor.Services.ScriptQuality
             "WireProtocol.cs",
             "AnalyzerRunner.cs",
             "AnalyzerConfiguration.cs",
+            "LoaderBindingCollector.cs",
             "AssemblyInfo.cs",
             "THIRD-PARTY-NOTICES.md",
         };

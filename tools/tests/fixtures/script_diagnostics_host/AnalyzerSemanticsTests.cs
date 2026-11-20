@@ -79,6 +79,42 @@ public class AnalyzerSemanticsTests
         Assert.That(result.Declarations.Single(d => d.Name == "Click").Signature, Does.Contain("int"));
     }
 
+    [TestCase(true, "string")]
+    [TestCase(false, "int")]
+    public async Task LoaderBindingUsesActiveDefineAndExtensionOverload(bool useText, string expectedType)
+    {
+        var request = Request(
+            """
+            namespace UnityEngine { public static class Resources { public static object Load(string key) => null; } }
+            class Shop {}
+            static class Loader {
+                public static object Load(this Shop shop, string key) => UnityEngine.Resources.Load(key);
+                public static object Load(this Shop shop, int key) => null;
+            }
+            class Caller {
+                object Open(Shop shop) {
+            #if SHOP_TEXT
+                    var key = "Shop";
+            #else
+                    var key = 17;
+            #endif
+                    return shop.Load(key);
+                }
+            }
+            """
+        );
+        request = request with { Assemblies = [request.Assemblies.Single() with { Defines = useText ? ["SHOP_TEXT"] : [] }] };
+        var result = await AnalyzerRunner.AnalyzeWithAsync(request, [], default);
+        Assert.That(result.Complete, Is.True, string.Join(",", result.CoverageGaps));
+        Assert.That(result.LoaderBindings.Any(row => row.Method == "UnityEngine.Resources.Load(string)"), Is.True);
+        var bound = result.LoaderBindings.Single(row => row.Method?.StartsWith("Loader.", StringComparison.Ordinal) == true);
+        Assert.That(bound.Path, Is.EqualTo("Assets/Changed.cs"));
+        Assert.That(bound.Assembly, Is.EqualTo("Game"));
+        Assert.That(bound.TargetAssembly, Is.EqualTo("Game"));
+        Assert.That(bound.Method, Is.EqualTo($"Loader.Load(Shop, {expectedType})"));
+        Assert.That(bound.Reason, Is.Null);
+    }
+
     [Test]
     public async Task UnityNullPropagationUsesUnt0008()
     {
