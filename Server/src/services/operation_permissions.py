@@ -15,7 +15,7 @@ from services.animator_actions import (
     animator_runtime_opt_in,
     guarded_animator_parameters,
 )
-from services.registry.capability_catalog import CAPABILITIES
+from services.registry.capability_catalog import CAMERA_INVENTORY_TOOL, CAPABILITIES
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 from services.texture_actions import CHECKED_TEXTURE_ACTIONS, checked_texture_parameters
 
@@ -401,6 +401,10 @@ _NATIVE_COMMANDS: Final = (
     | {"manage_reference_graph", "manage_script_quality", "manage_verification"}
 )
 _DEFAULT_ACTIONS: Final = {"read_console": "get", "execute_menu_item": "execute"}
+_FIXED_RESOURCE_READ_COMMANDS: Final = {
+    "inspect_editor_state": "get_editor_state",
+    CAMERA_INVENTORY_TOOL: "get_cameras",
+}
 _RESOURCE_PATHS: Final = _names(
     "capabilities capabilities/scoped doctor doctor/runtime doctor/config tool-diagnostics custom-tools editor/active-tool editor/game-view-size editor/state scene/cameras scene/gameobject-api project/layers menu-items editor/prefab-stage prefab-api project/info pipeline/renderer-features rendering/stats editor/selection project/tags tests tool-groups instances scene/volumes editor/windows"
 )
@@ -459,8 +463,8 @@ def required_permissions(
     if not native and name in FIXED_OBSERVATION_ACTIONS:
         name, fixed_action = FIXED_OBSERVATION_ACTIONS[name]
         params = {**params, "action": fixed_action}
-    if not native and name == "inspect_editor_state":
-        name = "get_editor_state"
+    if not native:
+        name = _FIXED_RESOURCE_READ_COMMANDS.get(name, name)
     # The Python tool routes inspect/exists to a different native command.
     # Native execute handlers ignore a supplied action: do not trust that alias input.
     if native and name in {"execute_menu_item", "execute_menu_item_observed"}:

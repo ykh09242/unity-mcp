@@ -39,6 +39,7 @@ from services.execution_receipt_identity import (
 from transport.local_project_context import full_hash
 from transport.local_http_target import configured_default, select_local_session
 from services.registry import get_registered_tools
+from services.registry.capability_catalog import CAMERA_INVENTORY_TOOL
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 from services.registry.operation_invocation import trusted_tool, wrap_tool
 from services.verification.edits import after_operation
@@ -1206,6 +1207,11 @@ class UnityInstanceMiddleware(Middleware):
             tools = [tool for tool in tools if getattr(tool, "name", None) in builtin_names]
 
         tool_names_from_fastmcp = sorted(getattr(t, "name", "?") for t in tools)
+        if CAMERA_INVENTORY_TOOL in tool_names_from_fastmcp:
+            from services.resources.cameras import camera_inventory_available
+
+            if not await camera_inventory_available(ctx):
+                tools = [tool for tool in tools if tool.name != CAMERA_INVENTORY_TOOL]
         # A projected read cannot advertise a parent hidden by this SDK session,
         # even when its Unity-side command is available to the project.
         tools = [

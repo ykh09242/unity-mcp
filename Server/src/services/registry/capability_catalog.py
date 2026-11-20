@@ -460,6 +460,7 @@ NATIVE_HANDLERS = {
 }
 
 CAMERA_INVENTORY_URI = "mcpforunity://scene/cameras"
+CAMERA_INVENTORY_TOOL = "inspect_scene_cameras"
 CAMERA_INVENTORY_READ = (
     f"For read-only camera inventory, read the MCP resource {CAMERA_INVENTORY_URI}."
 )

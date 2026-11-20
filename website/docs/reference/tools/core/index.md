@@ -24,6 +24,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`get_game_view_size`](./get_game_view_size.md)** — Read the current Game View render size in pixels, selected preset and available presets from an existing window in the selected Unity Editor.
 - **[`get_sha`](./get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`inspect_editor_state`](./inspect_editor_state.md)** — Read the selected Editor snapshot including active scene and current compiling flag.
+- **[`inspect_scene_cameras`](./inspect_scene_cameras.md)** — Read the selected Editor's scene camera inventory.
 - **[`manage_addressables`](./manage_addressables.md)** — Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing native build-layout report for duplicate…
 - **[`manage_audio`](./manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.

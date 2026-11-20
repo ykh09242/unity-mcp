@@ -108,6 +108,7 @@ Editor and client selection. The graph tool takes a required `path` and optional
 
 | Requested observation | Operation | Source and scope |
 | --- | --- | --- |
+| Scene camera inventory | `inspect_scene_cameras` or `mcpforunity://scene/cameras` | `editor_live`. Count the entries in `unityCameras` and `cinemachineCameras` and read their names. Both routes use the selected Editor's native inventory and its resource permissions. |
 | Pointer hit order | `inspect_ugui_hit_order` or `manage_ugui.diagnose_raycast` | `editor_live`, `pointer_hit_order`. The mixed action binds `allow_custom_filters=false` and `strict_read=true`. Supply a scene RectTransform and bottom-left Game View pixel position. Check the observed policy, ordered hits and truncation. |
 | Active scene name and path | `scene_inspect.get_active`, `manage_scene.get_active` or `mcpforunity://editor/state` | `editor_live`, `active_scene.name` and `active_scene.path`. Use the route's wire paths. For a snapshot, check staleness. |
 | Current compilation activity | `inspect_editor_state` or `mcpforunity://editor/state` | `editor_live`, `compilation.is_compiling`. Requires a fresh snapshot with a boolean value. |

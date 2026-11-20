@@ -47,6 +47,7 @@ READ_ONLY = {
     "get_game_view_size",
     "inspect_shader_graph",
     "inspect_editor_state",
+    "inspect_scene_cameras",
     "inspect_ugui_hit_order",
     "get_sha",
     "get_test_job",

@@ -40,7 +40,7 @@ from services.registry.action_catalog import (
     tool_description,
 )
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
-from services.registry.capability_catalog import CAMERA_INVENTORY_URI
+from services.registry.capability_catalog import CAMERA_INVENTORY_TOOL, CAMERA_INVENTORY_URI
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
 
 
@@ -174,7 +174,7 @@ class EquivalentRead:
     template_path: str | None = None
     pagination: tuple[str, ...] = ()
     focused_action: tuple[str, str] | None = None
-    resource_first: bool = False
+    fallback_tools: tuple[tuple[str, str], ...] = ()
 
     @property
     def parent(self) -> tuple[str, str] | None:
@@ -193,7 +193,7 @@ class EquivalentRead:
             self.resource,
             "",
         )
-        return (resource, *tools) if self.resource_first else (*tools, resource)
+        return (*tools, resource, *(("tool", name, action) for name, action in self.fallback_tools))
 
     def allowed(self, unavailable_parents: set[str]) -> bool:
         # Fixed tools/resources inherit the parent toggle. A focused tool has its own toggle.
@@ -207,11 +207,10 @@ class EquivalentRead:
 # Each relationship is backed by the same native read implementation.
 _EQUIVALENT_READS: Final = (
     EquivalentRead(
-        "manage_cameras",
+        CAMERA_INVENTORY_TOOL,
         CAMERA_INVENTORY_URI,
         CAMERA_INVENTORY_OBSERVATION,
-        focused_action=("manage_camera", "list_cameras"),
-        resource_first=True,  # Both tool bindings also admit authoring actions.
+        fallback_tools=(("manage_cameras", "list_cameras"), ("manage_camera", "list_cameras")),
     ),
     EquivalentRead("inspect_editor_state", "mcpforunity://editor/state", EDITOR_STATE_OBSERVATION),
     EquivalentRead("inspect_ugui_hit_order", None, POINTER_ORDER_OBSERVATION),
