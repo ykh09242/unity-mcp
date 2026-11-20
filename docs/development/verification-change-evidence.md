@@ -68,3 +68,31 @@ contradictory repeats, an unmatched runtime or a later return to passing leave
 the range open with exit 2. The result includes the ordered timeline, observed
 passing/failing endpoints and unverified builds. For observed Editor checks,
 each trial also identifies the Editor jobs in `check_job_ids`.
+
+## Install the offline reader
+
+Download the wheel from the `offline-verification-evidence` artifact on a successful
+**Offline verification evidence** workflow run. To build it from a checkout, run
+`python tools/build_offline_evidence.py --output .tmp/offline-wheel` with `uv` on
+your path. Install the downloaded or locally built wheel in a Python 3.11 or newer
+environment.
+
+```sh
+python -m pip install .tmp/offline-wheel/*.whl
+unity-mcp-evidence --format json compare \
+  --baseline before/verification.json before/run.json \
+  --candidate after/verification.json after/run.json
+```
+
+The wheel needs Click. The installed command reads evidence offline with
+`compare`, `first-failure`, and `selection`. Use the same arguments and
+exit codes as the corresponding `unity-mcp verification-evidence` commands.
+NUnit selection checks the complete XML and computes SHA-256 from the original
+bytes while streaming a regular local file up to 16 MiB. The reader rejects
+linked paths, malformed or truncated XML, document types and entity declarations.
+
+The workflow artifact also includes the two clean environments' installed package
+bytes and end-to-end first-read times in `offline-install.json`. It checks complete
+JSON outputs and exit codes for synthetic saved JSON and NUnit captures.
+`nunit-reader.json` records verdict and digest parity, median read time, and
+traced peak Python allocations against the previous reader on the same runner.

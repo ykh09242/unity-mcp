@@ -81,6 +81,23 @@ def test_a_fresh_run_can_have_identical_outcomes_and_duration(xml_cohort):
     assert result["selection"]["measured_seconds_saved"] == 0
 
 
+def test_reads_timings_and_failure_messages_owned_by_individual_cases(xml_cohort):
+    path = xml_cohort(1, {MAP: "Passed", ROUTE: "Failed"}, 3)
+    document = ET.parse(path)
+    passed, failed = document.findall(".//test-case")
+    passed.set("duration", "nan")
+    failed.set("duration", "0.24")
+    failure = ET.SubElement(failed, "failure")
+    ET.SubElement(failure, "message").text = "Route expected GPU instancing"
+    ET.SubElement(failure, "stack-trace").text = "Not a failure message"
+    document.write(path, encoding="utf-8")
+
+    run = read_cohort(path)
+
+    assert run.case_seconds == {ROUTE: 0.24}
+    assert run.failure_messages == {ROUTE: "Route expected GPU instancing"}
+
+
 def test_rewritten_nunit_xml_cannot_supply_an_independent_run(tmp_path, xml_cohort):
     capture = xml_cohort(1, {MAP: "Passed", ROUTE: "Failed"})
     xml = ET.parse(capture)

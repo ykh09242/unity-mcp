@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from cli.utils.play_scenario_analysis_io import AnalysisError, read_json
+from .play_scenario_analysis_io import AnalysisError, read_json
 
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
 _OBSERVED = {"passed", "failed"}

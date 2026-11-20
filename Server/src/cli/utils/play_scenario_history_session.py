@@ -4,14 +4,11 @@ import json
 from pathlib import Path
 from typing import Annotated, Literal, TypeVar
 
-from pydantic import BaseModel, Field
-
 from cli.utils.play_scenario_analysis_io import AnalysisError, read_bytes
 from cli.utils.play_scenario_history_models import HistoryEvidence, HistoryOutcome
-from cli.utils.play_scenario_iterations import STATE_KEYS, zero_iteration_counts
-from cli.utils.play_scenario_soak_environment import ENVIRONMENT_FIELDS
+from cli.utils.play_scenario_iterations import zero_iteration_counts
 from cli.utils.play_scenario_player_session import OUTCOME_FILE_LIMIT, OUTCOME_LIMIT, SUMMARY_LIMIT
-from cli.utils.play_scenario_query_compare import (
+from cli.utils.play_scenario_report_json import (
     _check_depth,
     _finite_float,
     _object,
@@ -20,13 +17,14 @@ from cli.utils.play_scenario_query_compare import (
 from cli.utils.play_scenario_session_recovery import (
     MAX_RECORDS,
     _Admission,
+    _admission_prefix,
     _Header,
     _Journal,
     _Outcome,
-    _admission_prefix,
     _outcome_prefix,
 )
-from pydantic import JsonValue
+from cli.utils.play_scenario_soak_environment import ENVIRONMENT_FIELDS
+from pydantic import BaseModel, Field, JsonValue
 
 Model = TypeVar("Model", bound=BaseModel)
 Total = Annotated[int, Field(strict=True, ge=0, le=10000)]

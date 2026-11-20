@@ -1,0 +1,72 @@
+name: Offline verification evidence
+
+on:
+  pull_request:
+    branches: [main, beta]
+    paths:
+      - Server/**
+      - tools/build_offline_evidence.py
+      - tools/check_offline_evidence.py
+      - tools/benchmark_nunit_reader.py
+      - .github/workflows/offline-verification-evidence.yml
+  push:
+    branches: [beta]
+    paths:
+      - Server/**
+      - tools/build_offline_evidence.py
+      - tools/check_offline_evidence.py
+      - tools/benchmark_nunit_reader.py
+      - .github/workflows/offline-verification-evidence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installed-evidence:
+    name: Clean offline installation and NUnit streaming
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.9"
+          python-version: "3.14"
+          enable-cache: false
+      - name: Build wheel and install both distributions in clean environments
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-project --python 3.14 python tools/build_offline_evidence.py --output .tmp/offline-wheel
+          UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/server" uv sync --project Server --python 3.14 --locked --no-dev --no-editable
+          uv venv --python 3.14 "$RUNNER_TEMP/offline"
+          uv pip install --python "$RUNNER_TEMP/offline/bin/python" .tmp/offline-wheel/*.whl
+      - name: Compare installed verdicts, exit codes and first read
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/server/bin/python" tools/check_offline_evidence.py \
+            --full "$RUNNER_TEMP/server/bin/unity-mcp" --lean "$RUNNER_TEMP/offline/bin/unity-mcp-evidence" \
+            --output "$RUNNER_TEMP/evidence"
+      - name: Compare NUnit readers on the same inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline=913059dd46d4d3b3634324d138e2af07efbfc3d5
+          git show "$baseline:Server/src/cli/utils/verification_selection.py" > "$RUNNER_TEMP/legacy_selection.py"
+          "$RUNNER_TEMP/server/bin/python" tools/benchmark_nunit_reader.py \
+            --legacy-source "$RUNNER_TEMP/legacy_selection.py" --output "$RUNNER_TEMP/evidence"
+          printf 'Candidate `%s`, legacy NUnit reader `%s`\n' "$(git rev-parse HEAD)" "$baseline" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: offline-verification-evidence
+          path: |
+            .tmp/offline-wheel/*.whl
+            ${{ runner.temp }}/evidence/*.json
+          include-hidden-files: true
+          retention-days: 30

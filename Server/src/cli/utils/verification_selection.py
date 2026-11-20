@@ -3,12 +3,13 @@
 import math
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
-from hashlib import sha256
+from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree
 
-from cli.utils.play_scenario_analysis_io import read_bytes
+from .play_scenario_analysis_io import open_artifact
+from .play_scenario_report_json import REPORT_LIMIT
+from .verification_nunit_xml import NUnitXml
 
 _ASSET = re.compile(r"(Assets/.+?) ([0-9a-f]{32}) ([0-9a-f]{64})")
 _CONTEXT = "MCP_VERIFICATION_CONTEXT "
@@ -33,58 +34,117 @@ class Cohort:
     fixture: FixtureObservation
     cases: dict[str, str]
     seconds: float
+    case_seconds: dict[str, float] = field(default_factory=dict)
+    failure_messages: dict[str, str] = field(default_factory=dict)
+
+
+def _observe_case(case: ElementTree.Element, result: str) -> FixtureObservation | None:
+    inputs = {}
+    contexts = []
+    executions = []
+    expected = []
+    for line in (case.findtext("output") or "").splitlines():
+        if line.startswith(_CONTEXT):
+            contexts.append(line.removeprefix(_CONTEXT).strip())
+        elif line.startswith(_EXECUTION):
+            executions.append(line.removeprefix(_EXECUTION).strip())
+        elif line.startswith(_EXPECTED_CASE):
+            expected.append(line.removeprefix(_EXPECTED_CASE).strip())
+        match = _ASSET.fullmatch(line)
+        if match:
+            asset, guid, digest = match.groups()
+            if asset in inputs:
+                raise ValueError("Duplicate fixture input observation")
+            inputs[asset] = (guid, digest)
+    if result not in _DECISIVE and not (inputs or contexts or executions or expected):
+        return None  # NUnit can skip cases before the fixture records observations.
+    if len(executions) != 1 or not _EXECUTION_ID.fullmatch(executions[0]):
+        raise ValueError("Each instrumented case needs one fixture execution ID")
+    if not inputs or len(contexts) != 1 or not contexts[0]:
+        raise ValueError("Each instrumented case needs fixture input digests and one context")
+    if not expected or not all(expected) or len(set(expected)) != len(expected):
+        raise ValueError("Each instrumented case needs the complete fixture inventory")
+    return FixtureObservation(executions[0], contexts[0], frozenset(expected), inputs)
+
+
+def _case_duration(case: ElementTree.Element) -> float | None:
+    try:
+        duration = float(case.get("duration", "nan"))
+    except ValueError:
+        return None
+    return duration if math.isfinite(duration) and duration >= 0 else None
+
+
+def _keep_case_evidence(element: ElementTree.Element, ancestors: list[ElementTree.Element]) -> bool:
+    parent = ancestors[-1]
+    if parent.tag == "test-case" and element.tag in {"output", "failure"}:
+        return parent.find(element.tag) is element
+    return (
+        len(ancestors) >= 2
+        and ancestors[-2].tag == "test-case"
+        and parent.tag == "failure"
+        and element.tag == "message"
+        and parent.find("message") is element
+    )
 
 
 def read_cohort(path: Path) -> Cohort:
-    raw = read_bytes(path, 16 * 1024 * 1024)
-    xml = raw.decode("utf-8-sig")
-    if "<!DOCTYPE" in xml or "<!ENTITY" in xml:
-        raise ValueError("NUnit evidence must not contain a document type or entities")
-    try:
-        root = ElementTree.fromstring(xml)
-    except ElementTree.ParseError as exc:
-        raise ValueError("Invalid NUnit evidence") from exc
-    if root.tag != "test-run":
-        raise ValueError("Expected Unity NUnit test-run")
-    seconds = float(root.get("duration", "nan"))
-    if not math.isfinite(seconds) or seconds < 0:
-        raise ValueError("Missing finite NUnit run duration")
-    fixture = None
+    """Stream case evidence from a complete, regular local Unity NUnit XML file."""
+    with open_artifact(path, REPORT_LIMIT) as (file, size):
+        return _read_cohort(NUnitXml(file, size))
+
+
+def _read_cohort(xml: NUnitXml) -> Cohort:
+    stack: list[ElementTree.Element] = []
+    error = None
+    root = {}
+    seconds = 0.0
     cases = {}
-    for case in root.iter("test-case"):
-        name, result = case.get("fullname", ""), case.get("result", "")
-        if not name or name in cases or result not in _TERMINAL:
-            raise ValueError("Expected unique named terminal NUnit cases")
-        cases[name] = result
-        inputs = {}
-        contexts = []
-        executions = []
-        expected = []
-        for line in (case.findtext("output") or "").splitlines():
-            if line.startswith(_CONTEXT):
-                contexts.append(line.removeprefix(_CONTEXT).strip())
-            elif line.startswith(_EXECUTION):
-                executions.append(line.removeprefix(_EXECUTION).strip())
-            elif line.startswith(_EXPECTED_CASE):
-                expected.append(line.removeprefix(_EXPECTED_CASE).strip())
-            match = _ASSET.fullmatch(line)
-            if match:
-                asset, guid, digest = match.groups()
-                if asset in inputs:
-                    raise ValueError("Duplicate fixture input observation")
-                inputs[asset] = (guid, digest)
-        if result not in _DECISIVE and not (inputs or contexts or executions or expected):
-            continue  # NUnit can skip cases before the fixture records observations.
-        if len(executions) != 1 or not _EXECUTION_ID.fullmatch(executions[0]):
-            raise ValueError("Each instrumented case needs one fixture execution ID")
-        if not inputs or len(contexts) != 1 or not contexts[0]:
-            raise ValueError("Each instrumented case needs fixture input digests and one context")
-        if not expected or not all(expected) or len(set(expected)) != len(expected):
-            raise ValueError("Each instrumented case needs the complete fixture inventory")
-        observation = FixtureObservation(executions[0], contexts[0], frozenset(expected), inputs)
-        if fixture is not None and observation != fixture:
-            raise ValueError("Fixture observations changed within the NUnit run")
-        fixture = observation
+    durations = {}
+    failures = {}
+    fixture = None
+    for event, element in xml.events():
+        try:
+            if event == "start":
+                if not stack and error is None:
+                    if element.tag != "test-run":
+                        raise ValueError("Expected Unity NUnit test-run")
+                    root = dict(element.attrib)
+                    seconds = float(root.get("duration", "nan"))
+                    if not math.isfinite(seconds) or seconds < 0:
+                        raise ValueError("Missing finite NUnit run duration")
+                if element.tag == "test-case" and error is None:
+                    name, result = element.get("fullname", ""), element.get("result", "")
+                    if not name or name in cases or result not in _TERMINAL:
+                        raise ValueError("Expected unique named terminal NUnit cases")
+                    cases[name] = result
+            elif element.tag == "test-case" and error is None:
+                name = element.get("fullname", "")
+                observation = _observe_case(element, cases[name])
+                if observation is not None:
+                    if fixture is not None and observation != fixture:
+                        raise ValueError("Fixture observations changed within the NUnit run")
+                    fixture = observation
+                duration = _case_duration(element)
+                if duration is not None:
+                    durations[name] = duration
+                failure = element.find("failure")
+                if failure is not None and (message := failure.findtext("message")):
+                    failures[name] = message
+        except ValueError as exc:
+            # Keep validating the whole input before reporting semantic errors.
+            error = exc
+        if event == "start":
+            stack.append(element)
+        else:
+            stack.pop()
+            if not stack:
+                element.clear()
+            elif error is not None or not _keep_case_evidence(element, stack):
+                stack[-1].remove(element)
+                element.clear()
+    if error is not None:
+        raise error
     if not cases or len(cases) != int(root.get("total", "-1")):
         raise ValueError("Incomplete NUnit case inventory")
     result = root.get("result", "").removesuffix("(Child)")
@@ -94,7 +154,7 @@ def read_cohort(path: Path) -> Cohort:
         raise ValueError("Run outcome does not agree with individual case evidence")
     if fixture is None or not cases.keys() <= fixture.expected_cases:
         raise ValueError("Run must contain fixture observations and only declared fixture cases")
-    return Cohort(sha256(raw).hexdigest(), fixture, cases, seconds)
+    return Cohort(xml.digest, fixture, cases, seconds, durations, failures)
 
 
 def selection_quality(

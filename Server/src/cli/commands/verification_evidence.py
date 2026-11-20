@@ -4,13 +4,14 @@ import json
 from pathlib import Path
 
 import click
-from cli.utils.config import get_config
-from cli.utils.output import format_output
-from cli.utils.play_scenario_analysis_io import write_new
-from cli.utils.verification_selection import read_cohort, selection_quality
 
-FILE = click.Path(exists=True, dir_okay=False, path_type=Path)
-OUTPUT = click.Path(dir_okay=False, path_type=Path)
+from ..utils.config import OUTPUT_FORMAT_TYPE, CLIConfig, get_config, set_config
+from ..utils.output import format_output
+from ..utils.play_scenario_analysis_io import write_new
+from ..utils.verification_selection import read_cohort, selection_quality
+
+# Convert path spellings without letting Click follow links or reach remote paths.
+FILE = OUTPUT = Path
 
 
 @click.group("verification-evidence")
@@ -56,7 +57,7 @@ def selection(selected, full, fallback, affected_test, output):
 @click.option("--output", type=OUTPUT)
 def compare(baseline, candidate, output):
     """Classify new, existing, repaired and unexecuted checks on the reviewed PR pair."""
-    from cli.utils.verification_change import compare_runs, read_run
+    from ..utils.verification_change import compare_runs, read_run
 
     def analyze():
         result = compare_runs(read_run(*baseline), read_run(*candidate))
@@ -78,10 +79,24 @@ def compare(baseline, candidate, output):
 @click.option("--output", type=OUTPUT)
 def first_failure(history_manifest, kind, check_id, output):
     """Locate the first failing archived build, or report observed bounds and missing trials."""
-    from cli.utils.verification_history import inspect_history
+    from ..utils.verification_history import inspect_history
 
     def analyze():
         result = inspect_history(history_manifest, kind, check_id)
         return result, {"no_observed_failure": 0, "first_failure": 1}.get(result["state"], 2)
 
     emit_result(analyze, output)
+
+
+@click.group("unity-mcp-evidence", commands=[compare, first_failure, selection])
+@click.option(
+    "--format",
+    "output_format",
+    type=OUTPUT_FORMAT_TYPE,
+    envvar="UNITY_MCP_FORMAT",
+    default="text",
+    show_default=True,
+)
+def offline_main(output_format: str) -> None:
+    """Inspect retained verification artifacts without installing the Unity MCP server."""
+    set_config(CLIConfig(format=output_format))

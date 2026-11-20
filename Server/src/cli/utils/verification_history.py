@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from cli.utils.play_scenario_analysis_io import AnalysisError, read_json, safe_local_path
-from cli.utils.verification_change import read_run, same_json
+from .play_scenario_analysis_io import AnalysisError, read_json, safe_local_path
+from .verification_change import read_run, same_json
 
 
 def inspect_history(manifest: Path, kind: str, name: str):

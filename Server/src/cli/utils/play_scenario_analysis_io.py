@@ -1,11 +1,13 @@
 """Bounded local artifact I/O shared by offline scenario analysis commands."""
 
 import os
-from pathlib import Path
 import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import BinaryIO
 
-from cli.utils.play_scenario_query_compare import read_report
-from pydantic import JsonValue
+from .play_scenario_report_json import JsonValue, read_report
 
 
 class AnalysisError(ValueError):
@@ -41,8 +43,9 @@ def safe_local_path(source: Path) -> Path:
     return path
 
 
-def read_bytes(source: Path, limit: int) -> bytes:
-    """Read at most limit bytes from one stable regular local file."""
+@contextmanager
+def open_artifact(source: Path, limit: int) -> Iterator[tuple[BinaryIO, int]]:
+    """Open one stable regular local file and return its admitted byte count."""
     path = safe_local_path(source)
     before = path.lstat()
     if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
@@ -58,9 +61,24 @@ def read_bytes(source: Path, limit: int) -> bytes:
             raise AnalysisError("Artifact changed before reading")
         if opened.st_size > limit:
             raise AnalysisError("Opened artifact exceeds its byte limit")
-        content = stream.read(opened.st_size + 1)
-    if len(content) != opened.st_size:
-        raise AnalysisError("Artifact changed while reading")
+        try:
+            yield stream, opened.st_size
+        finally:
+            after = os.fstat(stream.fileno())
+            if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            ):
+                raise AnalysisError("Artifact changed while reading")
+
+
+def read_bytes(source: Path, limit: int) -> bytes:
+    """Read at most limit bytes from one stable regular local file."""
+    with open_artifact(source, limit) as (stream, size):
+        content = stream.read(size + 1)
+        if len(content) != size:
+            raise AnalysisError("Artifact changed while reading")
     return content
 
 
