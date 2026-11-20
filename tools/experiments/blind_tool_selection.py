@@ -24,6 +24,7 @@ from tools.experiments.blind_tool_answers import answer_instruction
 from tools.experiments import blind_tool_observations as observations
 from tools.experiments.blind_tool_comparison import compare_directories, paired_schedule
 from tools.experiments.blind_tool_trace import score_case, score_directory
+from tools.experiments import blind_tool_actions as actions
 
 TASKS = (
     "raycast",
@@ -34,6 +35,7 @@ TASKS = (
     "editor",
     "context",
     *observations.TASKS,
+    *actions.FIELDS,
 )
 LANGUAGES = ("en", "ko", "ja", "es", "ar", "tr")
 ROLES = ("main", "subagent")
@@ -49,6 +51,7 @@ def task_prompt(task: str, language: str, graph_asset: str, fixture=None) -> str
     point = fixture.get("point") or [None, None]
     request = prompts[task][language].format(
         graph_asset=graph_asset,
+        ui_asset=fixture.get("ui_asset"),
         compile_id=fixture.get("compile_id"),
         target=fixture.get("target"),
         x=point[0],
@@ -253,6 +256,7 @@ def create_parser() -> argparse.ArgumentParser:
         help="Installed Unity MCP server name in configured mode",
     )
     launch.add_argument("--graph-asset", default="")
+    launch.add_argument("--ui-asset", help="Exact saved UXML path for the control-count task")
     launch.add_argument(
         "--existing-compile-id", help="Reference of an already issued compilation request"
     )
@@ -443,6 +447,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             ):
                 parser.error("declare separate exact competitor namespaces for a prepared pair")
         args.project, args.output = map(Path.resolve, (args.project, args.output))
+        if actions.UI_TASK in args.task:
+            if not actions.valid_ui_path(args.ui_asset):
+                parser.error("provide an exact permitted Assets-relative .uxml path")
+            target = args.project / args.ui_asset
+            if target.resolve() != target or not target.is_file():
+                parser.error("saved UXML must be a regular file at the exact project path")
         if args.existing_compile_id is not None and not re.fullmatch(
             r"[a-f0-9]{32}", args.existing_compile_id
         ):

@@ -475,6 +475,8 @@ def project_item(item, server, asset, project="", fixture=None):
                 }
                 if asset and args.get("path") == asset:
                     clean["path"] = asset
+                if fixture and fixture.get("ui_asset") and args.get("path") == fixture["ui_asset"]:
+                    clean["path"] = fixture["ui_asset"]
                 if fixture and name in ("get_compile_job", "inspect_ugui_hit_order", "manage_ugui"):
                     clean.update(
                         {
@@ -492,6 +494,7 @@ def project_item(item, server, asset, project="", fixture=None):
                 projected["observed_result"] = {
                     "status": status,
                     "facts": observation(route, data, fixture),
+                    "has_decoded_data": bool(data),
                 }
         if item.get("error"):
             projected["error"] = {"message": _tool_error(item["error"])}
@@ -500,7 +503,12 @@ def project_item(item, server, asset, project="", fixture=None):
         projected.update(type="command_execution", exit_code=item.get("exitCode"))
         command, output = item.get("command") or "", item.get("aggregatedOutput") or ""
         receipt = shell_receipt(
-            command, output, item.get("exitCode"), asset, project, item.get("cwd")
+            command,
+            output,
+            item.get("exitCode"),
+            (fixture or {}).get("ui_asset") or asset,
+            project,
+            item.get("cwd"),
         )
         projected["shell_receipt"] = receipt
         if (

@@ -630,6 +630,9 @@ def test_wire_records_real_results_and_never_forwards_mutation(tmp_path):
     traces = list(tmp_path.glob("mcp-*.jsonl"))
     assert len(traces) == 1
     audit = list(map(json.loads, traces[0].read_text(encoding="utf-8").splitlines()))
+    observed = [record.pop("observed_ns") for record in audit]
+    assert all(type(value) is int and value > 0 for value in observed)
+    assert observed == sorted(observed)
     assert audit[0]["channel"] == "blocked"
     assert audit[1] == {"event": "response", "sequence": 1, "outcome": "error"}
     assert audit[-1]["observation"] == {"render_size": [800, 600]}

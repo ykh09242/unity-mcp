@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tools.experiments.blind_tool_answers import FIELDS, expected_facts, matches
+from tools.experiments.blind_tool_actions import UI_TASK
 
 SAVED_FIELDS = ("nodes", "edges", "node_types")
 SOURCES = ("editor_live", "asset_file", "imported_asset", "compile_job", "unknown")
@@ -98,7 +99,7 @@ def score_claims(task, answer, wire, saved, *, explicit_limit=False):
     shape_valid = isinstance(answer, dict) and required <= set(submitted) <= allowed
     origin = (
         "asset_file"
-        if task in {"graph", "graph-saved"}
+        if task in {"graph", "graph-saved", UI_TASK}
         else "compile_job"
         if task == "compile-outcome"
         else "editor_live"
@@ -110,6 +111,8 @@ def score_claims(task, answer, wire, saved, *, explicit_limit=False):
     allowed_evidence = {"editor": expected_facts(task, wire, [])[0]}
     if task == "graph-saved":
         allowed_evidence = graph_evidence
+    if task == UI_TASK:
+        allowed_evidence["file"] = expected_facts(task, [], saved)[0]
     claims = {
         field: _check(field, submitted.get(field), allowed_evidence, origin) for field in fields
     }

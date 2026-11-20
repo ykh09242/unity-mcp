@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from threading import Lock, Thread
+from time import monotonic_ns
 from typing import IO, Any
 from urllib.parse import parse_qs, unquote, urlsplit
 from uuid import UUID
@@ -32,6 +33,7 @@ from tools.experiments.blind_tool_answers import (
 from tools.experiments.blind_tool_diagnostics import SEARCH_ROUTES
 from tools.experiments.blind_tool_shell import shell_purpose, shell_receipt
 from tools.experiments import blind_tool_observations as choices
+from tools.experiments import blind_tool_actions as actions
 
 EDITOR_STATE = "mcpforunity://editor/state"
 PROJECT_INFO = "mcpforunity://project/info"
@@ -42,6 +44,8 @@ GRAPH_ROUTES = {GRAPH, GRAPH_RESOURCE, "inspect_shader_graph"}
 SAVED_FILE = "shell.read_saved_graph"
 ACTIVE_SCENE = {"scene_inspect.get_active", "manage_scene.get_active"}
 ROUTES = {
+    actions.CAMERA_TASK: actions.CAMERA_ROUTES,
+    actions.UI_TASK: actions.UI_ROUTES,
     "editor": {EDITOR_STATE, choices.STATE, *ACTIVE_SCENE},
     "compile-current": {EDITOR_STATE, choices.STATE},
     "active-scene": {EDITOR_STATE, choices.STATE, *ACTIVE_SCENE},
@@ -174,6 +178,8 @@ def decision(
     if any(args.get(key) for key in ("allow_custom_filters", "evaluate_getters", "include_values")):
         return "blocked"
     allowed = choices.permitted(route, args, fixture or {})
+    if endpoint and route in actions.CAMERA_ROUTES | actions.UI_ROUTES:
+        return "blocked"
     if allowed is not None:
         return "unity" if allowed else "blocked"
     if route in GRAPH_ROUTES:
@@ -252,6 +258,12 @@ def positive_size(value: Any) -> list[int] | None:
 
 def observation(route: str, data: dict[str, Any], fixture=None) -> dict[str, Any]:
     """Retain the documented evidence fields for the scored read operations."""
+    if route in actions.CAMERA_ROUTES:
+        return actions.camera_facts(data)
+    if route in actions.UI_ROUTES:
+        if not fixture or fixture.get("ui_asset") != data.get("path"):
+            return {}
+        return actions.ui_facts(data.get("contents"))
     if route in SEARCH_ROUTES:
         from tools.experiments.blind_tool_diagnostics import search_receipt
 
@@ -355,6 +367,8 @@ def observation(route: str, data: dict[str, Any], fixture=None) -> dict[str, Any
             "data_state": "saved",
         }
     if route in {EDITOR_STATE, choices.STATE}:
+        if not data:
+            return {}
         if (
             fixture
             and fixture.get("task") in ("active-scene", "compile-current")
@@ -422,7 +436,9 @@ def relay_stdio(
         assert bridge.stdin is not None and bridge.stdout is not None
 
         def record(**fields: Any) -> None:
-            audit.write(json.dumps(fields, ensure_ascii=True) + "\n")
+            audit.write(
+                json.dumps({**fields, "observed_ns": monotonic_ns()}, ensure_ascii=True) + "\n"
+            )
             audit.flush()
 
         def send_to_host(payload: bytes) -> None:
@@ -736,11 +752,25 @@ def client_trace(
                         command,
                         string(item.get("aggregated_output")),
                         item.get("exit_code"),
-                        asset,
+                        (fixture or {}).get("ui_asset") or asset,
                         project,
                         item.get("cwd"),
                     )
                     call.shell_purpose = string(receipt.get("purpose")) or "unknown"
+                    ui = (fixture or {}).get("ui_asset")
+                    if (
+                        ui
+                        and call.shell_purpose == "named_asset_read"
+                        and receipt.get("asset_digest") == sha256(ui.encode()).hexdigest()
+                    ):
+                        call.route = actions.SAVED_UI
+                        if event.get("type") == "item.completed":
+                            trace.shell_calls += 1
+                            call.status = "returned" if item.get("exit_code") == 0 else "error"
+                            if call.status == "returned" and receipt.get("facts"):
+                                call.evidence = receipt["facts"]
+                                trace.saved_observations.append(call.evidence)
+                        continue
                     bound = bool(
                         asset and receipt.get("asset_digest") == sha256(asset.encode()).hexdigest()
                     )
@@ -911,7 +941,7 @@ def evidence_grade(task: str, calls: list[Call]) -> str:
             elif call.route in ACTIVE_SCENE:
                 scene = bool(call.evidence.get("active_scene"))
         return "complete" if fresh and scene else "partial"
-    if task in choices.TASKS:
+    if task in choices.TASKS or task in actions.FIELDS:
         from tools.experiments.blind_tool_answers import expected_facts, FIELDS
 
         facts, _ = expected_facts(
@@ -1088,6 +1118,8 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     task_evidence = attributed
     if task == "graph-saved" and host.saved_reads:
         task_evidence = "complete" if role == "confirmed" else "unattributed"
+    elif task == actions.UI_TASK and host.saved_observations:
+        task_evidence = "complete" if role == "confirmed" else "unattributed"
     elif task == "graph-saved" and host.saved_observations and task_evidence == "none":
         task_evidence = "partial" if role == "confirmed" else "unattributed"
     discovery_sources = [
@@ -1112,6 +1144,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         for call in business
         if (task != "graph-open" and call.channel == "unity" and call.route in routes)
         or (task == "graph-saved" and call.route == SAVED_FILE)
+        or (task == actions.UI_TASK and call.route == actions.SAVED_UI)
     ]
     first_suitable = next(iter(sequence), None)
     first_success = next(
@@ -1284,7 +1317,9 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         "shell_calls_visible_to_host": host.shell_calls,
         "saved_graph_file_reads_visible_to_host": host.saved_reads,
         "saved_graph_evidence": (
-            "observed"
+            "none"
+            if task == actions.UI_TASK
+            else "observed"
             if host.saved_reads and role == "confirmed"
             else "unattributed"
             if host.saved_reads

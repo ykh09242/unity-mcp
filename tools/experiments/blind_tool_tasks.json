@@ -1,4 +1,20 @@
 {
+  "camera-depth": {
+    "en": "Of the Unity cameras in the scene currently open in this project's editor, which one has the greatest depth, and what is its value?",
+    "ko": "지금 열려 있는 프로젝트의 씬에서 Unity 카메라들을 비교해 주세요. 깊이 값이 가장 큰 카메라의 이름과 그 값은 무엇인가요?",
+    "ja": "このプロジェクトで現在開いているシーンでは、Unity カメラのうち深度が最も大きいものの名前と、その深度の値は何ですか。",
+    "es": "Entre las cámaras de Unity de la escena abierta ahora en este proyecto, ¿cuál tiene la mayor profundidad y cuál es su valor?",
+    "ar": "بين كاميرات Unity في المشهد المفتوح الآن في محرر هذا المشروع، ما اسم الكاميرا ذات أكبر قيمة للعمق وما هذه القيمة؟",
+    "tr": "Projenin düzenleyicisinde şu anda açık olan sahnedeki Unity kameralarından hangisinin derinliği en büyük ve değeri kaç?"
+  },
+  "saved-ui-controls": {
+    "en": "In the saved interface markup at {ui_asset}, how many Button and TextField elements are written directly in the document? Count the two kinds separately.",
+    "ko": "저장된 {ui_asset} 문서에 직접 작성된 Button과 TextField 요소가 각각 몇 개인지 알려 주세요.",
+    "ja": "保存されている {ui_asset} の中に、Button と TextField はそれぞれいくつ直接記述されていますか。",
+    "es": "¿Cuántos elementos Button y cuántos TextField aparecen escritos directamente en el documento guardado {ui_asset}?",
+    "ar": "كم عنصرًا من نوع Button وكم عنصرًا من نوع TextField ورد مباشرة في المستند المحفوظ {ui_asset}؟",
+    "tr": "Kaydedilmiş {ui_asset} belgesinin doğrudan içinde kaç Button ve kaç TextField öğesi yazılmış?"
+  },
   "observation_scope": {
     "en": "Limit data access to relevant observations in this project’s open Editor and to the named asset, if any. Leave unrelated files and service data untouched.",
     "ko": "자료 조회는 이 프로젝트에 열린 에디터의 관련 상태와 요청에서 지정한 에셋으로 한정해 주세요. 그 밖의 파일이나 서비스 데이터는 열지 마세요.",

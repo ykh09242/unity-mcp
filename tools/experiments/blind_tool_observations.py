@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import sys
 
+from tools.experiments import blind_tool_actions as actions
+
 
 STUDY = "observation-choices"
 TASKS = ("compile-current", "active-scene", "compile-outcome", "pointer-order")
@@ -73,6 +75,10 @@ def fixture_availability(fixture, state):
 
 
 def observation_fixture(args, task):
+    if task == actions.UI_TASK:
+        return {"task": task, "ui_asset": getattr(args, "ui_asset", None)}
+    if task == actions.CAMERA_TASK:
+        return {"task": task}
     if task == "compile-outcome":
         return {"task": task, "compile_id": getattr(args, "existing_compile_id", None)}
     if task == "pointer-order":
@@ -96,6 +102,9 @@ def missing_fixture(fixture):
 
 def permitted(route, args, fixture):
     """Return a decision only for routes whose read scope depends on the selected task."""
+    action = actions.permitted(route, args, fixture)
+    if action is not None:
+        return action
     if route == JOB:
         job = fixture.get("compile_id")
         return bool(

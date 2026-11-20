@@ -36,6 +36,17 @@ def shell_purpose(command, asset="", project="", cwd=None):
     name = tokens[0].casefold()
     if name not in {"cat", "get-content"}:
         return "unknown"
+    if name == "get-content":
+        encoding = [i for i, token in enumerate(tokens) if token.casefold() == "-encoding"]
+        if encoding:
+            index = encoding[0]
+            if (
+                len(encoding) != 1
+                or index + 1 == len(tokens)
+                or tokens[index + 1].casefold() != "utf8"
+            ):
+                return "unknown"
+            tokens = tokens[:index] + tokens[index + 2 :]
     options = {arg.casefold() for arg in tokens[1:] if arg.startswith("-")}
     allowed = {"-raw", "-path", "-literalpath"} if name == "get-content" else {"--"}
     if not options <= allowed or {"-path", "-literalpath"} <= options:
@@ -73,7 +84,12 @@ def shell_receipt(command, output, exit_code, asset, project="", cwd=None):
     if purpose == "named_asset_read":
         receipt["asset_digest"] = sha256(asset.encode()).hexdigest()
     if purpose == "named_asset_read" and exit_code == 0 and isinstance(output, str):
-        facts = saved_graph_facts(output[:2_000_000], allow_partial=True)
+        if asset.lower().endswith(".uxml"):
+            from tools.experiments.blind_tool_actions import ui_facts
+
+            facts = ui_facts(output)
+        else:
+            facts = saved_graph_facts(output[:2_000_000], allow_partial=True)
         if facts:
             receipt["facts"] = facts
     return receipt

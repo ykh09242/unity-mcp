@@ -6,12 +6,15 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
+from tools.experiments import blind_tool_actions as actions
+
 GAME_VIEW = "manage_editor.get_game_view_size"
 GAME_VIEW_RESOURCE = "mcpforunity://editor/game-view-size"
 SIZE_ROUTES = {GAME_VIEW, GAME_VIEW_RESOURCE, "get_game_view_size"}
 RAYCAST = "manage_ugui.diagnose_raycast"
 
 FIELDS = {
+    **actions.FIELDS,
     "game-view": ("width", "height", "preset"),
     "graph": ("data_state", "nodes", "edges", "node_types"),
     "graph-saved": ("data_state", "nodes", "edges", "node_types"),
@@ -91,6 +94,15 @@ def expected_facts(task: str, wire: list[dict], saved: list[dict]) -> tuple[dict
     """Only derive claims that the specific observation established."""
     expected = {}
     sources = {"editor"} if wire else set()
+    if task in actions.FIELDS:
+        fields = actions.FIELDS[task]
+        file_rows = saved if task == actions.UI_TASK else []
+        if file_rows:
+            sources.add("file")
+        for row in [*wire, *file_rows]:
+            if all(key in row for key in fields):
+                expected = {key: row[key] for key in fields}
+        return expected, sources
     if task.startswith("graph"):
         if saved and task != "graph":
             sources.add("file")
@@ -156,6 +168,8 @@ def expected_facts(task: str, wire: list[dict], saved: list[dict]) -> tuple[dict
 
 
 def matches(key: str, answer: object, expected: object) -> bool:
+    if key == "depth":
+        return type(answer) in (int, float) and answer == expected
     if key == "node_types":
         return (
             isinstance(answer, list)
@@ -273,7 +287,9 @@ def final_answer(
         checks["channel"] = (
             "match" if isinstance(channel, str) and channel in sources else "unverified"
         )
-        origin = "asset_file" if task.startswith("graph") else "editor_live"
+        origin = (
+            "asset_file" if task.startswith("graph") or task == actions.UI_TASK else "editor_live"
+        )
         if sources and answer["source"] is not None:
             checks["source"] = "match" if answer["source"] == origin else "mismatch"
         elif answer["source"] is None and all(answer[field] is None for field in fields):

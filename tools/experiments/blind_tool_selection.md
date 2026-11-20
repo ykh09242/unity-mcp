@@ -72,6 +72,21 @@ are used by the CI test.
 
 ## Compare two conditions
 
+Two additional tasks exercise action choice on a fixed scene and a saved interface.
+`camera-depth` asks for the Unity camera with the greatest depth and its numeric value.
+Its trusted relay can admit the scene camera inventory resource and the exact
+`list_cameras` operation. Use a fixture with a unique maximum.
+`saved-ui-controls` requires `--ui-asset Assets/Example/Menu.uxml`. It counts authored
+Unity UI Toolkit Button and TextField elements in the named saved document. A verified
+literal read of the complete file and a successful exact-path UI source read can both
+establish the counts. The trusted relay must bind the project and reject other paths,
+arguments, operations, imports and edits. Probe the observation routes in each arm
+before delivery. Include unavailable advertised routes and unattributed answers in the
+report. Direct-file and editor-channel claims are distinguishable in V3.
+Current wire records include a monotonic observation timestamp (`observed_ns`) for
+the request and reply. Prepared pairs record `prompt_ns` on the same machine. Older
+records can establish call order even where wall-time-to-evidence is unavailable.
+
 Pin each relay to its respective server revision and use the same Editor and
 policy for both arms. A trusted read-only Python state probe receives the
 absolute project directory as its only argument. Before each case it should
