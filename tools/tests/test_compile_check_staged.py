@@ -44,7 +44,7 @@ def test_unity7_compiles_bundled_ui_before_all_consumers_without_template_cache(
     # When all target defines compile, uGUI must come from sources before any consumer.
     for platform in ("win", "osx"):
         (harness.output / platform).mkdir()
-    result = harness.run("7000.0.0a7", "win osx linux", test_project=project, framework=framework)
+    result = harness.run("7000.0.0a20", "win osx linux", test_project=project, framework=framework)
     assert result.returncode == 0, result.stdout + result.stderr
     # Then every platform compiles both UI assemblies and all nine previous assemblies.
     calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
@@ -54,6 +54,7 @@ def test_unity7_compiles_bundled_ui_before_all_consumers_without_template_cache(
             rsp = (harness.output / platform / f"{name}.rsp").read_text(encoding="utf-8")
             assert "/UGUI/Fixture.cs" in rsp
             assert ("-define:PACKAGE_UITOOLKIT" in rsp) == (name == "UnityEngine.UI")
+            assert '/Managed/UnityEngine/UnityEngine.TypeRegistryModule.dll"' in rsp
         editor = (harness.output / platform / "MCPForUnity.Editor.rsp").read_text(encoding="utf-8")
         assert f'/{platform}/UnityEditor.UI.dll"' in editor
         assert f'/{platform}/UnityEngine.UI.dll"' in editor
