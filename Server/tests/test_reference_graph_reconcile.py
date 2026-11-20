@@ -2980,7 +2980,12 @@ async def test_yaml_stop_interrupts_work_and_releases_lease(setup, monkeypatch, 
         (11, 12, False),
         (11, 13, False),
         (12, 13, False),
-        (12, 14, True),
+        (12, 14, False),
+        (13, 14, False),
+        (14, 15, False),
+        (7, 15, False),
+        (6, 15, True),
+        (12, 16, True),
     ],
 )
 async def test_analysis_version_upgrade_scopes_only_known_migration(

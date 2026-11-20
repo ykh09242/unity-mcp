@@ -243,9 +243,10 @@ class GraphWorkspace:
             previous = self._state(connection, "analysis_version")
             if previous == version:
                 return
-            if previous in (7, 8, 9, 10, 11, 12) and previous < version <= 13:
-                # These releases change C# and external analysis. Failed YAML scans
-                # were never published and remain in the retry queue.
+            if previous in range(7, 15) and previous < version <= 15:
+                # These upgrades preserve published YAML GUID/fileID observations.
+                # Failed YAML scans remain queued. External catalog-key analysis
+                # uses a versioned signature; reparse C# for changed bindings.
                 connection.execute(
                     "UPDATE graph_assets SET dirty=1 WHERE json_extract(payload,'$.source_format')='csharp'"
                 )
