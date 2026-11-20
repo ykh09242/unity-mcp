@@ -83,6 +83,9 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                     BuildRunner.ReserveNative(owner);
                 var scenario = (ErrorResponse)PlayScenarioService.Start("missing-unadmitted-scenario", 1, 30, owner);
                 Assert.AreEqual("native_job_active", scenario.Error);
+                var refusal = (JObject)scenario.Data;
+                Assert.AreEqual(false, (bool?)refusal["scenario_job_created"]);
+                Assert.AreEqual(owner, (string)refusal["requested_job_id"]);
                 var suite = (ErrorResponse)
                     PlayScenarioSuiteService.Handle(
                         new JObject

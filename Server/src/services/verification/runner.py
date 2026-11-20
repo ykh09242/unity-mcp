@@ -397,13 +397,14 @@ class VerificationRunner:
         self.publish()
         response = await self.io.native("run_tests", parameters, deadline)
         data = response.get("data") or {}
-        child["job_id"] = data.get("job_id")
+        # A negative response may identify someone else's busy job. Never poll or cancel it.
+        child["job_id"] = data.get("job_id") if response.get("success") is True else None
         if response.get("success") is not True or not child["job_id"]:
             # Older handlers have one exact error emitted only before StartJob.
             # Their generic busy response could also come from a later exception.
             refused = (
                 response.get("success") is False
-                and child["job_id"] is None
+                and data.get("job_id") is None
                 and isinstance(response.get("error"), str)
                 and (
                     data.get("test_job_created") is False

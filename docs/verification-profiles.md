@@ -154,10 +154,44 @@ Each run starts a fresh Player job after verifying its source, payload, build ID
 and scenario. Reports retain the job ID and artifact directory containing the
 native final report, owned process exit evidence and Player log. Passing requires
 the selected scenario and every configured required observation to pass.
-The report lists the observed native job in `executed_checks` and other selected
-test, scenario and broader profile IDs in `additional_checks_outstanding`.
+By default, the report lists the observed native job in `executed_checks` and
+other selected IDs in `additional_checks_outstanding`.
 Read `data.state` for the verdict. Observing a failed scenario is a successful
 report retrieval.
+
+Set `execute_selected_checks=true` on candidate preparation or direct run to
+execute the change mappings in the selected Editor after the standalone Player.
+The prepared run retains this choice. A mapped scenario that already ran in the
+Player uses that job's result. Other saved scenarios run once by project name and
+may enter Play Mode or load their declared scenes. Each mapped test uses its
+Unity Test Framework test name, a fresh-source admission and an owned console
+interval. Set `selected_test_mode` to `EditMode` (default) or `PlayMode` for those
+tests. A configured broader profile uses its frozen project settings and the
+candidate's registered C# inputs. An unresolved profile, missing input, history
+that differs from the live Editor, or unavailable coverage leaves the check
+incomplete. Each native operation requires its own permission.
+
+`selected_check_results` retains each check's kind, ID, state, native job ID
+when available, and evidence. Tests report their counts and profiles include
+the states of their stages and child job IDs. Scenario evidence identifies the
+execution environment and native outcome. A failed or unavailable check leaves
+later checks eligible while native ownership is settled. Uncertain dispatch
+retains its child record, blocks further Editor mutations and remains observable
+through the same run's status. Passing requires all selected checks and their
+selection coverage to pass. Reuse the preparation handle to observe the same
+execution.
+
+For executed selections, `evidence.definition_hash` matches the digest on the
+execution record and on native children tagged with the same `check_kind` and
+`check_id`. For tests and profiles, this is SHA-256 of the UTF-8 JSON object
+with keys `profile` (all resolved settings) and `selection` (the effective
+selectors or source paths), with sorted keys, literal Unicode and no whitespace.
+Scenarios use the native reproduction definition hash. The separate
+`evidence.candidate_source_revision` identifies the candidate inputs used for
+that run, so the same definition can be compared across source revisions.
+An individual test's `evidence.test_result` records the job ID, full NUnit name
+and native case state only when a complete one-case result page matches the
+selected name and counts. `test_result_gap` marks a missing exact-case witness.
 
 The default `source_mode="current"` requires live inputs to match the build.
 Choose `"frozen"` to replay a historical build after later edits. The report
@@ -165,3 +199,10 @@ records whether live bytes match. A subsequent edit to selected inputs during
 either run invalidates the comparison. A requested missing baseline leaves the
 comparison incomplete. Source observations are sampled at the preparation and
 execution boundaries.
+
+## Prepare inputs and compare runs
+
+- Start with a reviewable Git diff using [`verification-candidate draft`](verification-candidate-draft.md). For large inventories, [capture and assemble input chunks](verification-input-chunks.md).
+- To use a build on another machine, [export its proof and verify the receiving machine's files](verification-candidate-portability.md).
+- To classify a change or locate an earlier failing build, [compare retained verification and Player reports](development/verification-change-evidence.md).
+- For repeated Player trials, [vary the seed and timing or reduce a failing scenario](play-scenario-regressions.md). [Phase diagnostics](phase-diagnostics.md) describes the accompanying timing evidence.

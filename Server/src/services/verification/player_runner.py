@@ -19,6 +19,7 @@ from services.verification.loader_observations import import_player_loader_captu
 from services.verification.player_candidate import prepare_candidate
 from services.verification.reports import final_verdict
 from services.verification.runner import VerificationCanceled, VerificationRunner
+from services.verification.selected_checks import SelectedChecks
 
 
 def _resource_key(path):
@@ -109,7 +110,7 @@ def _state_result(directory, check):
 
 
 class PlayerVerificationRunner(VerificationRunner):
-    def __init__(self, io, profile, selection, prepared):
+    def __init__(self, io, profile, selection, prepared, broader_profile=None):
         super().__init__(io, profile, selection)
         self.prepared = prepared
         self.player_job_id = None
@@ -129,6 +130,11 @@ class PlayerVerificationRunner(VerificationRunner):
             if (check["kind"], check["id"]) != ("scenario", prepared.candidate.scenario)
         ]
         self.deadline = monotonic() + 180
+        self.selected = (
+            SelectedChecks(self, selected, broader_profile)
+            if selection.get("execute_selected_checks")
+            else None
+        )
 
     async def current(self):
         fresh = await asyncio.to_thread(
@@ -156,6 +162,8 @@ class PlayerVerificationRunner(VerificationRunner):
                 )
             else:
                 await self.execute_candidate()
+                if self.selected is not None:
+                    await self.selected.run()
                 await self.check()
                 self.stage(
                     "final_source", "passed" if await self.current() else self.source_check_state
@@ -164,6 +172,8 @@ class PlayerVerificationRunner(VerificationRunner):
             self.stage("cancellation", "canceled")
         except (OSError, ValueError, RuntimeError, TimeoutError) as error:
             self.stage("interruption", "incomplete", {"reason": str(error)[:256]})
+        if self.selected is not None:
+            self.selected.finish()
         self.report.update(
             state="canceled" if self.cancel_requested else final_verdict(self.report["stages"]),
             finished_at_unix_ms=int(time() * 1000),
@@ -215,9 +225,19 @@ class PlayerVerificationRunner(VerificationRunner):
             raise
         child["settled"] = True
         raw = outcome.report
-        self.report["executed_checks"].append(
-            {"kind": "scenario", "id": manifest.scenario, "job_id": job_id, "status": raw["status"]}
-        )
+        execution = {
+            "kind": "scenario",
+            "id": manifest.scenario,
+            "job_id": job_id,
+            "status": raw["status"],
+        }
+        if self.selected is not None:
+            definition_hash = raw["reproduction"]["definition_hash"]
+            child.update(
+                check_kind="scenario", check_id=manifest.scenario, definition_hash=definition_hash
+            )
+            execution["definition_hash"] = definition_hash
+        self.report["executed_checks"].append(execution)
         expected = {
             "job_id": job_id,
             "build_id": manifest.build_id,
@@ -261,10 +281,17 @@ class PlayerVerificationRunner(VerificationRunner):
                 "artifacts": str(outcome.directory),
             },
         )
-        if manifest.state_check:
-            state, evidence = await asyncio.to_thread(
-                _state_result, outcome.directory, manifest.state_check
+        if self.selected is not None:
+            self.selected.standalone_result(
+                player_state, job_id, raw["status"], execution["definition_hash"]
             )
+        if manifest.state_check:
+            try:
+                state, evidence = await asyncio.to_thread(
+                    _state_result, outcome.directory, manifest.state_check
+                )
+            except (OSError, ValueError) as error:
+                state, evidence = "incomplete", {"reason": str(error)[:256]}
             self.stage("observed_state", state, evidence)
 
     def player_settled(self, job_id):

@@ -57,6 +57,7 @@ class VerificationIO:
         self.generation = target.scope.generation
         self.on_refresh = lambda _parameters: None
         self.impact_requested = False
+        self.before_test_send = lambda: None
 
     async def target(self, deadline=None):
         target = await capture_target(
@@ -97,12 +98,27 @@ class VerificationIO:
         for name, params in profile_operations(profile, include_impact=self.impact_requested):
             await self.authorize(name, params)
 
-    async def native(self, command, params, deadline):
-        if monotonic() >= deadline:
-            raise TimeoutError()
-        target = await asyncio.wait_for(
-            self.authorize(command, params, deadline), max(0, deadline - monotonic())
-        )
+    async def native(self, command, params, deadline, *, before_send=None):
+        try:
+            if monotonic() >= deadline:
+                raise TimeoutError()
+            target = await asyncio.wait_for(
+                self.authorize(command, params, deadline), max(0, deadline - monotonic())
+            )
+            if not target.is_current():
+                raise ConnectionError("verification_target_unavailable")
+            if command == "run_tests":
+                self.before_test_send()
+        except (OSError, ValueError, RuntimeError) as error:
+            if command != "run_tests":
+                raise
+            return {
+                "success": False,
+                "error": str(error)[:256] or "test_admission_deadline",
+                "data": {"test_job_created": False},
+            }
+        if before_send is not None:
+            before_send()
         response = await asyncio.wait_for(
             send_with_unity_instance(
                 async_send_command_with_retry,
@@ -317,9 +333,18 @@ class VerificationService:
                 "selection": selection,
                 "installation": installation,
                 "player_candidate": candidate,
+                "broader_profile": (
+                    profiles.get(candidate.candidate.broader_check)
+                    if candidate and parsed["execute_selected_checks"]
+                    else None
+                ),
                 "profile": profile,
                 "profile_id": profile_id,
-                "profile_hash": None if candidate else data.get("byte_hash"),
+                "profile_hash": data.get("byte_hash")
+                if not candidate
+                or parsed.get("execute_selected_checks")
+                and candidate.candidate.broader_check in profiles
+                else None,
                 "baseline_id": baseline_id,
                 "ready": not parsed.get("capture_baseline"),
                 "state": "pending",
@@ -363,6 +388,7 @@ class VerificationService:
                         lease,
                         baseline_id=preparation["baseline_id"],
                         player_candidate=preparation["player_candidate"],
+                        broader_profile=preparation["broader_profile"],
                         metadata={
                             "preparation_id": preparation["preparation_id"],
                             "profile_id": preparation["profile_id"],
@@ -381,6 +407,8 @@ class VerificationService:
         runner = self.runners.get(identity)
         if action == "cancel" and runner is not None:
             runner.cancel_requested = True
+            if isinstance(runner, PlayerVerificationRunner) and runner.selected is not None:
+                runner.selected.cancel()
             report = self.store.read(identity, owner)
             report["cancel_requested"] = True
             self.store.update(identity, owner, report)
@@ -407,6 +435,7 @@ class VerificationService:
         expected_sources=None,
         metadata=None,
         player_candidate=None,
+        broader_profile=None,
     ):
         if player_candidate is None:
             await io.authorize_profile(profile)
@@ -418,8 +447,12 @@ class VerificationService:
             if config.http_remote_hosted:
                 raise ValueError("verification_local_operator_required")
             await io.authorize("manage_play_scenario", {"action": "run"})
-            runner = PlayerVerificationRunner(io, profile, selection, player_candidate)
-            permissions = ["read", "run"]
+            runner = PlayerVerificationRunner(
+                io, profile, selection, player_candidate, broader_profile
+            )
+            permissions = sorted(
+                {"read", "run"} | (runner.selected.permissions if runner.selected else set())
+            )
         owner = io.owner
         run_id = self.store.create(owner, runner.report)
         runner.report.update(
@@ -533,6 +566,8 @@ class VerificationService:
                     child["settled"] = await asyncio.to_thread(
                         runner.player_settled, child["job_id"]
                     )
+                elif child["kind"] == "editor_scenario":
+                    await runner.selected.observe_scenario(child, deadline, cancel=cancel)
                 elif child["kind"] == "compile":
                     from services.tools.get_compile_job import CompileCoordination
 
@@ -549,7 +584,7 @@ class VerificationService:
                         and data.get("state") == "finished"
                         and witness.phase == "finished"
                     )
-            except (TimeoutError, ConnectionError, ValueError):
+            except (TimeoutError, ConnectionError, PermissionError, ValueError):
                 pass
         runner.publish()
 
@@ -581,4 +616,6 @@ class VerificationService:
             view["profile"] = preparation["profile"].model_dump()
         else:
             view["comparison"] = preparation["player_candidate"].comparison()
+            if preparation.get("broader_profile") is not None:
+                view["broader_profile"] = preparation["broader_profile"]
         return view

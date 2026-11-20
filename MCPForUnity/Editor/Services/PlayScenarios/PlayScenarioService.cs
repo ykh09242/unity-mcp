@@ -158,13 +158,34 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 }
             }
             string suiteChildId = frozen == null ? null : jobId;
+            ErrorResponse RefusedBeforeStart(string reason, object details = null)
+            {
+                var evidence = details == null ? new JObject() : JObject.FromObject(details);
+                evidence["scenario_job_created"] = false;
+                evidence["requested_job_id"] = jobId;
+                return new ErrorResponse(reason, evidence);
+            }
             if (PlayScenarioSuiteService.HasForeignNativeOwner(suiteChildId) || IsBusy)
-                return new ErrorResponse("play_scenario_busy", new { job_id = _engine?.State.JobId });
+                return RefusedBeforeStart("play_scenario_busy", new { job_id = _engine?.State.JobId });
             if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode)
-                return new ErrorResponse("Wait for the editor to finish compiling, importing or changing Play Mode.");
+                return RefusedBeforeStart("Wait for the editor to finish compiling, importing or changing Play Mode.");
             if (NativeOperationBarriers.TryGetScenarioBlocker(null, suiteChildId, out var blocker))
-                return new ErrorResponse(blocker.Reason, blocker.Recovery);
-            PlayScenarioDefinition definition = frozen ?? PlayScenarioParameters.Materialize(Store.Get(name), dataset);
+                return RefusedBeforeStart(blocker.Reason, blocker.Recovery);
+            PlayScenarioDefinition definition;
+            try
+            {
+                definition = frozen ?? PlayScenarioParameters.Materialize(Store.Get(name), dataset);
+            }
+            catch (Exception exception)
+                when (exception is ArgumentException
+                    || exception is IOException
+                    || exception is UnauthorizedAccessException
+                    || exception is InvalidOperationException
+                    || exception is JsonException
+                )
+            {
+                return RefusedBeforeStart(exception.Message);
+            }
             var state = PlayScenarioEngine.Create(definition, jobId ?? Guid.NewGuid().ToString("N"), repeatCount, timeoutSeconds, Now);
             state.RequestedName = name;
             state.RequestedDataset = dataset;

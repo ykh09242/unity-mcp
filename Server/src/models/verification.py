@@ -84,6 +84,8 @@ class CandidateSelection(QualityOptions):
     candidate_id: ScenarioName
     baseline_candidate_id: ScenarioName | None = None
     source_mode: Literal["current", "frozen"] = "current"
+    execute_selected_checks: bool = False
+    selected_test_mode: Literal["EditMode", "PlayMode"] = "EditMode"
 
 
 class CandidateDirectRun(CandidateSelection):
