@@ -43,17 +43,19 @@ jobs:
         run: uv sync --project Server --python 3.14 --locked --extra dev
       - name: Run offline Git and generated graph controls
         id: fixtures
+        # Match the server suite's working directory for imports from tests.*.
+        working-directory: Server
         env:
           # Keep generated Git fixtures content-addressable across reruns.
           GIT_AUTHOR_DATE: '2026-10-20T00:00:00Z'
           GIT_COMMITTER_DATE: '2026-10-20T00:00:00Z'
         run: |
-          uv run --project Server --no-sync python -m pytest -q -o junit_family=xunit1 \
+          uv run --no-sync python -m pytest -q -o junit_family=xunit1 \
             --junitxml "$RUNNER_TEMP/change-review-evidence/pytest-junit.xml" \
-            Server/tests/test_verification_dependency_scan.py \
-            Server/tests/test_verification_git_merge.py \
-            Server/tests/test_verification_checkout_diagnostics.py \
-            Server/tests/test_verification_pr_replay.py
+            tests/test_verification_dependency_scan.py \
+            tests/test_verification_git_merge.py \
+            tests/test_verification_checkout_diagnostics.py \
+            tests/test_verification_pr_replay.py
       - name: Run installed historical replay and summarize observations
         if: always() && steps.install.outcome == 'success'
         env:
