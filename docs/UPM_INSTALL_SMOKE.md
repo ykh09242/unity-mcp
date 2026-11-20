@@ -3,7 +3,7 @@
 `unity-upm-install.yml` owns the reusable `untouchedUpmInstall` job, called by
 `unity-tests.yml` and exact release qualification. It runs for the `floor` and
 `current` roles in `tools/unity-versions.json`. Those roles currently select Unity **2021.3.45f2** and
-**6000.6.4f1**. The selector fails if either role is missing or ambiguous; the
+**6000.6.10f1**. The selector fails if either role is missing or ambiguous; the
 workflow does not maintain a second set of Editor pins.
 
 The job creates a fresh project and copies `MCPForUnity` without changing any

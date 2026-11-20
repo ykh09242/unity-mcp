@@ -1,15 +1,16 @@
 {
-  "$comment": "Pinned Unity CI channels, stable images verified 2026-10-04 against official release metadata and public GameCI tags; Unity 6000.6/6000.7 streams and Unity 7 alpha metadata verified 2026-10-08. Both CI workflows use every row and validate test-capable Linux images. Stable images include immutable digests; previews use official archives with publisher integrity metadata and the pinned GameCI base. No local project or published package version is changed.",
+  "$comment": "Pinned Unity CI channels verified 2026-11-20 against official release metadata and public GameCI tags. Both CI workflows use every row and validate test-capable Linux images. Stable images include immutable digests; previews use official archives with publisher integrity metadata and the pinned GameCI base.",
   "$sources": [
     "https://services.api.unity.com/unity/editor/release/v1/releases",
     "https://unity.com/releases/editor/whats-new/2022.3.76f1",
+    "https://unity.com/releases/editor/whats-new/6000.0.86f1",
     "https://hub.docker.com/v2/repositories/unityci/editor/tags/",
-    "https://hub.docker.com/v2/repositories/unityci/base/tags/ubuntu-3.2.2"
+    "https://hub.docker.com/v2/repositories/unityci/base/tags/ubuntu-4.0.0"
   ],
   "$coverage": "The support floor, older/current LTS streams, current supported release, beta and alpha are distinct required CI rows. Unity 6000.5/6/7 conditional branches are included. Compilation does not replace licensed Editor tests, whose license gate remains explicit.",
-  "defaultVersion": "6000.3.25f1",
+  "defaultVersion": "6000.3.29f1",
   "$defaultVersionComment": "Latest verified LTS, used only by local tools needing a default. CI uses the full matrix; the floor row separately preserves the Unity 2021.3 minimum fixture.",
-  "previewBaseImage": "unityci/base:ubuntu-3.2.2@sha256:076fe28aa9863a2466c69d4dce5af51e25988b31e4d9ed110f4025f6fd2f98d3",
+  "previewBaseImage": "unityci/base:ubuntu-4.0.0@sha256:a2deac33478f0dcaec3d768aca4f0babcac47a67fa1be918e3848bcaee3a72d0",
   "versions": [
     {
       "id": "2021.3.45f2",
@@ -28,82 +29,82 @@
       "notes": "Unity 2022 LTS, verified on its official release page and GameCI despite omission from the release API. Exercises the 2022 API branches without Unity 2023/6 symbols."
     },
     {
-      "id": "6000.0.84f1",
+      "id": "6000.0.86f1",
       "role": "lts",
       "channel": "lts",
-      "image": "unityci/editor:ubuntu-6000.0.84f1-base-3@sha256:fc9cf7a866dfba31f03d52f646f254181e12f6a12d0d55c44479a07753a49b83",
-      "testImage": "unityci/editor:ubuntu-6000.0.84f1-linux-il2cpp-3@sha256:45b5ac77eb4e89b81242d38e2517ccc6789361fd715448fd5469113490c29849",
+      "image": "unityci/editor:ubuntu-6000.0.86f1-base-4@sha256:a5a59b030deb0786c29c2ae413ada91253120c014185bee4082151c8633bd4eb",
+      "testImage": "unityci/editor:ubuntu-6000.0.86f1-linux-il2cpp-4@sha256:c93dc4b71c21dd12e8d8c2f01b22a34a6f11563e7b889f6184c3cbc1a30ac4a0",
       "notes": "Unity 6.0 LTS compatibility, before the newer Unity 6 API branches."
     },
     {
-      "id": "6000.3.25f1",
+      "id": "6000.3.29f1",
       "role": "lts",
       "channel": "lts",
-      "image": "unityci/editor:ubuntu-6000.3.25f1-base-3@sha256:a891be4f323e8e79a7d2406b2b3490867e76fe6367e3da51a27f57bae4c6c399",
-      "testImage": "unityci/editor:ubuntu-6000.3.25f1-linux-il2cpp-3@sha256:9b7a47cee53fd3ab0c304150590d81e86c5b52bb6a3bbc0c672b93320917e6e0",
+      "image": "unityci/editor:ubuntu-6000.3.29f1-base-4@sha256:41e91f1929220bfe7eec1518c4ba22b749216ddc0bc33006141640945ad5a091",
+      "testImage": "unityci/editor:ubuntu-6000.3.29f1-linux-il2cpp-4@sha256:9f1cecd5bac4955652cd1752efdec297de014ab3a88096a5986dad14ddf4fbaf",
       "notes": "Latest verified LTS, including the Unity 6000.3 API branches."
     },
     {
-      "id": "6000.6.4f1",
+      "id": "6000.6.10f1",
       "role": "current",
       "channel": "supported",
-      "image": "unityci/editor:ubuntu-6000.6.4f1-base-3@sha256:687f3d43fc6c1be086ad397168f13e1d092d4adabe05ef31c3c6fc6be07eb510",
-      "testImage": "unityci/editor:ubuntu-6000.6.4f1-linux-il2cpp-3@sha256:7387107290732f4899327ae57aedf51f05b577fd8efe9857b6664f8580b5a099",
+      "image": "unityci/editor:ubuntu-6000.6.10f1-base-4@sha256:b298e645b9982ee48dbcb90b77f900e82afd7eb59daf9512ed5a5220ee6911d5",
+      "testImage": "unityci/editor:ubuntu-6000.6.10f1-linux-il2cpp-4@sha256:38418c1fa02c74d2bed989415d1dac0e427893b0abd041c9ac57349e882d41f9",
       "notes": "Current supported non-LTS release; exercises EntityId and Unity 6000.5/6 compatibility paths."
     },
     {
-      "id": "6000.7.0b3",
+      "id": "6000.7.0b10",
       "role": "beta",
       "channel": "beta",
       "editorDownload": {
-        "url": "https://download.unity3d.com/download_unity/ad717268ad45/LinuxEditorInstaller/Unity-6000.7.0b3.tar.xz",
-        "integrity": "md5-oL8yxcRSwsvDclyu+AIyOQ==",
-        "size": 4080561148
+        "url": "https://download.unity3d.com/download_unity/4f3c1c5c4346/LinuxEditorInstaller/Unity-6000.7.0b10.tar.xz",
+        "integrity": "md5-g5kHfFXtLFHbDIWvhcwLEw==",
+        "size": 4144272184
       },
       "testModules": [
         {
           "name": "linux-il2cpp",
-          "url": "https://download.unity3d.com/download_unity/ad717268ad45/LinuxEditorTargetInstaller/UnitySetup-Linux-IL2CPP-Support-for-Editor-6000.7.0b3.tar.xz",
-          "integrity": "md5-hJl9HN0RPvm937Mf4UEHGQ==",
-          "size": 64555500,
+          "url": "https://download.unity3d.com/download_unity/4f3c1c5c4346/LinuxEditorTargetInstaller/UnitySetup-Linux-IL2CPP-Support-for-Editor-6000.7.0b10.tar.xz",
+          "integrity": "md5-piQSZoTeij87x1VafhBZHw==",
+          "size": 64970696,
           "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
         },
         {
           "name": "linux-server",
-          "url": "https://download.unity3d.com/download_unity/ad717268ad45/LinuxEditorTargetInstaller/UnitySetup-Linux-Server-Support-for-Editor-6000.7.0b3.tar.xz",
-          "integrity": "md5-sAAoeN9ZGNBndjpOZ8fGUQ==",
-          "size": 175723352,
+          "url": "https://download.unity3d.com/download_unity/4f3c1c5c4346/LinuxEditorTargetInstaller/UnitySetup-Linux-Server-Support-for-Editor-6000.7.0b10.tar.xz",
+          "integrity": "md5-oaYNcj9He9DAMAmAorhSog==",
+          "size": 176785148,
           "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
         }
       ],
       "notes": "Latest verified beta. No public GameCI tag exists; CI builds a custom image from the official archive without starting the Editor."
     },
     {
-      "id": "7000.0.0a7",
+      "id": "7000.0.0a20",
       "role": "unity7-alpha",
       "channel": "alpha",
       "editorDownload": {
-        "url": "https://download.unity3d.com/download_unity/581996e1a8f7/LinuxEditorInstaller/Unity-7000.0.0a7.tar.xz",
-        "integrity": "md5-D0oGXJsoPEethFkursqeWw==",
-        "size": 4233266752
+        "url": "https://download.unity3d.com/download_unity/f4e960bd2f88/LinuxEditorInstaller/Unity-7000.0.0a20.tar.xz",
+        "integrity": "md5-zZ087NFUb/l5rjeO8Y689A==",
+        "size": 4057826584
       },
       "testModules": [
         {
           "name": "linux-il2cpp",
-          "url": "https://download.unity3d.com/download_unity/581996e1a8f7/LinuxEditorTargetInstaller/UnitySetup-Linux-IL2CPP-Support-for-Editor-7000.0.0a7.tar.xz",
-          "integrity": "md5-AclOFw2tFBz/g1G8Sr4wcQ==",
-          "size": 65252880,
+          "url": "https://download.unity3d.com/download_unity/f4e960bd2f88/LinuxEditorTargetInstaller/UnitySetup-Linux-IL2CPP-Support-for-Editor-7000.0.0a20.tar.xz",
+          "integrity": "md5-HDB3rMMORbmmoW4BcB51/g==",
+          "size": 70184444,
           "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
         },
         {
           "name": "linux-server",
-          "url": "https://download.unity3d.com/download_unity/581996e1a8f7/LinuxEditorTargetInstaller/UnitySetup-Linux-Server-Support-for-Editor-7000.0.0a7.tar.xz",
-          "integrity": "md5-6DYz+hNnNITV31FPy8xmRA==",
-          "size": 261052704,
+          "url": "https://download.unity3d.com/download_unity/f4e960bd2f88/LinuxEditorTargetInstaller/UnitySetup-Linux-Server-Support-for-Editor-7000.0.0a20.tar.xz",
+          "integrity": "md5-3i+J6pFNVDTTbjRCW5pYGQ==",
+          "size": 259100084,
           "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
         }
       ],
-      "notes": "First Unity 7 alpha stream: CoreCLR Editor, with C# 9 and .NET Standard 2.1 scripting APIs. Uses its verified official Editor and Linux test modules."
+      "notes": "Unity 7 alpha exercises the CoreCLR Editor. Uses its verified official Editor and Linux test modules."
     }
   ]
 }

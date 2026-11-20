@@ -934,7 +934,7 @@ def copy_image_packages(image: str, destination: Path, *, unity_version: str | N
     """Copy metadata/sources from a stopped container, then remove that container."""
     version_pattern = r"[0-9]{4}\.[0-9]+\.[0-9]+[abfp][0-9]+"
     official = re.fullmatch(
-        rf"unityci/editor:ubuntu-({version_pattern})-(?:base|linux-il2cpp)-3@sha256:[0-9a-f]{{64}}",
+        rf"unityci/editor:ubuntu-({version_pattern})-(?:base|linux-il2cpp)-[34]@sha256:[0-9a-f]{{64}}",
         image,
     )
     local = re.fullmatch(rf"unity-mcp-editor:({version_pattern})(?:-tests)?", image)

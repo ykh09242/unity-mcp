@@ -67,9 +67,7 @@ def _parse_download(details, pattern: str) -> EditorDownload:
 
 
 def _parse_image(image, version: str, suffix: str) -> str:
-    pattern = (
-        r"unityci/editor:ubuntu-" + re.escape(version) + "-" + suffix + r"@sha256:[a-f0-9]{64}"
-    )
+    pattern = rf"unityci/editor:ubuntu-{re.escape(version)}-{suffix}-[34]@sha256:[a-f0-9]{{64}}"
     if not isinstance(image, str) or not re.fullmatch(pattern, image):
         raise ValueError(
             "Stable images must match the exact Unity version, purpose and GameCI digest pin"
@@ -84,9 +82,9 @@ def load_manifest(path: Path) -> Manifest:
         raise ValueError("Unity manifest must be an object")
     base = data.get("previewBaseImage")
     if not isinstance(base, str) or not re.fullmatch(
-        r"unityci/base:ubuntu-3(?:\.[0-9]+)*@sha256:[a-f0-9]{64}", base
+        r"unityci/base:ubuntu-[34](?:\.[0-9]+)*@sha256:[a-f0-9]{64}", base
     ):
-        raise ValueError("previewBaseImage must be a digest-pinned GameCI Ubuntu 3 base")
+        raise ValueError("previewBaseImage must be a digest-pinned GameCI Ubuntu 3 or 4 base")
     rows = data.get("versions")
     if not isinstance(rows, list) or not rows:
         raise ValueError("Unity manifest must contain non-empty versions")
@@ -167,11 +165,11 @@ def load_manifest(path: Path) -> Manifest:
                     )
                     modules.append(TestModule(name, _parse_download(module, pattern), destination))
         else:
-            image = _parse_image(row.get("image"), version, "base-3")
+            image = _parse_image(row.get("image"), version, "base")
             if "testModules" in row:
                 raise ValueError("Stable test images must use a pinned public GameCI image")
             if "testImage" in row:
-                test_image = _parse_image(row["testImage"], version, "linux-il2cpp-3")
+                test_image = _parse_image(row["testImage"], version, "linux-il2cpp")
         versions.append(Version(version, channel, image, download, test_image, tuple(modules)))
     default = data.get("defaultVersion")
     if not isinstance(default, str) or default not in ids:

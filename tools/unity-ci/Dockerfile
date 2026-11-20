@@ -1,6 +1,6 @@
-# GameCI layout/wrapper recipe pinned to 75891f03fd6c243db6198f285313118cef0fc806.
-# The manifest supplies the immutable unityci/base digest (Ubuntu 22.04).
-ARG PREVIEW_BASE_IMAGE=unityci/base:ubuntu-3.2.2@sha256:076fe28aa9863a2466c69d4dce5af51e25988b31e4d9ed110f4025f6fd2f98d3
+# GameCI layout and wrapper verified against game-ci/docker v4.0.0.
+# The manifest supplies the immutable unityci/base digest (Ubuntu 24.04).
+ARG PREVIEW_BASE_IMAGE=unityci/base:ubuntu-4.0.0@sha256:a2deac33478f0dcaec3d768aca4f0babcac47a67fa1be918e3848bcaee3a72d0
 FROM ${PREVIEW_BASE_IMAGE}
 
 ARG UNITY_VERSION

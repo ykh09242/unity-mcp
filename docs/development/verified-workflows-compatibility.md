@@ -10,11 +10,11 @@ Each cell is **C / E / P** for the indicated Editor role. `open` means a matchin
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `2021.3.45f2` package floor | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
 | `2022.3.76f1` LTS | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
-| `6000.0.84f1` LTS | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
-| `6000.3.25f1` LTS | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
-| `6000.6.4f1` current | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
-| `6000.7.0b3` beta | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
-| `7000.0.0a7` Unity 7 alpha | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
+| `6000.0.86f1` LTS | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
+| `6000.3.29f1` LTS | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
+| `6000.6.10f1` current | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
+| `6000.7.0b10` beta | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
+| `7000.0.0a20` Unity 7 alpha | open / open / open | open / open / open | open / open / — | open / open / — | open / open / open | open / open / — | open / — / open |
 
 The open rows need the exact Editor and target build module, a valid license for native execution, and a matching copy of the workflow fixture. The standard package matrix can produce compile and test results for its configured surfaces. This table uses the named feature receipts below. [CI validation](ci-validation.md)
 

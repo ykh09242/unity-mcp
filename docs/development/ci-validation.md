@@ -555,8 +555,10 @@ the compile and licensed-test workflows. Keep supported/LTS rows when adding a n
 Track the current beta and alpha releases; retire superseded preview rows when advancing
 those channels instead of retaining every earlier alpha from the same release family.
 Stable rows pin GameCI images by digest; preview rows pin official Editor/module downloads by
-version, size and publisher integrity metadata. Updating CI does not migrate the local Unity
-test project or change the package's minimum supported Unity version.
+version, size and publisher integrity metadata. The Unity 6 images and the preview base use
+GameCI 4 on Ubuntu 24.04. The 2021.3 and 2022.3 compatibility rows use their pinned GameCI 3
+images. The local Unity test project and package support floor are independent of the CI pins.
+[GameCI Docker 4.0.0](https://github.com/game-ci/docker/releases/tag/v4.0.0)
 
 [`compile-check.sh`](../../tools/compile-check.sh) compiles each matrix version with Windows,
 macOS and Linux platform defines, including runtime, Editor, custom Roslyn and test assemblies.
@@ -564,15 +566,13 @@ macOS and Linux platform defines, including runtime, Editor, custom Roslyn and t
 profile. Validate actual archive layouts, bundled compilers and references before adding a new
 major version; a new version number alone does not establish compatibility.
 
-Unity 7 is currently represented by the official `7000.0.0a7` alpha. Its initial CoreCLR Editor
-still exposes the documented C# 9/.NET Standard 2.1 compatibility level. Treat later language/API
+Unity 7 is currently represented by the official `7000.0.0a20` alpha. The CoreCLR profile
+targets the package's C# 9 and .NET Standard 2.1 compatibility level. Treat language and API
 upgrades separately and verify them against the corresponding release's real inputs.
 
 The Unity 7 profile uses the archive's bundled SDK and .NET Standard 2.1 references for both
 Editor and runtime assemblies. It compiles the bundled uGUI runtime and Editor sources before
-their consumers because this alpha no longer ships the template's precompiled UI assemblies.
-Its cache validates those source inputs, and its defines select CoreCLR instead of Mono.
-Earlier Unity profiles retain their existing reference and compiler contracts.
+their consumers. Its cache validates those source inputs, and its defines select CoreCLR.
 
 The native-execution policy and license gate stay explicit. A skipped licensed-test job is
 not runtime test evidence, and a successful compile is not proof that an Editor session was
@@ -768,9 +768,9 @@ After changing credentials, verify one licensed job before rerunning the remaini
 
 Repository-owned Unity assemblies compile with warnings as errors. The existing CS1701/CS1702
 reference-facade exceptions remain. Bundled `UnityEditor.TestRunner` suppresses CS0169/CS0649,
-matching native Unity's unused-field policy. Only its pinned `6000.0.84f1` build also suppresses
-CS0618 for UTF 1.6.0's obsolete Switch host-I/O call. These vendor exceptions do not apply to
-the package or its tests; reassess the version-specific exception when updating that Editor.
+matching native Unity's unused-field policy. The historical `6000.0.84f1` build has an explicit
+CS0618 exception for UTF 1.6.0's obsolete Switch host-I/O call. The package and its tests
+compile under the repository warning policy.
 
 The documentation build disables Node's experimental Web Storage because static rendering
 does not need file-backed browser storage. Only the pinned Pages deploy action filters DEP0040
@@ -861,8 +861,8 @@ Actions cache entry and rerun, or change the cache schema after changing its con
 local recovery remove only `.unity-ci/optional-inputs/VERSION`, never source directories.
 
 ```sh
-python tools/unity_ci_package_cache.py identity 6000.0.84f1
-python tools/unity_ci_package_cache.py prepare 6000.0.84f1 --output .unity-ci/optional-6000.0.84f1
+python tools/unity_ci_package_cache.py identity 6000.0.86f1
+python tools/unity_ci_package_cache.py prepare 6000.0.86f1 --output .unity-ci/optional-6000.0.86f1
 ```
 
 The output directory must be new and isolated. A cold run needs Docker and registry access;

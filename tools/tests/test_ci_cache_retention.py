@@ -370,21 +370,22 @@ def test_transport_error_never_emits_stderr_credentials(monkeypatch):
 def test_actual_manifest_keys_use_ci_helpers_without_provider_operations():
     keys = retention.current_keys()
     manifest = sys.modules["unity_ci"].load_manifest(TOOLS / "unity-versions.json")
+    version = next(row.id for row in manifest.versions if row.id.startswith("6000.0."))
     assert {version for family, version in keys if family == "sdk"} == {
         row.id for row in manifest.versions
     }
     assert (
-        keys[("sdk", VERSION)]
-        == sys.modules["unity_compile_cache"].identity(manifest, VERSION)["cache_key"]
+        keys[("sdk", version)]
+        == sys.modules["unity_compile_cache"].identity(manifest, version)["cache_key"]
     )
     request = sys.modules["unity_ci_package_cache"].CacheRequest(
-        VERSION,
+        version,
         TOOLS.parent,
         TOOLS / "unity-versions.json",
         TOOLS / "unity-ci-packages.json",
     )
     assert (
-        keys[("optional", VERSION)]
+        keys[("optional", version)]
         == sys.modules["unity_ci_package_cache"].identity(request).cache_key
     )
 

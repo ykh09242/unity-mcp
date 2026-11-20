@@ -100,11 +100,11 @@ def test_unity7_alpha_prepares_verified_archive_and_native_modules(monkeypatch, 
     expected = {
         "2021.3.45f2",
         "2022.3.76f1",
-        "6000.0.84f1",
-        "6000.3.25f1",
-        "6000.6.4f1",
-        "6000.7.0b3",
-        "7000.0.0a7",
+        "6000.0.86f1",
+        "6000.3.29f1",
+        "6000.6.10f1",
+        "6000.7.0b10",
+        "7000.0.0a20",
     }
     assert {row.id for row in manifest.versions} == expected
     commands = []
@@ -112,49 +112,49 @@ def test_unity7_alpha_prepares_verified_archive_and_native_modules(monkeypatch, 
         unity_ci.subprocess, "run", lambda command, **kwargs: commands.append(command)
     )
     # When preparing either purpose, the row must select its own verified inputs.
-    image = unity_ci.prepare(manifest, "7000.0.0a7", purpose=purpose)
+    image = unity_ci.prepare(manifest, "7000.0.0a20", purpose=purpose)
     # Then compilation excludes modules and native testing includes both exact archives.
-    assert image == "unity-mcp-editor:7000.0.0a7" + ("-tests" if purpose == "tests" else "")
+    assert image == "unity-mcp-editor:7000.0.0a20" + ("-tests" if purpose == "tests" else "")
     arguments = commands[0]
-    assert "EDITOR_MD5=0f4a065c9b283c47ad84592eaeca9e5b" in arguments
-    assert "EDITOR_SIZE=4233266752" in arguments
+    assert "EDITOR_MD5=cd9d3cecd1546ff979ae378ef18ebcf4" in arguments
+    assert "EDITOR_SIZE=4057826584" in arguments
     modules = [arg for arg in arguments if arg.startswith(("IL2CPP_", "SERVER_"))]
     assert len(modules) == (6 if purpose == "tests" else 0)
     if modules:
-        assert "IL2CPP_SIZE=65252880" in modules
-        assert "SERVER_SIZE=261052704" in modules
+        assert "IL2CPP_SIZE=70184444" in modules
+        assert "SERVER_SIZE=259100084" in modules
 
 
 @pytest.mark.parametrize("purpose", ["compile", "tests"])
-def test_real_latest_beta_prepares_verified_b3_archives(monkeypatch, purpose):
-    # Given the October 5 official beta, retain the supported release and current Unity 7 alpha.
+def test_real_latest_beta_prepares_verified_archives(monkeypatch, purpose):
+    # Given the November 19 official beta, retain the supported release and current Unity 7 alpha.
     manifest = unity_ci.load_manifest(Path(unity_ci.__file__).with_name("unity-versions.json"))
     versions = {row.id for row in manifest.versions}
-    assert {"6000.6.4f1", "6000.7.0b3", "7000.0.0a7"} <= versions
-    assert not {"6000.7.0b2", "6000.7.0a6"} & versions
+    assert {"6000.6.10f1", "6000.7.0b10", "7000.0.0a20"} <= versions
+    assert "6000.7.0b3" not in versions
     commands = []
     monkeypatch.setattr(
         unity_ci.subprocess, "run", lambda command, **kwargs: commands.append(command)
     )
     # When preparing each CI purpose, its inputs must come from the same exact revision.
-    image = unity_ci.prepare(manifest, "6000.7.0b3", purpose=purpose)
-    assert image == "unity-mcp-editor:6000.7.0b3" + ("-tests" if purpose == "tests" else "")
+    image = unity_ci.prepare(manifest, "6000.7.0b10", purpose=purpose)
+    assert image == "unity-mcp-editor:6000.7.0b10" + ("-tests" if purpose == "tests" else "")
     arguments = commands[0]
-    prefix = "https://download.unity3d.com/download_unity/ad717268ad45/"
-    assert "EDITOR_URL=" + prefix + "LinuxEditorInstaller/Unity-6000.7.0b3.tar.xz" in arguments
-    assert "EDITOR_MD5=a0bf32c5c452c2cbc3725caef8023239" in arguments
-    assert "EDITOR_SIZE=4080561148" in arguments
+    prefix = "https://download.unity3d.com/download_unity/4f3c1c5c4346/"
+    assert "EDITOR_URL=" + prefix + "LinuxEditorInstaller/Unity-6000.7.0b10.tar.xz" in arguments
+    assert "EDITOR_MD5=8399077c55ed2c51db0c85af85cc0b13" in arguments
+    assert "EDITOR_SIZE=4144272184" in arguments
     modules = [arg for arg in arguments if arg.startswith(("IL2CPP_", "SERVER_"))]
     # Then compile excludes modules; native testing verifies both publisher-provided archives.
     assert len(modules) == (6 if purpose == "tests" else 0)
     if modules:
         for name, label, checksum, size in (
-            ("IL2CPP", "IL2CPP", "84997d1cdd113ef9bddfb31fe1410719", 64555500),
-            ("SERVER", "Server", "b0002878df5918d067763a4e67c7c651", 175723352),
+            ("IL2CPP", "IL2CPP", "a624126684de8a3f3bc7555a7e10591f", 64970696),
+            ("SERVER", "Server", "a1a60d723f477bd0c0300980a2b852a2", 176785148),
         ):
             url = (
                 prefix
-                + f"LinuxEditorTargetInstaller/UnitySetup-Linux-{label}-Support-for-Editor-6000.7.0b3.tar.xz"
+                + f"LinuxEditorTargetInstaller/UnitySetup-Linux-{label}-Support-for-Editor-6000.7.0b10.tar.xz"
             )
             assert f"{name}_URL={url}" in modules
             assert f"{name}_MD5={checksum}" in modules

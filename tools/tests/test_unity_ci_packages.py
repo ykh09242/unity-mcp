@@ -1875,6 +1875,8 @@ def test_bundled_nunit_21_rejects_unverified_layout(
         "unity-mcp-editor:6000.7.0b2-tests",
         "unityci/editor:ubuntu-6000.7.0b2-base-3@sha256:" + "a" * 64,
         "unityci/editor:ubuntu-6000.7.0b2-linux-il2cpp-3@sha256:" + "a" * 64,
+        "unityci/editor:ubuntu-6000.7.0b2-base-4@sha256:" + "a" * 64,
+        "unityci/editor:ubuntu-6000.7.0b2-linux-il2cpp-4@sha256:" + "a" * 64,
     ],
 )
 def test_image_extraction_never_starts_editor_and_cleans_container(
