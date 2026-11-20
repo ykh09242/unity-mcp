@@ -20,7 +20,7 @@ namespace MCPForUnityTests.Editor.Tools
 {
     [Explicit("Requires a fresh isolated TMP fixture and supplied font-input/UI08.ttf.")]
     [Parallelizable(ParallelScope.None)]
-    public class UguiTmpLayoutDiagnosticsTests
+    public partial class UguiTmpLayoutDiagnosticsTests
     {
         private GameObject root;
         private Type textType,

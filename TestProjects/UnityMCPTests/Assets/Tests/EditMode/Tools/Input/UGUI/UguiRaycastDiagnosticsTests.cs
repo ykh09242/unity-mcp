@@ -98,7 +98,7 @@ namespace MCPForUnityTests.EditMode.Tools.Input
 
     /// <summary>Owned native scenarios with isolated scene state and explicit evidence exports.</summary>
     [Parallelizable(ParallelScope.None)]
-    public class UguiRaycastDiagnosticsTests
+    public partial class UguiRaycastDiagnosticsTests
     {
         private GameObject canvas,
             events,
@@ -148,6 +148,7 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             "ui09-handler-target-deep.json",
             "ui09-handler-sorting-control.json",
             "ui09-handler-sorting-deep.json",
+            "verified-pointer-overlay.json",
         };
 
         [UnitySetUp]

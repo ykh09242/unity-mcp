@@ -72,6 +72,24 @@ def test_valid_negative_native_outcome_is_truthful(native):
     assert check_report(directory, bundle, process)["status"] == "timed_out"
 
 
+@pytest.mark.parametrize(("require_cleanup", "declared"), [(True, False), (False, True)])
+def test_missing_cleanup_cannot_satisfy_a_required_body(native, require_cleanup, declared):
+    directory, bundle, _, process, report = native
+    if declared:
+        bundle["definition"]["cleanup_steps"] = [{"name": "cleanup", "action": "wait_state"}]
+    report["steps"] = []
+    (directory / "run.json").write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="Native cleanup body did not pass"):
+        check_report(directory, bundle, process, require_cleanup=require_cleanup)
+
+
+def test_optional_cleanup_allows_an_undeclared_body(native):
+    directory, bundle, _, process, report = native
+    report["steps"] = []
+    (directory / "run.json").write_text(json.dumps(report), encoding="utf-8")
+    assert check_report(directory, bundle, process, require_cleanup=False)["status"] == "timed_out"
+
+
 @pytest.mark.parametrize(
     "count,message,step_status,expected_error",
     [

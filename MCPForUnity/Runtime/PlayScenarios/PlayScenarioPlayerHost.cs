@@ -242,7 +242,9 @@ namespace MCPForUnity.Runtime.PlayScenarios
             {
                 if (!(PlayScenarioPlayerInput.Backend is IUguiScenarioRaycastClickBackend raycast))
                     throw new InvalidOperationException("Runtime raycast backend is unavailable.");
-                return new PlayScenarioObservation(raycast.TryRaycastClick(target, out _, out string clickDetail), clickDetail);
+                if (!raycast.TryRaycastClick(target, out _, out string clickDetail))
+                    return Pending(step, clickDetail, "input_blocked", "eligible first uGUI raycast hit at target center");
+                return new PlayScenarioObservation(true, clickDetail);
             }
             if (!(PlayScenarioPlayerInput.Backend is IUguiScenarioClickBackend click))
                 throw new InvalidOperationException("Runtime click backend is unavailable.");
@@ -269,7 +271,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 throw new InvalidOperationException("Target inspection exceeds the bounded hierarchy budget.");
         }
 
-        private static PlayScenarioObservation Pending(PlayScenarioStep step, string detail, string code) =>
+        private static PlayScenarioObservation Pending(PlayScenarioStep step, string detail, string code, string expected = null) =>
             new PlayScenarioObservation(
                 false,
                 detail,
@@ -278,6 +280,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     Code = code,
                     Message = detail,
                     Target = step.TargetId ?? step.Target,
+                    Expected = expected,
+                    Actual = expected == null ? null : detail,
                 }
             );
 

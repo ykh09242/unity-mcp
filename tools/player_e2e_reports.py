@@ -102,6 +102,7 @@ def check_report(
     *,
     cleanup_failure: bool = False,
     before_first_step: bool = False,
+    require_cleanup: bool = True,
 ) -> dict:
     """Require identity, terminal state, cleanup and actual native exit agreement."""
     request = read_json(directory / "request.json", 16384)
@@ -171,17 +172,18 @@ def check_report(
         return report
     steps = report.get("steps", [])
     cleanup = [step for step in steps if step.get("stage") == "cleanup"]
-    require(
-        cleanup
-        and (
-            cleanup_failure
-            or (
-                any(step.get("status") == "passed" for step in cleanup)
-                and all(step.get("status") in ("passed", "skipped") for step in cleanup)
-            )
-        ),
-        "Native cleanup body did not pass",
-    )
+    if require_cleanup or cleanup or bundle["definition"].get("cleanup_steps"):
+        require(
+            cleanup
+            and (
+                cleanup_failure
+                or (
+                    any(step.get("status") == "passed" for step in cleanup)
+                    and all(step.get("status") in ("passed", "skipped") for step in cleanup)
+                )
+            ),
+            "Native cleanup body did not pass",
+        )
     if report["status"] == "succeeded":
         main = [step for step in steps if step.get("stage") == "main"]
         require(
