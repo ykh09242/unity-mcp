@@ -1,0 +1,28 @@
+<Project>
+  <UsingTask TaskName="HoldPackageLock" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <PackagePath Required="true" />
+      <SdkDirectory Required="true" />
+      <GateDirectory Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Reflection" />
+      <Using Namespace="System.Threading" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var assembly = Assembly.LoadFrom(Path.Combine(SdkDirectory, "NuGet.Common.dll"));
+        var locks = assembly.GetType("NuGet.Common.ConcurrencyUtilities", true);
+        var method = locks.GetMethod("ExecuteWithFileLocked", new[] { typeof(string), typeof(Action) });
+        method.Invoke(null, new object[] { PackagePath, (Action)(() =>
+        {
+            Log.LogMessage(Microsoft.Build.Framework.MessageImportance.High, "Holding package installation lock");
+            if (!SpinWait.SpinUntil(() => File.Exists(Path.Combine(GateDirectory, "release")), TimeSpan.FromSeconds(90)))
+                throw new TimeoutException("The restore fixture did not release the NuGet package lock.");
+        }) });
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <Target Name="Hold">
+    <HoldPackageLock PackagePath="$(PackagePath)" GateDirectory="$(GateDirectory)" SdkDirectory="$(MSBuildToolsPath)" />
+  </Target>
+</Project>
