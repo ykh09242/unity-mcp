@@ -23,6 +23,7 @@ from pydantic import (
     model_validator,
 )
 
+from services.declared_action_contracts import ACTION_CONTRACTS
 from services.operation_permissions import required_permissions
 from services.reference_graph.action_options import GRAPH_ACTION_OPTIONS
 from services.registry.action_contracts import ACTION_RULES
@@ -36,7 +37,7 @@ from services.registry.action_guidance_types import (
     ObservationSource as ObservationSource,
     ObservationValue as ObservationValue,
 )
-from services.registry.capability_catalog import CAPABILITIES, READ_ONLY_EFFECTS
+from services.registry.capability_catalog import CAPABILITIES, READ_ONLY_EFFECTS, CapabilityEffects
 from services.registry.editor_action_guidance import EDITOR_ACTIONS
 from services.registry.integration_action_guidance import INTEGRATION_ACTIONS
 from services.registry.open_shader_graph_observation import OPEN_GRAPH_OBSERVATION
@@ -947,6 +948,13 @@ def action_guidance(entry: CatalogEntry, action: str | None) -> ActionGuidance |
     guidance = TOOL_GUIDANCE.get(entry["name"])
     if guidance and action in guidance.actions:
         return guidance.actions[action]
+    contract = ACTION_CONTRACTS.get(entry["name"], {}).get(action)
+    if contract:
+        return ActionGuidance(
+            contract.purpose,
+            effects=READ_ONLY_EFFECTS if contract.read_only else CapabilityEffects(),
+            intent="observe" if contract.read_only else "edit",
+        )
     for variant in entry.get("input_schema", {}).get("oneOf", ()):
         selector = (
             variant.get("properties", {}).get("action") if isinstance(variant, dict) else None
@@ -1016,6 +1024,7 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
     rules = next(
         (rule for rule in ACTION_RULES.get(entry["name"], ()) if rule.action == action), None
     )
+    contract = ACTION_CONTRACTS.get(entry["name"], {}).get(action)
     required = _required_tool_parameters(entry)
     effects = tool["effects"]
     if guidance and guidance.effects:
@@ -1056,15 +1065,20 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
             )
         ),
         "forbidden_parameters": list(rules.forbidden) if rules else [],
+        **({"alias_of": contract.alias_of} if contract and contract.alias_of else {}),
+        **(
+            {"success_data_schema": rules.success_data_schema()}
+            if rules and rules.success_fields
+            else {}
+        ),
         **(
             {
-                "success_data_schema": rules.success_data_schema(),
                 "required_permissions": sorted(
                     permission.value
                     for permission in required_permissions(entry["name"], rules.example_arguments())
-                ),
+                )
             }
-            if rules and rules.success_fields
+            if rules and (contract or rules.success_fields)
             else {}
         ),
         **({"options_schema": graph_options.schema()} if graph_options else {}),

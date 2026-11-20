@@ -14,6 +14,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
+from services.declared_action_contracts import ASSET_REFERENCE_WIRE
 from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -379,17 +380,19 @@ async def manage_asset(
                 reference_snapshot=reference_snapshot,
                 reference_cursor=reference_cursor,
             )
-            params.update(
-                action=action_l,
-                path=reference_path(path, "path"),
-                scanRoot=reference_path(
-                    "Assets" if scan_root is None else scan_root, "scan_root", root=True
-                ),
-                recursive=recursive,
-                maxAssets=page_integer(max_assets, 1024, 1, 250000, "max_assets"),
+            params["action"] = action_l
+            params[ASSET_REFERENCE_WIRE["path"]] = reference_path(path, "path")
+            params[ASSET_REFERENCE_WIRE["scan_root"]] = reference_path(
+                "Assets" if scan_root is None else scan_root, "scan_root", root=True
+            )
+            params[ASSET_REFERENCE_WIRE["recursive"]] = recursive
+            params[ASSET_REFERENCE_WIRE["max_assets"]] = page_integer(
+                max_assets, 1024, 1, 250000, "max_assets"
             )
             if action_l in {"preview_move", "move"}:
-                params["destination"] = reference_path(destination, "destination")
+                params[ASSET_REFERENCE_WIRE["destination"]] = reference_path(
+                    destination, "destination"
+                )
             elif destination is not None:
                 raise ValueError(
                     "Only move/preview_move accepts destination for reference diagnostics."
@@ -606,16 +609,16 @@ async def manage_asset(
     # Prepare parameters for the C# handler
     params_dict = {
         "action": action.lower(),
-        "path": path,
+        ASSET_REFERENCE_WIRE["path"]: path,
         "assetType": asset_type,
         "properties": properties,
-        "destination": destination,
+        ASSET_REFERENCE_WIRE["destination"]: destination,
         "generatePreview": generate_preview,
         "searchPattern": search_pattern,
         "filterType": filter_type,
         "filterDateAfter": filter_date_after,
-        "pageSize": page_size,
-        "pageNumber": page_number,
+        ASSET_REFERENCE_WIRE["page_size"]: page_size,
+        ASSET_REFERENCE_WIRE["page_number"]: page_number,
     }
 
     # Remove None values to avoid sending unnecessary nulls

@@ -83,7 +83,8 @@ namespace MCPForUnityTests.Editor.Tools
             foreach (var row in contract["inputs"])
             {
                 string id = (string)row["id"];
-                bool valid = (bool)row["valid"];
+                // The public adapter drops omitted and explicit-null optional parameters.
+                bool valid = (bool?)row["nativeValid"] ?? (bool)row["valid"];
                 var arguments = (JObject)row["arguments"].DeepClone();
                 if (arguments["path"]?.Type == JTokenType.String && (string)arguments["path"] == "SRC")
                     arguments["path"] = _source;

@@ -17,6 +17,9 @@ on:
       - Server/src/services/tools/**
       - Server/src/services/resources/**
       - Server/src/services/registry/**
+      - Server/src/services/declared_action_contracts.py
+      - Server/src/services/addressable_prefab.py
+      - Server/src/services/operation_permissions.py
       - Server/src/cli/**
       # CLI ranges and registration depend on shared models; version metadata
       # is resolved through core.telemetry and the Server project metadata.
@@ -34,7 +37,9 @@ on:
       - tools/public_contracts.py
       - Server/tests/fixtures/public_mcp_contracts.json
       - tools/generate_tool_capabilities.py
+      - tools/generate_declared_action_contracts.py
       - MCPForUnity/Editor/Tools/ToolCapabilities.generated.cs
+      - MCPForUnity/Editor/Tools/DeclaredActionContracts.generated.cs
       - .github/workflows/docs-generate.yml
   push:
     branches: [beta]
@@ -42,6 +47,9 @@ on:
       - Server/src/services/tools/**
       - Server/src/services/resources/**
       - Server/src/services/registry/**
+      - Server/src/services/declared_action_contracts.py
+      - Server/src/services/addressable_prefab.py
+      - Server/src/services/operation_permissions.py
       - Server/src/cli/**
       # Keep shared CLI metadata inputs aligned with the PR trigger above.
       - Server/src/models/**
@@ -58,7 +66,9 @@ on:
       - tools/public_contracts.py
       - Server/tests/fixtures/public_mcp_contracts.json
       - tools/generate_tool_capabilities.py
+      - tools/generate_declared_action_contracts.py
       - MCPForUnity/Editor/Tools/ToolCapabilities.generated.cs
+      - MCPForUnity/Editor/Tools/DeclaredActionContracts.generated.cs
       - .github/workflows/docs-generate.yml
   workflow_dispatch: {}
 
@@ -96,6 +106,9 @@ jobs:
       - name: Check native feature catalog
         working-directory: Server
         run: uv run --locked --python 3.14 python ../tools/generate_tool_capabilities.py --check
+
+      - name: Check native action input contracts
+        run: python3 tools/generate_declared_action_contracts.py --check
 
       - name: Check authored resource URI references
         run: >-

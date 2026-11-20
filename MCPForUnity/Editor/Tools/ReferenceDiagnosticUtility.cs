@@ -67,7 +67,7 @@ namespace MCPForUnity.Editor.Tools
 
         internal static string ExpectedRevision(JObject parameters)
         {
-            string revision = Text(parameters, "referenceRevision");
+            string revision = Text(parameters, DeclaredActionContracts.AssetReferenceRevision);
             if (revision != null && !Regex.IsMatch(revision, "\\Amcp-ref-v1_[0-9a-f]{64}\\z", RegexOptions.CultureInvariant))
                 throw new ArgumentException("referenceRevision must be an observed diagnostic revision.");
             return revision;

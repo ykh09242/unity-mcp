@@ -44,7 +44,15 @@ namespace MCPForUnity.Editor.Tools
         }
 
         internal static bool HasOptions(JObject parameters) =>
-            new[] { "scanRoot", "maxAssets", "maxWork", "referenceRevision", "referenceSnapshot", "referenceCursor" }.Any(name => parameters[name] != null);
+            new[]
+            {
+                DeclaredActionContracts.AssetScanRoot,
+                DeclaredActionContracts.AssetMaxAssets,
+                DeclaredActionContracts.AssetMaxWork,
+                DeclaredActionContracts.AssetReferenceRevision,
+                DeclaredActionContracts.AssetReferenceSnapshot,
+                DeclaredActionContracts.AssetReferenceCursor,
+            }.Any(name => parameters[name] != null);
 
         internal static object Handle(JObject parameters)
         {
@@ -152,21 +160,7 @@ namespace MCPForUnity.Editor.Tools
             // Preserve no-yield file observation where read-sharing guarantees have not been verified.
             background = false;
 #endif
-            ReferenceDiagnosticUtility.Allowed(
-                parameters,
-                "action",
-                "path",
-                "destination",
-                "scanRoot",
-                "recursive",
-                "maxAssets",
-                "maxWork",
-                "pageSize",
-                "pageNumber",
-                "referenceRevision",
-                "referenceSnapshot",
-                "referenceCursor"
-            );
+            ReferenceDiagnosticUtility.Allowed(parameters, DeclaredActionContracts.AssetReferenceFields);
             string action = ReferenceDiagnosticUtility.Text(parameters, "action");
             string operation =
                 action == "move" ? "preview_move"
@@ -175,30 +169,34 @@ namespace MCPForUnity.Editor.Tools
             bool preview = operation == "preview_move" || operation == "preview_delete";
             if (!(IsAction(operation) && (!mutation || preview)))
                 throw new ArgumentException("Unsupported reference operation.");
-            string source = ReferenceDiagnosticUtility.Path(parameters, "path");
+            string source = ReferenceDiagnosticUtility.Path(parameters, DeclaredActionContracts.AssetPath);
             if (AssetDatabase.IsValidFolder(source))
                 throw new ArgumentException("Reference diagnostics require a single imported asset file, not a folder.");
             string sourceGuid = AssetDatabase.AssetPathToGUID(source, AssetPathToGUIDOptions.OnlyExistingAssets);
             if (string.IsNullOrEmpty(sourceGuid))
                 throw new ArgumentException("The source asset does not exist in the imported AssetDatabase.");
             source = AssetPathUtility.GetContainedAssetPath(AssetDatabase.GUIDToAssetPath(sourceGuid));
-            string root = ReferenceDiagnosticUtility.Path(parameters, "scanRoot", true, "Assets");
+            string root = ReferenceDiagnosticUtility.Path(parameters, DeclaredActionContracts.AssetScanRoot, true, "Assets");
             if (!AssetDatabase.IsValidFolder(root))
                 throw new ArgumentException("scanRoot must identify an imported Assets folder.");
-            string destination = operation == "preview_move" ? ReferenceDiagnosticUtility.Path(parameters, "destination") : null;
-            if (destination == null && parameters["destination"] != null)
+            string destination = operation == "preview_move" ? ReferenceDiagnosticUtility.Path(parameters, DeclaredActionContracts.AssetDestination) : null;
+            if (destination == null && parameters[DeclaredActionContracts.AssetDestination] != null)
                 throw new ArgumentException("Only move/preview_move accepts destination.");
-            int maxAssets = ReferenceDiagnosticUtility.Integer(parameters, "maxAssets", 1024, ReferenceAssetInventory.MaximumAssets);
-            var budget = new Budget { Maximum = ReferenceDiagnosticUtility.Integer(parameters, "maxWork", 10000, 4000000), Token = cancellationToken };
-            int size = ReferenceDiagnosticUtility.Integer(parameters, "pageSize", 50, 100);
-            int page = ReferenceDiagnosticUtility.Integer(parameters, "pageNumber", 1, int.MaxValue);
-            bool recursive = ReferenceDiagnosticUtility.Boolean(parameters, "recursive");
+            int maxAssets = ReferenceDiagnosticUtility.Integer(parameters, DeclaredActionContracts.AssetMaxAssets, 1024, ReferenceAssetInventory.MaximumAssets);
+            var budget = new Budget
+            {
+                Maximum = ReferenceDiagnosticUtility.Integer(parameters, DeclaredActionContracts.AssetMaxWork, 10000, 4000000),
+                Token = cancellationToken,
+            };
+            int size = ReferenceDiagnosticUtility.Integer(parameters, DeclaredActionContracts.AssetPageSize, 50, 100);
+            int page = ReferenceDiagnosticUtility.Integer(parameters, DeclaredActionContracts.AssetPageNumber, 1, int.MaxValue);
+            bool recursive = ReferenceDiagnosticUtility.Boolean(parameters, DeclaredActionContracts.AssetRecursive);
             string expected = ReferenceDiagnosticUtility.ExpectedRevision(parameters);
-            JToken captureOption = parameters["referenceSnapshot"];
+            JToken captureOption = parameters[DeclaredActionContracts.AssetReferenceSnapshot];
             if (captureOption != null && captureOption.Type != JTokenType.Boolean)
                 throw new ArgumentException("referenceSnapshot must be a boolean.");
             bool capture = captureOption?.Value<bool>() == true;
-            string cursor = ReferenceDiagnosticUtility.Text(parameters, "referenceCursor", null);
+            string cursor = ReferenceDiagnosticUtility.Text(parameters, DeclaredActionContracts.AssetReferenceCursor, null);
             if (mutation && (captureOption != null || cursor != null))
                 throw new ArgumentException("Guarded mutations require live reference checks, without snapshot options.");
             string snapshotScope = new JArray(

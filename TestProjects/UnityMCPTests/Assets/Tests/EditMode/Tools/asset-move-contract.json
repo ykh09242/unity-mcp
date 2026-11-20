@@ -23,6 +23,7 @@
     {"id": "numeric destination", "arguments": {"action": "move", "path": "SRC", "destination": 12}, "valid": false},
     {"id": "empty destination", "arguments": {"action": "move", "path": "SRC", "destination": ""}, "valid": false},
     {"id": "malformed path and destination", "arguments": {"action": "move", "path": {}, "destination": []}, "valid": false},
-    {"id": "guard on rename alias", "arguments": {"action": "rename", "path": "SRC", "destination": "DST", "reference_revision": "mcp-ref-v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "valid": false}
+    {"id": "guard on rename alias", "arguments": {"action": "rename", "path": "SRC", "destination": "DST", "reference_revision": "mcp-ref-v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "valid": false},
+    {"id": "null guard on rename alias", "arguments": {"action": "rename", "path": "SRC", "destination": "DST", "reference_revision": null}, "valid": true, "nativeValid": false}
   ]
 }

@@ -93,7 +93,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (AssetReferenceDiagnostics.IsAction(action))
                 return AssetReferenceDiagnostics.Handle(@params);
-            bool guardedReferenceMutation = (action == "move" || action == "delete") && @params["referenceRevision"] != null;
+            bool guardedReferenceMutation = (action == "move" || action == "delete") && @params[DeclaredActionContracts.AssetReferenceRevision] != null;
             if (AssetReferenceDiagnostics.HasOptions(@params) && !guardedReferenceMutation)
                 return new ErrorResponse(
                     "invalid_reference_diagnostics",

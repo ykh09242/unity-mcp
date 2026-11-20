@@ -4,6 +4,14 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from services.declared_action_contracts import (
+    ACTION_CONTRACTS,
+    ASSET_MOVE_CONTRACTS,
+    PREFAB_CHECKPOINT_CONTRACTS,
+    PREFAB_FIELD_PATTERNS,
+    PREFAB_PAGING_DEFAULTS,
+)
+
 
 @dataclass(frozen=True)
 class ActionRule:
@@ -31,8 +39,8 @@ _ASSET_REQUIREMENTS = {
     "modify": ("path", "properties"),
     "delete": ("path",),
     "duplicate": ("path",),  # Existing native destination generation remains valid.
-    "move": ("path", "destination"),
-    "rename": ("path", "destination"),
+    "move": ASSET_MOVE_CONTRACTS["move"].required,
+    "rename": ASSET_MOVE_CONTRACTS["rename"].required,
     "create_folder": ("path",),
 }
 _ASSET_EXAMPLES = {
@@ -49,6 +57,20 @@ _PREVIEW_FORBIDDEN = tuple(
     for name in _PREFAB_EDITS
     if name not in {"prefab_path", "position", "rotation", "scale", "set_active"}
 )
+
+
+def _declared_rule(tool: str, action: str) -> ActionRule:
+    contract = ACTION_CONTRACTS[tool][action]
+    return ActionRule(
+        action,
+        contract.required,
+        contract.forbidden,
+        example=tuple(
+            (name, _ASSET_EXAMPLES[name]) for name in contract.required if name in _ASSET_EXAMPLES
+        ),
+        success_fields=contract.result,
+    )
+
 
 ACTION_RULES: dict[str, tuple[ActionRule, ...]] = {
     "gameobject_create": (ActionRule("create", ("name",), example=(("name", "Example"),)),),
@@ -70,33 +92,18 @@ ACTION_RULES: dict[str, tuple[ActionRule, ...]] = {
         ),
     ),
     "asset_edit": tuple(
-        ActionRule(
+        _declared_rule("asset_edit", action)
+        if action in ACTION_CONTRACTS["asset_edit"]
+        else ActionRule(
             action,
             required,
-            forbidden=("reference_revision",) if action == "rename" else (),
             example=tuple((name, _ASSET_EXAMPLES[name]) for name in required),
-            success_fields=(("path", "string"), ("verification", "object"))
-            if action in {"move", "rename"}
-            else (),
         )
         for action, required in _ASSET_REQUIREMENTS.items()
     ),
-    "asset_reference_diagnostics": (
-        ActionRule(
-            "preview_move",
-            ("path", "destination"),
-            example=(
-                ("path", _ASSET_EXAMPLES["path"]),
-                ("destination", _ASSET_EXAMPLES["destination"]),
-            ),
-            success_fields=(
-                ("path", "string"),
-                ("guid", "string"),
-                ("destination", "string"),
-                ("referenceRevision", "string"),
-                ("scanComplete", "boolean"),
-            ),
-        ),
+    "asset_reference_diagnostics": (_declared_rule("asset_reference_diagnostics", "preview_move"),),
+    "manage_addressables": tuple(
+        _declared_rule("manage_addressables", action) for action in PREFAB_CHECKPOINT_CONTRACTS
     ),
     "prefab_contents": (
         ActionRule(
@@ -168,10 +175,16 @@ def action_help(name: str) -> str:
     rows = []
     for rule in rules:
         parts = []
+        contract = ACTION_CONTRACTS.get(name, {}).get(rule.action)
         if rule.required:
-            parts.append("requires " + ", ".join(rule.required))
+            parts.append(
+                ("accepts only " if contract and contract.exact_shape else "requires ")
+                + ", ".join(rule.required)
+            )
         if rule.forbidden:
             parts.append("excludes non-null " + ", ".join(rule.forbidden))
+        if contract and contract.alias_of:
+            parts.append("alias of " + contract.alias_of)
         if rule.success_fields:
             parts.append(
                 "success data includes " + ", ".join(name for name, _ in rule.success_fields)
@@ -180,11 +193,35 @@ def action_help(name: str) -> str:
     return "Action inputs: " + ". ".join(rows) + "."
 
 
+def _prefab_input_schema(schema: dict) -> dict:
+    rules = []
+    for action, contract in PREFAB_CHECKPOINT_CONTRACTS.items():
+        fields = {
+            name: {"type": "null"}
+            for name in schema["properties"]
+            if name not in {"action", *contract.required, *PREFAB_PAGING_DEFAULTS}
+        }
+        fields.update({name: {"const": value} for name, value in PREFAB_PAGING_DEFAULTS.items()})
+        fields.update({name: {"type": "string"} for name in contract.required})
+        for name in contract.required:
+            if pattern := PREFAB_FIELD_PATTERNS.get(name):
+                fields[name]["pattern"] = rf"^{pattern}(?![\s\S])"
+        rules.append(
+            {
+                "if": {"properties": {"action": {"const": action}}, "required": ["action"]},
+                "then": {"required": list(contract.required), "properties": fields},
+            }
+        )
+    return {**schema, "allOf": [*schema.get("allOf", ()), *rules]}
+
+
 def action_input_schema(name: str, schema: dict) -> dict:
     """Add conditional rules without replacing SDK types, aliases or defaults."""
     rules = ACTION_RULES.get(name, ())
     if not rules:
         return schema
+    if name == "manage_addressables":
+        return _prefab_input_schema(schema)
     if name == "gameobject_create":
         # The focused tool always creates; generic legacy actions retain their
         # original nullable name and action-specific defaults.

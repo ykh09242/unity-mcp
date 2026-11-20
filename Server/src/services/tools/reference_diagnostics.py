@@ -3,8 +3,8 @@
 import re
 from typing import Any
 
+from services.declared_action_contracts import ASSET_REFERENCE_WIRE
 from services.tools.pagination import page_integer
-
 
 ASSET_REFERENCE_ACTIONS = frozenset(
     {"get_dependencies", "get_reverse_references", "preview_move", "preview_delete"}
@@ -39,9 +39,13 @@ def reference_page(
 ) -> dict[str, Any]:
     """Parse finite work/page budgets and an optional observation recheck."""
     params = {
-        "pageSize": page_integer(page_size, 50, 1, 100, "page_size"),
-        "pageNumber": page_integer(page_number, 1, 1, 2_147_483_647, "page_number"),
-        "maxWork": page_integer(max_work, 100000 if scene else 10000, 1, 4000000, "max_work"),
+        ASSET_REFERENCE_WIRE["page_size"]: page_integer(page_size, 50, 1, 100, "page_size"),
+        ASSET_REFERENCE_WIRE["page_number"]: page_integer(
+            page_number, 1, 1, 2_147_483_647, "page_number"
+        ),
+        ASSET_REFERENCE_WIRE["max_work"]: page_integer(
+            max_work, 100000 if scene else 10000, 1, 4000000, "max_work"
+        ),
     }
     if reference_revision is not None:
         if (
@@ -49,11 +53,11 @@ def reference_page(
             or re.fullmatch(r"mcp-ref-v1_[0-9a-f]{64}", reference_revision) is None
         ):
             raise ValueError("reference_revision must be an observed diagnostic revision.")
-        params["referenceRevision"] = reference_revision
+        params[ASSET_REFERENCE_WIRE["reference_revision"]] = reference_revision
     if reference_snapshot is not None:
         if type(reference_snapshot) is not bool:
             raise ValueError("reference_snapshot must be a boolean for reference diagnostics.")
-        params["referenceSnapshot"] = reference_snapshot
+        params[ASSET_REFERENCE_WIRE["reference_snapshot"]] = reference_snapshot
     if reference_cursor is not None:
         if (
             type(reference_cursor) is not str
@@ -64,5 +68,5 @@ def reference_page(
             raise ValueError(
                 "reference_cursor requires a captured cursor without a live revision or new snapshot."
             )
-        params["referenceCursor"] = reference_cursor
+        params[ASSET_REFERENCE_WIRE["reference_cursor"]] = reference_cursor
     return params

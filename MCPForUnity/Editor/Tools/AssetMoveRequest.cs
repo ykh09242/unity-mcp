@@ -18,15 +18,15 @@ namespace MCPForUnity.Editor.Tools
         internal static ErrorResponse Decode(JObject parameters, out AssetMoveRequest request)
         {
             request = default;
-            JToken path = parameters["path"];
-            JToken destination = parameters["destination"];
-            if (path != null && path.Type != JTokenType.Null && path.Type != JTokenType.String)
-                return new ErrorResponse("'path' must be a string or null.");
-            if (destination != null && destination.Type != JTokenType.Null && destination.Type != JTokenType.String)
-                return new ErrorResponse("'destination' must be a string or null.");
+            foreach (string field in DeclaredActionContracts.AssetMoveRequiredFields)
+            {
+                JToken value = parameters[field];
+                if (value != null && value.Type != JTokenType.Null && value.Type != JTokenType.String)
+                    return new ErrorResponse($"'{field}' must be a string or null.");
+            }
 
             // Required-value errors follow any reference revision check, including for explicit JSON null.
-            request = new AssetMoveRequest((string)path, (string)destination);
+            request = new AssetMoveRequest((string)parameters[DeclaredActionContracts.AssetPath], (string)parameters[DeclaredActionContracts.AssetDestination]);
             return null;
         }
     }

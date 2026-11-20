@@ -2,6 +2,7 @@
 
 from typing import Final
 
+from services.declared_action_contracts import ASSET_MOVE_CONTRACTS
 from services.registry.action_guidance_types import ActionGuidance, Observation
 from services.registry.capability_catalog import (
     CALLBACK_INSPECTION_EFFECTS,
@@ -71,16 +72,12 @@ _ASSET: Final = {
     "duplicate": _edit(
         "Copy the asset to destination, or generate a unique path when omitted.", "path"
     ),
-    "rename": _edit(
-        "Rename or relocate an asset using its full destination path through the AssetDatabase.",
-        "path",
-        "destination",
-    ),
-    "move": _edit(
-        "Move path to destination through the AssetDatabase. Supply reference_revision from preview_move to recheck the same scan options, require complete scan coverage and reject reference drift before mutation; omitting it performs an unguarded move.",
-        "path",
-        "destination",
-    ),
+    **{
+        action: _read(contract.purpose, *contract.required, limit=_REVERSE_LIMIT)
+        if contract.read_only
+        else _edit(contract.purpose, *contract.required)
+        for action, contract in ASSET_MOVE_CONTRACTS.items()
+    },
     "delete": _edit(
         "Delete the asset at path through the AssetDatabase. Supply reference_revision from preview_delete to recheck the same scan options, require complete scan coverage and reject reference drift before mutation; omitting it performs an unguarded delete.",
         "path",
@@ -94,12 +91,6 @@ _ASSET: Final = {
     "get_reverse_references": _read(
         "Find project assets that refer to the selected asset, including usages of a prefab.",
         "path",
-        limit=_REVERSE_LIMIT,
-    ),
-    "preview_move": _read(
-        "Observe bounded reference impact of moving path to destination without moving it. Return referenceRevision for an optional move with reference_revision; inspect scan coverage before relying on the result.",
-        "path",
-        "destination",
         limit=_REVERSE_LIMIT,
     ),
     "preview_delete": _read(
