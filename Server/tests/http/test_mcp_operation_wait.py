@@ -52,9 +52,10 @@ async def test_real_sdk_task_matches_ordinary_existing_job_observation(
 
     command_hub.websocket.send_json = answer
     async with bound_http(tmp_path, monkeypatch, operation_wait=True) as (client, runtime):
+        # Both paths receive an immediate native reply. Allow time for SDK and journal setup.
         params = {
             "name": "wait_for_operation",
-            "arguments": {"kind": kind, "job_id": job, "wait_timeout": 1},
+            "arguments": {"kind": kind, "job_id": job, "wait_timeout": 30},
         }
         ordinary = await bound_call(client, "tools/call", params)
         task = await completed_wait(client, runtime, params)
