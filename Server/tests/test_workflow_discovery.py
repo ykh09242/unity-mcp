@@ -57,12 +57,21 @@ async def test_transport_tool_is_discoverable_from_its_actual_wire_schema():
 async def test_search_and_normalized_resource_branch_stay_within_the_original_request():
     from fastmcp import Client, FastMCP
     from fastmcp.server.middleware import Middleware
+    from transport.protocol import is_internal_resource_list
 
     class CountResourceLists(Middleware):
-        calls = 0
+        def __init__(self):
+            self.external = []
+            self.internal = []
+            self.tool_requests = []
+
+        async def on_call_tool(self, context, call_next):
+            self.tool_requests.append(context.fastmcp_context.request_context.request_id)
+            return await call_next(context)
 
         async def on_list_resources(self, context, call_next):
-            self.calls += 1
+            requests = self.internal if is_internal_resource_list(context) else self.external
+            requests.append(context.fastmcp_context.request_context.request_id)
             return await call_next(context)
 
     server = FastMCP("readable-state")
@@ -76,8 +85,8 @@ async def test_search_and_normalized_resource_branch_stay_within_the_original_re
 
     async with Client(server) as client:
         await client.list_resources()
-        external_calls = counter.calls
-        assert external_calls > 0
+        external_calls = list(counter.external)
+        assert external_calls
         for group in ("resources", " resources "):
             page = await client.call_tool("manage_tools", {"action": "catalog", "group": group})
             assert [row["uri"] for row in page.structured_content["resources"]] == [
@@ -85,7 +94,39 @@ async def test_search_and_normalized_resource_branch_stay_within_the_original_re
             ]
         search = await client.call_tool("manage_tools", {"action": "search", "query": "هل يعمل؟"})
         assert search.structured_content["navigation"]["resources"]["total"] == 1
-        assert counter.calls == external_calls
+        assert counter.external == external_calls
+        assert len(counter.tool_requests) == 3
+        assert counter.internal == counter.tool_requests
+
+
+@pytest.mark.asyncio
+async def test_resource_catalog_keeps_per_call_project_selection(monkeypatch):
+    from fastmcp import Client, Context, FastMCP
+    from core.config import config
+    from transport.unity_instance_middleware import UnityInstanceMiddleware
+
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(config, "require_explicit_target", False)
+    server = FastMCP("per-call resource catalog")
+    routing = UnityInstanceMiddleware()
+    server.add_middleware(routing)
+
+    @server.tool
+    async def inspect_catalog_selection(ctx: Context) -> dict:
+        await routing.set_active_instance(ctx, "Saved@aaaaaaaa")
+        await ctx.set_state("unity_instance", "PerCall@bbbbbbbb", serializable=False)
+        await module._catalog_resources(ctx)
+        return {
+            "request": await ctx.get_state("unity_instance"),
+            "session": await routing.get_active_instance(ctx),
+        }
+
+    async with Client(server, mode="legacy") as client:
+        result = await client.call_tool("inspect_catalog_selection", {})
+        assert result.structured_content == {
+            "request": "PerCall@bbbbbbbb",
+            "session": "Saved@aaaaaaaa",
+        }
 
 
 @pytest.mark.asyncio

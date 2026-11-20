@@ -59,7 +59,7 @@ from transport.plugin_hub import (
     http_request_budget,
 )
 from transport.tool_input_validation import validate_tool_arguments
-from transport.protocol import is_sessionless
+from transport.protocol import is_internal_resource_list, is_sessionless
 from transport.response_delivery import response_lookup_selector
 from transport.session_state_store import SessionStateCapacityError
 
@@ -1168,12 +1168,14 @@ class UnityInstanceMiddleware(Middleware):
 
     async def on_list_resources(self, context: MiddlewareContext, call_next):
         await authorize_remote_resource()
-        await self._inject_unity_instance(context, allow_reconnect=False)
+        if not is_internal_resource_list(context):
+            await self._inject_unity_instance(context, allow_reconnect=False)
         return await call_next(context)
 
     async def on_list_resource_templates(self, context: MiddlewareContext, call_next):
         await authorize_remote_resource()
-        await self._inject_unity_instance(context, allow_reconnect=False)
+        if not is_internal_resource_list(context):
+            await self._inject_unity_instance(context, allow_reconnect=False)
         return await call_next(context)
 
     async def on_list_tools(self, context: MiddlewareContext, call_next):

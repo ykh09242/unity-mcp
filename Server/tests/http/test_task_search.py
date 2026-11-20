@@ -7,6 +7,51 @@ import pytest
 from starlette.testclient import TestClient
 
 from tests.http.test_discovery_profiles import discovery_server, names  # noqa: F401
+from tests.http.test_mcp_skills import skills_http, skills_server  # noqa: F401
+
+
+@pytest.mark.asyncio
+async def test_production_search_retains_outer_routing_and_budgets_only_its_result(
+    skills_server, monkeypatch
+):
+    from tests.http.test_mcp_protocol_wire import _body, _headers
+    from transport.unity_instance_middleware import UnityInstanceMiddleware
+
+    @skills_server.resource("mcpforunity://fixture/unrelated", description="x" * 12000)
+    def unrelated() -> str:
+        raise AssertionError("search must not read resource bodies")
+
+    routed = []
+    original = UnityInstanceMiddleware._inject_unity_instance
+
+    async def record_route(self, context, **kwargs):
+        routed.append(context.method)
+        return await original(self, context, **kwargs)
+
+    monkeypatch.setattr(UnityInstanceMiddleware, "_inject_unity_instance", record_route)
+    monkeypatch.setattr("transport.response_catalog_limits.MCP_RESULT_BYTES", 8192)
+    async with skills_http(skills_server) as client:
+        listing = await client.post(
+            "/mcp", json=_body("resources/list"), headers=_headers("resources/list")
+        )
+        assert listing.json()["error"]["data"]["reason"] == "response_transport_limit"
+        assert "resources/list" in routed
+        routed.clear()
+        uri = "mcpforunity://scene/cameras"
+        for name, args in (("search_unity_tools", {}), ("manage_tools", {"action": "search"})):
+            params = {
+                "name": name,
+                "arguments": {**args, "query": uri, "route_surfaces": "resources", "limit": 1},
+            }
+            response = await client.post(
+                "/mcp", json=_body("tools/call", params), headers=_headers("tools/call", name=name)
+            )
+            result = response.json()["result"]
+            assert not result.get("isError"), result["content"][0]
+            assert [
+                item["uri"] for item in result["content"] if item["type"] == "resource_link"
+            ] == [uri]
+        assert not {"resources/list", "resources/templates/list"}.intersection(routed)
 
 
 def test_search_links_require_list_visibility_and_read_permission(discovery_server):

@@ -54,6 +54,12 @@ async def test_profiles_large_catalog_and_legacy_reset_over_real_transports(
         generated = {name for name in names if name.startswith("assurance_catalog_")}
         assert len(generated) == (CATALOG_SIZE if profile == "full" else 0)
         assert "manage_tools" in names
+        search = await client.call_tool(
+            "manage_tools",
+            {"action": "search", "query": "manage_tools", "route_surfaces": "tools", "limit": 1},
+        )
+        assert not search.is_error
+        assert search.structured_content["results"][0]["name"] == "manage_tools"
         # When: the actual server describes a hidden tool, or legacy selection enables it.
         description = await client.call_tool(
             "manage_tools", {"action": "describe", "tool": "assurance_catalog_0000"}

@@ -26,10 +26,17 @@ from transport.response_delivery import (
     delivery_meta,
     retained_response,
 )
+from transport.protocol import is_internal_resource_list
 
 
 class ResponseCatalogLimits(Middleware):
     """Retain oversized inventories explicitly instead of returning partial discovery."""
+
+    async def __call__(self, context: MiddlewareContext, call_next: CallNext):
+        # Only the enclosing wire response owns an ID, byte budget and delivery receipt.
+        if is_internal_resource_list(context):
+            return await call_next(context)
+        return await super().__call__(context, call_next)
 
     async def _handle(
         self, wire: BaseModel | dict[str, JsonValue], context: MiddlewareContext

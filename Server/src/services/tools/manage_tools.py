@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
-from transport.protocol import is_sessionless
+from transport.protocol import internal_resource_catalog, is_sessionless
 
 from services.registry import (
     mcp_for_unity_tool,
@@ -462,10 +462,11 @@ async def _catalog_resources(ctx: Context) -> list[CatalogResource]:
     from services.operation_permissions import authorize_remote_resource
 
     await authorize_remote_resource()
+    with internal_resource_catalog(ctx.fastmcp):
+        listed = await ctx.fastmcp.list_resources()
+        templates = await ctx.fastmcp.list_resource_templates()
     resources: list[CatalogResource] = []
-    for item in dedupe_with_versions(
-        await ctx.fastmcp.list_resources(), lambda item: str(item.uri)
-    ):
+    for item in dedupe_with_versions(listed, lambda item: str(item.uri)):
         uri = str(item.uri)
         try:
             # A listed descriptor can still have a separate resource read policy.
@@ -480,10 +481,6 @@ async def _catalog_resources(ctx: Context) -> list[CatalogResource]:
                 "kwargs": {"meta": item.meta},
             }
         )
-    templates = dedupe_with_versions(
-        await ctx.fastmcp.list_resource_templates(),
-        lambda item: item.uri_template,
-    )
     resources.extend(
         {
             "uri": item.uri_template,
@@ -492,7 +489,7 @@ async def _catalog_resources(ctx: Context) -> list[CatalogResource]:
             "kwargs": {"meta": item.meta},
             "schema_required": tuple(item.parameters.get("required", ())),
         }
-        for item in templates
+        for item in dedupe_with_versions(templates, lambda item: item.uri_template)
     )
     return resources
 
