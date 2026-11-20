@@ -101,6 +101,20 @@ Ask your assistant:
 
 Use the returned `Name@hash` as `unity_instance` on each tool call and `_meta.unity_instance` on each resource read. Stateful legacy sessions can retain a default Editor; modern sessionless clients cannot. See [Multi-Instance Routing](../guides/multi-instance.md).
 
+For a local HTTP command-line check, bind both calls to your exact project and
+compare the returned scene path with your saved active scene.
+
+```sh
+unity-mcp --instance "Project@0123456789abcdef" --expect-project "/work/Project" --format json doctor
+unity-mcp --instance "Project@0123456789abcdef" --expect-project "/work/Project" --format json scene active
+```
+
+If the doctor reports `source_mismatch`, restart the selected client server with
+the package's `mcpServerSource` pin and rerun the doctor. A
+`comparison_unknown` diagnosis leaves the server revision unverified. Verify
+that the host actually launched the pinned installation, then check the active
+scene's exact `path` and `isLoaded` fields.
+
 Tool discovery selection is separate from the default Editor. Supported modern scopes can retain project-bound tool choices; modern HTTP using the existing API-key layer cannot change selection. For that mode, set `UNITY_MCP_TOOL_PROFILE=full` in the server environment, restart and reconnect to expose tools allowed by the Editor. See [Tool Visibility And Groups](../guides/tool-groups.md#modern-client-selection-and-inventory-refresh).
 
 Then try [Your First Prompt](./first-prompt.md) in a disposable or saved scene. Enable only the needed tools and review [consent and safe operation](../guides/security.md).
