@@ -158,4 +158,7 @@ def test_partial_coverage_and_foreign_jobs(load_runs, change):
         )
     else:
         assert result.exit_code == 0, result.output
-        assert json.loads(result.output)["newly_observed_loads"] is None
+        report = json.loads(result.output)
+        assert report["newly_observed_loads"] is None
+        assert report["before"]["unobserved_predictions"] is None
+        assert report["after"]["unobserved_predictions"] is not None

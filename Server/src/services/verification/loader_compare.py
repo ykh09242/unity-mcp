@@ -106,15 +106,19 @@ def _summarize(imported, static):
             else:
                 state = "static_coverage_unknown"
         events.append({**row, "registered_asset_path": asset_path, "comparison": state})
+    coverage = {key: imported["coverage"][key] for key in ("state", "observed_hooks", "dropped")}
+    intact = coverage["state"] == "instrumented_hooks_only" and coverage["dropped"] == 0
     return {
         "identity": imported["identity"],
         "capture_sha256": imported["capture_sha256"],
-        "coverage": imported["coverage"],
+        "coverage": coverage,
         "events": events,
         "unobserved_predictions": [
             {"scheme": scheme, "key": key, "owner_path": path}
             for scheme, key, path in sorted(predictions - observed)
-        ],
+        ]
+        if intact
+        else None,
     }, observed
 
 
@@ -139,11 +143,7 @@ def compare_player_loads(project, registration_path, before, after):
     static = _predictions(candidate, evidence)
     first, first_seen = _summarize(first_capture, static)
     second, _ = _summarize(second_capture, static)
-    comparable_captures = all(
-        capture["coverage"]["state"] == "instrumented_hooks_only"
-        and capture["coverage"]["dropped"] == 0
-        for capture in (first_capture, second_capture)
-    )
+    comparable_captures = all(run["unobserved_predictions"] is not None for run in (first, second))
     return {
         "schema": "player_loader_comparison@1",
         "scope": "selected_static_sources_and_instrumented_hooks",
