@@ -9,6 +9,73 @@ from starlette.testclient import TestClient
 from tests.http.test_discovery_profiles import discovery_server, names  # noqa: F401
 
 
+def test_search_links_require_list_visibility_and_read_permission(discovery_server):
+    from fastmcp.exceptions import AuthorizationError
+    from fastmcp.server.middleware import Middleware
+    from fastmcp.server.middleware.authorization import AuthMiddleware
+    from tests.http.test_mcp_protocol_wire import _body, _headers
+
+    server, _ = discovery_server[0]("core")
+    resource_names = ("open", "hidden", "denied", "unreadable")
+    prefix = "mcpforunity://scene/cameras/"
+    for name in resource_names:
+        server.resource(prefix + name, name=name)(lambda: "camera")
+
+    class InventoryPolicy(Middleware):
+        async def on_list_resources(self, context, call_next):
+            return [item for item in await call_next(context) if item.name != "hidden"]
+
+        async def check_resource_access(self, context):
+            if str(context.message.uri) == prefix + "unreadable":
+                raise AuthorizationError("Unavailable")
+
+        async def on_read_resource(self, context, call_next):
+            await self.check_resource_access(context)
+            return await call_next(context)
+
+    server.add_middleware(InventoryPolicy())
+    server.add_middleware(AuthMiddleware(auth=lambda ctx: ctx.component.name != "denied"))
+    app = server.http_app(transport="http", stateless_http=True, json_response=True)
+    with TestClient(app, headers={"Accept": "application/json, text/event-stream"}) as client:
+        listed = client.post(
+            "/mcp", json=_body("resources/list"), headers=_headers("resources/list")
+        )
+        assert {item["name"] for item in listed.json()["result"]["resources"]} == {
+            "open",
+            "unreadable",
+        }
+        for name in resource_names:
+            uri = prefix + name
+            read = client.post(
+                "/mcp",
+                json=_body("resources/read", {"uri": uri}),
+                headers=_headers("resources/read", name=uri),
+            )
+            assert ("result" in read.json()) == (name in {"open", "hidden"})
+            params = {
+                "name": "manage_tools",
+                "arguments": {"action": "search", "query": uri, "route_surfaces": "resources"},
+            }
+            response = client.post(
+                "/mcp",
+                json=_body("tools/call", params),
+                headers=_headers("tools/call", name="manage_tools"),
+            )
+            result = response.json()["result"]
+            expected = [uri] if name == "open" else []
+            assert [
+                item["uri"]
+                for item in result["content"]
+                if item["type"] == "resource_link" and item["uri"] == uri
+            ] == expected
+            groups = result["structuredContent"]["route_groups"]
+            assert any(
+                route.get("uri") == uri
+                for group in groups
+                for route in [group["representative"], *group["alternatives"]]
+            ) == bool(expected)
+
+
 @pytest.mark.parametrize(
     ("version", "expected"),
     [("2024-11-05", ["text"]), ("2025-03-26", ["text"]), ("2025-06-18", ["text", "resource_link"])],

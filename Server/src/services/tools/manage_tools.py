@@ -457,22 +457,31 @@ async def manage_tools(
 
 
 async def _catalog_resources(ctx: Context) -> list[CatalogResource]:
+    from fastmcp.exceptions import AuthorizationError
     from fastmcp.utilities.versions import dedupe_with_versions
     from services.operation_permissions import authorize_remote_resource
 
-    # Keep the resource listing permission check when skipping the listing middleware.
     await authorize_remote_resource()
-    resources: list[CatalogResource] = [
-        {
-            "uri": str(item.uri),
-            "name": item.name,
-            "description": item.description or "",
-            "kwargs": {"meta": item.meta},
-        }
-        for item in await ctx.fastmcp.list_resources(run_middleware=False)
-    ]
+    resources: list[CatalogResource] = []
+    for item in dedupe_with_versions(
+        await ctx.fastmcp.list_resources(), lambda item: str(item.uri)
+    ):
+        uri = str(item.uri)
+        try:
+            # A listed descriptor can still have a separate resource read policy.
+            await ctx.fastmcp._check_resource_access(uri)
+        except AuthorizationError:
+            continue
+        resources.append(
+            {
+                "uri": uri,
+                "name": item.name,
+                "description": item.description or "",
+                "kwargs": {"meta": item.meta},
+            }
+        )
     templates = dedupe_with_versions(
-        await ctx.fastmcp.list_resource_templates(run_middleware=False),
+        await ctx.fastmcp.list_resource_templates(),
         lambda item: item.uri_template,
     )
     resources.extend(
