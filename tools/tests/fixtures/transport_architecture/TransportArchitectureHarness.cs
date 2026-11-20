@@ -23,63 +23,17 @@ internal static class TransportArchitectureHarness
     private static readonly PumpContext Context = new PumpContext();
     private static int _passes;
 
-    public static int Main()
+    internal static void Run(bool includeCancellationAndProjection)
     {
-        try
+        SynchronizationContext.SetSynchronizationContext(Context);
+        typeof(TransportCommandDispatcher).GetField("_mainThreadContext", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, Context);
+        ExerciseRealSocket();
+        if (includeCancellationAndProjection)
         {
-            TransportCommandDispatcher.ExecuteCommandJsonAsync("ping", CancellationToken.None).GetAwaiter().GetResult();
-            RunNUnit(typeof(MCPForUnityTests.Editor.Services.TransportArchitectureTests));
-            RunNUnit(typeof(MCPForUnityTests.Editor.Services.CooperativeCancellationTests));
-            RunNUnit(typeof(MCPForUnityTests.Editor.Services.CooperativeHandlerCancellationTests));
-            RunNUnit(typeof(MCPForUnityTests.Editor.Tools.BatchExecuteCancellationTests));
-            RunNUnit(typeof(MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests));
-            RunNUnit(typeof(MCPForUnityTests.Editor.Services.WebSocketTransportClientTests));
-            SynchronizationContext.SetSynchronizationContext(Context);
-            typeof(TransportCommandDispatcher).GetField("_mainThreadContext", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, Context);
-            ExerciseRealSocket();
             CancellationSocketHarness.Run(PumpUntil, Pass);
             BenchmarkProjection();
-            Console.WriteLine("PASS_TOTAL: " + _passes);
-            return 0;
         }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine(ex);
-            return 1;
-        }
-    }
-
-    private static void RunNUnit(Type type)
-    {
-        foreach (var method in type.GetMethods())
-        {
-            var cases = method.GetCustomAttributes<TestCaseAttribute>().ToArray();
-            bool test = method.GetCustomAttribute<TestAttribute>() != null;
-            if (!test && cases.Length == 0)
-                continue;
-            var arguments = cases.Length == 0 ? new[] { Array.Empty<object>() } : cases.Select(c => c.Arguments).ToArray();
-            foreach (var args in arguments)
-            {
-                object fixture = Activator.CreateInstance(type);
-                try
-                {
-                    foreach (var setup in type.GetMethods().Where(m => m.GetCustomAttribute<SetUpAttribute>() != null))
-                        setup.Invoke(fixture, null);
-                    var returned = method.Invoke(fixture, args);
-                    if (returned is Task task)
-                    {
-                        PumpUntil(() => task.IsCompleted, "NUnit task");
-                        task.GetAwaiter().GetResult();
-                    }
-                    Pass(type.Name + "." + method.Name + "(" + string.Join(",", args) + ")");
-                }
-                finally
-                {
-                    foreach (var teardown in type.GetMethods().Where(m => m.GetCustomAttribute<TearDownAttribute>() != null))
-                        teardown.Invoke(fixture, null);
-                }
-            }
-        }
+        Console.WriteLine("ARCHITECTURE_TOTAL: " + _passes);
     }
 
     private static void Set(WebSocketTransportClient client, string name, object value) =>
@@ -200,7 +154,16 @@ internal static class TransportArchitectureHarness
         Assert.IsFalse(slow.Task.IsCompleted);
         Pass("Real receive loop accepts ping during active async command");
         peer.Send(Execute("active", "fixture_next"));
-        PumpUntil(() => Result(peer, "active")?.SelectToken("result.error")?.Value<string>() == "Duplicate command id", "duplicate error");
+        PumpUntil(
+            () =>
+            {
+                Collect(peer);
+                // The original command can report its deadline before the duplicate
+                // response. Its execution remains held by the settlement gate.
+                return Messages.Any(m => m.Value<string>("id") == "active" && m.SelectToken("result.error")?.Value<string>() == "Duplicate command id");
+            },
+            "duplicate error"
+        );
         Pass("Duplicate active ID rejected without a second execution");
         for (int i = 0; i < 31; i++)
             peer.Send(Execute("queued-" + i, "fixture_next"));
@@ -284,8 +247,7 @@ internal static class TransportArchitectureHarness
         var shutdown = Invoke(
             client,
             "StopCapturedConnectionLoopsAsync",
-            typeof(WebSocketTransportClient).GetMethod("CaptureConnectionLoops", PrivateInstance).Invoke(client, null),
-            true
+            typeof(WebSocketTransportClient).GetMethod("CaptureConnectionLoops", PrivateInstance).Invoke(client, null)
         );
         try
         {

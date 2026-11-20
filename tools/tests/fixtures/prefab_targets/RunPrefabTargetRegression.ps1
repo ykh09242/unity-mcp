@@ -37,7 +37,7 @@ try {
         ('/out:' + (Join-Path $work 'PrefabTargetRegression.exe')))
     $arguments += @('mscorlib.dll', 'System.dll', 'System.Core.dll') | ForEach-Object { '/reference:' + (Join-Path $framework $_) }
     $arguments += '/reference:' + (Join-Path $framework 'Facades/netstandard.dll')
-    $json = Join-Path $root '.compile-refs/Newtonsoft.Json.dll'
+    $json = Join-Path $SdkPath 'Sdks/Microsoft.NET.Sdk/tools/net472/Newtonsoft.Json.dll'
     $arguments += '/reference:' + $json
     Copy-Item -LiteralPath $json -Destination $work
     $arguments += @($generated, (Join-Path $PSScriptRoot 'PrefabTargetRegressionHarness.cs'))

@@ -13,12 +13,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../..'))
 if (!$HostSourcePath) { $HostSourcePath = Join-Path $root 'MCPForUnity/Editor/Services/Transport/Transports/StdioBridgeHost.cs' }
-$inputs = @((Resolve-Path -LiteralPath $HostSourcePath).Path,
-    (Join-Path $root 'MCPForUnity/Editor/Models/Command.cs'),
-    (Join-Path $root 'MCPForUnity/Editor/Services/Transport/TransportCommandResponse.cs'),
+$sourceMap = Join-Path $PSScriptRoot 'ProductionSources.ps1'
+. $sourceMap
+$sources = @((Resolve-Path -LiteralPath $HostSourcePath).Path) + @(Get-StdioProductionSources $root) + @(
     (Join-Path $PSScriptRoot 'UnityBoundaryStubs.cs'),
-    (Join-Path $PSScriptRoot 'IdleQueueBenchmarkHarness.cs'),
-    (Join-Path $PSScriptRoot 'RunIdleQueueBenchmark.ps1'))
+    (Join-Path $PSScriptRoot 'IdleQueueBenchmarkHarness.cs'))
+$inputs = $sources + @($sourceMap, $PSCommandPath)
 $hashes = @($inputs | ForEach-Object { @{ path = $_; sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash } })
 $work = Join-Path ([IO.Path]::GetTempPath()) ('phase12-stdio-idle-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
@@ -26,14 +26,14 @@ $result = 0
 try {
     $framework = Join-Path $UnityData 'MonoBleedingEdge/lib/mono/4.5'
     $executable = Join-Path $work 'IdleQueueBenchmark.exe'
-    $json = Join-Path $root '.compile-refs/Newtonsoft.Json.dll'
+    $json = Join-Path $SdkPath 'Sdks/Microsoft.NET.Sdk/tools/net472/Newtonsoft.Json.dll'
     Copy-Item -LiteralPath $json -Destination $work
     $arguments = @((Join-Path $SdkPath 'Roslyn/bincore/csc.dll'), '/nologo', '/noconfig', '/nostdlib+',
         '/target:exe', '/langversion:latest', '/optimize+', ('/out:' + $executable))
-    $arguments += @('mscorlib.dll', 'System.dll', 'System.Core.dll') | ForEach-Object { '/reference:' + (Join-Path $framework $_) }
+    $arguments += @('mscorlib.dll', 'System.dll', 'System.Core.dll', 'System.Numerics.dll') | ForEach-Object { '/reference:' + (Join-Path $framework $_) }
     $arguments += '/reference:' + (Join-Path $framework 'Facades/netstandard.dll')
     $arguments += '/reference:' + $json
-    $arguments += $inputs[0..4]
+    $arguments += $sources
     $hashes | ForEach-Object { Write-Output ($_.path + ' SHA256=' + $_.sha256) }
     & $DotnetPath @arguments
     if ($LASTEXITCODE -ne 0) { throw 'Idle queue benchmark compilation failed' }

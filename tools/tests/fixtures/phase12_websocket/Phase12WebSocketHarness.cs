@@ -10,6 +10,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Services.Transport.Transports;
 using MCPForUnity.Editor.Tools;
@@ -40,11 +41,19 @@ internal static class Phase12WebSocketHarness
 
     private static int RunFixture(string[] args)
     {
-        SynchronizationContext.SetSynchronizationContext(Context);
-        TransportCommandDispatcher.ExecuteCommandJsonAsync("ping", CancellationToken.None).GetAwaiter().GetResult();
         string selection = args.Length == 0 ? "all" : args[0];
+        if (
+            args.Length > 1
+            || !new[] { "all", "architecture", "transport_architecture", "reconnect", "force", "dispose", "bytes", "inputs" }.Contains(selection)
+        )
+            throw new ArgumentException("Unknown WebSocket fixture case: " + selection);
+        SynchronizationContext.SetSynchronizationContext(Context);
+        ToolConsentThread.Capture();
+        TransportCommandDispatcher.ExecuteCommandJsonAsync("ping", CancellationToken.None).GetAwaiter().GetResult();
         if (selection == "architecture")
-            Run("existing_architecture_real_socket", RunArchitecture);
+            Run("existing_architecture_real_socket", () => TransportArchitectureHarness.Run(includeCancellationAndProjection: false));
+        if (selection == "transport_architecture")
+            Run("transport_architecture_socket_and_projection", () => TransportArchitectureHarness.Run(includeCancellationAndProjection: true));
         foreach (string mode in new[] { "reconnect", "force", "dispose" })
         foreach (bool cooperative in new[] { false, true })
             if (selection == "all" || selection == mode)
@@ -73,15 +82,6 @@ internal static class Phase12WebSocketHarness
             _failures++;
             Console.WriteLine("FAIL: " + name + " " + ex);
         }
-    }
-
-    private static void RunArchitecture()
-    {
-        Type harness = typeof(TransportArchitectureHarness);
-        var context = (SynchronizationContext)harness.GetField("Context", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
-        SynchronizationContext.SetSynchronizationContext(context);
-        typeof(TransportCommandDispatcher).GetField("_mainThreadContext", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, context);
-        harness.GetMethod("ExerciseRealSocket", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
     }
 
     private static void HeldHandler(string mode, bool cooperative)

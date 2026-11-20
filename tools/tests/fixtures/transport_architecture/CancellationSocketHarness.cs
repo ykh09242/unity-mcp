@@ -146,8 +146,7 @@ internal static class CancellationSocketHarness
             peer.Send(Execute("disconnect-cooperative", name));
             pump(() => Volatile.Read(ref starts) == 3, "cooperative disconnect handler starts", 5000);
             object loops = typeof(WebSocketTransportClient).GetMethod("CaptureConnectionLoops", Private).Invoke(client, null);
-            var stop = (Task)
-                typeof(WebSocketTransportClient).GetMethod("StopCapturedConnectionLoopsAsync", Private).Invoke(client, new[] { loops, (object)true });
+            var stop = (Task)typeof(WebSocketTransportClient).GetMethod("StopCapturedConnectionLoopsAsync", Private).Invoke(client, new[] { loops });
             pump(() => stop.IsCompleted && Volatile.Read(ref settles) == 3, "cooperative disconnect settlement", 5000);
             stop.GetAwaiter().GetResult();
             Assert.IsTrue(work.DrainAsync().IsCompleted);

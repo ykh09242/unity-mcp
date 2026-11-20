@@ -103,10 +103,32 @@ public static class AssetDatabase
 {
     public static GameObject Saved;
 
+    public static UnityEngine.Object LoadMainAssetAtPath(string path) => Saved;
+
     public static T LoadAssetAtPath<T>(string path)
         where T : class => Saved as T;
 
+    public static string AssetPathToGUID(string path) => throw new InvalidOperationException("The fixture only creates a new asset");
+
     public static string GenerateUniqueAssetPath(string path) => path;
+}
+
+public sealed class AssetFolderScope : IDisposable
+{
+    public void EnsureParentDirectory(string path) { }
+
+    public void Complete() { }
+
+    public void Dispose() { }
+}
+
+public sealed class RuntimeMaterialTransaction : IDisposable
+{
+    public void Commit() { }
+
+    public void RetainSavedDependencies(string path) { }
+
+    public void Dispose() { }
 }
 
 public static class Selection
@@ -174,15 +196,28 @@ public static partial class ProductionResolver
 
     private static (bool isValid, string errorMessage, bool shouldUnlink) ValidateSourceObjectForPrefab(GameObject source, bool unlink) => (true, null, false);
 
-    private static void EnsureAssetDirectoryExists(string path) { }
+    private static bool IsDirtyStageForAsset(string path) => false;
 
-    private static (int count, string error) PersistRuntimeMaterials(GameObject source, string path) => (0, null);
+    private static ErrorResponse CheckPrefabSaveDestination(string path, string replacementGuid) =>
+        replacementGuid == null && AssetDatabase.Saved == null ? null : new ErrorResponse("Expected an unused destination");
 
-    private static bool CreatePrefabAsset(GameObject source, string path, bool replace)
+    private static void ValidateRuntimeMaterialPaths(GameObject source, string path) { }
+
+    private static (int count, string error) PersistRuntimeMaterials(
+        GameObject source,
+        string path,
+        AssetFolderScope folders,
+        RuntimeMaterialTransaction materials
+    ) => (0, null);
+
+    private static bool CreatePrefabAsset(GameObject source, string path, bool replace, Action onSaved)
     {
         AssetDatabase.Saved = new GameObject("ActualSavedRoot", 123);
+        onSaved();
         return true;
     }
+
+    private static object SavedVerification(string path, int[] ids, string[] names, JObject changes) => new { path };
 }
 
 public static class PrefabTargetRegression

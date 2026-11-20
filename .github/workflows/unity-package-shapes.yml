@@ -84,6 +84,13 @@ jobs:
           }
           Remove-Item -LiteralPath (Join-Path $installRoot 'UnitySetup.exe')
           "UNITY_EDITOR=$editor" >> $env:GITHUB_ENV
+      - name: Run standalone Windows managed fixture regressions
+        if: matrix.suite == 'package'
+        timeout-minutes: 5
+        run: |
+          $unityData = Join-Path (Split-Path -Parent $env:UNITY_EDITOR) 'Data'
+          $fixtureOutput = Join-Path $env:RUNNER_TEMP 'managed-fixture-smoke'
+          & tools/tests/fixtures/RunManagedFixtureSmoke.ps1 -UnityData $unityData -WorkPath $fixtureOutput
       - name: Activate scoped Windows serial license
         id: activate
         env:

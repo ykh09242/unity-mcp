@@ -10,23 +10,40 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../..'))
-$evidenceRoot = [IO.Path]::GetFullPath((Join-Path $root 'reports/CS-20261006-mcp-usability/phase12/websocket')) + [IO.Path]::DirectorySeparatorChar
 $work = [IO.Path]::GetFullPath($Evidence)
-if (!$work.StartsWith($evidenceRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Evidence must be below the owned phase12/websocket directory' }
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 $framework = Join-Path $UnityData 'MonoBleedingEdge/lib/mono/4.5'
-$references = @('mscorlib.dll','System.dll','System.Core.dll','System.Net.Http.dll') | ForEach-Object { Join-Path $framework $_ }
+$references = @('mscorlib.dll', 'System.dll', 'System.Core.dll', 'System.Numerics.dll', 'System.Net.Http.dll') | ForEach-Object { Join-Path $framework $_ }
 $references += Join-Path $framework 'Facades/netstandard.dll'
-foreach ($name in @('Newtonsoft.Json.dll','nunit.framework.dll')) {
-    $path = Join-Path $root ('.compile-refs/' + $name)
+foreach ($path in @(
+    (Join-Path $SdkPath 'Sdks/Microsoft.NET.Sdk/tools/net472/Newtonsoft.Json.dll'),
+    (Join-Path $UnityData 'Resources/PackageManager/BuiltInPackages/com.unity.ext.nunit/net40/unity-custom/nunit.framework.dll')
+)) {
     $references += $path
     Copy-Item -LiteralPath $path -Destination $work
 }
 $sources = @(
+    'MCPForUnity/Editor/Constants/ProductInfo.cs',
+    'MCPForUnity/Editor/Helpers/CommandOutcome.cs',
+    'MCPForUnity/Editor/Helpers/OperationTimeouts.cs',
+    'MCPForUnity/Editor/Services/EditorMainThreadWakeup.cs',
+    'MCPForUnity/Editor/Services/ServerVersionDiagnostics.cs',
+    'MCPForUnity/Editor/Services/ToolOperationIdentity.generated.cs',
+    'MCPForUnity/Editor/Services/ToolOperationPolicy.generated.cs',
+    'MCPForUnity/Editor/Services/ToolSettingsState.cs',
+    'MCPForUnity/Editor/Services/ToolSettingsRegistration.cs',
+    'MCPForUnity/Editor/Services/Transport/BoundedResponseJson.cs',
+    'MCPForUnity/Editor/Services/Transport/CommandPhaseTiming.cs',
+    'MCPForUnity/Editor/Services/Transport/CommandProgress.cs',
+    'MCPForUnity/Editor/Services/Transport/CommandResumeJournal.cs',
     'MCPForUnity/Editor/Services/Transport/ConnectionCommandWork.cs',
+    'MCPForUnity/Editor/Services/Transport/NativeCommandArbitrator.cs',
+    'MCPForUnity/Editor/Services/Transport/PlainObjectJsonWriter.cs',
     'MCPForUnity/Editor/Services/Transport/TransportCommandResponse.cs',
     'MCPForUnity/Editor/Services/Transport/TransportCommandDispatcher.cs',
+    'MCPForUnity/Editor/Services/Transport/TransportJson.cs',
     'MCPForUnity/Editor/Services/Transport/Transports/WebSocketTransportClient.cs',
+    'MCPForUnity/Editor/Services/Transport/WebSocketMessageReader.cs',
     'MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs',
     'MCPForUnity/Editor/Services/Transport/TransportState.cs',
     'MCPForUnity/Editor/Services/Transport/IMcpTransportClient.cs',
@@ -42,15 +59,11 @@ $sources = @(
     'tools/tests/fixtures/transport_architecture/LocalWebSocketPeer.cs',
     'tools/tests/fixtures/transport_architecture/CancellationSocketHarness.cs',
     'tools/tests/fixtures/transport_architecture/TransportArchitectureHarness.cs',
-    'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Services/TransportArchitectureTests.cs',
-    'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Services/CooperativeCancellationTests.cs',
-    'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Services/CooperativeHandlerCancellationTests.cs',
-    'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/BatchExecuteCancellationTests.cs',
-    'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Services/TransportCommandDispatcherTests.cs',
-    'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Services/WebSocketTransportClientTests.cs',
+    'tools/tests/fixtures/phase12_websocket/Phase12Boundary.cs',
     'tools/tests/fixtures/phase12_websocket/Phase12WebSocketHarness.cs'
 ) | ForEach-Object { Join-Path $root $_ }
-$arguments = @((Join-Path $SdkPath 'Roslyn/bincore/csc.dll'), '/nologo','/noconfig','/nostdlib+','/target:exe','/main:Phase12WebSocketHarness','/langversion:latest',('/out:'+(Join-Path $work 'Phase12WebSocket.exe')))
+$arguments = @((Join-Path $SdkPath 'Roslyn/bincore/csc.dll'), '/nologo', '/noconfig', '/nostdlib+', '/target:exe', '/langversion:latest',
+    ('/out:' + (Join-Path $work 'Phase12WebSocket.exe')))
 $arguments += $references | ForEach-Object { '/reference:' + $_ }
 $arguments += $sources
 foreach ($source in $sources) { Write-Output ((Split-Path -Leaf $source) + '_SHA256: ' + (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) }
@@ -60,7 +73,7 @@ $runtimeOutput = Join-Path $work 'runtime.stdout.log'
 $runtimeError = Join-Path $work 'runtime.stderr.log'
 $process = Start-Process -FilePath (Join-Path $UnityData 'MonoBleedingEdge/bin/mono.exe') `
     -ArgumentList @(('"' + (Join-Path $work 'Phase12WebSocket.exe') + '"'), $Case) `
-    -WindowStyle Hidden -PassThru -RedirectStandardOutput $runtimeOutput -RedirectStandardError $runtimeError
+    -WorkingDirectory $work -WindowStyle Hidden -PassThru -RedirectStandardOutput $runtimeOutput -RedirectStandardError $runtimeError
 if (!$process.WaitForExit($ProcessTimeoutMilliseconds)) {
     $cleanupFailure = $null
     try {
@@ -78,7 +91,12 @@ if (!$process.WaitForExit($ProcessTimeoutMilliseconds)) {
     if ($null -ne $cleanupFailure) { throw $cleanupFailure }
     throw 'Owned WebSocket fixture exceeded its process timeout'
 }
-$process.Refresh()
-Get-Content -LiteralPath $runtimeOutput
-Get-Content -LiteralPath $runtimeError
-exit $process.ExitCode
+try {
+    $process.Refresh()
+    $result = $process.ExitCode
+    Get-Content -LiteralPath $runtimeOutput
+    Get-Content -LiteralPath $runtimeError
+} finally {
+    $process.Dispose()
+}
+exit $result

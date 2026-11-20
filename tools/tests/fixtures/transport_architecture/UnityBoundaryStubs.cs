@@ -16,6 +16,7 @@ namespace UnityEditor
         public delegate void CallbackFunction();
         public static CallbackFunction update;
         public static CallbackFunction delayCall;
+        public static CallbackFunction quitting;
 
         public static void QueuePlayerLoopUpdate() { }
 
@@ -140,7 +141,9 @@ namespace MCPForUnity.Editor.Helpers
         private static bool? _isEnabledCached = false;
         public static bool IsEnabled => _isEnabledCached ?? false;
 
-        public static void Log(string name, JObject parameters, string type, string status, long elapsed, string error) { }
+        public static void Log(string name, JObject parameters, string type, string status, long elapsed, string error = null) { }
+
+        public static void LogTiming(JObject entry) => throw new InvalidOperationException("Timing logs are disabled");
     }
 
     public static class ProjectIdentityUtility
@@ -214,15 +217,22 @@ namespace MCPForUnity.Editor.Services
     internal sealed class EditorStatePublisher : IDisposable
     {
         internal const string Capability = "editor_state_v1";
+        internal Task Completion => Task.CompletedTask;
         internal static int Starts;
         internal static int Disposals;
         private bool _disposed;
 
-        internal static EditorStatePublisher Start(Func<EditorStateFrame, CancellationToken, Task> send, CancellationToken token)
+        internal static EditorStatePublisher Start(
+            Func<EditorStateFrame, CancellationToken, Task> send,
+            CancellationToken token,
+            Action<EditorStatePublisher> publish = null
+        )
         {
             token.ThrowIfCancellationRequested();
             Starts++;
-            return new EditorStatePublisher();
+            var publisher = new EditorStatePublisher();
+            publish?.Invoke(publisher);
+            return publisher;
         }
 
         public void Dispose()

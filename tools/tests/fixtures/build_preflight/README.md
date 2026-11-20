@@ -1,13 +1,7 @@
 # Build preflight regression
 
-For the current Editor implementation, run `BuildPlanIntegrityTests`,
-`BuildPreparationIntegrityTests` and `BuildQueueCheckpointTests` in Unity EditMode.
-The historical standalone source list predates durable build queue checkpoints and
-operation activity tracking. A build against current sources fails before the
-standalone harness starts.
-
-This Windows managed harness originally compiled the build command, runner, mapping,
-job and parameter sources against observable Unity API substitutes. It checks that
+This Windows managed harness compiles the build command, runner, mapping, queue,
+profile adapter and parameter sources against observable Unity API substitutes. It checks that
 invalid option names, malformed option arrays and invalid subtargets are rejected
 before backend changes, job registration, callbacks, platform changes or output
 folder creation. Valid controls cover builds, batches and Unity 6 build profiles.
@@ -16,29 +10,29 @@ omitted/null subtarget preservation, and recovery when the switch returns false
 or throws. The managed switch seam records the selected subtarget at invocation;
 this does not establish native Unity reimport or compilation behavior.
 
-Historical invocations used Unity Mono reference assemblies and a .NET SDK from
-the repository root. The script downloads nothing and does not start the Unity Editor.
-Override `-UnityData`, `-SdkPath` and `-DotnetPath` for local installations.
+Run from the repository root with an installed Unity Editor's `Editor/Data` path in
+`$unityData` and the compiler's .NET SDK directory in `$sdkPath`. The script uses
+Unity Mono and the SDK's Newtonsoft.Json assembly. It downloads nothing.
 
 ```powershell
-& tools/tests/fixtures/build_preflight/RunBuildPreflight.ps1 -WorkPath .tmp/build-preflight/unity6
-& tools/tests/fixtures/build_preflight/RunBuildPreflight.ps1 -WorkPath .tmp/build-preflight/legacy -UnityDefines UNITY_2022_3_OR_NEWER
+& tools/tests/fixtures/build_preflight/RunBuildPreflight.ps1 -UnityData $unityData -SdkPath $sdkPath -WorkPath .tmp/build-preflight/unity6
+& tools/tests/fixtures/build_preflight/RunBuildPreflight.ps1 -UnityData $unityData -SdkPath $sdkPath -WorkPath .tmp/build-preflight/legacy -UnityDefines UNITY_2022_3_OR_NEWER
 ```
 
 `-WorkPath` receives compiler output and an owned test output path. Use a disposable
 directory. Optional `-BaselinePath` supplies alternative `ManageBuild.cs`,
-`BuildRunner.cs`, `BuildTargetMapping.cs` and optional `BuildPlan.cs` files for before/after comparisons;
-other sources come from the current checkout. The runner prints source hashes and
+`BuildRunner.cs`, `BuildTargetMapping.cs` and optionally `BuildPlan.cs` files that are
+compatible with the current queue and managed boundary. Other sources come from the
+current checkout. The runner prints source hashes and
 returns a nonzero exit code on compilation or assertion failure.
 
-The managed boundary does not execute native builds or pump real Editor update callbacks,
-or verify native Unity lifecycle behavior. EditMode regressions also live in
-`BuildPreparationIntegrityTests.cs`; compiling those tests is separate from running
-them in Unity.
+For native Editor behavior, run `BuildPlanIntegrityTests`, `BuildPreparationIntegrityTests`
+and `BuildQueueCheckpointTests` in Unity EditMode. The Windows package-shapes job runs
+both standalone build profiles through `RunManagedFixtureSmoke.ps1` before license activation.
 
 ## Read-only plans and guarded builds
 
-The harness also compiles `BuildPlan.cs` when present. It calls production `plan` and
+The harness calls production `plan` and
 `build_from_plan` handling, with managed substitutes for settings, scene metadata,
 module support, saving and building. It invokes captured managed callbacks explicitly;
 it never invokes the Editor or `BuildPipeline` native implementation.
@@ -46,11 +40,10 @@ it never invokes the Editor or `BuildPipeline` native implementation.
 Checks cover zero-effect valid and invalid plans; explicit empty scenes; bounded inputs;
 raw observed backend values; deterministic declared-observation hashes; immediate and
 next-update drift; cancellation; and detached caller arrays. Requested backend changes
-must occur after the second check, followed by the existing save/build flow. A matching
+must occur after the second check. A subsequent update performs the save/build flow. A matching
 controlled build records the exact options and returns a synthetic report. The ordinary
 build negative control demonstrates that the read-only oracle detects settings,
-scheduling, saving and build calls. An old source without `plan` fails the facility
-assertion; that failure does not prove deeper drift behavior was exercised.
+scheduling, saving and build calls.
 
 No UPM/package resolution occurs. Resolving build inputs is part of planning. The hash
 does not cover all settings, scene/source contents or dependency contents. Native

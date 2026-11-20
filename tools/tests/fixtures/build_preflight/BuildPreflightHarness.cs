@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
@@ -34,6 +35,14 @@ internal static class BuildPreflightHarness
         Store("_buildJobs").Clear();
         Store("_batchJobs").Clear();
         EditorApplication.update = null;
+        EditorApplication.delayCall = null;
+        SessionState.Clear();
+        var flags = BindingFlags.Static | BindingFlags.NonPublic;
+        typeof(BuildQueueCheckpoint).GetField("entries", flags).SetValue(null, null);
+        ((HashSet<string>)typeof(BuildQueueCheckpoint).GetField("Scheduled", flags).GetValue(null)).Clear();
+        ((IDictionary)typeof(BuildQueueCheckpoint).GetField("Preparations", flags).GetValue(null)).Clear();
+        ((HashSet<string>)typeof(BuildRunner).GetField("NativeOwners", flags).GetValue(null)).Clear();
+        ((HashSet<string>)typeof(BuildRunner).GetField("InvokedOwners", flags).GetValue(null)).Clear();
         PlayerSettings.Writes = 0;
         EditorUserBuildSettings.Switches = 0;
         EditorUserBuildSettings.SwitchSucceeds = true;
@@ -72,7 +81,8 @@ internal static class BuildPreflightHarness
         var response = JObject.FromObject(ManageBuild.HandleCommand(request));
         string name = request.ToString(Newtonsoft.Json.Formatting.None);
         Check(!response.Value<bool>("success"), name + " rejects");
-        Check((response.Value<string>("error") ?? "").Contains(diagnostic), name + " diagnostic");
+        string error = response.Value<string>("error") ?? "";
+        Check(error.Contains(diagnostic), name + " expected " + diagnostic + ", received " + error);
         Check(PlayerSettings.Writes == 0, name + " backend untouched");
         Check(Store("_buildJobs").Count == 0 && Store("_batchJobs").Count == 0, name + " inventory untouched");
         Check(EditorApplication.update == null, name + " no scheduled callbacks");
@@ -136,9 +146,11 @@ internal static class BuildPreflightHarness
         unguarded["action"] = "build";
         Call(unguarded);
         Check(
-            !ReadOnly() && PlayerSettings.Writes == 1 && Store("_buildJobs").Count == 1,
+            !ReadOnly() && PlayerSettings.Writes == 0 && Store("_buildJobs").Count == 1,
             "negative control: old build route fails read-only oracle before actual execution"
         );
+        RunUpdate();
+        Check(PlayerSettings.Writes == 1 && BuildPipeline.Builds == 0, "negative control: checkpoint prepares the backend before native build");
         RunUpdate();
         Check(BuildPipeline.Builds == 1 && AssetDatabase.Saves == 1, "negative control: unguarded route really executes fake build");
 
@@ -338,15 +350,17 @@ internal static class BuildPreflightHarness
             if (cancel)
                 job.State = BuildJobState.Cancelled;
             RunUpdate();
+            Check(BuildPipeline.Builds == 0 && AssetDatabase.Saves == 0, "checkpoint preparation must precede native effects " + cancel);
+            RunUpdate();
             Check(
                 BuildPipeline.Builds == (cancel ? 0 : 1) && PlayerSettings.Writes == (cancel ? 0 : 1) && AssetDatabase.Saves == (cancel ? 0 : 1),
                 "matching/cancel effects exactly once " + cancel
             );
             if (!cancel)
             {
-                Check(job.State == BuildJobState.Succeeded, "matching job succeeds through fake build");
+                Check(job.State == BuildJobState.Succeeded, "matching job succeeds through fake build: " + job.ErrorMessage);
                 Check(
-                    BuildPipeline.LastOptions.scenes[0] == "Assets/First.unity" && BuildPipeline.LastOptions.options.HasFlag(BuildOptions.AutoRunPlayer),
+                    BuildPipeline.LastOptions.scenes?[0] == "Assets/First.unity" && BuildPipeline.LastOptions.options.HasFlag(BuildOptions.AutoRunPlayer),
                     "detached resolved scene/options passed unchanged"
                 );
                 Check(BuildPipeline.BackendAtBuild == ScriptingImplementation.IL2CPP, "backend applied after guard before build");
@@ -403,8 +417,10 @@ internal static class BuildPreflightHarness
             {
                 var request = JObject.Parse(json);
                 request["action"] = action;
-                request["profile"] = "Assets/Valid.asset";
-                request["profiles"] = new JArray("Assets/Valid.asset");
+                if (action == "build")
+                    request["profile"] = "Assets/Valid.asset";
+                else
+                    request["profiles"] = new JArray("Assets/Valid.asset");
                 request["scripting_backend"] = "il2cpp";
                 Reject(request, "options");
             }
@@ -502,23 +518,22 @@ internal static class BuildPreflightHarness
         foreach (string action in new[] { "build", "batch" })
         {
             Reset();
-            var response = JObject.FromObject(
-                ManageBuild.HandleCommand(
-                    new JObject
-                    {
-                        ["action"] = action,
-                        ["profile"] = "Assets/Valid.asset",
-                        ["profiles"] = new JArray("Assets/Valid.asset"),
-                        ["options"] = new JArray("STRICT_MODE"),
-                        ["output_path"] = Path.Combine(outputRoot, "Game.exe"),
-                        ["output_dir"] = outputRoot,
-                        ["scripting_backend"] = "il2cpp",
-                    }
-                )
-            );
-            Check(response.Value<bool>("success") && response.Value<string>("_mcp_status") == "pending", "valid profile control schedules: " + action);
+            var request = new JObject
+            {
+                ["action"] = action,
+                ["options"] = new JArray("STRICT_MODE"),
+                ["output_path"] = Path.Combine(outputRoot, "Game.exe"),
+                ["output_dir"] = outputRoot,
+                ["scripting_backend"] = "il2cpp",
+            };
+            if (action == "build")
+                request["profile"] = "Assets/Valid.asset";
+            else
+                request["profiles"] = new JArray("Assets/Valid.asset");
+            var response = JObject.FromObject(ManageBuild.HandleCommand(request));
+            Check(response.Value<bool>("success") && response.Value<string>("_mcp_status") == "pending", "valid profile control schedules: " + response);
             Check(EditorApplication.update != null && Store("_buildJobs").Count == 1, "valid profile registers/schedules");
-            Check(PlayerSettings.Writes == (action == "build" ? 1 : 0), "valid profile backend semantics");
+            Check(PlayerSettings.Writes == 0 && BuildPipeline.Builds == 0, "valid profile awaits checkpoint preparation");
         }
 #endif
         foreach (JToken subtarget in new JToken[] { JValue.CreateNull(), "PLAYER", "SERVER" })
@@ -663,6 +678,8 @@ namespace UnityEngine
 {
     public class Object { }
 
+    public class ScriptableObject : Object { }
+
     public static class Application
     {
         public static string dataPath = Path.GetFullPath("Assets");
@@ -674,6 +691,8 @@ namespace UnityEngine
         public static void Log(object value) { }
 
         public static void LogError(object value) { }
+
+        public static void LogWarning(object value) { }
     }
 }
 
@@ -761,18 +780,44 @@ namespace UnityEditor
         public string[] scenes;
         public BuildOptions options;
         public int subtarget;
+        public string assetBundleManifestPath;
+        public string[] extraScriptingDefines;
     }
 
+#if UNITY_6000_0_OR_NEWER
     public struct BuildPlayerWithProfileOptions
     {
-        public Build.Profile.BuildProfile buildProfile;
-        public string locationPathName;
-        public BuildOptions options;
+        public Build.Profile.BuildProfile buildProfile { get; set; }
+        public string locationPathName { get; set; }
+        public string assetBundleManifestPath { get; set; }
+        public BuildOptions options { get; set; }
     }
+#endif
+
+    public sealed class InitializeOnLoadAttribute : Attribute { }
 
     public static class EditorApplication
     {
         public static Action update;
+        public static Action delayCall;
+        public static bool isPlayingOrWillChangePlaymode;
+        public static bool isCompiling;
+        public static bool isUpdating;
+    }
+
+    public static class SessionState
+    {
+        private static readonly Dictionary<string, object> Values = new();
+
+        public static bool GetBool(string key, bool fallback) => Values.TryGetValue(key, out var value) ? (bool)value : fallback;
+
+        public static string GetString(string key, string fallback) => Values.TryGetValue(key, out var value) ? (string)value : fallback;
+
+        public static void SetBool(string key, bool value) => Values[key] = value;
+
+        public static void SetString(string key, string value) => Values[key] = value;
+
+        internal static void Clear() => Values.Clear();
     }
 
     public static class EditorUserBuildSettings
@@ -870,11 +915,13 @@ namespace UnityEditor
             };
         }
 
+#if UNITY_6000_0_OR_NEWER
         public static Build.Reporting.BuildReport BuildPlayer(BuildPlayerWithProfileOptions options)
         {
             Builds++;
             throw new InvalidOperationException("Native profile build forbidden");
         }
+#endif
     }
 
     public class SceneAsset : UnityEngine.Object { }
@@ -895,17 +942,22 @@ namespace UnityEditor
     public static class EditorBuildSettings
     {
         public static EditorBuildSettingsScene[] scenes = Array.Empty<EditorBuildSettingsScene>();
+        public static EditorBuildSettingsScene[] globalScenes => scenes;
     }
 
     public static class AssetDatabase
     {
         public static T LoadAssetAtPath<T>(string path)
-            where T : UnityEngine.Object
+            where T : UnityEngine.Object => (T)LoadAssetAtPath(path, typeof(T));
+
+        public static UnityEngine.Object LoadAssetAtPath(string path, Type type)
         {
-            if (typeof(T) == typeof(SceneAsset) && (path == "Assets/First.unity" || path == "Assets/Second.unity"))
-                return (T)(UnityEngine.Object)new SceneAsset();
-            if (typeof(T) == typeof(Build.Profile.BuildProfile) && path == "Assets/Valid.asset")
-                return (T)(UnityEngine.Object)new Build.Profile.BuildProfile();
+            if (type == typeof(SceneAsset) && (path == "Assets/First.unity" || path == "Assets/Second.unity"))
+                return new SceneAsset();
+#if UNITY_6000_0_OR_NEWER
+            if (type == typeof(Build.Profile.BuildProfile) && path == "Assets/Valid.asset")
+                return new Build.Profile.BuildProfile();
+#endif
             return null;
         }
 
@@ -914,12 +966,16 @@ namespace UnityEditor
 
         public static string AssetPathToGUID(string path) => SceneGuid;
 
+        public static string GUIDToAssetPath(string guid) => guid == SceneGuid ? "Assets/Valid.asset" : "";
+
+        public static string GetAssetDependencyHash(string path) => "22222222222222222222222222222222";
+
         public static void SaveAssets()
         {
             Saves++;
         }
 
-        public static string[] FindAssets(string filter) => Array.Empty<string>();
+        public static string[] FindAssets(string filter, string[] folders = null) => Array.Empty<string>();
 
         public static string GetAssetPath(UnityEngine.Object obj) => "Assets/Valid.asset";
     }
@@ -953,17 +1009,20 @@ namespace UnityEditor.Build
     }
 }
 
+#if UNITY_6000_0_OR_NEWER
 namespace UnityEditor.Build.Profile
 {
-    public class BuildProfile : UnityEngine.Object
+    public class BuildProfile : UnityEngine.ScriptableObject
     {
-        public UnityEditor.EditorBuildSettingsScene[] scenes = Array.Empty<UnityEditor.EditorBuildSettingsScene>();
+        public UnityEditor.EditorBuildSettingsScene[] scenes { get; } = Array.Empty<UnityEditor.EditorBuildSettingsScene>();
+        public bool overrideGlobalScenes => false;
 
         public static BuildProfile GetActiveBuildProfile() => null;
 
         public static void SetActiveBuildProfile(BuildProfile profile) { }
     }
 }
+#endif
 
 namespace UnityEditor.Build.Reporting
 {
@@ -998,12 +1057,17 @@ namespace UnityEditor.SceneManagement
 {
     public static class EditorSceneManager
     {
-        public static void SaveScene(UnityEngine.SceneManagement.Scene scene) { }
+        public static bool SaveScene(UnityEngine.SceneManagement.Scene scene) => true;
     }
 }
 
 namespace MCPForUnity.Editor.Helpers
 {
+    internal static class EditorStateCache
+    {
+        internal static bool IsDomainReloadPending => false;
+    }
+
     public static class McpLog
     {
         public static void Warn(string message) { }
@@ -1014,6 +1078,47 @@ namespace MCPForUnity.Editor.Helpers
         public static string GetContainedAssetPath(string path) => path;
 
         public static string GetAssetPathFromGuid(string guid) => guid;
+    }
+}
+
+namespace MCPForUnity.Editor.Services
+{
+    internal static class OperationActivity
+    {
+        internal static void Invalidate() { }
+    }
+
+    internal sealed class OperationActivityRow
+    {
+        public string Owner;
+        public string Id;
+        public string Operation;
+        public string State;
+        public string Phase;
+        public bool Active;
+        public long Started;
+        public long? Finished;
+        public string Detail;
+        public string Cancellation;
+        public bool CanCancel;
+        public string EvidenceId;
+    }
+}
+
+namespace MCPForUnity.Editor.Services.Transport
+{
+    internal readonly struct NativeAdmissionBlocker
+    {
+        internal string Reason => null;
+    }
+
+    internal static class NativeOperationBarriers
+    {
+        internal static bool TryGetBuildContinuationBlocker(string jobId, string batchId, out NativeAdmissionBlocker blocker)
+        {
+            blocker = default;
+            return false;
+        }
     }
 }
 
@@ -1035,6 +1140,28 @@ namespace MCPForUnity.Editor.Tools
 
 namespace MCPForUnity.Editor.Tools.Build
 {
+    internal static class BuildReportStore
+    {
+        internal static bool IsAction(string action) => false;
+
+        internal static bool HasOptions(JObject request) => false;
+
+        internal static object Handle(JObject request) => throw new InvalidOperationException("Report queries are outside this fixture");
+
+        internal static object FindStatus(string jobId = null) => null;
+
+        internal static Func<UnityEditor.Build.Reporting.BuildReport> GetLatestReport => null;
+        internal static Func<UnityEditor.Build.Reporting.BuildReport, string> SummarizeErrors => null;
+
+        internal static void Observe(BuildJob job) { }
+
+        internal static void Observe(BatchJob job) { }
+
+        internal static void Complete(BuildJob job, UnityEditor.Build.Reporting.BuildReport report = null) { }
+
+        internal static void Complete(BatchJob job) { }
+    }
+
     public static class BuildOutputCleaner
     {
         public static object Clean(string root, string path, bool dryRun, bool busy) => throw new InvalidOperationException("Unused seam");

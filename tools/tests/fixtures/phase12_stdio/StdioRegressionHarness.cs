@@ -17,6 +17,7 @@ internal static class StdioRegressionHarness
     private static MethodInfo Write;
     private static MethodInfo Pump;
     private static MethodInfo Read;
+    private static MethodInfo ReadExact;
     private static int passed,
         failed;
 
@@ -43,8 +44,13 @@ internal static class StdioRegressionHarness
 
     private static Task WriteFrame(NetworkStream stream, byte[] payload) => (Task)Write.Invoke(null, new object[] { stream, payload });
 
-    private static Task<string> ReadFrame(NetworkStream stream, CancellationToken token = default) =>
-        (Task<string>)Read.Invoke(null, new object[] { stream, 80, token });
+    private static async Task<string> ReadFrame(OwnedPair pair, NetworkStream stream)
+    {
+        var read = (Task)Read.Invoke(null, new object[] { pair.Client, stream, 80, CancellationToken.None });
+        await read.ConfigureAwait(false);
+        using var frame = (IDisposable)read.GetType().GetProperty("Result").GetValue(read);
+        return (string)frame.GetType().GetField("Text", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(frame);
+    }
 
     private static async Task SettleWithin(Task task, string message)
     {
@@ -74,6 +80,7 @@ internal static class StdioRegressionHarness
         private TcpClient receiver;
         private readonly TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
         public ObservingStream Stream;
+        public TcpClient Client => sender;
         public NetworkStream ActualStream => sender.GetStream();
         public NetworkStream PeerStream => receiver.GetStream();
         public int ReceivedBytes => receiver.Available;
@@ -445,7 +452,7 @@ internal static class StdioRegressionHarness
         using (var pair = new OwnedPair())
         using (NetworkStream stream = pair.ActualStream)
         {
-            Task<string> read = Task.Run(() => ReadFrame(stream));
+            Task<string> read = Task.Run(() => ReadFrame(pair, stream));
             try
             {
                 Check(
@@ -460,6 +467,10 @@ internal static class StdioRegressionHarness
                 catch (IOException error)
                 {
                     Check(error.Message == "Read timed out", "timeout outcome changed: " + error.Message);
+                }
+                catch (OperationCanceledException error)
+                {
+                    Check(error.CancellationToken.IsCancellationRequested && !stream.CanRead, "frame deadline did not abort the owned stream");
                 }
             }
             finally
@@ -491,7 +502,7 @@ internal static class StdioRegressionHarness
         {
             byte[] prefix = Frame(new byte[] { (byte)'p', (byte)'i', (byte)'n' }).Take(9).ToArray();
             await SettleWithin(pair.PeerStream.WriteAsync(prefix, 0, prefix.Length), "owned partial frame send pending").ConfigureAwait(false);
-            Task<string> read = Task.Run(() => ReadFrame(stream));
+            Task<string> read = Task.Run(() => ReadFrame(pair, stream));
             try
             {
                 Check(await Task.WhenAny(read, Task.Delay(2000)).ConfigureAwait(false) == read, "partial payload read ignored timeout");
@@ -503,6 +514,10 @@ internal static class StdioRegressionHarness
                 catch (IOException error)
                 {
                     Check(error.Message == "Read timed out", "partial payload timeout outcome changed");
+                }
+                catch (OperationCanceledException error)
+                {
+                    Check(error.CancellationToken.IsCancellationRequested && !stream.CanRead, "frame deadline did not abort the partial payload read");
                 }
             }
             finally
@@ -525,7 +540,7 @@ internal static class StdioRegressionHarness
         using (NetworkStream stream = pair.ActualStream)
         {
             byte[] frame = Frame(new byte[] { (byte)'p', (byte)'i', (byte)'n', (byte)'g' });
-            Task<string> read = Task.Run(() => ReadFrame(stream));
+            Task<string> read = Task.Run(() => ReadFrame(pair, stream));
             await pair.PeerStream.WriteAsync(frame, 0, 4).ConfigureAwait(false);
             await Task.Delay(5).ConfigureAwait(false);
             await pair.PeerStream.WriteAsync(frame, 4, 6).ConfigureAwait(false);
@@ -536,7 +551,7 @@ internal static class StdioRegressionHarness
             await Task.Delay(120).ConfigureAwait(false);
             Check(stream.CanRead, "successful read left deadline callback on reusable stream");
             await pair.PeerStream.WriteAsync(frame, 0, frame.Length).ConfigureAwait(false);
-            Task<string> again = Task.Run(() => ReadFrame(stream));
+            Task<string> again = Task.Run(() => ReadFrame(pair, stream));
             await SettleWithin(again, "reused frame read pending").ConfigureAwait(false);
             Check(again.Result == "ping", "reused read changed payload");
         }
@@ -548,7 +563,7 @@ internal static class StdioRegressionHarness
         using (NetworkStream stream = pair.ActualStream)
         using (var cancel = new CancellationTokenSource())
         {
-            Task<string> read = Task.Run(() => ReadFrame(stream, cancel.Token));
+            Task<byte[]> read = Task.Run(() => (Task<byte[]>)ReadExact.Invoke(null, new object[] { stream, 8, 80, cancel.Token }));
             await Task.Delay(10).ConfigureAwait(false);
             cancel.Cancel();
             if (raceClose)
@@ -586,7 +601,7 @@ internal static class StdioRegressionHarness
         {
             NetworkStream stream = pair.ActualStream;
             stream.Dispose();
-            Task operation = Task.Run(() => reading ? (Task)ReadFrame(stream) : WriteFrame(stream, new byte[] { 1 }));
+            Task operation = Task.Run(() => reading ? (Task)ReadFrame(pair, stream) : WriteFrame(stream, new byte[] { 1 }));
             Check(await Task.WhenAny(operation, Task.Delay(2000)).ConfigureAwait(false) == operation, "closed stream operation pending");
             try
             {
@@ -638,6 +653,7 @@ internal static class StdioRegressionHarness
     {
         var queue = (Dictionary<string, QueuedCommand>)Get("commandQueue");
         queue.Clear();
+        ((LinkedList<string>)Get("commandOrder")).Clear();
         Set("isRunning", true);
         Set("ownedEndpoint", true); // WriteHeartbeat exits before any discovery/prefs/file I/O.
         Set("processingCommands", 0);
@@ -645,6 +661,12 @@ internal static class StdioRegressionHarness
         TransportCommandDispatcher.Calls = 0;
         TransportCommandDispatcher.Settlement = Task.CompletedTask;
         return queue;
+    }
+
+    private static void Enqueue(Dictionary<string, QueuedCommand> queue, string id, QueuedCommand command)
+    {
+        queue.Add(id, command);
+        command.QueueNode = ((LinkedList<string>)Get("commandOrder")).AddLast(id);
     }
 
     private static QueuedCommand Command(string json = "ping", CancellationToken cancel = default) =>
@@ -661,9 +683,9 @@ internal static class StdioRegressionHarness
         string body = File.ReadAllText(source);
         int start = body.IndexOf("private static void ProcessCommands()", StringComparison.Ordinal);
         body = body.Substring(start, body.IndexOf("private static void ExecuteQueuedCommand", start, StringComparison.Ordinal) - start);
-        int scan = body.IndexOf("var canceled = commandQueue.Where", StringComparison.Ordinal);
+        int scan = body.IndexOf("foreach (var item in commandQueue)", StringComparison.Ordinal);
         int firstGuard = body.IndexOf("if (commandQueue.Count == 0)", StringComparison.Ordinal);
-        Check(firstGuard >= 0 && firstGuard < scan, "empty guard still follows LINQ cancellation scan");
+        Check(firstGuard >= 0 && firstGuard < scan, "empty guard must precede cancellation scan");
         int secondGuard = body.IndexOf("if (commandQueue.Count == 0)", firstGuard + 1, StringComparison.Ordinal);
         Check(secondGuard > scan, "post-prune empty guard removed");
     }
@@ -684,7 +706,7 @@ internal static class StdioRegressionHarness
         {
             cancel.Cancel();
             var item = Command(cancel: cancel.Token);
-            queue.Add("canceled", item);
+            Enqueue(queue, "canceled", item);
             Pump.Invoke(null, null);
             Check(item.Tcs.Task.IsCanceled && queue.Count == 0, "canceled item was not pruned");
             Check((int)Get("processingCommands") == 0 && TransportCommandDispatcher.Calls == 0, "canceled-only path failed to exit/reset");
@@ -699,8 +721,8 @@ internal static class StdioRegressionHarness
             cancel.Cancel();
             var abandoned = Command(cancel: cancel.Token);
             var live = Command();
-            queue.Add("canceled", abandoned);
-            queue.Add("live", live);
+            Enqueue(queue, "canceled", abandoned);
+            Enqueue(queue, "live", live);
             Pump.Invoke(null, null);
             Check(abandoned.Tcs.Task.IsCanceled && live.Tcs.Task.IsCompleted && live.Tcs.Task.Result.Contains("pong"), "pruning blocked following live work");
             Check(queue.Count == 0, "completed work retained");
@@ -716,8 +738,8 @@ internal static class StdioRegressionHarness
             var executing = Command(cancel: cancel.Token);
             executing.IsExecuting = true;
             var live = Command();
-            queue.Add("executing", executing);
-            queue.Add("live", live);
+            Enqueue(queue, "executing", executing);
+            Enqueue(queue, "live", live);
             Pump.Invoke(null, null);
             Check(queue.Count == 2 && !executing.Tcs.Task.IsCompleted && !live.Tcs.Task.IsCompleted, "executing cancellation released ordering barrier");
             Check((int)Get("processingCommands") == 0, "barrier return failed to reset processing guard");
@@ -731,8 +753,8 @@ internal static class StdioRegressionHarness
         TransportCommandDispatcher.Settlement = settlement.Task;
         var first = Command("{\"type\":\"owned-command\"}");
         var second = Command();
-        queue.Add("first", first);
-        queue.Add("second", second);
+        Enqueue(queue, "first", first);
+        Enqueue(queue, "second", second);
         try
         {
             Pump.Invoke(null, null);
@@ -779,6 +801,7 @@ internal static class StdioRegressionHarness
         Write = Host.GetMethod("WriteFrameAsync", PrivateStatic, null, new[] { typeof(NetworkStream), typeof(byte[]) }, null);
         Pump = Host.GetMethod("ProcessCommands", PrivateStatic);
         Read = Host.GetMethod("ReadFrameAsUtf8Async", PrivateStatic);
+        ReadExact = Host.GetMethod("ReadExactAsync", PrivateStatic);
         Test("header write timeout cancels and cleans up", () => TimeoutAsync(1).GetAwaiter().GetResult());
         Test("payload write timeout cancels and cleans up", () => TimeoutAsync(2).GetAwaiter().GetResult());
         Test("timeout CTS lives through pending write and disposes after success", () => LifetimeAsync().GetAwaiter().GetResult());
@@ -798,7 +821,7 @@ internal static class StdioRegressionHarness
         Test("already closed real stream write fails without stale timer callback", () => ClosedStreamAsync(false).GetAwaiter().GetResult());
         Test("deadline rejects successful partial-cleanup completion", () => TimeoutDisposalEdgeAsync(true).GetAwaiter().GetResult());
         Test("throwing deadline disposal callback cannot crash timer", () => TimeoutDisposalEdgeAsync(false).GetAwaiter().GetResult());
-        Test("empty queue guard precedes LINQ; post-prune guard retained", () => GuardOrdering(args[0]));
+        Test("empty queue guard precedes cancellation scan; post-prune guard retained", () => GuardOrdering(args[0]));
         Test("empty editor tick retains heartbeat and resets processing guard", EmptyTick);
         Test("canceled-only queue pruned and processing guard reset", CanceledOnly);
         Test("canceled queued work does not block following live request", CanceledThenLive);

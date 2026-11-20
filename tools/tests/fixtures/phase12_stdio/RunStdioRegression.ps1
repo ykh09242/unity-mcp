@@ -11,12 +11,12 @@ $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../..'))
 if (!$HostSourcePath) { $HostSourcePath = Join-Path $root 'MCPForUnity/Editor/Services/Transport/Transports/StdioBridgeHost.cs' }
 $HostSourcePath = (Resolve-Path -LiteralPath $HostSourcePath).Path
 $work = Join-Path ([IO.Path]::GetTempPath()) ('phase12-stdio-' + [Guid]::NewGuid().ToString('N'))
-$inputs = @($HostSourcePath,
-    (Join-Path $root 'MCPForUnity/Editor/Models/Command.cs'),
-    (Join-Path $root 'MCPForUnity/Editor/Services/Transport/TransportCommandResponse.cs'),
+$sourceMap = Join-Path $PSScriptRoot 'ProductionSources.ps1'
+. $sourceMap
+$dependencies = @(Get-StdioProductionSources $root) + @(
     (Join-Path $PSScriptRoot 'UnityBoundaryStubs.cs'),
-    (Join-Path $PSScriptRoot 'StdioRegressionHarness.cs'),
-    (Join-Path $PSScriptRoot 'RunStdioRegression.ps1'))
+    (Join-Path $PSScriptRoot 'StdioRegressionHarness.cs'))
+$inputs = @($HostSourcePath) + $dependencies + @($sourceMap, $PSCommandPath)
 $hashes = @($inputs | ForEach-Object { @{ path = $_; sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash } })
 $output = @()
 $result = 1
@@ -24,7 +24,7 @@ $fresh = $false
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
     # Injection changes only a constant initialization, not either tested method.
-    # It avoids real environment mutation and the production five-second minimum.
+    # The short fixture deadline does not depend on machine environment settings.
     $original = [IO.File]::ReadAllText($HostSourcePath)
     $needle = 'private static readonly int FrameIOTimeoutMs = ResolveFrameIOTimeoutMs();'
     if ([regex]::Matches($original, [regex]::Escape($needle)).Count -ne 1) { throw 'Timeout injection requires exactly one production declaration' }
@@ -34,14 +34,14 @@ try {
     $injectedHash = (Get-FileHash -LiteralPath $hostCopy -Algorithm SHA256).Hash
     $framework = Join-Path $UnityData 'MonoBleedingEdge/lib/mono/4.5'
     $executable = Join-Path $work 'StdioRegression.exe'
-    $json = Join-Path $root '.compile-refs/Newtonsoft.Json.dll'
+    $json = Join-Path $SdkPath 'Sdks/Microsoft.NET.Sdk/tools/net472/Newtonsoft.Json.dll'
     Copy-Item -LiteralPath $json -Destination $work
     $arguments = @((Join-Path $SdkPath 'Roslyn/bincore/csc.dll'), '/nologo', '/noconfig', '/nostdlib+',
         '/target:exe', '/langversion:latest', ('/out:' + $executable))
-    $arguments += @('mscorlib.dll', 'System.dll', 'System.Core.dll') | ForEach-Object { '/reference:' + (Join-Path $framework $_) }
+    $arguments += @('mscorlib.dll', 'System.dll', 'System.Core.dll', 'System.Numerics.dll') | ForEach-Object { '/reference:' + (Join-Path $framework $_) }
     $arguments += '/reference:' + (Join-Path $framework 'Facades/netstandard.dll')
     $arguments += '/reference:' + $json
-    $arguments += @($hostCopy) + $inputs[1..4]
+    $arguments += @($hostCopy) + $dependencies
     $hashes | ForEach-Object { Write-Output ($_.path + ' SHA256=' + $_.sha256) }
     Write-Output ('INJECTED_HOST_SHA256=' + $injectedHash + ' timeout_ms=80')
     $compileOutput = @(& $DotnetPath @arguments 2>&1 | ForEach-Object { $_.ToString() })
@@ -62,8 +62,10 @@ try {
         if (!$child.WaitForExit(45000)) {
             # This is the exact process object launched above, never a name-based kill.
             $child.Kill()
-            $child.WaitForExit(2000) | Out-Null
             $result = 1
+            if (!$child.WaitForExit(2000)) {
+                throw 'Owned Mono fixture exit could not be confirmed within the 2000 ms cleanup budget'
+            }
             $output += 'FAIL: owned Mono fixture exceeded 45000 ms process watchdog and was terminated'
         } else { $result = $child.ExitCode }
         $output += @($stdout.GetAwaiter().GetResult().Split([Environment]::NewLine, [StringSplitOptions]::RemoveEmptyEntries))

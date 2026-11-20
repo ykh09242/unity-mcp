@@ -8,13 +8,13 @@ editor-state publisher boundary. It opens an ephemeral loopback WebSocket peer.
 
 ```powershell
 & tools/tests/fixtures/transport_architecture/RunTransportArchitecture.ps1 `
-  -UnityData 'C:/Program Files/Unity/Hub/Editor/6000.0.69f1/Editor/Data' `
-  -SdkPath 'C:/Program Files/dotnet/sdk/10.0.401'
+  -UnityData $unityData -SdkPath $sdkPath
 ```
 
-The runner references existing `.compile-refs/Newtonsoft.Json.dll` and NUnit, records production
-source SHA256 values, compiles into its own temporary directory, runs existing service NUnit
-cases and new architecture cases, and removes only that verified temporary directory.
+Set `$unityData` to an installed Editor's `Editor/Data` path and `$sdkPath` to the
+compiler's .NET SDK directory. The runner shares the Phase12 WebSocket source map,
+uses the SDK's Newtonsoft.Json and Unity's bundled NUnit, records source SHA256
+values, and removes its owned temporary compile directory.
 
 Real socket checks cover receiver responsiveness during an asynchronous command, main-thread
 handler invocation, capacity/duplicate rejection, deadline measurement from receipt, expiration
@@ -24,11 +24,11 @@ that retains the actual handler settlement barrier after disconnect. The benchma
 round trip to the structured production projection using a 256KiB Unicode result and exact
 output equality. Timing and allocation values are local measurements, not latency guarantees.
 
-The real Unity test runner is still needed for host-specific Editor synchronization, actual
-state observation and package assembly loading. Existing asynchronous Unity tools do not take
-a cancellation token: response deadlines cancel the response, while FIFO waits for their actual
-settlement; disconnect cancels response delivery and prevents stale sends, while asynchronous
-teardown/reconnection still awaits actual handler settlement. ForceStop and Dispose cancel and
-close synchronously without blocking Editor cleanup; a later same-client restart awaits the
-retained settlement barrier. This fixture
-cannot prove those existing tools abort their Unity side effects after disconnect.
+Run the NUnit suites through Unity EditMode for host synchronization, state
+observation and assembly loading. This includes `TransportArchitectureTests`,
+`CooperativeCancellationTests`, `CooperativeHandlerCancellationTests`,
+`BatchExecuteCancellationTests`, `TransportCommandDispatcherTests` and
+`WebSocketTransportClientTests`. The explicit real-SDK and native-consent cases
+require their own loopback server or admitted test project. The Windows
+package-shapes smoke step runs the standalone socket, cancellation and projection
+assertions before license activation.
