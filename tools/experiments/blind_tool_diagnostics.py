@@ -175,6 +175,22 @@ def actor_searches(host, wire, actor, role_confirmed):
     return bound if len({call.timeline for call in bound}) <= 1 else []
 
 
+def no_observed_tool_calls(host, wire, actor, confirmed):
+    """A complete actor timeline can establish abstention, including failed calls."""
+    if not confirmed or not actor or not host or not host.completed:
+        return None
+    if host.calls or host.collaboration_attempted or host.child_actors:
+        return False
+    # Protocol setup and automatic catalog listing can precede a business request.
+    setup = {"initialize", "tools/list", "resources/list", "resources/templates/list"}
+    attempts = [call for call in wire if call.route not in setup]
+    if any(call.actor == actor for call in attempts):
+        return False
+    if any(not call.actor for call in attempts):
+        return None
+    return True
+
+
 def actor_discovery(host, wire, actor, confirmed):
     """Count only verified actor-owned discovery. Unknown capture is distinct from zero."""
     if not confirmed or not actor:

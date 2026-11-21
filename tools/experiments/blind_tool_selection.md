@@ -12,9 +12,10 @@ and mixed-language requests in the same six locales. Both arms and both roles
 receive the same user wording and literal fixture values. The default
 `baseline` retains the original prompts for historical comparisons.
 Include `--task request-label` to measure a request answerable from the
-prompt alone. The scorer checks the exact Unicode spelling and records
-whether the confirmed actor used any observed tool. An incomplete turn
-cannot establish abstention. Use `--answer-format json` for automatic scoring.
+prompt alone. The scorer checks the confirmed actor's own exact Unicode
+answer and counts attempted calls, including failed delegation and
+actor-attributed discovery. An incomplete turn or unattributed call can
+leave abstention unknown. Use `--answer-format json` for automatic scoring.
 
 The comparison provides language-by-role counts. `natural_search_use` counts
 observed attempts among cases with known search behavior. A returned empty

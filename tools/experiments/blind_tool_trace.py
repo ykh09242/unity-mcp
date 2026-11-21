@@ -723,6 +723,7 @@ class ClientTrace:
     child_actors: set[str] = field(default_factory=set)
     parent_actor: str = ""
     waits: int = 0
+    collaboration_attempted: bool = False
     completed: bool = False
     final_message: str = ""
 
@@ -876,9 +877,12 @@ def client_trace(
                     elif APPROVAL.search(output):
                         trace.approval_blocks += 1
                 case (
-                    "item.completed",
+                    "item.started" | "item.completed",
                     "collab_tool_call" | "collaboration_tool_call" | "subagent_tool_call",
                 ):
+                    trace.collaboration_attempted = True
+                    if event["type"] != "item.completed":
+                        continue
                     if (
                         item.get("tool") in {"spawn_agent", "spawn"}
                         and item.get("status") == "completed"
@@ -1121,6 +1125,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     from tools.experiments.blind_tool_diagnostics import (
         actor_discovery,
         actor_searches,
+        no_observed_tool_calls,
         stage_diagnosis,
     )
 
@@ -1354,17 +1359,9 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         actor_host, wire, selected_actor, role == "confirmed"
     )
     if task == "request-label":
-        # A completed actor's item stream distinguishes silence from missing telemetry.
-        free = None
-        if role == "confirmed" and selected_actor and actor_host and actor_host.completed:
-            free = not (
-                actor_host.calls
-                or actor_host.child_actors
-                or actor_host.waits
-                or business
-                or searches
-            )
-        diagnosis["no_observed_tool_calls"] = free
+        diagnosis["no_observed_tool_calls"] = no_observed_tool_calls(
+            actor_host, wire, selected_actor, role == "confirmed"
+        )
     open_graph = latest_open_graph(live_observations) if role == "confirmed" else {}
     saved_graph = host.saved_reads or any(
         r["route"] in GRAPH_ROUTES and "nodes" in r for r in live_observations
@@ -1500,7 +1497,8 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             actor_answer=(
                 child.final_message if child and child.completed and role == "confirmed" else ""
             )
-            if row.get("answer_protocol") == "v3" and row["role"] == "subagent"
+            if row["role"] == "subagent"
+            and (task == "request-label" or row.get("answer_protocol") == "v3")
             else None,
             explicit_limit=task == "graph-open"
             and (

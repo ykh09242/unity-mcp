@@ -179,6 +179,93 @@ def test_request_literal_separates_correct_answers_unnecessary_calls_and_missing
     assert score_case(case)["final_answer"]["status"] == "incorrect"
 
 
+@pytest.mark.parametrize("protocol", ["v1", "v2", "v3"])
+def test_request_only_control_scores_the_linked_childs_own_answer(tmp_path, protocol):
+    from tools.experiments.blind_tool_answers import REQUEST_LABEL
+
+    actor = "a" * 64
+    case = trial(
+        tmp_path,
+        "request-label",
+        role="subagent",
+        host=[{"type": "host.child_linked", "child_actor": actor}, {"type": "turn.completed"}],
+    )
+    meta = case / "case.json"
+    meta.write_text(
+        json.dumps(
+            json.loads(meta.read_text()) | {"host_mode": "configured", "answer_protocol": protocol}
+        ),
+        encoding="utf-8",
+    )
+    (case / "answer.txt").write_text(json.dumps({"label": REQUEST_LABEL}), encoding="utf-8")
+    completed = {"host_actor": actor, "type": "turn.completed"}
+    child = case / f"child-{actor}.jsonl"
+    write_rows(
+        child,
+        [
+            {
+                "type": "item.completed",
+                "host_actor": actor,
+                "item": {"id": "msg", "type": "agent_message", "text": '{"label":"wrong"}'},
+            },
+            completed,
+        ],
+    )
+    result = score_case(case)
+    assert result["role_status"] == "confirmed"
+    assert result["selection_diagnosis"]["no_observed_tool_calls"] is True
+    assert result["final_answer"]["status"] == "incorrect"
+    write_rows(child, [completed])
+    assert score_case(case)["final_answer"]["status"] == "missing"
+
+
+@pytest.mark.parametrize(
+    ("attempt", "expected"),
+    [
+        ("failed_spawn", False),
+        ("started_spawn", False),
+        ("other_collaboration", False),
+        ("actor_catalog", False),
+        ("unbound_catalog", None),
+        ("handshake", True),
+    ],
+)
+def test_request_only_counts_host_and_actor_wire_attempts(tmp_path, attempt, expected):
+    from tools.experiments.blind_tool_host import project_item
+    from tools.experiments.blind_tool_trace import thread_digest
+
+    thread = "01800000-0000-4000-8100-000000000001"
+    host = [{"type": "thread.started", "thread_id": thread}]
+    wire = []
+    if attempt in {"failed_spawn", "started_spawn", "other_collaboration"}:
+        item = project_item(
+            {
+                "id": "collab",
+                "type": "collabAgentToolCall",
+                "tool": "sendInput" if attempt == "other_collaboration" else "spawnAgent",
+                "status": "failed",
+            },
+            "unityMCP",
+            "",
+        )
+        if item is not None:
+            host.append(
+                {
+                    "type": "item.started" if attempt == "started_spawn" else "item.completed",
+                    "item": item,
+                }
+            )
+    else:
+        call = request(
+            1, "initialize" if attempt == "handshake" else "manage_tools.catalog", "discovery"
+        )
+        if attempt != "unbound_catalog":
+            call["actor"] = thread_digest(thread)
+        wire = [call, response(1)]
+    case = trial(tmp_path, "request-label", host=[*host, {"type": "turn.completed"}], audit=wire)
+    assert score_case(case)["selection_diagnosis"]["no_observed_tool_calls"] is expected
+
+
 def test_resources_require_exact_single_encoded_asset_and_observation_only_arguments():
     asset_uri = f"{GRAPH_PREFIX}{quote(ASSET, safe='')}"
     valid = [

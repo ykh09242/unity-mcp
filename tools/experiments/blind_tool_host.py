@@ -462,17 +462,14 @@ def project_item(item, server, asset, project="", fixture=None):
             "text": item.get("text", ""),
         }
     if kind == "collabAgentToolCall":
-        tool = {"spawnAgent": "spawn_agent", "wait": "wait"}.get(item.get("tool"))
-        if tool:
-            return {
-                **projected,
-                "type": "collab_tool_call",
-                "tool": tool,
-                "receiver_thread_ids": [
-                    peer for value in item.get("receiverThreadIds", []) if (peer := _host_id(value))
-                ],
-            }
-        return None
+        return {
+            **projected,
+            "type": "collab_tool_call",
+            "tool": {"spawnAgent": "spawn_agent", "wait": "wait"}.get(item.get("tool"), "other"),
+            "receiver_thread_ids": [
+                peer for value in item.get("receiverThreadIds", []) if (peer := _host_id(value))
+            ],
+        }
     if kind == "mcpToolCall":
         name = item.get("tool")
         service = item.get("server")
