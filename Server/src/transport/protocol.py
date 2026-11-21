@@ -9,30 +9,43 @@ from fastmcp.server.middleware import MiddlewareContext
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 
-_catalog_server: ContextVar[FastMCP | None] = ContextVar("unity_mcp_catalog_server", default=None)
+_catalog_server: ContextVar[tuple[FastMCP, tuple[str, ...]] | None] = ContextVar(
+    "unity_mcp_catalog_server", default=None
+)
 _resource_read: ContextVar[tuple[FastMCP, str, str] | None] = ContextVar(
     "unity_mcp_resource_read", default=None
 )
 
 
 @contextmanager
-def internal_resource_catalog(server: FastMCP) -> Iterator[None]:
+def internal_catalog(server: FastMCP, *methods: str) -> Iterator[None]:
     """Run listing policies inside the tool request that already owns routing and delivery."""
-    token = _catalog_server.set(server)
+    token = _catalog_server.set((server, methods))
     try:
         yield
     finally:
         _catalog_server.reset(token)
 
 
-def is_internal_resource_list(context: MiddlewareContext) -> bool:
-    server = _catalog_server.get()
+def internal_resource_catalog(server: FastMCP):
+    return internal_catalog(server, "resources/list", "resources/templates/list")
+
+
+def is_internal_catalog_list(context: MiddlewareContext) -> bool:
+    scope = _catalog_server.get()
     return (
-        server is not None
-        and context.method in {"resources/list", "resources/templates/list"}
+        scope is not None
+        and context.method in scope[1]
         and context.fastmcp_context is not None
-        and context.fastmcp_context.fastmcp is server
+        and context.fastmcp_context.fastmcp is scope[0]
     )
+
+
+def is_internal_resource_list(context: MiddlewareContext) -> bool:
+    return context.method in {
+        "resources/list",
+        "resources/templates/list",
+    } and is_internal_catalog_list(context)
 
 
 @contextmanager

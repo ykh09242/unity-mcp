@@ -1,5 +1,7 @@
 """Bounded exact-name evidence reported by the caller about its current connection."""
 
+import hashlib
+import json
 from typing import Annotated, Final
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, model_validator
@@ -7,6 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, model_
 MAX_CANDIDATES: Final = 20
 ToolName = Annotated[StrictStr, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")]
 HostToolNames = Annotated[list[ToolName], Field(max_length=512)]
+
+
+def input_schema_digest(schema: dict) -> str:
+    """Hash the advertised JSON Schema, independent of JSON object key order."""
+    canonical = json.dumps(schema, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
 
 
 class HostToolEvidence(BaseModel):

@@ -656,6 +656,7 @@ async def diagnose(
                         tool=inspect_tool,
                         received=listing.received(inspect_tool),
                         complete=listing.complete,
+                        input_schema_sha256=listing.schema_digests.get(inspect_tool),
                     )
                     completed = receipt = receipt.model_copy(update={"tool_inventory": inventory})
                 return receipt

@@ -5,9 +5,10 @@ from typing import Final, TYPE_CHECKING
 
 import anyio
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
+from pydantic import Field
 
 from cli.utils.doctor_connection import DiagnosticLimit
-from models.host_tool_inventory import HostToolEvidence, ToolName
+from models.host_tool_inventory import HostToolEvidence, ToolName, input_schema_digest
 
 if TYPE_CHECKING:
     from cli.utils.doctor_connection import DiagnosticClient
@@ -17,12 +18,19 @@ _MAX_PAGES: Final = 1024
 _MAX_CURSOR: Final = 1024
 
 
+class ObservedHostTools(HostToolEvidence):
+    """Schema fingerprints obtained from the same SDK pages as the candidate names."""
+
+    schema_digests: dict[str, str] = Field(default_factory=dict)
+
+
 async def observe_host_tools(
     client: "DiagnosticClient", candidates: tuple[ToolName, ...], target: str
-) -> HostToolEvidence:
+) -> ObservedHostTools:
     """Use the caller's existing client, byte limit and deadline; retain only candidates."""
-    unknown = HostToolEvidence(candidates=candidates, present=(), complete=False)
-    remaining = set(unknown.candidates)
+    unknown = ObservedHostTools(candidates=candidates, present=(), complete=False)
+    wanted = set(unknown.candidates)
+    digests: dict[str, str] = {}
     epoch = client.tool_inventory_epoch
     cursor = None
     seen_cursors: set[str] = set()
@@ -55,11 +63,16 @@ async def observe_host_tools(
                 cursor = page.next_cursor
                 if cursor is not None and (len(cursor) > _MAX_CURSOR or cursor in seen_cursors):
                     break
-                remaining.difference_update(tool.name for tool in page.tools)
+                for tool in page.tools:
+                    if tool.name in wanted:
+                        digest = input_schema_digest(tool.input_schema)
+                        if tool.name in digests and digests[tool.name] != digest:
+                            return unknown
+                        digests[tool.name] = digest
                 if cursor is None:
                     complete = not seen_cursors or watch_covered
                     break
-                if not remaining:
+                if wanted == digests.keys():
                     break
                 if not watch_covered and not watch_attempted:
                     watch_attempted = True
@@ -74,14 +87,15 @@ async def observe_host_tools(
                         return unknown
                     if watch_covered:
                         # Restart when the watch comes online after the first request.
-                        remaining = set(unknown.candidates)
+                        digests.clear()
                         cursor = None
                         continue
                 seen_cursors.add(cursor)
     if invalidated():
         return unknown
-    return HostToolEvidence(
+    return ObservedHostTools(
         candidates=unknown.candidates,
-        present=tuple(name for name in unknown.candidates if name not in remaining),
+        present=tuple(name for name in unknown.candidates if name in digests),
         complete=complete,
+        schema_digests=digests,
     )

@@ -117,6 +117,9 @@ class DoctorToolInventory(DoctorModel):
     scope: Literal["diagnostic_sdk_tools_list"] = "diagnostic_sdk_tools_list"
     received: bool | None
     complete: bool = False
+    input_schema_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class DoctorCLIReceipt(DoctorModel):

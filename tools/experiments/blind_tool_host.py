@@ -254,8 +254,36 @@ async def observe_host(client, thread_id, unity_server, instance, *, installed):
                 ):
                     healthy = False
                 actions = {}
+                discovery_inputs = {}
                 for name_, tool in tools.items():
                     schema = tool.get("inputSchema") or tool.get("input_schema") or {}
+                    if name_ in {"manage_tools", "search_unity_tools"} and isinstance(
+                        schema.get("properties"), dict
+                    ):
+                        discovery_inputs[name_] = {
+                            "parameters": sorted(
+                                schema["properties"].keys()
+                                & {
+                                    "action",
+                                    "query",
+                                    "catalog_query",
+                                    "intent",
+                                    "observation_source",
+                                    "required_values",
+                                    "route_surfaces",
+                                    "host_tool_names",
+                                    "host_tool_evidence",
+                                    "tool",
+                                    "group",
+                                    "operation",
+                                    "include_schema",
+                                    "unity_instance",
+                                    "offset",
+                                    "limit",
+                                }
+                            ),
+                            "input_schema_sha256": _digest(schema),
+                        }
                     if name_ == "manage_ugui":
                         properties = schema.get("properties") or {}
                         strict = properties.get("strict_read") or {}
@@ -277,6 +305,7 @@ async def observe_host(client, thread_id, unity_server, instance, *, installed):
                     ):
                         actions[name_] = sorted(choices)
                 result["unity"]["actions"] = actions
+                result["unity"]["discovery_inputs"] = discovery_inputs
                 for field, source_key, key in (
                     ("resources", "resources", "uri"),
                     ("templates", "resourceTemplates", "uriTemplate"),

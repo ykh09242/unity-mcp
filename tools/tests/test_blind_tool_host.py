@@ -116,6 +116,22 @@ def test_incomplete_inventory_and_source_are_unknown():
     assert not result["competitor_digest"] and not result["source"]["server_commit"]
 
 
+def test_host_records_discovery_contract_from_this_threads_schema_only():
+    unity = server("unityMCP", ["manage_tools", "search_unity_tools"])
+    schema = {"type": "object", "properties": {"action": {}, "query": {"description": "private"}}}
+    unity["tools"]["manage_tools"]["inputSchema"] = schema
+    receipt = asyncio.run(
+        host.observe_host(Catalog([{"data": [unity]}]), "thread", "unityMCP", None, installed=False)
+    )
+    assert receipt["unity"]["discovery_inputs"] == {
+        "manage_tools": {
+            "parameters": ["action", "query"],
+            "input_schema_sha256": host._digest(schema),
+        }
+    }
+    assert "private" not in json.dumps(receipt)
+
+
 def test_archive_source_is_attested_for_recorded_treatment():
     client = Catalog(
         [{"data": [server("trial", ["viewer"], resources=[host.TRIAL_SOURCE])]}],

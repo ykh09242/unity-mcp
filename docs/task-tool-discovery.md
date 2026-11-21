@@ -57,6 +57,13 @@ on any current page is confirmed. A missing candidate stays unknown until the
 connection confirms a complete, consistent inventory. A desktop host must
 inspect its own connection.
 
+With `include_schema=true`, `inspect_inventory` returns the advertised
+`inputSchema` and `input_schema_sha256` when that tool is visible to the
+server request. Compare them with the same tool on the host's own listing.
+`doctor --inspect-tool` reports the fingerprint from its own SDK listing.
+The digest covers compact, ASCII-escaped JSON with sorted object keys.
+A matching name can have a different parameter or action contract.
+
 ## One catalog projection
 
 `Server/src/services/registry/action_catalog.py` projects registered tool signatures,

@@ -62,6 +62,7 @@ from transport.plugin_hub import (
 from transport.tool_input_validation import validate_tool_arguments
 from transport.protocol import (
     internal_resource_read_target,
+    is_internal_catalog_list,
     is_internal_resource_list,
     is_sessionless,
 )
@@ -1192,7 +1193,8 @@ class UnityInstanceMiddleware(Middleware):
         """Filter MCP tool listing to the Unity-enabled set when session data is available."""
         await authorize_remote_resource()
         try:
-            await self._inject_unity_instance(context, allow_reconnect=False)
+            if not is_internal_catalog_list(context):
+                await self._inject_unity_instance(context, allow_reconnect=False)
         except Exception as exc:
             # Re-raise authentication errors so callers get a proper auth failure
             if isinstance(exc, RuntimeError) and "authentication" in str(exc).lower():

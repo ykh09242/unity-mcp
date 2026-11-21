@@ -17,9 +17,9 @@ from typing import Annotated, Any, Literal
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
-from transport.protocol import internal_resource_catalog, is_sessionless
+from transport.protocol import internal_catalog, internal_resource_catalog, is_sessionless
 
-from models.host_tool_inventory import HostToolEvidence, HostToolNames
+from models.host_tool_inventory import HostToolEvidence, HostToolNames, input_schema_digest
 from services.registry import (
     mcp_for_unity_tool,
     TOOL_GROUPS,
@@ -170,7 +170,7 @@ async def manage_tools(
     include_schema: Annotated[
         bool,
         Field(strict=True),
-        "On single-tool activation, attach its schema and readiness lookup.",
+        "On single-tool activation attach schema and readiness. On inspect_inventory include the advertised inputSchema and its SHA-256.",
     ] = False,
     catalog_query: Annotated[
         str | None,
@@ -234,13 +234,23 @@ async def manage_tools(
             return {"success": False, "error": "Supply host_tool_names or host_tool_evidence."}
         # Only report the queried name's membership. Catalog definitions include
         # selectable but denied entries and must never populate this receipt.
-        advertised = any(item.name == tool for item in await _visible_tools(ctx))
+        if include_schema:
+            from fastmcp.utilities.versions import dedupe_with_versions
+
+            with internal_catalog(ctx.fastmcp, "tools/list"):
+                visible = dedupe_with_versions(
+                    await ctx.fastmcp.list_tools(), lambda item: item.name
+                )
+        else:
+            visible = await _visible_tools(ctx)
+        definition = next((item for item in visible if item.name == tool), None)
+        advertised = definition is not None
         received = None
         if host_tool_evidence is not None:
             received = host_tool_evidence.received(tool)
         elif host_tool_names is not None:
             received = tool in host_tool_names
-        return {
+        result = {
             "scope": "current_mcp_request",
             "server_advertised": advertised,
             "host_evidence": "caller_report" if received is not None else "unknown",
@@ -254,6 +264,10 @@ async def manage_tools(
                 else "host_filtered"
             ),
         }
+        if include_schema and definition is not None:
+            schema = definition.to_mcp_tool().input_schema
+            result.update(inputSchema=schema, input_schema_sha256=input_schema_digest(schema))
+        return result
     if intent is not None and action not in {"catalog", "search"}:
         return {"success": False, "error": "intent is supported only for search or catalog."}
     if (observation_source is not None or required_values is not None) and action != "search":

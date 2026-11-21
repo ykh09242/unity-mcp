@@ -1,6 +1,7 @@
 """Exercise exact host candidate evidence through the MCP tools and CLI doctor."""
 
 import json
+import hashlib
 
 import anyio
 from click.testing import CliRunner
@@ -12,6 +13,30 @@ from tests.test_http_command_outcome import command_hub  # noqa: F401
 
 
 TARGET = "Fixture@aaaa1111"
+
+
+@pytest.mark.asyncio
+async def test_inventory_schema_uses_only_the_actual_filtered_descriptor():
+    from services.tools.manage_tools import manage_tools, search_unity_tools
+
+    server = FastMCP("discovery-contract")
+    server.tool(manage_tools)
+    server.tool(search_unity_tools)
+    async with Client(server, mode="legacy") as client:
+        descriptor = next(t for t in await client.list_tools() if t.name == "search_unity_tools")
+        canonical = json.dumps(descriptor.input_schema, sort_keys=True, separators=(",", ":"))
+        args = {"action": "inspect_inventory", "tool": descriptor.name, "include_schema": True}
+        receipt = (await client.call_tool("manage_tools", args)).structured_content
+        assert receipt["status"] == "host_unknown"
+        assert receipt["inputSchema"] == descriptor.input_schema
+        assert receipt["input_schema_sha256"] == hashlib.sha256(canonical.encode()).hexdigest()
+        assert {"observation_source", "required_values"} <= receipt["inputSchema"][
+            "properties"
+        ].keys()
+        server.disable(names={descriptor.name})
+        hidden = (await client.call_tool("manage_tools", args)).structured_content
+        assert hidden["status"] == "server_unavailable"
+        assert "inputSchema" not in hidden and "input_schema_sha256" not in hidden
 
 
 def _tools(count: int) -> list[Tool]:
@@ -169,6 +194,8 @@ async def test_doctor_follows_pages_until_candidate_or_a_complete_miss(
         found = name == catalog[-1].name
         expected = True if found else False if complete else None
         assert receipt.tool_inventory.received is expected
+        digest = hashlib.sha256(b'{"type":"object"}').hexdigest() if found else None
+        assert receipt.tool_inventory.input_schema_sha256 == digest
         assert receipt.tool_inventory.complete is (complete and (not found or count > 512))
         assert all(meta == {"unity_instance": TARGET} for _, _, meta in calls)
         assert len({id(client) for client, _, _ in calls}) == 1
@@ -199,6 +226,7 @@ async def test_a_catalog_change_discards_both_presence_and_absence_from_mixed_pa
     evidence = await observe_host_tools(client, (original.name, replacement.name), TARGET)
     assert evidence.complete is False
     assert evidence.received(original.name) is evidence.received(replacement.name) is None
+    assert not evidence.schema_digests
 
 
 @pytest.mark.asyncio

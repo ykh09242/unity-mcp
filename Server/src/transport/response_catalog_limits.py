@@ -26,7 +26,7 @@ from transport.response_delivery import (
     delivery_meta,
     retained_response,
 )
-from transport.protocol import is_internal_resource_list
+from transport.protocol import is_internal_catalog_list
 
 
 class ResponseCatalogLimits(Middleware):
@@ -34,7 +34,7 @@ class ResponseCatalogLimits(Middleware):
 
     async def __call__(self, context: MiddlewareContext, call_next: CallNext):
         # Only the enclosing wire response owns an ID, byte budget and delivery receipt.
-        if is_internal_resource_list(context):
+        if is_internal_catalog_list(context):
             return await call_next(context)
         return await super().__call__(context, call_next)
 
