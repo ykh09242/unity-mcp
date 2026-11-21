@@ -8,6 +8,7 @@ import socket
 import struct
 import threading
 import time
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -175,6 +176,7 @@ def resume_peer(
                         },
                         "payload": {
                             "status": "error",
+                            "success": False,
                             "error": "Command queue capacity reached",
                             "code": capacity,
                             "data": {
@@ -337,6 +339,42 @@ async def test_stdio_queue_capacity_keeps_socket_and_original_uncertainty(
                 assert response["data"]["reason"] == "command_queue_capacity"
                 assert response["data"]["execution"] == "not_started"
                 assert response["data"]["dispatch"] == "not_dispatched"
+        finally:
+            connection.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["get_editor_state", "get_compile_job"])
+async def test_public_read_recognizes_negotiated_stdio_queue_refusal(monkeypatch, command):
+    from services.resources import editor_state
+    from services.tools import get_compile_job
+    from tests.integration.test_helpers import DummyContext
+
+    with resume_peer("queue_capacity", reloads=0) as (port, commands, _, _):
+        connection = configure(monkeypatch, port)
+        owner = editor_state if command == "get_editor_state" else get_compile_job
+        monkeypatch.setattr(
+            owner, "get_unity_instance_from_context", AsyncMock(return_value=connection.instance_id)
+        )
+        try:
+            if command == "get_editor_state":
+                result = await editor_state.get_editor_state(DummyContext())
+            else:
+                result = await get_compile_job.get_compile_job(DummyContext(), "a" * 32)
+            sock = connection.sock
+            assert sock is not None
+            assert connection.send_command("ping", {}) == {"message": "pong"}
+            assert connection.sock is sock
+            assert [item["type"] for item in commands] == [command, "ping"]
+            assert "resume" not in commands[0]
+            if command == "get_editor_state":
+                assert result.success is False
+                assert result.data["reason"] == "command_queue_capacity"
+                assert result.data["execution"] == "not_started"
+                assert "schema_version" not in result.data
+            else:
+                assert result.data["outcome"] == "unknown"
+                assert result.data["reason"] == "observation_rejected"
         finally:
             connection.disconnect()
 

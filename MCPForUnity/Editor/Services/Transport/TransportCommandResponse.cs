@@ -136,6 +136,7 @@ namespace MCPForUnity.Editor.Services.Transport
             var error = new JObject { ["status"] = "error", ["error"] = "Command queue capacity reached" };
             if (IsBoundRequest(arbitration) || receipt != null)
             {
+                error["success"] = false;
                 error["code"] = reason;
                 if (fresh)
                     error["data"] = new JObject

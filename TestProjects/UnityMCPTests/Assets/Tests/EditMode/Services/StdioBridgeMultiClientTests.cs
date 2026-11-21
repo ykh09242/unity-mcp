@@ -528,6 +528,7 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.AreEqual("not_started", (string)envelope.SelectToken("native_arbitration.disposition"));
                 Assert.AreEqual(false, (bool)envelope.SelectToken("native_arbitration.retryable"));
                 Assert.AreEqual("command_queue_capacity", (string)envelope.SelectToken("native_arbitration.reason"));
+                Assert.AreEqual(false, (bool)envelope.SelectToken("payload.success"));
                 Assert.AreEqual(action == "resume" ? null : "not_started", (string)envelope.SelectToken("payload.data.execution"));
                 Assert.AreEqual(0, calls);
                 Assert.AreEqual(0, StdioBridgeHost.QueuedCommandCount);
