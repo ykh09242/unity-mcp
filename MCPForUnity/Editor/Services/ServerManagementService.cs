@@ -317,6 +317,9 @@ namespace MCPForUnity.Editor.Services
             int portForPid = uriForPid?.Port ?? 0;
             string instanceToken = Guid.NewGuid().ToString("N");
             string pidFilePath = portForPid > 0 ? GetLocalHttpServerPidFilePath(portForPid) : null;
+            bool cancellable = literalLaunch && pidFilePath != null && _terminalLauncher is ICancellableTerminalLauncher;
+            if (cancellable)
+                pidFilePath = Path.ChangeExtension(pidFilePath, _pidFileManager.ComputeShortHash(instanceToken) + ".pid");
 
             string launchCommand = displayCommand;
             var launchArguments = literalLaunch ? new List<string>(literalArguments) : null;
@@ -352,10 +355,7 @@ namespace MCPForUnity.Editor.Services
             }
 
             string launchLog = portForPid > 0 ? GetLocalHttpServerLaunchLogPath(portForPid) : null;
-            string gate =
-                literalLaunch && pidFilePath != null && _terminalLauncher is ICancellableTerminalLauncher
-                    ? GetLaunchGatePath(pidFilePath, instanceToken)
-                    : null;
+            string gate = cancellable ? GetLaunchGatePath(pidFilePath, instanceToken) : null;
 
             try
             {
@@ -466,12 +466,30 @@ namespace MCPForUnity.Editor.Services
                     return PendingLaunchState.Waiting;
                 if (File.Exists(gate + ".cancelled"))
                     return PendingLaunchState.Cancelling;
-                return !serverKnown && File.Exists(gate) ? PendingLaunchState.Cancellable : PendingLaunchState.Waiting;
+                if (
+                    !File.Exists(gate)
+                    || (!serverKnown && File.Exists(pidFile))
+                    || (serverKnown && !VerifyInitializingServer(pids, gate, port, serverPid, token))
+                )
+                    return PendingLaunchState.Waiting;
+                return PendingLaunchState.Cancellable;
             }
             catch
             {
                 return PendingLaunchState.Waiting;
             }
+        }
+
+        private bool VerifyInitializingServer(PidFileManager pids, string gate, int port, int pid, string token, bool recheckToken = false)
+        {
+            if (!TryReadPidFromPidFile(gate, out int recorded) || recorded != pid || pid == GetCurrentProcessIdSafe())
+                return false;
+            if (recheckToken || !pids.HasOwnedServerCreation(pid, port, token))
+            {
+                if (!TryProcessCommandLineContainsInstanceToken(pid, token, out bool matches) || !matches)
+                    return false;
+            }
+            return pids.MatchesServerCreation(pid, port, token);
         }
 
         public async Task<bool> CancelPendingLaunchAsync(string localUrl)
@@ -492,6 +510,12 @@ namespace MCPForUnity.Editor.Services
                 )
                     return false;
                 string gate = GetLaunchGatePath(pidFile, token);
+                if (
+                    state == PendingLaunchState.Cancellable
+                    && File.Exists(pidFile)
+                    && (!TryReadPidFromPidFile(pidFile, out int serverPid) || !VerifyInitializingServer(pids, gate, port, serverPid, token, recheckToken: true))
+                )
+                    return false;
                 return await Task.Run(() => CancelVerifiedBootstrap(state, pid, creation, gate));
             }
             catch
@@ -512,7 +536,16 @@ namespace MCPForUnity.Editor.Services
             if (process.HasExited || process.StartTime.ToUniversalTime().Ticks != creation)
                 return false;
             if (state == PendingLaunchState.Cancellable)
+            {
+#if UNITY_EDITOR_WIN
                 File.Move(gate, gate + ".cancelled");
+#else
+                // rename(2) and Python unlink(2) compete for the same directory entry.
+                // A copy/link followed by an unlink cannot provide that exclusion.
+                if (RenameLaunchGate(gate, gate + ".cancelled") != 0)
+                    return false;
+#endif
+            }
 #if UNITY_EDITOR_WIN
             using var stop = System.Diagnostics.Process.Start(
                 new System.Diagnostics.ProcessStartInfo
@@ -532,6 +565,11 @@ namespace MCPForUnity.Editor.Services
 #endif
             return true;
         }
+
+#if !UNITY_EDITOR_WIN
+        [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "rename")]
+        private static extern int RenameLaunchGate(string source, string destination);
+#endif
 
         private bool TryPreparePreviousManagedLaunch(out string error)
         {

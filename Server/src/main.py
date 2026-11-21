@@ -1239,10 +1239,17 @@ Examples:
     # Optional lifecycle handshake for Unity-managed terminal launches
     if args.unity_instance_token:
         os.environ["UNITY_MCP_INSTANCE_TOKEN"] = args.unity_instance_token
-    if args.pidfile:
-        from transport.local_server_lifecycle import claim_managed_launch
+    from transport.local_server_lifecycle import (
+        admit_bound_launch,
+        check_pending_launch,
+        prepare_managed_launch,
+    )
 
-        claim_managed_launch(args.unity_instance_token, args.pidfile)
+    launch_gate = (
+        prepare_managed_launch(args.unity_instance_token, args.pidfile) if args.pidfile else None
+    )
+
+    def publish_pid():
         try:
             pid_dir = os.path.dirname(args.pidfile)
             if pid_dir:
@@ -1251,6 +1258,14 @@ Examples:
                 f.write(str(os.getpid()))
         except Exception as exc:
             logger.warning("Failed to write pidfile '%s': %s", args.pidfile, exc)
+
+    # New Editors give each launch its own PID file. Older gated Editors reuse a port-wide
+    # PID file, so delay that publication until this run owns the actual listener.
+    defer_pid = launch_gate is not None and not Path(args.pidfile).stem.endswith(
+        "." + launch_gate.stem.removeprefix("launch-")
+    )
+    if args.pidfile and not defer_pid:
+        publish_pid()
 
     if args.http_url != "http://127.0.0.1:8080":
         logger.info("HTTP URL set to: %s", safe_config_value("http_url", http_url))
@@ -1345,26 +1360,33 @@ Examples:
         if config.http_remote_hosted:
             mcp.run(transport=transport, host=host, port=port)
         else:
-            with local_http_sockets(host, port) as sockets, local_auth_token(port) as token:
-                config.local_auth_token = token
-                configuration_trace.record(
-                    "local_auth_token",
-                    token,
-                    ConfigOrigin(source="runtime", source_detail="local_auth_context"),
-                )
-                logger.info(
-                    "Local HTTP authentication enabled; token file: %s",
-                    local_auth_token_path(port),
-                )
-                try:
-                    mcp.run(transport=transport, host=host, port=port, sockets=sockets)
-                finally:
-                    config.local_auth_token = None
+            check_pending_launch(launch_gate)
+            with local_http_sockets(host, port) as sockets:
+                admit_bound_launch(launch_gate)
+                if defer_pid:
+                    publish_pid()
+                with local_auth_token(port) as token:
+                    config.local_auth_token = token
                     configuration_trace.record(
                         "local_auth_token",
-                        None,
-                        ConfigOrigin(source="runtime", source_detail="local_auth_context_closed"),
+                        token,
+                        ConfigOrigin(source="runtime", source_detail="local_auth_context"),
                     )
+                    logger.info(
+                        "Local HTTP authentication enabled; token file: %s",
+                        local_auth_token_path(port),
+                    )
+                    try:
+                        mcp.run(transport=transport, host=host, port=port, sockets=sockets)
+                    finally:
+                        config.local_auth_token = None
+                        configuration_trace.record(
+                            "local_auth_token",
+                            None,
+                            ConfigOrigin(
+                                source="runtime", source_detail="local_auth_context_closed"
+                            ),
+                        )
     else:
         # Use stdio transport for traditional MCP
         logger.info("Starting FastMCP with stdio transport")

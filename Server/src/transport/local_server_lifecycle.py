@@ -15,20 +15,42 @@ import uvicorn
 
 from transport.plugin_hub import PluginHub
 
+_LAUNCH_CANCELLED = "Managed launch was cancelled before the server became ready."
 
-def claim_managed_launch(instance_token: str | None, pid_file: str) -> None:
-    """Win the Editor's per-launch gate before allowing this runner to serve."""
+
+def prepare_managed_launch(instance_token: str | None, pid_file: str) -> Path | None:
+    """Record the initializing Python process without consuming the cancellation gate."""
     gate = os.environ.get("UNITY_MCP_LAUNCH_GATE")
     if not gate or not instance_token:
-        return
+        return None
     identity = hashlib.sha256(instance_token.encode()).hexdigest()[:16]
     path = Path(gate)
     if path != Path(pid_file).with_name(f"launch-{identity}.pending"):
         raise RuntimeError("Managed launcher identity does not match its startup gate.")
     try:
-        path.unlink()
+        # r+ cannot recreate a cancelled gate. A late write on Unix follows only the
+        # original file handle, never a replacement run's path.
+        with path.open("r+", encoding="ascii") as marker:
+            marker.write(str(os.getpid()))
+            marker.truncate()
     except FileNotFoundError:
-        raise RuntimeError("Managed launch was cancelled before the server became ready.") from None
+        raise RuntimeError(_LAUNCH_CANCELLED) from None
+    return path
+
+
+def check_pending_launch(path: Path | None) -> None:
+    """Avoid competing for a port if cancellation already won during initialization."""
+    if path is not None and not path.is_file():
+        raise RuntimeError(_LAUNCH_CANCELLED)
+
+
+def admit_bound_launch(path: Path | None) -> None:
+    """Only a bound runner may win the gate and publish its session credential."""
+    if path is not None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            raise RuntimeError(_LAUNCH_CANCELLED) from None
 
 
 class ShutdownRequest(BaseModel):

@@ -601,7 +601,7 @@ namespace MCPForUnityTests.Editor.Services
             for (int attempt = 0; attempt < 2; attempt++)
             {
                 Assert.IsTrue(service.StartLocalHttpServer(quiet: true));
-                Assert.IsTrue(_pids.TryGetHandshake(out _, out string token));
+                Assert.IsTrue(_pids.TryGetHandshake(out string pidFile, out string token));
                 Assert.IsTrue(_pids.TryGetOwnedLaunchProcess(Port, token, out int pid));
                 using var owner = System.Diagnostics.Process.GetProcessById(pid);
                 _detector.ExistsProbe = candidate => candidate == pid && !owner.HasExited;
@@ -618,6 +618,19 @@ namespace MCPForUnityTests.Editor.Services
                     Assert.Greater(childPid, 1, "The fixture bootstrap did not record its child PID.");
                     using var child = System.Diagnostics.Process.GetProcessById(childPid);
                     var recreated = new ServerManagementService(_detector, _pids, _terminator);
+                    string gate = Path.Combine(Path.GetDirectoryName(pidFile), "launch-" + _pids.ComputeShortHash(token) + ".pending");
+                    File.WriteAllText(gate, childPid.ToString());
+                    if (attempt == 1)
+                    {
+                        File.WriteAllText(pidFile, childPid.ToString());
+                        _detector.ExistsProbe = candidate => (candidate == pid && !owner.HasExited) || (candidate == childPid && !child.HasExited);
+                        _detector.CommandLine = "python --unity-instance-token " + token;
+                    }
+                    Assert.AreEqual(
+                        PendingLaunchState.Cancellable,
+                        recreated.GetPendingLaunchState(url),
+                        "A stalled initialization must remain cancellable with or without a published PID."
+                    );
                     var cancel = recreated.CancelPendingLaunchAsync(url);
                     while (!cancel.IsCompleted && EditorApplication.timeSinceStartup < deadline)
                         yield return null;
@@ -653,6 +666,39 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreNotEqual(PendingLaunchState.Cancellable, _service.GetPendingLaunchState(url));
             Assert.IsFalse(_service.CancelPendingLaunchAsync(url).Result);
             Assert.IsTrue(File.Exists(gate));
+            Assert.AreEqual(0, _terminator.Calls);
+        }
+
+        [TestCase("wrong_pid")]
+        [TestCase("unreadable_pid")]
+        [TestCase("another_token")]
+        [TestCase("inaccessible_creation")]
+        [TestCase("reused_pid")]
+        [TestCase("server_bound")]
+        public void PreBindLaunch_MismatchedPublishedServerIdentityCannotCancel(string mismatch)
+        {
+            DateTime original = DateTime.UtcNow.AddMinutes(-1);
+            _pids = new PidFileManager(_root, pid => pid != ServerPid ? original
+                : mismatch == "inaccessible_creation" ? (DateTime?)null
+                : mismatch == "reused_pid" ? original.AddSeconds(1)
+                : original);
+            _pids.StoreOwnedLaunchProcess(LauncherPid, Port, InstanceToken, original);
+            _detector.ExistsOverride = true;
+            _detector.Listening = mismatch == "server_bound";
+            string gate = Path.Combine(Path.GetDirectoryName(_pidPath), "launch-" + _pids.ComputeShortHash(InstanceToken) + ".pending");
+            if (mismatch != "server_bound")
+                File.WriteAllText(gate, (mismatch == "wrong_pid" ? LauncherPid : ServerPid).ToString());
+            if (mismatch == "unreadable_pid")
+                File.WriteAllText(_pidPath, "incomplete");
+            if (mismatch == "another_token")
+                _detector.CommandLine = "python --unity-instance-token unrelated";
+            if (mismatch == "reused_pid")
+                _pids.RememberOwnedServerCreation(ServerPid, Port, InstanceToken, original);
+            _service = new ServerManagementService(_detector, _pids, _terminator);
+            string url = "http://127.0.0.1:" + Port;
+            Assert.AreEqual(PendingLaunchState.Waiting, _service.GetPendingLaunchState(url));
+            Assert.IsFalse(_service.CancelPendingLaunchAsync(url).Result);
+            Assert.IsFalse(File.Exists(gate + ".cancelled"));
             Assert.AreEqual(0, _terminator.Calls);
         }
 

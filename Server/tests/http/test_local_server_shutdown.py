@@ -2,10 +2,13 @@
 
 import asyncio
 import hashlib
+import os
 import signal
-from contextlib import asynccontextmanager
+import sys
+from copy import deepcopy
+from contextlib import asynccontextmanager, contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import httpx
@@ -26,8 +29,93 @@ BODY = {"instance_token": "owned-test-launch"}
 PATH = "/api/server/shutdown"
 
 
+@pytest.mark.parametrize(
+    "phase, legacy_pid",
+    [
+        ("before_pid", False),
+        ("after_pid", False),
+        ("bound", False),
+        ("admitted", False),
+        ("after_pid", True),
+        ("admitted", True),
+    ],
+)
+def test_managed_entry_cancellable_until_sockets_bound(tmp_path, monkeypatch, phase, legacy_pid):
+    import main as entry
+    from core.local_auth import local_http_sockets
+
+    token = "fixture-owned-launch"
+    identity = hashlib.sha256(token.encode()).hexdigest()[:16]
+    pidfile = tmp_path / ("mcp_http_59981.pid" if legacy_pid else f"mcp_http_59981.{identity}.pid")
+    gate = tmp_path / f"launch-{identity}.pending"
+    cancelled = gate.with_suffix(".pending.cancelled")
+    gate.touch()
+    monkeypatch.setenv("UNITY_MCP_LAUNCH_GATE", str(gate))
+    monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "1")
+    monkeypatch.setenv("UNITY_MCP_HTTP_REMOTE_HOSTED", "false")
+    monkeypatch.setenv("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", str(tmp_path / "auth"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "server",
+            "--transport",
+            "http",
+            "--pidfile",
+            str(pidfile),
+            "--unity-instance-token",
+            token,
+        ],
+    )
+    observed = []
+    sockets_seen = []
+
+    def attempt_cancel(at):
+        if phase == at:
+            observed.append((gate.is_file(), pidfile.exists()))
+            if gate.exists():
+                gate.rename(cancelled)
+
+    def open_pid(path, *args, **kwargs):
+        if path == str(pidfile):
+            attempt_cancel("before_pid")
+        return open(path, *args, **kwargs)
+
+    def run(**_options):
+        assert phase == "admitted", "A cancelled fixture cannot serve"
+        attempt_cancel("admitted")
+        assert (tmp_path / "auth").is_file()
+
+    def initialize(*_args, **_kwargs):
+        attempt_cancel("after_pid")
+        return SimpleNamespace(run=run)
+
+    @contextmanager
+    def owned_sockets(*_args):
+        with local_http_sockets("127.0.0.1", 0) as listeners:
+            sockets_seen.extend(listeners)
+            attempt_cancel("bound")
+            yield listeners
+
+    monkeypatch.setattr(entry, "open", open_pid, raising=False)
+    monkeypatch.setattr(entry, "create_mcp_server", initialize)
+    monkeypatch.setattr(entry, "local_http_sockets", owned_sockets)
+    monkeypatch.setattr(entry, "config", deepcopy(entry.config))
+    with patch.dict(os.environ):
+        if phase == "admitted":
+            entry.main()
+        else:
+            with pytest.raises(RuntimeError, match="cancelled"):
+                entry.main()
+    pid_published = phase == "admitted" or (not legacy_pid and phase != "before_pid")
+    assert observed == [(phase != "admitted", pid_published)]
+    assert bool(sockets_seen) == (phase in ("bound", "admitted"))
+    assert all(sock.fileno() == -1 for sock in sockets_seen)
+    assert not (tmp_path / "auth").exists()
+
+
 def test_cancel_and_server_admission_exclusively_claim_same_launch(tmp_path, monkeypatch):
-    from transport.local_server_lifecycle import claim_managed_launch
+    from transport.local_server_lifecycle import admit_bound_launch, prepare_managed_launch
 
     token = "test-launch-identity"
     pidfile = tmp_path / "mcp_http_12345.pid"
@@ -37,13 +125,15 @@ def test_cancel_and_server_admission_exclusively_claim_same_launch(tmp_path, mon
     monkeypatch.setenv("UNITY_MCP_LAUNCH_GATE", str(gate))
     gate.touch()
     with pytest.raises(RuntimeError, match="identity"):
-        claim_managed_launch("other-launch", str(pidfile))
+        prepare_managed_launch("other-launch", str(pidfile))
     gate.rename(cancelled)
     with pytest.raises(RuntimeError, match="cancelled"):
-        claim_managed_launch(token, str(pidfile))
+        prepare_managed_launch(token, str(pidfile))
     assert not pidfile.exists()
     cancelled.rename(gate)
-    claim_managed_launch(token, str(pidfile))
+    assert prepare_managed_launch(token, str(pidfile)) == gate
+    assert int(gate.read_text()) == os.getpid()
+    admit_bound_launch(gate)
     with pytest.raises(FileNotFoundError):
         gate.rename(cancelled)
 

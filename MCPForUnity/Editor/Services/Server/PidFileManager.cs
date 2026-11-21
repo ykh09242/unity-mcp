@@ -110,6 +110,14 @@ namespace MCPForUnity.Editor.Services.Server
                 }
 
                 string portText = fileName.Substring(prefix.Length);
+                int suffix = portText.IndexOf('.');
+                if (suffix >= 0)
+                {
+                    string identity = portText.Substring(suffix + 1);
+                    if (identity.Length != 16 || !identity.All(Uri.IsHexDigit))
+                        return false;
+                    portText = portText.Substring(0, suffix);
+                }
                 return int.TryParse(portText, out port) && port > 0;
             }
             catch
@@ -273,6 +281,10 @@ namespace MCPForUnity.Editor.Services.Server
 
         internal bool HasOwnedServerCreation(int pid, int port, string instanceToken) =>
             TryGetProcessCreation(EditorPrefKeys.LastLocalHttpServerCreation, pid, port, instanceToken, out _);
+
+        internal bool MatchesServerCreation(int pid, int port, string instanceToken) =>
+            TryGetProcessCreation(EditorPrefKeys.LastLocalHttpServerCreation, pid, port, instanceToken, out long ticks)
+            && GetProcessCreationUtc(pid)?.Ticks == ticks;
 
         internal bool TryGetLauncherCreation(int pid, int port, string instanceToken, out long ticks) =>
             TryGetProcessCreation(EditorPrefKeys.LastLocalHttpServerLauncherCreation, pid, port, instanceToken, out ticks);
