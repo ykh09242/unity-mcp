@@ -587,9 +587,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 Directory.Delete(blocked);
                 Invoke("Restore");
 
-                var next = PlayScenarioDefinition.Parse(
-                    JObject.Parse("{'name':'next','steps':[{'name':'Absent','action':'wait_object','target':'MCPAbsent-" + run.JobId + "','count':0}]}")
-                );
+                var next = StartingRun().Scenario;
                 if (receiptAlsoFails)
                 {
                     string saved = SessionState.GetString(SessionKey, "");
@@ -605,7 +603,11 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 string nextId = Guid.NewGuid().ToString("N");
                 Assert.IsInstanceOf<SuccessResponse>(PlayScenarioService.Start(next, 1, 30, nextId));
                 var nextEngine = (PlayScenarioEngine)engineField.GetValue(null);
+                // Keep the admitted engine and checkpoint, and observe its scene dispatch without switching the Editor scene.
+                var nextHost = new CountingHost();
+                typeof(PlayScenarioEngine).GetField("_host", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(nextEngine, nextHost);
                 Finish(nextEngine);
+                Assert.AreEqual(1, nextHost.Executions);
                 Assert.AreEqual("succeeded", store.GetReport(nextId).Status);
                 var replay = (ErrorResponse)PlayScenarioService.Start(run.Scenario, 1, 30, run.JobId);
                 StringAssert.Contains("job_id was already used", replay.Error);
