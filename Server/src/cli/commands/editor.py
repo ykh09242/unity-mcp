@@ -1,7 +1,9 @@
 """Editor CLI commands."""
 
+import re
 import sys
 import time
+from dataclasses import replace
 from uuid import uuid4
 from pathlib import Path
 import click
@@ -585,8 +587,6 @@ def run_tests(
 
     result = _run_test_job_command("run_tests", params, config)
     if isinstance(result.get("unity_instance"), str):
-        from dataclasses import replace
-
         config = replace(config, unity_instance=result["unity_instance"])
 
     # For async mode, just show job ID
@@ -793,6 +793,21 @@ def _poll_test_job(
         sys.exit(exit_code)
 
 
+def _refresh_target(data: object) -> tuple[str, str] | None:
+    target = data.get("editor_target") if isinstance(data, dict) else None
+    if not isinstance(target, dict):
+        return None
+    instance, generation = target.get("instance"), target.get("generation")
+    if (
+        isinstance(instance, str)
+        and re.fullmatch(r"[^\x00-\x1f\x7f-\x9f]{1,256}@[0-9a-f]{16}", instance)
+        and isinstance(generation, str)
+        and re.fullmatch(r"[0-9a-f]{32}", generation)
+    ):
+        return instance, generation
+    return None
+
+
 @editor.command("refresh")
 @click.option(
     "--mode", type=click.Choice(["if_dirty", "force"]), default="if_dirty", help="Refresh mode."
@@ -837,10 +852,40 @@ def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
         # native snapshots; the CLI HTTP boundary exposes commands, not resources.
         from services.resources.editor_state import _enrich_advice_and_staleness
 
+        def unverified() -> UnityCommandError:
+            return UnityCommandError(
+                {
+                    "success": False,
+                    "error": "refresh_editor_identity_unverified",
+                    "message": "Refresh was acknowledged, but readiness could not be verified for the same Editor process.",
+                    "data": {"refresh_response": result},
+                    "hint": "Inspect the original Editor before deciding whether to refresh again.",
+                }
+            )
+
+        target = _refresh_target(result.get("data"))
+        if target is None:
+            raise unverified()
+        instance, generation = target
+        name, _, project_hash = instance.rpartition("@")
+        requested = config.unity_instance
+        if requested and requested != name:
+            requested_name, separator, requested_hash = requested.rpartition("@")
+            if requested_hash.lower() != project_hash or (separator and requested_name != name):
+                raise unverified()
+        # Guarded project context already requires an exact hash and checks the root on every request.
+        selected = (
+            config if config.expected_project_root else replace(config, unity_instance=instance)
+        )
         ready = False
         while (remaining := deadline - time.monotonic()) > 0:
             try:
-                state = run_command("get_editor_state", {}, config, timeout=min(2.0, remaining))
+                state = run_command(
+                    "get_editor_state",
+                    {"expected_editor_generation": generation},
+                    selected,
+                    timeout=min(2.0, remaining),
+                )
             except UnityConnectionError as error:
                 if str(error).startswith("HTTP error from server:") and not str(error).startswith(
                     ("HTTP error from server: 404", "HTTP error from server: 503")
@@ -850,9 +895,29 @@ def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
             except UnityCommandError as error:
                 response = error.response
                 message = str(response.get("error") or response.get("message") or "").lower()
-                if response.get("hint") != "retry" and not any(
-                    transient in message
-                    for transient in ("disconnected", "connection closed", "timeout", "timed out")
+                if response.get("error") == "editor_generation_mismatch":
+                    raise unverified() from error
+                details = response.get("data")
+                selection_unavailable = response.get("code") == "no_unity_instances" or (
+                    isinstance(details, dict)
+                    and details.get("dispatch") == "not_dispatched"
+                    and (
+                        isinstance(details.get("available_instances"), list)
+                        or details.get("reason") == "project_context_target_unavailable"
+                    )
+                )
+                if (
+                    not selection_unavailable
+                    and response.get("hint") != "retry"
+                    and not any(
+                        transient in message
+                        for transient in (
+                            "disconnected",
+                            "connection closed",
+                            "timeout",
+                            "timed out",
+                        )
+                    )
                 ):
                     raise
             else:
@@ -870,6 +935,8 @@ def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
                             "message": "Readiness requires a canonical editor state snapshot.",
                         }
                     )
+                if _refresh_target(data) != target:
+                    raise unverified()
                 advice = _enrich_advice_and_staleness(data)["advice"]
                 if "recovery_required" in advice["blocking_reasons"]:
                     native = data["native_coordination"]

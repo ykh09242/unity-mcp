@@ -474,7 +474,7 @@ class TestSceneCommands:
         """Test scene hierarchy with options."""
         with patch("cli.commands.scene.run_command", return_value=mock_unity_response):
             result = runner.invoke(
-                cli, ["scene", "hierarchy", "--max-depth", "5", "--include-transform"]
+                cli, ["scene", "hierarchy", "--max-depth", "1", "--include-transform"]
             )
             assert result.exit_code == 0
 
@@ -1552,18 +1552,16 @@ class TestBatchCommands:
 class TestEditorEnhancedCommands:
     """Tests for new editor subcommands."""
 
-    def test_editor_refresh(self, runner, mock_unity_response):
-        """Test editor refresh."""
-        ready = {"success": True, "data": {"schema_version": "unity-mcp/editor_state@2"}}
-        with patch("cli.commands.editor.run_command", side_effect=[mock_unity_response, ready]):
-            result = runner.invoke(cli, ["editor", "refresh"])
-            assert result.exit_code == 0
-
-    def test_editor_refresh_with_compile(self, runner, mock_unity_response):
-        """Test editor refresh with compile flag."""
-        ready = {"success": True, "data": {"schema_version": "unity-mcp/editor_state@2"}}
-        with patch("cli.commands.editor.run_command", side_effect=[mock_unity_response, ready]):
-            result = runner.invoke(cli, ["editor", "refresh", "--compile"])
+    @pytest.mark.parametrize("args", [[], ["--compile"]])
+    def test_editor_refresh(self, runner, args):
+        target = {"instance": "Fixture@0123456789abcdef", "generation": "ab" * 16}
+        ack = {"success": True, "data": {"editor_target": target}}
+        ready = {
+            "success": True,
+            "data": {"schema_version": "unity-mcp/editor_state@2", "editor_target": target},
+        }
+        with patch("cli.commands.editor.run_command", side_effect=[ack, ready]):
+            result = runner.invoke(cli, ["editor", "refresh", *args])
             assert result.exit_code == 0
 
     def test_editor_custom_tool(self, runner, mock_unity_response):

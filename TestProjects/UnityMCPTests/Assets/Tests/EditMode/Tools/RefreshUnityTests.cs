@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Resources.Editor;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -71,6 +72,13 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.AreEqual(!refreshThrows, (bool)response["success"]);
                 if (!refreshThrows)
                 {
+                    var target = (JObject)response["data"]["editor_target"];
+                    Assert.AreEqual(ProjectIdentityUtility.GetProjectName() + "@" + ProjectIdentityUtility.GetProjectHash(), (string)target["instance"]);
+                    Assert.That((string)target["generation"], Does.Match("^[0-9a-f]{32}$"));
+                    var observed = ToJObject(EditorState.HandleCommand(new JObject { ["expected_editor_generation"] = (string)target["generation"] }));
+                    Assert.IsTrue(JToken.DeepEquals(target, observed["data"]["editor_target"]));
+                    var wrongProcess = ToJObject(EditorState.HandleCommand(new JObject { ["expected_editor_generation"] = "other" }));
+                    Assert.AreEqual("editor_generation_mismatch", (string)wrongProcess["error"]);
                     Assert.IsFalse((bool)response["data"]["compile_requested"]);
                     Assert.AreEqual("refresh", (string)response["data"]["compilation_trigger"]);
                     Assert.IsTrue((bool)response["data"]["compilation_goal_satisfied"]);

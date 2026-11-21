@@ -105,35 +105,31 @@ def test_valid_values_preserve_defaults_and_configure_returned_identity(
     assert result.exit_code == 0, (result.exception, result.output)
     assert result.stderr == ""
     calls = state["attempts"]
-    assert len(calls) == len(state["encoded"]) == 3 + (color is not None) + (intensity is not None)
-    assert calls[0] == (
-        "manage_gameobject",
-        {
-            "action": "create",
-            "name": "Owned",
-            "position": [float(value) for value in position] if position else [0, 3, 0],
-        },
-    )
-    assert calls[1][1]["componentType"] == "Light" and calls[1][1]["action"] == "add"
-    assert calls[2][1]["property"] == "type" and calls[2][1]["value"] == "Spot"
-    assert all(
-        params["target"] == -123 and params["search_method"] == "by_id" for _, params in calls[1:]
-    )
+    assert len(calls) == len(state["encoded"]) == 1
+    properties = {"type": "Spot"}
     if color is not None:
-        assert calls[3][1]["value"] == {
+        properties["color"] = {
             "r": float(color[0]),
             "g": float(color[1]),
             "b": float(color[2]),
             "a": 1,
         }
     if intensity is not None:
-        assert calls[-1][1]["value"] == float(intensity)
+        properties["intensity"] = float(intensity)
+    assert calls[0] == (
+        "manage_gameobject",
+        {
+            "action": "create",
+            "name": "Owned",
+            "position": [float(value) for value in position] if position else [0, 3, 0],
+            "componentsToAdd": [{"typeName": "Light", "properties": properties}],
+        },
+    )
 
 
-@pytest.mark.parametrize("stage", [1, 2, 3, 4, 5])
-def test_valid_options_preserve_stop_on_native_rejection_and_falsey_payload(dispatch, stage):
+def test_valid_options_preserve_stop_on_native_rejection_and_falsey_payload(dispatch):
     cli, state = dispatch
-    state["fail_at"] = stage
+    state["fail_at"] = 1
     result = CliRunner().invoke(
         cli,
         [
@@ -151,15 +147,11 @@ def test_valid_options_preserve_stop_on_native_rejection_and_falsey_payload(disp
         ],
     )
     assert result.exit_code == 1 and result.stderr == ""
-    assert len(state["attempts"]) == len(state["encoded"]) == stage
+    assert len(state["attempts"]) == len(state["encoded"]) == 1
     payload = json.loads(result.stdout)
     assert {key: payload[key] for key in ("success", "error", "data")} == {
         "success": False,
         "error": "Controlled rejection",
         "data": {"zero": 0, "enabled": False, "reference": None},
     }
-    if stage == 1:
-        assert "lightingCreation" not in payload
-    else:
-        assert payload["lightingCreation"]["createdObject"]["instanceID"] == -123
-        assert payload["lightingCreation"]["partialExecution"] is True
+    assert "lightingCreation" not in payload

@@ -124,6 +124,7 @@ namespace MCPForUnity.Editor.Tools
                     "Compilation request already tracked or tracking capacity reached; no work repeated.",
                     new
                     {
+                        editor_target = ProjectIdentityUtility.CaptureEditorTarget(),
                         compilation = Ledger.Query(compileId),
                         refresh_triggered = false,
                         compile_requested = false,
@@ -270,6 +271,7 @@ namespace MCPForUnity.Editor.Tools
                     : "Refresh or compilation dispatched.",
                 new
                 {
+                    editor_target = ProjectIdentityUtility.CaptureEditorTarget(),
                     compilation = compileId == null ? null : Ledger.Query(compileId),
                     refresh_triggered = refreshTriggered,
                     compile_requested = compileRequested,

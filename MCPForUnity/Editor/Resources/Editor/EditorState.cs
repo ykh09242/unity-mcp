@@ -15,7 +15,16 @@ namespace MCPForUnity.Editor.Resources.Editor
         {
             try
             {
+                JObject target = null;
+                if (@params?["expected_editor_generation"] is JToken expected)
+                {
+                    target = ProjectIdentityUtility.CaptureEditorTarget();
+                    if (expected.Type != JTokenType.String || !JToken.DeepEquals(expected, target["generation"]))
+                        return new ErrorResponse("editor_generation_mismatch");
+                }
                 var snapshot = EditorStateCache.GetSnapshot();
+                if (target != null)
+                    snapshot["editor_target"] = target;
                 if (
                     @params?["_editor_clock_request"]?.Type == JTokenType.String
                     && Guid.TryParseExact((string)@params["_editor_clock_request"], "D", out var requestId)

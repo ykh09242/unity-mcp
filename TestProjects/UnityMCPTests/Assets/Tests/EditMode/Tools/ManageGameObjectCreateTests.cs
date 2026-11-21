@@ -41,6 +41,45 @@ namespace MCPForUnityTests.Editor.Tools
         #region Basic Create Tests
 
         [Test]
+        public void Create_ConfiguresTheCliLightOnTheNewObjectInOneCommand()
+        {
+            var result = ManageGameObject.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "create",
+                    ["name"] = "CliConfiguredLight",
+                    ["position"] = new JArray(1, 2, 3),
+                    ["componentsToAdd"] = new JArray(
+                        new JObject
+                        {
+                            ["typeName"] = "Light",
+                            ["properties"] = new JObject
+                            {
+                                ["type"] = "Spot",
+                                ["color"] = new JObject
+                                {
+                                    ["r"] = 1,
+                                    ["g"] = 0,
+                                    ["b"] = 0,
+                                    ["a"] = 1,
+                                },
+                                ["intensity"] = 0,
+                            },
+                        }
+                    ),
+                }
+            );
+            var created = FindAndTrack("CliConfiguredLight");
+            var response = result as JObject ?? JObject.FromObject(result);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(new Vector3(1, 2, 3), created.transform.position);
+            var light = created.GetComponent<Light>();
+            Assert.AreEqual(LightType.Spot, light.type);
+            Assert.AreEqual(Color.red, light.color);
+            Assert.AreEqual(0f, light.intensity);
+        }
+
+        [Test]
         public void Create_WithNameOnly_CreatesEmptyGameObject()
         {
             var p = new JObject { ["action"] = "create", ["name"] = "TestEmptyObject" };

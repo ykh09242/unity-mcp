@@ -14,6 +14,7 @@ from click.testing import CliRunner
 
 from cli.main import cli
 from cli.utils import connection
+from models.connection_diagnosis import no_unity_instances_response
 
 
 @pytest.fixture
@@ -34,11 +35,17 @@ def refresh_cli(monkeypatch):
     client_type = httpx.AsyncClient
     requests = []
 
-    def invoke(handler, args=(), timeout=30, output_format="json"):
+    def invoke(
+        handler, args=(), timeout=30, output_format="json", selector="Fixture@0123456789abcdef"
+    ):
         def respond(request):
             assert request.url.path == "/api/command"
             payload = json.loads(request.content)
-            assert payload["unity_instance"] == "Fixture@hash"
+            if payload["type"] == "refresh_unity":
+                assert payload.get("unity_instance") == selector
+            else:
+                assert payload["unity_instance"] == TARGET["instance"]
+                assert payload["params"]["expected_editor_generation"] == TARGET["generation"]
             requests.append((payload, request.extensions["timeout"]["read"]))
             return handler(payload)
 
@@ -52,8 +59,7 @@ def refresh_cli(monkeypatch):
         return CliRunner().invoke(
             cli,
             [
-                "--instance",
-                "Fixture@hash",
+                *(["--instance", selector] if selector is not None else []),
                 "--format",
                 output_format,
                 "--timeout",
@@ -67,11 +73,15 @@ def refresh_cli(monkeypatch):
     return invoke, requests, now
 
 
+TARGET = {"instance": "Fixture@0123456789abcdef", "generation": "ab" * 16}
+
+
 def ready_state(*, playing=False, compiling=False, reloading=False, importing=False):
     return {
         "success": True,
         "data": {
             "schema_version": "unity-mcp/editor_state@2",
+            "editor_target": TARGET,
             "observed_at_unix_ms": 100000,
             "sequence": 1,
             "editor": {"play_mode": {"is_playing": playing}},
@@ -86,11 +96,91 @@ ACKNOWLEDGED = {
     "success": True,
     "message": "Refresh requested.",
     "data": {
+        "editor_target": TARGET,
         "refresh_triggered": True,
         "compile_requested": False,
         "resulting_state": "idle",
     },
 }
+
+
+@pytest.mark.parametrize("selector", [None, "Fixture", TARGET["instance"]])
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        None,
+        {**TARGET, "instance": "Fixture@0123456789abcdee"},
+        {**TARGET, "generation": "cd" * 16},
+    ],
+)
+def test_replacement_or_unwitnessed_ready_state_cannot_finish_refresh(
+    refresh_cli, selector, replacement
+):
+    invoke, requests, _ = refresh_cli
+    state = ready_state()
+    state["data"]["editor_target"] = replacement
+    result = invoke(
+        lambda payload: httpx.Response(
+            200, json=ACKNOWLEDGED if payload["type"] == "refresh_unity" else state
+        ),
+        selector=selector,
+    )
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout)["error"] == "refresh_editor_identity_unverified"
+    assert [payload["type"] for payload, _ in requests] == ["refresh_unity", "get_editor_state"]
+
+
+def test_legacy_refresh_ack_is_retained_without_polling_an_unbound_target(refresh_cli):
+    invoke, requests, _ = refresh_cli
+    ack = {"success": True, "data": {"refresh_triggered": True}}
+    result = invoke(lambda _: httpx.Response(200, json=ack), selector=None)
+    assert result.exit_code == 1 and len(requests) == 1
+    document = json.loads(result.stdout)
+    assert document["error"] == "refresh_editor_identity_unverified"
+    assert document["data"]["refresh_response"] == ack
+
+
+def test_guarded_refresh_keeps_the_root_and_exact_hash_across_reload(monkeypatch):
+    editor = importlib.import_module("cli.commands.editor")
+    selector = TARGET["instance"].split("@")[1].upper()
+    config = connection.CLIConfig(
+        unity_instance=selector, expected_project_root="C:/Fixture", format="json"
+    )
+    calls = []
+
+    def respond(request):
+        assert request.url.path == "/api/context-command"
+        payload = json.loads(request.content)
+        assert payload["expected_project"] == {"root": "C:/Fixture"}
+        assert payload["unity_instance"] == selector
+        calls.append(payload["type"])
+        if payload["type"] == "refresh_unity":
+            return httpx.Response(200, json=ACKNOWLEDGED)
+        assert payload["params"]["expected_editor_generation"] == TARGET["generation"]
+        if len(calls) == 2:
+            return httpx.Response(
+                200,
+                json={
+                    "success": False,
+                    "hint": "select_instance",
+                    "data": {
+                        "dispatch": "not_dispatched",
+                        "reason": "project_context_target_unavailable",
+                    },
+                },
+            )
+        return httpx.Response(200, json=ready_state())
+
+    monkeypatch.setattr(editor, "get_config", lambda: config)
+    monkeypatch.setattr(connection, "_auth_headers", lambda cfg: {})
+    client = httpx.AsyncClient
+    monkeypatch.setattr(
+        connection, "_http_client", lambda cfg: client(transport=httpx.MockTransport(respond))
+    )
+    monkeypatch.setattr("services.resources.editor_state._now_unix_ms", lambda: 100000)
+    result = CliRunner().invoke(cli, ["--format", "json", "editor", "refresh"])
+    assert result.exit_code == 0, result.output
+    assert calls == ["refresh_unity", "get_editor_state", "get_editor_state"]
 
 
 @pytest.mark.parametrize("restart_required", [False, True])
@@ -174,7 +264,18 @@ def test_refresh_readiness_survives_reload_read_failures_without_replaying_refre
     invoke, requests, _ = refresh_cli
     states = iter(
         [
-            httpx.Response(503, json={"error": "No Unity instances connected"}),
+            httpx.Response(503, json=no_unity_instances_response()),
+            httpx.Response(
+                404,
+                json={
+                    "success": False,
+                    "error": "Unity instance not found",
+                    "data": {
+                        "dispatch": "not_dispatched",
+                        "available_instances": ["Fixture@0123456789abcdee"],
+                    },
+                },
+            ),
             httpx.Response(
                 200,
                 json={
@@ -199,7 +300,7 @@ def test_refresh_readiness_survives_reload_read_failures_without_replaying_refre
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == ACKNOWLEDGED
     assert [payload["type"] for payload, _ in requests].count("refresh_unity") == 1
-    assert len(requests) == 4
+    assert len(requests) == 5
 
 
 @pytest.mark.parametrize("compile", [False, True])

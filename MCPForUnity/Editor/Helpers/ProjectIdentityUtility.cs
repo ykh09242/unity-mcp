@@ -4,6 +4,8 @@ using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -104,6 +106,9 @@ namespace MCPForUnity.Editor.Helpers
             EnsureIdentityCache();
             return _cachedProjectName;
         }
+
+        internal static JObject CaptureEditorTarget() =>
+            new JObject { ["instance"] = GetProjectName() + "@" + GetProjectHash(), ["generation"] = CommandResumeState.SessionId };
 
         private static string ComputeProjectHash(string dataPath)
         {
