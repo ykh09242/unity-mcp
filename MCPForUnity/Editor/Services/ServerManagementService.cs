@@ -18,17 +18,30 @@ namespace MCPForUnity.Editor.Services
     /// <summary>
     /// Service for managing MCP server lifecycle
     /// </summary>
-    public class ServerManagementService : IServerManagementService, IAsyncLocalHttpServerProbe
+    public class ServerManagementService : IServerManagementService, IAsyncLocalHttpServerProbe, ILocalHttpServerStatus
     {
         private readonly IProcessDetector _processDetector;
         private readonly IPidFileManager _pidFileManager;
         private readonly IServerCommandBuilder _commandBuilder;
         private readonly ITerminalLauncher _terminalLauncher;
         private readonly Func<Uri, string, (bool Accepted, string Error)> _shutdownRequester;
-        private Func<Uri, CancellationToken, Task<bool>> _probePort = (uri, token) => Task.Run(() => TryConnectToLocalPort(uri.Host, uri.Port, 250, token));
+        private Func<Uri, CancellationToken, Task<(bool Occupied, string ServerId)>> _probeEndpoint = ProbeEndpointAsync;
+        private static readonly HttpClient HealthClient = new(
+            new HttpClientHandler
+            {
+                UseProxy = false,
+                UseCookies = false,
+                AllowAutoRedirect = false,
+            }
+        )
+        {
+            Timeout = TimeSpan.FromSeconds(1),
+            MaxResponseContentBufferSize = 16 * 1024,
+        };
         private string _probeUrl;
-        private Task<bool> _probeTask;
+        private Task<LocalHttpServerState> _probeTask;
         private CancellationTokenSource _probeCancellation;
+        private (string ServerId, string LaunchToken, int Pid, DateTime CheckedAt, bool Owned) _listenerIdentity;
 
         /// <summary>Actionable explanation of the last refused or failed stop. Never contains credentials.</summary>
         public string LastStopFailure { get; private set; }
@@ -614,8 +627,9 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        // Called on the Editor thread. Only the immutable endpoint and cancellation token cross into the worker.
-        public Task<bool> ProbeLocalHttpServerAsync(string localUrl)
+        public async Task<bool> ProbeLocalHttpServerAsync(string localUrl) => (await InspectLocalHttpServerAsync(localUrl)).IsCompatible();
+
+        public Task<LocalHttpServerState> InspectLocalHttpServerAsync(string localUrl)
         {
             if (_probeTask != null && !_probeTask.IsCompleted && string.Equals(localUrl, _probeUrl, StringComparison.Ordinal))
                 return _probeTask;
@@ -625,11 +639,98 @@ namespace MCPForUnity.Editor.Services
             _probeCancellation = null;
             _probeTask = null;
             _probeUrl = localUrl;
-            if (!IsLocalUrl(localUrl) || !Uri.TryCreate(localUrl, UriKind.Absolute, out var uri) || uri.Port <= 0)
-                return Task.FromResult(false);
+            if (!IsLocalUrl(localUrl) || !Uri.TryCreate(localUrl, UriKind.Absolute, out var uri) || (uri.Scheme != "http" && uri.Scheme != "https"))
+                return Task.FromResult(LocalHttpServerState.Unavailable);
 
             _probeCancellation = new CancellationTokenSource();
-            return _probeTask = _probePort(uri, _probeCancellation.Token);
+            return _probeTask = InspectAsync(uri, _probeCancellation.Token);
+        }
+
+        private async Task<LocalHttpServerState> InspectAsync(Uri uri, CancellationToken token)
+        {
+            (bool Occupied, string ServerId) endpoint;
+            try
+            {
+                endpoint = await _probeEndpoint(uri, token);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                return LocalHttpServerState.Unavailable;
+            }
+            if (token.IsCancellationRequested)
+                return LocalHttpServerState.Unavailable;
+            if (endpoint.ServerId == null)
+                return endpoint.Occupied ? LocalHttpServerState.PortOccupied : LocalHttpServerState.Unavailable;
+            if (!TryGetListenerIdentity(uri.Port, out int pid, out string launchToken))
+                return LocalHttpServerState.ExternalServer;
+
+            // Reuse expensive OS inspection only for the same process-frozen /health identity and launch.
+            // Retry an inaccessible process, and always independently verify again at the stop action.
+            if (
+                endpoint.ServerId.Length == 0
+                || _listenerIdentity.ServerId != endpoint.ServerId
+                || _listenerIdentity.Pid != pid
+                || _listenerIdentity.LaunchToken != launchToken
+                || (!_listenerIdentity.Owned && DateTime.UtcNow - _listenerIdentity.CheckedAt > TimeSpan.FromSeconds(5))
+            )
+                _listenerIdentity = (endpoint.ServerId, launchToken, pid, DateTime.UtcNow, VerifyListenerProcess(uri.Port, pid, launchToken));
+            return _listenerIdentity.Owned ? LocalHttpServerState.OwnedServer : LocalHttpServerState.ExternalServer;
+        }
+
+        private static async Task<(bool Occupied, string ServerId)> ProbeEndpointAsync(Uri uri, CancellationToken token)
+        {
+            string host = HttpEndpointUtility.IsBindAllInterfacesHost(uri.Host) ? (uri.Host.Contains(":") ? "::1" : "127.0.0.1") : uri.Host;
+            var health = new UriBuilder(uri.Scheme, host, uri.Port, "/health").Uri;
+            try
+            {
+                using var response = await HealthClient.GetAsync(health, token).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                    return (true, null);
+                string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                return (true, ReadCompatibleServerId(body));
+            }
+            catch when (!token.IsCancellationRequested)
+            {
+                return (await Task.Run(() => TryConnectToLocalPort(host, uri.Port, 250, token), token).ConfigureAwait(false), null);
+            }
+        }
+
+        internal static string ReadCompatibleServerId(string body)
+        {
+            try
+            {
+                var health = JObject.Parse(body);
+                string message = (string)health["message"];
+                if ((string)health["status"] == "healthy" && (message == "Unity MCP (ykh09242) server is running" || message == "Unity MCP server is running"))
+                    return (string)health["server_build"]?["server_id"] ?? string.Empty;
+            }
+            catch (Exception) { /* Another application may return arbitrary content. */ }
+            return null;
+        }
+
+        private bool TryGetListenerIdentity(int port, out int pid, out string launchToken)
+        {
+            pid = 0;
+            return TryGetLocalHttpServerHandshake(out var pidFile, out launchToken)
+                && TryGetPortFromPidFilePath(pidFile, out int recordedPort)
+                && recordedPort == port
+                && TryReadPidFromPidFile(pidFile, out pid)
+                && pid > 1
+                && pid != GetCurrentProcessIdSafe();
+        }
+
+        private bool VerifyListenerProcess(int port, int pid, string launchToken) =>
+            GetListeningProcessIdsForPort(port).Contains(pid)
+            && !(_pidFileManager is PidFileManager pids && pids.HasProcessCreationMismatch(pid, port, launchToken, launcher: false))
+            && TryProcessCommandLineContainsInstanceToken(pid, launchToken, out bool matches)
+            && matches;
+
+        public bool VerifyListenerOwnership(string localUrl)
+        {
+            return IsLocalUrl(localUrl)
+                && Uri.TryCreate(localUrl, UriKind.Absolute, out var uri)
+                && TryGetListenerIdentity(uri.Port, out int pid, out string launchToken)
+                && VerifyListenerProcess(uri.Port, pid, launchToken);
         }
 
         private static bool TryConnectToLocalPort(string host, int port, int timeoutMs, CancellationToken token = default)

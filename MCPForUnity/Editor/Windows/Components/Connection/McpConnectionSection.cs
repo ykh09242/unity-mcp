@@ -44,6 +44,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private Label httpServerCommandHint;
         private TextField httpUrlField;
         private Button startHttpServerButton;
+        private Label localServerStatus;
         private Toggle keepLocalServerAliveToggle;
         private VisualElement unitySocketPortRow;
         private TextField unityPortField;
@@ -79,8 +80,9 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private int consecutiveVerifyFailures;
         private double lastLocalServerRunningPollTime;
         private string localProbeUrl;
-        private Task<bool> localProbe;
-        private bool lastLocalServerRunning;
+        private Task<LocalHttpServerState> localProbe;
+        private LocalHttpServerState lastLocalServerState;
+        private bool localProbeHasResult;
         private int consecutiveServerDownPolls;
         private bool sessionWasRunning;
 
@@ -129,6 +131,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             httpServerCommandHint = Root.Q<Label>("http-server-command-hint");
             httpUrlField = Root.Q<TextField>("http-url");
             startHttpServerButton = Root.Q<Button>("start-http-server-button");
+            localServerStatus = Root.Q<Label>("local-server-status");
             keepLocalServerAliveToggle = Root.Q<Toggle>("keep-local-server-alive");
             unitySocketPortRow = Root.Q<VisualElement>("unity-socket-port-row");
             unityPortField = Root.Q<TextField>("unity-port");
@@ -408,7 +411,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             // A local outage must leave the active session or its reconnect worker cancellable.
             if (connectionToggleButton != null)
             {
-                bool showSessionToggle = !showLocalServerControls || lastLocalServerRunning || isRunning || httpConnectionIntent;
+                bool showSessionToggle = !showLocalServerControls || lastLocalServerState.IsCompatible() || isRunning || httpConnectionIntent;
                 connectionToggleButton.style.display = showSessionToggle ? DisplayStyle.Flex : DisplayStyle.None;
             }
 
@@ -661,46 +664,36 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             bool httpLocalSelected = IsHttpLocalSelected();
             bool localUrlAllowedForLaunch = TryGetLocalHttpLaunchPolicy(out _, out string localUrlError);
             bool canStartLocalServer = httpLocalSelected && localUrlAllowedForLaunch;
-            bool localServerRunning = false;
-
             if (httpLocalSelected)
-            {
                 PollLocalServer();
-                localServerRunning = lastLocalServerRunning;
-            }
             else
                 ResetLocalProbe();
 
-            // Server button only controls server lifecycle (Start/Stop Server).
-            // Session lifecycle is handled by the separate connectionToggleButton.
-            bool shouldShowStop = localServerRunning;
-            // While we are launching+connecting and the server isn't up yet, show a transient "Starting…" label.
-            if (httpServerToggleInProgress && !localServerRunning)
-            {
-                startHttpServerButton.text = "Starting…";
-            }
-            else
-            {
-                startHttpServerButton.text = shouldShowStop ? "Stop Server" : "Start Server";
-            }
-            // Note: Server logs may contain transient HTTP 400s on /mcp during startup probing and
-            // CancelledError stack traces on shutdown when streaming requests are cancelled; this is expected.
-            startHttpServerButton.EnableInClassList("server-running", localServerRunning);
-            startHttpServerButton.SetEnabled(!httpServerToggleInProgress && (shouldShowStop || canStartLocalServer));
-            startHttpServerButton.tooltip = httpLocalSelected
-                ? (
-                    canStartLocalServer
-                        ? string.Empty
-                        : localUrlError ?? $"HTTP Local requires a loopback URL ({HttpEndpointUtility.GetHttpLocalHostRequirementText()})."
-                )
-                : string.Empty;
+            bool owned = lastLocalServerState == LocalHttpServerState.OwnedServer;
+            bool free = lastLocalServerState == LocalHttpServerState.Unavailable;
+            startHttpServerButton.style.display = owned || free ? DisplayStyle.Flex : DisplayStyle.None;
+            startHttpServerButton.text =
+                owned ? "Stop Server"
+                : httpServerToggleInProgress ? "Starting…"
+                : "Start Server";
+            startHttpServerButton.EnableInClassList("server-running", owned);
+            startHttpServerButton.SetEnabled(!httpServerToggleInProgress && localProbeHasResult && (owned || (free && canStartLocalServer)));
+            startHttpServerButton.tooltip = canStartLocalServer ? string.Empty : localUrlError;
+            if (localServerStatus != null)
+                localServerStatus.text = lastLocalServerState switch
+                {
+                    LocalHttpServerState.PortOccupied => "Port in use. Choose another HTTP URL or stop the application using this port.",
+                    LocalHttpServerState.ExternalServer => "MCP server managed elsewhere. Use the session controls to connect or disconnect.",
+                    _ => string.Empty,
+                };
         }
 
         private void ResetLocalProbe()
         {
             localProbeUrl = null;
             localProbe = null;
-            lastLocalServerRunning = false;
+            lastLocalServerState = LocalHttpServerState.Unavailable;
+            localProbeHasResult = false;
             consecutiveServerDownPolls = 0;
             lastLocalServerRunningPollTime = double.NegativeInfinity;
         }
@@ -718,19 +711,24 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             if (localProbe == null && now - lastLocalServerRunningPollTime >= 0.75)
             {
                 lastLocalServerRunningPollTime = now;
-                localProbe = MCPServiceLocator.Server.ProbeLocalHttpServerAsync(url);
+                localProbe = MCPServiceLocator.Server.InspectLocalHttpServerAsync(url);
             }
             if (localProbe == null || !localProbe.IsCompleted)
                 return;
 
             bool sampled = localProbe.Status == TaskStatus.RanToCompletion;
             if (sampled)
-                lastLocalServerRunning = localProbe.Result;
+            {
+                lastLocalServerState = localProbe.Result;
+                localProbeHasResult = true;
+            }
             else if (localProbe.IsFaulted)
                 McpLog.Debug($"Local HTTP probe failed: {HttpEndpointUtility.RedactUrls(localProbe.Exception.GetBaseException().Message)}");
             localProbe = null;
             consecutiveServerDownPolls =
-                sampled && !lastLocalServerRunning && !EditorApplication.isCompiling && !EditorApplication.isUpdating ? consecutiveServerDownPolls + 1 : 0;
+                sampled && lastLocalServerState == LocalHttpServerState.Unavailable && !EditorApplication.isCompiling && !EditorApplication.isUpdating
+                    ? consecutiveServerDownPolls + 1
+                    : 0;
         }
 
         private void SetConnectionBlocker(string reason, VisualElement target)
@@ -779,6 +777,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             }
 
             var bridgeService = MCPServiceLocator.Bridge;
+            var server = MCPServiceLocator.Server;
+            LocalHttpServerState intended = lastLocalServerState;
             int generation = ++autoStartGeneration;
             string url = HttpEndpointUtility.GetLocalBaseUrl();
             httpServerToggleInProgress = true;
@@ -789,12 +789,14 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 // Check if a local server is running.
                 if (!IsAutoStartContextCurrent(generation, url))
                     return;
-                bool serverRunning = await MCPServiceLocator.Server.ProbeLocalHttpServerAsync(url);
-                if (!IsAutoStartContextCurrent(generation, url))
+                var state = await server.InspectLocalHttpServerAsync(url);
+                if (!IsAutoStartContextCurrent(generation, url) || state != intended)
                     return;
 
-                if (serverRunning)
+                if (state == LocalHttpServerState.OwnedServer)
                 {
+                    if (!(server is ILocalHttpServerStatus status) || !status.VerifyListenerOwnership(url))
+                        return;
                     // Stop also owns pending reconnect/reload work, even when there is
                     // no active session at this instant.
                     HttpBridgeReloadHandler.CancelPendingResume();
@@ -814,7 +816,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                         EditorUtility.DisplayDialog("HTTP Server Shutdown Not Confirmed", reason, "OK");
                     }
                 }
-                else
+                else if (state == LocalHttpServerState.Unavailable)
                 {
                     // Start Server: launch the local HTTP server.
                     // When WE start the server, auto-start our session (we clearly want to use it).
@@ -873,10 +875,12 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             {
                 if (!IsAutoStartContextCurrent(generation, url))
                     return;
-                bool reachable = await server.ProbeLocalHttpServerAsync(url);
+                var state = await server.InspectLocalHttpServerAsync(url);
                 if (!IsAutoStartContextCurrent(generation, url))
                     return;
-                if (reachable)
+                if (state == LocalHttpServerState.PortOccupied)
+                    return;
+                if (state.IsCompatible())
                 {
                     McpLog.Info($"Server ready on {HttpEndpointUtility.GetDisplayUrl(url)}");
                     bool started = await bridgeService.StartAsync();

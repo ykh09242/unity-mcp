@@ -2,6 +2,20 @@ using System.Threading.Tasks;
 
 namespace MCPForUnity.Editor.Services
 {
+    public enum LocalHttpServerState
+    {
+        Unavailable,
+        PortOccupied,
+        ExternalServer,
+        OwnedServer,
+    }
+
+    public interface ILocalHttpServerStatus
+    {
+        Task<LocalHttpServerState> InspectLocalHttpServerAsync(string localUrl);
+        bool VerifyListenerOwnership(string localUrl);
+    }
+
     public interface IAsyncLocalHttpServerProbe
     {
         Task<bool> ProbeLocalHttpServerAsync(string localUrl);
@@ -9,6 +23,17 @@ namespace MCPForUnity.Editor.Services
 
     internal static class LocalHttpProbeExtensions
     {
+        internal static async Task<LocalHttpServerState> InspectLocalHttpServerAsync(this IServerManagementService server, string localUrl)
+        {
+            if (server is ILocalHttpServerStatus status)
+                return await status.InspectLocalHttpServerAsync(localUrl);
+            // A legacy service can report reachability but cannot grant stop authority.
+            return await server.ProbeLocalHttpServerAsync(localUrl) ? LocalHttpServerState.ExternalServer : LocalHttpServerState.Unavailable;
+        }
+
+        internal static bool IsCompatible(this LocalHttpServerState state) =>
+            state == LocalHttpServerState.ExternalServer || state == LocalHttpServerState.OwnedServer;
+
         internal static Task<bool> ProbeLocalHttpServerAsync(this IServerManagementService server, string localUrl)
         {
             // Existing injected services may access Editor APIs inside their synchronous method.

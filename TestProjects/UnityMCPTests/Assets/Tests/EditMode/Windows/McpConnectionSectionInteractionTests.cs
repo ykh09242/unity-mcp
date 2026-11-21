@@ -459,17 +459,17 @@ namespace MCPForUnityTests.Editor.Windows
             var protocol = typeof(McpConnectionSection).GetNestedType("TransportProtocol", BindingFlags.NonPublic);
             Get<EnumField>(section, "transportDropdown").SetValueWithoutNotify((Enum)Enum.Parse(protocol, "HTTPLocal"));
             Set(section, "startHttpServerButton", new Button());
-            var probes = new List<TaskCompletionSource<bool>>();
+            var probes = new List<TaskCompletionSource<(bool, string)>>();
             var cancellations = new List<CancellationToken>();
             var service = new ServerManagementService();
-            Func<Uri, CancellationToken, Task<bool>> probe = (_, cancellation) =>
+            Func<Uri, CancellationToken, Task<(bool, string)>> probe = (_, cancellation) =>
             {
-                var completion = new TaskCompletionSource<bool>();
+                var completion = new TaskCompletionSource<(bool, string)>();
                 probes.Add(completion);
                 cancellations.Add(cancellation);
                 return completion.Task;
             };
-            typeof(ServerManagementService).GetField("_probePort", InstanceFlags).SetValue(service, probe);
+            typeof(ServerManagementService).GetField("_probeEndpoint", InstanceFlags).SetValue(service, probe);
             MCPServiceLocator.Register<IServerManagementService>(service);
             bridge.Running = true;
             section.UpdateConnectionStatus();
@@ -484,14 +484,14 @@ namespace MCPForUnityTests.Editor.Windows
             section.UpdateConnectionStatus();
             Assert.AreEqual(2, probes.Count);
             Assert.IsTrue(cancellations[0].IsCancellationRequested);
-            probes[0].SetResult(true);
+            probes[0].SetResult((true, "old-server"));
             yield return Complete(launch);
             Assert.AreEqual(0, bridge.StartCalls, "The late old endpoint must not connect or enable Stop Server.");
-            Assert.IsFalse(Get<bool>(section, "lastLocalServerRunning"));
+            Assert.AreEqual(LocalHttpServerState.Unavailable, Get<LocalHttpServerState>(section, "lastLocalServerState"));
             for (int failure = 1; failure <= 3; failure++)
             {
                 Assert.AreEqual(failure + 1, probes.Count);
-                probes[failure].SetResult(false);
+                probes[failure].SetResult((false, null));
                 section.UpdateConnectionStatus();
                 if (failure < 3)
                 {
@@ -869,11 +869,51 @@ namespace MCPForUnityTests.Editor.Windows
                 };
         }
 
-        private sealed class FakeServer : IServerManagementService
+        [TestCase(LocalHttpServerState.PortOccupied, false, false)]
+        [TestCase(LocalHttpServerState.ExternalServer, false, true)]
+        [TestCase(LocalHttpServerState.ExternalServer, true, true)]
+        [TestCase(LocalHttpServerState.OwnedServer, true, true)]
+        public void LocalServerControls_PreserveSessionUntilOwnershipIsVerified(LocalHttpServerState state, bool connected, bool sessionControl)
+        {
+            var section = CreateSection();
+            UseHttp("local");
+            var protocol = typeof(McpConnectionSection).GetNestedType("TransportProtocol", BindingFlags.NonPublic);
+            Get<EnumField>(section, "transportDropdown").SetValueWithoutNotify((Enum)Enum.Parse(protocol, "HTTPLocal"));
+            var button = new Button();
+            Set(section, "startHttpServerButton", button);
+            Set(section, "localServerStatus", new Label());
+            server.State = state;
+            bridge.Running = connected;
+            section.UpdateConnectionStatus();
+            bool owned = state == LocalHttpServerState.OwnedServer;
+            Assert.AreEqual(owned ? DisplayStyle.Flex : DisplayStyle.None, button.style.display.value);
+            Assert.AreEqual(sessionControl ? DisplayStyle.Flex : DisplayStyle.None, Get<Button>(section, "connectionToggleButton").style.display.value);
+            if (owned)
+                Assert.AreEqual("Stop Server", button.text);
+            else
+                StringAssert.Contains(
+                    state == LocalHttpServerState.PortOccupied ? "Port in use" : "managed elsewhere",
+                    Get<Label>(section, "localServerStatus").text
+                );
+            // Even if the last display said "Stop Server", the process may have changed before the click.
+            Invoke(section, "OnHttpServerToggleClicked");
+            Assert.AreEqual(0, bridge.StopCalls);
+            Assert.AreEqual(0, server.StopCalls);
+            Assert.AreEqual(connected, bridge.IsRunning);
+        }
+
+        private sealed class FakeServer : IServerManagementService, ILocalHttpServerStatus
         {
             public bool Reachable;
             public bool Alive = true;
             public int StopCalls;
+            public LocalHttpServerState? State;
+
+            public Task<LocalHttpServerState> InspectLocalHttpServerAsync(string url) =>
+                Task.FromResult(State ?? (Reachable ? LocalHttpServerState.ExternalServer : LocalHttpServerState.Unavailable));
+
+            public bool VerifyListenerOwnership(string url) => false;
+
             public bool HasManagedServerLaunchHandle => true;
 
             public bool ClearUvxCache() => false;

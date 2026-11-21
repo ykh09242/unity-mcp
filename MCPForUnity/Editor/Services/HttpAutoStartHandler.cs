@@ -233,10 +233,15 @@ namespace MCPForUnity.Editor.Services
                     }
 
                     // Check if server is already reachable (e.g. user started it externally).
-                    bool reachable = await MCPServiceLocator.Server.ProbeLocalHttpServerAsync(url);
+                    var state = await MCPServiceLocator.Server.InspectLocalHttpServerAsync(url);
                     if (!IsLocalConnectContextCurrent(generation, url))
                         return;
-                    if (!reachable)
+                    if (state == LocalHttpServerState.PortOccupied)
+                    {
+                        McpLog.Warn("[HTTP Auto-Start] Another application occupies the local HTTP port.");
+                        return;
+                    }
+                    if (state == LocalHttpServerState.Unavailable)
                     {
                         bool serverStarted = MCPServiceLocator.Server.StartLocalHttpServer(quiet: true);
                         if (!serverStarted)
@@ -319,7 +324,10 @@ namespace MCPForUnity.Editor.Services
                 if (MCPServiceLocator.TransportManager.IsRunning(TransportMode.Http))
                     return;
 
-                if (await server.ProbeLocalHttpServerAsync(url))
+                var state = await server.InspectLocalHttpServerAsync(url);
+                if (state == LocalHttpServerState.PortOccupied)
+                    return;
+                if (state.IsCompatible())
                 {
                     if (!IsLocalConnectContextCurrent(generation, url))
                         return;

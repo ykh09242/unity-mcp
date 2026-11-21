@@ -77,6 +77,29 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void ListenerOwnership_RequiresCurrentPortPidAndLaunchToken()
+        {
+            string url = "http://127.0.0.1:" + Port;
+            Assert.IsFalse(_service.VerifyListenerOwnership("http://127.0.0.1:" + (Port + 1)));
+            Assert.IsTrue(_service.VerifyListenerOwnership(url));
+            _detector.CommandLine += "changed";
+            Assert.IsFalse(_service.VerifyListenerOwnership(url));
+            _detector.Listening = false;
+            Assert.IsFalse(_service.VerifyListenerOwnership(url));
+            Assert.AreEqual(0, _requests);
+            Assert.AreEqual(0, _terminator.Calls);
+        }
+
+        [TestCase("not json", null)]
+        [TestCase("{\"status\":\"healthy\",\"message\":\"Other server\"}", null)]
+        [TestCase("{\"status\":\"healthy\",\"message\":\"Unity MCP server is running\"}", "")]
+        [TestCase("{\"status\":\"healthy\",\"message\":\"Unity MCP (ykh09242) server is running\",\"server_build\":{\"server_id\":\"instance\"}}", "instance")]
+        public void CompatibleHealth_RequiresUnityMcpIdentity(string body, string expected)
+        {
+            Assert.AreEqual(expected, ServerManagementService.ReadCompatibleServerId(body));
+        }
+
+        [Test]
         public void Stop_AnotherProjectHasNoLaunchIdentity_RefusesWithoutTermination()
         {
             // Given this editor did not launch the listener.
