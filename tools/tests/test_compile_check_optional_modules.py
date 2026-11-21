@@ -17,6 +17,17 @@ MODULES = {
 }
 
 
+def test_addressables_diagnostics_imports_on_editor_and_desktop_platforms() -> None:
+    path = ROOT / "MCPForUnity/Runtime/Addressables/MCPForUnity.Addressables.Diagnostics.asmdef"
+    definition = json.loads(path.read_text(encoding="utf-8"))
+    assert set(definition["includePlatforms"]) == {
+        "Editor",
+        "WindowsStandalone64",
+        "macOSStandalone",
+        "LinuxStandalone64",
+    }
+
+
 @pytest.mark.parametrize("version", ["2021.3.45f2", "6000.0.84f1", "7000.0.0a1"])
 @pytest.mark.parametrize(
     "disabled", [list(values) for n in range(4) for values in itertools.combinations(MODULES, n)]

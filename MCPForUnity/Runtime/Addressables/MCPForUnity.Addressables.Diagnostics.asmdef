@@ -1,7 +1,7 @@
 {
   "name": "MCPForUnity.Addressables.Diagnostics",
   "references": ["Unity.Addressables", "Unity.ResourceManager"],
-  "includePlatforms": ["Editor", "WindowsStandalone64", "OSXStandalone", "LinuxStandalone64"],
+  "includePlatforms": ["Editor", "WindowsStandalone64", "macOSStandalone", "LinuxStandalone64"],
   "autoReferenced": true,
   "defineConstraints": ["MCP_ADDRESSABLES_CATALOG_DIAGNOSTICS"],
   "versionDefines": [
