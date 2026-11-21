@@ -75,6 +75,7 @@ def test_mirror_url_resolves_only_the_committed_package(git_package, tmp_path):
     git(tmp_path, "clone", url._replace(query="", fragment="").geturl(), str(clone))
     path = parse_qs(url.query)["path"][0].lstrip("/")
     assert smoke.git(clone, "show", f"{url.fragment}:{path}/package.json") == original
+    assert (project.parent / "source-package.json").read_bytes() == original
     for invalid in (f"{'a' * 40}:{path}/package.json", f"{revision}:wrong/package.json"):
         with pytest.raises(subprocess.CalledProcessError):
             git(clone, "show", invalid)

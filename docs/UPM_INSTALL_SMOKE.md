@@ -23,8 +23,12 @@ and loading the package's Editor assembly and types. Git qualification also chec
 the direct entry in Unity's generated `Packages/packages-lock.json` against the
 requested URL, subfolder and commit. The result gate requires the exact fixture body to
 pass; missing XML, zero tests, skipped tests, failed runner execution and a missing
-required body fail the job. Reservation/observation records and package manifests
-are uploaded for review. This is an installation/import smoke; the existing curated
+required body fail the job. Evidence includes the byte-exact original
+`source-package.json` and the imported `.upm-imported-package.json`. Some Editors
+append a 40-hex `_fingerprint` property to cached Git manifests. When the raw
+hash differs, the fixture removes only that trailing generated field and requires
+the remaining bytes to match the original SHA256. It also tests a changed version
+with a valid fingerprint and requires rejection. This is an installation/import smoke; the existing curated
 EditMode, PlayMode, optional integration and compilation matrix remain separate.
 
 The reusable workflow preserves the existing `license` policy and credential gate.

@@ -225,6 +225,7 @@ jobs:
         run: >-
           python3 tools/check_unity_test_results.py "$RESULTS_XML" --runner-outcome "$TEST_RUN_OUTCOME"
           --require-test UntouchedUpmSmoke.UntouchedPackageInstallTests.OriginalManifestImportsAndResolvesDependencies
+          --require-test UntouchedUpmSmoke.UntouchedPackageInstallTests.GitCacheFingerprintCannotMaskAChangedManifestProperty
 
       - name: Verify locked Git installation at the selected subfolder and commit
         if: inputs.require_upm_install
@@ -241,8 +242,9 @@ jobs:
           path: |
             .release-evidence/
             .unity-ci/upm-${{ matrix.unity.version }}/project/.upm-smoke.json
+            .unity-ci/upm-${{ matrix.unity.version }}/project/.upm-imported-package.json
             .unity-ci/upm-${{ matrix.unity.version }}/project/Packages/
-            .unity-ci/upm-${{ matrix.unity.version }}/package/package.json
+            .unity-ci/upm-${{ matrix.unity.version }}/source-package.json
           include-hidden-files: true
           if-no-files-found: error
 

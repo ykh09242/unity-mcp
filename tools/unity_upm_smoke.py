@@ -107,6 +107,7 @@ def prepare(
             original = git(mirror, "show", f"{git_revision}:{PACKAGE_FOLDER}/package.json")
             editor_mirror = (editor_workspace or repo) / output.relative_to(repo) / mirror.name
             dependency = f"{editor_mirror.as_uri()}?path=/{PACKAGE_FOLDER}#{git_revision}"
+        (scratch / "source-package.json").write_bytes(original)
         metadata = json.loads(original)
         if not isinstance(metadata, dict) or not packages.PACKAGE_NAME.fullmatch(metadata["name"]):
             raise packages.PreparationError("Invalid distributed package identity")
