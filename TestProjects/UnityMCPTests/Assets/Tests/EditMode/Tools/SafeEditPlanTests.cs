@@ -119,6 +119,33 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void DirtyPrefabUndoCanRetryOriginalReceiptAfterUserSave()
+        {
+            new GameObject("Child").transform.SetParent(root.transform, false);
+            string path = folder + "/Source.prefab";
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            var applied = Prefab(new JObject { ["action"] = "apply_preview", ["preview_id"] = PreviewRootScale(path) });
+            Assert.IsTrue(applied.Value<bool>("success"), applied.ToString());
+            var undo = new JObject { ["action"] = "undo", ["receipt_id"] = applied["data"]["receipt_id"] };
+            var asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            Transform child = asset.transform.GetChild(0);
+            child.localPosition = Vector3.up;
+            EditorUtility.SetDirty(child);
+            var original = System.IO.File.ReadAllBytes(path);
+            var denied = Scene(undo);
+            Assert.IsFalse(denied.Value<bool>("success"), denied.ToString());
+            Assert.AreEqual((string)undo["receipt_id"], (string)denied["data"]["remaining_receipt_id"]);
+            CollectionAssert.AreEqual(original, System.IO.File.ReadAllBytes(path));
+            PrefabUtility.SavePrefabAsset(asset);
+            var retried = Scene(undo);
+            Assert.IsTrue(retried.Value<bool>("success"), retried.ToString());
+            asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            Assert.AreEqual(Vector3.one, asset.transform.localScale);
+            Assert.AreEqual(Vector3.up, asset.transform.GetChild(0).localPosition);
+            Assert.IsFalse(Scene(undo).Value<bool>("success"), "A completed receipt must be consumed.");
+        }
+
+        [Test]
         public void UnsavedImportedChildRejectsPreviewAndApplyUntilSaved()
         {
             new GameObject("Child").transform.SetParent(root.transform, false);

@@ -101,6 +101,28 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void MissingUndoTargetLeavesOnlyItsOriginalIdentityPending()
+        {
+            var missing = Create("A");
+            var surviving = Create("B");
+            var applied = Apply(Token(Preview(Edit(missing, "localPosition", new JArray(1, 0, 0)), Edit(surviving, "localPosition", new JArray(2, 0, 0)))));
+            int missingId = missing.GetInstanceIDCompat();
+            Object.DestroyImmediate(missing);
+            _objects.Remove(missing);
+
+            var partial = Send(new JObject { ["action"] = "undo", ["receipt_id"] = applied["data"]["receipt_id"] });
+            Assert.AreEqual("property_undo_conflict", (string)partial["code"], partial.ToString());
+            Assert.AreEqual(missingId, (int)partial["data"]["conflicts"][0]["target_id"]);
+            Assert.AreEqual(surviving.GetInstanceIDCompat(), (int)partial["data"]["restored_fields"][0]["target_id"]);
+            Assert.AreEqual(Vector3.zero, surviving.transform.localPosition);
+            surviving.transform.localPosition = Vector3.right * 2;
+            var retry = Send(new JObject { ["action"] = "undo", ["receipt_id"] = partial["data"]["remaining_receipt_id"] });
+            Assert.AreEqual(0, (int)retry["data"]["restored"]);
+            Assert.AreEqual(missingId, (int)retry["data"]["conflicts"][0]["target_id"]);
+            Assert.AreEqual(Vector3.right * 2, surviving.transform.localPosition);
+        }
+
+        [Test]
         public void ConflictRetryOnlyRechecksOutstandingFields()
         {
             var target = Create("field-conflict");

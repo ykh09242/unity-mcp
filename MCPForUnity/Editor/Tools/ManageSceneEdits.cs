@@ -34,6 +34,8 @@ namespace MCPForUnity.Editor.Tools
             internal string ScenePath;
             internal string TargetPath;
             internal int ComponentIndex;
+            internal int TargetId;
+            internal int ComponentId;
             internal string Property;
             internal JToken Before;
             internal JToken After;
@@ -55,12 +57,12 @@ namespace MCPForUnity.Editor.Tools
             internal JObject Describe() =>
                 new JObject
                 {
-                    ["target_id"] = Target.GetInstanceIDCompat(),
+                    ["target_id"] = TargetId,
                     ["target_path"] = TargetPath,
                     ["scene_path"] = ScenePath,
                     ["scene_handle"] = SceneHandle,
                     ["component_type"] = Component.GetType().FullName,
-                    ["component_id"] = Component.GetInstanceIDCompat(),
+                    ["component_id"] = ComponentId,
                     ["component_index"] = ComponentIndex,
                     ["property"] = Property,
                     ["before"] = Before.DeepClone(),
@@ -209,6 +211,8 @@ namespace MCPForUnity.Editor.Tools
                             ScenePath = target.scene.path,
                             TargetPath = GameObjectLookup.GetGameObjectPath(target),
                             ComponentIndex = index,
+                            TargetId = target.GetInstanceIDCompat(),
+                            ComponentId = component.GetInstanceIDCompat(),
                             Property = path,
                             Before = before,
                             After = after,
@@ -289,24 +293,45 @@ namespace MCPForUnity.Editor.Tools
         private static object Restore(Plan original)
         {
             var conflicts = new JArray();
+            var restored = new JArray();
             var inverse = new Plan { Edits = new List<Edit>() };
             var pending = new Plan { Edits = new List<Edit>() };
             foreach (var edit in original.Edits)
             {
-                EnsureSceneTarget(edit.Target);
-                if (edit.Component == null || edit.Component.gameObject != edit.Target || edit.Target.scene != edit.Scene)
-                    throw new InvalidOperationException("The original scene component is no longer loaded.");
-                using var serialized = new SerializedObject(edit.Component);
-                var current = SceneEditValues.Read(serialized.FindProperty(edit.Property));
-                var identity = new JObject { ["component_id"] = edit.Component.GetInstanceIDCompat(), ["property"] = edit.Property };
-                switch (PropertyUndoReceipts.Compare(edit.Before, edit.After, current, identity, conflicts))
+                var identity = new JObject
                 {
-                    case PropertyUndoReceipts.Decision.Restore:
-                        inverse.Edits.Add(edit.Reverse());
-                        break;
-                    case PropertyUndoReceipts.Decision.Conflict:
-                        pending.Edits.Add(edit);
-                        break;
+                    ["component_id"] = edit.ComponentId,
+                    ["target_id"] = edit.TargetId,
+                    ["target_path"] = edit.TargetPath,
+                    ["scene_path"] = edit.ScenePath,
+                    ["property"] = edit.Property,
+                };
+                try
+                {
+                    EnsureSceneTarget(edit.Target);
+                    if (edit.Component == null || edit.Component.gameObject != edit.Target || edit.Target.scene != edit.Scene)
+                        throw new InvalidOperationException("The original scene component is no longer loaded.");
+                    using var serialized = new SerializedObject(edit.Component);
+                    var property = serialized.FindProperty(edit.Property);
+                    if (property == null || !property.editable)
+                        throw new InvalidOperationException("The original property is unavailable or read-only.");
+                    var current = SceneEditValues.Read(property);
+                    switch (PropertyUndoReceipts.Compare(edit.Before, edit.After, current, identity, conflicts))
+                    {
+                        case PropertyUndoReceipts.Decision.Restore:
+                            inverse.Edits.Add(edit.Reverse());
+                            restored.Add(identity);
+                            break;
+                        case PropertyUndoReceipts.Decision.Conflict:
+                            pending.Edits.Add(edit);
+                            break;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    identity["reason"] = exception.Message;
+                    conflicts.Add(identity);
+                    pending.Edits.Add(edit);
                 }
             }
             if (inverse.Edits.Count > 0)
@@ -316,7 +341,7 @@ namespace MCPForUnity.Editor.Tools
                 if (result is ErrorResponse)
                     return result;
             }
-            return PropertyUndoReceipts.Report(inverse.Edits.Count, conflicts, () => Restore(pending));
+            return PropertyUndoReceipts.Report(restored, conflicts, () => Restore(pending));
         }
 
         private static object Apply(Plan plan, string undoName, bool retainReceipt = true)
@@ -368,6 +393,8 @@ namespace MCPForUnity.Editor.Tools
                 {
                     rollbackError = rollbackException.Message;
                 }
+                if (!retainReceipt && restored)
+                    throw new InvalidOperationException("Property undo rolled back: " + exception.Message, exception);
                 return new ErrorResponse(
                     "Scene edit apply failed: " + exception.Message,
                     new

@@ -14,10 +14,15 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
         internal static string Retain(Func<object> restore)
         {
             string id = Guid.NewGuid().ToString("N");
+            Remember(id, restore);
+            return id;
+        }
+
+        private static void Remember(string id, Func<object> restore)
+        {
             if (Recent.Count == 32)
                 Recent.RemoveFirst();
             Recent.AddLast((id, restore));
-            return id;
         }
 
         internal static object Restore(string id)
@@ -28,7 +33,17 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
                     continue;
                 var restore = node.Value.restore;
                 Recent.Remove(node);
-                return restore();
+                try
+                {
+                    return restore();
+                }
+                catch (Exception exception)
+                {
+                    // Restoration callbacks return an error for uncertain writes. A thrown
+                    // preflight failure leaves the same guarded fields available for retry.
+                    Remember(id, restore);
+                    return new ErrorResponse(exception.Message, new { remaining_receipt_id = id });
+                }
             }
             return new ErrorResponse("Unknown or consumed property undo receipt in this Editor domain.");
         }
@@ -60,11 +75,12 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
                 ? a.Count == b.Count && a.Zip(b, SameField).All(equal => equal)
                 : left is JValue x && right is JValue y && Equals(x.Value, y.Value);
 
-        internal static object Report(int restored, JArray conflicts, Func<object> retryConflicts)
+        internal static object Report(JArray restoredFields, JArray conflicts, Func<object> retryConflicts)
         {
             var data = new
             {
-                restored,
+                restored = restoredFields.Count,
+                restored_fields = restoredFields,
                 conflicts,
                 remaining_receipt_id = conflicts.Count > 0 ? Retain(retryConflicts) : null,
             };

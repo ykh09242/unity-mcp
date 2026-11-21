@@ -238,10 +238,12 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
             // Reload the CURRENT source. The receipt never contains a copy of the prefab file.
             GameObject contents = PrefabUtility.LoadPrefabContents(path);
+            bool saveAttempted = false;
             try
             {
                 var conflicts = new JArray();
                 var restored = new JObject();
+                var restoredFields = new JArray();
                 var pending = new JObject();
                 var current = ReadProperties(contents, before.Properties().Select(p => p.Name));
                 foreach (var field in before.Properties())
@@ -257,12 +259,14 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     SceneEditValues.Write(serialized.FindProperty(name), field.Value);
                     serialized.ApplyModifiedPropertiesWithoutUndo();
                     restored[name] = field.Value;
+                    restoredFields.Add(identity);
                 }
                 if (restored.Count != 0)
                 {
                     if (SourceHash(path) != guard)
                         throw new InvalidOperationException("The prefab changed during property undo. No save was attempted.");
                     ValidateSource(AssetDatabase.LoadAssetAtPath<GameObject>(path));
+                    saveAttempted = true;
                     PrefabUtility.SaveAsPrefabAsset(contents, path, out bool saved);
                     if (
                         !saved
@@ -273,7 +277,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     )
                         return new ErrorResponse("Could not verify the saved property undo.", new { save_attempted = true });
                 }
-                return PropertyUndoReceipts.Report(restored.Count, conflicts, () => Restore(guid, objectId, transformId, pending, applied));
+                return PropertyUndoReceipts.Report(restoredFields, conflicts, () => Restore(guid, objectId, transformId, pending, applied));
+            }
+            catch (Exception exception) when (saveAttempted)
+            {
+                return new ErrorResponse("Could not verify the saved property undo: " + exception.Message, new { save_attempted = true });
             }
             finally
             {
