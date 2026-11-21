@@ -22,7 +22,10 @@ namespace MCPForUnity.Editor.Clients
         internal bool RequiresLocalServer => client.status == McpStatus.IncorrectPath && client.configStatus == LocalServerRequiredReason;
 
         internal static string AuthenticationPrerequisite(bool remote, IDictionary<string, string> expectedHeaders) =>
-            !remote && !expectedHeaders.ContainsKey(AuthConstants.LocalTokenHeader) ? LocalServerRequiredReason : null;
+            !remote
+            && (expectedHeaders == null || !expectedHeaders.TryGetValue(AuthConstants.LocalTokenHeader, out string token) || string.IsNullOrWhiteSpace(token))
+                ? LocalServerRequiredReason
+                : null;
 
         public JsonFileMcpConfigurator(McpClient client)
             : base(client) { }

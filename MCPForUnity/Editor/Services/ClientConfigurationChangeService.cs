@@ -200,7 +200,7 @@ namespace MCPForUnity.Editor.Services
                 if (inputs.Locked)
                     return Refused("locked");
                 string context = inputs.Fingerprint();
-                ValidateInputs(inputs);
+                ValidateInputs(inputs, target.Format);
                 if (target.Format == "toml" && inputs.UseHttp && !inputs.Remote && inputs.CodexHelperSupported != true)
                     return Refused("capability_unavailable");
                 string proposal;
@@ -281,7 +281,7 @@ namespace MCPForUnity.Editor.Services
             if (inputs.Locked)
                 return "locked";
             string currentContext = inputs.Fingerprint();
-            ValidateInputs(inputs);
+            ValidateInputs(inputs, target.Format);
             if (currentContext != preview.ContextHash)
                 return "stale_context";
             string ownershipFormat = OwnershipFormat(target);
@@ -472,6 +472,7 @@ namespace MCPForUnity.Editor.Services
 
         private static string Classify(Exception error) =>
             error is ConfigurationLockedException ? "locked"
+            : error is McpConfigurationHelper.ConfigurationAuthenticationUnavailableException ? "local_auth_unavailable"
             : error is ConfigurationLimitException ? "input_limit"
             : error is ConfigurationPathException ? "unsupported_path"
             : error is McpConfigurationHelper.ConfigurationConflictException ? "stale_file"
@@ -616,12 +617,14 @@ namespace MCPForUnity.Editor.Services
 
         private static bool ReadLock() => EditorPrefs.GetBool(EditorPrefKeys.LockCursorConfig, false);
 
-        private static void ValidateInputs(ClientConfigurationInputs inputs)
+        private static void ValidateInputs(ClientConfigurationInputs inputs, string format)
         {
             if (inputs.UseHttp)
             {
                 if (!Uri.TryCreate(inputs.Endpoint, UriKind.Absolute, out var endpoint) || (endpoint.Scheme != "http" && endpoint.Scheme != "https"))
                     throw new FormatException();
+                if (format == "json")
+                    McpConfigurationHelper.RequireStaticHttpAuthentication(inputs.Remote, inputs.Headers);
             }
             else if (string.IsNullOrWhiteSpace(inputs.Command) || inputs.Args.Any(arg => arg == null))
                 throw new FormatException();
@@ -633,7 +636,6 @@ namespace MCPForUnity.Editor.Services
         private static ClientConfigurationInputs Capture(string format)
         {
             bool http = format != "stdio" && EditorConfigurationCache.Instance.UseHttpTransport;
-            string endpoint = http ? HttpEndpointUtility.GetMcpRpcUrl() : null;
             string command = null;
             string[] args = Array.Empty<string>();
             if (!http)
@@ -643,7 +645,9 @@ namespace MCPForUnity.Editor.Services
                 args = ConfigJsonBuilder.BuildUvxArgs(parts.Item1, parts.Item2, parts.Item3).ToArray();
             }
             bool remote = http && HttpEndpointUtility.IsRemoteScope();
-            var headers = http && (format != "toml" || remote) ? HttpEndpointUtility.GetAuthHeaders() : new Dictionary<string, string>();
+            var connection = http ? HttpEndpointUtility.CaptureConnectionSettings(remote) : null;
+            string endpoint = connection?.McpRpcUrl;
+            var headers = http && (format != "toml" || remote) ? connection.GetAuthHeaders() : null;
             return new ClientConfigurationInputs(
                 http,
                 endpoint,

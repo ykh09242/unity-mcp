@@ -232,6 +232,8 @@ namespace MCPForUnity.Editor.Clients.Configurators
             if (existing?["headersHelper"] != null || existing?["http_headers_helper"] != null)
                 throw new InvalidOperationException("Custom OpenCode authentication must be migrated manually. The existing configuration was not changed.");
 
+            if (inputs == null && HttpEndpointUtility.GetCurrentServerTransport() != ConfiguredTransport.Stdio)
+                inputs = McpConfigurationHelper.CaptureStaticHttpInputs();
             var generated = BuildServerEntry(inputs);
             var entry = existing?.DeepClone() as JObject ?? new JObject();
             bool remote = (string)generated["type"] == RemoteType;

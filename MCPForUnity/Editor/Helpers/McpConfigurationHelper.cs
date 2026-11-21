@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -92,7 +93,8 @@ namespace MCPForUnity.Editor.Helpers
             if (!useHttp && string.IsNullOrEmpty(uvxPath))
                 return "uv package manager not found. Please install uv first.";
 
-            existingRoot = ConfigJsonBuilder.ApplyUnityServerToExistingConfig(existingRoot, uvxPath, mcpClient);
+            var inputs = useHttp ? CaptureStaticHttpInputs() : null;
+            existingRoot = ConfigJsonBuilder.ApplyUnityServerToExistingConfig(existingRoot, uvxPath, mcpClient, inputs, addSchema: true);
             if (automatic != null)
             {
                 string property = string.IsNullOrEmpty(mcpClient?.HttpUrlProperty) ? "url" : mcpClient.HttpUrlProperty;
@@ -115,6 +117,26 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             return "Configured successfully";
+        }
+
+        internal static ClientConfigurationInputs CaptureStaticHttpInputs()
+        {
+            var connection = HttpEndpointUtility.CaptureConnectionSettings();
+            var headers = connection.GetAuthHeaders();
+            RequireStaticHttpAuthentication(connection.Remote, headers);
+            return new ClientConfigurationInputs(true, connection.McpRpcUrl, null, null, headers, null, connection.Remote, null, null, false);
+        }
+
+        internal static void RequireStaticHttpAuthentication(bool remote, IDictionary<string, string> headers)
+        {
+            if (JsonFileMcpConfigurator.AuthenticationPrerequisite(remote, headers) is string prerequisite)
+                throw new ConfigurationAuthenticationUnavailableException(prerequisite);
+        }
+
+        internal sealed class ConfigurationAuthenticationUnavailableException : InvalidOperationException
+        {
+            internal ConfigurationAuthenticationUnavailableException(string message)
+                : base(message) { }
         }
 
         /// <summary>

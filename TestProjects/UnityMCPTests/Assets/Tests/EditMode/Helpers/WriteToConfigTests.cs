@@ -27,6 +27,9 @@ namespace MCPForUnityTests.Editor.Helpers
         private bool _originalHttpTransport;
         private bool _hadHttpUrl;
         private string _originalHttpUrl;
+        private bool _hadScope;
+        private string _originalScope;
+        private string _originalLocalToken;
 
         [SetUp]
         public void SetUp()
@@ -36,6 +39,9 @@ namespace MCPForUnityTests.Editor.Helpers
             _originalHttpTransport = EditorPrefs.GetBool(UseHttpTransportPrefKey, true);
             _hadHttpUrl = EditorPrefs.HasKey(HttpUrlPrefKey);
             _originalHttpUrl = EditorPrefs.GetString(HttpUrlPrefKey, "");
+            _hadScope = EditorPrefs.HasKey(EditorPrefKeys.HttpTransportScope);
+            _originalScope = EditorPrefs.GetString(EditorPrefKeys.HttpTransportScope, "local");
+            _originalLocalToken = Environment.GetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN");
 
             // Tests are designed for Linux/macOS runners. Skip on Windows due to ProcessStartInfo
             // restrictions when UseShellExecute=false for .cmd/.bat scripts.
@@ -67,6 +73,8 @@ namespace MCPForUnityTests.Editor.Helpers
             // Force HTTP transport defaults so expectations match current behavior
             EditorPrefs.SetBool(UseHttpTransportPrefKey, true);
             EditorPrefs.SetString(HttpUrlPrefKey, "http://localhost:8080");
+            EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "local");
+            Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN", "synthetic-config-format-token");
             EditorConfigCache.Instance.Refresh();
         }
 
@@ -88,6 +96,12 @@ namespace MCPForUnityTests.Editor.Helpers
                 EditorPrefs.SetString(HttpUrlPrefKey, _originalHttpUrl);
             else
                 EditorPrefs.DeleteKey(HttpUrlPrefKey);
+
+            if (_hadScope)
+                EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, _originalScope);
+            else
+                EditorPrefs.DeleteKey(EditorPrefKeys.HttpTransportScope);
+            Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN", _originalLocalToken);
 
             // Remove temp files
             try

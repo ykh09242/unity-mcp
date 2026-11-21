@@ -5,6 +5,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using MCPForUnity.Editor.Clients;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using Newtonsoft.Json.Linq;
@@ -225,6 +226,40 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual("locked", Value<string>(harness.Prepare(), "Code"));
             Assert.AreEqual(0, Directory.GetFiles(root).Length);
             Assert.AreEqual(0, harness.Client.ForbiddenCalls);
+        }
+
+        [Test]
+        public void LocalHttpPreviewAndApplyRequireStaticTokenAndPreserveStdioBytes()
+        {
+            var path = Path.Combine(root, "config");
+            File.WriteAllText(path, "{\"mcpServers\":{\"unityMCP\":{\"command\":\"uvx\",\"args\":[\"mcp-for-unity\"]}}}", new System.Text.UTF8Encoding(true));
+            byte[] original = File.ReadAllBytes(path);
+            var harness = new Harness(path, "json");
+            const string endpoint = "http://localhost:54321/mcp";
+            var missing = Inputs(endpoint, remote: false);
+            var current = Inputs(endpoint, remote: false, localToken: "synthetic-current-token");
+            harness.Context.Value = missing;
+
+            var refused = harness.Prepare();
+            Assert.AreEqual("local_auth_unavailable", Value<string>(refused, "Code"));
+            Assert.AreEqual("stale_handle", Value<string>(harness.Apply(refused), "Code"));
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+
+            harness.Context.Value = current;
+            var approved = harness.Prepare();
+            Assert.AreEqual("prepared", Value<string>(approved, "Code"));
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+            harness.Context.Value = missing;
+            Assert.AreEqual("local_auth_unavailable", Value<string>(harness.Apply(approved), "Code"));
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+
+            harness.Context.Value = current;
+            Assert.AreEqual("applied", Value<string>(harness.Apply(harness.Prepare()), "Code"));
+            var written = JObject.Parse(File.ReadAllText(path)).SelectToken("mcpServers.unityMCP");
+            Assert.AreEqual(endpoint, (string)written["url"]);
+            Assert.AreEqual("synthetic-current-token", (string)written["headers"][AuthConstants.LocalTokenHeader]);
+            Assert.IsNull(written["command"]);
+            Assert.IsNull(written["args"]);
         }
 
         [Test]
@@ -533,7 +568,8 @@ namespace MCPForUnityTests.Editor.Services
             string endpoint = "https://example.invalid/synthetic-sensitive-endpoint",
             bool remote = true,
             bool? capability = true,
-            bool locked = false
+            bool locked = false,
+            string localToken = null
         ) =>
             Activator.CreateInstance(
                 Type("ClientConfigurationInputs"),
@@ -545,7 +581,10 @@ namespace MCPForUnityTests.Editor.Services
                     endpoint,
                     "synthetic-sensitive-command",
                     new[] { "synthetic-sensitive-argument" },
-                    new Dictionary<string, string> { ["X-API-Key"] = "synthetic-sensitive-header" },
+                    remote
+                        ? new Dictionary<string, string> { [AuthConstants.ApiKeyHeader] = "synthetic-sensitive-header" }
+                    : localToken != null ? new Dictionary<string, string> { [AuthConstants.LocalTokenHeader] = localToken }
+                    : null,
                     "synthetic-sensitive-systemroot",
                     remote,
                     capability,

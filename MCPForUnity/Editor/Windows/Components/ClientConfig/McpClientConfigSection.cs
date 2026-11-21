@@ -649,6 +649,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 "owned_entry_changed" => "The Unity MCP entry changed after saving. Review it before restoring.",
                 "unsupported_client" => "Preview is unavailable for this client. Use its manual configuration instructions.",
                 "capability_unavailable" => "The required client capability is unavailable. Check the installed client and preview again.",
+                "local_auth_unavailable" => "Start the local server to make its current authentication token available, then preview again.",
                 "unsupported_path" => "The configuration path is unsupported. Choose a regular local file.",
                 "unsupported_layout" => "The file layout is unsupported. Review it using the manual configuration instructions.",
                 "invalid_configuration" => "The configuration is invalid. Correct the file or connection settings and preview again.",

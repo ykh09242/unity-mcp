@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
@@ -433,6 +434,55 @@ namespace MCPForUnityTests.Editor.Helpers
                     EditorPrefs.DeleteKey(EditorPrefKeys.LockCursorConfig);
                 }
             }
+        }
+
+        [TestCase("json", "mcpServers.unityMCP", "{\"command\":\"uvx\",\"args\":[\"mcp-for-unity\"]}")]
+        [TestCase("opencode", "mcp.unityMCP", "{\"type\":\"local\",\"command\":[\"uvx\",\"mcp-for-unity\"]}")]
+        [TestCase("openclaw", "plugins.entries.openclaw-mcp-bridge.config.servers.unityMCP", "{\"transport\":\"stdio\",\"command\":\"uvx\"}")]
+        public void StaticHttpConfigureWaitsForLocalAuthentication(string clientType, string entryPath, string stdioEntry)
+        {
+            WithOwnedConfiguration(false, (jsonClient, path) =>
+            {
+                IMcpClientConfigurator configurator = clientType switch
+                {
+                    "opencode" => new OwnedOpenCode(path),
+                    "openclaw" => new OwnedOpenClaw(path),
+                    _ => jsonClient,
+                };
+                var root = new JObject { ["other"] = "preserved" };
+                var parent = root;
+                string[] entryParts = entryPath.Split('.');
+                for (int i = 0; i < entryParts.Length - 1; i++)
+                {
+                    var child = new JObject();
+                    parent[entryParts[i]] = child;
+                    parent = child;
+                }
+                parent["unityMCP"] = JObject.Parse(stdioEntry);
+                File.WriteAllText(path, root.ToString(), new System.Text.UTF8Encoding(true));
+                byte[] original = File.ReadAllBytes(path);
+                File.Delete(_tokenPath);
+
+                var service = new ClientConfigurationService(new[] { configurator }, () => true, _ => { }, () => { }, _ => { });
+                var direct = Assert.Catch<InvalidOperationException>(() => service.ConfigureClient(configurator));
+                StringAssert.Contains("Start the local server", direct.Message);
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+
+                var bulk = service.ConfigureAllDetectedClients();
+                Assert.AreEqual(1, bulk.FailureCount);
+                Assert.That(bulk.Messages.Single(), Does.Contain("Start the local server"));
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+
+                File.WriteAllText(_tokenPath, "synthetic-current-token");
+                var retry = service.RetryFailedClients(bulk.Attempt);
+                Assert.AreEqual(1, retry.Summary.SuccessCount);
+                var written = JObject.Parse(File.ReadAllText(path));
+                var entry = written.SelectToken(entryPath);
+                Assert.IsNull(entry["command"]);
+                Assert.IsNull(entry["args"]);
+                Assert.AreEqual("synthetic-current-token", (string)entry["headers"][AuthConstants.LocalTokenHeader]);
+                Assert.AreEqual("preserved", (string)written["other"]);
+            });
         }
 
         [Test]
