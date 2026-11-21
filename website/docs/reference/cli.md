@@ -36,7 +36,7 @@ Place global options before subcommands. HTTP tokens are discovered automaticall
 
 ## Command groups
 
-Registered groups include `instance`, `scene`, `scene_edit`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `play_scenario`, `scenario_recording`, `prefab`, `material`, `lighting`, `animation`, `sprite`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `doctor`, `physics`, `profiler`, `project_auditor`, `verification`, `verification_candidate`, `verification_evidence`, `receipt`, `tool`, and `custom_tool`. Installed help shows which optional groups loaded.
+The top-level commands are `animation`, `asset`, `asset-gen`, `audio`, `batch`, `blender`, `build`, `camera`, `code`, `component`, `custom_tool`, `docs`, `doctor`, `editor`, `gameobject`, `graphics`, `instance`, `instances`, `lighting`, `material`, `packages`, `physics`, `play-scenario`, `prefab`, `probuilder`, `profiler`, `project-auditor`, `raw`, `receipt`, `reflect`, `scenario-recording`, `scene`, `scene-edit`, `script`, `shader`, `sprite`, `status`, `texture`, `tool`, `ui`, `verification`, `verification-candidate`, `verification-evidence`, and `vfx`.
 
 CLI verbs/flags are not automatically generated from MCP tool parameters. Use exact help:
 
@@ -48,17 +48,17 @@ unity-mcp verification-candidate --help
 unity-mcp verification-evidence --help
 ```
 
-Root commands also include `status`, `instances`, and `raw`. Raw parameters must be a JSON object. Tool discovery, request targeting, consent and budgets still apply. `instance set` deliberately cannot persist a target; `batch` is not a universal atomic transaction or rollback mechanism.
+`raw` sends native Editor commands with a JSON object. Use dedicated commands such as `verification report` for Python-composed MCP tools. Tool discovery, request targeting, consent and budgets still apply. `instance set` deliberately cannot persist a target; `batch` is not a universal atomic transaction or rollback mechanism.
 
 The `receipt` group explicitly protects one native command with a validated store and request key. Its `describe` and `get` commands inspect retained execution records without a connected Editor. Protection is opt-in; see [execution receipts](../guides/cli.md#recover-a-command-after-response-loss) for setup and recovery after an uncertain response.
 
 The `sprite` group uses [`manage_sprite`](./tools/animation/manage_sprite.md) for sheet inspection, slicing, clip creation and controller setup. The beta checkout includes this group; use matching Editor/server revisions and inspect `unity-mcp sprite --help` before changing assets. Published older server pins may not expose it.
 
-The `play_scenario` registration is exposed as `play-scenario` in CLI commands. Use `unity-mcp play-scenario --help` for save/get/list/reports/delete/run/status/cancel and the corresponding suite-save/get/list/reports/delete/run/status/cancel commands. Single runs return a Unity-owned job immediately; suite-run explicitly waits on the selected `--instance` and writes suite.json plus junit.xml to its required `--output-dir`. See the [scenario tool reference](./tools/testing/manage_play_scenario.md) for its bounded definition and execution contract.
+Use `unity-mcp play-scenario --help` for save/get/list/reports/delete/run/status/cancel and the corresponding suite-save/get/list/reports/delete/run/status/cancel commands. Single runs return a Unity-owned job immediately; suite-run explicitly waits on the selected `--instance` and writes suite.json plus junit.xml to its required `--output-dir`. See the [scenario tool reference](./tools/testing/manage_play_scenario.md) for its bounded definition and execution contract.
 
-The `scenario_recording` and `scene_edit` registrations are exposed as `scenario-recording` and `scene-edit`. [Scenario recording](./tools/testing/manage_scenario_recording.md) saves observed interactions as a draft that requires review before execution. [Scene edits](./tools/core/manage_scene_edits.md) preview supported property changes and apply them with drift checks and one native Undo group. Inspect each group's `--help` before use.
+The `scenario-recording` commands save observed interactions as a draft that requires review before execution. The `scene-edit` commands preview supported property changes and apply them with drift checks and one native Undo group. Inspect each group's `--help` before use. See the [scenario recording](./tools/testing/manage_scenario_recording.md) and [scene edits](./tools/core/manage_scene_edits.md) tool references.
 
-The `project_auditor` registration is exposed as `project-auditor`. The `availability` command checks the installed Project Auditor package or Editor module and its rules. `start` begins analysis of the current build target and may compile Player code. Retain the audit identity and use `status` after an uncertain response. `issues` reads completed results with `--page-size` from 1 to 100 (default 50) and the returned `--cursor`. See `unity-mcp project-auditor --help` for command syntax and the [Project Auditor tool reference](./tools/profiling/manage_project_auditor.md) for result details.
+The `project-auditor availability` command checks the installed Project Auditor package or Editor module and its rules. `start` begins analysis of the current build target and may compile Player code. Retain the audit identity and use `status` after an uncertain response. `issues` reads completed results with `--page-size` from 1 to 100 (default 50) and the returned `--cursor`. See `unity-mcp project-auditor --help` for command syntax and the [Project Auditor tool reference](./tools/profiling/manage_project_auditor.md) for result details.
 
 ## Output and failures
 

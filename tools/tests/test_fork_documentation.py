@@ -18,7 +18,7 @@ TOOLS = Path(__file__).resolve().parents[1]
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-from cli_reference import prepare_cli_reference
+from cli_reference import CliReference, prepare_cli_reference
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -249,33 +249,29 @@ def test_server_readme_uses_reviewed_fastmcp_and_mcp_versions() -> None:
         assert set(versions) == {packages[name]}
 
 
-def test_cli_examples_name_registered_commands_and_options() -> None:
+@pytest.fixture(scope="module")
+def cli_reference() -> CliReference:
     # Actual subordinate Click options, required arguments and scalar types are
     # parsed in an isolated child. Root/group/leaf/parameter callbacks never run.
-    reference = prepare_cli_reference(ROOT)
-    assert reference.example_count > 0
+    return prepare_cli_reference(ROOT)
 
 
-def test_authored_cli_inventory_matches_registered_groups() -> None:
-    # Given the actual structured group-registration list.
-    source = ast.parse(_read(ROOT / "Server/src/cli/main.py"))
-    registration = next(
-        node.value
-        for node in ast.walk(source)
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "optional_commands"
-            for target in node.targets
-        )
-    )
-    registered = {command for _, command in ast.literal_eval(registration)}
+def test_cli_examples_name_registered_commands_and_options(cli_reference: CliReference) -> None:
+    assert cli_reference.example_count > 0
+
+
+def test_authored_cli_inventory_matches_registered_commands(cli_reference: CliReference) -> None:
+    # Given the visible command paths from the isolated Click tree, including aliases.
+    registered = {
+        parts[1] for parts in map(str.split, cli_reference.command_paths) if len(parts) == 2
+    }
 
     # When reading only the authored inventory, not flags or example payloads.
     reference = _read(SITE / "reference/cli.md")
-    inventory = reference.split("## Command groups\n", 1)[1].split("CLI verbs/flags", 1)[0]
+    inventory = reference.split("## Command groups\n\n", 1)[1].split("\n\n", 1)[0]
 
-    # Then documented groups are complete and do not advertise nonexistent names.
-    assert set(re.findall(r"`([a-z_]+)`", inventory)) == registered
+    # Then the inventory uses every public top-level name and only those names.
+    assert set(re.findall(r"`([^`\n]+)`", inventory)) == registered
 
 
 def test_resource_target_example_uses_registered_uri_and_metadata_shape() -> None:
