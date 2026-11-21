@@ -136,13 +136,12 @@ async def test_bound_queue_refusal_settles_only_the_current_native_child(
                 await runner.run_test_job("a" * 64, SimpleNamespace(window_id=None))
             else:
                 evidence = await io.freshness("if_needed", monotonic() + 5)
+                assert evidence["reason"] == "refresh_not_dispatched"
             assert connection.send_command("ping", {}) == {"message": "pong"}
         finally:
             connection.disconnect()
     *previous, child = runner.report["children"]
     assert child["kind"] == kind and child["settled"] and child["dispatch"] == "refused"
-    if kind != "tests":
-        assert evidence["reason"] == "refresh_not_dispatched"
     if kind == "compile":
         assert len(previous) == 1 and previous[0]["kind"] == "import" and not previous[0]["settled"]
 
