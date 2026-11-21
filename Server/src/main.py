@@ -27,6 +27,7 @@ from transport.legacy.unity_connection import (
     UnityConnectionPool,
 )
 from services.tools import register_all_tools
+from services.tool_discovery import parse_startup_groups
 from core.telemetry import (
     begin_telemetry_shutdown,
     record_milestone,
@@ -534,7 +535,7 @@ Target and discover
 - Use the bound Editor. Resolve unclear targets via mcpforunity://instances. If sessionless, pass unity_instance=Name@hash on tools and _meta.unity_instance on resources, or use supported set_active_instance.
 - Bind resource templates with observed values. For search_unity_tools choose observation_source and required_values by meaning. Use route_groups and route_surfaces="tools" for tools-only clients.
 - For unclear routes browse manage_tools(action="catalog") by intent, follow next_offset and describe the operation. Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck scene or mode when relevant.
-- Missing tools: inspect manage_tools(action="list_groups").discovery. Selection needs client scope/project binding, Editor toggles and consent. Fixed inventories: reconnect with UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
+- Missing tools: inspect manage_tools(action="list_groups").discovery. Selection needs client scope/project binding, Editor toggles and consent. Fixed inventories: restart with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full and reconnect. {custom_tools_note}
 
 Observe and execute
 - Start with the advertised read that supplies the requested facts. Use mcpforunity://editor/state when lifecycle matters. Check ready_for_tools, compiler outcome and source confirmation independently. Keep compile_id and follow next_call from get_compile_job for pending work. Check evidence_diagnostics for invalid responses.
@@ -803,6 +804,7 @@ Environment Variables:
   UNITY_MCP_TELEMETRY_ENABLED   Enable telemetry (set to 1/true/yes/on)
   UNITY_MCP_TRANSPORT   Transport protocol: stdio or http (default: stdio)
   UNITY_MCP_TOOL_PROFILE   Startup tool selection: minimal, core or full (local default: core)
+  UNITY_MCP_TOOL_GROUPS    Comma-separated startup groups (overrides the environment profile)
   UNITY_MCP_HTTP_URL   HTTP server URL (default: http://127.0.0.1:8080)
   UNITY_MCP_HTTP_HOST   HTTP server host (overrides URL host)
   UNITY_MCP_HTTP_PORT   HTTP server port (overrides URL port)
@@ -837,13 +839,20 @@ Examples:
         help="Transport protocol to use: stdio or http (default: stdio). "
         "Overrides UNITY_MCP_TRANSPORT environment variable.",
     )
-    parser.add_argument(
+    startup_selection = parser.add_mutually_exclusive_group()
+    startup_selection.add_argument(
         "--tool-profile",
         choices=["minimal", "core", "full"],
         default=None,
         help="Initial tool selection. Use full for clients that capture a fixed tool inventory. "
         "Overrides UNITY_MCP_TOOL_PROFILE; otherwise preserves the local core/hosted full default. "
         "Unity availability and permissions still apply.",
+    )
+    startup_selection.add_argument(
+        "--tool-groups",
+        metavar="GROUPS",
+        help="Initial built-in groups, e.g. core,vfx. Overrides both startup environment settings. "
+        "Always-visible helpers and Unity availability and permissions still apply.",
     )
     parser.add_argument(
         "--http-url",
@@ -965,6 +974,17 @@ Examples:
     # Set environment variables from command line args
     if args.tool_profile is not None:
         os.environ["UNITY_MCP_TOOL_PROFILE"] = args.tool_profile
+        os.environ.pop("UNITY_MCP_TOOL_GROUPS", None)
+    else:
+        groups = (
+            args.tool_groups if args.tool_groups is not None else os.getenv("UNITY_MCP_TOOL_GROUPS")
+        )
+        if groups is not None:
+            try:
+                parse_startup_groups(groups)
+            except ValueError as exc:
+                parser.error(str(exc))
+            os.environ["UNITY_MCP_TOOL_GROUPS"] = groups
     if args.default_instance:
         os.environ["UNITY_MCP_DEFAULT_INSTANCE"] = args.default_instance
         logger.info(f"Using default Unity instance from command-line: {args.default_instance}")

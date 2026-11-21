@@ -297,12 +297,7 @@ namespace MCPForUnity.Editor.Helpers
 
             args.Add("--transport");
             args.Add("stdio");
-            string profile = StartupToolProfile.Selection;
-            if (!string.IsNullOrEmpty(profile))
-            {
-                args.Add("--tool-profile");
-                args.Add(profile);
-            }
+            args.AddRange(StartupToolProfile.Arguments(StartupToolProfile.Selection));
 
             return args;
         }
@@ -310,6 +305,30 @@ namespace MCPForUnity.Editor.Helpers
 
     internal static class StartupToolProfile
     {
+        internal const string GroupPrefix = "groups:";
+
+        /// <summary>Human-friendly names for tool groups shown in the UI.</summary>
+        internal static readonly IReadOnlyDictionary<string, string> GroupDisplayNames = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            { "core", "Essentials" },
+            { "scene", "Scene Layout & Diagnostics" },
+            { "assets", "Asset Management" },
+            { "prefabs", "Prefab Editing" },
+            { "legacy", "Compatibility" },
+            { "camera", "Cameras & Capture" },
+            { "graphics", "Rendering & Lighting" },
+            { "physics", "Physics" },
+            { "docs", "API Reference" },
+            { "vfx", "VFX & Shaders" },
+            { "animation", "Animation" },
+            { "ui", "User Interface" },
+            { "scripting_ext", "Scripting Extensions" },
+            { "testing", "Testing" },
+            { "probuilder", "ProBuilder — Experimental" },
+            { "profiling", "Profiling & Frame Debugger" },
+            { "asset_gen", "Asset Generation" },
+        };
+
         internal static string PreferenceKey(string projectHash) => EditorPrefKeys.StartupToolProfilePrefix + projectHash;
 
         internal static string Selection
@@ -317,7 +336,7 @@ namespace MCPForUnity.Editor.Helpers
             get
             {
                 string value = EditorPrefs.GetString(PreferenceKey(ProjectIdentityUtility.GetProjectHash()), "");
-                return value is "core" or "full" or "minimal" ? value : "";
+                return IsPreset(value) || IsGroupSelection(value) ? value : "";
             }
             set
             {
@@ -326,18 +345,30 @@ namespace MCPForUnity.Editor.Helpers
                     EditorPrefs.DeleteKey(key);
                 else
                 {
-                    CommandSuffix(value);
+                    Arguments(value);
                     EditorPrefs.SetString(key, value);
                 }
             }
         }
 
-        internal static string CommandSuffix(string profile) =>
-            profile switch
-            {
-                null or "" => "",
-                "core" or "full" or "minimal" => " --tool-profile " + profile,
-                _ => throw new ArgumentException("Startup tool profile must be minimal, core, full or the server default.", nameof(profile)),
-            };
+        internal static bool IsPreset(string selection) => selection is "core" or "full" or "minimal";
+
+        internal static bool IsGroupList(string groups) => groups != null && groups.Split(',').All(GroupDisplayNames.ContainsKey);
+
+        internal static bool IsGroupSelection(string selection) =>
+            selection != null && selection.StartsWith(GroupPrefix, StringComparison.Ordinal) && IsGroupList(selection.Substring(GroupPrefix.Length));
+
+        internal static string[] Arguments(string selection)
+        {
+            if (string.IsNullOrEmpty(selection))
+                return Array.Empty<string>();
+            if (IsPreset(selection))
+                return new[] { "--tool-profile", selection };
+            if (IsGroupSelection(selection))
+                return new[] { "--tool-groups", selection.Substring(GroupPrefix.Length) };
+            throw new ArgumentException("Select a startup preset or one or more registered tool groups.", nameof(selection));
+        }
+
+        internal static string CommandSuffix(string selection) => string.IsNullOrEmpty(selection) ? "" : " " + string.Join(" ", Arguments(selection));
     }
 }

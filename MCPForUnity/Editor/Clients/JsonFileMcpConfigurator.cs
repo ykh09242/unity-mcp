@@ -367,7 +367,13 @@ namespace MCPForUnity.Editor.Clients
                 return false;
             if (index + 1 < args.Length && args[index] == "--transport" && args[index + 1] == "stdio")
                 index += 2;
-            if (index + 1 < args.Length && args[index] == "--tool-profile" && args[index + 1] is "core" or "minimal" or "full")
+            if (
+                index + 1 < args.Length
+                && (
+                    args[index] == "--tool-profile" && StartupToolProfile.IsPreset(args[index + 1])
+                    || args[index] == "--tool-groups" && StartupToolProfile.IsGroupList(args[index + 1])
+                )
+            )
                 index += 2;
             return index == args.Length;
         }

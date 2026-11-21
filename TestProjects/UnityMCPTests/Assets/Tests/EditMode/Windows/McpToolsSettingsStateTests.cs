@@ -64,6 +64,7 @@ namespace MCPForUnityTests.Editor.Windows
                 EditorConfigurationCache.Instance.Refresh();
                 var root = Root();
                 root.Add(new DropdownField { name = "startup-tool-profile" });
+                root.Add(new VisualElement { name = "startup-tool-groups" });
                 root.Add(new Label { name = "startup-tool-profile-help" });
                 using var panel = new OwnedConsentPanel(root);
                 var section = new McpToolsSection(root, null, true);
@@ -89,9 +90,22 @@ namespace MCPForUnityTests.Editor.Windows
                     Assert.IsFalse(root.Q<Label>("startup-tool-profile-help").ClassListContains("catalog-hidden"));
                     dropdown.value = "Core (compact)";
                     Assert.AreEqual("core", EditorPrefs.GetString(key));
+                    dropdown.value = "Selected groups";
+                    var vfx = root.Q<Toggle>("startup-group-vfx");
+                    var core = root.Q<Toggle>("startup-group-core");
+                    Assert.IsTrue(core.value);
+                    Assert.IsFalse(core.enabledSelf);
+                    vfx.value = true;
+                    Assert.AreEqual("groups:core,vfx", EditorPrefs.GetString(key));
+                    Assert.IsTrue(core.enabledSelf);
+                    section.Refresh();
+                    Assert.IsTrue(vfx.value);
+                    core.value = false;
+                    Assert.AreEqual("groups:vfx", EditorPrefs.GetString(key));
                     dropdown.value = "Server default";
                     Assert.IsFalse(EditorPrefs.HasKey(key));
                     Assert.IsTrue(root.Q<Label>("startup-tool-profile-help").ClassListContains("catalog-hidden"));
+                    Assert.IsTrue(root.Q("startup-tool-groups").ClassListContains("catalog-hidden"));
                 }
             }
             finally

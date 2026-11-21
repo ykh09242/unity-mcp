@@ -76,9 +76,7 @@ namespace MCPForUnity.Editor.Services.Server
             bool projectScopedTools = EditorPrefs.GetBool(EditorPrefKeys.ProjectScopedToolsLocalHttp, true);
             if (projectScopedTools)
                 args.Add("--project-scoped-tools");
-            string profile = StartupToolProfile.Selection;
-            if (!string.IsNullOrEmpty(profile))
-                args.AddRange(new[] { "--tool-profile", profile });
+            args.AddRange(StartupToolProfile.Arguments(StartupToolProfile.Selection));
 
             fileName = uvxPath;
             arguments = args;

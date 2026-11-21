@@ -180,6 +180,7 @@ namespace MCPForUnityTests.Editor.Clients
         [TestCase("codex", "core", false)]
         [TestCase("opencode", "minimal", false)]
         [TestCase("json", "full", true)]
+        [TestCase("json", "groups:core,vfx", true)]
         [TestCase("codex", "full", true)]
         [TestCase("opencode", "full", true)]
         public void ExplicitConfigureRecordsProfileOwnershipAndStartupFollowsSource(string kind, string profile, bool gitSource)
@@ -192,7 +193,7 @@ namespace MCPForUnityTests.Editor.Clients
             File.WriteAllText(client.GetConfigPath(), UnownedDocument(kind, "manual"));
             client.Configure();
             StringAssert.Contains(first, File.ReadAllText(client.GetConfigPath()));
-            StringAssert.Contains("--tool-profile", File.ReadAllText(client.GetConfigPath()));
+            StringAssert.Contains(profile == "groups:core,vfx" ? "--tool-groups" : "--tool-profile", File.ReadAllText(client.GetConfigPath()));
             string format =
                 kind == "codex" ? "Codex"
                 : kind == "opencode" ? "OpenCode"

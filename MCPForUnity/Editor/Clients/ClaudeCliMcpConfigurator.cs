@@ -948,9 +948,7 @@ namespace MCPForUnity.Editor.Clients
             arguments.AddRange((devFlags ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
             arguments.AddRange(fromArguments);
             arguments.Add(packageName);
-            StartupToolProfile.CommandSuffix(profile);
-            if (!string.IsNullOrEmpty(profile))
-                arguments.AddRange(new[] { "--tool-profile", profile });
+            arguments.AddRange(StartupToolProfile.Arguments(profile));
             return new JObject
             {
                 ["type"] = "stdio",

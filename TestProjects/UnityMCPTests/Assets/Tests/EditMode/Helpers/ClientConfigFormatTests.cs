@@ -161,6 +161,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("core")]
         [TestCase("full")]
         [TestCase("minimal")]
+        [TestCase("groups:core,vfx")]
         public void StartupProfile_StdioBuildersUseSameExplicitChoice(string profile)
         {
             // Given: this project's explicit startup choice does not change Unity tool toggles.
@@ -181,9 +182,12 @@ namespace MCPForUnityTests.Editor.Helpers
             var openCode = JObject.Parse(new OpenCodeConfigurator().GetManualSnippet());
             CollectionAssert.AreEqual(expected, openCode["mcp"]["unityMCP"]["command"].ToObject<string[]>().Skip(1));
             // Then: no flag preserves server/env defaults; explicit choices occur once after server args.
-            Assert.AreEqual(string.IsNullOrEmpty(profile) ? 0 : 1, expected.Count(arg => arg == "--tool-profile"));
+            Assert.AreEqual(string.IsNullOrEmpty(profile) ? 0 : 1, expected.Count(arg => arg is "--tool-profile" or "--tool-groups"));
             if (!string.IsNullOrEmpty(profile))
-                CollectionAssert.AreEqual(new[] { "--tool-profile", profile }, expected.Skip(expected.Length - 2));
+                CollectionAssert.AreEqual(
+                    profile == "groups:core,vfx" ? new[] { "--tool-groups", "core,vfx" } : new[] { "--tool-profile", profile },
+                    expected.Skip(expected.Length - 2)
+                );
         }
 
         [Test]
@@ -199,17 +203,18 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.AreEqual(beforeToml, CodexConfigHelper.BuildCodexServerBlock("uv"));
         }
 
-        [Test]
-        public void StartupProfile_LocalHttpLaunchUsesExplicitChoice()
+        [TestCase("full", "--tool-profile full")]
+        [TestCase("groups:core,vfx", "--tool-groups core,vfx")]
+        public void StartupProfile_LocalHttpLaunchUsesExplicitChoice(string selection, string expected)
         {
             // Given: the local server launch uses the same project startup choice.
-            EditorPrefs.SetString(_profileKey, "full");
+            EditorPrefs.SetString(_profileKey, selection);
             var builder = new ServerCommandBuilder();
             // When: the Editor constructs the HTTP server command without launching it.
             Assert.IsTrue(builder.TryBuildCommand(out _, out var args, out var display, out var error), error);
             // Then: the server receives the explicit choice without changing the client endpoint.
-            StringAssert.Contains(" --tool-profile full", args);
-            StringAssert.Contains(" --tool-profile full", display);
+            StringAssert.Contains(" " + expected, args);
+            StringAssert.Contains(" " + expected, display);
         }
 
         [TestCase("json")]
@@ -249,6 +254,8 @@ namespace MCPForUnityTests.Editor.Helpers
             // When/Then: reading preserves server defaults, and an invalid setter cannot overwrite it.
             Assert.AreEqual("", StartupToolProfile.Selection);
             Assert.Throws<ArgumentException>(() => StartupToolProfile.Selection = "full --other-flag");
+            Assert.Throws<ArgumentException>(() => StartupToolProfile.Selection = "groups:core,missing");
+            Assert.Throws<ArgumentException>(() => StartupToolProfile.Selection = "groups:core,");
             Assert.AreEqual("full --other-flag", EditorPrefs.GetString(_profileKey));
         }
 

@@ -2,11 +2,14 @@
 
 import json
 
+import httpx
 import pytest
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+from websockets.sync.client import connect
 
 from core.local_auth import LOCAL_AUTH_HEADER
+from tests.http.test_local_control_wire import local_server_process
 from tests.http.test_mcp_protocol_wire import (
     _body,
     _headers,
@@ -47,6 +50,87 @@ def test_modern_http_preflight_exposes_static_selection_and_startup_guidance(pro
     )
     report = json.loads(_message(response)["result"]["contents"][0]["text"])
     assert report["discovery"] == capability
+
+
+def test_static_startup_groups_intersect_editor_catalog_on_local_http(tmp_path, monkeypatch):
+    monkeypatch.setenv("UNITY_MCP_TOOL_GROUPS", "core,vfx")
+    with local_server_process(tmp_path) as (url, port, token):
+        headers = {LOCAL_AUTH_HEADER: token}
+        with (
+            connect(
+                f"ws://127.0.0.1:{port}/hub/plugin", additional_headers=headers, proxy=None
+            ) as plugin,
+            httpx.Client(
+                base_url=url,
+                headers={**headers, "Accept": "application/json, text/event-stream"},
+                trust_env=False,
+            ) as client,
+        ):
+            assert json.loads(plugin.recv(timeout=5))["type"] == "welcome"
+            plugin.send(
+                json.dumps(
+                    {
+                        "type": "register",
+                        "project_name": "Static",
+                        "project_hash": "static-groups",
+                        "capabilities": ["tool_settings_ack_v1"],
+                    }
+                )
+            )
+            assert json.loads(plugin.recv(timeout=5))["type"] == "registered"
+            plugin.send(
+                json.dumps(
+                    {
+                        "type": "register_tools",
+                        "settings_epoch": "a" * 32,
+                        "desired_revision": 1,
+                        "tools": [
+                            {"name": name}
+                            for name in ("read_console", "manage_vfx", "manage_animation")
+                        ],
+                    }
+                )
+            )
+            assert json.loads(plugin.recv(timeout=5))["status"] == "applied"
+
+            def request(method, params=None):
+                return _message(
+                    client.post(
+                        "/mcp",
+                        headers=_headers(method, name=(params or {}).get("name")),
+                        json=_body(method, params),
+                    )
+                )
+
+            visible = {tool["name"] for tool in request("tools/list")["result"]["tools"]}
+            assert {"read_console", "manage_tools", "manage_vfx"} <= visible
+            assert {"manage_animation", "manage_shader"}.isdisjoint(visible)
+
+            def call(tool, **arguments):
+                return request("tools/call", {"name": tool, "arguments": arguments})
+
+            groups = call("manage_tools", action="list_groups")["result"]["structuredContent"]
+            assert groups["discovery"]["profile"] == "groups"
+            assert groups["discovery"]["selection_supported"] is False
+            assert sorted(row["name"] for row in groups["groups"] if row["default_enabled"]) == [
+                "core",
+                "vfx",
+            ]
+            assert (
+                "error"
+                in call("manage_tools", action="activate", group="animation")["result"][
+                    "structuredContent"
+                ]
+            )
+            denied = call("manage_shader", action="read", name="Missing")
+            assert "error" in denied or denied["result"]["isError"]
+            # The SDK can redact protocol errors. Observe the native boundary as well.
+            while True:
+                try:
+                    frame = json.loads(plugin.recv(timeout=0))
+                except TimeoutError:
+                    break
+                assert frame["type"] != "execute", frame["type"]
 
 
 @pytest.mark.asyncio

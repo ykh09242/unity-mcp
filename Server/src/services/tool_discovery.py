@@ -56,21 +56,21 @@ REFRESH_GUIDANCE = (
     + CLIENT_INVENTORY_GUIDANCE
     + "Unity availability and permissions still apply. "
     "Refresh tools/list after tools/list_changed. If the client uses a fixed inventory, "
-    "start the server with --tool-profile full (or UNITY_MCP_TOOL_PROFILE=full), "
+    "start the server with --tool-groups core,vfx for selected groups or UNITY_MCP_TOOL_PROFILE=full, "
     "then establish a fresh client connection after enabling the desired tools in Unity. "
     "Reconnect alone does not preserve a legacy session selection."
 )
 UNSCOPED_GUIDANCE = (
     "This sessionless connection has no supported stable client scope and resolved project. "
     "Use a stateful handshake, a project-bound stdio connection, or authenticated SDK scope. "
-    "Alternatively start the server with UNITY_MCP_TOOL_PROFILE=full and reconnect. "
+    "Alternatively start the server with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full and reconnect. "
     "Editor toggles still control availability. " + CLIENT_INVENTORY_GUIDANCE
 )
 SETUP_GUIDANCE = (
     "Check manage_tools(action='list_groups').discovery before selecting optional tools; "
     "it reports this connection's mode and reason. Modern HTTP selection requires a verified "
     "SDK principal and resolved project. The existing HTTP API-key layer does not supply that "
-    "principal. For these connections, set UNITY_MCP_TOOL_PROFILE=full before starting the "
+    "principal. For these connections, set UNITY_MCP_TOOL_GROUPS (e.g. core,vfx) or UNITY_MCP_TOOL_PROFILE=full before starting the "
     "server, restart it and reconnect, or use a supported stateful legacy client. "
     "Modern project-bound stdio also supports selection. Editor availability and permissions "
     "still apply to every profile."
@@ -86,6 +86,16 @@ class DiscoveryCapability(TypedDict):
     client_inventory_status: Literal["unconfirmed"]
 
 
+def parse_startup_groups(value: str) -> set[str]:
+    groups = {group.strip() for group in value.split(",")}
+    if not groups <= TOOL_GROUPS.keys():
+        raise ValueError(
+            "--tool-groups / UNITY_MCP_TOOL_GROUPS requires comma-separated group names "
+            f"without empty entries. Valid groups: {', '.join(sorted(TOOL_GROUPS))}"
+        )
+    return groups
+
+
 class ToolDiscovery(Transform):
     """Keep schemas intact; store one finite override map per trusted scope/project.
 
@@ -97,16 +107,16 @@ class ToolDiscovery(Transform):
     _LEGACY_STATE_KEY = "mcpforunity.tool_selection"
 
     def __init__(self, server, definitions, groups, *, hosted):
-        self.profile = os.environ.get("UNITY_MCP_TOOL_PROFILE", "full" if hosted else "core")
-        if self.profile not in {"minimal", "core", "full"}:
-            raise ValueError("UNITY_MCP_TOOL_PROFILE must be minimal, core or full")
-        self.default_groups = (
-            set(TOOL_GROUPS)
-            if self.profile == "full"
-            else set(DEFAULT_ENABLED_GROUPS)
-            if self.profile == "core"
-            else set()
-        )
+        configured_groups = os.environ.get("UNITY_MCP_TOOL_GROUPS")
+        if configured_groups is not None:
+            self.profile = "groups"
+            self.default_groups = parse_startup_groups(configured_groups)
+        else:
+            self.profile = os.environ.get("UNITY_MCP_TOOL_PROFILE", "full" if hosted else "core")
+            profiles = {"full": TOOL_GROUPS, "core": DEFAULT_ENABLED_GROUPS, "minimal": ()}
+            if self.profile not in profiles:
+                raise ValueError("UNITY_MCP_TOOL_PROFILE must be minimal, core or full")
+            self.default_groups = set(profiles[self.profile])
         self.definitions = definitions
         self.groups = groups
         self.store = getattr(server, "_unity_session_state_store", None)

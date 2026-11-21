@@ -28,6 +28,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private readonly Dictionary<string, Toggle> toolToggleMap = new();
         private Toggle projectScopedToolsToggle;
         private DropdownField startupToolProfile;
+        private VisualElement startupGroupContainer;
+        private readonly Dictionary<string, Toggle> startupGroupToggles = new();
         private Label startupToolProfileHelp;
         private Label summaryLabel;
         private Label noteLabel;
@@ -62,28 +64,6 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private readonly List<(Foldout foldout, string title, List<ToolMetadata> tools)> foldoutEntries = new();
         private readonly Dictionary<string, VisualElement> toolRowMap = new();
         private readonly Dictionary<Foldout, bool> foldoutStatesBeforeSearch = new();
-
-        /// <summary>Human-friendly names for tool groups shown in the UI.</summary>
-        private static readonly Dictionary<string, string> GroupDisplayNames = new(StringComparer.OrdinalIgnoreCase)
-        {
-            { "core", "Essentials" },
-            { "scene", "Scene Layout & Diagnostics" },
-            { "assets", "Asset Management" },
-            { "prefabs", "Prefab Editing" },
-            { "legacy", "Compatibility" },
-            { "camera", "Cameras & Capture" },
-            { "graphics", "Rendering & Lighting" },
-            { "physics", "Physics" },
-            { "docs", "API Reference" },
-            { "vfx", "VFX & Shaders" },
-            { "animation", "Animation" },
-            { "ui", "User Interface" },
-            { "scripting_ext", "Scripting Extensions" },
-            { "testing", "Testing" },
-            { "probuilder", "ProBuilder — Experimental" },
-            { "profiling", "Profiling & Frame Debugger" },
-            { "asset_gen", "Asset Generation" },
-        };
 
         public VisualElement Root { get; }
 
@@ -143,6 +123,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         {
             projectScopedToolsToggle = Root.Q<Toggle>("project-scoped-tools-toggle");
             startupToolProfile = Root.Q<DropdownField>("startup-tool-profile");
+            startupGroupContainer = Root.Q<VisualElement>("startup-tool-groups");
             startupToolProfileHelp = Root.Q<Label>("startup-tool-profile-help");
             summaryLabel = Root.Q<Label>("tools-summary");
             noteLabel = Root.Q<Label>("tools-note");
@@ -167,7 +148,17 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         {
             if (startupToolProfile != null)
             {
-                startupToolProfile.choices = new List<string> { "Server default", "Core (compact)", "Full (static clients)", "Minimal" };
+                startupToolProfile.choices = new List<string> { "Server default", "Core (compact)", "Full (static clients)", "Minimal", "Selected groups" };
+                if (startupGroupContainer != null)
+                {
+                    foreach (var group in StartupToolProfile.GroupDisplayNames)
+                    {
+                        var toggle = new Toggle { text = $"{group.Value} ({group.Key})", name = "startup-group-" + group.Key };
+                        startupGroupContainer.Add(toggle);
+                        startupGroupToggles.Add(group.Key, toggle);
+                        toggle.RegisterValueChangedCallback(evt => SetStartupGroup(group.Key, evt.newValue));
+                    }
+                }
                 RefreshStartupToolProfile();
                 startupToolProfile.RegisterValueChangedCallback(evt =>
                 {
@@ -178,6 +169,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                         "Core (compact)" => "core",
                         "Full (static clients)" => "full",
                         "Minimal" => "minimal",
+                        "Selected groups" => StartupToolProfile.GroupPrefix + "core",
                         _ => "",
                     };
                     RefreshStartupToolProfile();
@@ -317,18 +309,49 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             ApplySearch();
         }
 
+        private void SetStartupGroup(string group, bool enabled)
+        {
+            string selection = StartupToolProfile.Selection;
+            if ((IsHttpMode() && HttpEndpointUtility.IsRemoteScope()) || !StartupToolProfile.IsGroupSelection(selection))
+                return;
+            var groups = new HashSet<string>(selection.Substring(StartupToolProfile.GroupPrefix.Length).Split(','));
+            if (enabled)
+                groups.Add(group);
+            else
+                groups.Remove(group);
+            if (groups.Count > 0)
+                StartupToolProfile.Selection = StartupToolProfile.GroupPrefix + string.Join(",", groups.OrderBy(name => name, StringComparer.Ordinal));
+            RefreshStartupToolProfile();
+        }
+
         private void RefreshStartupToolProfile()
         {
             if (startupToolProfile == null)
                 return;
             bool remote = IsHttpMode() && HttpEndpointUtility.IsRemoteScope();
             string profile = StartupToolProfile.Selection;
+            bool selectedGroups = StartupToolProfile.IsGroupSelection(profile);
+            if (startupGroupContainer != null)
+            {
+                startupGroupContainer.EnableInClassList("catalog-hidden", !selectedGroups || remote);
+                if (selectedGroups)
+                {
+                    var groups = new HashSet<string>(profile.Substring(StartupToolProfile.GroupPrefix.Length).Split(','));
+                    foreach (var row in startupGroupToggles)
+                    {
+                        bool selected = groups.Contains(row.Key);
+                        row.Value.SetValueWithoutNotify(selected);
+                        row.Value.SetEnabled(!remote && (!selected || groups.Count > 1));
+                    }
+                }
+            }
             startupToolProfile.SetValueWithoutNotify(
                 profile switch
                 {
                     "core" => "Core (compact)",
                     "full" => "Full (static clients)",
                     "minimal" => "Minimal",
+                    _ when selectedGroups => "Selected groups",
                     _ => "Server default",
                 }
             );
@@ -346,7 +369,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
         private static string GetGroupDisplayName(string group)
         {
-            if (GroupDisplayNames.TryGetValue(group, out var displayName))
+            if (!string.IsNullOrEmpty(group) && StartupToolProfile.GroupDisplayNames.TryGetValue(group.ToLowerInvariant(), out var displayName))
                 return displayName;
             // Fallback: capitalize first letter
             return string.IsNullOrEmpty(group) ? "Other" : char.ToUpper(group[0]) + group.Substring(1);
