@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -573,6 +574,103 @@ namespace MCPForUnityTests.Editor.Services
             return launcher;
         }
 
+        [UnityTest]
+        public IEnumerator PreBindLaunch_VerifiedCancellationReapsBootstrapBeforeRestart()
+        {
+            File.Delete(_pidPath);
+            _pids.ClearTracking();
+            _detector.Listening = false;
+            var launcher = new SleepingLauncher(_root);
+            var service = new ServerManagementService(_detector, _pids, _terminator, new LiteralCommandBuilder(), launcher);
+            string url = "http://127.0.0.1:" + Port;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                Assert.IsTrue(service.StartLocalHttpServer(quiet: true));
+                Assert.IsTrue(_pids.TryGetHandshake(out _, out string token));
+                Assert.IsTrue(_pids.TryGetOwnedLaunchProcess(Port, token, out int pid));
+                using var owner = System.Diagnostics.Process.GetProcessById(pid);
+                _detector.ExistsProbe = candidate => candidate == pid && !owner.HasExited;
+                try
+                {
+                    Assert.AreEqual(PendingLaunchState.Cancellable, service.GetPendingLaunchState(url));
+                    Assert.IsFalse(service.StartLocalHttpServer(quiet: true));
+                    Assert.AreEqual(attempt + 1, launcher.Calls);
+                    string log = service.GetLocalHttpServerLaunchLogPath();
+                    double deadline = EditorApplication.timeSinceStartup + 8;
+                    int childPid = 0;
+                    while (!int.TryParse(ServerManagementService.TailFile(log, 1), out childPid) && EditorApplication.timeSinceStartup < deadline)
+                        yield return null;
+                    Assert.Greater(childPid, 1, "The fixture bootstrap did not record its child PID.");
+                    using var child = System.Diagnostics.Process.GetProcessById(childPid);
+                    var recreated = new ServerManagementService(_detector, _pids, _terminator);
+                    var cancel = recreated.CancelPendingLaunchAsync(url);
+                    while (!cancel.IsCompleted && EditorApplication.timeSinceStartup < deadline)
+                        yield return null;
+                    Assert.IsTrue(cancel.IsCompleted && cancel.Result);
+                    while ((!owner.HasExited || !child.HasExited) && EditorApplication.timeSinceStartup < deadline)
+                        yield return null;
+                    Assert.IsTrue(owner.HasExited && child.HasExited, "Cancellation must also stop the launcher child.");
+                    Assert.AreEqual(PendingLaunchState.None, recreated.GetPendingLaunchState(url));
+                }
+                finally
+                {
+                    // Only this bounded fixture owns this handle. It also exits on its own after 12s.
+                    owner.WaitForExit(15000);
+                    _detector.ExistsProbe = _ => false;
+                }
+            }
+            Assert.AreEqual(0, _terminator.Calls, "PID-only termination must never be used.");
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void PreBindLaunch_UnknownOrReusedCreationCannotCancel(bool reused)
+        {
+            File.Delete(_pidPath);
+            DateTime created = DateTime.UtcNow.AddMinutes(-1);
+            _pids = new PidFileManager(_root, _ => reused ? created.AddSeconds(10) : (DateTime?)null);
+            _pids.StoreOwnedLaunchProcess(LauncherPid, Port, InstanceToken, created);
+            _detector.ExistsByPid[LauncherPid] = true;
+            string gate = Path.Combine(Path.GetDirectoryName(_pidPath), "launch-" + _pids.ComputeShortHash(InstanceToken) + ".pending");
+            File.WriteAllText(gate, "");
+            _service = new ServerManagementService(_detector, _pids, _terminator);
+            string url = "http://127.0.0.1:" + Port;
+            Assert.AreNotEqual(PendingLaunchState.Cancellable, _service.GetPendingLaunchState(url));
+            Assert.IsFalse(_service.CancelPendingLaunchAsync(url).Result);
+            Assert.IsTrue(File.Exists(gate));
+            Assert.AreEqual(0, _terminator.Calls);
+        }
+
+        private sealed class SleepingLauncher : ICancellableTerminalLauncher
+        {
+            private readonly string _root;
+            internal int Calls;
+
+            internal SleepingLauncher(string root) => _root = root;
+
+            public string GetProjectRootPath() => _root;
+
+            public System.Diagnostics.ProcessStartInfo CreateManagedStartInfo(string file, IReadOnlyList<string> args, string log, string gate)
+            {
+                Calls++;
+#if UNITY_EDITOR_WIN
+                string program = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+                string[] arguments = { "-NoProfile", "-NonInteractive", "-Command", "[Console]::WriteLine($PID); Start-Sleep -Seconds 12" };
+#else
+                string program = "/bin/bash";
+                string[] arguments = { "-c", "echo $$; exec sleep 12" };
+#endif
+                return new TerminalLauncher().CreateManagedStartInfo(program, arguments, log, gate);
+            }
+
+            public System.Diagnostics.ProcessStartInfo CreateHeadlessProcessStartInfo(string file, IReadOnlyList<string> args, string log) =>
+                throw new NotSupportedException();
+
+            public System.Diagnostics.ProcessStartInfo CreateHeadlessProcessStartInfo(string command, string log) => throw new NotSupportedException();
+
+            public System.Diagnostics.ProcessStartInfo CreateTerminalProcessStartInfo(string command) => throw new NotSupportedException();
+        }
+
         [TestCase(true, "reused")]
         [TestCase(false, "reused")]
         [TestCase(true, "current")]
@@ -734,6 +832,7 @@ namespace MCPForUnityTests.Editor.Services
             internal bool CanInspect = true;
             internal bool? ExistsOverride;
             internal bool ThrowOnExists;
+            internal Func<int, bool> ExistsProbe;
             internal readonly Dictionary<int, bool> ExistsByPid = new Dictionary<int, bool>();
             internal string CommandLine = "python mcp-for-unity --unity-instance-token " + InstanceToken;
 
@@ -753,6 +852,8 @@ namespace MCPForUnityTests.Editor.Services
             {
                 if (ThrowOnExists)
                     throw new InvalidOperationException("Fixture process inspection unavailable");
+                if (ExistsProbe != null)
+                    return ExistsProbe(pid);
                 return ExistsByPid.TryGetValue(pid, out bool exists) ? exists : ExistsOverride ?? Listening;
             }
 

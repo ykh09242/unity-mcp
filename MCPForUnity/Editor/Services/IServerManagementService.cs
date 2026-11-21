@@ -16,6 +16,20 @@ namespace MCPForUnity.Editor.Services
         bool VerifyListenerOwnership(string localUrl);
     }
 
+    public enum PendingLaunchState
+    {
+        None,
+        Waiting,
+        Cancellable,
+        Cancelling,
+    }
+
+    public interface IPendingLocalHttpLaunch
+    {
+        PendingLaunchState GetPendingLaunchState(string localUrl);
+        Task<bool> CancelPendingLaunchAsync(string localUrl);
+    }
+
     public interface IAsyncLocalHttpServerProbe
     {
         Task<bool> ProbeLocalHttpServerAsync(string localUrl);

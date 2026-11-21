@@ -44,6 +44,7 @@
                 <ui:Label text="Local Server:" class="setting-label" />
                 <ui:Button name="start-http-server-button" text="Start Server" class="action-button start-server-button" />
                 <ui:Label name="local-server-status" class="help-text" />
+                <ui:Button name="show-launch-log" text="Show Launch Log" class="action-button hidden" />
             </ui:VisualElement>
             <ui:Toggle name="keep-local-server-alive" tooltip="Keep the shared server running when this project closes. If disabled, exit stops only this project's managed server when no Unity sessions remain." text="Keep local server running when this Editor closes" class="field-toggle" />
             <ui:VisualElement class="setting-row" name="unity-socket-port-row">

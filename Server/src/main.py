@@ -1240,6 +1240,9 @@ Examples:
     if args.unity_instance_token:
         os.environ["UNITY_MCP_INSTANCE_TOKEN"] = args.unity_instance_token
     if args.pidfile:
+        from transport.local_server_lifecycle import claim_managed_launch
+
+        claim_managed_launch(args.unity_instance_token, args.pidfile)
         try:
             pid_dir = os.path.dirname(args.pidfile)
             if pid_dir:

@@ -274,6 +274,9 @@ namespace MCPForUnity.Editor.Services.Server
         internal bool HasOwnedServerCreation(int pid, int port, string instanceToken) =>
             TryGetProcessCreation(EditorPrefKeys.LastLocalHttpServerCreation, pid, port, instanceToken, out _);
 
+        internal bool TryGetLauncherCreation(int pid, int port, string instanceToken, out long ticks) =>
+            TryGetProcessCreation(EditorPrefKeys.LastLocalHttpServerLauncherCreation, pid, port, instanceToken, out ticks);
+
         internal bool HasProcessCreationMismatch(int pid, int port, string instanceToken, bool launcher)
         {
             string key = launcher ? EditorPrefKeys.LastLocalHttpServerLauncherCreation : EditorPrefKeys.LastLocalHttpServerCreation;

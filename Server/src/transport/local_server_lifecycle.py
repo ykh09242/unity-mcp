@@ -1,9 +1,12 @@
 """Bounded local shutdown of the HTTP runner that owns this application."""
 
 import asyncio
+import hashlib
+import os
 import secrets
 import signal
 from collections.abc import Callable
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.requests import Request
@@ -11,6 +14,21 @@ from starlette.responses import JSONResponse
 import uvicorn
 
 from transport.plugin_hub import PluginHub
+
+
+def claim_managed_launch(instance_token: str | None, pid_file: str) -> None:
+    """Win the Editor's per-launch gate before allowing this runner to serve."""
+    gate = os.environ.get("UNITY_MCP_LAUNCH_GATE")
+    if not gate or not instance_token:
+        return
+    identity = hashlib.sha256(instance_token.encode()).hexdigest()[:16]
+    path = Path(gate)
+    if path != Path(pid_file).with_name(f"launch-{identity}.pending"):
+        raise RuntimeError("Managed launcher identity does not match its startup gate.")
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        raise RuntimeError("Managed launch was cancelled before the server became ready.") from None
 
 
 class ShutdownRequest(BaseModel):

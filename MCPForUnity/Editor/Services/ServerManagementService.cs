@@ -18,7 +18,7 @@ namespace MCPForUnity.Editor.Services
     /// <summary>
     /// Service for managing MCP server lifecycle
     /// </summary>
-    public class ServerManagementService : IServerManagementService, IAsyncLocalHttpServerProbe, ILocalHttpServerStatus
+    public class ServerManagementService : IServerManagementService, IAsyncLocalHttpServerProbe, ILocalHttpServerStatus, IPendingLocalHttpLaunch
     {
         private readonly IProcessDetector _processDetector;
         private readonly IPidFileManager _pidFileManager;
@@ -91,8 +91,19 @@ namespace MCPForUnity.Editor.Services
 
         private void ClearLocalServerPidTracking()
         {
+            if (_pidFileManager is PidFileManager && TryGetLocalHttpServerHandshake(out var pidFile, out var token))
+            {
+                string gate = GetLaunchGatePath(pidFile, token);
+                if (File.Exists(gate))
+                    DeletePidFile(gate);
+                if (File.Exists(gate + ".cancelled"))
+                    DeletePidFile(gate + ".cancelled");
+            }
             _pidFileManager.ClearTracking();
         }
+
+        private string GetLaunchGatePath(string pidFile, string token) =>
+            Path.Combine(Path.GetDirectoryName(pidFile) ?? string.Empty, "launch-" + _pidFileManager.ComputeShortHash(token) + ".pending");
 
         private void StoreLocalHttpServerHandshake(string pidFilePath, string instanceToken)
         {
@@ -341,6 +352,10 @@ namespace MCPForUnity.Editor.Services
             }
 
             string launchLog = portForPid > 0 ? GetLocalHttpServerLaunchLogPath(portForPid) : null;
+            string gate =
+                literalLaunch && pidFilePath != null && _terminalLauncher is ICancellableTerminalLauncher
+                    ? GetLaunchGatePath(pidFilePath, instanceToken)
+                    : null;
 
             try
             {
@@ -373,8 +388,9 @@ namespace MCPForUnity.Editor.Services
 
                 // Launch the server headless (no terminal window); stdout+stderr go to the launch log.
                 string effectiveLog = launchLog ?? Path.Combine(Path.GetTempPath(), "mcp-for-unity-server-launch.log");
-                var startInfo = literalLaunch
-                    ? ((ILiteralTerminalLauncher)_terminalLauncher).CreateHeadlessProcessStartInfo(executable, launchArguments, effectiveLog)
+                var startInfo =
+                    gate != null ? ((ICancellableTerminalLauncher)_terminalLauncher).CreateManagedStartInfo(executable, launchArguments, effectiveLog, gate)
+                    : literalLaunch ? ((ILiteralTerminalLauncher)_terminalLauncher).CreateHeadlessProcessStartInfo(executable, launchArguments, effectiveLog)
                     : CreateHeadlessProcessStartInfo(launchCommand, effectiveLog);
 
                 // The headless shell is not a login shell, so it does not inherit the user's
@@ -391,15 +407,17 @@ namespace MCPForUnity.Editor.Services
                     );
                 }
 
+                if (gate != null)
+                {
+                    using var marker = new FileStream(gate, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                }
                 _lastLaunchedProcess = System.Diagnostics.Process.Start(startInfo);
                 if (_lastLaunchedProcess == null)
                     throw new InvalidOperationException("The server launcher did not return a process handle.");
                 if (!string.IsNullOrEmpty(pidFilePath))
                 {
                     StoreLocalHttpServerHandshake(pidFilePath, instanceToken);
-                    // Windows waits for the foreground uv child; POSIX exec replaces
-                    // its redirection shim with uv. The launch PID covers the
-                    // dependency/bootstrap period before Python writes its PID.
+                    // The launcher owns the bootstrap period before Python writes its PID.
                     if (_pidFileManager is PidFileManager ownedPids)
                         ownedPids.StoreOwnedLaunchProcess(_lastLaunchedProcess, portForPid, instanceToken);
                 }
@@ -407,6 +425,8 @@ namespace MCPForUnity.Editor.Services
             }
             catch (Exception ex)
             {
+                if (gate != null && _lastLaunchedProcess == null)
+                    DeletePidFile(gate);
                 McpLog.Error($"Failed to start server: {ex.Message}");
                 if (!quiet)
                 {
@@ -414,6 +434,103 @@ namespace MCPForUnity.Editor.Services
                 }
                 return false;
             }
+        }
+
+        public PendingLaunchState GetPendingLaunchState(string localUrl)
+        {
+            if (
+                !IsLocalUrl(localUrl)
+                || !Uri.TryCreate(localUrl, UriKind.Absolute, out var uri)
+                || !TryGetLocalHttpServerHandshake(out string pidFile, out string token)
+                || !TryGetPortFromPidFilePath(pidFile, out int port)
+                || port != uri.Port
+            )
+                return PendingLaunchState.None;
+            try
+            {
+                bool serverKnown = TryReadPidFromPidFile(pidFile, out int serverPid) && serverPid > 1;
+                if (!(_pidFileManager is PidFileManager pids) || !pids.TryGetOwnedLaunchProcess(port, token, out int pid))
+                    return !serverKnown || IsTrackedProcessPossiblyAlive(serverPid, port, token, launcher: false)
+                        ? PendingLaunchState.Waiting
+                        : PendingLaunchState.None;
+                if (!IsTrackedProcessPossiblyAlive(pid, port, token, launcher: true))
+                    return serverKnown && IsTrackedProcessPossiblyAlive(serverPid, port, token, launcher: false)
+                        ? PendingLaunchState.Waiting
+                        : PendingLaunchState.None;
+                string gate = GetLaunchGatePath(pidFile, token);
+                if (
+                    pid == GetCurrentProcessIdSafe()
+                    || !pids.TryGetLauncherCreation(pid, port, token, out long creation)
+                    || pids.GetProcessCreationUtc(pid)?.Ticks != creation
+                )
+                    return PendingLaunchState.Waiting;
+                if (File.Exists(gate + ".cancelled"))
+                    return PendingLaunchState.Cancelling;
+                return !serverKnown && File.Exists(gate) ? PendingLaunchState.Cancellable : PendingLaunchState.Waiting;
+            }
+            catch
+            {
+                return PendingLaunchState.Waiting;
+            }
+        }
+
+        public async Task<bool> CancelPendingLaunchAsync(string localUrl)
+        {
+            try
+            {
+                var state = GetPendingLaunchState(localUrl);
+                if (
+                    (state != PendingLaunchState.Cancellable && state != PendingLaunchState.Cancelling)
+                    || !TryGetLocalHttpServerHandshake(out string pidFile, out string token)
+                    || !TryGetPortFromPidFilePath(pidFile, out int port)
+                    || port != new Uri(localUrl).Port
+                    || !(_pidFileManager is PidFileManager pids)
+                    || !pids.TryGetOwnedLaunchProcess(port, token, out int pid)
+                    || !pids.TryGetLauncherCreation(pid, port, token, out long creation)
+                    || pid <= 1
+                    || pid == GetCurrentProcessIdSafe()
+                )
+                    return false;
+                string gate = GetLaunchGatePath(pidFile, token);
+                return await Task.Run(() => CancelVerifiedBootstrap(state, pid, creation, gate));
+            }
+            catch
+            {
+                // A concurrent server claim, process exit or access failure needs a fresh observation.
+                return false;
+            }
+        }
+
+        private static bool CancelVerifiedBootstrap(PendingLaunchState state, int pid, long creation, string gate)
+        {
+            // Hold the exact OS process during revalidation and dispatch. On Windows this also pins
+            // the PID against reuse until taskkill finishes inspecting this launcher's descendants.
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+#if UNITY_EDITOR_WIN
+            _ = process.Handle;
+#endif
+            if (process.HasExited || process.StartTime.ToUniversalTime().Ticks != creation)
+                return false;
+            if (state == PendingLaunchState.Cancellable)
+                File.Move(gate, gate + ".cancelled");
+#if UNITY_EDITOR_WIN
+            using var stop = System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = Path.Combine(Environment.SystemDirectory, "taskkill.exe"),
+                    Arguments = $"/F /T /PID {pid}",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+                }
+            );
+            if (stop == null)
+                return false;
+            stop.WaitForExit();
+            if (stop.ExitCode != 0 && !process.HasExited)
+                return false;
+#endif
+            return true;
         }
 
         private bool TryPreparePreviousManagedLaunch(out string error)

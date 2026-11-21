@@ -3,6 +3,11 @@ using System.Diagnostics;
 
 namespace MCPForUnity.Editor.Services.Server
 {
+    public interface ICancellableTerminalLauncher : ILiteralTerminalLauncher
+    {
+        ProcessStartInfo CreateManagedStartInfo(string fileName, IReadOnlyList<string> arguments, string logFilePath, string launchGate);
+    }
+
     /// <summary>Launches an executable with literal arguments and reload-durable output redirection.</summary>
     public interface ILiteralTerminalLauncher : ITerminalLauncher
     {

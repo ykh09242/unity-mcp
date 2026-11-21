@@ -1,6 +1,7 @@
 """Atomic local shutdown through real authenticated routes without a live runner."""
 
 import asyncio
+import hashlib
 import signal
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -23,6 +24,28 @@ from transport.plugin_registry import PluginRegistry
 HEADERS = {"X-Unity-MCP-Token": "local-test-token"}
 BODY = {"instance_token": "owned-test-launch"}
 PATH = "/api/server/shutdown"
+
+
+def test_cancel_and_server_admission_exclusively_claim_same_launch(tmp_path, monkeypatch):
+    from transport.local_server_lifecycle import claim_managed_launch
+
+    token = "test-launch-identity"
+    pidfile = tmp_path / "mcp_http_12345.pid"
+    identity = hashlib.sha256(token.encode()).hexdigest()[:16]
+    gate = tmp_path / f"launch-{identity}.pending"
+    cancelled = gate.with_suffix(".pending.cancelled")
+    monkeypatch.setenv("UNITY_MCP_LAUNCH_GATE", str(gate))
+    gate.touch()
+    with pytest.raises(RuntimeError, match="identity"):
+        claim_managed_launch("other-launch", str(pidfile))
+    gate.rename(cancelled)
+    with pytest.raises(RuntimeError, match="cancelled"):
+        claim_managed_launch(token, str(pidfile))
+    assert not pidfile.exists()
+    cancelled.rename(gate)
+    claim_managed_launch(token, str(pidfile))
+    with pytest.raises(FileNotFoundError):
+        gate.rename(cancelled)
 
 
 @pytest.fixture(scope="module")

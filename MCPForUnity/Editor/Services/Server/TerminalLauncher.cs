@@ -11,7 +11,7 @@ namespace MCPForUnity.Editor.Services.Server
     /// Launches commands in platform-specific terminal windows.
     /// Supports macOS Terminal, Windows cmd, and Linux terminal emulators.
     /// </summary>
-    public class TerminalLauncher : ILiteralTerminalLauncher
+    public class TerminalLauncher : ICancellableTerminalLauncher
     {
         /// <inheritdoc/>
         public string GetProjectRootPath()
@@ -49,7 +49,8 @@ namespace MCPForUnity.Editor.Services.Server
             string fileName,
             IReadOnlyList<string> arguments,
             string logFilePath,
-            bool windows
+            bool windows,
+            string launchGate = null
         )
         {
             if (string.IsNullOrWhiteSpace(fileName))
@@ -68,7 +69,14 @@ namespace MCPForUnity.Editor.Services.Server
             };
             // Raw path for Python's bounded writer; shell argument slots below are encoded.
             info.EnvironmentVariables["UNITY_MCP_LAUNCH_LOG"] = logFilePath;
-            var command = new StringBuilder(windows ? "" : "exec ");
+            bool supervisedJob = !windows && launchGate != null;
+            if (launchGate != null)
+                info.EnvironmentVariables["UNITY_MCP_LAUNCH_GATE"] = launchGate;
+            var command = new StringBuilder(
+                windows ? ""
+                : supervisedJob ? "set -m; "
+                : "exec "
+            );
             long expandedLength = 32; // Include redirection and /d /v:on /s /c framing in the cmd limit.
             AddSlot("MCP_UNITY_EXECUTABLE", fileName);
             for (int i = 0; i < arguments.Count; i++)
@@ -79,6 +87,17 @@ namespace MCPForUnity.Editor.Services.Server
             command.Append(windows ? " < NUL >> " : " < /dev/null >> ");
             AddSlot("MCP_UNITY_LAUNCH_LOG", logFilePath);
             command.Append(" 2>&1");
+            if (supervisedJob)
+            {
+                // The shell owns one private job group. Signal its live job, never a PID read
+                // from a file. Once Python claims the gate this shell only waits for exit.
+                command.Append(
+                    " & child=$!; while kill -0 \"$child\" 2>/dev/null; do "
+                        + "if [[ -e \"$UNITY_MCP_LAUNCH_GATE.cancelled\" ]]; then kill -KILL %1 2>/dev/null; break; fi; "
+                        + "[[ -e \"$UNITY_MCP_LAUNCH_GATE\" ]] || { [[ -e \"$UNITY_MCP_LAUNCH_GATE.cancelled\" ]] && continue; break; }; "
+                        + "sleep 0.25; done; wait \"$child\""
+                );
+            }
             if (windows && (expandedLength > 8191 || command.Length + 20 > 8191))
                 throw new ArgumentException(
                     "The local server launch exceeds the Windows cmd.exe 8191-character limit. Shorten the executable, source or project path."
@@ -99,6 +118,22 @@ namespace MCPForUnity.Editor.Services.Server
                 expandedLength += encoded.Length + 1L;
                 command.Append(windows ? "!" + name + "!" : "\"$" + name + "\"");
             }
+        }
+
+        public System.Diagnostics.ProcessStartInfo CreateManagedStartInfo(
+            string fileName,
+            IReadOnlyList<string> arguments,
+            string logFilePath,
+            string launchGate
+        )
+        {
+            return CreateLiteralHeadlessProcessStartInfo(fileName, arguments, logFilePath,
+#if UNITY_EDITOR_WIN
+                true,
+#else
+                false,
+#endif
+                launchGate);
         }
 
         // CRT argument encoding, not cmd escaping. Delayed expansion keeps every encoded value

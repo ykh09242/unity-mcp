@@ -902,12 +902,51 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.AreEqual(connected, bridge.IsRunning);
         }
 
-        private sealed class FakeServer : IServerManagementService, ILocalHttpServerStatus
+        [Test]
+        public void PreBindLaunch_PanelShowsLogAndCancellationUntilExit()
+        {
+            var section = CreateSection();
+            UseHttp("local");
+            var protocol = typeof(McpConnectionSection).GetNestedType("TransportProtocol", BindingFlags.NonPublic);
+            Get<EnumField>(section, "transportDropdown").SetValueWithoutNotify((Enum)Enum.Parse(protocol, "HTTPLocal"));
+            var button = new Button();
+            var status = new Label();
+            Set(section, "startHttpServerButton", button);
+            Set(section, "localServerStatus", status);
+            server.Pending = PendingLaunchState.Cancellable;
+            section.UpdateConnectionStatus();
+            Assert.AreEqual("Cancel Launch", button.text);
+            Assert.IsTrue(button.enabledSelf);
+            StringAssert.Contains("fixture-launch.log", status.text);
+            Invoke(section, "OnHttpServerToggleClicked");
+            Assert.AreEqual(1, server.CancelCalls);
+            Assert.AreEqual("Retry Cancellation", button.text);
+            Assert.AreEqual(0, bridge.StopCalls);
+            Assert.AreEqual(0, server.StopCalls);
+            server.Pending = PendingLaunchState.None;
+            Set(section, "lastLocalServerRunningPollTime", double.NegativeInfinity);
+            section.UpdateConnectionStatus();
+            Assert.AreEqual("Start Server", button.text);
+            Assert.IsTrue(button.enabledSelf);
+        }
+
+        private sealed class FakeServer : IServerManagementService, ILocalHttpServerStatus, IPendingLocalHttpLaunch
         {
             public bool Reachable;
             public bool Alive = true;
             public int StopCalls;
             public LocalHttpServerState? State;
+            public PendingLaunchState Pending;
+            public int CancelCalls;
+
+            public PendingLaunchState GetPendingLaunchState(string localUrl) => Pending;
+
+            public Task<bool> CancelPendingLaunchAsync(string localUrl)
+            {
+                CancelCalls++;
+                Pending = PendingLaunchState.Cancelling;
+                return Task.FromResult(true);
+            }
 
             public Task<LocalHttpServerState> InspectLocalHttpServerAsync(string url) =>
                 Task.FromResult(State ?? (Reachable ? LocalHttpServerState.ExternalServer : LocalHttpServerState.Unavailable));
@@ -920,7 +959,7 @@ namespace MCPForUnityTests.Editor.Windows
 
             public bool StartLocalHttpServer(bool quiet = false) => false;
 
-            public string GetLocalHttpServerLaunchLogPath() => null;
+            public string GetLocalHttpServerLaunchLogPath() => "fixture-launch.log";
 
             public bool IsManagedServerLaunchProcessAlive() => Alive;
 
