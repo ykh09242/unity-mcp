@@ -48,6 +48,26 @@ class NativeReply:
     retryable: bool = False
     reason: str | None = None
 
+    def proves_fresh_queue_refusal(self, resume: CommandResumeInvocation | None) -> bool:
+        # This frame's bound arbitration cannot settle a previously dispatched invocation.
+        payload = self.payload
+        data = payload.get("data")
+        return (
+            self.not_started
+            and self.reason == "command_queue_capacity"
+            and (resume is None or resume.action == "new" and resume.state == "unavailable")
+            and payload.get("status", "error") == "error"
+            and payload.get("success") is False
+            and isinstance(payload.get("error"), str)
+            and payload.get("code") == "command_queue_capacity"
+            and isinstance(data, dict)
+            and data.get("reason") == "command_queue_capacity"
+            and data.get("execution") == "not_started"
+            and data.get("dispatch") == "not_dispatched"
+            and data.get("native_resume_state", "unavailable") == "unavailable"
+            and "job_id" not in data
+        )
+
 
 class VerifiedQueueRefusal(dict[str, JsonValue]):
     """In-process witness for a queue rejection of the original, unstarted command."""
@@ -62,31 +82,13 @@ class NativeNotStarted(RuntimeError):
         *,
         transport_generation: str,
         params: dict[str, JsonValue],
+        fresh_queue_refusal: bool = False,
     ) -> None:
         super().__init__("native_operation_not_started")
         self.reply = reply
         self.transport_generation = transport_generation
         self.params = params
-
-    def proves_fresh_queue_refusal(self, resume: CommandResumeInvocation | None) -> bool:
-        # This frame's bound arbitration cannot settle a previously dispatched invocation.
-        payload = self.reply.payload
-        data = payload.get("data")
-        return (
-            self.reply.not_started
-            and self.reply.reason == "command_queue_capacity"
-            and (resume is None or resume.action == "new" and resume.state == "unavailable")
-            and payload.get("status", "error") == "error"
-            and payload.get("success") is False
-            and isinstance(payload.get("error"), str)
-            and payload.get("code") == "command_queue_capacity"
-            and isinstance(data, dict)
-            and data.get("reason") == "command_queue_capacity"
-            and data.get("execution") == "not_started"
-            and data.get("dispatch") == "not_dispatched"
-            and data.get("native_resume_state", "unavailable") == "unavailable"
-            and "job_id" not in data
-        )
+        self.fresh_queue_refusal = fresh_queue_refusal
 
 
 def valid_generation(value: str | None) -> bool:

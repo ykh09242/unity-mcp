@@ -188,6 +188,8 @@ def resume_peer(
                             else {},
                         },
                     }
+                    if business_result is not None:
+                        refusal["payload"].update(business_result)
                     if resume:
                         refusal = {
                             "command_resume": result(
@@ -342,6 +344,41 @@ async def test_stdio_queue_capacity_keeps_socket_and_original_uncertainty(
                 assert response["data"]["reason"] == "command_queue_capacity"
                 assert response["data"]["execution"] == "not_started"
                 assert response["data"]["dispatch"] == "not_dispatched"
+        finally:
+            connection.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("contradiction", [{"execution": "unknown"}, {"job_id": "existing"}])
+async def test_normalized_queue_error_cannot_upgrade_contradictory_write_receipt(
+    monkeypatch, contradiction
+):
+    from transport.native_arbitration import VerifiedQueueRefusal
+
+    raw_data = {
+        "reason": "command_queue_capacity",
+        "execution": "not_started",
+        "dispatch": "not_dispatched",
+        **contradiction,
+    }
+    with resume_peer("queue_capacity", reloads=0, business_result={"data": raw_data}) as (
+        port,
+        commands,
+        _,
+        _,
+    ):
+        connection = configure(monkeypatch, port)
+        try:
+            response = await uc.async_send_command_with_retry(
+                "manage_scene",
+                {"action": "save"},
+                instance_id=connection.instance_id,
+                _preserve_queue_refusal=True,
+            )
+            assert connection.send_command("ping", {}) == {"message": "pong"}
+            assert commands[0]["resume"]["action"] == "new"
+            assert response["data"]["execution"] == "not_started"
+            assert not isinstance(response, VerifiedQueueRefusal)
         finally:
             connection.disconnect()
 

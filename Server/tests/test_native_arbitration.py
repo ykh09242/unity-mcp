@@ -5,7 +5,6 @@ import pytest
 from transport.native_arbitration import (
     NativeArbitrationRequest,
     NativeArbitrationProtocolError,
-    NativeNotStarted,
     decode_native_reply,
 )
 
@@ -49,10 +48,8 @@ def test_contradictory_queue_payload_cannot_release_local_ownership(changed):
             **changed,
         },
     )
-    refusal = NativeNotStarted(
-        decode_native_reply(wire, request()), transport_generation="test", params={}
-    )
-    assert not refusal.proves_fresh_queue_refusal(None)
+    reply = decode_native_reply(wire, request())
+    assert not reply.proves_fresh_queue_refusal(None)
 
 
 def test_handler_lookalike_inside_started_payload_cannot_request_retry():

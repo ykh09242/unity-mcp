@@ -1248,6 +1248,9 @@ class UnityConnection:
                     reply = decode_native_reply(resp, arbitration)
                     if reply.payload.get("status") not in ("success", "error"):
                         raise _UnityProtocolError("Unity response status must be success or error")
+                    # Public resume normalization can replace contradictory business fields.
+                    # Only the original bound frame supplies the internal settlement witness.
+                    fresh_queue_refusal = reply.proves_fresh_queue_refusal(_resume)
                     if _resume is not None:
                         _resume.validate_reply(reply)
                         if _resume.action == "cancel":
@@ -1261,6 +1264,7 @@ class UnityConnection:
                             reply,
                             transport_generation=self.session_generation,
                             params=json.loads(payload)["params"],
+                            fresh_queue_refusal=fresh_queue_refusal,
                         )
                     resp = reply.payload
                     if command_type == "ping":
@@ -2937,7 +2941,7 @@ async def _async_send_command_response(
                         and resume.waiting
                         or may_retry_wire_attempt(command_type, refusal.reply)
                     ):
-                        if _preserve_queue_refusal and refusal.proves_fresh_queue_refusal(resume):
+                        if _preserve_queue_refusal and refusal.fresh_queue_refusal:
                             return VerifiedQueueRefusal(refusal.reply.payload)
                         return refusal.reply.payload
                     params = refusal.params
