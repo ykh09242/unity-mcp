@@ -52,6 +52,12 @@ The existing Immutable server source workflow runs this suite from an exact chec
 
 ## Prepare the independent skill pin
 
+Before starting its licensed jobs, exact beta release qualification checks that the
+receiving commit's server inputs match its launcher pin and that both skill directories
+match the pinned skill commit. This applies to licensed beta pushes and manual dispatches.
+The standalone server drift check remains advisory for ordinary intermediate changes to
+server inputs while the existing pin is unchanged.
+
 Verify both skill copies against the intended Unity contracts, then commit that content as C. In a later package commit P, declare the full C as `mcpSkillRevision` in `MCPForUnity/package.json`. Keep `mcpServerSource` independent: a verified server commit does not establish a verified skill revision. Do not try to make a commit contain its own SHA.
 
 Run `python tools/check_skill_pin.py --repo . --verify-git` after preparing the package. It checks locally available committed content and both current mirrors without fetching or changing the pin. Missing history is an explicit failure. The package commit P, selected server commit S and selected skill commit C can all differ.

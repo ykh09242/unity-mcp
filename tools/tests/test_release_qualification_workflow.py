@@ -84,6 +84,8 @@ def test_qualification_requires_the_selected_server_suite_at_the_server_sha(
     "path",
     [
         "MCPForUnity/package.json",
+        ".claude/skills/unity-mcp-skill/SKILL.md",
+        "unity-mcp-skill/SKILL.md",
         "manifest.json",
         "release-source-inputs.json",
         "MCPForUnity/Editor/Tools/AssetGen/AssetGenPaths.cs",
@@ -187,16 +189,43 @@ def test_qualification_reuses_exact_sha_and_selected_pair_with_full_native_scope
     assert "Windows native package shapes are SKIPPED" in str(jobs["license_free"])
 
 
-def test_manual_qualification_requires_current_server_history(history):
+def test_every_qualification_requires_current_server_and_skill_history(history):
     repo, _, base = history
     steps = workflow("release-qualification.yml")["jobs"]["identity"]["steps"]
     prepare = next(step for step in steps if "prepare_source_pin_history.py" in step.get("run", ""))
     strict = next(step for step in steps if "check_source_pin_drift.py" in step.get("run", ""))
+    skill = next(step for step in steps if "check_skill_pin.py" in step.get("run", ""))
+    pair = next(step for step in steps if step.get("id") == "pair")
     assert steps.index(prepare) < steps.index(strict)
-    for step in (prepare, strict):
-        assert step["if"] == "github.event_name == 'workflow_dispatch'"
-        assert step["env"]["CHECK_REVISION"] == "${{ github.sha }}"
+    assert steps.index(prepare) < steps.index(skill) < steps.index(pair)
+    assert '--revision "$CHECK_REVISION" --component skill' in prepare["run"]
+    for step in (prepare, strict, skill):
+        assert (
+            step["if"]
+            == "vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'"
+        )
         assert not step.get("continue-on-error")
+    assert (
+        prepare["env"]["CHECK_REVISION"] == strict["env"]["CHECK_REVISION"] == "${{ github.sha }}"
+    )
+    assert any(
+        step.get("with", {}).get("ref") == "${{ github.sha }}"
+        for step in steps[: steps.index(prepare)]
+    )
+
+    # The fixture's server metadata selects a syntactically valid but unavailable skill.
+    skill_command = shlex.split(skill["run"])
+    assert skill_command[:2] == ["python3", "tools/check_skill_pin.py"]
+    put(repo, "unity-mcp-skill/SKILL.md", "fixture")
+    put(repo, ".claude/skills/unity-mcp-skill/SKILL.md", "fixture")
+    commit(repo)
+    skill_result = subprocess.run(
+        [sys.executable, str(ROOT / skill_command[1]), *skill_command[2:], "--repo", str(repo)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert skill_result.returncode == 1 and "not an available local commit" in skill_result.stdout
 
     put(repo, "Server/src/main.py", "# changed server input\n")
     candidate = commit(repo)

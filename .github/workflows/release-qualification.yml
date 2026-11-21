@@ -8,6 +8,8 @@ on:
     branches: [beta]
     paths:
       - MCPForUnity/**
+      - unity-mcp-skill/**
+      - .claude/skills/unity-mcp-skill/**
       - Server/**
       - TestProjects/UnityMCPTests/**
       - CustomTools/**
@@ -45,16 +47,21 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Prepare immutable pinned history for manual qualification
-        if: github.event_name == 'workflow_dispatch'
+      - name: Prepare immutable server and skill history for qualification
+        if: vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'
         env:
           CHECK_REVISION: ${{ github.sha }}
-        run: python3 tools/prepare_source_pin_history.py --revision "$CHECK_REVISION"
-      - name: Require current launcher source for manual qualification
-        if: github.event_name == 'workflow_dispatch'
+        run: |
+          python3 tools/prepare_source_pin_history.py --revision "$CHECK_REVISION"
+          python3 tools/prepare_source_pin_history.py --revision "$CHECK_REVISION" --component skill
+      - name: Require current launcher source for qualification
+        if: vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'
         env:
           CHECK_REVISION: ${{ github.sha }}
         run: python3 tools/check_source_pin_drift.py --revision "$CHECK_REVISION" --require-current
+      - name: Require both receiving skill mirrors to match their immutable pin
+        if: vars.UNITY_RUN_LICENSED_TESTS == 'true' || github.event_name == 'workflow_dispatch'
+        run: python3 tools/check_skill_pin.py --verify-git
       - name: Verify receiving SHA and committed selected-server pair
         id: pair
         env:

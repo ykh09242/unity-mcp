@@ -24,6 +24,8 @@ TOOLS_ONLY = frozenset(
 # Keep in sync with release-qualification.yml's beta push paths. The tests
 # compare these prefixes and files to the actual workflow filter.
 QUALIFICATION_PREFIXES = (
+    "unity-mcp-skill/",
+    ".claude/skills/unity-mcp-skill/",
     "MCPForUnity/",
     "Server/",
     "TestProjects/UnityMCPTests/",
