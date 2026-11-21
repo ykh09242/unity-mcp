@@ -38,7 +38,8 @@ async def execute_menu_item(
     ctx: Context,
     menu_path: Annotated[
         StrictStr,
-        "Exact menu path, maximum 1024 UTF-16 characters/4096 UTF-8 bytes; no NUL/newlines.",
+        "Exact declared path, maximum 1024 UTF-16 characters/4096 UTF-8 bytes, no NUL/newlines. "
+        "For an unknown path, read mcpforunity://menu-items and copy a matching declaration verbatim.",
     ]
     | None = None,
     action: Annotated[

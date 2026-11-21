@@ -90,3 +90,37 @@ def test_exact_identifier_and_multiple_route_terms_have_distinct_lexical_bases()
     )
     assert multi["routes"][0]["readiness"] == "unobserved"
     assert multi["routes"][0]["advertised"] is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "콘솔에 찍힌 에러만 보여줘",
+        "Show only Console errors",
+        "コンソールのエラーだけ見せて",
+        "Enséñame solo los errores de la consola",
+        "أرني أخطاء وحدة التحكم فقط",
+        "Konsoldaki hataları göster",
+    ],
+)
+def test_console_read_by_meaning_keeps_the_original_request(query):
+    from services.registry.observation_predicates import evaluate_observation
+
+    search = result("search", query, "--intent", "observe", "--required-value", "console.entries")
+    route = search["routes"][0]
+    assert search["query"] == query and search["matching"] == "observation"
+    assert (route["tool"], route["operation"]) == ("read_console", "get")
+    assert route["arguments"] == {"action": "get", "format": "json", "page_size": 10}
+    assert 'types=["error"]' in route["purpose"]
+    for items, expected in (([], True), ([{"message": "오류"}], True), ("", False)):
+        receipt = {"success": True, "data": {"items": items}}
+        assert evaluate_observation(route["observation"], receipt, ["console.entries"]) == {
+            "console.entries": expected
+        }
+
+
+def test_console_read_and_clear_have_separate_intents():
+    read = result("catalog", "--tool", "read_console", "--intent", "observe")
+    clear = result("catalog", "--tool", "read_console", "--intent", "interact")
+    assert [c["action"] for c in read["actions"]] == ["get"]
+    assert [c["action"] for c in clear["actions"]] == ["clear"]

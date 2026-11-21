@@ -22,6 +22,7 @@ ObservationValue = Literal[
     "presets",
     "rendered_image",
     "pointer_hit_order",
+    "console.entries",
     "active_scene.name",
     "active_scene.path",
     "compilation.is_compiling",
@@ -64,7 +65,7 @@ class Observation(TypedDict):
     predicates: NotRequired[EvidencePredicates]
     required_parameters: NotRequired[list[str]]
     related_values: NotRequired[dict[str, list[ObservationValue]]]
-    fixed_arguments: NotRequired[dict[str, bool]]
+    fixed_arguments: NotRequired[dict[str, bool | str | int]]
     mutually_exclusive_values: NotRequired[list[list[ObservationValue]]]
 
 

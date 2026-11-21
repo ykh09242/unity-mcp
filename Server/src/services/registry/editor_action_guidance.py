@@ -289,4 +289,28 @@ _UI: Final = {
     ),
 }
 
-EDITOR_ACTIONS: Final = {"manage_asset": _ASSET, "manage_camera": _CAMERA, "manage_ui": _UI}
+EDITOR_ACTIONS: Final = {
+    "manage_asset": _ASSET,
+    "manage_camera": _CAMERA,
+    "manage_ui": _UI,
+    "read_console": {
+        "get": ActionGuidance(
+            'Read Unity Console entries. For errors only, set types=["error"]. '
+            "Use filter_text for the requested text and nextCursor to continue a page.",
+            effects=READ_ONLY_EFFECTS,
+            intent="observe",
+            observation={
+                "source": "editor_live",
+                "values": ["console.entries"],
+                "unavailable": [],
+                "wire_paths": {"console.entries": "items"},
+                "fixed_arguments": {"format": "json", "page_size": 10},
+                "predicates": {
+                    "all": [{"op": "type", "path": "items", "type": "array"}],
+                    "by_value": {},
+                },
+            },
+        ),
+        "clear": _interact("Clear the retained Unity Console entries."),
+    },
+}

@@ -52,11 +52,15 @@ logger = logging.getLogger("mcp-for-unity-server")
 async def search_unity_tools(
     ctx: Context,
     query: Annotated[
-        str | None, Field(max_length=512), "Optional original task or lexical query."
+        str | None,
+        Field(max_length=512),
+        "Original request in its own language or a lexical query.",
     ] = None,
     limit: Annotated[int, Field(strict=True, ge=1, le=20), "Maximum results per page."] = 5,
     catalog_query: Annotated[
-        str | None, Field(max_length=512), "Optional alternate catalog terms for a lexical query."
+        str | None,
+        Field(max_length=512),
+        "Optional English action and target terms for lexical search.",
     ] = None,
     intent: Annotated[ActionIntent | None, "Requested operation purpose."] = None,
     observation_source: Annotated[
@@ -175,7 +179,7 @@ async def manage_tools(
     catalog_query: Annotated[
         str | None,
         Field(max_length=512),
-        "Optional alternate terms for literal search, such as a known API identifier. The complete catalog is available for requests in any language.",
+        "Optional English action and target terms or exact API identifier for lexical search.",
     ] = None,
     offset: Annotated[
         int, Field(strict=True, ge=0), "Catalog page offset for a selected group or tool."

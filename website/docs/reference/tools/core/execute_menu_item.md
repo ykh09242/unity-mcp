@@ -20,7 +20,7 @@ Inspect menu declarations or invoke a menu by exact path. inspect/exists never e
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `menu_path` | `str \| None` | — | Exact menu path, maximum 1024 UTF-16 characters/4096 UTF-8 bytes; no NUL/newlines. |
+| `menu_path` | `str \| None` | — | Exact declared path, maximum 1024 UTF-16 characters/4096 UTF-8 bytes, no NUL/newlines. For an unknown path, read mcpforunity://menu-items and copy a matching declaration verbatim. |
 | `action` | `Literal['execute', 'inspect', 'exists', 'evaluate_availability'] \| None` | — | Default execute; inspect/exists reads declarations only; evaluate_availability opts into validation callbacks. |
 | `wait_for` | `Literal['none', 'console_window_open'] \| None` | — | Optional allowlisted window-presence observation, not general menu completion. |
 | `timeout_ms` | `int \| None` | — | Observation ceiling, default 300000ms; permitted only with a supported wait_for. |

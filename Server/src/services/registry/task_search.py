@@ -779,7 +779,9 @@ def search_catalog(
             "Interpret the original request in its own language. Use navigation to choose by purpose "
             "even when words do not match or lexical suggestions are incidental. Browse the selected "
             "domain and compare action outcomes or read a listed resource. Supply intent with a tool or tool group in catalog "
-            "to browse classified actions without matching any words. catalog_query is optional."
+            "to browse classified actions without matching any words. catalog_query is optional. "
+            "For another lexical search, supply the action and target in English. Keep names, paths "
+            "and requested text verbatim in the eventual call."
         ),
         "navigation": navigation,
         "results": [item[2] for item in matches[: request.limit]],

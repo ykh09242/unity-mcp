@@ -19,7 +19,7 @@ class Choice(TypedDict):
 class FieldType(TypedDict):
     op: Literal["type"]
     path: str
-    type: Literal["string", "boolean", "positive_integer", "nonnegative_integer", "hex32"]
+    type: Literal["string", "boolean", "array", "positive_integer", "nonnegative_integer", "hex32"]
 
 
 class RelatedField(TypedDict):
@@ -84,6 +84,8 @@ def _satisfies(data: dict, clause: Predicate) -> bool:
                     return type(value) is str
                 case "boolean":
                     return type(value) is bool
+                case "array":
+                    return type(value) is list
                 case "positive_integer":
                     return type(value) is int and value > 0
                 case "nonnegative_integer":

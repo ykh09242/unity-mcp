@@ -20,12 +20,12 @@ Search Unity tools, actions and readable resources without changing selection or
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `query` | `str \| None` | — | Optional original task or lexical query. |
+| `query` | `str \| None` | — | Original request in its own language or a lexical query. |
 | `limit` | `int` | — | Maximum results per page. |
-| `catalog_query` | `str \| None` | — | Optional alternate catalog terms for a lexical query. |
+| `catalog_query` | `str \| None` | — | Optional English action and target terms for lexical search. |
 | `intent` | `Literal['observe', 'interact', 'edit'] \| None` | — | Requested operation purpose. |
 | `observation_source` | `Literal['editor_live', 'asset_file', 'imported_asset', 'compile_job', 'scenario_job'] \| None` | — | Origin of the required evidence. |
-| `required_values` | `list[Literal['unityCameras', 'cinemachineCameras', 'cinemachineInstalled', 'render_size.width', 'render_size.height', 'current_size', 'view_instance_id', 'presets', 'rendered_image', 'pointer_hit_order', 'active_scene.name', 'active_scene.path', 'compilation.is_compiling', 'compile_job.outcome', 'scenario_job.outcome', 'nodeCount', 'edgeCount', 'nodes', 'edges', 'properties', 'keywords', 'unsaved_graph_structure', 'property_values', 'shader_source', 'contents', 'encodedContents', 'nextOffset', 'shader_graph_structure', 'unsaved_source', 'compilation', 'passes', 'subshader_count', 'navigation.module_available', 'navigation.package_available', 'project_auditor.api_supported', 'project_auditor.rules_available']] \| None` | — | Select every result field the observation must supply. |
+| `required_values` | `list[Literal['unityCameras', 'cinemachineCameras', 'cinemachineInstalled', 'render_size.width', 'render_size.height', 'current_size', 'view_instance_id', 'presets', 'rendered_image', 'pointer_hit_order', 'console.entries', 'active_scene.name', 'active_scene.path', 'compilation.is_compiling', 'compile_job.outcome', 'scenario_job.outcome', 'nodeCount', 'edgeCount', 'nodes', 'edges', 'properties', 'keywords', 'unsaved_graph_structure', 'property_values', 'shader_source', 'contents', 'encodedContents', 'nextOffset', 'shader_graph_structure', 'unsaved_source', 'compilation', 'passes', 'subshader_count', 'navigation.module_available', 'navigation.package_available', 'project_auditor.api_supported', 'project_auditor.rules_available']] \| None` | — | Select every result field the observation must supply. |
 | `route_surfaces` | `Literal['both', 'tools', 'resources'] \| None` | — | Group tools, resources or both (default). |
 | `host_tool_names` | `list[str] \| None` | — | Complete callable tool names exposed by this host for this connection. Omit if unknown. |
 | `host_tool_evidence` | `HostToolEvidence \| None` | — | Bounded exact-name checks from this host on the same connection and target. Use instead of host_tool_names. Incomplete misses stay unknown. |

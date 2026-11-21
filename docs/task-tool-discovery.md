@@ -351,6 +351,18 @@ before treating an addition as compatible or a reported change as intentional.
 After reviewing a deliberate contract change, regenerate with the existing
 generator and commit the generated fixture with the source change.
 
+## Choosing an operation across languages
+
+For a request in any language, use an advertised operation directly when its
+source, effects and arguments fit. During discovery keep the original wording
+in `query`. For example, choose `observation_source="editor_live"` and
+`required_values=["console.entries"]` to discover a paged Console read.
+To get errors only, add `types=["error"]` to the returned arguments. Copy user
+filter text, object identifiers and asset paths verbatim. On a lexical-only
+host, place English action and target terms such as `console errors` in
+`catalog_query` if advertised, or browse by intent. For an unknown menu
+path, read `mcpforunity://menu-items` and use the returned spelling.
+
 ## Inspecting an open Shader Graph
 
 `inspect_open_shader_graph(path)` and `manage_shader(action="inspect_open_graph", path=...)`
