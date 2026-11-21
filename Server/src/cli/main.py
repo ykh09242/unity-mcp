@@ -1,11 +1,10 @@
 """Unity MCP Command Line Interface - Main Entry Point."""
 
 import sys
-from importlib import import_module
 
 import click
-from cli.utils.parsers import admit_raw_json_args, load_finite_json
 from cli import __version__
+from cli.registration import COMMANDS, LazyCommandGroup
 from cli.utils.config import (
     HTTP_PORT_TYPE,
     OUTPUT_FORMAT_TYPE,
@@ -19,11 +18,12 @@ from cli.utils.connection import (
     UnityConnectionError,
     handle_unity_errors,
     print_connection_error,
+    remote_host_warning_scope,
     run_check_connection,
     run_command,
     run_list_instances,
-    remote_host_warning_scope,
 )
+from cli.utils.input_errors import CLIInputError
 from cli.utils.output import (
     format_instance_line,
     format_output,
@@ -31,7 +31,7 @@ from cli.utils.output import (
     print_info,
     print_success,
 )
-from cli.utils.input_errors import CLIInputError
+from cli.utils.parsers import admit_raw_json_args, load_finite_json
 from cli.utils.suggestions import format_suggestions, suggest_matches
 
 
@@ -73,7 +73,7 @@ def _resolve_command_with_suggestions(self: click.Group, ctx: click.Context, arg
 click.Group.resolve_command = _resolve_command_with_suggestions  # type: ignore[assignment]
 
 
-class CLIGroup(click.Group):
+class CLIGroup(LazyCommandGroup):
     """Keep shared parser failures structured even for undecorated subcommands."""
 
     @handle_unity_errors
@@ -327,80 +327,8 @@ def raw_command(ctx: Context, command_type: str, params: tuple):
         sys.exit(1)
 
 
-# Import and register command groups
-# These will be implemented in subsequent TODOs
-def register_commands():
-    """Register all command groups."""
-
-    def register_optional_command(module_name: str, command_name: str) -> None:
-        try:
-            module = import_module(module_name)
-        except ModuleNotFoundError as e:
-            if e.name == module_name:
-                return
-            print_error(f"Failed to load command module '{module_name}': {e}")
-            return
-        except Exception as e:
-            print_error(f"Failed to load command module '{module_name}': {e}")
-            return
-
-        command = getattr(module, command_name, None)
-        if command is None:
-            print_error(f"Command '{command_name}' not found in '{module_name}'")
-            return
-
-        cli.add_command(command)
-
-    optional_commands = [
-        ("cli.commands.receipt", "receipt"),
-        ("cli.commands.tool", "tool"),
-        ("cli.commands.tool", "custom_tool"),
-        ("cli.commands.gameobject", "gameobject"),
-        ("cli.commands.component", "component"),
-        ("cli.commands.scene", "scene"),
-        ("cli.commands.scene_edits", "scene_edit"),
-        ("cli.commands.scenario_recording", "scenario_recording"),
-        ("cli.commands.asset", "asset"),
-        ("cli.commands.asset_gen", "asset_gen"),
-        ("cli.commands.blender", "blender"),
-        ("cli.commands.script", "script"),
-        ("cli.commands.verification", "verification"),
-        ("cli.commands.verification_candidate", "verification_candidate"),
-        ("cli.commands.verification_workflow_evidence", "verification_evidence"),
-        ("cli.commands.code", "code"),
-        ("cli.commands.editor", "editor"),
-        ("cli.commands.play_scenario", "play_scenario"),
-        ("cli.commands.prefab", "prefab"),
-        ("cli.commands.material", "material"),
-        ("cli.commands.lighting", "lighting"),
-        ("cli.commands.animation", "animation"),
-        ("cli.commands.sprite", "sprite"),
-        ("cli.commands.audio", "audio"),
-        ("cli.commands.ui", "ui"),
-        ("cli.commands.instance", "instance"),
-        ("cli.commands.shader", "shader"),
-        ("cli.commands.vfx", "vfx"),
-        ("cli.commands.batch", "batch"),
-        ("cli.commands.texture", "texture"),
-        ("cli.commands.probuilder", "probuilder"),
-        ("cli.commands.project_auditor", "project_auditor"),
-        ("cli.commands.build", "build"),
-        ("cli.commands.camera", "camera"),
-        ("cli.commands.graphics", "graphics"),
-        ("cli.commands.packages", "packages"),
-        ("cli.commands.reflect", "reflect"),
-        ("cli.commands.docs", "docs"),
-        ("cli.commands.doctor", "doctor"),
-        ("cli.commands.physics", "physics"),
-        ("cli.commands.profiler", "profiler"),
-    ]
-
-    for module_name, command_name in optional_commands:
-        register_optional_command(module_name, command_name)
-
-
-# Register commands on import
-register_commands()
+for command in COMMANDS:
+    cli.add_command(command)
 
 
 def main():

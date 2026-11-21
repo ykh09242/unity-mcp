@@ -407,11 +407,16 @@ def test_missing_declared_optional_registration_fails_before_reference_generatio
     package = tmp_path / "Server/src/cli"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "registration.py").write_bytes(
+        (TOOLS.parent / "Server/src/cli/registration.py").read_bytes()
+    )
     (package / "main.py").write_text(
-        "import click\ncli = click.Group('unity-mcp')\noptional_commands = [('cli.commands.missing', 'missing')]\n",
+        "from cli.registration import LazyCommand, LazyCommandGroup\n"
+        "COMMANDS = (LazyCommand('missing', 'Missing command.'),)\n"
+        "cli = LazyCommandGroup('unity-mcp', commands=COMMANDS)\n",
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="Incomplete declared CLI registration"):
+    with pytest.raises(ValueError, match="Incomplete declared CLI registration: missing"):
         prepare_cli_reference(tmp_path)
     assert not (tmp_path / "website").exists()
 
@@ -421,7 +426,7 @@ def test_actual_worker_reports_bad_subordinate_option_with_page_and_line(tmp_pat
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "main.py").write_text(
-        "import click\ncli = click.Group('unity-mcp')\noptional_commands = []\n"
+        "import click\ncli = click.Group('unity-mcp')\nCOMMANDS = ()\n"
         "def forbidden(): raise AssertionError('Command callback ran')\n"
         "cli.add_command(click.Command('show', callback=forbidden, params=[click.Option(['--count'], type=int)]))\n",
         encoding="utf-8",

@@ -1,18 +1,17 @@
 """Project the actual Click command tree in an isolated, non-executing worker."""
 
 import argparse
-import ast
-from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import dataclass
 import importlib
 import io
 import json
 import os
-from pathlib import Path
 import socket
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import dataclass
+from pathlib import Path
 
 import click
 
@@ -191,28 +190,23 @@ def _load_cli(root: Path) -> click.Group:
     diagnostics = io.StringIO()
     with redirect_stderr(diagnostics), redirect_stdout(diagnostics):
         module = importlib.import_module("cli.main")
+        if not Path(module.__file__).resolve().is_relative_to(source):
+            raise ValueError("CLI import escaped the selected repository")
+        with click.Context(module.cli) as context:
+            for metadata in module.COMMANDS:
+                name = metadata.name
+                try:
+                    command = module.cli.get_command(context, name)
+                except click.UsageError as error:
+                    raise ValueError(f"Incomplete declared CLI registration: {name}") from error
+                if command is None or command is not metadata.implementation:
+                    raise ValueError(f"Incomplete declared CLI registration: {name}")
+                if metadata.hidden != command.hidden or metadata.get_short_help_str(
+                    limit=1000
+                ) != command.get_short_help_str(limit=1000):
+                    raise ValueError(f"CLI listing metadata differs from the command: {name}")
     if diagnostics.getvalue():
         raise ValueError("CLI registration emitted import diagnostics")
-    if not Path(module.__file__).resolve().is_relative_to(source):
-        raise ValueError("CLI import escaped the selected repository")
-    # register_commands intentionally treats optional imports as optional. A repo
-    # reference must not silently omit a declared group when generation is broken.
-    declarations = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
-    registration = next(
-        node.value
-        for node in ast.walk(declarations)
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "optional_commands"
-            for target in node.targets
-        )
-    )
-    with click.Context(module.cli) as context:
-        for module_name, attribute in ast.literal_eval(registration):
-            loaded = sys.modules.get(module_name)
-            command = getattr(loaded, attribute, None)
-            if command is None or module.cli.get_command(context, command.name) is not command:
-                raise ValueError(f"Incomplete declared CLI registration: {module_name}.{attribute}")
     return module.cli
 
 
