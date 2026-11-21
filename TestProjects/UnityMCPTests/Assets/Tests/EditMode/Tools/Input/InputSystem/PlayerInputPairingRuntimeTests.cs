@@ -65,6 +65,12 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                 JObject diagnostic = JObject.FromObject(diagnose.Invoke(backend, new object[] { first.gameObject }));
                 Assert.AreEqual(first.playerIndex, (int)diagnostic["player_index"]);
                 CollectionAssert.AreEquivalent(beforeOne, first.devices.Select(d => d.deviceId));
+                backend.Apply(InputSimulationRequest.Parse(JObject.Parse("{'action':'key','key':'Space','frames':100}")));
+                var keyboard = Keyboard.current;
+                InputApi.Update();
+                Assert.IsTrue(keyboard.spaceKey.isPressed);
+                Assert.IsFalse((bool)JObject.FromObject(backend.ReleasePlayer(first.gameObject))["pairing_released"]);
+                Assert.IsTrue(keyboard.added && keyboard.spaceKey.isPressed);
                 pair.Invoke(backend, new object[] { first.gameObject, "gamepad" });
                 Gamepad owned = Gamepad.current;
                 Assert.Contains(owned, first.devices.ToArray());
@@ -75,6 +81,18 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                 InputApi.Update();
                 Assert.Greater(first.actions["Gameplay/Move"].ReadValue<Vector2>().magnitude, 0.5f);
                 Assert.AreEqual(Vector2.zero, second.actions["Gameplay/Move"].ReadValue<Vector2>());
+                Assert.IsFalse((bool)JObject.FromObject(backend.ReleasePlayer(second.gameObject))["pairing_released"]);
+                Assert.Contains(owned, first.devices.ToArray());
+                Assert.IsTrue((bool)JObject.FromObject(backend.ReleasePlayer(first.gameObject))["pairing_released"]);
+                Assert.IsFalse(owned.added);
+                CollectionAssert.AreEquivalent(beforeOne, first.devices.Select(d => d.deviceId));
+                for (int update = 2; update < 100; update++)
+                    InputApi.Update();
+                Assert.IsTrue(keyboard.added && keyboard.spaceKey.isPressed);
+                InputApi.Update();
+                Assert.IsFalse(keyboard.spaceKey.isPressed);
+                pair.Invoke(backend, new object[] { first.gameObject, "gamepad" });
+                owned = Gamepad.current;
                 EditorApplication.isPaused = true;
                 yield return null;
                 Assert.IsFalse(owned.added, "Real pause callback must remove the paired owned device.");

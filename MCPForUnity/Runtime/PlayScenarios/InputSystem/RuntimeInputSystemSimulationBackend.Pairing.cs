@@ -45,9 +45,10 @@ namespace MCPForUnity.Editor.Tools.Input
             return player;
         }
 
-        public object DiagnosePlayer(GameObject target)
+        public object DiagnosePlayer(GameObject target) => PlayerDiagnostics(RequirePlayer(target));
+
+        private Dictionary<string, object> PlayerDiagnostics(Behaviour player)
         {
-            Behaviour player = RequirePlayer(target);
             var user = (InputUser)User.GetValue(player);
             bool inputActive = (bool)InputActive.GetValue(player);
             bool active = player.isActiveAndEnabled && inputActive && user.valid;
@@ -98,7 +99,7 @@ namespace MCPForUnity.Editor.Tools.Input
             if (_pairedPlayer == player && _gamepad != null && _gamepad.added && _pairedUser.valid && user.id == _pairedUser.id)
                 return DiagnosePlayer(target);
             if (_pairedPlayer == player)
-                ReleaseAll();
+                ReleasePlayerLease();
             if (_gamepad != null && _gamepad.added && _gamepadReleases.Count > 0)
                 throw new ArgumentException("Release held gamepad controls before creating a PlayerInput pairing lease.");
             EnsureLease();
@@ -117,7 +118,7 @@ namespace MCPForUnity.Editor.Tools.Input
             }
             catch
             {
-                ReleaseAll();
+                ReleasePlayerLease();
                 throw;
             }
         }
@@ -125,12 +126,23 @@ namespace MCPForUnity.Editor.Tools.Input
         public object ReleasePlayer(GameObject target)
         {
             Behaviour player = RequirePlayer(target);
-            if (_subscribed && Clock >= _deadline)
+            bool released = _pairedPlayer == player;
+            if (released)
+                ReleasePlayerLease();
+            var diagnostics = PlayerDiagnostics(player);
+            diagnostics["pairing_released"] = released;
+            return diagnostics;
+        }
+
+        private void ReleasePlayerLease()
+        {
+            if (_keyboard == null && _mouse == null && _touchscreen == null)
+            {
                 ReleaseAll();
-            if (_pairedPlayer != null && _pairedPlayer != player)
-                throw new ArgumentException("target does not own the active pairing lease.");
-            ReleaseAll();
-            return DiagnosePlayer(target);
+                return;
+            }
+            RestorePlayerPairing();
+            ReleaseGamepad();
         }
 
         private void RestorePlayerPairing()
