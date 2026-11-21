@@ -1,9 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.SceneEdits;
 using Newtonsoft.Json.Linq;
@@ -19,7 +18,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         // Preserved unchanged through isolated load/save; these are not scene-edit property codecs.
         private static readonly HashSet<Type> PreservedSourceTypes = new HashSet<Type> { typeof(MeshFilter), typeof(MeshRenderer) };
         private const double Lifetime = 600;
-        private const long MaxBytes = 256L * 1024 * 1024;
         private static readonly Dictionary<string, Plan> Previews = new Dictionary<string, Plan>(StringComparer.Ordinal);
 
         private sealed class Plan
@@ -31,7 +29,28 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             internal double ExpiresAt;
         }
 
-        internal static object Preview(JObject request)
+        private sealed class IsolatedContents : IDisposable
+        {
+            internal GameObject Root { get; private set; }
+
+            internal IsolatedContents(string path)
+            {
+                Root = PrefabUtility.LoadPrefabContents(path);
+                AssemblyReloadEvents.beforeAssemblyReload += Dispose;
+                EditorApplication.quitting += Dispose;
+            }
+
+            public void Dispose()
+            {
+                AssemblyReloadEvents.beforeAssemblyReload -= Dispose;
+                EditorApplication.quitting -= Dispose;
+                if (Root != null)
+                    PrefabUtility.UnloadPrefabContents(Root);
+                Root = null;
+            }
+        }
+
+        internal static async Task<object> Preview(JObject request, bool background, CancellationToken cancellationToken)
         {
             StableEditor();
             if (request["name"] != null)
@@ -42,7 +61,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             string path = AssetPathUtility.GetContainedAssetPath(Text(request, "prefabPath"));
             if (string.IsNullOrEmpty(path) || !path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("A contained .prefab asset path is required.");
-            string hash = SourceHash(path);
+            ValidateSource(AssetDatabase.LoadAssetAtPath<GameObject>(path));
+            using var revision = await PrefabSourceRevision.Observe(path, background, cancellationToken);
+            StableEditor();
+            string hash = revision.Hash;
             GameObject root = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             ValidateSource(root);
             var fields = new JObject();
@@ -88,8 +110,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
             if (fields.Count == 0)
                 throw new ArgumentException("At least one root field is required.");
-            if (SourceHash(path) != hash)
-                throw new InvalidOperationException("Prefab source changed during preview. Preview again.");
+            cancellationToken.ThrowIfCancellationRequested();
+            revision.VerifyCurrent();
             foreach (string expired in Previews.Where(pair => pair.Value.ExpiresAt <= EditorApplication.timeSinceStartup).Select(pair => pair.Key).ToArray())
                 Previews.Remove(expired);
             if (Previews.Count >= 32)
@@ -120,7 +142,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             );
         }
 
-        internal static object Apply(JObject request)
+        internal static async Task<object> Apply(JObject request, bool background, CancellationToken cancellationToken)
         {
             StableEditor();
             Keys(request, "action", "preview_id", "previewId");
@@ -132,80 +154,79 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             Previews.Remove(token);
             if (EditorApplication.timeSinceStartup >= plan.ExpiresAt)
                 throw new ArgumentException("Prefab preview expired. Preview again.");
-            Verify(plan);
             ValidateSource(AssetDatabase.LoadAssetAtPath<GameObject>(plan.Path));
-            GameObject contents = PrefabUtility.LoadPrefabContents(plan.Path);
-            try
-            {
-                // Recheck after loading and before any isolated native field mutation.
-                Verify(plan);
-                var propertyPaths = plan
-                    .Fields.Properties()
-                    .Select(field =>
-                        field.Name switch
-                        {
-                            "setActive" => "m_IsActive",
-                            "position" => "m_LocalPosition",
-                            "rotation" => "m_LocalRotation",
-                            "scale" => "m_LocalScale",
-                            _ => throw new InvalidOperationException("Unsupported stored prefab field."),
-                        }
-                    )
-                    .ToArray();
-                var before = ReadProperties(contents, propertyPaths);
-                foreach (JProperty field in plan.Fields.Properties())
-                    switch (field.Name)
+            using var revision = await PrefabSourceRevision.Observe(plan.Path, background, cancellationToken);
+            StableEditor();
+            if (revision.Hash != plan.Hash || EditorApplication.timeSinceStartup >= plan.ExpiresAt)
+                throw new InvalidOperationException("Prefab source or dependency drifted, or the preview expired. Preview again.");
+            ValidateSource(AssetDatabase.LoadAssetAtPath<GameObject>(plan.Path));
+            using var isolated = new IsolatedContents(plan.Path);
+            GameObject contents = isolated.Root;
+            cancellationToken.ThrowIfCancellationRequested();
+            var propertyPaths = plan
+                .Fields.Properties()
+                .Select(field =>
+                    field.Name switch
                     {
-                        case "setActive":
-                            contents.SetActive(field.Value.Value<bool>());
-                            break;
-                        case "position":
-                            contents.transform.localPosition = ReadVector(field.Value);
-                            break;
-                        case "rotation":
-                            contents.transform.localEulerAngles = ReadVector(field.Value);
-                            break;
-                        case "scale":
-                            contents.transform.localScale = ReadVector(field.Value);
-                            break;
-                        default:
-                            throw new InvalidOperationException("Unsupported stored prefab field.");
+                        "setActive" => "m_IsActive",
+                        "position" => "m_LocalPosition",
+                        "rotation" => "m_LocalRotation",
+                        "scale" => "m_LocalScale",
+                        _ => throw new InvalidOperationException("Unsupported stored prefab field."),
                     }
-                // The source remains untouched while isolated contents are prepared.
-                Verify(plan);
-                string path = AssetPathUtility.GetContainedAssetPath(plan.Path);
-                ValidateSource(AssetDatabase.LoadAssetAtPath<GameObject>(path));
-                PrefabUtility.SaveAsPrefabAsset(contents, path, out bool saved);
-                if (!saved)
-                    return new ErrorResponse(
-                        "Prefab save failed; inspect the source before retrying.",
-                        new { save_attempted = true, atomicity = "compare_before_save" }
-                    );
-                GameObject asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-                var applied = ReadProperties(asset, propertyPaths);
-                string guid = AssetDatabase.AssetPathToGUID(path);
-                string objectId = GlobalObjectId.GetGlobalObjectIdSlow(asset).ToString();
-                string transformId = GlobalObjectId.GetGlobalObjectIdSlow(asset.transform).ToString();
-                string receipt = PropertyUndoReceipts.Retain(() => Restore(guid, objectId, transformId, before, applied));
-                return new SuccessResponse(
-                    "Previewed prefab root fields saved.",
-                    new
-                    {
-                        prefab_path = path,
-                        receipt_id = receipt,
-                        source_hash = plan.Hash,
-                        impact = plan.Impact,
-                        atomicity = "compare_before_save",
-                        saved = true,
-                        verification = ManagePrefabs.SavedVerification(path, System.Array.Empty<int>(), System.Array.Empty<string>(), plan.Fields),
-                    }
+                )
+                .ToArray();
+            var before = ReadProperties(contents, propertyPaths);
+            foreach (JProperty field in plan.Fields.Properties())
+                switch (field.Name)
+                {
+                    case "setActive":
+                        contents.SetActive(field.Value.Value<bool>());
+                        break;
+                    case "position":
+                        contents.transform.localPosition = ReadVector(field.Value);
+                        break;
+                    case "rotation":
+                        contents.transform.localEulerAngles = ReadVector(field.Value);
+                        break;
+                    case "scale":
+                        contents.transform.localScale = ReadVector(field.Value);
+                        break;
+                    default:
+                        throw new InvalidOperationException("Unsupported stored prefab field.");
+                }
+            // The source remains untouched while isolated contents are prepared.
+            await revision.VerifyBeforeSave(background, cancellationToken);
+            StableEditor();
+            string path = AssetPathUtility.GetContainedAssetPath(plan.Path);
+            ValidateSource(AssetDatabase.LoadAssetAtPath<GameObject>(path));
+            revision.Dispose();
+            cancellationToken.ThrowIfCancellationRequested();
+            PrefabUtility.SaveAsPrefabAsset(contents, path, out bool saved);
+            if (!saved)
+                return new ErrorResponse(
+                    "Prefab save failed; inspect the source before retrying.",
+                    new { save_attempted = true, atomicity = "compare_before_save" }
                 );
-            }
-            finally
-            {
-                if (contents != null)
-                    PrefabUtility.UnloadPrefabContents(contents);
-            }
+            GameObject asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            var applied = ReadProperties(asset, propertyPaths);
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            string objectId = GlobalObjectId.GetGlobalObjectIdSlow(asset).ToString();
+            string transformId = GlobalObjectId.GetGlobalObjectIdSlow(asset.transform).ToString();
+            string receipt = PropertyUndoReceipts.Retain((asyncRead, token) => Restore(guid, objectId, transformId, before, applied, asyncRead, token));
+            return new SuccessResponse(
+                "Previewed prefab root fields saved.",
+                new
+                {
+                    prefab_path = path,
+                    receipt_id = receipt,
+                    source_hash = plan.Hash,
+                    impact = plan.Impact,
+                    atomicity = "compare_before_save",
+                    saved = true,
+                    verification = ManagePrefabs.SavedVerification(path, System.Array.Empty<int>(), System.Array.Empty<string>(), plan.Fields),
+                }
+            );
         }
 
         private static UnityEngine.Object Owner(GameObject root, string property) => property == "m_IsActive" ? (UnityEngine.Object)root : root.transform;
@@ -221,13 +242,23 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             return values;
         }
 
-        private static object Restore(string guid, string objectId, string transformId, JObject before, JObject applied)
+        private static async Task<object> Restore(
+            string guid,
+            string objectId,
+            string transformId,
+            JObject before,
+            JObject applied,
+            bool background,
+            CancellationToken cancellationToken
+        )
         {
             StableEditor();
             string path = AssetPathUtility.GetContainedAssetPath(AssetDatabase.GUIDToAssetPath(guid));
             if (string.IsNullOrEmpty(path) || !path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("The original prefab GUID no longer resolves to a prefab asset.");
-            string guard = SourceHash(path);
+            ValidateSource(AssetDatabase.LoadAssetAtPath<GameObject>(path));
+            using var revision = await PrefabSourceRevision.Observe(path, background, cancellationToken);
+            StableEditor();
             GameObject asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             ValidateSource(asset);
             if (
@@ -237,7 +268,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 throw new InvalidOperationException("The recorded prefab root or transform was replaced.");
 
             // Reload the CURRENT source. The receipt never contains a copy of the prefab file.
-            GameObject contents = PrefabUtility.LoadPrefabContents(path);
+            using var isolated = new IsolatedContents(path);
+            GameObject contents = isolated.Root;
             bool saveAttempted = false;
             try
             {
@@ -263,9 +295,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 }
                 if (restored.Count != 0)
                 {
-                    if (SourceHash(path) != guard)
-                        throw new InvalidOperationException("The prefab changed during property undo. No save was attempted.");
+                    await revision.VerifyBeforeSave(background, cancellationToken);
+                    StableEditor();
                     ValidateSource(AssetDatabase.LoadAssetAtPath<GameObject>(path));
+                    revision.Dispose();
+                    cancellationToken.ThrowIfCancellationRequested();
                     saveAttempted = true;
                     PrefabUtility.SaveAsPrefabAsset(contents, path, out bool saved);
                     if (
@@ -277,24 +311,28 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     )
                         return new ErrorResponse("Could not verify the saved property undo.", new { save_attempted = true });
                 }
-                return PropertyUndoReceipts.Report(restoredFields, conflicts, () => Restore(guid, objectId, transformId, pending, applied));
+                return PropertyUndoReceipts.Report(restoredFields, conflicts, (asyncRead, token) =>
+                    Restore(guid, objectId, transformId, pending, applied, asyncRead, token)
+                );
             }
             catch (Exception exception) when (saveAttempted)
             {
                 return new ErrorResponse("Could not verify the saved property undo: " + exception.Message, new { save_attempted = true });
             }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(contents);
-            }
         }
 
-        internal static JObject InspectBatchPlan(string token)
+        internal static JObject InspectBatchPlan(string token, PrefabSourceRevision revision)
         {
             StableEditor();
             if (!Previews.TryGetValue(token, out Plan plan) || EditorApplication.timeSinceStartup >= plan.ExpiresAt)
                 throw new ArgumentException("Unknown, consumed or expired prefab preview.");
-            Verify(plan);
+            ValidateSource(AssetDatabase.LoadAssetAtPath<GameObject>(plan.Path));
+            if (revision != null)
+            {
+                revision.VerifyCurrent();
+                if (revision.Hash != plan.Hash)
+                    throw new InvalidOperationException("Prefab source or dependency drifted. Preview again.");
+            }
             return new JObject
             {
                 ["keys"] = new JArray("asset:" + plan.Path),
@@ -303,12 +341,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 ["fields"] = plan.Fields.DeepClone(),
                 ["token"] = token,
             };
-        }
-
-        private static void Verify(Plan plan)
-        {
-            if (SourceHash(plan.Path) != plan.Hash)
-                throw new InvalidOperationException("Prefab source or dependency drifted. Preview again.");
         }
 
         private static void StableEditor()
@@ -366,62 +398,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             string relative = AnimationUtility.CalculateTransformPath(node, root.transform);
             string path = root.name + (relative.Length == 0 ? "" : "/" + relative);
             return new ArgumentException("Safe prefab source rejected component '" + componentType + "' at hierarchy path '" + path + "': " + reason + ".");
-        }
-
-        private static string SourceHash(string path)
-        {
-            string[] dependencies = AssetDatabase
-                .GetDependencies(path, true)
-                .Append(path)
-                .Distinct(StringComparer.Ordinal)
-                .OrderBy(item => item, StringComparer.Ordinal)
-                .ToArray();
-            if (dependencies.Length > 4096)
-                throw new ArgumentException("Safe prefab plans are limited to 4096 dependencies.");
-            var fingerprint = new StringBuilder(AssetDatabase.AssetPathToGUID(path) + ":" + AssetDatabase.GetAssetDependencyHash(path));
-            long bytes = 0;
-            var buffer = new byte[65536];
-            using (SHA256 sha = SHA256.Create())
-            {
-                foreach (string dependency in dependencies.Where(dependency => dependency.StartsWith("Assets/", StringComparison.Ordinal)))
-                {
-                    string full = AssetPathUtility.GetFullAssetPath(dependency);
-                    if (Directory.Exists(full))
-                        continue;
-                    foreach (string file in new[] { full, AssetPathUtility.GetFullAssetPath(dependency + ".meta") })
-                    {
-                        if (!File.Exists(file))
-                            throw new ArgumentException("Prefab source/dependency file is unavailable.");
-                        using (var stream = File.OpenRead(file))
-                        {
-                            long length = stream.Length;
-                            if (length > MaxBytes - bytes)
-                                throw new ArgumentException("Safe prefab source/dependency bytes exceed 256 MiB.");
-                            sha.Initialize();
-                            long read = 0;
-                            while (read < length)
-                            {
-                                int count = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, length - read));
-                                if (count == 0)
-                                    throw new IOException("Prefab source changed during hashing.");
-                                sha.TransformBlock(buffer, 0, count, buffer, 0);
-                                read += count;
-                            }
-                            if (stream.Length != length || stream.ReadByte() != -1)
-                                throw new IOException("Prefab source changed during hashing.");
-                            sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-                            bytes += read;
-                            fingerprint
-                                .Append('\n')
-                                .Append(dependency)
-                                .Append(file.EndsWith(".meta", StringComparison.Ordinal) ? ":meta:" : ":asset:")
-                                .Append(Convert.ToBase64String(sha.Hash));
-                            sha.Initialize();
-                        }
-                    }
-                }
-                return Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(fingerprint.ToString())));
-            }
         }
 
         private static JArray NormalizeVector(JToken token)

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.SceneEdits;
 using MCPForUnity.Runtime.Helpers;
@@ -76,10 +78,16 @@ namespace MCPForUnity.Editor.Tools
             internal double ExpiresAt;
         }
 
-        public static object HandleCommand(JObject parameters)
+        public static object HandleCommand(JObject parameters) => HandleCommandCore(parameters, false, CancellationToken.None).GetAwaiter().GetResult();
+
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            HandleCommandCore(parameters, true, cancellationToken);
+
+        private static async Task<object> HandleCommandCore(JObject parameters, bool background, CancellationToken cancellationToken)
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 EnsureEditMode();
                 if (parameters == null)
                     throw new ArgumentException("Parameters are required.");
@@ -94,7 +102,7 @@ namespace MCPForUnity.Editor.Tools
                     case "undo":
                         if (parameters.Properties().Any(p => p.Name != "receipt_id" && p.Name != "action"))
                             throw new ArgumentException("Property undo accepts only receipt_id.");
-                        return PropertyUndoReceipts.Restore(RequiredString(parameters, "receipt_id"));
+                        return await PropertyUndoReceipts.Restore(RequiredString(parameters, "receipt_id"), background, cancellationToken);
                     case "preview_structure":
                         return SceneStructurePlans.Preview(parameters);
                     case "apply_structure":
@@ -127,7 +135,7 @@ namespace MCPForUnity.Editor.Tools
                         throw new ArgumentException("action must be preview or apply.");
                 }
             }
-            catch (Exception exception)
+            catch (Exception exception) when (!(exception is OperationCanceledException))
             {
                 return new ErrorResponse(exception.Message);
             }
@@ -341,7 +349,7 @@ namespace MCPForUnity.Editor.Tools
                 if (result is ErrorResponse)
                     return result;
             }
-            return PropertyUndoReceipts.Report(restored, conflicts, () => Restore(pending));
+            return PropertyUndoReceipts.Report(restored, conflicts, (_, __) => Task.FromResult(Restore(pending)));
         }
 
         private static object Apply(Plan plan, string undoName, bool retainReceipt = true)
@@ -373,7 +381,7 @@ namespace MCPForUnity.Editor.Tools
                     {
                         undo_name = undoName,
                         undo_group = group,
-                        receipt_id = retainReceipt ? PropertyUndoReceipts.Retain(() => Restore(plan)) : null,
+                        receipt_id = retainReceipt ? PropertyUndoReceipts.Retain((_, __) => Task.FromResult(Restore(plan))) : null,
                         edits = Describe(plan),
                         atomicity = "recorded_native_component_state",
                     }

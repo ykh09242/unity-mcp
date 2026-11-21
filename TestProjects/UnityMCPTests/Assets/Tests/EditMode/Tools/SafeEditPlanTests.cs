@@ -1,5 +1,8 @@
 using System;
+using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.Prefabs;
 using MCPForUnity.Runtime.Helpers;
@@ -179,31 +182,90 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void LargePrefabSourceHashUsesBoundedMemoryAndDetectsLateBytes()
+        public async Task LargeDependencyHashYieldsCancelsAndDetectsLateBytes()
         {
-            string path = folder + "/HashProbe.prefab";
-            PrefabUtility.SaveAsPrefabAsset(root, path);
-            Type plans = typeof(ManagePrefabs).Assembly.GetType("MCPForUnity.Editor.Tools.Prefabs.PrefabSourcePlans");
-            var method = plans.GetMethod("SourceHash", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-            string Hash() => (string)method.Invoke(null, new object[] { path });
-            string original = Hash();
-            using (var stream = new System.IO.FileStream(path, System.IO.FileMode.Append, System.IO.FileAccess.Write))
+            var assets = CreateMeshPrefab();
+            var sourceBytes = File.ReadAllBytes(assets.prefabPath);
+            var preview = new JObject
             {
-                byte[] padding = System.Text.Encoding.ASCII.GetBytes("#" + new string('x', 8190) + "\n");
-                for (int index = 0; index < 2176; index++)
-                    stream.Write(padding, 0, padding.Length);
-            }
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            string extended = Hash();
-            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-            Assert.AreNotEqual(original, extended);
-            Assert.Less(allocated, 1024 * 1024, "Hashing must not allocate the whole 17 MiB source.");
-            using (var stream = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Write))
+                ["action"] = "preview_modify_contents",
+                ["prefabPath"] = assets.prefabPath,
+                ["scale"] = new JArray(2, 2, 2),
+            };
+            long meshLength = new FileInfo(assets.meshPath).Length;
+            AssetDatabase.DisallowAutoRefresh();
+            try
             {
-                stream.Seek(-2, System.IO.SeekOrigin.End);
-                stream.WriteByte((byte)'y');
+                using (var stream = File.OpenWrite(assets.meshPath))
+                    stream.SetLength(meshLength + 64L * 1024 * 1024);
+                long allocated = await Task.Run(() =>
+                {
+                    using var stream = File.OpenRead(assets.meshPath);
+                    using var sha = System.Security.Cryptography.SHA256.Create();
+                    long before = GC.GetAllocatedBytesForCurrentThread();
+                    PrefabSourceRevision.HashFile(stream, stream.Length, sha, new byte[65536], CancellationToken.None);
+                    return GC.GetAllocatedBytesForCurrentThread() - before;
+                });
+                Assert.Less(allocated, 1024 * 1024, "The worker must not allocate memory proportional to the dependency bytes.");
+
+                int updates = 0;
+                void CountUpdate() => updates++;
+                EditorApplication.update += CountUpdate;
+                string token;
+                try
+                {
+                    var task = ManagePrefabs.HandleCommand(preview, CancellationToken.None);
+                    Assert.IsFalse(task.IsCompleted, "Large file work must release the Editor thread.");
+                    token = Token(JObject.FromObject(await task));
+                    Assert.Greater(updates, 0, "The Editor must advance while hashing a large dependency.");
+                }
+                finally
+                {
+                    EditorApplication.update -= CountUpdate;
+                }
+
+                using (var cancellation = new CancellationTokenSource())
+                {
+                    var apply = ManagePrefabs.HandleCommand(new JObject { ["action"] = "apply_preview", ["preview_id"] = token }, cancellation.Token);
+                    Assert.IsFalse(apply.IsCompleted);
+                    cancellation.Cancel();
+                    try
+                    {
+                        await apply;
+                        Assert.Fail("A cancelled apply must not publish a save.");
+                    }
+                    catch (OperationCanceledException) { }
+                }
+                CollectionAssert.AreEqual(sourceBytes, File.ReadAllBytes(assets.prefabPath));
+                Assert.AreEqual(Vector3.one, AssetDatabase.LoadAssetAtPath<GameObject>(assets.prefabPath).transform.localScale);
+
+                string next = Token(JObject.FromObject(await ManagePrefabs.HandleCommand(preview, CancellationToken.None)));
+                DateTime stamp = File.GetLastWriteTimeUtc(assets.meshPath);
+                using (var stream = File.OpenWrite(assets.meshPath))
+                {
+                    stream.Seek(-1, SeekOrigin.End);
+                    stream.WriteByte(1);
+                }
+                File.SetLastWriteTimeUtc(assets.meshPath, stamp);
+                var result = JObject.FromObject(
+                    await ManagePrefabs.HandleCommand(new JObject { ["action"] = "apply_preview", ["preview_id"] = next }, CancellationToken.None)
+                );
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                StringAssert.Contains("drifted", result.Value<string>("error"));
+                CollectionAssert.AreEqual(sourceBytes, File.ReadAllBytes(assets.prefabPath));
             }
-            Assert.AreNotEqual(extended, Hash(), "The final bytes must participate in the revision.");
+            finally
+            {
+                try
+                {
+                    using var stream = File.OpenWrite(assets.meshPath);
+                    stream.SetLength(meshLength);
+                }
+                finally
+                {
+                    AssetDatabase.AllowAutoRefresh();
+                }
+            }
         }
 
         [Test]

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 
@@ -9,23 +11,25 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
     // Bound ownership to the Editor domain that actually performed the write.
     internal static class PropertyUndoReceipts
     {
-        private static readonly LinkedList<(string id, Func<object> restore)> Recent = new();
+        internal delegate Task<object> RestoreFields(bool background, CancellationToken token);
 
-        internal static string Retain(Func<object> restore)
+        private static readonly LinkedList<(string id, RestoreFields restore)> Recent = new();
+
+        internal static string Retain(RestoreFields restore)
         {
             string id = Guid.NewGuid().ToString("N");
             Remember(id, restore);
             return id;
         }
 
-        private static void Remember(string id, Func<object> restore)
+        private static void Remember(string id, RestoreFields restore)
         {
             if (Recent.Count == 32)
                 Recent.RemoveFirst();
             Recent.AddLast((id, restore));
         }
 
-        internal static object Restore(string id)
+        internal static async Task<object> Restore(string id, bool background, CancellationToken token)
         {
             for (var node = Recent.First; node != null; node = node.Next)
             {
@@ -35,7 +39,12 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
                 Recent.Remove(node);
                 try
                 {
-                    return restore();
+                    return await restore(background, token);
+                }
+                catch (OperationCanceledException)
+                {
+                    Remember(id, restore);
+                    throw;
                 }
                 catch (Exception exception)
                 {
@@ -75,7 +84,7 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
                 ? a.Count == b.Count && a.Zip(b, SameField).All(equal => equal)
                 : left is JValue x && right is JValue y && Equals(x.Value, y.Value);
 
-        internal static object Report(JArray restoredFields, JArray conflicts, Func<object> retryConflicts)
+        internal static object Report(JArray restoredFields, JArray conflicts, RestoreFields retryConflicts)
         {
             var data = new
             {

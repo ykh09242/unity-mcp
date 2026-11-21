@@ -319,11 +319,14 @@ namespace MCPForUnity.Editor.Tools
         internal sealed class Observation : IDisposable
         {
             internal JObject State;
+            internal PrefabSourceRevision PrefabRevision;
             internal Dictionary<string, string> FileHashes;
             internal readonly List<FileStream> Readers = new List<FileStream>(2);
 
             public void Dispose()
             {
+                PrefabRevision?.Dispose();
+                PrefabRevision = null;
                 foreach (FileStream reader in Readers)
                     reader.Dispose();
                 Readers.Clear();
@@ -333,7 +336,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 try
                 {
-                    return JToken.DeepEquals(State, Describe(command, ReadHash));
+                    return JToken.DeepEquals(State, Describe(command, ReadHash, PrefabRevision));
                 }
                 catch (Exception exception) when (IsObservationFailure(exception))
                 {
@@ -348,6 +351,27 @@ namespace MCPForUnity.Editor.Tools
         private static async Task<Observation> ObserveAsync(JObject command, bool background, SynchronousHashBudget budget, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            string tool = command.Value<string>("tool");
+            if (tool == "prefab_contents" || tool == "manage_prefabs")
+            {
+                JObject state = Describe(command);
+                var prefab = new Observation
+                {
+                    State = state,
+                    PrefabRevision = await PrefabSourceRevision.Observe(state.Value<string>("path"), background, cancellationToken),
+                };
+                try
+                {
+                    if (!prefab.IsCurrent(command))
+                        throw new Incomplete("target_changed_during_preparation");
+                    return prefab;
+                }
+                catch
+                {
+                    prefab.Dispose();
+                    throw;
+                }
+            }
             if (!background && budget == null)
                 return new Observation { State = Describe(command) };
             var paths = new List<string>(2);
@@ -417,7 +441,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static JObject Describe(JObject command, Func<string, string> fileHash = null)
+        private static JObject Describe(JObject command, Func<string, string> fileHash = null, PrefabSourceRevision prefabRevision = null)
         {
             if (
                 EditorApplication.isPlayingOrWillChangePlaymode
@@ -454,7 +478,7 @@ namespace MCPForUnity.Editor.Tools
                     if (action != "apply_preview")
                         throw new Incomplete("prepare_prefab_plan_first");
                     Keys(parameters, "action", "previewId");
-                    state = PrefabSourcePlans.InspectBatchPlan(Text(parameters, "previewId"));
+                    state = PrefabSourcePlans.InspectBatchPlan(Text(parameters, "previewId"), prefabRevision);
                     break;
                 default:
                     throw new Incomplete("unsupported_target_preview");

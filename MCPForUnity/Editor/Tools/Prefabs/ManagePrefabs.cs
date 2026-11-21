@@ -67,16 +67,16 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
         public static object HandleCommand(JObject @params)
         {
-            return HandleCommandCore(@params, CancellationToken.None);
+            return HandleCommandCore(@params, false, CancellationToken.None).GetAwaiter().GetResult();
         }
 
         public static Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken)
         {
             // CommandRegistry invokes this on its existing Unity main-thread dispatcher.
-            return Task.FromResult(HandleCommandCore(@params, cancellationToken));
+            return HandleCommandCore(@params, true, cancellationToken);
         }
 
-        private static object HandleCommandCore(JObject @params, CancellationToken cancellationToken)
+        private static async Task<object> HandleCommandCore(JObject @params, bool background, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (@params == null)
@@ -99,9 +99,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 switch (action)
                 {
                     case "preview_modify_contents":
-                        return PrefabSourcePlans.Preview(@params);
+                        return await PrefabSourcePlans.Preview(@params, background, cancellationToken);
                     case "apply_preview":
-                        return PrefabSourcePlans.Apply(@params);
+                        return await PrefabSourcePlans.Apply(@params, background, cancellationToken);
                     case "trace_property":
                     case "list_overrides":
                     case "revert_overrides":
