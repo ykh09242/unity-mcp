@@ -50,10 +50,18 @@ class ScriptQualityService:
         self._cursor_secret = secrets.token_bytes(32)
 
     async def execute(self, ctx, action: str, options: dict | None):
+        starting = action in {"analyze", "capture_baseline"}
+
+        def admission_error(code, message):
+            response = self.error(code, message)
+            if starting:
+                response["analysis_job_created"] = False
+            return response
+
         try:
             parsed = parse_quality_options(action, options).model_dump(exclude_none=True)
         except (ValueError, ValidationError) as error:
-            return self.error("invalid_script_quality_request", str(error)[:2048])
+            return admission_error("invalid_script_quality_request", str(error)[:2048])
         instance = await get_unity_instance_from_context(ctx)
         user_id = None
         if config.http_remote_hosted:
@@ -62,14 +70,16 @@ class ScriptQualityService:
             user_id = (await require_credential_lease()).user_id
         target = await capture_target(instance, user_id=user_id)
         if target is None:
-            return self.error("analysis_target_unavailable", "Select a connected Editor project.")
+            return admission_error(
+                "analysis_target_unavailable", "Select a connected Editor project."
+            )
         if target.authorize_public is not None:
             check = await target.authorize_public(
                 "manage_script_quality", {"action": action, "options": parsed}
             )
             check()
         if not target.is_current():
-            return self.error(
+            return admission_error(
                 "analysis_target_changed", "The selected Editor connection changed before dispatch."
             )
         owner = target.scope.key
@@ -150,7 +160,7 @@ class ScriptQualityService:
                 return {"success": True, "data": result}
             except (ValueError, RevisionConflict, TimeoutError, ConnectionError) as error:
                 return self.error("impact_unavailable", str(error)[:2048])
-        if action in {"analyze", "capture_baseline"}:
+        if starting:
             if len(self.jobs) >= 512:
                 oldest = next(
                     (
@@ -161,7 +171,7 @@ class ScriptQualityService:
                     None,
                 )
                 if oldest is None:
-                    return self.error(
+                    return admission_error(
                         "analysis_capacity_unavailable",
                         "Outstanding native jobs retain their ownership records.",
                     )
@@ -170,7 +180,7 @@ class ScriptQualityService:
             try:
                 self.results.reserve(job_id, owner)
             except RetentionRefused as error:
-                return self.error(
+                return admission_error(
                     str(error),
                     "The bounded evidence store has no capacity; settle outstanding jobs first.",
                 )

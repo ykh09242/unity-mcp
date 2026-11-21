@@ -34,6 +34,55 @@ def service(monkeypatch):
     return VerificationService(), ctx, target, native
 
 
+@pytest.fixture
+def analysis_service(service, monkeypatch):
+    from services.script_quality import service as quality_module
+    from services.verification.service import VerificationIO
+
+    subject, ctx, target, _ = service
+    quality = ctx.fastmcp._script_quality_service = quality_module.ScriptQualityService()
+    monkeypatch.setattr(
+        quality_module, "get_unity_instance_from_context", AsyncMock(return_value="Editor@project")
+    )
+    monkeypatch.setattr(quality_module, "capture_target", AsyncMock(return_value=target))
+    send = AsyncMock()
+    monkeypatch.setattr(quality_module, "send_with_unity_instance", send)
+    monkeypatch.setattr(
+        VerificationIO, "freshness", AsyncMock(return_value={"status": "observed_current"})
+    )
+    return subject, ctx, quality, send
+
+
+@pytest.mark.asyncio
+async def test_refused_analysis_releases_slots_but_lost_acknowledgment_keeps_job(analysis_service):
+    subject, ctx, quality, send = analysis_service
+    options = {"paths": ["Assets/A.cs"], "wait_seconds": 2}
+    quality.results.scope_bytes = 0
+    for _ in range(2):
+        response = await subject.execute(ctx, "run", options)
+        (child,) = response["data"]["children"]
+        assert child == {"kind": "analysis", "job_id": None, "settled": True, "dispatch": "refused"}
+        assert response["data"]["native_settled"]
+    assert not quality.jobs and not quality.results.active
+    send.assert_not_awaited()
+
+    quality.results.scope_bytes = quality.results.reservation_bytes
+    send.side_effect = ConnectionError("acknowledgment lost")
+    response = await subject.execute(ctx, "run", options)
+    (child,) = response["data"]["children"]
+    assert not response["data"]["native_settled"] and not child["settled"]
+    assert child["job_id"] in quality.results.active
+    send.assert_awaited_once()
+    send.side_effect = None
+    send.return_value = {
+        "success": True,
+        "data": {"job_id": child["job_id"], "terminal": True, "state": "failed"},
+    }
+    polled = await subject.execute(ctx, "status", {"run_id": response["data"]["run_id"]})
+    assert polled["data"]["native_settled"]
+    assert [call.args[3]["action"] for call in send.await_args_list] == ["analyze", "status"]
+
+
 @pytest.mark.asyncio
 async def test_prepare_freezes_profile_and_selection_without_running_stages(service):
     subject, ctx, target, native = service

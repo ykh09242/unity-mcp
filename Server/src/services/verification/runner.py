@@ -152,7 +152,10 @@ class VerificationRunner:
         response = await self.io.quality("analyze", options, deadline)
         child["job_id"] = (response.get("data") or {}).get("job_id") or response.get("job_id")
         if response.get("success") is not True:
-            child["settled"] = response.get("settled") is True
+            refused = response.get("analysis_job_created") is False and child["job_id"] is None
+            if refused:
+                child["dispatch"] = "refused"
+            child["settled"] = refused or response.get("settled") is True
             self.stage(
                 "analysis",
                 "incomplete",
