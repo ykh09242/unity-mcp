@@ -225,6 +225,61 @@ async def test_abandoned_baselines_release_capacity_and_preserve_live_jobs(
 
 
 @pytest.mark.asyncio
+async def test_disconnected_baseline_request_is_reconciled_after_its_child_finishes(
+    analysis_service, monkeypatch
+):
+    subject, ctx, quality, send = analysis_service
+    sent = asyncio.Event()
+
+    async def await_ack(*args, **kwargs):
+        sent.set()
+        await asyncio.Event().wait()
+
+    send.side_effect = await_ack
+    request = asyncio.create_task(
+        subject.execute(ctx, "prepare", {"paths": ["Assets/A.cs"], "capture_baseline": True})
+    )
+    await asyncio.wait_for(sent.wait(), 2)
+    request.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    (job_id,) = quality.results.active
+    (preparation,) = subject.preparations.values()
+    assert preparation["baseline_id"] == job_id
+
+    monkeypatch.setattr(
+        "services.verification.service.monotonic", lambda: preparation["expires"] + 1
+    )
+    send.side_effect = None
+    send.return_value = {
+        "success": True,
+        "data": {"job_id": job_id, "terminal": True, "state": "failed"},
+    }
+    assert (await subject.execute(ctx, "prepare", {"paths": ["Assets/B.cs"]}))["success"]
+    assert preparation["preparation_id"] not in subject.preparations
+    assert job_id not in quality.results.active
+    assert [call.args[3]["action"] for call in send.await_args_list] == [
+        "capture_baseline",
+        "status",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_definitively_refused_baseline_releases_preparation(analysis_service):
+    subject, ctx, quality, send = analysis_service
+    send.return_value = {
+        "success": False,
+        "error": "script_quality_unavailable",
+        "data": {"reason": "analysis_consent_required"},
+    }
+    response = await subject.execute(
+        ctx, "prepare", {"paths": ["Assets/A.cs"], "capture_baseline": True}
+    )
+    assert response["success"] is False and response["settled"]
+    assert not subject.preparations and not quality.results.active
+
+
+@pytest.mark.asyncio
 async def test_pending_baseline_reserves_capacity_while_native_capture_is_awaited(analysis_service):
     subject, ctx, _, send = analysis_service
     for _ in range(15):

@@ -391,22 +391,28 @@ class VerificationService:
                 "expires": monotonic() + 1800,
             }
             if parsed.get("capture_baseline"):
+
+                def baseline_dispatched(job_id):
+                    preparation["baseline_id"] = job_id
+                    # Keep the local terminal witness even after the job map evicts it.
+                    preparation["baseline_job"] = ctx.fastmcp._script_quality_service.jobs[job_id]
+
                 try:
                     await io.authorize("manage_script_quality", {"action": "capture_baseline"})
                     capture = await io.quality(
                         "capture_baseline",
                         {**selection, "timeout_seconds": profile.deadlines.analysis},
                         deadline,
+                        on_dispatch=baseline_dispatched,
                     )
-                    baseline_id = (capture.get("data") or {}).get("job_id") or capture.get("job_id")
-                    if not baseline_id:
+                    if capture.get("success") is False and capture.get("settled"):
+                        self.preparations.pop(identity, None)
                         return capture
-                    preparation["baseline_id"] = baseline_id
-                    quality = getattr(ctx.fastmcp, "_script_quality_service", None)
-                    job = quality.jobs.get(baseline_id) if quality else None
-                    if job is not None and job.owner == owner:
-                        # Terminal evidence survives eviction from the quality service's job map.
-                        preparation["baseline_job"] = job
+                    if not preparation["baseline_id"]:
+                        return capture
+                except (TimeoutError, ConnectionError):
+                    if not preparation["baseline_id"]:
+                        raise
                 finally:
                     if not preparation["baseline_id"]:
                         self.preparations.pop(identity, None)
