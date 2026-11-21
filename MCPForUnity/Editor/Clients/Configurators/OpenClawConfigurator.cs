@@ -212,7 +212,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
         {
             JObject servers = NormalizeServers(serversToken);
             JObject entry = servers[ServerName] as JObject ?? new JObject();
-            JObject desiredEntry = BuildUnityServerEntry(forConfiguration: true);
+            JObject desiredEntry = BuildUnityServerEntry();
 
             entry.Remove("name");
             entry.Remove("prefix");
@@ -265,7 +265,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
             return normalized;
         }
 
-        private static JObject BuildUnityServerEntry(bool forConfiguration = false)
+        private static JObject BuildUnityServerEntry()
         {
             ConfiguredTransport transport = HttpEndpointUtility.GetCurrentServerTransport();
             if (transport == ConfiguredTransport.Stdio)
@@ -295,12 +295,12 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 };
             }
 
-            var inputs = forConfiguration ? McpConfigurationHelper.CaptureStaticHttpInputs() : null;
+            var inputs = McpConfigurationHelper.CaptureStaticHttpInputs();
             return new JObject
             {
                 ["enabled"] = true,
-                ["url"] = inputs?.Endpoint ?? HttpEndpointUtility.GetMcpRpcUrl(),
-                ["headers"] = JObject.FromObject(inputs?.Headers ?? HttpEndpointUtility.GetAuthHeaders()),
+                ["url"] = inputs.Endpoint,
+                ["headers"] = JObject.FromObject(inputs.Headers),
                 ["transport"] = HttpTransportName,
                 ["toolPrefix"] = ServerName,
                 ["requestTimeoutMs"] = 30000,

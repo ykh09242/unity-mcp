@@ -112,10 +112,10 @@ namespace MCPForUnity.Editor.Helpers
             {
                 JToken existingHeaders = unity["headers"];
                 ValidateHeaderObject(existingHeaders);
+                inputs ??= McpConfigurationHelper.CaptureStaticHttpInputs();
 
                 // HTTP mode: Use URL, no command
-                string httpUrl = inputs == null ? HttpEndpointUtility.GetMcpRpcUrl() : inputs.Endpoint;
-                unity[httpProperty] = httpUrl;
+                unity[httpProperty] = inputs.Endpoint;
 
                 foreach (var prop in urlPropsToRemove)
                 {
@@ -140,7 +140,7 @@ namespace MCPForUnity.Editor.Helpers
                         .ToArray()
                 )
                     property.Remove();
-                foreach (var header in inputs?.Headers ?? HttpEndpointUtility.GetAuthHeaders())
+                foreach (var header in inputs.Headers)
                     headers[header.Key] = header.Value;
                 if (headers.HasValues)
                 {

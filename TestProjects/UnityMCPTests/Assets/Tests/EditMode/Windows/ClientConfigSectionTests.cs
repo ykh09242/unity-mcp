@@ -465,6 +465,64 @@ namespace MCPForUnityTests.Editor.Windows
         }
 
         [Test]
+        public void StaticLocalHttpCopyClearsSnippetWhenAuthenticationDisappears()
+        {
+            const string tokenKey = "UNITY_MCP_LOCAL_AUTH_TOKEN";
+            const string tokenFileKey = "UNITY_MCP_LOCAL_AUTH_TOKEN_FILE";
+            string priorToken = Environment.GetEnvironmentVariable(tokenKey);
+            string priorTokenFile = Environment.GetEnvironmentVariable(tokenFileKey);
+            string tokenPath = System.IO.Path.GetTempFileName();
+            var cache = EditorConfigurationCache.Instance;
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var overrides = new Dictionary<FieldInfo, object>();
+            try
+            {
+                foreach (
+                    var setting in new Dictionary<string, object>
+                    {
+                        ["_useHttpTransport"] = true,
+                        ["_forceStdioForSession"] = false,
+                        ["_httpTransportScope"] = "local",
+                    }
+                )
+                {
+                    var field = typeof(EditorConfigurationCache).GetField(setting.Key, flags);
+                    overrides[field] = field.GetValue(cache);
+                    field.SetValue(cache, setting.Value);
+                }
+                Environment.SetEnvironmentVariable(tokenKey, null);
+                Environment.SetEnvironmentVariable(tokenFileKey, tokenPath);
+                var section = CreateSection(new MemoryHttpClient(tokenPath + ".json"));
+                var copies = new List<string>();
+                Set(section, "copyToClipboard", new Action<string>(copies.Add));
+                section.UpdateManualConfiguration();
+                Assert.IsFalse(Get<Button>(section, "copyJsonButton").enabledSelf);
+                StringAssert.Contains("Start the local server", Get<Label>(section, "installationStepsLabel").text);
+
+                System.IO.File.WriteAllText(tokenPath, "synthetic-copy-token");
+                section.UpdateManualConfiguration();
+                Assert.IsTrue(Get<Button>(section, "copyJsonButton").enabledSelf);
+                Invoke(section, "OnCopyJsonClicked");
+                StringAssert.Contains("synthetic-copy-token", copies[0]);
+
+                System.IO.File.Delete(tokenPath);
+                Invoke(section, "OnCopyJsonClicked");
+                Assert.AreEqual(1, copies.Count);
+                Assert.IsFalse(Get<Button>(section, "copyJsonButton").enabledSelf);
+                Assert.IsTrue(string.IsNullOrEmpty(Get<TextField>(section, "configJsonField").value));
+                StringAssert.Contains("Start the local server", Get<Label>(section, "installationStepsLabel").text);
+            }
+            finally
+            {
+                System.IO.File.Delete(tokenPath);
+                Environment.SetEnvironmentVariable(tokenKey, priorToken);
+                Environment.SetEnvironmentVariable(tokenFileKey, priorTokenFile);
+                foreach (var field in overrides)
+                    field.Key.SetValue(cache, field.Value);
+            }
+        }
+
+        [Test]
         public void ManualConfigurationWithoutStepsDisplaysFallback()
         {
             var client = new ManualClient { Steps = null };
@@ -996,6 +1054,15 @@ namespace MCPForUnityTests.Editor.Windows
 
         private static void Set(McpClientConfigSection section, string field, object value) =>
             typeof(McpClientConfigSection).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(section, value);
+
+        private sealed class MemoryHttpClient : CursorConfigurator
+        {
+            private readonly string path;
+
+            public MemoryHttpClient(string path) => this.path = path;
+
+            public override string GetConfigPath() => path;
+        }
 
         private sealed class ManualPaths : IPathResolverService
         {

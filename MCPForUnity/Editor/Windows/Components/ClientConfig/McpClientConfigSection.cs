@@ -1117,6 +1117,9 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         {
             if (!copyJsonButton.enabledSelf)
                 return;
+            UpdateManualConfiguration();
+            if (!copyJsonButton.enabledSelf)
+                return;
             copyToClipboard(configJsonField.value);
             McpLog.Info("Configuration copied to clipboard");
         }

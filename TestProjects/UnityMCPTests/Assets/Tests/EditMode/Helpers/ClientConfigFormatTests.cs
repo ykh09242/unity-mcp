@@ -492,6 +492,31 @@ namespace MCPForUnityTests.Editor.Helpers
             });
         }
 
+        [TestCase("json", "mcpServers.unityMCP")]
+        [TestCase("opencode", "mcp.unityMCP")]
+        [TestCase("openclaw", "plugins.entries.openclaw-mcp-bridge.config.servers.unityMCP")]
+        public void StaticLocalHttpManualConfigurationRequiresToken(string clientType, string entryPath)
+        {
+            McpClientConfiguratorBase configurator = clientType switch
+            {
+                "opencode" => new OpenCodeConfigurator(),
+                "openclaw" => new OpenClawConfigurator(),
+                _ => new CursorConfigurator(),
+            };
+            File.Delete(_tokenPath);
+
+            var unavailable = configurator.GenerateManualConfiguration();
+            Assert.IsFalse(unavailable.Success);
+            Assert.IsNull(unavailable.Snippet);
+            StringAssert.Contains("Start the local server", unavailable.Error);
+
+            File.WriteAllText(_tokenPath, "synthetic-manual-token");
+            var available = configurator.GenerateManualConfiguration();
+            Assert.IsTrue(available.Success);
+            var written = JObject.Parse(available.Snippet).SelectToken(entryPath);
+            Assert.AreEqual("synthetic-manual-token", (string)written["headers"][AuthConstants.LocalTokenHeader]);
+        }
+
         [Test]
         public void OpenCodeConfigurePreservesSameEndpointSettingsAndRotatesOwnedHeaders()
         {
