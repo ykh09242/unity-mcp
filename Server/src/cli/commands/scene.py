@@ -23,12 +23,12 @@ def scene():
     default=None,
     help="Parent GameObject to list children of (name, path, or instance ID).",
 )
-@click.option("--max-depth", "-d", default=None, type=int, help="Maximum depth to traverse.")
+@click.option("--max-depth", "-d", default=None, type=int, help="Only one level is supported (1).")
 @click.option(
     "--include-transform", "-t", is_flag=True, help="Include transform data for each node."
 )
 @click.option("--limit", "-l", default=50, type=int, help="Maximum nodes to return.")
-@click.option("--cursor", "-c", default=0, type=int, help="Pagination cursor.")
+@click.option("--cursor", "-c", default=0, type=int, help="Use next_cursor for the same parent.")
 @handle_unity_errors
 def hierarchy(
     parent: Optional[str],
@@ -37,15 +37,24 @@ def hierarchy(
     limit: int,
     cursor: int,
 ):
-    """Get the scene hierarchy.
+    """List one page of roots, or the direct children of --parent.
+
+    Use a returned instance ID as --parent to descend one level. For more
+    siblings, pass next_cursor to --cursor with the same parent.
 
     \b
     Examples:
         unity-mcp scene hierarchy
-        unity-mcp scene hierarchy --max-depth 3
+        unity-mcp scene hierarchy --parent 1234 --limit 20
         unity-mcp scene hierarchy --parent "Canvas" --include-transform
         unity-mcp --format json scene hierarchy
     """
+    if max_depth not in (None, 1):
+        raise click.BadParameter(
+            "Only one level is supported. Use --parent to descend and --cursor with "
+            "next_cursor to list more siblings.",
+            param_hint="--max-depth",
+        )
     config = get_config()
 
     params: dict[str, Any] = {
