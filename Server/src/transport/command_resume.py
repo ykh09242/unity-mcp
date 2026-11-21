@@ -258,13 +258,24 @@ class CommandResumeInvocation:
             and reply.not_started
             and reply.reason == "command_resume_capacity"
         )
+        queue_capacity = (
+            self.action == "new"
+            and self.state == "unavailable"
+            and reply.not_started
+            and reply.reason == "command_queue_capacity"
+        )
         data: dict[str, JsonValue] = {
             "reason": "command_resume_capacity" if capacity else "outcome_unknown",
             "command": command,
             "native_resume_state": self.state,
         }
         hint = "inspect_state_before_retry"
-        if capacity:
+        if queue_capacity:
+            data.update(
+                reason="command_queue_capacity", execution="not_started", dispatch="not_dispatched"
+            )
+            hint = "retry_after_queue_drains"
+        elif capacity:
             data["execution"] = "not_started"
             metrics = _journal_capacity(reply.payload.get("capacity"))
             if metrics:

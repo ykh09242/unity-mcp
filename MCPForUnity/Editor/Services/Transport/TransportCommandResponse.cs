@@ -109,17 +109,52 @@ namespace MCPForUnity.Editor.Services.Transport
             }
         }
 
-        internal static TransportCommandResponse Interrupted(Command command, string detail, bool mayHaveStarted)
+        private static JObject BoundResumeReceipt(JObject request, string state)
         {
-            var bound = IsBoundRequest(command?.arbitration);
-            var request = command?.resume;
             string invocation = request?["invocation_id"]?.Type == JTokenType.String ? (string)request["invocation_id"] : null;
-            bool resumeBound =
+            return
                 CommandResumeJournal.IsIdentity(invocation)
                 && request?["version"]?.Type == JTokenType.Integer
                 && request["version"].ToString(Formatting.None) == "1"
                 && request["editor_session_id"]?.Type == JTokenType.String
-                && (string)request["editor_session_id"] == CommandResumeState.SessionId;
+                && (string)request["editor_session_id"] == CommandResumeState.SessionId
+                ? new JObject
+                {
+                    ["version"] = 1,
+                    ["invocation_id"] = invocation,
+                    ["editor_session_id"] = CommandResumeState.SessionId,
+                    ["state"] = state,
+                }
+                : null;
+        }
+
+        internal static TransportCommandResponse QueueCapacity(JObject arbitration, JObject resume)
+        {
+            const string reason = "command_queue_capacity";
+            bool fresh = resume == null || resume["action"]?.Type == JTokenType.String && (string)resume["action"] == "new";
+            var receipt = BoundResumeReceipt(resume, fresh ? "unavailable" : "unknown");
+            var error = new JObject { ["status"] = "error", ["error"] = "Command queue capacity reached" };
+            if (IsBoundRequest(arbitration) || receipt != null)
+            {
+                error["code"] = reason;
+                if (fresh)
+                    error["data"] = new JObject
+                    {
+                        ["reason"] = reason,
+                        ["execution"] = "not_started",
+                        ["dispatch"] = "not_dispatched",
+                    };
+            }
+            // Arbitration describes this frame. The journal was not consulted for an
+            // earlier invocation, so a continuation must preserve its original uncertainty.
+            return new TransportCommandResponse(error).WithAdmission(arbitration, true, new NativeAdmissionBlocker(reason, false)).WithResume(receipt);
+        }
+
+        internal static TransportCommandResponse Interrupted(Command command, string detail, bool mayHaveStarted)
+        {
+            var bound = IsBoundRequest(command?.arbitration);
+            var receipt = BoundResumeReceipt(command?.resume, "unknown");
+            bool resumeBound = receipt != null;
             // An earlier attempt of a resumable invocation may have run even if this
             // transport did not dispatch. Never certify its completion or permit replay.
             bool unknown = mayHaveStarted || resumeBound;
@@ -148,17 +183,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 !unknown,
                 new NativeAdmissionBlocker("command_interrupted", false)
             );
-            if (resumeBound)
-                response.WithResume(
-                    new JObject
-                    {
-                        ["version"] = 1,
-                        ["invocation_id"] = invocation,
-                        ["editor_session_id"] = CommandResumeState.SessionId,
-                        ["state"] = "unknown",
-                    }
-                );
-            return response;
+            return response.WithResume(receipt);
         }
 
         private static object LimitPayload() => new { status = "error", error = "Command result exceeds the transport size or complexity limit" };

@@ -1356,18 +1356,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     // Reserve graph retention before typed deserialization or journal
                     // admission. Capacity refusal never enqueues or starts the command.
+                    var refusal = TransportCommandResponse.QueueCapacity(
+                        session.Capabilities.Contains(NativeCommandArbitrator.Capability) ? commandObject?["arbitration"] as JObject : null,
+                        session.Capabilities.Contains(CommandResumeJournal.Capability) ? commandObject?["resume"] as JObject : null
+                    );
                     commandObject = null;
                     commandText = null;
                     frame.Dispose();
                     frame = null;
                     using var capacityDeadline = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
                     capacityDeadline.CancelAfter(FrameIOTimeoutMs);
-                    await writer
-                        .WriteResultAsync(
-                            System.Text.Encoding.UTF8.GetBytes("{\"status\":\"error\",\"error\":\"Command queue capacity reached\"}"),
-                            capacityDeadline.Token
-                        )
-                        .ConfigureAwait(false);
+                    await writer.WriteResultAsync(System.Text.Encoding.UTF8.GetBytes(refusal.ToJson()), capacityDeadline.Token).ConfigureAwait(false);
                     return;
                 }
                 resumeCommand = input.Command;
@@ -1473,7 +1472,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         }
                         else if (commandQueue.Count >= 128)
                         {
-                            result.TrySetResult("{\"status\":\"error\",\"error\":\"Command queue capacity reached\"}");
+                            result.TrySetResult(TransportCommandResponse.QueueCapacity(responseBinding.arbitration, responseBinding.resume).ToJson());
                             timing?.ExecutionDone();
                         }
                         else

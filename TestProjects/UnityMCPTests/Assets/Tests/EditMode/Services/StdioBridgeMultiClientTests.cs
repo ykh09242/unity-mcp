@@ -489,6 +489,64 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [UnityTest]
+        public IEnumerator RetainedInputCapacityRefusesBoundFramesAndKeepsTheSamePeer()
+        {
+            Start();
+            var offered = new JArray(CommandResumeJournal.Capability, NativeCommandArbitrator.Capability);
+            var connect = host.Track(Task.Run(() => StdioBridgeReconnectTests.ConnectProgressPeer(host.Port, host.Token, offered, out _)));
+            yield return Await(connect);
+            var peer = connect.Result;
+            peers.Add(peer);
+            var budget = (StdioFrameBudget)typeof(StdioBridgeHost).GetField("inputBudget", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            var pressure = budget.AcquireAsync(1, CancellationToken.None).Result;
+            inputs.Add(pressure);
+            Assert.IsTrue(pressure.TryIncreaseTo(8 * 1024 * 1024 - 16 * 1024));
+            foreach (string action in new string[] { null, "new", "resume" })
+            {
+                var command = Command(host.Name, true);
+                command["params"]["numbers"] = new JArray(new int[512]);
+                if (action != null)
+                    command["resume"] = new JObject
+                    {
+                        ["version"] = 1,
+                        ["invocation_id"] = Guid.NewGuid().ToString("N"),
+                        ["editor_session_id"] = CommandResumeState.SessionId,
+                        ["deadline_unix_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 60000,
+                        ["action"] = action,
+                    };
+                yield return Await(Send(peer, command.ToString(Formatting.None)));
+                var read = Read(peer);
+                yield return Await(read);
+                var envelope = read.Result;
+                if (action != null)
+                {
+                    Assert.AreEqual(command.SelectToken("resume.invocation_id"), envelope.SelectToken("command_resume.invocation_id"));
+                    Assert.AreEqual(action == "new" ? "unavailable" : "unknown", (string)envelope.SelectToken("command_resume.state"));
+                    envelope = (JObject)envelope["payload"];
+                }
+                Assert.AreEqual(command.SelectToken("arbitration.request_nonce"), envelope.SelectToken("native_arbitration.request_nonce"));
+                Assert.AreEqual("not_started", (string)envelope.SelectToken("native_arbitration.disposition"));
+                Assert.AreEqual(false, (bool)envelope.SelectToken("native_arbitration.retryable"));
+                Assert.AreEqual("command_queue_capacity", (string)envelope.SelectToken("native_arbitration.reason"));
+                Assert.AreEqual(action == "resume" ? null : "not_started", (string)envelope.SelectToken("payload.data.execution"));
+                Assert.AreEqual(0, calls);
+                Assert.AreEqual(0, StdioBridgeHost.QueuedCommandCount);
+                yield return Ping(peer);
+            }
+            var legacy = Connect();
+            yield return Await(legacy);
+            peers.Add(legacy.Result);
+            var legacyCommand = Command(host.Name, true);
+            legacyCommand["params"]["numbers"] = new JArray(new int[512]);
+            yield return Await(Send(legacy.Result, legacyCommand.ToString(Formatting.None)));
+            var legacyReply = Read(legacy.Result);
+            yield return Await(legacyReply);
+            Assert.IsTrue(JToken.DeepEquals(new JObject { ["status"] = "error", ["error"] = "Command queue capacity reached" }, legacyReply.Result));
+            Assert.AreEqual(0, calls);
+            yield return Ping(legacy.Result);
+        }
+
+        [UnityTest]
         public IEnumerator SaturatedLargeInputKeepsBoundedSmallIngressAndDisconnectReclaimsWaiter()
         {
             Start();

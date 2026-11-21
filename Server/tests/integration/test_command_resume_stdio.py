@@ -162,6 +162,52 @@ def resume_peer(
                     send_frame(peer, result(command, state, value))
                     if control:
                         assert peer.recv(1) == b""  # The control socket is owned by cleanup.
+                elif mode == "queue_capacity" and attempt == reloads:
+                    resume = command.get("resume")
+                    fresh = resume is None or resume["action"] == "new"
+                    capacity = "command_queue_capacity"
+                    refusal = {
+                        "native_arbitration": {
+                            **command["arbitration"],
+                            "disposition": "not_started",
+                            "retryable": False,
+                            "reason": capacity,
+                        },
+                        "payload": {
+                            "status": "error",
+                            "error": "Command queue capacity reached",
+                            "code": capacity,
+                            "data": {
+                                "reason": capacity,
+                                "execution": "not_started",
+                                "dispatch": "not_dispatched",
+                            }
+                            if fresh
+                            else {},
+                        },
+                    }
+                    if resume:
+                        refusal = {
+                            "command_resume": result(
+                                command, "unavailable" if fresh else "unknown", {}
+                            )["command_resume"],
+                            "payload": refusal,
+                        }
+                    send_frame(peer, refusal)
+                    ping = read_frame(peer)
+                    commands.append(ping)
+                    assert ping["type"] == "ping"
+                    send_frame(
+                        peer,
+                        {
+                            "native_arbitration": {
+                                **ping["arbitration"],
+                                "disposition": "started",
+                                "retryable": False,
+                            },
+                            "payload": {"status": "success", "result": {"message": "pong"}},
+                        },
+                    )
                 elif mode in {"queued_then_offline", "applied_then_offline"}:
                     send_frame(
                         peer,
@@ -257,6 +303,42 @@ def configure(monkeypatch, port, reconnect_failures=0):
     monkeypatch.setattr(uc, "get_unity_connection", select)
     monkeypatch.setattr(uc, "read_status_file", lambda *_: None)
     return connection
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command,params,reloads",
+    [
+        ("manage_reference_graph", {"action": "inventory"}, 0),
+        ("manage_scene", {"action": "save"}, 0),
+        ("manage_scene", {"action": "save"}, 1),
+    ],
+)
+async def test_stdio_queue_capacity_keeps_socket_and_original_uncertainty(
+    monkeypatch, command, params, reloads
+):
+    with resume_peer("queue_capacity", reloads=reloads) as (port, commands, _, _):
+        connection = configure(monkeypatch, port)
+        try:
+            response = await uc.async_send_command_with_retry(
+                command, params, instance_id=connection.instance_id
+            )
+            sock = connection.sock
+            assert sock is not None
+            assert connection.send_command("ping", {}) == {"message": "pong"}
+            assert connection.sock is sock
+            assert [c["type"] for c in commands] == [command] * (reloads + 1) + ["ping"]
+            assert ("resume" in commands[0]) is (command == "manage_scene")
+            if reloads:
+                assert commands[1]["resume"]["action"] == "resume"
+                assert response["data"]["reason"] == "outcome_unknown"
+                assert "execution" not in response["data"]
+            else:
+                assert response["data"]["reason"] == "command_queue_capacity"
+                assert response["data"]["execution"] == "not_started"
+                assert response["data"]["dispatch"] == "not_dispatched"
+        finally:
+            connection.disconnect()
 
 
 @pytest.mark.asyncio
