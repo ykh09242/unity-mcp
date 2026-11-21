@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -46,6 +47,56 @@ namespace MCPForUnityTests.Editor.Services
                 ["deadline_unix_ms"] = deadline,
                 ["action"] = action,
             };
+
+        internal static string VersionOneFingerprint(string name, JObject parameters)
+        {
+            JToken Canonical(JToken value) =>
+                value is JObject obj
+                    ? new JObject(obj.Properties().OrderBy(p => p.Name, StringComparer.Ordinal).Select(p => new JProperty(p.Name, Canonical(p.Value))))
+                : value is JArray array ? new JArray(array.Select(Canonical))
+                : value.DeepClone();
+            using var sha = SHA256.Create();
+            return BitConverter
+                .ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(name + "\n" + Canonical(parameters).ToString(Formatting.None))))
+                .Replace("-", "")
+                .ToLowerInvariant();
+        }
+
+        [Test]
+        public void StreamingFingerprintMatchesVersionOneAcrossReloadAndRejectsChangedArrayOrder()
+        {
+            const string name = "texture_텍스처";
+            var nested = new JObject
+            {
+                ["z"] = -0.0d,
+                ["a"] = 2.50m,
+                ["bc"] = 1e-15d,
+            };
+            var array = new JArray(nested, 9223372036854775807L, JValue.CreateNull(), true);
+            var text = new string('x', 4079) + "💡\u0085\n\\\"\u2028\u2029\ud800";
+            var parameters = new JObject
+            {
+                ["힣"] = text,
+                ["\u00e9"] = array,
+                ["e\u0301"] = 2,
+            };
+            string legacy = VersionOneFingerprint(name, parameters);
+            var admitted = journal.Admit(Request(), name, parameters);
+            Assert.IsNotNull(admitted.Ticket);
+            Assert.AreEqual(legacy, (string)JObject.Parse(stored).SelectToken("entries[0].fingerprint"));
+            Assert.IsTrue(journal.TryStart(admitted.Ticket));
+            journal.Complete(admitted.Ticket, new JValue("original"));
+            journal = Open();
+            var reordered = new JObject(parameters.Properties().Reverse().Select(p => new JProperty(p.Name, p.Value.DeepClone())));
+            var reorderedArray = (JArray)reordered["\u00e9"];
+            reorderedArray[0] = new JObject(nested.Properties().Reverse().Select(p => new JProperty(p.Name, p.Value.DeepClone())));
+            var restored = journal.Admit(Request("resume"), name, reordered);
+            Assert.AreEqual("completed", restored.State);
+            Assert.AreEqual("original", (string)restored.Payload);
+            reorderedArray.Add(reorderedArray[0].DeepClone());
+            reorderedArray.RemoveAt(0);
+            Assert.AreEqual("unavailable", journal.Admit(Request("resume"), name, reordered).State);
+        }
 
         [Test]
         public void TranslatedDeadlineIsNeverRecapturedAfterReload()

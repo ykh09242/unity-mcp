@@ -23,6 +23,7 @@ namespace MCPForUnity.Editor.Services.Transport
         private static SynchronizationContext _mainThreadContext;
         private static int _mainThreadId;
         private static int _processingFlag;
+        private static readonly SemaphoreSlim ResumePreparationSlots = new(2, 2);
 
         private sealed class PendingCommand
         {
@@ -302,16 +303,35 @@ namespace MCPForUnity.Editor.Services.Transport
             return operation;
         }
 
-        internal static Task<CommandResumeJournal.Admission> AdmitResumeAsync(
+        // The transport owns this decoded frame exclusively until admission completes.
+        // Nothing hands its parameters to a handler (or mutates them) while the worker reads them.
+        internal static async Task<CommandResumeJournal.Admission> AdmitResumeAsync(
             Command command,
             CancellationToken cancellationToken,
             CommandResumeJournal journal = null
-        ) =>
-            RunOnMainThreadCore(
-                () => (journal ?? CommandResumeState.Journal).Admit(command.resume, command.type, command.@params),
-                cancellationToken,
-                abandoned => abandoned.Ticket?.Owner.Release(abandoned.Ticket)
-            );
+        )
+        {
+            var request = command.resume;
+            var name = command.type;
+            var parameters = command.@params;
+            CommandResumeJournal.PreparedCommand prepared;
+            await ResumePreparationSlots.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                prepared = await Task.Run(() => new CommandResumeJournal.PreparedCommand(name, parameters, cancellationToken), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                ResumePreparationSlots.Release();
+            }
+            return await RunOnMainThreadCore(
+                    () => (journal ?? CommandResumeState.Journal).Admit(request, prepared),
+                    cancellationToken,
+                    abandoned => abandoned.Ticket?.Owner.Release(abandoned.Ticket)
+                )
+                .ConfigureAwait(false);
+        }
 
         internal static Task<T> RunOnMainThreadAsync<T>(Func<T> func, CancellationToken cancellationToken) =>
             RunOnMainThreadCore(func, cancellationToken, null);

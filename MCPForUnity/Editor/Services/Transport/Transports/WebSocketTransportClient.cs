@@ -1284,8 +1284,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 );
                 await TransportCommandDispatcher
-                    .RunOnMainThreadAsync(
-                        () => CommandResumeState.Journal.Admit(resume, payload.Value<string>("name"), payload["params"] as JObject ?? new JObject()),
+                    .AdmitResumeAsync(
+                        new Command
+                        {
+                            type = payload.Value<string>("name"),
+                            @params = payload["params"] as JObject,
+                            resume = resume,
+                        },
                         deadline.Token
                     )
                     .ConfigureAwait(false);

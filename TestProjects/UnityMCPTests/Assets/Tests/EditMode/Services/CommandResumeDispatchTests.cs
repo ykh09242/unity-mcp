@@ -73,8 +73,8 @@ namespace MCPForUnityTests.Editor.Services
                 ["instance_generation"] = NativeCommandArbitrator.Shared.Generation,
             };
 
-        [Test]
-        public void CancellationDuringJournalAdmissionReleasesTheUnclaimedTicket()
+        [UnityTest]
+        public IEnumerator CancellationDuringJournalAdmissionReleasesTheUnclaimedTicket()
         {
             using var cancel = new CancellationTokenSource();
             bool armed = false;
@@ -99,11 +99,87 @@ namespace MCPForUnityTests.Editor.Services
                 cancel.Token,
                 journal
             );
+            var wait = System.Diagnostics.Stopwatch.StartNew();
+            while (!admission.IsCompleted && wait.Elapsed < TimeSpan.FromSeconds(10))
+                yield return null;
             Assert.IsTrue(admission.IsCanceled);
             request["action"] = "resume";
             var retry = journal.Admit(request, Name, new JObject());
             Assert.IsNotNull(retry.Ticket, "The abandoned admission cannot retain the active slot.");
             journal.Release(retry.Ticket);
+        }
+
+        [Test]
+        public void WaitingFingerprintPreparationCancelsWithoutJournalAdmission()
+        {
+            var slots = (SemaphoreSlim)
+                typeof(TransportCommandDispatcher).GetField("ResumePreparationSlots", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            int claimed = 0;
+            try
+            {
+                while (slots.Wait(0))
+                    claimed++;
+                Assert.AreEqual(2, claimed);
+                using var cancellation = new CancellationTokenSource();
+                var prepare = TransportCommandDispatcher.AdmitResumeAsync(new Command { type = Name, resume = Request() }, cancellation.Token, journal);
+                Assert.IsFalse(prepare.IsCompleted);
+                cancellation.Cancel();
+                Assert.Catch<OperationCanceledException>(() => prepare.GetAwaiter().GetResult());
+                Assert.AreEqual("unknown", journal.Admit(Request("status"), Name, new JObject()).State);
+            }
+            finally
+            {
+                if (claimed > 0)
+                    slots.Release(claimed);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator LargeTextureFingerprintPreservesEditorFrameProgress()
+        {
+            var parameters = new JObject
+            {
+                ["width"] = 1024,
+                ["height"] = 1024,
+                ["data"] = Convert.ToBase64String(new byte[1024 * 1024 * 4]),
+            };
+            var command = new Command
+            {
+                type = "manage_texture",
+                @params = parameters,
+                resume = Request(),
+            };
+            long baseline = GC.GetAllocatedBytesForCurrentThread();
+            string expected = CommandResumeJournalTests.VersionOneFingerprint(command.type, parameters);
+            long legacyBytes = GC.GetAllocatedBytesForCurrentThread() - baseline;
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            baseline = GC.GetAllocatedBytesForCurrentThread();
+            var admission = TransportCommandDispatcher.AdmitResumeAsync(command, CancellationToken.None, journal);
+            long submitBytes = GC.GetAllocatedBytesForCurrentThread() - baseline;
+            int updates = 0;
+            while (!admission.IsCompleted && elapsed.Elapsed < TimeSpan.FromSeconds(20))
+            {
+                yield return null;
+                updates++;
+            }
+            long mainBytesIncludingFrames = GC.GetAllocatedBytesForCurrentThread() - baseline;
+            Assert.IsTrue(admission.IsCompleted, "The fingerprint worker must release the request for journal admission.");
+            var ticket = admission.GetAwaiter().GetResult().Ticket;
+            try
+            {
+                Assert.IsNotNull(ticket);
+                Assert.AreEqual(expected, (string)JObject.Parse(stored).SelectToken("entries[0].fingerprint"));
+                Assert.Greater(updates, 0);
+                if (legacyBytes > 0)
+                    Assert.Less(submitBytes, legacyBytes / 10);
+                TestContext.WriteLine(
+                    $"Texture fingerprint: legacy main {legacyBytes} B, main submission {submitBytes} B, main including frames {mainBytesIncludingFrames} B, {updates} frame updates, {elapsed.ElapsedMilliseconds} ms"
+                );
+            }
+            finally
+            {
+                journal.Release(ticket);
+            }
         }
 
         [Test]

@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -218,8 +219,13 @@ namespace MCPForUnity.Editor.Services.Transport
                 };
         }
 
-        internal Admission Admit(JObject request, string name, JObject parameters)
+        internal Admission Admit(JObject request, string name, JObject parameters) =>
+            Admit(request, new PreparedCommand(name, parameters, CancellationToken.None));
+
+        internal Admission Admit(JObject request, PreparedCommand command)
         {
+            string name = command.Name;
+            JObject parameters = command.Parameters;
             lock (gate)
             {
                 if (
@@ -253,10 +259,9 @@ namespace MCPForUnity.Editor.Services.Transport
                     return Reply(request, "unavailable");
                 if (clock() >= deadline)
                     return Reply(request, "expired");
-                string fingerprint = Fingerprint(name, parameters ?? new JObject());
                 if (entries.TryGetValue(id, out Entry entry))
                 {
-                    if (entry.fingerprint != fingerprint || entry.deadline != deadline || entry.origin_generation != origin)
+                    if (entry.fingerprint != command.Fingerprint || entry.deadline != deadline || entry.origin_generation != origin)
                         return Reply(request, "unavailable");
                 }
                 else
@@ -292,12 +297,12 @@ namespace MCPForUnity.Editor.Services.Transport
                     entry = new Entry
                     {
                         id = id,
-                        fingerprint = fingerprint,
+                        fingerprint = command.Fingerprint,
                         deadline = deadline.Value,
                         phase = "queued",
                         domain = domain,
                         origin_generation = origin,
-                        volatile_targets = HasVolatileTargets(parameters, name) || !continuationPolicy(name, parameters ?? new JObject()),
+                        volatile_targets = command.VolatileTargets || !continuationPolicy(name, parameters),
                     };
                     entries.Add(id, entry);
                     if (!Persist())
@@ -324,7 +329,7 @@ namespace MCPForUnity.Editor.Services.Transport
                     return Reply(request, "queued");
                 if (
                     (entry.domain != domain || entry.origin_generation != null)
-                    && (entry.volatile_targets || HasVolatileTargets(parameters, name) || !continuationPolicy(name, parameters ?? new JObject()))
+                    && (entry.volatile_targets || command.VolatileTargets || !continuationPolicy(name, parameters))
                 )
                     return Reply(request, "unavailable");
                 var ticket = new Ticket
@@ -332,7 +337,7 @@ namespace MCPForUnity.Editor.Services.Transport
                     Id = id,
                     Request = (JObject)request.DeepClone(),
                     Owner = this,
-                    Revalidate = entry.domain == domain && entry.origin_generation == null ? null : () => continuationPolicy(name, parameters ?? new JObject()),
+                    Revalidate = entry.domain == domain && entry.origin_generation == null ? null : () => continuationPolicy(name, parameters),
                 };
                 active.Add(id, ticket);
                 var accepted = Reply(request, "queued");
@@ -510,14 +515,93 @@ namespace MCPForUnity.Editor.Services.Transport
             };
         }
 
-        private static string Fingerprint(string name, JObject parameters)
+        internal sealed class PreparedCommand
         {
-            JToken Canonical(JToken value) =>
-                value is JObject obj
-                    ? new JObject(obj.Properties().OrderBy(p => p.Name, StringComparer.Ordinal).Select(p => new JProperty(p.Name, Canonical(p.Value))))
-                : value is JArray array ? new JArray(array.Select(Canonical))
-                : value.DeepClone();
-            return Digest(name + "\n" + Canonical(parameters).ToString(Formatting.None));
+            internal readonly string Name;
+            internal readonly JObject Parameters;
+            internal readonly string Fingerprint;
+            internal readonly bool VolatileTargets;
+
+            internal PreparedCommand(string name, JObject parameters, CancellationToken cancellation)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                Name = name;
+                Parameters = parameters ?? new JObject();
+                using var sha = SHA256.Create();
+                using var output = new FingerprintStream(sha, cancellation);
+                using (var text = new StreamWriter(output, new UTF8Encoding(false), 4096, leaveOpen: true))
+                using (var json = new JsonTextWriter(text) { AutoCompleteOnClose = false })
+                {
+                    text.Write(name);
+                    text.Write('\n');
+                    WriteCanonical(json, Parameters, cancellation);
+                }
+                sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                Fingerprint = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+                VolatileTargets = HasVolatileTargets(Parameters, name, cancellation: cancellation);
+            }
+
+            private static void WriteCanonical(JsonTextWriter json, JToken token, CancellationToken cancellation)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                if (token is JObject obj)
+                {
+                    json.WriteStartObject();
+                    foreach (var property in obj.Properties().OrderBy(p => p.Name, StringComparer.Ordinal))
+                    {
+                        json.WritePropertyName(property.Name);
+                        WriteCanonical(json, property.Value, cancellation);
+                    }
+                    json.WriteEndObject();
+                }
+                else if (token is JArray array)
+                {
+                    json.WriteStartArray();
+                    foreach (var item in array)
+                        WriteCanonical(json, item, cancellation);
+                    json.WriteEndArray();
+                }
+                else
+                    token.WriteTo(json);
+            }
+        }
+
+        // StreamWriter preserves UTF-8 encoder state across chunk boundaries. Hash the
+        // chunks directly, including replacement fallback, just like Encoding.UTF8.GetBytes.
+        private sealed class FingerprintStream : Stream
+        {
+            private readonly SHA256 sha;
+            private readonly CancellationToken cancellation;
+
+            internal FingerprintStream(SHA256 sha, CancellationToken cancellation)
+            {
+                this.sha = sha;
+                this.cancellation = cancellation;
+            }
+
+            public override void Write(byte[] buffer, int offset, int count)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                sha.TransformBlock(buffer, offset, count, null, 0);
+            }
+
+            public override bool CanRead => false;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => throw new NotSupportedException();
+            public override long Position
+            {
+                get => throw new NotSupportedException();
+                set => throw new NotSupportedException();
+            }
+
+            public override void Flush() { }
+
+            public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+            public override void SetLength(long value) => throw new NotSupportedException();
         }
 
         private static string Digest(string text)
@@ -555,8 +639,9 @@ namespace MCPForUnity.Editor.Services.Transport
             );
 
         // Refuse process-local identity continuations; never recapture or reinterpret a target.
-        private static bool HasVolatileTargets(JToken value, string commandName = null, bool componentValues = false)
+        private static bool HasVolatileTargets(JToken value, string commandName = null, bool componentValues = false, CancellationToken cancellation = default)
         {
+            cancellation.ThrowIfCancellationRequested();
             if (componentValues && IsNumericSelector(value))
                 return true;
             if (value?.Type == JTokenType.String && value.Value<string>().StartsWith("mcp-oh-", StringComparison.Ordinal))
@@ -564,7 +649,11 @@ namespace MCPForUnity.Editor.Services.Transport
             if (value is JObject obj)
             {
                 // Batch wrappers retain each child's actual command/action semantics.
-                if (obj["tool"]?.Type == JTokenType.String && obj["params"] is JObject child && HasVolatileTargets(child, obj.Value<string>("tool")))
+                if (
+                    obj["tool"]?.Type == JTokenType.String
+                    && obj["params"] is JObject child
+                    && HasVolatileTargets(child, obj.Value<string>("tool"), cancellation: cancellation)
+                )
                     return true;
                 string action = obj["action"]?.Type == JTokenType.String ? obj.Value<string>("action").ToLowerInvariant() : null;
                 bool gameObject = commandName == "manage_gameobject" || commandName?.StartsWith("gameobject_", StringComparison.Ordinal) == true;
@@ -610,7 +699,11 @@ namespace MCPForUnity.Editor.Services.Transport
                                 return true;
                             using var reader = new JsonTextReader(new StringReader(text)) { DateParseHandling = DateParseHandling.None, MaxDepth = 64 };
                             var parsed = JToken.Load(reader);
-                            if (!(parsed is JObject) && !(parsed is JArray) || reader.Read() || HasVolatileTargets(parsed, componentValues: assignment))
+                            if (
+                                !(parsed is JObject) && !(parsed is JArray)
+                                || reader.Read()
+                                || HasVolatileTargets(parsed, componentValues: assignment, cancellation: cancellation)
+                            )
                                 return true;
                         }
                         catch (JsonException)
@@ -618,12 +711,12 @@ namespace MCPForUnity.Editor.Services.Transport
                             return true;
                         }
                     }
-                    else if (HasVolatileTargets(property.Value, componentValues: assignment))
+                    else if (HasVolatileTargets(property.Value, componentValues: assignment, cancellation: cancellation))
                         return true;
                 }
             }
             else if (value is JArray array)
-                return array.Any(item => HasVolatileTargets(item, componentValues: componentValues));
+                return array.Any(item => HasVolatileTargets(item, componentValues: componentValues, cancellation: cancellation));
             return false;
         }
     }
