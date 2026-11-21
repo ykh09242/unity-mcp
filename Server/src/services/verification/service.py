@@ -199,8 +199,12 @@ class VerificationService:
     def trim(self):
         self.store._expire()
         for identity, preparation in list(self.preparations.items()):
+            job = preparation.get("baseline_job")
             if preparation["expires"] <= monotonic() and (
-                preparation["ready"] or preparation.get("failed")
+                preparation["ready"]
+                or preparation.get("failed")
+                or job is not None
+                and job.terminal
             ):
                 del self.preparations[identity]
         for identity, runner in list(self.runners.items()):
@@ -209,6 +213,44 @@ class VerificationService:
             ):
                 self.runners.pop(identity, None)
                 self.tasks.pop(identity, None)
+
+    async def observe_baseline(self, preparation, io, deadline):
+        async with preparation["baseline_lock"]:
+            if preparation["ready"] or preparation.get("failed"):
+                return
+            identity = preparation["baseline_id"]
+            baseline = await io.quality("status", {"job_id": identity}, deadline)
+            data = baseline.get("data") or {}
+            if baseline.get("success") is True and data.get("job_id") == identity:
+                if data.get("baseline_id") == identity:
+                    preparation["ready"] = True
+                elif data.get("terminal") is True and data.get("state") in {
+                    "completed",
+                    "failed",
+                    "canceled",
+                }:
+                    preparation.update(failed=True, state="incomplete")
+            elif baseline.get("code") == "analysis_expired_or_evicted":
+                preparation.update(failed=True, state="incomplete")
+
+    async def reconcile_expired_baselines(self, io, deadline):
+        for preparation in list(self.preparations.values()):
+            if (
+                preparation["expires"] <= monotonic() < deadline
+                and preparation["owner"] == io.owner
+                and preparation["resume"] == io.resume
+                and (io.resume or preparation["generation"] == io.generation)
+                and preparation["baseline_id"]
+                and not preparation["ready"]
+                and not preparation.get("failed")
+                and not preparation["baseline_lock"].locked()
+            ):
+                try:
+                    await self.observe_baseline(preparation, io, deadline)
+                except (OSError, RuntimeError, ValueError):
+                    # An unavailable observation cannot release an outstanding capture.
+                    continue
+        self.trim()
 
     async def execute(self, ctx, action, options):
         if action == "run" and config.phase_diagnostics and verification_timing.current() is None:
@@ -292,10 +334,8 @@ class VerificationService:
                 "package": info.get("mcpPackage"),
                 "server": RUNNING_SERVER.command_metadata(),
             }
-            if (
-                len(self.preparations) >= 64
-                or sum(p["owner"] == owner for p in self.preparations.values()) >= 16
-            ):
+            await self.reconcile_expired_baselines(io, deadline)
+            if self.preparation_capacity_reached(owner):
                 return self.error("verification_preparation_capacity")
             candidate = None
             if "candidate_id" in parsed:
@@ -303,6 +343,8 @@ class VerificationService:
                     candidate = await asyncio.to_thread(prepare_candidate, info, parsed)
                 except (OSError, ValueError) as error:
                     return self.error("candidate_preparation_unavailable", str(error)[:256])
+                if self.preparation_capacity_reached(owner):
+                    return self.error("verification_preparation_capacity")
                 profile_id = "standalone-player"
                 profile = VerificationProfile(
                     refresh_policy="never", analysis_required=False, impact="off"
@@ -314,19 +356,8 @@ class VerificationService:
                 selection = {
                     key: parsed[key] for key in ("paths", "change_set_id") if key in parsed
                 }
-            baseline_id = parsed.get("baseline_id")
-            if parsed.get("capture_baseline"):
-                await io.authorize("manage_script_quality", {"action": "capture_baseline"})
-                capture = await io.quality(
-                    "capture_baseline",
-                    {**selection, "timeout_seconds": profile.deadlines.analysis},
-                    deadline,
-                )
-                baseline_id = (capture.get("data") or {}).get("job_id") or capture.get("job_id")
-                if not baseline_id:
-                    return capture
             identity = uuid4().hex
-            self.preparations[identity] = {
+            preparation = self.preparations[identity] = {
                 "owner": owner,
                 "instance": instance,
                 "resume": target.resume_generation,
@@ -347,13 +378,34 @@ class VerificationService:
                 or parsed.get("execute_selected_checks")
                 and candidate.candidate.broader_check in profiles
                 else None,
-                "baseline_id": baseline_id,
+                "baseline_id": parsed.get("baseline_id"),
+                "baseline_lock": asyncio.Lock(),
                 "ready": not parsed.get("capture_baseline"),
                 "state": "pending",
                 "run_id": None,
                 "expires": monotonic() + 1800,
             }
-            return {"success": True, "data": self.preparation_view(self.preparations[identity])}
+            if parsed.get("capture_baseline"):
+                try:
+                    await io.authorize("manage_script_quality", {"action": "capture_baseline"})
+                    capture = await io.quality(
+                        "capture_baseline",
+                        {**selection, "timeout_seconds": profile.deadlines.analysis},
+                        deadline,
+                    )
+                    baseline_id = (capture.get("data") or {}).get("job_id") or capture.get("job_id")
+                    if not baseline_id:
+                        return capture
+                    preparation["baseline_id"] = baseline_id
+                    quality = getattr(ctx.fastmcp, "_script_quality_service", None)
+                    job = quality.jobs.get(baseline_id) if quality else None
+                    if job is not None and job.owner == owner:
+                        # Terminal evidence survives eviction from the quality service's job map.
+                        preparation["baseline_job"] = job
+                finally:
+                    if not preparation["baseline_id"]:
+                        self.preparations.pop(identity, None)
+            return {"success": True, "data": self.preparation_view(preparation)}
         if "preparation_id" in parsed:
             preparation = self.preparations.get(parsed["preparation_id"])
             if preparation is None or preparation["owner"] != owner:
@@ -363,18 +415,7 @@ class VerificationService:
             ):
                 return self.error("verification_editor_process_changed")
             if not preparation["ready"] and not preparation.get("failed"):
-                baseline = await io.quality(
-                    "status", {"job_id": preparation["baseline_id"]}, deadline
-                )
-                data = baseline.get("data") or {}
-                if data.get("baseline_id") == preparation["baseline_id"]:
-                    preparation["ready"] = True
-                elif data.get("terminal") and data.get("state") in {
-                    "completed",
-                    "failed",
-                    "canceled",
-                }:
-                    preparation.update(failed=True, state="incomplete")
+                await self.observe_baseline(preparation, io, deadline)
             if action == "status":
                 return {"success": True, "data": self.preparation_view(preparation)}
             if not preparation["ready"]:
@@ -425,6 +466,12 @@ class VerificationService:
                 identity, owner, runner.report, settled=runner.report["native_settled"]
             )
         return self.read(identity, owner)
+
+    def preparation_capacity_reached(self, owner):
+        return (
+            len(self.preparations) >= 64
+            or sum(p["owner"] == owner for p in self.preparations.values()) >= 16
+        )
 
     async def start_runner(
         self,

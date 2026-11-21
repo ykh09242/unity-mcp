@@ -84,6 +84,102 @@ async def test_refused_analysis_releases_slots_but_lost_acknowledgment_keeps_job
 
 
 @pytest.mark.asyncio
+async def test_abandoned_baselines_release_capacity_and_preserve_live_jobs(
+    analysis_service, service, monkeypatch
+):
+    from .test_script_quality_service import native_completion
+
+    subject, ctx, quality, send = analysis_service
+    _, _, target, _ = service
+    quality.results.reservation_bytes = 16384
+    now = monotonic()
+    monkeypatch.setattr("services.verification.service.monotonic", lambda: now)
+    quality.results.clock = lambda: now
+    states = {}
+
+    async def native(*args, **kwargs):
+        request = args[3]
+        identity = request["job_id"]
+        if request["action"] == "capture_baseline":
+            states[identity] = "running"
+        if states[identity] == "completed":
+            return native_completion(identity)
+        return {
+            "success": True,
+            "data": {
+                "job_id": identity,
+                "state": states[identity],
+                "terminal": states[identity] == "failed",
+            },
+        }
+
+    send.side_effect = native
+    options = {"paths": ["Assets/A.cs"], "capture_baseline": True}
+    abandoned = [(await subject.execute(ctx, "prepare", options))["data"] for _ in range(16)]
+    assert (await subject.execute(ctx, "prepare", options))[
+        "code"
+    ] == "verification_preparation_capacity"
+    first, *rest = abandoned
+    for record in rest:
+        states[record["baseline_id"]] = "failed"
+    retained = rest[0]["baseline_id"]
+    states[retained] = "completed"
+    assert (await quality.execute(ctx, "status", {"job_id": retained}))["data"][
+        "baseline_id"
+    ] == retained
+    now += 1801
+    assert (await quality.execute(ctx, "status", {"job_id": retained}))[
+        "code"
+    ] == "analysis_expired_or_evicted"
+    send.reset_mock()
+
+    # A different principal or Editor process cannot poll the abandoned captures.
+    target.scope.key = ("other", "p")
+    assert (await subject.execute(ctx, "prepare", {"paths": ["Assets/B.cs"]}))["success"]
+    target.scope.key = ("u", "p")
+    target.resume_generation = "other-editor"
+    await subject.execute(ctx, "prepare", {"paths": ["Assets/B.cs"]})
+    send.assert_not_awaited()
+    target.resume_generation = "process"
+
+    admitted = await subject.execute(ctx, "prepare", options)
+    assert admitted["success"], admitted
+    assert not {r["preparation_id"] for r in rest} & subject.preparations.keys()
+    assert first["preparation_id"] in subject.preparations
+    pending = await subject.execute(ctx, "status", {"preparation_id": first["preparation_id"]})
+    assert pending["success"] and not pending["data"]["ready"]
+    states[first["baseline_id"]] = "completed"
+    complete = await subject.execute(ctx, "status", {"preparation_id": first["preparation_id"]})
+    assert complete["data"]["ready"]
+
+
+@pytest.mark.asyncio
+async def test_pending_baseline_reserves_capacity_while_native_capture_is_awaited(analysis_service):
+    subject, ctx, _, send = analysis_service
+    for _ in range(15):
+        assert (await subject.execute(ctx, "prepare", {"paths": ["Assets/A.cs"]}))["success"]
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def native(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return {"success": True, "data": {"job_id": args[3]["job_id"], "state": "queued"}}
+
+    send.side_effect = native
+    capture = asyncio.create_task(
+        subject.execute(ctx, "prepare", {"paths": ["Assets/A.cs"], "capture_baseline": True})
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        competing = await subject.execute(ctx, "prepare", {"paths": ["Assets/B.cs"]})
+        assert competing.get("code") == "verification_preparation_capacity"
+    finally:
+        release.set()
+        assert (await capture)["success"]
+
+
+@pytest.mark.asyncio
 async def test_prepare_freezes_profile_and_selection_without_running_stages(service):
     subject, ctx, target, native = service
     response = await subject.execute(
