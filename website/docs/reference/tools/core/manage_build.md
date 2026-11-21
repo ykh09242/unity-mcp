@@ -58,6 +58,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read the first 10 retained build reports to find a report ID for detailed inspection or comparison.
+
+```json title="MCP arguments"
+{
+  "action": "report_history",
+  "page_size": 10
+}
+```
 <!-- examples:end -->
 

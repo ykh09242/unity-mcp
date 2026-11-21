@@ -34,6 +34,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read the first page of a prefab hierarchy before opening the prefab for editing. Replace the example path with the target prefab. Use the reported cursor if more nodes are available.
+
+```json title="MCP arguments"
+{
+  "action": "get_hierarchy",
+  "prefab_path": "Assets/Prefabs/Player.prefab",
+  "page_size": 25
+}
+```
 <!-- examples:end -->
 

@@ -46,6 +46,16 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Create a 32×32 solid swatch for a prototype under an existing `Assets/Textures` folder. Choose a new output path.
+
+```json title="MCP arguments"
+{
+  "action": "create",
+  "path": "Assets/Textures/PrototypeSwatch.png",
+  "width": 32,
+  "height": 32,
+  "fill_color": "#55AAFF"
+}
+```
 <!-- examples:end -->
 

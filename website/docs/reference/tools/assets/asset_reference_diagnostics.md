@@ -41,6 +41,15 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect recursive dependencies of a prefab before moving it. Replace the path with an existing asset.
+
+```json title="MCP arguments"
+{
+  "action": "get_dependencies",
+  "path": "Assets/Prefabs/Player.prefab",
+  "recursive": true,
+  "page_size": 25
+}
+```
 <!-- examples:end -->
 

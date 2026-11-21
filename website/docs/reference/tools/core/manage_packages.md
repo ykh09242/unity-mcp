@@ -61,6 +61,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Look up the installed Input System package by its package name. This reads package information from the selected project.
+
+```json title="MCP arguments"
+{
+  "action": "get_package_info",
+  "package": "com.unity.inputsystem"
+}
+```
 <!-- examples:end -->
 

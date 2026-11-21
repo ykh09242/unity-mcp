@@ -38,6 +38,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List the first 25 overrides on an instance in the scene. Replace `Player` with the scene instance you intend to inspect.
+
+```json title="MCP arguments"
+{
+  "action": "list_overrides",
+  "target": "Player",
+  "page_size": 25
+}
+```
 <!-- examples:end -->
 

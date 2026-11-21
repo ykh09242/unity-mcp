@@ -40,6 +40,24 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect recent errors and warnings without clearing the Console. This requests a bounded JSON result with the message and its source location.
+
+```json title="MCP arguments"
+{
+  "action": "get",
+  "types": [
+    "error",
+    "warning"
+  ],
+  "count": "20",
+  "format": "json",
+  "fields": [
+    "type",
+    "message",
+    "file",
+    "line"
+  ]
+}
+```
 <!-- examples:end -->
 

@@ -31,6 +31,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Remove the disposable `PrototypeProbe.cs` file from the [create_script example](./create_script.md) in the same scratch project. Confirm the exact path and that the script is disposable before calling. Unity may import the change and compile afterward.
+
+```json title="MCP arguments"
+{
+  "uri": "Assets/Scripts/PrototypeProbe.cs",
+  "verification": "off"
+}
+```
 <!-- examples:end -->
 

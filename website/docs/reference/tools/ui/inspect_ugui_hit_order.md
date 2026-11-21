@@ -31,6 +31,16 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect the ordered uGUI hits over a Start button using Game view coordinates. Replace the RectTransform and bottom-left pixel position with the target and current coordinates in your project. This inspection sends no pointer input.
+
+```json title="MCP arguments"
+{
+  "target": "Canvas/Start",
+  "screen_position": [
+    320,
+    180
+  ]
+}
+```
 <!-- examples:end -->
 

@@ -39,6 +39,50 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+### Save and run a scene smoke test
+
+Enable the `testing` tool group and use the same connected Unity instance throughout. In a permission-scoped connection, `save` needs `edit`, `run` needs `run`, and `status` needs `read`. This example uses the repository's `TestProjects/VerificationProjects/Harbor` fixture. Its `Assets/Dock.unity` scene registers `harbor.berth` through `BerthProbe`. When adapting it, use an existing scene and a state provider from your project. The run may enter Play Mode and will load the declared scene. Save any open scene edits before starting.
+
+**1. Save the scenario.** Use a new name in the project to preserve existing definitions. Continue after a successful response.
+
+```json title="MCP arguments"
+{
+  "action": "save",
+  "scenario": {
+    "name": "harbor-berth-smoke",
+    "steps": [
+      {"name": "Load project scene", "action": "load_scene", "scene": "Assets/Dock.unity"},
+      {
+        "name": "Read project state",
+        "action": "wait_state",
+        "state_id": "harbor.berth",
+        "state_equals": 3,
+        "timeout_seconds": 5
+      }
+    ]
+  }
+}
+```
+
+**2. Start the run.** Replace the example `job_id` with a fresh 32-character lowercase hexadecimal ID and keep it with the request. The tool returns immediately. Save `data.job_id` from a successful start. If the acknowledgment is lost, check `status` with the ID you supplied before attempting another start.
+
+```json title="MCP arguments"
+{
+  "action": "run",
+  "name": "harbor-berth-smoke",
+  "job_id": "0123456789abcdef0123456789abcdef",
+  "repeat_count": 1,
+  "timeout_seconds": 60
+}
+```
+
+**3. Poll the job and inspect the terminal report.** Replace the example `job_id` with the same ID from step 2. Poll with a short delay while `data.status` is `running`, including during finalization. A successful scenario has `data.status` equal to `succeeded`, `data.runner_resources_released` equal to `true`, and no `data.report_error`. `failed`, `timed_out`, and `cancelled` are other terminal outcomes. Use `data.steps` and `data.logs` to investigate a failure. Unity may still be in Play Mode after the job ends.
+
+```json title="MCP arguments"
+{
+  "action": "status",
+  "job_id": "0123456789abcdef0123456789abcdef"
+}
+```
 <!-- examples:end -->
 

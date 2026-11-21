@@ -39,6 +39,16 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Add a BoxCollider to a uniquely named marker in a test scene. Use a marker without a collider and enable strict selection so an ambiguous target is rejected.
+
+```json title="MCP arguments"
+{
+  "action": "add",
+  "target": "Prototype Marker",
+  "component_type": "BoxCollider",
+  "search_method": "by_name",
+  "strict_selection": true
+}
+```
 <!-- examples:end -->
 

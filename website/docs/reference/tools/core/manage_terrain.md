@@ -44,6 +44,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect an existing Terrain before planning a bounded height or layer operation. Use the returned data identity and a matching scoped revision for a guarded edit.
+
+```json title="MCP arguments"
+{
+  "action": "get_info",
+  "target": "Terrain",
+  "search_method": "by_name"
+}
+```
 <!-- examples:end -->
 

@@ -40,6 +40,22 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Find objects with a `Camera` component in the active scene. Include inactive cameras and ask for a small page of names, activation state, and handles. If `hasMore` is true, reuse the returned cursor with the same search options.
+
+```json title="MCP arguments"
+{
+  "search_term": "Camera",
+  "search_method": "by_component",
+  "scene_scope": "active",
+  "include_inactive": true,
+  "page_size": 20,
+  "projection": [
+    "name",
+    "active",
+    "handle"
+  ],
+  "refresh_if_dirty": false
+}
+```
 <!-- examples:end -->
 

@@ -39,6 +39,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect the playback and listener state for a specific scene AudioSource. Replace `Music` with the relevant object. The result describes what Unity observes, including whether the source is playing.
+
+```json title="MCP arguments"
+{
+  "action": "diagnose",
+  "target": "Music",
+  "search_method": "by_name"
+}
+```
 <!-- examples:end -->
 

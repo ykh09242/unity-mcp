@@ -38,6 +38,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read one level of the active scene hierarchy with local transforms. For a subsequent level, pass a returned object as `parent`.
+
+```json title="MCP arguments"
+{
+  "action": "get_hierarchy",
+  "page_size": 20,
+  "include_transform": true
+}
+```
 <!-- examples:end -->
 

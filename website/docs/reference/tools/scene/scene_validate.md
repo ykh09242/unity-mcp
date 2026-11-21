@@ -35,6 +35,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Check the selected scene without applying repairs. Follow a returned continuation before treating the bounded scan as complete.
+
+```json title="MCP arguments"
+{
+  "action": "validate",
+  "auto_repair": false,
+  "max_objects": 100
+}
+```
 <!-- examples:end -->
 

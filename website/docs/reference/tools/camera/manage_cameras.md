@@ -33,6 +33,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List the cameras the connected Editor can inspect. Use returned names or stable references to choose the camera for a later operation.
+
+```json title="MCP arguments"
+{
+  "action": "list_cameras"
+}
+```
 <!-- examples:end -->
 

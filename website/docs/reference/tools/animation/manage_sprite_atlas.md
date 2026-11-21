@@ -39,6 +39,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Check whether the Editor can work with Sprite Atlas assets before opening or creating an atlas.
+
+```json title="MCP arguments"
+{
+  "action": "capabilities"
+}
+```
 <!-- examples:end -->
 

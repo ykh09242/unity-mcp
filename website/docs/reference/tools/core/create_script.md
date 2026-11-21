@@ -34,6 +34,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Create a new component script in a scratch project. Choose an unused path whose filename matches the class. This defers additional tool verification. Unity may still import and compile the new source.
+
+```json title="MCP arguments"
+{
+  "path": "Assets/Scripts/PrototypeProbe.cs",
+  "contents": "using UnityEngine;\n\npublic sealed class PrototypeProbe : MonoBehaviour\n{\n}\n",
+  "verification": "off"
+}
+```
 <!-- examples:end -->
 

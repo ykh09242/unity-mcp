@@ -32,6 +32,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read the first page of a deferred tool response. Replace the example ID with the response ID from the original call. Follow `next_offset` until it is `null`. Concatenate the decoded page bytes in order and check `sha256` before decoding the JSON.
+
+```json title="MCP arguments"
+{
+  "response_id": "0123456789abcdef0123456789abcdef",
+  "offset": 0
+}
+```
 <!-- examples:end -->
 

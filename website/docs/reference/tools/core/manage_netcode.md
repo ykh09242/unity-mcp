@@ -33,6 +33,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Check which Netcode for GameObjects package features are available before preflighting a scene.
+
+```json title="MCP arguments"
+{
+  "action": "capabilities"
+}
+```
 <!-- examples:end -->
 

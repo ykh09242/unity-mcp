@@ -41,6 +41,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read the current Game view size before changing it for an Editor capture.
+
+```json title="MCP arguments"
+{
+  "action": "get_game_view_size"
+}
+```
 <!-- examples:end -->
 

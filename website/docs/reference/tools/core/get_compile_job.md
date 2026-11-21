@@ -31,6 +31,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read the compile job created by a refresh. Replace the example ID with the compile ID returned by `refresh_unity` and use the same Editor instance.
+
+```json title="MCP arguments"
+{
+  "compile_id": "0123456789abcdef0123456789abcdef"
+}
+```
 <!-- examples:end -->
 

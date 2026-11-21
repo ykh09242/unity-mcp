@@ -47,6 +47,19 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Add a cube as a scene placeholder. Use an unused object name and position within the selected scene.
+
+```json title="MCP arguments"
+{
+  "action": "create",
+  "name": "Prototype Marker",
+  "primitive_type": "Cube",
+  "position": [
+    0,
+    0.5,
+    0
+  ]
+}
+```
 <!-- examples:end -->
 

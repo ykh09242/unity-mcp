@@ -35,6 +35,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read the labels on a prefab before filtering or making label changes. Replace the path with a prefab in your project.
+
+```json title="MCP arguments"
+{
+  "action": "get_labels",
+  "path": "Assets/Prefabs/Player.prefab"
+}
+```
 <!-- examples:end -->
 

@@ -45,6 +45,16 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Change the live text of one named UI Toolkit Label in an initialized HUD. Use the actual scene object and element name. `strict_name` rejects an ambiguous match.
+
+```json title="MCP arguments"
+{
+  "action": "modify_visual_element",
+  "target": "HUD",
+  "element_name": "status-label",
+  "strict_name": true,
+  "text": "Ready"
+}
+```
 <!-- examples:end -->
 

@@ -36,6 +36,21 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Preview aligning three markers on the world X axis. Replace the names with three unique scene objects. The first target is the anchor. Review the returned positions before applying a placement.
+
+```json title="MCP arguments"
+{
+  "action": "placement",
+  "space": "world",
+  "targets": [
+    "Marker A",
+    "Marker B",
+    "Marker C"
+  ],
+  "placement_mode": "align",
+  "axis": "x",
+  "preview": true
+}
+```
 <!-- examples:end -->
 

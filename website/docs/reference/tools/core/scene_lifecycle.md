@@ -42,6 +42,15 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Open the Harbor fixture's Dock scene additively when it is currently closed. The currently loaded scene remains open. `verify` requests a bounded validation observation for the loaded scene.
+
+```json title="MCP arguments"
+{
+  "action": "load",
+  "path": "Assets/Dock.unity",
+  "additive": true,
+  "verify": true
+}
+```
 <!-- examples:end -->
 

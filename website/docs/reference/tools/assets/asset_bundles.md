@@ -35,6 +35,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List the first 20 bundle assignments in the selected project. Use a returned bundle name for asset or dependency inspection.
+
+```json title="MCP arguments"
+{
+  "action": "list_asset_bundles",
+  "page_size": 20,
+  "page_number": 1
+}
+```
 <!-- examples:end -->
 

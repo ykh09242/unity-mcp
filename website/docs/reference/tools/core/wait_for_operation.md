@@ -32,6 +32,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Observe an existing [Play Scenario run](../testing/manage_play_scenario.md) for up to five seconds. Replace the example ID with the scenario job ID and keep the same Editor instance. Inspect the returned state and job evidence before deciding whether to observe again.
+
+```json title="MCP arguments"
+{
+  "kind": "scenario",
+  "job_id": "0123456789abcdef0123456789abcdef",
+  "wait_timeout": 5
+}
+```
 <!-- examples:end -->
 

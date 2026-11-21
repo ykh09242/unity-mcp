@@ -30,6 +30,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read the current SHA-256 and metadata for `Assets/BerthProbe.cs` in the Harbor fixture before preparing a source change.
+
+```json title="MCP arguments"
+{
+  "uri": "Assets/BerthProbe.cs"
+}
+```
 <!-- examples:end -->
 

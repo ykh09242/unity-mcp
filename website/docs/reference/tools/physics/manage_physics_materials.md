@@ -45,6 +45,18 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Create a low-friction 3D physics material at a fresh path under an existing folder. Assign the material to a collider separately with `assign_physics_material`.
+
+```json title="MCP arguments"
+{
+  "action": "create_physics_material",
+  "dimension": "3d",
+  "name": "PrototypeIce",
+  "path": "Assets/Physics/PrototypeIce.physicMaterial",
+  "static_friction": 0.05,
+  "dynamic_friction": 0.05,
+  "bounciness": 0
+}
+```
 <!-- examples:end -->
 

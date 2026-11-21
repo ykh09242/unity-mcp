@@ -35,6 +35,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Lower environment reflection intensity in a test scene. Keep other reflection settings by supplying only `intensity`.
+
+```json title="MCP arguments"
+{
+  "action": "skybox_set_reflection",
+  "intensity": 0.65
+}
+```
 <!-- examples:end -->
 

@@ -36,6 +36,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List curve bindings on an existing walk animation. Replace the clip path, then choose a returned binding ID for `clip_get_curve`.
+
+```json title="MCP arguments"
+{
+  "action": "clip_get_curves",
+  "clip_path": "Assets/Animations/Walk.anim"
+}
+```
 <!-- examples:end -->
 

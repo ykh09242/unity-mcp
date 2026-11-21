@@ -32,6 +32,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Ask the Editor to validate the Harbor fixture's `Assets/BerthProbe.cs` and include diagnostics. For another project, use its script path.
+
+```json title="MCP arguments"
+{
+  "uri": "Assets/BerthProbe.cs",
+  "include_diagnostics": true
+}
+```
 <!-- examples:end -->
 

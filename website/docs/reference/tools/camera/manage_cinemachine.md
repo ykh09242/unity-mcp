@@ -33,6 +33,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect the Cinemachine brain Unity finds in the active scene. The response identifies its GameObject, the active virtual camera, and the current blend state. The scene needs a CinemachineBrain component.
+
+```json title="MCP arguments"
+{
+  "action": "get_brain_status"
+}
+```
 <!-- examples:end -->
 

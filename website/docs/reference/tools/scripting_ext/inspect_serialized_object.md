@@ -36,6 +36,15 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List the first 20 top-level serialized fields of a loaded component. Replace the number with the exact instance ID from a recent component inspection. With values disabled the example reads field descriptors.
+
+```json title="MCP arguments"
+{
+  "instance_id": 43210,
+  "mode": "fields",
+  "page_size": 20,
+  "include_values": false
+}
+```
 <!-- examples:end -->
 

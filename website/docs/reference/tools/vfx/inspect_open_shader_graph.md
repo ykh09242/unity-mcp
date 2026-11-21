@@ -30,6 +30,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Check the current node and edge counts for a Shader Graph that is already open. Use its full Assets path and examine the returned status before comparing counts to the saved graph.
+
+```json title="MCP arguments"
+{
+  "path": "Assets/Shaders/Water.shadergraph"
+}
+```
 <!-- examples:end -->
 

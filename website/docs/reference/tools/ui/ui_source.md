@@ -43,6 +43,15 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Find the first 20 UXML documents before choosing a file to inspect or edit.
+
+```json title="MCP arguments"
+{
+  "action": "list",
+  "filter_type": "uxml",
+  "page_size": 20,
+  "page_number": 1
+}
+```
 <!-- examples:end -->
 

@@ -65,6 +65,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Check the Blender add-on connection before requesting scene inspection or object import.
+
+```json title="MCP arguments"
+{
+  "action": "status"
+}
+```
 <!-- examples:end -->
 

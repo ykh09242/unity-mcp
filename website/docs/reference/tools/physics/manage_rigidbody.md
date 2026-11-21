@@ -34,6 +34,15 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read a 3D Rigidbody on `Player`. Replace the target with an unambiguous object in the loaded scene.
+
+```json title="MCP arguments"
+{
+  "action": "get_rigidbody",
+  "dimension": "3d",
+  "target": "Player",
+  "search_method": "by_name"
+}
+```
 <!-- examples:end -->
 

@@ -42,6 +42,21 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Apply an upward impulse to a test crate with a dynamic 3D Rigidbody in Play Mode. Replace `Test Crate` with the exact object you want to move, and inspect its subsequent simulation state.
+
+```json title="MCP arguments"
+{
+  "action": "apply_force",
+  "dimension": "3d",
+  "target": "Test Crate",
+  "search_method": "by_name",
+  "force_mode": "Impulse",
+  "force": [
+    0,
+    2,
+    0
+  ]
+}
+```
 <!-- examples:end -->
 

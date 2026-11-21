@@ -36,6 +36,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect the current recording in the selected Editor. Check the reported input observation mode before interpreting captured actions.
+
+```json title="MCP arguments"
+{
+  "action": "status"
+}
+```
 <!-- examples:end -->
 

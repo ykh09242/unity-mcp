@@ -79,6 +79,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List existing cameras when using the legacy camera facade. New clients can use `manage_cameras` for the same inventory action.
+
+```json title="MCP arguments"
+{
+  "action": "list_cameras"
+}
+```
 <!-- examples:end -->
 

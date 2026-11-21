@@ -47,6 +47,24 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Cast a downward 3D ray from world-space height 3 within a ten-unit range. In a scene with a collider below the origin, inspect its hit point and normal.
+
+```json title="MCP arguments"
+{
+  "action": "raycast",
+  "dimension": "3d",
+  "origin": [
+    0,
+    3,
+    0
+  ],
+  "direction": [
+    0,
+    -1,
+    0
+  ],
+  "max_distance": 10
+}
+```
 <!-- examples:end -->
 

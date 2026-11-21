@@ -38,6 +38,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Find up to five tool candidates for diagnosing why an object is missing from a loaded scene. Compare the returned action and parameter requirements before calling a candidate.
+
+```json title="MCP arguments"
+{
+  "query": "find GameObjects across loaded scenes",
+  "limit": 5
+}
+```
 <!-- examples:end -->
 

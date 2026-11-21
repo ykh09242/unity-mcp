@@ -38,6 +38,15 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect a small UI Toolkit visual tree for the GameObject that owns a `UIDocument`. Replace `HUD` with that object's name or ID.
+
+```json title="MCP arguments"
+{
+  "action": "get_visual_tree",
+  "target": "HUD",
+  "max_depth": 3,
+  "max_nodes": 30
+}
+```
 <!-- examples:end -->
 

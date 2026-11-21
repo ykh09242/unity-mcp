@@ -29,6 +29,10 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect request context from the MCP client whose routing you are diagnosing. The response can contain session identifiers and client-supplied metadata, so keep it in the diagnostic session.
+
+```json title="MCP arguments"
+{}
+```
 <!-- examples:end -->
 

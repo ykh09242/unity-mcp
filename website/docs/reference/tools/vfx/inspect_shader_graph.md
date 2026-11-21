@@ -32,6 +32,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read the first 20 saved nodes, edges, properties, and keywords for a project Shader Graph. Replace the example path with the saved asset to inspect.
+
+```json title="MCP arguments"
+{
+  "path": "Assets/Shaders/Water.shadergraph",
+  "page_size": 20,
+  "page_number": 1
+}
+```
 <!-- examples:end -->
 

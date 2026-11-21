@@ -34,6 +34,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Capture a handle for a specific, currently loaded object. Replace the integer with the instance ID from a fresh GameObject or component lookup. Keep the returned handle for `resolve` in the same Editor session.
+
+```json title="MCP arguments"
+{
+  "action": "capture",
+  "instance_id": 43210
+}
+```
 <!-- examples:end -->
 

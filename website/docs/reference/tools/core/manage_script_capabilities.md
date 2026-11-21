@@ -34,6 +34,10 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect the selected Editor's script command capabilities before choosing a verification or source-editing workflow.
+
+```json title="MCP arguments"
+{}
+```
 <!-- examples:end -->
 

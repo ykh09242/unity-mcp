@@ -31,6 +31,16 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Call the `my_custom_tool` handler after installing and discovering the sample from the [custom tool guide](../../../guides/custom-tools.md). Pass the parameters declared by that project handler. Run this in the project that registered it.
+
+```json title="MCP arguments"
+{
+  "tool_name": "my_custom_tool",
+  "parameters": {
+    "param1": "Harbor",
+    "param2": 2
+  }
+}
+```
 <!-- examples:end -->
 

@@ -35,6 +35,16 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+After saving C# files, ask the selected Editor for a scripts refresh and compile if dirty. A readiness timeout bounds the wait. Use the returned compile job ID to observe compilation separately.
+
+```json title="MCP arguments"
+{
+  "mode": "if_dirty",
+  "scope": "scripts",
+  "compile": "request",
+  "wait_for_ready": true,
+  "timeout_seconds": 30
+}
+```
 <!-- examples:end -->
 

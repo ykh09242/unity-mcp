@@ -41,6 +41,17 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Add a 3D hinge to `Door` in a test scene and connect it to the Rigidbody on `Door Frame`. Use unique names for existing bodies and inspect the resulting joint before saving.
+
+```json title="MCP arguments"
+{
+  "action": "add_joint",
+  "dimension": "3d",
+  "target": "Door",
+  "joint_type": "hinge",
+  "connected_body": "Door Frame",
+  "search_method": "by_name"
+}
+```
 <!-- examples:end -->
 

@@ -103,6 +103,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect the active render pipeline through the legacy graphics facade. New clients can use `manage_render_pipeline` for the same observation.
+
+```json title="MCP arguments"
+{
+  "action": "pipeline_get_info"
+}
+```
 <!-- examples:end -->
 

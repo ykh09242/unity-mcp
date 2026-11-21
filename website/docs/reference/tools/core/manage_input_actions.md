@@ -45,6 +45,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Check Input System support before reading a `.inputactions` asset. Continue with `read` and an asset path when the capability is available.
+
+```json title="MCP arguments"
+{
+  "action": "capabilities"
+}
+```
 <!-- examples:end -->
 

@@ -39,6 +39,15 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect references in the active scene, with explicit workload and page limits. The action may load assets or invoke project callbacks. Use the returned continuation when the report is partial.
+
+```json title="MCP arguments"
+{
+  "action": "validate_references",
+  "reference_scope": "active_scene",
+  "max_objects": 100,
+  "page_size": 20
+}
+```
 <!-- examples:end -->
 

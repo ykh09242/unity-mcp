@@ -35,6 +35,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Find the registration call in `Assets/BerthProbe.cs` from the Harbor fixture. For another project, replace the URI and regex. Reuse a returned `next_cursor` with the same query to continue searching the same snapshot.
+
+```json title="MCP arguments"
+{
+  "uri": "Assets/BerthProbe.cs",
+  "pattern": "PlayScenarioStateRegistry\\.Register",
+  "max_results": 10
+}
+```
 <!-- examples:end -->
 

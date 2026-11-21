@@ -33,6 +33,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Check whether the project declares `Tools/Gameplay/Validate Scenes`. Replace it with an exact managed path from `mcpforunity://menu-items`. Inspection uses declarations and leaves validation callbacks uncalled.
+
+```json title="MCP arguments"
+{
+  "action": "inspect",
+  "menu_path": "Tools/Gameplay/Validate Scenes"
+}
+```
 <!-- examples:end -->
 

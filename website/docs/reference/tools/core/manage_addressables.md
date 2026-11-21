@@ -48,6 +48,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Check the installed Addressables provider's per-action availability before looking up a settings asset or planning edits.
+
+```json title="MCP arguments"
+{
+  "action": "capabilities"
+}
+```
 <!-- examples:end -->
 

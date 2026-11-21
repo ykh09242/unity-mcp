@@ -37,6 +37,22 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Validate a change to an integer property before applying it. Replace the path with your existing tuning asset and `maxLives` with its canonical serialized field path. `dry_run` checks the patch without applying it.
+
+```json title="MCP arguments"
+{
+  "action": "modify",
+  "target": {
+    "path": "Assets/Config/GameTuning.asset"
+  },
+  "patches": [
+    {
+      "path": "maxLives",
+      "value": 5
+    }
+  ],
+  "dry_run": true
+}
+```
 <!-- examples:end -->
 

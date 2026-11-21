@@ -38,6 +38,22 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Enable linear fog in a test scene, fading between 25 and 100 world units. This changes the scene environment. Inspect its appearance in the Scene or Game view before saving.
+
+```json title="MCP arguments"
+{
+  "action": "skybox_set_fog",
+  "fog_enabled": true,
+  "fog_mode": "Linear",
+  "fog_color": [
+    0.6,
+    0.67,
+    0.75,
+    1
+  ],
+  "fog_start": 25,
+  "fog_end": 100
+}
+```
 <!-- examples:end -->
 

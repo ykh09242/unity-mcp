@@ -44,6 +44,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List localization locales in a bounded page before choosing a table or editing a locale-specific entry.
+
+```json title="MCP arguments"
+{
+  "action": "list_locales",
+  "limit": 20
+}
+```
 <!-- examples:end -->
 

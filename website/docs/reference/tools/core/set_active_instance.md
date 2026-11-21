@@ -32,6 +32,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Select the Harbor Editor and request a bounded context snapshot. Replace the example selector with the exact `Name@hash` value from `mcpforunity://instances`.
+
+```json title="MCP arguments"
+{
+  "instance": "Harbor@01234567",
+  "include_context": true
+}
+```
 <!-- examples:end -->
 

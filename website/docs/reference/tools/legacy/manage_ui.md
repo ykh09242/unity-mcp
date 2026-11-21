@@ -85,6 +85,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Check whether the selected Editor's UI Toolkit operations are ready before opening a UXML asset.
+
+```json title="MCP arguments"
+{
+  "action": "ping"
+}
+```
 <!-- examples:end -->
 

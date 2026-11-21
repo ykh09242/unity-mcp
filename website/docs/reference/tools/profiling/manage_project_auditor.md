@@ -34,6 +34,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Check Project Auditor availability before starting analysis. The action reports setup without starting the analysis or installing a package.
+
+```json title="MCP arguments"
+{
+  "action": "availability"
+}
+```
 <!-- examples:end -->
 

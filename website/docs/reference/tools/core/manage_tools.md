@@ -44,6 +44,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List available tool groups and their activation state. Check for the `testing` group before calling a Play Scenario or verification tool.
+
+```json title="MCP arguments"
+{
+  "action": "list_groups"
+}
+```
 <!-- examples:end -->
 

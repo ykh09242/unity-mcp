@@ -32,6 +32,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Export JUnit evidence for a completed `run_tests` job. Use its actual job ID, and pass each `next_cursor` back to collect the remaining chunks in order.
+
+```json title="MCP arguments"
+{
+  "job_id": "0123456789abcdef0123456789abcdef",
+  "format": "junit"
+}
+```
 <!-- examples:end -->
 

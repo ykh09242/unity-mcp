@@ -31,6 +31,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Request cancellation only for an owned test run you intend to stop. Replace the example ID with the ID from `run_tests`. For a started job, observe it again with `get_test_job` and check `native_control` for confirmed termination.
+
+```json title="MCP arguments"
+{
+  "job_id": "0123456789abcdef0123456789abcdef",
+  "wait_timeout": 0
+}
+```
 <!-- examples:end -->
 

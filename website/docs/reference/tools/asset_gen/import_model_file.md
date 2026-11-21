@@ -43,6 +43,15 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Import an existing FBX from the selected project into a new model destination. Point `source_path` at your staged FBX under `Assets`. This keeps the source file and, with `target_size` set to zero, preserves imported scale. Check `model_import_stage` for `usable` before using the returned asset.
+
+```json title="MCP arguments"
+{
+  "source_path": "Assets/SourceModels/Crate.fbx",
+  "name": "PrototypeCrate",
+  "output_folder": "Assets/ImportedModels",
+  "target_size": 0
+}
+```
 <!-- examples:end -->
 

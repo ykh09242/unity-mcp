@@ -34,6 +34,14 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Capture a bounded semantic snapshot of a uGUI HUD under `Canvas/HUD`. Use the GameObject path or ID for your actual root. A scoped connection needs `read`, `edit`, and `run` because capture can invoke project callbacks.
+
+```json title="MCP arguments"
+{
+  "framework": "ugui",
+  "target": "Canvas/HUD",
+  "max_nodes": 50
+}
+```
 <!-- examples:end -->
 

@@ -42,6 +42,17 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Render the current UI Toolkit document on `HUD` for a visual check. Use the actual GameObject and choose an output folder inside the project for the generated PNG.
+
+```json title="MCP arguments"
+{
+  "action": "render_ui",
+  "target": "HUD",
+  "width": 640,
+  "height": 360,
+  "include_image": true,
+  "output_folder": "Captures"
+}
+```
 <!-- examples:end -->
 

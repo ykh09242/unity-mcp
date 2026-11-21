@@ -41,6 +41,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List effects known to the selected Editor before selecting an effect type for a Volume profile.
+
+```json title="MCP arguments"
+{
+  "action": "volume_list_effects"
+}
+```
 <!-- examples:end -->
 

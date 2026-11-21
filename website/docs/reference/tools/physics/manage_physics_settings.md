@@ -35,6 +35,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read the current 3D collision matrix before debugging why colliders on two layers ignore one another.
+
+```json title="MCP arguments"
+{
+  "action": "get_collision_matrix",
+  "dimension": "3d"
+}
+```
 <!-- examples:end -->
 

@@ -48,6 +48,24 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Preview inserting a file header at the first character of the Harbor fixture's `Assets/BerthProbe.cs`. The identical start and end positions make this an insertion. Review the returned proposal and source identity before applying edits.
+
+```json title="MCP arguments"
+{
+  "uri": "Assets/BerthProbe.cs",
+  "edits": [
+    {
+      "startLine": 1,
+      "startCol": 1,
+      "endLine": 1,
+      "endCol": 1,
+      "newText": "// Harbor scenario state probe\n"
+    }
+  ],
+  "options": {
+    "preview": true
+  }
+}
+```
 <!-- examples:end -->
 

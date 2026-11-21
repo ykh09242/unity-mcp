@@ -31,6 +31,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Open a project prefab in Prefab Mode for inspection. Replace the path with the prefab to inspect and account for any existing unsaved stage edits before changing stages.
+
+```json title="MCP arguments"
+{
+  "action": "open_prefab_stage",
+  "prefab_path": "Assets/Prefabs/Player.prefab"
+}
+```
 <!-- examples:end -->
 

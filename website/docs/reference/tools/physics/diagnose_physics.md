@@ -43,6 +43,16 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect collider evidence for one scene object. Replace `Player` with the object to diagnose. The small page is useful when the object owns multiple colliders.
+
+```json title="MCP arguments"
+{
+  "action": "validate",
+  "dimension": "3d",
+  "target": "Player",
+  "search_method": "by_name",
+  "page_size": 10
+}
+```
 <!-- examples:end -->
 

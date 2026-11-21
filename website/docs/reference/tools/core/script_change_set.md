@@ -34,6 +34,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect a change set before choosing whether to apply or recover it. Replace the example ID with the ID returned by `prepare` and use its original Editor connection.
+
+```json title="MCP arguments"
+{
+  "action": "status",
+  "change_set_id": "0123456789abcdef0123456789abcdef"
+}
+```
 <!-- examples:end -->
 

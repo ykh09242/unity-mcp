@@ -38,6 +38,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List saved simulation profiles in the selected project. Choose a returned name for inspection before applying any settings.
+
+```json title="MCP arguments"
+{
+  "action": "list",
+  "limit": 20
+}
+```
 <!-- examples:end -->
 

@@ -35,6 +35,17 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Advance 3D physics by one 20-millisecond step in a disposable test scene and read back the test crate's Rigidbody state. `target` limits the reported bodies. The simulation itself advances the physics scene.
+
+```json title="MCP arguments"
+{
+  "action": "simulate_step",
+  "dimension": "3d",
+  "target": "Test Crate",
+  "search_method": "by_name",
+  "steps": 1,
+  "step_size": 0.02
+}
+```
 <!-- examples:end -->
 

@@ -40,6 +40,15 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Orient a scene marker toward a target. Replace both names with unique objects in the selected scene, and confirm the marker's new rotation before saving.
+
+```json title="MCP arguments"
+{
+  "action": "look_at",
+  "target": "Look Marker",
+  "search_method": "by_name",
+  "look_at_target": "Focus Target"
+}
+```
 <!-- examples:end -->
 

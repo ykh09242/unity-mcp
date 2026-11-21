@@ -49,6 +49,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List available model providers before choosing where to search for a model.
+
+```json title="MCP arguments"
+{
+  "action": "list_providers"
+}
+```
 <!-- examples:end -->
 

@@ -40,6 +40,12 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List renderer features before choosing a feature to configure. This requires a project with a supported renderer setup.
+
+```json title="MCP arguments"
+{
+  "action": "feature_list"
+}
+```
 <!-- examples:end -->
 

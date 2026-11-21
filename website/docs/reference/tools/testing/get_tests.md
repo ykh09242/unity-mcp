@@ -34,6 +34,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+List the first 25 Edit Mode tests. Use the returned cursor if more items are available before choosing test selectors.
+
+```json title="MCP arguments"
+{
+  "mode": "EditMode",
+  "page_size": 25
+}
+```
 <!-- examples:end -->
 

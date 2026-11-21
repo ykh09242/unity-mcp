@@ -42,6 +42,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Create a folder for scene prototypes. Choose an unused path under an existing parent folder.
+
+```json title="MCP arguments"
+{
+  "action": "create_folder",
+  "path": "Assets/PrototypeScenes"
+}
+```
 <!-- examples:end -->
 

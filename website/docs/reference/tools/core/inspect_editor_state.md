@@ -29,6 +29,10 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read the Editor snapshot before a scene operation. Check the active scene, compile flag, and snapshot freshness before relying on them.
+
+```json title="MCP arguments"
+{}
+```
 <!-- examples:end -->
 

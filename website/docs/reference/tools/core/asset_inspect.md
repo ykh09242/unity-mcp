@@ -40,6 +40,17 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Find the first 20 C# script assets under `Assets/Scripts` without loading previews. If the response includes a search snapshot, reuse it with the same query and page size for subsequent pages.
+
+```json title="MCP arguments"
+{
+  "action": "search",
+  "path": "Assets/Scripts",
+  "search_pattern": "t:MonoScript",
+  "metadata_only": true,
+  "page_size": 20,
+  "page_number": 1
+}
+```
 <!-- examples:end -->
 

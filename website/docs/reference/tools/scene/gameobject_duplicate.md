@@ -37,6 +37,20 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Duplicate a scene marker, give the copy a new name, and offset it by two units on X. Use the unique name or current instance ID of the source object.
+
+```json title="MCP arguments"
+{
+  "action": "duplicate",
+  "target": "Prototype Marker",
+  "search_method": "by_name",
+  "new_name": "Prototype Marker B",
+  "offset": [
+    2,
+    0,
+    0
+  ]
+}
+```
 <!-- examples:end -->
 

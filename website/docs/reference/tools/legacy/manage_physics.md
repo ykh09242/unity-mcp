@@ -103,6 +103,13 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Check the current 3D collision matrix through the legacy physics facade before querying contacts between two layers.
+
+```json title="MCP arguments"
+{
+  "action": "get_collision_matrix",
+  "dimension": "3d"
+}
+```
 <!-- examples:end -->
 

@@ -88,6 +88,17 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect the mesh summary of an existing ProBuilder wall. Replace `Blockout Wall` with a scene object that has a ProBuilder mesh.
+
+```json title="MCP arguments"
+{
+  "action": "get_mesh_info",
+  "target": "Blockout Wall",
+  "search_method": "by_name",
+  "properties": {
+    "include": "summary"
+  }
+}
+```
 <!-- examples:end -->
 

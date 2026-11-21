@@ -29,6 +29,10 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Inspect the scene's camera inventory before choosing a camera for a capture.
+
+```json title="MCP arguments"
+{}
+```
 <!-- examples:end -->
 

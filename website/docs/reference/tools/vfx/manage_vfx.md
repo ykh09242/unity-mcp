@@ -34,6 +34,18 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Read a small page of exposed properties on the `VisualEffect` component of a scene object. Replace `Campfire` with an object using a compatible Visual Effect Graph.
+
+```json title="MCP arguments"
+{
+  "action": "vfx_get_exposed_properties",
+  "target": "Campfire",
+  "search_method": "by_name",
+  "properties": {
+    "page_size": 10,
+    "page_number": 1
+  }
+}
+```
 <!-- examples:end -->
 
