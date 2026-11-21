@@ -531,33 +531,91 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That((bool)finished["runner_resources_released"], Is.True);
         }
 
-        [Test]
-        public void JobStatusAfterFailedFirstReportWriteExposesErrorWithoutAPath()
+        private sealed class CountingHost : IPlayScenarioHost
         {
+            internal int Executions;
+
+            public PlayScenarioObservation Evaluate(PlayScenarioStep step, bool firstPoll)
+            {
+                if (firstPoll)
+                    Executions++;
+                return new PlayScenarioObservation(true, "done");
+            }
+
+            public void Release() { }
+        }
+
+        private static void Finish(PlayScenarioEngine engine)
+        {
+            engine.EnteredPlayMode();
+            for (int i = 0; i < 20 && engine.Running; i++)
+                engine.Tick(engine.State.StartedUnixMs + i * 250, true);
+            Assert.AreEqual("succeeded", engine.State.Status, engine.State.Error);
+            Service.GetMethod("Synchronize", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { true });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CompletedJobCannotRunAgainAfterReportFailureAndTheNextJob(bool receiptAlsoFails)
+        {
+            if (PlayScenarioSuiteService.IsBusy || EditorApplication.isPlayingOrWillChangePlaymode)
+                Assert.Ignore("An idle Edit Mode editor is required.");
             PlayScenarioRun run = StartingRun();
-            var engine = new PlayScenarioEngine(run, new UnityPlayScenarioHost());
-            engine.Cancel(run.StartedUnixMs + 1);
-            Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, engine);
+            var host = new CountingHost();
+            var engine = new PlayScenarioEngine(run, host);
+            var engineField = Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic);
+            engineField.SetValue(null, engine);
             Service.GetField("_logs", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, null);
             Service.GetField("_finalized", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, false);
-            string folder = Path.Combine(Path.GetDirectoryName(UnityEngine.Application.dataPath), "Library/MCPForUnity/PlayScenarioRuns");
-            if (Directory.Exists(folder) && Directory.GetFiles(folder, "*.json").Length > 20)
-                Assert.Ignore("Preserve existing report retention recovery.");
+            string root = Path.Combine(Path.GetTempPath(), "MCPUnpublished-" + run.JobId);
+            string folder = Path.Combine(root, "Library/MCPForUnity/PlayScenarioRuns");
             string blocked = Path.Combine(folder, run.JobId + ".json");
             Directory.CreateDirectory(blocked);
+            string receipt = Path.Combine(folder, "retired.ids");
+            var store = new PlayScenarioStore(root);
+            Service.GetField("_storeRoot", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, root);
             try
             {
-                Service.GetMethod("Synchronize", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { true });
+                if (receiptAlsoFails)
+                    Directory.CreateDirectory(receipt);
+                Finish(engine);
                 var response = (SuccessResponse)ManagePlayScenario.HandleCommand(new JObject { ["action"] = "status", ["job_id"] = run.JobId });
                 var observed = (JObject)response.Data;
-                Assert.AreEqual("cancelled", (string)observed["status"]);
+                Assert.AreEqual("succeeded", (string)observed["status"]);
                 Assert.IsNull((string)observed["report_path"]);
                 Assert.IsNotEmpty((string)observed["report_error"]);
-                Assert.IsFalse(File.Exists(blocked));
+                Directory.Delete(blocked);
+                Invoke("Restore");
+
+                var next = PlayScenarioDefinition.Parse(
+                    JObject.Parse("{'name':'next','steps':[{'name':'Absent','action':'wait_object','target':'MCPAbsent-" + run.JobId + "','count':0}]}")
+                );
+                if (receiptAlsoFails)
+                {
+                    string saved = SessionState.GetString(SessionKey, "");
+                    var refused = (ErrorResponse)PlayScenarioService.Start(next, 1, 30, null);
+                    Assert.AreEqual(false, (bool?)((JObject)refused.Data)["scenario_job_created"]);
+                    Assert.AreEqual(saved, SessionState.GetString(SessionKey, ""));
+                    Assert.AreEqual(0, QueuedPlayRequests());
+                    Directory.Delete(receipt);
+                }
+                else
+                    Assert.Throws<InvalidOperationException>(() => new PlayScenarioStore(root).FindReportForStart(run.JobId));
+
+                string nextId = Guid.NewGuid().ToString("N");
+                Assert.IsInstanceOf<SuccessResponse>(PlayScenarioService.Start(next, 1, 30, nextId));
+                var nextEngine = (PlayScenarioEngine)engineField.GetValue(null);
+                Finish(nextEngine);
+                Assert.AreEqual("succeeded", store.GetReport(nextId).Status);
+                var replay = (ErrorResponse)PlayScenarioService.Start(run.Scenario, 1, 30, run.JobId);
+                StringAssert.Contains("job_id was already used", replay.Error);
+                Assert.AreSame(nextEngine, engineField.GetValue(null));
+                Assert.AreEqual(0, QueuedPlayRequests());
+                Assert.AreEqual(1, host.Executions);
             }
             finally
             {
-                Directory.Delete(blocked);
+                Directory.Delete(root, true);
             }
         }
 

@@ -157,6 +157,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return history.FindForStart(jobId, GetReport, "job_id");
         }
 
+        internal void RememberUnpublishedJob(string jobId)
+        {
+            lock (gate)
+                history.Retire(jobId);
+        }
+
         public IReadOnlyList<PlayScenarioRun> ListReports(string name = null, int limit = 20)
         {
             if (name != null)

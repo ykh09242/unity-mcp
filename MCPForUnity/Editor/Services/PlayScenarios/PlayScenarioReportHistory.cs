@@ -9,7 +9,7 @@ using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Services.PlayScenarios
 {
-    /// <summary>Retire a report ID durably before its full report can be removed.</summary>
+    /// <summary>Retain job identities when their full reports are unavailable.</summary>
     internal sealed class PlayScenarioReportHistory
     {
         internal const int RetiredLimit = 256;
@@ -66,12 +66,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             catch (IOException exception) when (exception is FileNotFoundException || exception is DirectoryNotFoundException)
             {
                 if (ReadRetired().Contains(id))
-                    throw new InvalidOperationException(field + " was already used and its full report has expired.");
+                    throw new InvalidOperationException(field + " was already used and its full report is unavailable.");
                 return null;
             }
         }
 
-        private void Retire(string id)
+        internal void Retire(string id)
         {
             PlayScenarioSuiteStore.ValidateId(id);
             var ids = ReadRetired();
@@ -81,6 +81,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 ids.RemoveAt(0);
             ids.Add(id);
             byte[] bytes = Encoding.ASCII.GetBytes(string.Concat(ids));
+            Directory.CreateDirectory(Checked(directory));
             string path = Checked(directory + "/retired.ids");
             string stage = Checked(directory + "/" + Guid.NewGuid().ToString("N") + ".tmp");
             try

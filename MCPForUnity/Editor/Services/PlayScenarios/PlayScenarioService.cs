@@ -35,7 +35,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static int _activityRevision = -1;
         private static bool _activityFinalized;
         private static bool? _activityResourcesReleased;
-        private static PlayScenarioStore Store => new PlayScenarioStore(Path.GetDirectoryName(Application.dataPath));
+        private static string _storeRoot;
+        private static PlayScenarioStore Store => new PlayScenarioStore(_storeRoot ??= Path.GetDirectoryName(Application.dataPath));
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         static PlayScenarioService() => Restore();
@@ -171,6 +172,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return RefusedBeforeStart("Wait for the editor to finish compiling, importing or changing Play Mode.");
             if (NativeOperationBarriers.TryGetScenarioBlocker(null, suiteChildId, out var blocker))
                 return RefusedBeforeStart(blocker.Reason, blocker.Recovery);
+            // A terminal checkpoint is the last copy of this ID if both report and receipt writes failed.
+            var previousState = _engine?.State;
+            if (previousState?.ReportError != null && previousState.ReportPath == null && RememberUnpublishedJob(previousState) is string storageError)
+                return RefusedBeforeStart(storageError);
             PlayScenarioDefinition definition;
             try
             {
@@ -568,6 +573,19 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             OperationActivity.Invalidate();
         }
 
+        private static string RememberUnpublishedJob(PlayScenarioRun state)
+        {
+            try
+            {
+                Store.RememberUnpublishedJob(state.JobId);
+                return null;
+            }
+            catch (Exception exception)
+            {
+                return PlayScenarioEngine.Bounded("Could not retain completed job_id " + state.JobId + ": " + exception.Message, 1024);
+            }
+        }
+
         private static void Synchronize(bool force)
         {
             if (_engine == null)
@@ -596,7 +614,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 }
                 catch (Exception exception)
                 {
-                    _engine.State.ReportError = PlayScenarioEngine.Bounded(exception.Message, 2048);
+                    var state = _engine.State;
+                    state.ReportError = PlayScenarioEngine.Bounded(exception.Message, 2048);
+                    if (state.ReportPath == null && RememberUnpublishedJob(state) is string storageError)
+                        state.ReportError = PlayScenarioEngine.Bounded(exception.Message, 1024) + " " + storageError;
                 }
                 force = true;
             }
