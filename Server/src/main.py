@@ -525,20 +525,20 @@ def _build_instructions(project_scoped_tools: bool) -> str:
     # Some clients repeat initialize instructions beside each tool. Keep shared
     # rules compact; detailed procedures live in the on-demand skill resources.
     custom_tools_note = (
-        "Read mcpforunity://custom-tools for project-specific capabilities."
+        "Project tools: mcpforunity://custom-tools."
         if project_scoped_tools
-        else "Custom tools appear as standard tools after Unity connects."
+        else "Connected Unity custom tools appear as standard tools."
     )
     return f"""Unity Editor tools. Use live schemas. Editor reads can return saved files.
 
 Target and discover
-- Use the bound Editor. Resolve unclear targets via mcpforunity://instances. If sessionless, pass unity_instance=Name@hash on tools and _meta.unity_instance on resources, or use supported set_active_instance.
+- Use the bound Editor. Resolve ambiguity via mcpforunity://instances. If sessionless, pass unity_instance=Name@hash on tools and _meta.unity_instance on resources, or use supported set_active_instance.
 - Bind resource templates with observed values. For search_unity_tools choose observation_source and required_values by meaning. Use route_groups and route_surfaces="tools" for tools-only clients.
-- For unclear routes browse manage_tools(action="catalog") by intent, follow next_offset and describe the operation. Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck scene or mode when relevant.
+- If unsure, browse manage_tools(action="catalog") by intent, follow next_offset and describe the operation. Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck scene or mode when relevant.
 - Missing tools: inspect manage_tools(action="list_groups").discovery. Selection needs client scope/project binding, Editor toggles and consent. Fixed inventories: restart with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full and reconnect. {custom_tools_note}
 
 Observe and execute
-- Start with the advertised read that supplies the requested facts. Use mcpforunity://editor/state when lifecycle matters. Check ready_for_tools, compiler outcome and source confirmation independently. Keep compile_id and follow next_call from get_compile_job for pending work. Check evidence_diagnostics for invalid responses.
+- Start with the advertised read for the requested facts. Use mcpforunity://editor/state when lifecycle matters. Check ready_for_tools, compiler outcome and source confirmation independently. For pending work keep compile_id and follow get_compile_job's next_call. Use evidence_diagnostics on invalid responses.
 - Keep job IDs across reconnects. Check uncertain targets and receipts before retry. Earlier edits may persist. Follow recovery_required, order dependent calls and inspect each batch result.
 - Preserve existing Play sessions, scenes and runtime objects. Use interaction tools for input/UI paths. For authorized runtime work, proactively use exposed, enabled and consented execute_code with safety_checks=true when needed. Verify target and Play state, return bounded before/after values and observe async effects without blocking. Keep persistent/external writes within scope.
 - Track temporary owners/lifetimes. Run exception-safe cleanup after last use, preserving results and unrelated state. Read data.verification status, complete, scope and findings on the original job.
