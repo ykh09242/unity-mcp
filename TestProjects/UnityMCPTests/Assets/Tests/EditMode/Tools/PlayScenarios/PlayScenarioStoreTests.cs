@@ -385,6 +385,29 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
         }
 
         [Test]
+        public void DatasetHistoryMatchesTheSavedNameAndExactMaterializedOrLegacyNames()
+        {
+            foreach (string dataset in new[] { "small", "large" })
+            {
+                var run = Run(Guid.NewGuid().ToString("N"));
+                run.RequestedName = "route";
+                run.RequestedDataset = dataset;
+                run.Scenario = Definition("route--" + dataset);
+                store.SaveReport(run);
+            }
+            var legacy = Run(Guid.NewGuid().ToString("N"));
+            legacy.Scenario = Definition("route--legacy");
+            store.SaveReport(legacy);
+            var other = Run(Guid.NewGuid().ToString("N"));
+            other.Scenario = Definition("route-extra");
+            store.SaveReport(other);
+
+            CollectionAssert.AreEquivalent(new[] { "small", "large" }, store.ListReports("route").Select(run => run.RequestedDataset));
+            Assert.AreEqual("small", store.ListReports("route--small").Single().RequestedDataset);
+            Assert.AreEqual(legacy.JobId, store.ListReports("route--legacy").Single().JobId);
+        }
+
+        [Test]
         public void RetentionRemovesOnlyOwnedScreenshotAndScreenshotBytesAreBounded()
         {
             string oldest = 0.ToString("x32");

@@ -169,7 +169,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 foreach (string file in Files(Reports, 20))
                 {
                     PlayScenarioRun run = GetReport(Path.GetFileNameWithoutExtension(file));
-                    if (run.Status != "running" && (name == null || run.Scenario.Name == name))
+                    if (run.Status != "running" && (name == null || run.RequestedName == name || run.Scenario.Name == name))
                         reports.Add(run);
                 }
                 return reports
