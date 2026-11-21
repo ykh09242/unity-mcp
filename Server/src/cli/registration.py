@@ -1,5 +1,6 @@
 """Lightweight top-level command metadata for help and shell completion."""
 
+from collections.abc import Iterator, MutableMapping
 from functools import cached_property
 from importlib import import_module
 
@@ -23,15 +24,47 @@ class LazyCommand(click.Command):
         return command
 
 
+class _RegisteredCommands(MutableMapping[str, click.Command]):
+    """Click's subcommand mapping resolves commands only when reading their values."""
+
+    def __init__(self, advertised: MutableMapping[str, click.Command]) -> None:
+        self._advertised = advertised
+
+    def __getitem__(self, name: str) -> click.Command:
+        command = self._advertised[name]
+        if isinstance(command, LazyCommand):
+            return command.implementation
+        return command
+
+    def __setitem__(self, name: str, command: click.Command) -> None:
+        self._advertised[name] = command
+
+    def __delitem__(self, name: str) -> None:
+        del self._advertised[name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._advertised)
+
+    def __len__(self) -> int:
+        return len(self._advertised)
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._advertised
+
+
 class LazyCommandGroup(click.Group):
     """Resolve real commands for dispatch while listing their metadata."""
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._advertised_commands = self.commands
+        self.commands = _RegisteredCommands(self._advertised_commands)
+
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
-        command = super().get_command(ctx, cmd_name)
-        if not isinstance(command, LazyCommand):
-            return command
+        if cmd_name not in self.commands:
+            return None
         try:
-            return command.implementation
+            return self.commands[cmd_name]
         except Exception as error:
             if ctx.resilient_parsing:
                 return None
@@ -39,13 +72,13 @@ class LazyCommandGroup(click.Group):
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         # Let Click wrap the short help using the advertised commands, without resolving them.
-        click.Group(commands=self.commands).format_commands(ctx, formatter)
+        click.Group(commands=self._advertised_commands).format_commands(ctx, formatter)
 
     def shell_complete(self, ctx: click.Context, incomplete: str) -> list[CompletionItem]:
         completions = [
-            CompletionItem(name, help=self.commands[name].get_short_help_str())
+            CompletionItem(name, help=self._advertised_commands[name].get_short_help_str())
             for name in self.list_commands(ctx)
-            if name.startswith(incomplete) and not self.commands[name].hidden
+            if name.startswith(incomplete) and not self._advertised_commands[name].hidden
         ]
         # Keep Click's ordinary option completion as well as the advertised command names.
         return completions + click.Command.shell_complete(self, ctx, incomplete)
