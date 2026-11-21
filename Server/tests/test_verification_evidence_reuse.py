@@ -2,6 +2,7 @@
 
 from hashlib import sha256
 import json
+from types import SimpleNamespace
 
 from click.testing import CliRunner
 import pytest
@@ -22,6 +23,43 @@ FILES = {
     "dependencies": ["Assets/Shared.prefab", "Assets/Shared.prefab.meta"],
     "settings": ["ProjectSettings/QualitySettings.asset"],
 }
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_reuse_accepts_covered_resource_case_variants_with_bound_native_evidence(legacy):
+    identity = dict(
+        job_id="job", build_id="build", payload_hash="payload", build_source_revision="source"
+    )
+    hook = {
+        "sequence": 1,
+        "kind": "load",
+        "scheme": "resources",
+        "key": "guide",
+        "owner_path": "Assets/Wind.cs",
+        "outcome": "loaded",
+    }
+    capture = {**identity, "schema_version": 1, "dropped": 0, "observations": [hook]}
+    native = {
+        "job_id": "job",
+        "execution_environment": "player",
+        "reproduction": identity,
+        "loader_capture": capture,
+    }
+    evidence = import_player_loader_capture(native, expected=identity)
+    if legacy:
+        evidence["coverage"]["unobserved_keys"] = [{"scheme": "resources", "key": "Guide"}]
+    run = SimpleNamespace(
+        job_id="job",
+        build_id="build",
+        payload="payload",
+        source="source",
+        native_loader_capture=capture,
+        loader_observations={"state": "incomplete" if legacy else "passed", "evidence": evidence},
+    )
+    candidate = SimpleNamespace(assets={"Assets/Resources/Guide.prefab": "d" * 32})
+    assert evidence_reuse._runtime_confirmed(run, candidate)
+    evidence["observations"][0]["key"] = "edited"
+    assert not evidence_reuse._runtime_confirmed(run, candidate)
 
 
 def write(path, document):

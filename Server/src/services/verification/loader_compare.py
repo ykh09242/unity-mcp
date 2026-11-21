@@ -8,7 +8,10 @@ from cli.utils.play_scenario_player import PlayerFinalReport
 from cli.utils.play_scenario_soak_reports import _ProcessReceipt
 from models.play_scenarios import PlayScenario, normalize_native_definition
 from services.verification.input_chunks import decode_object
-from services.verification.loader_observations import import_player_loader_capture
+from services.verification.loader_observations import (
+    import_player_loader_capture,
+    loader_key_identity,
+)
 from services.verification.player_candidate import (
     CANDIDATE_MANIFEST_LIMIT,
     PreparedCandidate,
@@ -74,8 +77,8 @@ def _predictions(registration, evidence):
     for path, guid in registration.assets.items():
         key = _resource_key(path)
         if key:
-            catalog[("resources", key)].append((guid, path))
-    predictions = set()
+            catalog[loader_key_identity("resources", key)].append((guid, path))
+    predictions = {}
     comparable = set()
     for guid, asset in evidence["assets"].items():
         covered = set(asset.get("coverage", []))
@@ -83,7 +86,10 @@ def _predictions(registration, evidence):
             comparable.add(guid)
         for row in asset.get("findings", []):
             if row.get("kind") == "loader_key" and row.get("state") == "catalog_match":
-                predictions.add((row["scheme"], row["key"], row["path"]))
+                scheme, key, path = row["scheme"], row["key"], row["path"]
+                predictions.setdefault(
+                    (*loader_key_identity(scheme, key), path), (scheme, key, path)
+                )
     return catalog, analyzed, predictions, comparable
 
 
@@ -92,7 +98,7 @@ def _summarize(imported, static):
     events = []
     observed = set()
     for row in imported["observations"]:
-        edge = (row["scheme"], row["key"], row["owner_path"])
+        edge = (*loader_key_identity(row["scheme"], row["key"]), row["owner_path"])
         matches = catalog[edge[:2]]
         guid, asset_path = matches[0] if len(matches) == 1 else (None, None)
         if row["outcome"] != "loaded":
@@ -115,7 +121,9 @@ def _summarize(imported, static):
         "events": events,
         "unobserved_predictions": [
             {"scheme": scheme, "key": key, "owner_path": path}
-            for scheme, key, path in sorted(predictions - observed)
+            for scheme, key, path in sorted(
+                predictions[edge] for edge in predictions.keys() - observed
+            )
         ]
         if intact
         else None,
@@ -156,7 +164,8 @@ def compare_player_loads(project, registration_path, before, after):
             row
             for row in second["events"]
             if row["outcome"] == "loaded"
-            and (row["scheme"], row["key"], row["owner_path"]) not in first_seen
+            and (*loader_key_identity(row["scheme"], row["key"]), row["owner_path"])
+            not in first_seen
         ]
         if comparable_captures
         else None,

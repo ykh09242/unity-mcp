@@ -8,7 +8,11 @@ def test_capture_is_build_bound_and_reimport_is_idempotent():
         job_id="job", build_id="build", payload_hash="payload", build_source_revision="source"
     )
     run = {"execution_environment": "player", "job_id": "job", "reproduction": dict(identity)}
-    expected_keys = [("resources", "Inventory/Icon"), ("resources", "Other")]
+    expected_keys = [
+        ("resources", "Inventory/Icon"),
+        ("resources", "Other"),
+        ("addressables", "Icon"),
+    ]
     missing = import_player_loader_capture(run, expected=identity, expected_keys=expected_keys)
     assert (
         missing["coverage"]["state"] == "capture_unavailable"
@@ -23,16 +27,28 @@ def test_capture_is_build_bound_and_reimport_is_idempotent():
                 "kind": "load",
                 "sequence": 1,
                 "scheme": "resources",
-                "key": "Inventory/Icon",
+                "key": "inventory/icon",
                 "owner_path": "Assets/Inventory.cs",
                 "outcome": "loaded",
                 "asset_name": "Icon",
-            }
+            },
+            {
+                "kind": "load",
+                "sequence": 2,
+                "scheme": "addressables",
+                "key": "icon",
+                "owner_path": "Assets/Inventory.cs",
+                "outcome": "loaded",
+            },
         ],
     }
     observed = import_player_loader_capture(run, expected=identity, expected_keys=expected_keys)
-    assert len(observed["observations"]) == 1 and observed["coverage"]["dropped"] == 2
-    assert observed["coverage"]["unobserved_keys"] == [{"scheme": "resources", "key": "Other"}]
+    assert len(observed["observations"]) == 2 and observed["coverage"]["dropped"] == 2
+    assert observed["observations"][0]["key"] == "inventory/icon"
+    assert observed["coverage"]["unobserved_keys"] == [
+        {"scheme": "addressables", "key": "Icon"},
+        {"scheme": "resources", "key": "Other"},
+    ]
     assert (
         import_player_loader_capture(
             run, expected=identity, expected_keys=expected_keys, previous=observed

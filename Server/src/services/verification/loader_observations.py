@@ -3,6 +3,12 @@
 from hashlib import sha256
 import json
 
+from services.reference_graph.analysis import Catalog
+
+
+def loader_key_identity(scheme, key):
+    return scheme, Catalog.canonical_key(scheme, key)
+
 
 def _valid_row(row, sequence):
     limits = {"scheme": 64, "key": 512, "owner_path": 512}
@@ -59,7 +65,7 @@ def import_player_loader_capture(run, *, expected, expected_keys=(), previous=No
         previous.get("identity") != identity or previous.get("capture_sha256") != digest
     ):
         raise ValueError("player_loader_capture_conflict")
-    seen = {(row["scheme"], row["key"]) for row in rows}
+    seen = {loader_key_identity(row["scheme"], row["key"]) for row in rows}
     return {
         "identity": identity,
         "capture_sha256": digest,
@@ -69,7 +75,9 @@ def import_player_loader_capture(run, *, expected, expected_keys=(), previous=No
             "observed_hooks": len(rows),
             "dropped": dropped,
             "unobserved_keys": [
-                {"scheme": scheme, "key": key} for scheme, key in sorted(set(expected_keys) - seen)
+                {"scheme": scheme, "key": key}
+                for scheme, key in sorted(set(expected_keys))
+                if loader_key_identity(scheme, key) not in seen
             ],
         },
     }

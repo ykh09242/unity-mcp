@@ -18,7 +18,7 @@ from .test_verification_player_candidates import registered
 def load_runs(registered, child, tmp_path):
     project, script, register = registered
     script.write_text(
-        'using UnityEngine; class Wind { Object One() => Resources.Load("Guide"); '
+        'using UnityEngine; class Wind { Object One() => Resources.Load("guide"); '
         'Object Two(string key) => Resources.Load(key); Object Three() => Resources.Load("Skipped"); }'
     )
     assets = {}
@@ -37,7 +37,7 @@ def load_runs(registered, child, tmp_path):
     doc = register("wind", inputs=inputs, source_revision=source_revision(inputs), assets=assets)
     directory = tmp_path / "registrations/wind"
     jobs = []
-    for keys in (["Guide"], ["Guide", "Optional"]):
+    for keys in (["guide"], ["Guide", "Optional"]):
         outcome = run_player(
             PlayerRunOptions(
                 build_directory=directory / "build",
@@ -103,7 +103,10 @@ def test_observed_branch_and_unvisited_prediction(load_runs):
     assert addition["registered_asset_path"] == "Assets/Resources/Optional.prefab"
     assert addition["owner_path"] == "Assets/Wind.cs"
     for name in ("before", "after"):
-        assert report[name]["events"][0]["comparison"] == "predicted_load"
+        guide = report[name]["events"][0]
+        assert guide["comparison"] == "predicted_load"
+        assert guide["key"] == ("guide" if name == "before" else "Guide")
+        assert guide["registered_asset_path"] == "Assets/Resources/Guide.prefab"
         assert [row["key"] for row in report[name]["unobserved_predictions"]] == ["Skipped"]
 
 

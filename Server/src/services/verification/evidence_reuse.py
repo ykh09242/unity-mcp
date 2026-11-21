@@ -17,7 +17,10 @@ from cli.utils.play_scenario_soak_environment import ENVIRONMENT_FIELDS, Recorde
 from cli.utils.verification_change import read_run, same_json
 from services.verification.git_draft import _Git, _blob_ids, _resolve_commit, _snapshot
 from services.verification.input_chunks import decode_object, source_revision, validate_input_paths
-from services.verification.loader_observations import import_player_loader_capture
+from services.verification.loader_observations import (
+    import_player_loader_capture,
+    loader_key_identity,
+)
 from services.verification.player_candidate import CANDIDATE_MANIFEST_LIMIT, parse_manifest
 
 SCOPE_KEY = "verification_scope_sha256"
@@ -175,7 +178,11 @@ def _references_confirmed(stage, candidate):
 
 def _runtime_confirmed(run, candidate):
     stage = run.loader_observations
-    if not stage or stage.get("state") != "passed" or not run.native_loader_capture:
+    if (
+        not stage
+        or stage.get("state") not in {"passed", "incomplete"}
+        or not run.native_loader_capture
+    ):
         return False
     keys = {
         ("resources", path.rsplit("/Resources/", 1)[1].rsplit(".", 1)[0])
@@ -196,15 +203,26 @@ def _runtime_confirmed(run, candidate):
     }
     imported = import_player_loader_capture(native, expected=identity, expected_keys=keys)
     coverage = imported["coverage"]
-    return (
-        same_json(stage.get("evidence"), imported)
-        and coverage["dropped"] == 0
-        and not coverage["unobserved_keys"]
-        and all(
-            row["outcome"] == "loaded" and (row["scheme"], row["key"]) in keys
+    registered = {loader_key_identity(*key) for key in keys}
+    if (
+        coverage["dropped"] != 0
+        or coverage["unobserved_keys"]
+        or any(
+            row["outcome"] != "loaded"
+            or loader_key_identity(row["scheme"], row["key"]) not in registered
             for row in imported["observations"]
         )
-    )
+    ):
+        return False
+    if stage["state"] == "incomplete":
+        # Older writers compared raw spellings. Reproduce their exact receipt
+        # only after the native observations independently confirm every key.
+        exact = {(row["scheme"], row["key"]) for row in imported["observations"]}
+        missing = [{"scheme": scheme, "key": key} for scheme, key in sorted(keys - exact)]
+        if not missing:
+            return False
+        imported = {**imported, "coverage": {**coverage, "unobserved_keys": missing}}
+    return same_json(stage.get("evidence"), imported)
 
 
 def assess_reuse(
