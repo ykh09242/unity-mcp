@@ -9,6 +9,7 @@ from fastmcp.server.middleware import MiddlewareContext
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 
+_RESOURCE_LIST_METHODS = ("resources/list", "resources/templates/list")
 _catalog_server: ContextVar[tuple[FastMCP, tuple[str, ...]] | None] = ContextVar(
     "unity_mcp_catalog_server", default=None
 )
@@ -28,24 +29,19 @@ def internal_catalog(server: FastMCP, *methods: str) -> Iterator[None]:
 
 
 def internal_resource_catalog(server: FastMCP):
-    return internal_catalog(server, "resources/list", "resources/templates/list")
+    return internal_catalog(server, *_RESOURCE_LIST_METHODS)
 
 
 def is_internal_catalog_list(context: MiddlewareContext) -> bool:
     scope = _catalog_server.get()
-    return (
-        scope is not None
-        and context.method in scope[1]
-        and context.fastmcp_context is not None
-        and context.fastmcp_context.fastmcp is scope[0]
-    )
+    if scope is None or getattr(context, "method", None) not in scope[1]:
+        return False
+    request_context = getattr(context, "fastmcp_context", None)
+    return getattr(request_context, "fastmcp", None) is scope[0]
 
 
 def is_internal_resource_list(context: MiddlewareContext) -> bool:
-    return context.method in {
-        "resources/list",
-        "resources/templates/list",
-    } and is_internal_catalog_list(context)
+    return is_internal_catalog_list(context) and context.method in _RESOURCE_LIST_METHODS
 
 
 @contextmanager

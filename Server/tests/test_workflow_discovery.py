@@ -11,6 +11,35 @@ import services.tools.manage_tools as module
 from tests.test_http_command_outcome import command_hub  # pylint: disable=unused-import
 
 
+def test_internal_catalog_requires_the_scoped_method_and_server():
+    from fastmcp import FastMCP
+    from transport.protocol import (
+        internal_catalog,
+        is_internal_catalog_list,
+        is_internal_resource_list,
+    )
+
+    server = FastMCP("catalog-owner")
+    owner = SimpleNamespace(fastmcp=server)
+    resources = SimpleNamespace(method="resources/list", fastmcp_context=owner)
+    tools = SimpleNamespace(method="tools/list", fastmcp_context=owner)
+
+    with internal_catalog(server, "resources/list", "tools/list"):
+        assert is_internal_resource_list(resources)
+        assert is_internal_catalog_list(tools) and not is_internal_resource_list(tools)
+        for context in (
+            SimpleNamespace(fastmcp_context=owner),
+            SimpleNamespace(method="resources/list"),
+            SimpleNamespace(
+                method="resources/list", fastmcp_context=SimpleNamespace(fastmcp=FastMCP("other"))
+            ),
+            SimpleNamespace(method="resources/templates/list", fastmcp_context=owner),
+        ):
+            assert not is_internal_catalog_list(context)
+            assert not is_internal_resource_list(context)
+    assert not is_internal_resource_list(resources)
+
+
 @pytest.mark.asyncio
 async def test_transport_tool_is_discoverable_from_its_actual_wire_schema():
     from fastmcp import Client, FastMCP
