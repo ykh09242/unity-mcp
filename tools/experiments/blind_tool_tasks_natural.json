@@ -1,0 +1,122 @@
+{
+  "game-view": {
+    "en": "What pixel size is the game actually drawing at right now? Give me width × height and the selected preset label if you can see it.",
+    "ko": "지금 Game 뷰에 실제로 몇 × 몇 픽셀로 그려져? 선택된 프리셋 이름도 보이면 같이 알려줘.",
+    "ja": "今の Game ビュー、実際に何ピクセル掛ける何ピクセルで描画してる？ 選択中のプリセット名も分かれば添えて。",
+    "es": "¿A cuántos píxeles está dibujando ahora la vista Game? Dame ancho por alto y el nombre del preset si aparece.",
+    "ar": "كم عرض وارتفاع الصورة التي يرسمها Game View الآن بالبكسل؟ وأعطني اسم الإعداد المختار إذا ظهر.",
+    "tr": "Game görünümü şu an kaç piksele kaç piksel çiziliyor? Görünüyorsa seçili önayarın adını da ver."
+  },
+  "graph-open": {
+    "en": "I'm looking at {graph_asset}. What are the node and edge counts in the open tab, including edits I haven't saved? Name two node types only if visible there.",
+    "ko": "{graph_asset} 탭에서 방금 수정한 것까지 세면 노드랑 연결이 몇 개야? 열린 탭에서 타입도 두 개 확인되면 알려줘.",
+    "ja": "{graph_asset} の開いてるタブ、未保存の編集込みでノードと線はいくつ？ そこで分かるならノードの型も二つ。",
+    "es": "En la pestaña abierta de {graph_asset}, ¿cuántos nodos y conexiones hay contando mis cambios sin guardar? Dos tipos de nodo si los ves ahí.",
+    "ar": "في تبويب {graph_asset} المفتوح، كم عقدة ووصلة فيه مع تعديلاتي التي لم أحفظها؟ اذكر نوعين من العقد إن ظهرا هناك.",
+    "tr": "{graph_asset} açık sekmesinde kaydetmediğim düzenlemeler dahil kaç düğüm ve bağlantı var? Orada görebiliyorsan iki düğüm türü de ver."
+  },
+  "graph-saved": {
+    "en": "For my notes, count the nodes and links in the copy of {graph_asset} on disk. Give two node types from that copy as well.",
+    "ko": "{graph_asset} 디스크에 저장된 버전 기준으로 노드랑 연결 몇 개야? 거기서 확인한 노드 타입도 두 개 적어줘.",
+    "ja": "ディスクにある {graph_asset} のほう、ノード数と接続数、それに実際に入ってる型を二つ教えて。",
+    "es": "Mira la copia guardada de {graph_asset}. ¿Cuántos nodos y enlaces trae? Dame también dos tipos que aparezcan ahí.",
+    "ar": "من نسخة {graph_asset} المحفوظة على القرص، أعطني عدد العقد والوصلات ونوعين من العقد الموجودة فيها.",
+    "tr": "{graph_asset} dosyasının diskteki halinde kaç düğüm ve bağlantı var? İçinden iki düğüm türünü de yaz."
+  },
+  "graph": {
+    "en": "Through the Editor, check {graph_asset} for me. How many nodes and connections does it report, and which two node types can you confirm?",
+    "ko": "Editor에서 {graph_asset} 한번 봐줘. 노드와 연결이 몇 개로 나오고 어떤 노드 타입 두 개가 확인돼?",
+    "ja": "エディター越しに {graph_asset} を確認して。ノードと接続はいくつで、どの型を二つ確認できる？",
+    "es": "¿Puedes mirar {graph_asset} desde el editor? ¿Qué totales de nodos y conexiones devuelve y qué dos tipos ves?",
+    "ar": "من داخل المحرر تحقق من {graph_asset}. كم عقدة ووصلة يعرض وما نوعا العقد اللذان يمكنك تأكيدهما؟",
+    "tr": "Editör üzerinden {graph_asset} için düğüm ve bağlantı sayılarına bak. Hangi iki türü görebiliyorsun?"
+  },
+  "pointer-order": {
+    "en": "At Game View pixel ({x}, {y}) for {target}, what uGUI element is first in line for the pointer? Check the point before calling it empty.",
+    "ko": "{target} 쪽 Game 뷰 ({x}, {y}) 픽셀에서 포인터를 맨 먼저 받는 uGUI 요소가 뭐야? 실제로 확인됐을 때만 비었다고 해줘.",
+    "ja": "{target} の Game ビューのピクセル ({x}, {y}) でポインターに最初に当たる uGUI 要素は？ 空かどうかはその点を調べて。",
+    "es": "Para {target}, ¿qué elemento uGUI queda primero bajo el puntero en el píxel ({x}, {y}) de Game? Confirma el punto antes de decir que está vacío.",
+    "ar": "عند البكسل ({x}, {y}) في Game View للعنصر {target}، ما أول عنصر uGUI يقع تحت المؤشر؟ تحقق من النقطة قبل القول إنها فارغة.",
+    "tr": "{target} için Game görünümündeki ({x}, {y}) pikselinde işaretçinin ilk karşılaştığı uGUI öğesi hangisi? Boş demeden önce o noktayı kontrol et."
+  },
+  "raycast": {
+    "en": "What are the exact pixel coordinates of the middle of Game View? Which uGUI element would get the pointer first there? Say what you can verify without sending input.",
+    "ko": "Game 뷰 딱 한가운데 픽셀 좌표가 뭐야? 거기서 포인터를 먼저 받을 uGUI 요소도 입력을 보내지 않고 확인되는 만큼 알려줘.",
+    "ja": "Game ビューのど真ん中ってピクセル座標でいくつ？ そこでポインターに最初に当たる uGUI も、入力を送らずに分かる範囲で教えて。",
+    "es": "¿Cuáles son las coordenadas exactas del centro de Game en píxeles? ¿Qué elemento uGUI recibiría primero el puntero ahí? Dime qué puedes verificar sin enviar entrada.",
+    "ar": "ما إحداثيات مركز Game View بالضبط بالبكسل؟ وأي عنصر uGUI يستقبل المؤشر أولاً هناك؟ أخبرني بما يمكنك التحقق منه دون إرسال إدخال.",
+    "tr": "Game görünümünün tam ortasının piksel koordinatları ne? Orada işaretçiyi önce hangi uGUI öğesi karşılar? Girdi göndermeden doğrulayabildiğini söyle."
+  },
+  "camera-depth": {
+    "en": "Which Unity camera in the open scene has the highest depth? I need its name and the number.",
+    "ko": "열려 있는 씬에서 depth 제일 큰 Unity 카메라가 뭐야? 이름이랑 숫자만 확인해줘.",
+    "ja": "今のシーンの Unity カメラで depth が最大なのはどれ？ 名前と値を知りたい。",
+    "es": "En la escena abierta, ¿qué cámara de Unity tiene el depth más alto? Pásame el nombre y el valor.",
+    "ar": "أي كاميرا Unity في المشهد المفتوح لها أعلى قيمة depth؟ أريد الاسم والرقم.",
+    "tr": "Açık sahnedeki Unity kameralarından depth değeri en yüksek olan hangisi? Adını ve değeri ver."
+  },
+  "menu-declaration": {
+    "en": "I'm writing down where this Editor puts Frame Debugger. What's its full declared menu path? Leave the window closed.",
+    "ko": "Frame Debugger 어디 메뉴에 등록돼 있어? 이 Editor의 전체 경로만 적어줘. 창은 닫힌 채로 두고.",
+    "ja": "このエディターの Frame Debugger、メニューのどこに登録されてる？ ウィンドウは閉じたままでフルパスを教えて。",
+    "es": "¿Dónde está registrado Frame Debugger en el menú de este editor? Solo necesito la ruta completa, deja cerrada la ventana.",
+    "ar": "أين سُجّلت نافذة Frame Debugger في قائمة هذا المحرر؟ أحتاج المسار كاملاً مع بقاء النافذة مغلقة.",
+    "tr": "Bu editörde Frame Debugger hangi menü yoluna kayıtlı? Tam yolu yaz, pencere kapalı kalsın."
+  },
+  "saved-ui-controls": {
+    "en": "In the saved {ui_asset} markup, how many Button and TextField elements are written right there? Give separate counts.",
+    "ko": "저장된 {ui_asset} 안에 직접 적힌 Button이랑 TextField가 각각 몇 개야?",
+    "ja": "保存済みの {ui_asset} に直書きされた Button と TextField、各いくつ？",
+    "es": "En {ui_asset} ya guardado, ¿cuántos Button y cuántos TextField están escritos directamente en el archivo?",
+    "ar": "في ترميز {ui_asset} المحفوظ، كم عنصر Button وكم عنصر TextField مكتوب مباشرة في الملف؟",
+    "tr": "Kaydedilmiş {ui_asset} içinde doğrudan yazılı kaç Button ve kaç TextField var?"
+  },
+  "compile-outcome": {
+    "en": "That earlier compile with ID {compile_id} — did that particular request finish successfully or fail?",
+    "ko": "아까 그 컴파일 {compile_id}, 그 요청 자체는 성공이야 실패야?",
+    "ja": "さっきのコンパイル {compile_id}、そのリクエスト自体の結果は成功、それとも失敗？",
+    "es": "Aquella compilación {compile_id}, ¿esa solicitud concreta terminó bien o falló?",
+    "ar": "بالنسبة لعملية التجميع السابقة {compile_id}، هل نجح ذلك الطلب بالتحديد أم فشل؟",
+    "tr": "Önceki {compile_id} derlemesi vardı ya, o isteğin kendisi başarılı mı oldu, başarısız mı?"
+  },
+  "compile-current": {
+    "en": "Is the open Editor busy compiling scripts right this minute?",
+    "ko": "지금 열려 있는 Editor 스크립트 컴파일 중이야?",
+    "ja": "いま開いてるエディター、スクリプトをコンパイル中？",
+    "es": "¿El editor abierto está compilando scripts ahora mismo?",
+    "ar": "هل يجمع المحرر المفتوح السكربتات الآن؟",
+    "tr": "Açık editör şu anda betikleri derliyor mu?"
+  },
+  "active-scene": {
+    "en": "What's the exact name of the scene that's active in the Editor now?",
+    "ko": "지금 Editor에서 활성 씬 이름 정확히 뭐야?",
+    "ja": "今エディターでアクティブなシーン、正確な名前は？",
+    "es": "¿Cómo se llama exactamente la escena activa ahora en el editor?",
+    "ar": "ما الاسم الدقيق للمشهد النشط الآن في المحرر؟",
+    "tr": "Editörde şu anda aktif olan sahnenin adı tam olarak ne?"
+  },
+  "editor": {
+    "en": "Is the Editor in Play? Is it compiling? Which scene is active right now?",
+    "ko": "지금 에디터 Play 중이야? 컴파일 중인지랑 활성 씬도 같이 봐줘.",
+    "ja": "いまエディターは再生中？ コンパイル中かどうかと、アクティブなシーンも教えて。",
+    "es": "¿Está en Play el editor? ¿Está compilando? ¿Qué escena está activa ahora?",
+    "ar": "هل المحرر في وضع التشغيل؟ وهل يجري التجميع؟ وما المشهد النشط الآن؟",
+    "tr": "Editör Play modunda mı? Derleme sürüyor mu ve hangi sahne aktif?"
+  },
+  "context": {
+    "en": "Which project root, Unity version and render pipeline does the open Editor report?",
+    "ko": "열려 있는 에디터 기준으로 프로젝트 루트, Unity 버전, 렌더 파이프라인이 뭐야?",
+    "ja": "開いてるエディターが示すプロジェクトのルート、Unity のバージョン、描画パイプラインは？",
+    "es": "¿Qué raíz de proyecto, versión de Unity y pipeline de render indica el editor abierto?",
+    "ar": "ما جذر المشروع وإصدار Unity ومسار التصيير الذي يعرضه المحرر المفتوح؟",
+    "tr": "Açık editör hangi proje kökünü, Unity sürümünü ve render pipeline'ı bildiriyor?"
+  },
+  "request-label": {
+    "en": "I need the label from this message for my notes. Copy just this spelling, including the space: {label}.",
+    "ko": "메모에 붙이게, 여기 적은 이름만 띄어쓰기까지 그대로 줘. {label}",
+    "ja": "メモに貼りたいので、このラベルの表記を空白も含めてそのまま返して。{label}",
+    "es": "Para mis notas, copia tal cual esta etiqueta, incluido el espacio: {label}.",
+    "ar": "لأضعه في ملاحظاتي انسخ هذا الاسم كما كتبته هنا مع الحفاظ على المسافة: {label}.",
+    "tr": "Notlarıma yapıştıracağım. Şu etiketi aradaki boşlukla birlikte aynen yaz: {label}."
+  }
+}

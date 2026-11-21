@@ -1,4 +1,12 @@
 {
+  "request-label": {
+    "en": "Return the label supplied in this message exactly as written: {label}.",
+    "ko": "이 메시지에서 제공한 표기를 정확히 그대로 반환해 주세요. {label}",
+    "ja": "このメッセージに記載されたラベルを、その表記のまま返してください。{label}",
+    "es": "Reproduce exactamente la etiqueta escrita en este mensaje: {label}.",
+    "ar": "أعد كتابة التسمية الواردة في هذه الرسالة حرفياً: {label}.",
+    "tr": "Bu iletide verilen etiketi aynen yazın: {label}."
+  },
   "menu-declaration": {
     "en": "Which full menu path does this editor declare for its Frame Debugger window? Please check the current editor and leave the window closed.",
     "ko": "이 에디터에 프레임 디버거 창을 여는 메뉴가 어느 전체 경로로 선언되어 있나요? 현재 에디터에서 확인하고 창은 닫힌 상태로 두세요.",

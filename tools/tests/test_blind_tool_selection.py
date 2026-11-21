@@ -156,8 +156,21 @@ def test_graph_open_scores_a_matching_model_and_replaces_stale_counts(tmp_path, 
 
 @pytest.mark.parametrize("task", TASKS)
 @pytest.mark.parametrize("language", LANGUAGES)
-def test_blind_prompt_translates_the_same_task_without_tool_identifiers(task, language):
-    prompt = task_prompt(task, language, ASSET)
+@pytest.mark.parametrize("prompt_set", ["baseline", "natural"])
+def test_blind_prompt_translates_the_same_task_without_tool_identifiers(task, language, prompt_set):
+    fixture = {
+        "target": "Canvas/β 버튼",
+        "point": [152, 87],
+        "ui_asset": "Assets/小 窗.uxml",
+        "compile_id": "a" * 32,
+    }
+    prompt = task_prompt(task, language, ASSET, fixture, prompt_set=prompt_set)
+    if task == "saved-ui-controls":
+        assert fixture["ui_asset"] in prompt
+    if task == "compile-outcome":
+        assert fixture["compile_id"] in prompt
+    if task == "pointer-order":
+        assert all(str(value) in prompt for value in (fixture["target"], *fixture["point"]))
     assert "Assets/Resources/GameData" in prompt
     assert (ASSET in prompt) == task.startswith("graph")
     assert not any(
@@ -172,6 +185,34 @@ def test_blind_prompt_translates_the_same_task_without_tool_identifiers(task, la
             "mcpforunity://",
         )
     )
+
+
+def test_request_literal_separates_correct_answers_unnecessary_calls_and_missing_capture(tmp_path):
+    from tools.experiments.blind_tool_answers import REQUEST_LABEL
+
+    started = {"type": "thread.started", "thread_id": "01800000-0000-4000-8100-000000000001"}
+    completed = {"type": "turn.completed"}
+    case = trial(tmp_path, "request-label", host=[started, completed])
+    (case / "answer.txt").write_text(json.dumps({"label": REQUEST_LABEL}), encoding="utf-8")
+    report = score_case(case)
+    assert report["final_answer"]["status"] == "correct"
+    assert report["selection_diagnosis"]["no_observed_tool_calls"] is True
+    write_rows(
+        case / "events.jsonl",
+        [
+            started,
+            {
+                "type": "item.completed",
+                "item": {"id": "1", "type": "other_tool", "tool": "tool_search"},
+            },
+            completed,
+        ],
+    )
+    assert score_case(case)["selection_diagnosis"]["no_observed_tool_calls"] is False
+    write_rows(case / "events.jsonl", [started])
+    assert score_case(case)["selection_diagnosis"]["no_observed_tool_calls"] is None
+    (case / "answer.txt").write_text(json.dumps({"label": REQUEST_LABEL.lower()}), encoding="utf-8")
+    assert score_case(case)["final_answer"]["status"] == "incorrect"
 
 
 def test_resources_require_exact_single_encoded_asset_and_observation_only_arguments():

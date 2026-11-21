@@ -94,15 +94,35 @@ def test_scores_split_no_search_unrecorded_and_naturally_ranked():
             pair("graph-saved", "ranked", True, "correct"),
             pair("graph-saved", "attempt_without_rank", None, "limited"),
             pair("graph-open", "ranked", False, "limited"),
+            pair("game-view", "empty", False, "limited"),
+            pair("game-view", "unknown", None, "limited"),
         ]
     )
     arm = result["arms"]["candidate"]
-    assert arm["suitable_in_first_search_top3"] == {"numerator": 1, "denominator": 1}
+    assert arm["suitable_in_first_search_top3"] == {"numerator": 1, "denominator": 2}
+    assert arm["natural_search_use"] == {"numerator": 3, "denominator": 4}
     assert arm["first_success_without_search"] == {"numerator": 1, "denominator": 1}
-    assert arm["first_success_on_first_business_call"]["denominator"] == 3
-    assert arm["answer_status"] == {"correct": 2, "limited": 2}
+    assert arm["first_success_on_first_business_call"]["denominator"] == 5
+    assert arm["answer_status"] == {"correct": 2, "limited": 4}
     assert arm["observed_turns"] == 0
-    assert arm["attempted_cases"] == 4
+    assert arm["attempted_cases"] == 6
+
+
+def test_natural_prompts_preserve_literals_and_share_role_payloads():
+    from tools.experiments.blind_tool_answers import REQUEST_LABEL
+
+    asset = "Assets/별빛 日本・β.shadergraph"
+    args = SimpleNamespace(
+        graph_asset=asset, prompt_set="natural", model="fixture", effort="medium"
+    )
+    for language in selection.LANGUAGES:
+        for task, literal in (("graph-open", asset), ("request-label", REQUEST_LABEL)):
+            direct = selection.delivery_prompt(args, task, language, "main").split("\n\n", 1)[1]
+            assert literal in direct and "search_unity_tools" not in direct
+            assert direct != selection.task_prompt(task, language, asset)
+            assert "<request>\n" + direct + "\n</request>" in selection.delivery_prompt(
+                args, task, language, "subagent"
+            )
 
 
 def test_study_prompts_exclude_tool_oracle_and_implementation_hints():

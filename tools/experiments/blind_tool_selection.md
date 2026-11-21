@@ -7,6 +7,22 @@ language in either the main role or a fresh native subagent role. Both roles
 receive identical observation requests. The parent delivers the request and
 collects the result for subagent cells.
 
+Use `--prompt-set natural` with `run` or `matched` to exercise colloquial
+and mixed-language requests in the same six locales. Both arms and both roles
+receive the same user wording and literal fixture values. The default
+`baseline` retains the original prompts for historical comparisons.
+Include `--task request-label` to measure a request answerable from the
+prompt alone. The scorer checks the exact Unicode spelling and records
+whether the confirmed actor used any observed tool. An incomplete turn
+cannot establish abstention. Use `--answer-format json` for automatic scoring.
+
+The comparison provides language-by-role counts. `natural_search_use` counts
+observed attempts among cases with known search behavior. A returned empty
+search is a measured top-three miss. An uncaptured ranking or a direct call
+does not enter that denominator. `grounded_answer` requires a correct answer
+and complete actor-attributed evidence in a positive-availability pair.
+`correct_without_tools` scores the request-only control on its own denominator.
+
 ## Run against an open Editor
 
 Use the checkout's locked Server Python environment and an installed, already

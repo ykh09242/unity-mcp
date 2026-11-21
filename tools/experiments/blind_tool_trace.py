@@ -45,6 +45,7 @@ GRAPH_ROUTES = {GRAPH, GRAPH_RESOURCE, "inspect_shader_graph"}
 SAVED_FILE = "shell.read_saved_graph"
 ACTIVE_SCENE = {"scene_inspect.get_active", "manage_scene.get_active"}
 ROUTES = {
+    "request-label": set(),
     actions.CAMERA_TASK: actions.CAMERA_ROUTES,
     actions.UI_TASK: actions.UI_ROUTES,
     actions.MENU_TASK: actions.MENU_ROUTES,
@@ -1328,9 +1329,11 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         grade=task_evidence,
     )
     if searches:
-        diagnosis["search_capture"] = (
-            "ranked" if diagnosis["first_search"] else "attempt_without_rank"
-        )
+        receipt = diagnosis["first_search"] or {}
+        if "top3" not in receipt:
+            diagnosis["search_capture"] = "attempt_without_rank"
+        else:
+            diagnosis["search_capture"] = "ranked" if receipt["top3"] else "empty"
     elif (
         role == "confirmed"
         and selected_actor
@@ -1350,6 +1353,18 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     diagnosis["actor_discovery"] = actor_discovery(
         actor_host, wire, selected_actor, role == "confirmed"
     )
+    if task == "request-label":
+        # A completed actor's item stream distinguishes silence from missing telemetry.
+        free = None
+        if role == "confirmed" and selected_actor and actor_host and actor_host.completed:
+            free = not (
+                actor_host.calls
+                or actor_host.child_actors
+                or actor_host.waits
+                or business
+                or searches
+            )
+        diagnosis["no_observed_tool_calls"] = free
     open_graph = latest_open_graph(live_observations) if role == "confirmed" else {}
     saved_graph = host.saved_reads or any(
         r["route"] in GRAPH_ROUTES and "nodes" in r for r in live_observations

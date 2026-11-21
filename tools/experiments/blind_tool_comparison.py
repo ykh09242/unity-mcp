@@ -116,7 +116,8 @@ def study_stratum(pairs):
         positive = [
             pair[arm]
             for pair in eligible
-            if (
+            if pair["task"] != "request-label"
+            and (
                 pair["task"] not in {"compile-outcome", "pointer-order", "graph-open"}
                 or all(
                     pair[name].get("fixture_availability") == "positive"
@@ -131,7 +132,7 @@ def study_stratum(pairs):
         ranked = [
             case["selection_diagnosis"]["first_search_top3_suitable"]
             for case in positive
-            if (case.get("selection_diagnosis") or {}).get("search_capture") == "ranked"
+            if (case.get("selection_diagnosis") or {}).get("search_capture") in {"ranked", "empty"}
         ]
         direct = [
             case
@@ -142,6 +143,13 @@ def study_stratum(pairs):
         def ratio(hits, total):
             return {"numerator": hits, "denominator": total}
 
+        attempted_searches = sum(captures[k] for k in ("ranked", "empty", "attempt_without_rank"))
+        no_tool = [
+            p[arm]
+            for p in eligible
+            if p["task"] == "request-label"
+            and (p[arm].get("selection_diagnosis") or {}).get("no_observed_tool_calls") is not None
+        ]
         result["arms"][arm] = {
             "attempted_cases": len(observed),
             "observed_turns": sum(c.get("turn_completed") is True for c in observed),
@@ -163,6 +171,25 @@ def study_stratum(pairs):
                 sum(c["calls_before_first_success"] == 0 for c in direct), len(direct)
             ),
             "natural_search_capture": dict(captures),
+            "natural_search_use": ratio(
+                attempted_searches, attempted_searches + captures["no_search"]
+            ),
+            "grounded_answer": ratio(
+                sum(
+                    c.get("task_evidence") == "complete"
+                    and c["final_answer"]["status"] == "correct"
+                    for c in positive
+                ),
+                len(positive),
+            ),
+            "correct_without_tools": ratio(
+                sum(
+                    c["selection_diagnosis"]["no_observed_tool_calls"]
+                    and c["final_answer"]["status"] == "correct"
+                    for c in no_tool
+                ),
+                len(no_tool),
+            ),
             "fixture_availability": dict(
                 Counter(
                     c["fixture_availability"] for c in observed if c.get("fixture_availability")
@@ -231,13 +258,16 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
                     reasons.extend(arm + ":" + issue for issue in case.get("pair_reasons", []))
                     if case.get("role") == "subagent":
                         receipt = case.get("actor_receipt") or {}
-                        if len(receipt.get("children", [])) != 1 or not all(
-                            receipt.get(k)
-                            for k in (
-                                "child_business_observed",
-                                "child_final_observed",
-                                "child_turn_completed",
-                            )
+                        measured = (
+                            (case.get("selection_diagnosis") or {}).get("no_observed_tool_calls")
+                            is not None
+                            if key[0] == "request-label"
+                            else receipt.get("child_business_observed")
+                        )
+                        if len(receipt.get("children", [])) != 1 or not (
+                            measured
+                            and receipt.get("child_final_observed")
+                            and receipt.get("child_turn_completed")
                         ):
                             reasons.append("unverified:" + arm + "_child_turn")
             host_modes = [c.get("host_mode", "isolated") for c in (left, right)]
@@ -325,6 +355,15 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
         "observed_by_requested_role": observed_by_role,
         "coverage": {
             "overall": study_stratum(pairs),
+            "language_by_role": {
+                language: {
+                    role: study_stratum(
+                        [p for p in pairs if p["language"] == language and p["role"] == role]
+                    )
+                    for role in sorted({p["role"] for p in pairs if p["language"] == language})
+                }
+                for language in sorted({p["language"] for p in pairs})
+            },
             **{
                 axis: {
                     value: study_stratum([pair for pair in pairs if pair[axis] == value])

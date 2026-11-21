@@ -13,6 +13,7 @@ GAME_VIEW = "manage_editor.get_game_view_size"
 GAME_VIEW_RESOURCE = "mcpforunity://editor/game-view-size"
 SIZE_ROUTES = {GAME_VIEW, GAME_VIEW_RESOURCE, "get_game_view_size"}
 RAYCAST = "manage_ugui.diagnose_raycast"
+REQUEST_LABEL = "UI_별빛・β 02"
 
 FIELDS = {
     **actions.FIELDS,
@@ -41,6 +42,8 @@ CONVENTIONS = {
 
 
 def answer_instruction(task: str, protocol: str = "v1") -> str:
+    if task == "request-label":
+        return 'Return a JSON object with one string field, "label".'
     if protocol == "v3":
         from tools.experiments.blind_tool_claims import claim_instruction
 
@@ -230,6 +233,8 @@ def final_answer(
             answer_path.read_text(encoding="utf-8-sig") if answer_path.is_file() else host_answer
         ).strip()
     if not text:
+        if task == "request-label":
+            return {"status": "missing", "protocol": protocol, "format_valid": False}
         if protocol == "v3":
             from tools.experiments.blind_tool_claims import score_claims
 
@@ -282,6 +287,22 @@ def final_answer(
             answer = None
         else:
             return result
+    if task == "request-label":
+        valid = (
+            isinstance(answer, dict)
+            and set(answer) == {"label"}
+            and isinstance(answer["label"], str)
+        )
+        return {
+            **result,
+            "status": "correct"
+            if valid and answer["label"] == REQUEST_LABEL
+            else "incorrect"
+            if valid
+            else "needs_review",
+            "method": "request_literal",
+            "format_valid": valid,
+        }
     if protocol == "v3":
         from tools.experiments.blind_tool_claims import score_claims
 

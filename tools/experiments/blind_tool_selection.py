@@ -20,13 +20,14 @@ from uuid import uuid4
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.experiments.blind_tool_answers import answer_instruction
+from tools.experiments.blind_tool_answers import REQUEST_LABEL, answer_instruction
 from tools.experiments import blind_tool_observations as observations
 from tools.experiments.blind_tool_comparison import compare_directories, paired_schedule
 from tools.experiments.blind_tool_trace import score_case, score_directory
 from tools.experiments import blind_tool_actions as actions
 
 TASKS = (
+    "request-label",
     "raycast",
     "graph",
     "graph-saved",
@@ -43,13 +44,27 @@ STUDY_TASKS = ("game-view", "graph-saved", "graph-open")
 STUDY = "consumer-discovery"
 
 
-def task_prompt(task: str, language: str, graph_asset: str, fixture=None) -> str:
+def task_prompt(
+    task: str, language: str, graph_asset: str, fixture=None, *, prompt_set="baseline"
+) -> str:
     """Return the identical user task text for either execution role."""
     with Path(__file__).with_name("blind_tool_tasks.json").open(encoding="utf-8") as stream:
         prompts = json.load(stream)
+    if prompt_set == "natural":
+        with (
+            Path(__file__)
+            .with_name("blind_tool_tasks_natural.json")
+            .open(encoding="utf-8") as stream
+        ):
+            template = json.load(stream)[task][language]
+    elif prompt_set == "baseline":
+        template = prompts[task][language]
+    else:
+        raise ValueError("Unknown prompt set")
     fixture = fixture or {}
     point = fixture.get("point") or [None, None]
-    request = prompts[task][language].format(
+    request = template.format(
+        label=REQUEST_LABEL,
         graph_asset=graph_asset,
         ui_asset=fixture.get("ui_asset"),
         compile_id=fixture.get("compile_id"),
@@ -62,7 +77,11 @@ def task_prompt(task: str, language: str, graph_asset: str, fixture=None) -> str
 
 def delivery_prompt(args: argparse.Namespace, task: str, language: str, role: str) -> str:
     prompt = task_prompt(
-        task, language, args.graph_asset, observations.observation_fixture(args, task)
+        task,
+        language,
+        args.graph_asset,
+        observations.observation_fixture(args, task),
+        prompt_set=getattr(args, "prompt_set", "baseline"),
     )
     if getattr(args, "study", None) in (STUDY, observations.STUDY):
         with Path(__file__).with_name("blind_tool_tasks.json").open(encoding="utf-8") as stream:
@@ -180,6 +199,7 @@ def run_case(
         "answer_format": getattr(args, "answer_format", "prose"),
         "answer_protocol": getattr(args, "answer_protocol", "v1"),
         "prompt_digest": sha256(prompt.encode()).hexdigest(),
+        "prompt_set": getattr(args, "prompt_set", "baseline"),
         **({"observation_fixture": args.observation_fixture} if args.observation_fixture else {}),
         **getattr(args, "case_metadata", {}),
     }
@@ -244,6 +264,12 @@ def create_parser() -> argparse.ArgumentParser:
     launch.add_argument("--effort", required=True)
     launch.add_argument("--task", choices=TASKS, action="append")
     launch.add_argument("--language", choices=LANGUAGES, action="append")
+    launch.add_argument(
+        "--prompt-set",
+        choices=("baseline", "natural"),
+        default="baseline",
+        help="Wording shared by both roles and both comparison arms",
+    )
     launch.add_argument("--role", choices=ROLES, action="append")
     launch.add_argument(
         "--host-mode",
@@ -543,6 +569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "tasks": args.task,
                 "languages": LANGUAGES,
                 "held_out_language": "tr",
+                "prompt_set": args.prompt_set,
                 "roles": ROLES,
                 "repeats": args.repeat,
                 "answer_protocol": args.answer_protocol,
