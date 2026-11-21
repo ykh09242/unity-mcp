@@ -83,44 +83,8 @@ def trial(path, task, *, role="main", audit=(), host=()):
 
 
 @pytest.mark.parametrize("dirty", [True, False])
-def test_graph_open_scores_a_matching_model_and_replaces_stale_counts(tmp_path, dirty):
-    route = "manage_shader.inspect_open_graph"
-    facts = observation(
-        route,
-        {
-            "path": ASSET,
-            "status": "open_model",
-            "nodeCount": 7,
-            "edgeCount": 0,
-            "hasUnsavedChanges": dirty,
-        },
-        graph_asset=ASSET,
-    )
-    audit = [
-        request(1, GRAPH),
-        response(1, nodes=4, edges=2, node_types=["A", "B"], data_state="saved"),
-        request(2, route),
-        response(2, **facts),
-    ]
-    case = trial(tmp_path, "graph-open", audit=audit)
-    report = score_case(case)
-    assert report["graph_data_state"] == "open" and report["unsaved_graph_observed"] is dirty
-    assert (
-        report["first_successful_suitable_call"] == route
-        and report["calls_before_first_success"] == 1
-    )
-    assert report["task_evidence"] == "complete" and report["fixture_availability"] == "unverified"
-    write_rows(
-        case / "mcp-1.jsonl", [*audit, request(3, route), response(3, status="no_matching_window")]
-    )
-    report = score_case(case)
-    assert report["task_evidence"] == "partial" and report["graph_data_state"] == "saved"
-    assert report["unsaved_graph_observed"] is False
-
-
-@pytest.mark.parametrize("dirty", [True, False])
-def test_graph_open_scores_a_matching_model_and_replaces_stale_counts(tmp_path, dirty):
-    route = "manage_shader.inspect_open_graph"
+@pytest.mark.parametrize("route", ["inspect_open_shader_graph", "manage_shader.inspect_open_graph"])
+def test_graph_open_scores_a_matching_model_and_replaces_stale_counts(tmp_path, dirty, route):
     facts = observation(
         route,
         {
