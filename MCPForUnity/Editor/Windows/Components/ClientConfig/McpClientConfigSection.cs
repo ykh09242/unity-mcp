@@ -722,14 +722,21 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         {
             retryAttempt = attempt;
             retryFailedButton?.SetEnabled(!configurationInProgress && attempt != null && attempt.CanRetry);
+            SetRetryStatus(
+                attempt == null ? "Retry uses current settings and preserves successful clients."
+                : attempt.CanRetry ? $"Retry is available for {attempt.RetryableFailureCount} failed client(s) using current settings."
+                : attempt.UnavailableReason != null ? "Selective retry is unavailable for this configuration run."
+                : attempt.RemainingFailureCount == 0 ? "No failed clients remain."
+                : "The remaining failure(s) require manual verification."
+            );
+        }
+
+        private void SetRetryStatus(string message)
+        {
             if (retryStatusLabel == null)
                 return;
-            retryStatusLabel.text =
-                attempt == null ? "Uses current settings; successful clients are not changed."
-                : attempt.CanRetry
-                    ? $"{attempt.RemainingFailureCount} failed client(s) remain. Retry uses current settings; successful clients are not changed."
-                : attempt.RemainingFailureCount == 0 ? "No failed clients remain."
-                : "Selective retry unavailable; start a new detected-client configuration run.";
+            var guidance = retryAttempt?.Failures.Where(failure => !failure.CanRetry).Select(failure => $"\n{failure.DisplayName}. {failure.RecoveryGuidance}");
+            retryStatusLabel.text = guidance == null ? message : message + string.Concat(guidance);
         }
 
         private void OnRetryFailedClientsClicked()
@@ -751,14 +758,22 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             {
                 var result = retryService.RetryFailedClients(previous);
                 SetRetryAttempt(result.Attempt);
-                if (retryStatusLabel != null)
+                switch (result.Disposition)
                 {
-                    retryStatusLabel.text =
-                        result.Disposition == "completed"
-                            ? $"Retry: {result.Summary.SuccessCount} succeeded, {result.Summary.FailureCount} failed, {result.Summary.SkippedCount} unavailable; {result.Attempt.RemainingFailureCount} remain. Uses current settings."
-                        : result.Disposition == "preparation_failed"
-                            ? "Retry preparation failed; no clients were attempted. Retry again explicitly using current settings."
-                        : "Selective retry unavailable; start a new detected-client configuration run.";
+                    case "completed":
+                        SetRetryStatus(
+                            $"Retry finished with {result.Summary.SuccessCount} succeeded, {result.Summary.FailureCount} failed, and {result.Summary.SkippedCount} unavailable. "
+                                + $"{result.Attempt.RetryableFailureCount} available for retry."
+                        );
+                        break;
+                    case "preparation_failed":
+                        SetRetryStatus("Retry preparation failed before checking any client. Try again using current settings.");
+                        break;
+                    case "manual_verification_required":
+                        break;
+                    default:
+                        SetRetryStatus("Selective retry is unavailable for this configuration run.");
+                        break;
                 }
                 if (result.Disposition != "completed" || previous == null)
                     return;
@@ -778,8 +793,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             catch (Exception)
             {
                 SetRetryAttempt(null);
-                if (retryStatusLabel != null)
-                    retryStatusLabel.text = "Selective retry unavailable; start a new detected-client configuration run.";
+                SetRetryStatus("Selective retry is unavailable for this configuration run.");
             }
             finally
             {

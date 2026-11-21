@@ -129,6 +129,46 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(2, failure.ConfigureCalls);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RetryPreservesBlockedClaudeRecoveryGuidanceAndNeverReplaysIt(bool blockDuringRetry)
+        {
+            const string guidance = "Wait for the CLI to stop, then inspect the selected local registration before retrying.";
+            var claude = new FakeClient("claude-code", store)
+            {
+                ConfigureFailure = new ClaudeCliMcpConfigurator.ConfigurationFailureException(guidance, canRetry: blockDuringRetry),
+            };
+            var peer = new FakeClient("peer", store) { FailConfigure = true };
+            var service = CreateService(claude, peer);
+            var bulk = service.ConfigureAllDetectedClients();
+
+            Assert.AreEqual(2, bulk.FailureCount);
+            Assert.AreEqual(blockDuringRetry ? 2 : 1, bulk.Attempt.RetryableFailureCount);
+            Assert.AreEqual(blockDuringRetry, bulk.Attempt.Failures.Single(row => row.ClientId == claude.Id).CanRetry);
+            peer.FailConfigure = false;
+            claude.ConfigureFailure = new ClaudeCliMcpConfigurator.ConfigurationFailureException(guidance, canRetry: false);
+            var retry = service.RetryFailedClients(bulk.Attempt);
+
+            Assert.AreEqual("completed", retry.Disposition);
+            Assert.AreEqual(1, retry.Summary.SuccessCount);
+            Assert.AreEqual(blockDuringRetry ? 1 : 0, retry.Summary.FailureCount);
+            Assert.AreEqual(blockDuringRetry ? 2 : 1, claude.ConfigureCalls);
+            Assert.AreEqual(2, peer.ConfigureCalls);
+            Assert.AreEqual(1, retry.Attempt.RemainingFailureCount);
+            Assert.Zero(retry.Attempt.RetryableFailureCount);
+            Assert.IsFalse(retry.Attempt.CanRetry);
+            var blocked = retry.Attempt.Failures.Single();
+            Assert.AreEqual(claude.Id, blocked.ClientId);
+            Assert.IsFalse(blocked.CanRetry);
+            Assert.AreEqual(guidance, blocked.RecoveryGuidance);
+
+            var refused = service.RetryFailedClients(retry.Attempt);
+            Assert.AreEqual("manual_verification_required", refused.Disposition);
+            Assert.AreSame(retry.Attempt, refused.Attempt);
+            Assert.AreEqual(blockDuringRetry ? 2 : 1, claude.ConfigureCalls);
+            Assert.AreEqual(2, preparations);
+        }
+
         [Test]
         public void RetryDropsTargetThatNowRequiresManualConfiguration()
         {
@@ -590,6 +630,7 @@ namespace MCPForUnityTests.Editor.Services
             }
             public IReadOnlyList<ConfiguredTransport> SupportedTransports { get; set; } = new[] { ConfiguredTransport.Http, ConfiguredTransport.Stdio };
             public bool FailConfigure { get; set; }
+            public Exception ConfigureFailure { get; set; }
             public bool FailStatus { get; set; }
             public bool MergeOwnedFields { get; set; }
             public int StatusCalls { get; private set; }
@@ -629,6 +670,8 @@ namespace MCPForUnityTests.Editor.Services
                 }
                 if (FailConfigure)
                     throw new IOException("owned-sensitive-marker");
+                if (ConfigureFailure != null)
+                    throw ConfigureFailure;
                 if (!MergeOwnedFields)
                     File.WriteAllText(GetConfigPath(), http ? "http" : "stdio");
                 Status = ConfiguredStatus;

@@ -15,8 +15,9 @@ namespace MCPForUnity.Editor.Services
         internal readonly ClientConfigurationTarget[] FailedTargets;
         public IReadOnlyList<ClientConfigurationFailure> Failures { get; }
         public int RemainingFailureCount { get; }
+        public int RetryableFailureCount => FailedTargets.Length;
         public string UnavailableReason { get; }
-        public bool CanRetry => RemainingFailureCount > 0 && string.IsNullOrEmpty(UnavailableReason);
+        public bool CanRetry => RetryableFailureCount > 0 && string.IsNullOrEmpty(UnavailableReason);
 
         internal ClientConfigurationAttempt(
             object owner,
@@ -69,12 +70,16 @@ namespace MCPForUnity.Editor.Services
         public string ClientId { get; }
         public string DisplayName { get; }
         public string FailureCode { get; }
+        public bool CanRetry { get; }
+        public string RecoveryGuidance { get; }
 
-        internal ClientConfigurationFailure(string clientId, string displayName, string failureCode)
+        internal ClientConfigurationFailure(string clientId, string displayName, string failureCode, bool canRetry = true, string recoveryGuidance = null)
         {
             ClientId = clientId;
             DisplayName = ClientConfigurationAttempt.BoundedDisplay(displayName, 128);
             FailureCode = ClientConfigurationAttempt.BoundedDisplay(failureCode, 80);
+            CanRetry = canRetry;
+            RecoveryGuidance = ClientConfigurationAttempt.BoundedDisplay(recoveryGuidance, 512);
         }
     }
 

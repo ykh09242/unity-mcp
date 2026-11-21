@@ -61,14 +61,12 @@ namespace MCPForUnity.Editor.Services
             var catalog = CaptureCatalog(out string unavailable);
             var failed = new List<ClientConfigurationTarget>();
             var rows = new List<ClientConfigurationFailure>();
-            foreach (var configurator in configurators)
+            for (int i = 0; i < configurators.Count; i++)
             {
-                string code = ConfigureDetected(configurator, summary, out _);
-                if (code != null)
-                {
-                    var target = catalog?.FirstOrDefault(entry => ReferenceEquals(entry.Client, configurator));
-                    RetainFailure(target, configurator, code, failed, rows);
-                }
+                var target = catalog?[i];
+                var failure = ConfigureDetected(configurators[i], target, summary);
+                if (failure != null)
+                    RetainFailure(target, failure, failed, rows);
             }
             if (summary.FailureCount > ClientConfigurationAttempt.MaxFailures)
                 unavailable = "snapshot_limit";
@@ -84,11 +82,15 @@ namespace MCPForUnity.Editor.Services
             if (attempt == null || !ReferenceEquals(attempt, currentAttempt) || !attempt.OwnedBy(retryOwner))
                 return new ClientConfigurationRetryResult("stale_attempt", summary, null);
             if (!attempt.CanRetry)
+            {
+                if (attempt.UnavailableReason != null)
+                    return new ClientConfigurationRetryResult(attempt.UnavailableReason, summary, null);
                 return new ClientConfigurationRetryResult(
-                    string.IsNullOrEmpty(attempt.UnavailableReason) ? "no_failures" : attempt.UnavailableReason,
+                    attempt.RemainingFailureCount == 0 ? "no_failures" : "manual_verification_required",
                     summary,
-                    null
+                    attempt.RemainingFailureCount == 0 ? null : attempt
                 );
+            }
             if (!attempt.MatchesCatalog(configurators))
             {
                 DiscardConfigurationAttempt();
@@ -112,19 +114,25 @@ namespace MCPForUnity.Editor.Services
                 return new ClientConfigurationRetryResult("preparation_failed", summary, summary.Attempt);
             }
 
+            rows.AddRange(attempt.Failures.Where(failure => !failure.CanRetry));
             foreach (var target in attempt.FailedTargets)
             {
-                string code = ConfigureDetected(target.Client, summary, out bool retainUnavailableTarget);
-                if (code != null || retainUnavailableTarget)
-                    RetainFailure(target, target.Client, code ?? "unavailable:not_installed", failed, rows);
+                var failure = ConfigureDetected(target.Client, target, summary, retrying: true);
+                if (failure != null)
+                    RetainFailure(target, failure, failed, rows);
             }
-            summary.Attempt = PublishAttempt(catalog, failed, rows, failed.Count, null);
+            summary.Attempt = PublishAttempt(catalog, failed, rows, rows.Count, null);
             return new ClientConfigurationRetryResult("completed", summary, summary.Attempt);
         }
 
-        private string ConfigureDetected(IMcpClientConfigurator configurator, ClientConfigurationSummary summary, out bool retainUnavailableTarget)
+        private ClientConfigurationFailure ConfigureDetected(
+            IMcpClientConfigurator configurator,
+            ClientConfigurationTarget target,
+            ClientConfigurationSummary summary,
+            bool retrying = false
+        )
         {
-            retainUnavailableTarget = false;
+            string clientId = target?.Id ?? string.Empty;
             string stage = "detection";
             bool requiresStdio;
             try
@@ -137,8 +145,7 @@ namespace MCPForUnity.Editor.Services
                 if (!configurator.IsInstalled)
                 {
                     summary.SkippedCount++;
-                    retainUnavailableTarget = true;
-                    return null;
+                    return retrying ? new ClientConfigurationFailure(clientId, SafeDisplay(configurator), "unavailable:not_installed") : null;
                 }
                 stage = "status";
                 configurator.CheckStatus(attemptAutoRewrite: false);
@@ -149,17 +156,27 @@ namespace MCPForUnity.Editor.Services
                 if (!IsConfigurationComplete(status))
                 {
                     summary.FailureCount++;
+                    string display = SafeDisplay(configurator);
                     summary.Messages.Add(
-                        $"⚠ {SafeDisplay(configurator)}: Configuration validation is incomplete. Check connection settings and client instructions, then retry."
+                        $"⚠ {display}: Configuration validation is incomplete. Check connection settings and client instructions, then retry."
                     );
-                    return "validation:" + status;
+                    return new ClientConfigurationFailure(clientId, display, "validation:" + status);
                 }
             }
             catch (Exception ex)
             {
                 summary.FailureCount++;
-                summary.Messages.Add($"⚠ {SafeDisplay(configurator)}: {ex.Message}");
-                return stage + ":" + ex.GetType().Name;
+                string display = SafeDisplay(configurator);
+                summary.Messages.Add($"⚠ {display}: {ex.Message}");
+                // Claude failures supply bounded, credential-free operation and recovery guidance.
+                var explicitFailure = ex as ClaudeCliMcpConfigurator.ConfigurationFailureException;
+                return new ClientConfigurationFailure(
+                    clientId,
+                    display,
+                    stage + ":" + ex.GetType().Name,
+                    explicitFailure?.CanRetry ?? true,
+                    explicitFailure?.Message
+                );
             }
             // Presentation metadata cannot turn a completed configuration into a failed retry target.
             summary.SuccessCount++;
@@ -221,17 +238,16 @@ namespace MCPForUnity.Editor.Services
 
         private static void RetainFailure(
             ClientConfigurationTarget target,
-            IMcpClientConfigurator client,
-            string code,
+            ClientConfigurationFailure failure,
             List<ClientConfigurationTarget> failed,
             List<ClientConfigurationFailure> rows
         )
         {
             if (rows.Count == ClientConfigurationAttempt.MaxFailures)
                 return;
-            if (target != null)
+            if (target != null && failure.CanRetry)
                 failed.Add(target);
-            rows.Add(new ClientConfigurationFailure(target?.Id ?? string.Empty, SafeDisplay(client), code));
+            rows.Add(failure);
         }
 
         private ClientConfigurationAttempt PublishAttempt(

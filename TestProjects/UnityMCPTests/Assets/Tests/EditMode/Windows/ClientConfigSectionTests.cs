@@ -544,6 +544,44 @@ namespace MCPForUnityTests.Editor.Windows
         }
 
         [Test]
+        public void RetryUi_KeepsManualVerificationGuidanceAfterRetryingTheOtherClient()
+        {
+            const string guidance = "Wait for the CLI to stop, then inspect the selected local registration before retrying.";
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            var original = slot.GetValue(null);
+            try
+            {
+                var claude = new ManualClient
+                {
+                    AllowConfigure = true,
+                    ClientId = "claude-code",
+                    ConfigureFailure = new ClaudeCliMcpConfigurator.ConfigurationFailureException(guidance, canRetry: false),
+                };
+                var peer = new ManualClient { AllowConfigure = true, ConfigureFails = true };
+                var service = new ClientConfigurationService(new[] { claude, peer }, () => true, _ => { }, () => { }, _ => { });
+                slot.SetValue(null, service);
+                var section = CreateSection(claude);
+                Set(section, "configurators", new List<IMcpClientConfigurator> { claude, peer });
+                InitializeRetryUi(section);
+
+                Invoke(section, "OnConfigureAllClientsClicked");
+                Assert.IsTrue(Get<Button>(section, "retryFailedButton").enabledSelf);
+                StringAssert.Contains(guidance, Get<Label>(section, "retryStatusLabel").text);
+                peer.ConfigureFails = false;
+
+                Invoke(section, "OnRetryFailedClientsClicked");
+                Assert.AreEqual(1, claude.ConfigureCalls);
+                Assert.AreEqual(2, peer.ConfigureCalls);
+                Assert.IsFalse(Get<Button>(section, "retryFailedButton").enabledSelf);
+                StringAssert.Contains(guidance, Get<Label>(section, "retryStatusLabel").text);
+            }
+            finally
+            {
+                slot.SetValue(null, original);
+            }
+        }
+
+        [Test]
         public void RetryUi_ServiceReplacementRefusesWithoutFallingBackToBulk()
         {
             var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
@@ -1043,6 +1081,7 @@ namespace MCPForUnityTests.Editor.Windows
             public string ClientId = "memory-client";
             public bool AllowConfigure;
             public bool ConfigureFails;
+            public Exception ConfigureFailure;
             public int ConfigureCalls;
             public int StatusCalls;
             public McpStatus CurrentStatus = McpStatus.NotConfigured;
@@ -1087,6 +1126,8 @@ namespace MCPForUnityTests.Editor.Windows
             public void Configure()
             {
                 ConfigureCalls++;
+                if (ConfigureFailure != null)
+                    throw ConfigureFailure;
                 if (AllowConfigure && !ConfigureFails)
                 {
                     CurrentStatus = McpStatus.Configured;
