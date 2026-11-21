@@ -14,6 +14,36 @@ TASKS = ("compile-current", "active-scene", "compile-outcome", "pointer-order")
 STATE = "inspect_editor_state"
 POINTER = "inspect_ugui_hit_order"
 JOB = "get_compile_job"
+OPEN_GRAPH_ROUTES = {"inspect_open_shader_graph", "manage_shader.inspect_open_graph"}
+OPEN_GRAPH_LIMITS = {"no_matching_window", "open_model_unavailable", "window_lookup_unavailable"}
+
+
+def open_graph_observation(path, data):
+    if not path or data.get("path") != path:
+        return {}
+    status = data.get("status")
+    if type(status) is str and status in OPEN_GRAPH_LIMITS:
+        return {"status": status}
+    nodes, edges, dirty = (
+        data.get("nodeCount"),
+        data.get("edgeCount"),
+        data.get("hasUnsavedChanges"),
+    )
+    if (
+        status != "open_model"
+        or type(nodes) is not int
+        or type(edges) is not int
+        or min(nodes, edges) < 0
+        or type(dirty) is not bool
+    ):
+        return {}
+    return {
+        "status": status,
+        "data_state": "open",
+        "nodes": nodes,
+        "edges": edges,
+        "has_unsaved_changes": dirty,
+    }
 
 
 @lru_cache(maxsize=1)
@@ -50,7 +80,7 @@ def fixture_availability(fixture, state):
     if missing:
         return missing
     task = fixture.get("task")
-    if task not in ("compile-outcome", "pointer-order"):
+    if task not in ("compile-outcome", "pointer-order", "graph-open"):
         return "positive"
     proof = ((state or {}).get("observation_fixtures") or {}).get(task)
     if not isinstance(proof, dict):
@@ -62,8 +92,19 @@ def fixture_availability(fixture, state):
         or not isinstance(reply.get("data"), dict)
     ):
         return "unavailable"
-    route = JOB if task == "compile-outcome" else POINTER
     args = proof.get("arguments")
+    if task == "graph-open":
+        path = fixture.get("graph_asset")
+        if (
+            not path
+            or not isinstance(args, dict)
+            or args.get("path") != path
+            or reply["data"].get("path") != path
+        ):
+            return "unverified"
+        observation = open_graph_observation(path, reply["data"])
+        return "positive" if observation.get("data_state") == "open" else "unavailable"
+    route = JOB if task == "compile-outcome" else POINTER
     if not isinstance(args, dict) or not permitted(route, args, fixture):
         return "unverified"
     data = reply["data"]
@@ -75,6 +116,8 @@ def fixture_availability(fixture, state):
 
 
 def observation_fixture(args, task):
+    if task == "graph-open":
+        return {"task": task, "graph_asset": args.graph_asset}
     if task == actions.UI_TASK:
         return {"task": task, "ui_asset": getattr(args, "ui_asset", None)}
     if task in {actions.CAMERA_TASK, actions.MENU_TASK}:

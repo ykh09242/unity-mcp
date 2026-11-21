@@ -166,8 +166,14 @@ raw serialized graph output from a direct shell read of the exact path. The
 report flags other possible saved-file observations for manual review. A graph
 summary returned through the Editor also reads serialized file contents. The
 `graph` task requests the Editor's response. Neither route observes unsaved
-window contents. For `graph-open` the saved file can establish only the
-observation limit. The report keeps the first suitable window read empty.
+window contents. For `graph-open`, a successful `inspect_open_shader_graph`
+or `manage_shader.inspect_open_graph` read must return the requested path,
+`status="open_model"`, nonnegative counts and the window's dirty flag.
+The counts describe the open model even when the flag is false. Node types
+and saved-file references are scored separately. To include an open-graph
+pair in positive-availability rates, the independent state probe must record
+`observation_fixtures["graph-open"]` with the exact path in `arguments.path`
+and the corresponding successful native response in `reply` before both turns.
 `wire_evidence` and the historical `live_evidence` field report transport
 and role-attributed evidence. The graph data state identifies the content source.
 `task_evidence` also credits a confirmed saved-file read for the saved graph task.

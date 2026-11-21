@@ -533,7 +533,7 @@ def project_item(item, server, asset, project="", fixture=None):
                     status = "error"
                 projected["observed_result"] = {
                     "status": status,
-                    "facts": observation(route, data, fixture),
+                    "facts": observation(route, data, fixture, graph_asset=asset),
                     "has_decoded_data": bool(data),
                 }
         if item.get("error"):

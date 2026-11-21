@@ -7,6 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from tools.experiments import blind_tool_actions as actions
+from tools.experiments.blind_tool_observations import OPEN_GRAPH_ROUTES
 
 GAME_VIEW = "manage_editor.get_game_view_size"
 GAME_VIEW_RESOURCE = "mcpforunity://editor/game-view-size"
@@ -90,6 +91,10 @@ def observed_center_hit(hit: dict) -> bool:
     )
 
 
+def latest_open_graph(wire):
+    return next((row for row in reversed(wire) if row.get("route") in OPEN_GRAPH_ROUTES), {})
+
+
 def expected_facts(task: str, wire: list[dict], saved: list[dict]) -> tuple[dict, set[str]]:
     """Only derive claims that the specific observation established."""
     expected = {}
@@ -104,10 +109,25 @@ def expected_facts(task: str, wire: list[dict], saved: list[dict]) -> tuple[dict
                 expected = {key: row[key] for key in fields}
         return expected, sources
     if task.startswith("graph"):
+        if task == "graph-open":
+            row = latest_open_graph(wire)
+            if (
+                row.get("status") == "open_model"
+                and row.get("data_state") == "open"
+                and all(type(row.get(k)) is int and row[k] >= 0 for k in ("nodes", "edges"))
+                and type(row.get("has_unsaved_changes")) is bool
+            ):
+                return {k: row[k] for k in ("data_state", "nodes", "edges")}, {"editor"}
         if saved and task != "graph":
             sources.add("file")
         if task != "graph-open":
-            rows = [*wire, *(saved if task == "graph-saved" else [])]
+            rows = [
+                r
+                for r in wire
+                if r.get("route") not in OPEN_GRAPH_ROUTES and r.get("data_state") != "open"
+            ]
+            if task == "graph-saved":
+                rows.extend(saved)
             totals = {(r["nodes"], r["edges"]) for r in rows if "nodes" in r and "edges" in r}
             if len(totals) == 1:
                 expected["data_state"] = "saved"
@@ -288,7 +308,10 @@ def final_answer(
             "match" if isinstance(channel, str) and channel in sources else "unverified"
         )
         origin = (
-            "asset_file" if task.startswith("graph") or task == actions.UI_TASK else "editor_live"
+            "asset_file"
+            if (task.startswith("graph") and expected.get("data_state") != "open")
+            or task == actions.UI_TASK
+            else "editor_live"
         )
         if sources and answer["source"] is not None:
             checks["source"] = "match" if answer["source"] == origin else "mismatch"
@@ -313,9 +336,15 @@ def final_answer(
     current_size, current_ray = current_view(wire)
     for key in fields:
         value = answer[key]
-        if task == "graph-open" and key == "data_state" and value == "saved" and (saved or wire):
+        if (
+            task == "graph-open"
+            and not expected
+            and key == "data_state"
+            and value == "saved"
+            and expected_facts("graph-saved", wire, saved)[0]
+        ):
             checks[key] = "match"
-        elif task == "graph-open" and value is not None:
+        elif task == "graph-open" and key not in expected and value is not None:
             checks[key] = "unsupported"
         elif (
             task == "game-view"
@@ -348,7 +377,16 @@ def final_answer(
         only_preset = task == "game-view" and [k for k, v in checks.items() if v == "unknown"] == [
             "preset"
         ]
-        status = "correct" if only_preset and not current_size.get("preset_reported") else "limited"
+        open_counts = (
+            task == "graph-open"
+            and expected.get("data_state") == "open"
+            and checks.get("node_types") == "unknown"
+        )
+        status = (
+            "correct"
+            if open_counts or (only_preset and not current_size.get("preset_reported"))
+            else "limited"
+        )
     else:
         status = "correct"
     return {**result, "status": status, "method": "structured", "claims": checks}

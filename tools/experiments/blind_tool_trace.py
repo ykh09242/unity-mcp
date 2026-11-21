@@ -28,6 +28,7 @@ from tools.experiments.blind_tool_answers import (
     SIZE_ROUTES,
     current_view,
     final_answer,
+    latest_open_graph,
     observed_center_hit,
 )
 from tools.experiments.blind_tool_diagnostics import SEARCH_ROUTES
@@ -57,7 +58,7 @@ ROUTES = {
     "raycast": {*SIZE_ROUTES, RAYCAST},
     "graph": GRAPH_ROUTES,
     "graph-saved": GRAPH_ROUTES,
-    "graph-open": GRAPH_ROUTES,
+    "graph-open": choices.OPEN_GRAPH_ROUTES,
 }
 DISCOVERY = {
     "initialize",
@@ -100,6 +101,7 @@ SAFE_HTTP_READS = {
     PROJECT_INFO,
     *SIZE_ROUTES,
     *GRAPH_ROUTES,
+    *choices.OPEN_GRAPH_ROUTES,
     "find_gameobjects",
 }
 APPROVAL = re.compile(
@@ -183,7 +185,13 @@ def decision(
         return "blocked"
     if allowed is not None:
         return "unity" if allowed else "blocked"
-    if route in GRAPH_ROUTES:
+    if route in choices.OPEN_GRAPH_ROUTES:
+        permitted_keys = {"path", "unity_instance"}
+        if route == "manage_shader.inspect_open_graph":
+            permitted_keys.add("action")
+        if not graph_asset or args.get("path") != graph_asset or set(args) - permitted_keys:
+            return "blocked"
+    elif route in GRAPH_ROUTES:
         if not graph_asset or args.get("path") != graph_asset:
             return "blocked"
         if route == GRAPH_RESOURCE:
@@ -295,8 +303,12 @@ def positive_size(value: Any) -> list[int] | None:
     return None
 
 
-def observation(route: str, data: dict[str, Any], fixture=None) -> dict[str, Any]:
+def observation(
+    route: str, data: dict[str, Any], fixture=None, *, graph_asset=""
+) -> dict[str, Any]:
     """Retain the documented evidence fields for the scored read operations."""
+    if route in choices.OPEN_GRAPH_ROUTES:
+        return choices.open_graph_observation(graph_asset, data)
     if route in actions.MENU_ROUTES:
         if data.get("menu_path") == actions.FRAME_DEBUGGER and (
             route == actions.MENU_RESOURCE or mapping(data.get("existence")).get("value") is True
@@ -565,7 +577,7 @@ def relay_stdio(
                     if route == RAYCAST and data.get("status") == "failed":
                         outcome = "error"
                     detail = (
-                        observation(route, data, fixture)
+                        observation(route, data, fixture, graph_asset=graph_asset)
                         if channel == "unity" or route in SEARCH_ROUTES
                         else {}
                     )
@@ -774,7 +786,7 @@ def client_trace(
                                 call.evidence = mapping(receipt.get("facts"))
                             elif result and call.status == "completed":
                                 call.status, data = unpack({"result": result}, route)
-                                call.evidence = observation(route, data, fixture)
+                                call.evidence = observation(route, data, fixture, graph_asset=asset)
                                 if route == RAYCAST and data.get("status") == "failed":
                                     call.status = "error"
                 case "item.started" | "item.completed", "mcp_tool_call" | "other_tool":
@@ -973,7 +985,10 @@ def evidence_grade(task: str, calls: list[Call]) -> str:
     if not evidence:
         return "none"
     if task == "graph-open":
-        return "partial"
+        from tools.experiments.blind_tool_answers import expected_facts
+
+        rows = [{"route": c.route, **c.evidence} for c in calls if c.status == "returned"]
+        return "complete" if expected_facts(task, rows, [])[0] else "partial"
     if task in {"graph", "graph-saved"}:
         totals: dict[tuple[int, int], set[str]] = {}
         for call in evidence:
@@ -1158,7 +1173,8 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     host = child if child and attribution == "host-linked-child-items" else parent
     wire = [call for calls in connections for call in calls]
     unity = [call for call in wire if call.channel == "unity"]
-    relevant = [call for call in unity if call.route in routes]
+    evidence_routes = routes | GRAPH_ROUTES if task == "graph-open" else routes
+    relevant = [call for call in unity if call.route in evidence_routes]
     # Wire response order is established only within a connection.
     relevant = sorted(relevant, key=lambda c: (c.timeline, c.response_at))
     wire_grade = evidence_grade(task, relevant)
@@ -1166,7 +1182,9 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     host_only = row.get("backend") == "installed-host" and row.get("host_mode") == "configured"
     if host_only:
         relevant = [
-            call for call in host_business if call.channel == "unity" and call.route in routes
+            call
+            for call in host_business
+            if call.channel == "unity" and call.route in evidence_routes
         ]
     grade = evidence_grade(task, relevant)
     attributed = grade if role == "confirmed" or grade == "none" else "unattributed"
@@ -1192,12 +1210,10 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         if call.shell_purpose not in {"instruction_read", "working_directory"}
     ]
     first_observation = next(iter(observation_attempts), None)
-    # The registered graph readers cannot inspect an unsaved window. Their responses
-    # can document that limitation but are not a suitable business read of its contents.
     sequence = [
         call
         for call in business
-        if (task != "graph-open" and call.channel == "unity" and call.route in routes)
+        if (call.channel == "unity" and call.route in routes)
         or (task == "graph-saved" and call.route == SAVED_FILE)
         or (task == actions.UI_TASK and call.route == actions.SAVED_UI)
     ]
@@ -1220,7 +1236,10 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             for call in sequence
             if call.status == "returned"
             and call.evidence
-            and (task not in choices.TASKS or evidence_grade(task, [call]) == "complete")
+            and (
+                task not in (*choices.TASKS, "graph-open")
+                or evidence_grade(task, [call]) == "complete"
+            )
         ),
         None,
     )
@@ -1246,7 +1265,12 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             and all(matches[0].evidence.get(k) == v for k, v in detail.items())
         ):
             detail.update(matches[0].evidence)
-        if detail or call.route in SIZE_ROUTES or call.route == RAYCAST or task in choices.TASKS:
+        if (
+            detail
+            or call.route in SIZE_ROUTES | choices.OPEN_GRAPH_ROUTES
+            or call.route == RAYCAST
+            or task in choices.TASKS
+        ):
             live_observations.append({"route": call.route, **detail})
     redundant, early_rays = timing_metrics(task, sequence)
     selected_actor = (
@@ -1296,7 +1320,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             for call in actor_host.calls.values()
         )
     diagnosis = stage_diagnosis(
-        set() if task == "graph-open" else routes,
+        routes,
         inventory,
         business,
         searches,
@@ -1326,8 +1350,21 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     diagnosis["actor_discovery"] = actor_discovery(
         actor_host, wire, selected_actor, role == "confirmed"
     )
+    open_graph = latest_open_graph(live_observations) if role == "confirmed" else {}
+    saved_graph = host.saved_reads or any(
+        r["route"] in GRAPH_ROUTES and "nodes" in r for r in live_observations
+    )
     return {
         **row,
+        **(
+            {
+                "fixture_availability": choices.fixture_availability(
+                    {"task": task, "graph_asset": asset}, row.get("editor_start_state")
+                )
+            }
+            if task == "graph-open"
+            else {}
+        ),
         **(
             {
                 "competitor_digest": inventory.get("competitor_digest"),
@@ -1428,10 +1465,14 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         else None,
         "calls_before_declared_graph_limit": calls_before_graph_limit,
         "live_observations": live_observations,
-        "graph_data_state": "saved"
-        if task.startswith("graph") and (live_observations or host.saved_reads)
+        "graph_data_state": "open"
+        if open_graph.get("data_state") == "open"
+        else "saved"
+        if task.startswith("graph") and saved_graph
         else None,
-        "unsaved_graph_observed": False if task.startswith("graph") else None,
+        "unsaved_graph_observed": open_graph.get("has_unsaved_changes") is True
+        if task.startswith("graph")
+        else None,
         "final_answer": final_answer(
             case_dir,
             task,
@@ -1447,7 +1488,11 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             if row.get("answer_protocol") == "v3" and row["role"] == "subagent"
             else None,
             explicit_limit=task == "graph-open"
-            and (absent_window is not None or graph_limit is not None),
+            and (
+                absent_window is not None
+                or graph_limit is not None
+                or open_graph.get("status") in choices.OPEN_GRAPH_LIMITS
+            ),
         ),
     }
 

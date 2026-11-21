@@ -112,13 +112,12 @@ def study_stratum(pairs):
     for arm in ("baseline", "candidate"):
         observed = [pair[arm] for pair in pairs if pair[arm]]
         answered = [pair[arm] for pair in eligible]
-        # The open-window task measures restraint. Its declared readers only observe a saved file.
+        # Conditional tasks need independent matching pre-prompt evidence in both arms.
         positive = [
             pair[arm]
             for pair in eligible
-            if pair["task"] != "graph-open"
-            and (
-                pair["task"] not in {"compile-outcome", "pointer-order"}
+            if (
+                pair["task"] not in {"compile-outcome", "pointer-order", "graph-open"}
                 or all(
                     pair[name].get("fixture_availability") == "positive"
                     for name in ("baseline", "candidate")

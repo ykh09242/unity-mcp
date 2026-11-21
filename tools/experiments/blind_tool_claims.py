@@ -138,7 +138,9 @@ def score_claims(task, answer, wire, saved, *, explicit_limit=False):
         status = "needs_review"
     elif "unknown" not in checks:
         status = "correct"
-    elif task == "graph-open" and (explicit_limit or any(graph_evidence.values())):
+    elif task == "graph-open" and (
+        allowed_evidence["editor"] or explicit_limit or any(graph_evidence.values())
+    ):
         status = "correct"
     elif task == "game-view" and all(claims[key]["fact"] == "match" for key in ("width", "height")):
         status = (

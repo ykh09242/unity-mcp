@@ -20,6 +20,44 @@ def empty(task):
     return {field: claim() for field in FIELDS[task]}
 
 
+@pytest.mark.parametrize("route", ["inspect_open_shader_graph", "manage_shader.inspect_open_graph"])
+def test_open_model_is_scored_only_for_the_requested_path_and_source(route):
+    from tools.experiments import blind_tool_trace as trace
+    from tools.experiments.blind_tool_observations import fixture_availability
+
+    path = "Assets/장면 A.shadergraph"
+    args = {"path": path}
+    if route.startswith("manage_shader."):
+        args["action"] = "inspect_open_graph"
+    data = {
+        "path": path,
+        "status": "open_model",
+        "nodeCount": 2,
+        "edgeCount": 0,
+        "hasUnsavedChanges": True,
+    }
+    assert trace.decision(route, args, path, endpoint=True) == "unity"
+    assert trace.decision(route, args | {"page_number": 1}, path, endpoint=True) == "blocked"
+    assert trace.observation(route, data, graph_asset="Assets/Other.shadergraph") == {}
+    evidence = trace.observation(route, data, graph_asset=path)
+    row = {"route": route, **evidence}
+    assert evidence["has_unsaved_changes"] is True
+    answer = empty("graph-open") | {
+        key: claim(value, "editor_live", "editor")
+        for key, value in {"data_state": "open", "nodes": 2, "edges": 0}.items()
+    }
+    assert score_claims("graph-open", answer, [row], [])["status"] == "correct"
+    answer["saved_reference"] = {"nodes": claim(2, "asset_file", "editor")}
+    assert score_claims("graph-open", answer, [row], [])["status"] != "correct"
+    fixture = {"task": "graph-open", "graph_asset": path}
+    proof = {"arguments": {"path": path}, "reply": {"success": True, "data": data}}
+    assert (
+        fixture_availability(fixture, {"observation_fixtures": {"graph-open": proof}}) == "positive"
+    )
+    assert fixture_availability(fixture, {}) == "unverified"
+    assert not trace.observation(route, data | {"edgeCount": False}, graph_asset=path)
+
+
 def test_open_window_and_saved_counts_have_independent_receipts():
     answer = empty("graph-open")
     answer["saved_reference"] = {"nodes": claim(24, "asset_file", "file")}
