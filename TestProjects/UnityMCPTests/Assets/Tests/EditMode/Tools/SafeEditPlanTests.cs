@@ -119,6 +119,39 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void UnsavedImportedChildRejectsPreviewAndApplyUntilSaved()
+        {
+            new GameObject("Child").transform.SetParent(root.transform, false);
+            string path = folder + "/Source.prefab";
+            GameObject asset = PrefabUtility.SaveAsPrefabAsset(root, path);
+            string token = PreviewRootScale(path);
+            var original = System.IO.File.ReadAllBytes(path);
+            Transform child = asset.transform.GetChild(0);
+            child.localPosition = Vector3.right;
+            EditorUtility.SetDirty(child);
+
+            var refused = Prefab(new JObject { ["action"] = "apply_preview", ["preview_id"] = token });
+            Assert.IsFalse(refused.Value<bool>("success"), refused.ToString());
+            StringAssert.Contains("unsaved", refused.ToString());
+            var request = new JObject
+            {
+                ["action"] = "preview_modify_contents",
+                ["prefabPath"] = path,
+                ["setActive"] = false,
+            };
+            Assert.IsFalse(Prefab(request).Value<bool>("success"));
+            CollectionAssert.AreEqual(original, System.IO.File.ReadAllBytes(path));
+            Assert.AreEqual(Vector3.right, child.localPosition);
+
+            PrefabUtility.SavePrefabAsset(asset);
+            var applied = Prefab(new JObject { ["action"] = "apply_preview", ["preview_id"] = Token(Prefab(request)) });
+            Assert.IsTrue(applied.Value<bool>("success"), applied.ToString());
+            asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            Assert.IsFalse(asset.activeSelf);
+            Assert.AreEqual(Vector3.right, asset.transform.GetChild(0).localPosition);
+        }
+
+        [Test]
         public void LargePrefabSourceHashUsesBoundedMemoryAndDetectsLateBytes()
         {
             string path = folder + "/HashProbe.prefab";

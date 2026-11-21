@@ -174,6 +174,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 // The source remains untouched while isolated contents are prepared.
                 Verify(plan);
                 string path = AssetPathUtility.GetContainedAssetPath(plan.Path);
+                ValidateSource(AssetDatabase.LoadAssetAtPath<GameObject>(path));
                 PrefabUtility.SaveAsPrefabAsset(contents, path, out bool saved);
                 if (!saved)
                     return new ErrorResponse(
@@ -229,8 +230,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             string guard = SourceHash(path);
             GameObject asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             ValidateSource(asset);
-            if (asset.GetComponentsInChildren<Component>(true).Any(c => EditorUtility.IsDirty(c) || EditorUtility.IsDirty(c.gameObject)))
-                throw new InvalidOperationException("The imported prefab has unsaved edits. Resolve them before a source save.");
             if (
                 GlobalObjectId.GetGlobalObjectIdSlow(asset).ToString() != objectId
                 || GlobalObjectId.GetGlobalObjectIdSlow(asset.transform).ToString() != transformId
@@ -263,6 +262,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 {
                     if (SourceHash(path) != guard)
                         throw new InvalidOperationException("The prefab changed during property undo. No save was attempted.");
+                    ValidateSource(AssetDatabase.LoadAssetAtPath<GameObject>(path));
                     PrefabUtility.SaveAsPrefabAsset(contents, path, out bool saved);
                     if (
                         !saved
@@ -328,12 +328,16 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     throw new ArgumentException("Safe prefab sources are limited to 10000 objects.");
                 if (PrefabUtility.IsPartOfPrefabInstance(node.gameObject))
                     throw SourceRestriction(root, node, node.GetType().FullName, "nested prefab instance; safe source plans do not unpack nested instances");
+                if (EditorUtility.IsDirty(node.gameObject))
+                    throw new InvalidOperationException("The imported prefab has unsaved edits. Resolve them before a source save.");
                 var components = node.gameObject.GetComponents<Component>();
                 for (int index = 0; index < components.Length; index++)
                 {
                     var component = components[index];
                     if (component == null)
                         throw SourceRestriction(root, node, "<missing script>", "missing component script at component index " + index);
+                    if (EditorUtility.IsDirty(component))
+                        throw new InvalidOperationException("The imported prefab has unsaved edits. Resolve them before a source save.");
                     if (!SceneEditValues.Types.Values.Contains(component.GetType()) && !PreservedSourceTypes.Contains(component.GetType()))
                         throw SourceRestriction(
                             root,
