@@ -163,8 +163,8 @@ class VerificationIO:
                 child["settled"] = True
         return evidence.model_dump(by_alias=True)
 
-    async def quality(self, action, options, deadline):
-        await asyncio.wait_for(
+    async def quality(self, action, options, deadline, *, on_dispatch=None):
+        target = await asyncio.wait_for(
             self.authorize(
                 "manage_script_quality", {"action": action, "options": options}, deadline
             ),
@@ -175,12 +175,17 @@ class VerificationIO:
             service = ScriptQualityService()
             self.ctx.fastmcp._script_quality_service = service
         response = await asyncio.wait_for(
-            service.execute(self.ctx, action, options), max(0, deadline - monotonic())
+            service.execute(
+                self.ctx, action, options, on_dispatch=on_dispatch, expected_target=target
+            ),
+            max(0, deadline - monotonic()),
         )
         if response.get("success") is False:
             job = service.jobs.get(response.get("job_id"))
-            if job is not None and job.owner == self.owner and job.terminal:
-                response = {**response, "settled": True}
+            response = {
+                **response,
+                "settled": job is not None and job.owner == self.owner and job.terminal,
+            }
         return response
 
 

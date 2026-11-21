@@ -149,8 +149,20 @@ class VerificationRunner:
         options = {**self.selection, "timeout_seconds": self.profile.deadlines.analysis}
         if self.baseline_id:
             options["baseline_id"] = self.baseline_id
-        response = await self.io.quality("analyze", options, deadline)
-        child["job_id"] = (response.get("data") or {}).get("job_id") or response.get("job_id")
+
+        def on_dispatch(identity):
+            # Preserve ownership even if the outer wait is interrupted before acknowledgment.
+            child["job_id"] = identity
+            self.publish()
+
+        try:
+            response = await self.io.quality("analyze", options, deadline, on_dispatch=on_dispatch)
+        except BaseException:
+            if child["job_id"] is None:
+                child.update(dispatch="refused", settled=True)
+            raise
+        if child["job_id"] is None:
+            child["job_id"] = (response.get("data") or {}).get("job_id") or response.get("job_id")
         if response.get("success") is not True:
             refused = response.get("analysis_job_created") is False and child["job_id"] is None
             if refused:

@@ -49,7 +49,9 @@ class ScriptQualityService:
         self.results = QualityResults()
         self._cursor_secret = secrets.token_bytes(32)
 
-    async def execute(self, ctx, action: str, options: dict | None):
+    async def execute(
+        self, ctx, action: str, options: dict | None, *, on_dispatch=None, expected_target=None
+    ):
         starting = action in {"analyze", "capture_baseline"}
 
         def admission_error(code, message):
@@ -72,6 +74,12 @@ class ScriptQualityService:
         if target is None:
             return admission_error(
                 "analysis_target_unavailable", "Select a connected Editor project."
+            )
+        if expected_target is not None and (
+            target.scope != expected_target.scope or not expected_target.is_current()
+        ):
+            return admission_error(
+                "analysis_target_changed", "The selected Editor connection changed before dispatch."
             )
         if target.authorize_public is not None:
             check = await target.authorize_public(
@@ -197,9 +205,23 @@ class ScriptQualityService:
             params.pop("cursor", None)
             params["page_size"] = 500
         deadline = monotonic() + 30
+        dispatched = False
+
+        def start_dispatch():
+            nonlocal dispatched
+            if on_dispatch is not None:
+                on_dispatch(job_id)
+            dispatched = True
+
         try:
-            response = await self._send(target, instance, params, deadline)
+            response = await self._send(
+                target, instance, params, deadline, before_send=start_dispatch if starting else None
+            )
         except (TimeoutError, ConnectionError):
+            if starting and not dispatched:
+                return admission_error(
+                    "analysis_dispatch_refused", "Analysis dispatch did not start."
+                )
             return {
                 **self.error(
                     "analysis_transport_unknown",
@@ -207,6 +229,10 @@ class ScriptQualityService:
                 ),
                 "job_id": job_id,
             }
+        finally:
+            if starting and not dispatched:
+                self.results.settle(job_id, owner)
+                del self.jobs[job_id]
         if isinstance(response, MCPResponse):
             response = response.model_dump(exclude_none=True)
         if job_id is not None and isinstance(response, dict):
@@ -320,7 +346,16 @@ class ScriptQualityService:
                     self.results.settle(job_id, owner)
         return response
 
-    async def _send(self, target, instance, params, deadline, *, command="manage_script_quality"):
+    async def _send(
+        self,
+        target,
+        instance,
+        params,
+        deadline,
+        *,
+        command="manage_script_quality",
+        before_send=None,
+    ):
         remaining = deadline - monotonic()
         if remaining <= 0:
             raise TimeoutError()
@@ -330,6 +365,11 @@ class ScriptQualityService:
             check()
         if not target.is_current():
             raise ConnectionError("analysis_target_changed")
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise TimeoutError()
+        if before_send is not None:
+            before_send()
         response = await asyncio.wait_for(
             send_with_unity_instance(
                 async_send_command_with_retry,
@@ -339,7 +379,7 @@ class ScriptQualityService:
                 retry_on_reload=False,
                 _deadline=deadline,
             ),
-            max(0, deadline - monotonic()),
+            remaining,
         )
         if not target.is_current():
             raise ConnectionError("analysis_target_changed")

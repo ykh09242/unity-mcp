@@ -84,6 +84,77 @@ async def test_refused_analysis_releases_slots_but_lost_acknowledgment_keeps_job
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "refusal",
+    ["verification_access", "quality_target", "rebound_owner", "rebound_generation", "final_fence"],
+)
+async def test_late_analysis_refusal_settles_before_native_send(
+    analysis_service, service, monkeypatch, refusal
+):
+    subject, ctx, quality, send = analysis_service
+    _, _, target, _ = service
+
+    async def authorize(name, params):
+        if name == "manage_script_quality" and params["action"] == "analyze":
+            if refusal == "verification_access" and "options" in params:
+                raise PermissionError("analysis permission revoked")
+            if refusal == "final_fence" and "job_id" in params:
+                raise PermissionError("analysis permission revoked before send")
+        return lambda: None
+
+    target.authorize_public = authorize
+    if refusal == "quality_target":
+        monkeypatch.setattr(
+            "services.script_quality.service.capture_target",
+            AsyncMock(side_effect=ConnectionError("target retired")),
+        )
+    elif refusal in {"rebound_owner", "rebound_generation"}:
+        replacement = SimpleNamespace(**vars(target))
+        replacement.scope = SimpleNamespace(
+            key=("other", "p") if refusal == "rebound_owner" else target.scope.key,
+            generation="changed" if refusal == "rebound_generation" else target.scope.generation,
+        )
+        monkeypatch.setattr(
+            "services.script_quality.service.capture_target", AsyncMock(return_value=replacement)
+        )
+    for _ in range(3):
+        response = await subject.execute(ctx, "run", {"paths": ["Assets/A.cs"], "wait_seconds": 2})
+        (child,) = response["data"]["children"]
+        assert child == {"kind": "analysis", "job_id": None, "settled": True, "dispatch": "refused"}
+        assert response["data"]["native_settled"] and response["data"]["state"] == "incomplete"
+    send.assert_not_awaited()
+    assert not quality.jobs and not quality.results.active
+
+
+@pytest.mark.asyncio
+async def test_interrupted_analysis_send_retains_original_job_for_settlement(analysis_service):
+    subject, ctx, quality, send = analysis_service
+    sent = asyncio.Event()
+
+    async def await_ack(*args, **kwargs):
+        sent.set()
+        await asyncio.Event().wait()
+
+    send.side_effect = await_ack
+    started = await subject.execute(ctx, "run", {"paths": ["Assets/A.cs"]})
+    run_id = started["data"]["run_id"]
+    await asyncio.wait_for(sent.wait(), 2)
+    subject.tasks[run_id].cancel()
+    await subject.tasks[run_id]
+    (job_id,) = quality.results.active
+    (child,) = subject.runners[run_id].report["children"]
+    assert not child["settled"] and child["job_id"] == job_id
+    send.side_effect = None
+    send.return_value = {
+        "success": True,
+        "data": {"job_id": job_id, "terminal": True, "state": "failed"},
+    }
+    polled = await subject.execute(ctx, "status", {"run_id": run_id})
+    assert polled["data"]["native_settled"]
+    assert [call.args[3]["action"] for call in send.await_args_list] == ["analyze", "status"]
+
+
+@pytest.mark.asyncio
 async def test_abandoned_baselines_release_capacity_and_preserve_live_jobs(
     analysis_service, service, monkeypatch
 ):

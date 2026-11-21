@@ -63,9 +63,11 @@ class IO:
         self.calls.append(("freshness", policy))
         return self.observations.pop(0)
 
-    async def quality(self, action, options, deadline):
+    async def quality(self, action, options, deadline, *, on_dispatch=None):
         self.calls.append(("quality", action))
         if action == "analyze":
+            if on_dispatch:
+                on_dispatch("q" * 32)
             return {"success": True, "data": {"job_id": "q" * 32, "state": "queued"}}
         if action == "status":
             return {
@@ -412,7 +414,7 @@ async def test_missing_analyzer_is_incomplete_without_a_phantom_native_owner():
     io = IO()
     original = io.quality
 
-    async def unavailable(action, options, deadline):
+    async def unavailable(action, options, deadline, *, on_dispatch=None):
         if action == "analyze":
             return {"success": False, "settled": True, "error": "analyzer_unavailable"}
         return await original(action, options, deadline)
