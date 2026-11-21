@@ -80,9 +80,7 @@ so tool tests do not wait for the longer server suite.
   independent dependency resolution, rather than relying on the locked test environment.
 - The locked and candidate-archive suites exercise py-key-value-aio's runtime type
   checks on Python 3.15 with warnings treated as errors. Version 0.5.0 fixes its
-  runtime-checkable protocol. The separate released-launcher canary still resolves
-  0.4.x through the immutable FastMCP 4.1.8 archive and disables optional type
-  instrumentation on Python 3.15 for that archive. [Upstream storage fix](https://github.com/strawgate/py-key-value/pull/397)
+  runtime-checkable protocol. [Upstream storage fix](https://github.com/strawgate/py-key-value/pull/397)
 
 The installed-candidate archive job retains Python 3.11 checks on Windows, Linux and macOS
 and adds one Linux Python 3.15 check. Each installs the checked commit's server archive with
@@ -168,9 +166,12 @@ coverage remains independent and continues to exercise the checked source commit
 The canary creates an empty environment and installs that archive with fresh, unlocked
 dependency resolution and no shared uv cache. It reuses the installed-archive HTTP/CLI,
 stdio/authenticated HTTP MCP exchanges and startup-registration probes, including
-warnings-as-errors and source-import rejection. Python 3.15 disables only optional
-`py-key-value-aio` beartype instrumentation, matching the locked suites; application
-validation and warnings-as-errors remain enabled. Each OS/Python artifact retains source identity,
+warnings-as-errors and source-import rejection. The canary checks the installed interpreter
+and dependency versions before running those probes. It leaves `PY_KEY_VALUE_DISABLE_BEARTYPE`
+unset for the current pin so the probes use default type checks. On Python 3.15, the canary sets
+the flag to `true` only when a historical archive resolves `py-key-value-aio` 0.4.x. The run
+summary and `runtime-type-checks.json` record the applied setting and resolved versions.
+Each OS/Python artifact retains source identity,
 install output, toolchain versions, every
 resolved distribution version, and successful probe reports for 30 days. Installation or
 probe failures fail the job; this read-only check publishes no package and does not run

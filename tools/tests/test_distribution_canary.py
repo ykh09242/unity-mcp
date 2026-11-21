@@ -1,17 +1,18 @@
-"""Execute the scheduled canary's source selection against committed fixture history."""
+"""Exercise the canary's source selection and installed probe environment."""
 
 import json
 import os
-from pathlib import Path
+import runpy
 import subprocess
 import sys
+from pathlib import Path
 
-import yaml
 import pytest
+import yaml
 
-from tests.test_check_source_pin_drift import commit, history, set_pin
+from tests.test_check_source_pin_drift import commit, set_pin
+from tests.test_check_source_pin_drift import history as history  # noqa: PLC0414 - pytest fixture
 from tests.test_update_source_pins import put
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -131,6 +132,63 @@ def test_canary_rejects_another_checkout_before_install_or_evidence(history, tmp
     assert "exact requested SHA" in result.stderr
     assert not (tmp_path / "output").exists()
     assert not (repo / ".tmp/distribution-canary/source.json").exists()
+
+
+@pytest.mark.parametrize(
+    "python_version, storage_version, override",
+    [
+        ("3.15.0", "0.5.0", None),
+        ("3.15.0", "0.4.5", "true"),
+        ("3.14.2", "0.4.5", None),
+    ],
+)
+def test_canary_probes_use_and_record_the_installed_storage_runtime_setting(
+    tmp_path, monkeypatch, python_version, storage_version, override
+):
+    config = yaml.safe_load((ROOT / ".github/workflows/distribution-canary.yml").read_text())
+    step = next(
+        step
+        for step in config["jobs"]["canary"]["steps"]
+        if step.get("name", "").startswith("Exercise installed")
+    )
+    evidence = tmp_path / ".tmp/distribution-canary"
+    evidence.mkdir(parents=True)
+    probes = tmp_path / "tools"
+    probes.mkdir()
+    for probe in ("check_server_archive.py", "check_server_startup.py"):
+        (probes / probe).write_text(
+            'import json, os\nprint(json.dumps(os.getenv("PY_KEY_VALUE_DISABLE_BEARTYPE")))\n',
+            encoding="utf-8",
+        )
+    summary = tmp_path / "summary"
+    monkeypatch.chdir(tmp_path)
+    for name, value in {
+        "CANARY_PYTHON": sys.executable,
+        "GITHUB_WORKSPACE": str(tmp_path),
+        "SERVER_COMMIT": "1" * 40,
+        "SERVER_SOURCE": "https://example.test/fixture.zip#subdirectory=Server",
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "PY_KEY_VALUE_DISABLE_BEARTYPE": "true",
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(
+        subprocess,
+        "check_output",
+        lambda *args, **kwargs: json.dumps([python_version, storage_version]),
+    )
+
+    program = tmp_path / "exercise_installed.py"
+    program.write_text(step["run"], encoding="utf-8")
+    runpy.run_path(str(program))
+
+    assert json.loads((evidence / "behavior.json").read_text()) == override
+    assert json.loads((evidence / "registration.jsonl").read_text()) == override
+    assert json.loads((evidence / "runtime-type-checks.json").read_text()) == {
+        "python_version": python_version,
+        "py_key_value_aio_version": storage_version,
+        "PY_KEY_VALUE_DISABLE_BEARTYPE": override,
+    }
+    assert ("legacy override" if override else "enabled (default)") in summary.read_text()
 
 
 @pytest.mark.parametrize(
