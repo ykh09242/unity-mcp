@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Final
+from typing import TYPE_CHECKING, Final
 from uuid import uuid4
 
 from services.operation_permissions import JsonValue
+
+if TYPE_CHECKING:
+    from transport.command_resume import CommandResumeInvocation
 
 CAPABILITY: Final = "native_arbitration_v1"
 _TRANSIENT: Final = frozenset(
@@ -46,6 +49,10 @@ class NativeReply:
     reason: str | None = None
 
 
+class VerifiedQueueRefusal(dict[str, JsonValue]):
+    """In-process witness for a queue rejection of the original, unstarted command."""
+
+
 class NativeNotStarted(RuntimeError):
     """Opaque transport proof; never constructed from a public tool's result."""
 
@@ -60,6 +67,26 @@ class NativeNotStarted(RuntimeError):
         self.reply = reply
         self.transport_generation = transport_generation
         self.params = params
+
+    def proves_fresh_queue_refusal(self, resume: CommandResumeInvocation | None) -> bool:
+        # This frame's bound arbitration cannot settle a previously dispatched invocation.
+        payload = self.reply.payload
+        data = payload.get("data")
+        return (
+            self.reply.not_started
+            and self.reply.reason == "command_queue_capacity"
+            and (resume is None or resume.action == "new" and resume.state == "unavailable")
+            and payload.get("status", "error") == "error"
+            and payload.get("success") is False
+            and isinstance(payload.get("error"), str)
+            and payload.get("code") == "command_queue_capacity"
+            and isinstance(data, dict)
+            and data.get("reason") == "command_queue_capacity"
+            and data.get("execution") == "not_started"
+            and data.get("dispatch") == "not_dispatched"
+            and data.get("native_resume_state", "unavailable") == "unavailable"
+            and "job_id" not in data
+        )
 
 
 def valid_generation(value: str | None) -> bool:

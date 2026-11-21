@@ -5,6 +5,7 @@ import pytest
 from transport.native_arbitration import (
     NativeArbitrationRequest,
     NativeArbitrationProtocolError,
+    NativeNotStarted,
     decode_native_reply,
 )
 
@@ -25,6 +26,33 @@ def envelope(disposition="not_started", reason="operation_busy", retryable=True)
 
 def request():
     return NativeArbitrationRequest("a" * 32, "b" * 32)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"execution": "unknown"},
+        {"dispatch": "dispatched"},
+        {"native_resume_state": "unknown"},
+        {"job_id": "existing"},
+    ],
+)
+def test_contradictory_queue_payload_cannot_release_local_ownership(changed):
+    wire = envelope(reason="command_queue_capacity", retryable=False)
+    wire["payload"].update(
+        success=False,
+        code="command_queue_capacity",
+        data={
+            "reason": "command_queue_capacity",
+            "execution": "not_started",
+            "dispatch": "not_dispatched",
+            **changed,
+        },
+    )
+    refusal = NativeNotStarted(
+        decode_native_reply(wire, request()), transport_generation="test", params={}
+    )
+    assert not refusal.proves_fresh_queue_refusal(None)
 
 
 def test_handler_lookalike_inside_started_payload_cannot_request_retry():

@@ -127,6 +127,11 @@ class VerificationIO:
                 params,
                 retry_on_reload=False,
                 _deadline=deadline,
+                **(
+                    {"_preserve_queue_refusal": True}
+                    if command == "run_tests" or before_send is not None
+                    else {}
+                ),
             ),
             max(0, deadline - monotonic()),
         )
@@ -149,6 +154,7 @@ class VerificationIO:
                 child = self.on_refresh(params)
                 if child is not None:
                     children.append(child)
+                    return lambda: child.update(settled=True, dispatch="refused")
 
         evidence = await ensure_source_freshness(
             self.ctx,

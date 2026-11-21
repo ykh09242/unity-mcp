@@ -319,11 +319,13 @@ def configure(monkeypatch, port, reconnect_failures=0):
 async def test_stdio_queue_capacity_keeps_socket_and_original_uncertainty(
     monkeypatch, command, params, reloads
 ):
+    from transport.native_arbitration import VerifiedQueueRefusal
+
     with resume_peer("queue_capacity", reloads=reloads) as (port, commands, _, _):
         connection = configure(monkeypatch, port)
         try:
             response = await uc.async_send_command_with_retry(
-                command, params, instance_id=connection.instance_id
+                command, params, instance_id=connection.instance_id, _preserve_queue_refusal=True
             )
             sock = connection.sock
             assert sock is not None
@@ -331,6 +333,7 @@ async def test_stdio_queue_capacity_keeps_socket_and_original_uncertainty(
             assert connection.sock is sock
             assert [c["type"] for c in commands] == [command] * (reloads + 1) + ["ping"]
             assert ("resume" in commands[0]) is (command == "manage_scene")
+            assert isinstance(response, VerifiedQueueRefusal) is (reloads == 0)
             if reloads:
                 assert commands[1]["resume"]["action"] == "resume"
                 assert response["data"]["reason"] == "outcome_unknown"

@@ -203,7 +203,7 @@ async def test_foreign_scenario_definition_never_settles_or_receives_cancel(mapp
     assert all(call.args[3].get("action") != "cancel" for call in native.await_args_list)
 
 
-@pytest.mark.parametrize("witness", ["matching", "foreign", "missing"])
+@pytest.mark.parametrize("witness", ["matching", "foreign", "missing", "bound_queue"])
 @pytest.mark.asyncio
 async def test_prestart_barrier_requires_matching_no_job_witness(mapped, child, witness):
     subject, ctx, native, window, jobs, _ = mapped
@@ -212,6 +212,11 @@ async def test_prestart_barrier_requires_matching_no_job_witness(mapped, child, 
     async def refused(*args, **kwargs):
         params = args[3]
         if args[2] == "manage_play_scenario" and params["action"] == "run":
+            if witness == "bound_queue":
+                from transport.native_arbitration import VerifiedQueueRefusal
+
+                assert kwargs["_preserve_queue_refusal"]
+                return VerifiedQueueRefusal(success=False, error="queue capacity reached")
             data = (
                 {
                     "scenario_job_created": False,
@@ -224,11 +229,12 @@ async def test_prestart_barrier_requires_matching_no_job_witness(mapped, child, 
         return await dispatch(*args, **kwargs)
 
     native.side_effect = refused
-    for _attempt in range(3 if witness == "matching" else 1):
+    settled = witness in {"matching", "bound_queue"}
+    for _attempt in range(3 if settled else 1):
         report = (await subject.execute(ctx, "run", {**OPTIONS, "wait_seconds": 5}))["data"]
-        assert report["native_settled"] == (witness == "matching")
+        assert report["native_settled"] == settled
         assert report["state"] == "incomplete"
-        assert any(cmd == "run_tests" for cmd, _ in window.calls) == (witness == "matching")
+        assert any(cmd == "run_tests" for cmd, _ in window.calls) == settled
     assert not jobs
 
 

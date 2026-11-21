@@ -13,6 +13,7 @@ from services.script_quality.pages import encoded_size
 from services.verification.profiles import profile_permissions
 from services.verification.reports import final_verdict, test_settled
 from services.verification.runner import VerificationCanceled, VerificationRunner
+from transport.native_arbitration import VerifiedQueueRefusal
 
 SCENARIO_STATES = {
     "succeeded": "passed",
@@ -331,9 +332,9 @@ class SelectedChecks:
         if start.get("success") is not True:
             # Other failures may be lost replies. A status read can later prove native settlement.
             refusal = start.get("data")
-            if (
-                start.get("success") is False
-                and isinstance(refusal, dict)
+            if start.get("success") is False and (
+                isinstance(start, VerifiedQueueRefusal)
+                or isinstance(refusal, dict)
                 and refusal.get("scenario_job_created") is False
                 and refusal.get("requested_job_id") == child["job_id"]
             ):

@@ -7,6 +7,7 @@ from core.verification_timing import interval
 from services.script_quality.pages import encoded_size
 from services.verification.console import ConsoleObservation
 from services.verification.reports import final_verdict, test_settled, test_verdict
+from transport.native_arbitration import VerifiedQueueRefusal
 
 
 class VerificationCanceled(Exception):
@@ -164,7 +165,9 @@ class VerificationRunner:
         if child["job_id"] is None:
             child["job_id"] = (response.get("data") or {}).get("job_id") or response.get("job_id")
         if response.get("success") is not True:
-            refused = response.get("analysis_job_created") is False and child["job_id"] is None
+            refused = response.get("analysis_job_created") is False and (
+                child["job_id"] is None or response.get("settled") is True
+            )
             if refused:
                 child["dispatch"] = "refused"
             child["settled"] = refused or response.get("settled") is True
@@ -422,7 +425,8 @@ class VerificationRunner:
                 and data.get("job_id") is None
                 and isinstance(response.get("error"), str)
                 and (
-                    data.get("test_job_created") is False
+                    isinstance(response, VerifiedQueueRefusal)
+                    or data.get("test_job_created") is False
                     or not data
                     and response["error"] == "unsupported_native_test_control"
                 )

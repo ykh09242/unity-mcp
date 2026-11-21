@@ -18,6 +18,7 @@ from services.script_quality.results import QualityResults, RetentionRefused
 from services.registry.operation_target import capture_target
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
+from transport.native_arbitration import VerifiedQueueRefusal
 from transport.unity_transport import send_with_unity_instance
 
 
@@ -235,6 +236,10 @@ class ScriptQualityService:
                 del self.jobs[job_id]
         if isinstance(response, MCPResponse):
             response = response.model_dump(exclude_none=True)
+        if starting and isinstance(response, VerifiedQueueRefusal):
+            job.terminal = True
+            self.results.settle(job_id, owner)
+            return {**response, "job_id": job_id, "analysis_job_created": False}
         if job_id is not None and isinstance(response, dict):
             data = response.get("data")
             if isinstance(data, dict) and response.get("success"):
@@ -378,6 +383,7 @@ class ScriptQualityService:
                 params,
                 retry_on_reload=False,
                 _deadline=deadline,
+                **({"_preserve_queue_refusal": True} if before_send is not None else {}),
             ),
             remaining,
         )

@@ -54,6 +54,118 @@ def analysis_service(service, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["run", "prepare"])
+async def test_bound_stdio_queue_refusal_releases_verification_capacity(
+    analysis_service, monkeypatch, action
+):
+    from tests.integration.test_command_resume_stdio import configure, resume_peer
+    from services.script_quality import service as quality_module
+    from transport.unity_transport import send_with_unity_instance
+
+    subject, ctx, quality, send = analysis_service
+    monkeypatch.setattr(quality_module, "send_with_unity_instance", send_with_unity_instance)
+    monkeypatch.setattr(
+        quality_module, "get_unity_instance_from_context", AsyncMock(return_value="Owned@deadbeef")
+    )
+    options = {"paths": ["Assets/A.cs"]}
+    options.update({"wait_seconds": 2} if action == "run" else {"capture_baseline": True})
+    for _ in range(2):
+        with resume_peer("queue_capacity", reloads=0) as (port, commands, _, _):
+            connection = configure(monkeypatch, port)
+            try:
+                response = await subject.execute(ctx, action, options)
+                assert connection.send_command("ping", {}) == {"message": "pong"}
+                assert [c["type"] for c in commands] == ["manage_script_quality", "ping"]
+            finally:
+                connection.disconnect()
+        if action == "run":
+            (child,) = response["data"]["children"]
+            assert response["data"]["native_settled"] and child["dispatch"] == "refused"
+        else:
+            assert response["success"] is False and not subject.preparations
+        assert not quality.results.active
+
+    monkeypatch.setattr(quality_module, "send_with_unity_instance", send)
+    send.return_value = {"success": True, "data": {"state": "failed", "terminal": True}}
+    admitted = await subject.execute(ctx, action, options)
+    assert admitted["success"]
+    assert send.call_args_list[0].args[3]["action"] == (
+        "analyze" if action == "run" else "capture_baseline"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["tests", "import", "compile"])
+async def test_bound_queue_refusal_settles_only_the_current_native_child(
+    service, monkeypatch, kind
+):
+    from models.verification import VerificationProfile
+    from services import source_freshness
+    from services.verification.runner import VerificationRunner
+    from services.verification.service import VerificationIO, BoundContext
+    from tests.integration.test_command_resume_stdio import configure, resume_peer
+    from transport.unity_transport import send_with_unity_instance
+
+    _, ctx, target, _ = service
+
+    async def route(send_fn, instance, command, params, **kwargs):
+        if command == "get_compile_job":
+            return {
+                "success": True,
+                "source_freshness": {
+                    "schema": "unity-mcp/source_freshness@1",
+                    "status": "changed",
+                    "project_id": "p",
+                    "session_id": "s",
+                    "coverage": {"complete": True},
+                },
+            }
+        if kind == "compile" and command == "refresh_unity" and params["compile"] == "none":
+            return {"success": True}
+        return await send_with_unity_instance(send_fn, instance, command, params, **kwargs)
+
+    monkeypatch.setattr(source_freshness.unity_transport, "send_with_unity_instance", route)
+    monkeypatch.setattr(source_freshness, "remote_operation_allowed", AsyncMock(return_value=True))
+    monkeypatch.setattr("services.verification.service.send_with_unity_instance", route)
+    with resume_peer("queue_capacity", reloads=0) as (port, commands, _, _):
+        connection = configure(monkeypatch, port)
+        io = VerificationIO(BoundContext(ctx.fastmcp, connection.instance_id, None), target)
+        runner = VerificationRunner(io, VerificationProfile(test_mode="EditMode"), {})
+        try:
+            if kind == "tests":
+                await runner.run_test_job("a" * 64, SimpleNamespace(window_id=None))
+            else:
+                evidence = await io.freshness("if_needed", monotonic() + 5)
+            assert connection.send_command("ping", {}) == {"message": "pong"}
+        finally:
+            connection.disconnect()
+    *previous, child = runner.report["children"]
+    assert child["kind"] == kind and child["settled"] and child["dispatch"] == "refused"
+    if kind != "tests":
+        assert evidence["reason"] == "refresh_not_dispatched"
+    if kind == "compile":
+        assert len(previous) == 1 and previous[0]["kind"] == "import" and not previous[0]["settled"]
+
+
+@pytest.mark.asyncio
+async def test_queue_shaped_business_error_does_not_settle_native_work(analysis_service):
+    subject, ctx, quality, send = analysis_service
+    send.return_value = {
+        "success": False,
+        "error": "Command queue capacity reached",
+        "code": "command_queue_capacity",
+        "data": {
+            "reason": "command_queue_capacity",
+            "execution": "not_started",
+            "dispatch": "not_dispatched",
+        },
+    }
+    response = await subject.execute(ctx, "run", {"paths": ["Assets/A.cs"], "wait_seconds": 2})
+    (child,) = response["data"]["children"]
+    assert not child["settled"] and child["job_id"] in quality.results.active
+
+
+@pytest.mark.asyncio
 async def test_refused_analysis_releases_slots_but_lost_acknowledgment_keeps_job(analysis_service):
     subject, ctx, quality, send = analysis_service
     options = {"paths": ["Assets/A.cs"], "wait_seconds": 2}

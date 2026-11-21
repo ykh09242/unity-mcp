@@ -9,6 +9,7 @@ from models.source_freshness import SourceFreshness, parse_freshness
 from services.operation_permissions import remote_operation_allowed
 from transport import unity_transport
 from transport.legacy.unity_connection import async_send_command_with_retry
+from transport.native_arbitration import VerifiedQueueRefusal
 
 
 async def ensure_source_freshness(
@@ -34,10 +35,11 @@ async def ensure_source_freshness(
             return None
 
     async def send(command, params):
-        if before_dispatch is not None:
-            await before_dispatch(command, params)
+        on_refusal = await before_dispatch(command, params) if before_dispatch is not None else None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
+            if on_refusal is not None:
+                on_refusal()
             raise TimeoutError()
         response = await asyncio.wait_for(
             unity_transport.send_with_unity_instance(
@@ -47,9 +49,12 @@ async def ensure_source_freshness(
                 params,
                 retry_on_reload=False,
                 _deadline=deadline,
+                **({"_preserve_queue_refusal": True} if command == "refresh_unity" else {}),
             ),
             remaining,
         )
+        if on_refusal is not None and isinstance(response, VerifiedQueueRefusal):
+            on_refusal()
         return response.model_dump() if hasattr(response, "model_dump") else response
 
     return await observe_source_freshness(
@@ -120,7 +125,10 @@ async def observe_source_freshness(send, permitted, *, deadline, refresh_policy)
             )
         if not isinstance(reply, dict) or reply.get("success") is not True:
             return SourceFreshness(
-                reason="refresh_not_confirmed", compile_id=compile_id if imported else None
+                reason="refresh_not_dispatched"
+                if isinstance(reply, VerifiedQueueRefusal)
+                else "refresh_not_confirmed",
+                compile_id=compile_id if imported else None,
             )
         if imported:
             compiled = True

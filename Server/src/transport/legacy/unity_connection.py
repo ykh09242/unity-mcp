@@ -118,6 +118,7 @@ from transport.native_arbitration import (
     NativeArbitrationRequest,
     NativeArbitrationProtocolError,
     NativeNotStarted,
+    VerifiedQueueRefusal,
     decode_native_reply,
     valid_generation,
     may_retry_wire_attempt,
@@ -2815,6 +2816,7 @@ async def async_send_command_with_retry(
     _catalog_guard=None,
     _catalog_capture=None,
     _progress: ProgressSink | None = None,
+    _preserve_queue_refusal: bool = False,
 ) -> dict[str, Any] | MCPResponse:
     """Preserve existing dispatch behavior and observe canonical uncertainty."""
     result = await _async_send_command_response(
@@ -2830,6 +2832,7 @@ async def async_send_command_with_retry(
         _catalog_guard=_catalog_guard,
         _catalog_capture=_catalog_capture,
         **({"_progress": _progress} if _progress is not None else {}),
+        **({"_preserve_queue_refusal": True} if _preserve_queue_refusal else {}),
     )
     observe_native_result({"data": result.data} if isinstance(result, MCPResponse) else result)
     return result
@@ -2849,6 +2852,7 @@ async def _async_send_command_response(
     _catalog_guard=None,
     _catalog_capture=None,
     _progress: ProgressSink | None = None,
+    _preserve_queue_refusal: bool = False,
 ) -> dict[str, Any] | MCPResponse:
     """Own one selected instance while exact pre-handler refusals wait off-wire."""
     import asyncio  # noqa: ANYIO_OK -- existing connection admission uses asyncio.
@@ -2933,6 +2937,8 @@ async def _async_send_command_response(
                         and resume.waiting
                         or may_retry_wire_attempt(command_type, refusal.reply)
                     ):
+                        if _preserve_queue_refusal and refusal.proves_fresh_queue_refusal(resume):
+                            return VerifiedQueueRefusal(refusal.reply.payload)
                         return refusal.reply.payload
                     params = refusal.params
                     _expected_generation = refusal.transport_generation
