@@ -17,6 +17,7 @@ Editor tests by themselves. Keep the repository Actions variable
 | Codex interoperability | A checksum-pinned Codex CLI exercises the checked-out server on full fork-beta runs |
 | Unity version matrix | Runtime, Editor and test assembly compilation for Windows, macOS and Linux defines |
 | Optional packages | Pinned Cinemachine, ProBuilder and graphics dependency preparation and integrity checks |
+| Unity asset metadata | One nonzero 32-digit hexadecimal asset GUID per supplied `.meta` file, unique within the package or test asset tree |
 | Native EditMode, PlayMode and optional integration tests | **Skipped**; compilation and package preparation do not execute these tests |
 | Live E2E bridge and manual NL suite | **Skipped**; no Editor activation or live tool calls |
 

@@ -1,14 +1,14 @@
-"""Keep owned package scripts importable without Unity generating missing metadata."""
+"""Validate shipped Unity GUIDs and keep owned scripts importable as supplied."""
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Final
 
 import pytest
 
-
 PACKAGE: Final = Path(__file__).resolve().parents[2] / "MCPForUnity"
-GUID: Final = re.compile(r"^guid: ([0-9a-fA-F]{32})[ \t]*$", re.MULTILINE)
+GUID_FIELD: Final = re.compile(r"^guid[ \t]*:(.*)$", re.MULTILINE)
+GUID_VALUE: Final = re.compile(r"[ \t]+([0-9a-fA-F]{32})[ \t]*")
 SCRIPT_METADATA: Final = (
     "fileFormatVersion: 2\nguid: {guid}\nMonoImporter:\n"
     "  externalObjects: {{}}\n  serializedVersion: 2\n"
@@ -16,8 +16,9 @@ SCRIPT_METADATA: Final = (
 
 
 def _metadata_issues(package: Path, *, require_script_metadata: bool = True) -> list[str]:
-    """Inspect the shipped tree, including collisions with non-script package assets."""
+    """Check supplied asset GUIDs and the metadata required by owned package scripts."""
     issues: list[str] = []
+    script_metadata: set[Path] = set()
     for script in sorted(package.rglob("*.cs")):
         if any(part.endswith("~") for part in script.relative_to(package).parts[:-1]):
             continue
@@ -26,27 +27,28 @@ def _metadata_issues(package: Path, *, require_script_metadata: bool = True) -> 
             if require_script_metadata:
                 issues.append(f"Missing script metadata: {script.relative_to(package)}")
             continue
-        text = metadata.read_text(encoding="utf-8")
-        guids = GUID.findall(text)
-        if (
-            len(guids) != 1
-            or len(re.findall(r"^guid:.*$", text, re.MULTILINE)) != 1
-            or int(guids[0], 16) == 0
-        ):
-            issues.append(f"Invalid script GUID: {metadata.relative_to(package)}")
-        if not re.search(r"^fileFormatVersion: 2$", text, re.MULTILINE):
-            issues.append(f"Invalid metadata format: {metadata.relative_to(package)}")
+        script_metadata.add(metadata)
 
     owners: dict[str, Path] = {}
     for metadata in sorted(package.rglob("*.meta")):
-        for guid in GUID.findall(metadata.read_text(encoding="utf-8")):
-            normalized = guid.lower()
-            if normalized in owners:
-                issues.append(
-                    f"Duplicate GUID {normalized}: {owners[normalized].relative_to(package)}"
-                    f" and {metadata.relative_to(package)}"
-                )
-            owners[normalized] = metadata
+        relative = metadata.relative_to(package)
+        text = metadata.read_text(encoding="utf-8")
+        is_script = metadata in script_metadata
+        if is_script and not re.search(r"^fileFormatVersion: 2$", text, re.MULTILINE):
+            issues.append(f"Invalid metadata format: {relative}")
+        fields = GUID_FIELD.findall(text)
+        match = GUID_VALUE.fullmatch(fields[0]) if len(fields) == 1 else None
+        if match is None or match.group(1) == "0" * 32:
+            label = "script GUID" if is_script else "GUID"
+            issues.append(f"Invalid {label}: {relative}")
+            continue
+        guid = match.group(1).lower()
+        if guid in owners:
+            issues.append(
+                f"Duplicate GUID {guid}: {owners[guid].relative_to(package)} and {relative}"
+            )
+        else:
+            owners[guid] = metadata
     return issues
 
 
@@ -101,6 +103,39 @@ def test_multiple_guid_fields_are_reported(tmp_path: Path) -> None:
     with metadata.open("a", encoding="utf-8") as stream:
         stream.write(f"guid: {'2' * 32}\n")
     assert _metadata_issues(tmp_path) == ["Invalid script GUID: Helper.cs.meta"]
+
+
+@pytest.mark.parametrize(
+    "declarations",
+    [
+        "",
+        "guid: invalid\n",
+        f"guid: {'0' * 32}\n",
+        f"guid: {'1' * 32}\nguid: {'2' * 32}\n",
+        f"guid: {'1' * 32}\nguid: invalid\n",
+    ],
+    ids=["missing", "malformed", "zero", "multiple", "mixed"],
+)
+def test_invalid_non_script_metadata_guid_is_reported(tmp_path: Path, declarations: str) -> None:
+    (tmp_path / "Fixture.mat.meta").write_text(
+        f"fileFormatVersion: 2\n{declarations}NativeFormatImporter:\n", encoding="utf-8"
+    )
+
+    assert _metadata_issues(tmp_path, require_script_metadata=False) == [
+        "Invalid GUID: Fixture.mat.meta"
+    ]
+
+
+def test_asset_metadata_ignores_nested_guid_references_and_allows_external_sources(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "External.cs").write_text("class External {}\n", encoding="utf-8")
+    (tmp_path / "Fixture.mat.meta").write_text(
+        f"fileFormatVersion: 2\nguid: {'A' * 32}\nNativeFormatImporter:\n  guid: {'2' * 32}\n",
+        encoding="utf-8",
+    )
+
+    assert _metadata_issues(tmp_path, require_script_metadata=False) == []
 
 
 def test_missing_metadata_format_is_reported(tmp_path: Path) -> None:
