@@ -78,6 +78,21 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void Stop_MultipleListenerPidsOnDifferentInterfacesCannotIdentifyEndpoint()
+        {
+            string url = "http://127.0.0.1:" + Port;
+            _detector.AdditionalListeners.Add(ServerPid);
+            Assert.IsTrue(_service.VerifyListenerOwnership(url), "IPv4/IPv6 rows for the same process are unambiguous.");
+            _detector.AdditionalListeners.Add(LauncherPid);
+            Assert.IsFalse(_service.VerifyListenerOwnership(url));
+            Assert.IsFalse(_service.StopLocalHttpServer());
+            StringAssert.Contains("Multiple processes", _service.LastStopFailure);
+            Assert.AreEqual(0, _requests);
+            Assert.AreEqual(0, _terminator.Calls);
+            AssertOriginalOwnership();
+        }
+
+        [Test]
         public void ListenerOwnership_RequiresCurrentPortPidAndLaunchToken()
         {
             string url = "http://127.0.0.1:" + Port;
@@ -829,6 +844,7 @@ namespace MCPForUnityTests.Editor.Services
         private sealed class Detector : IProcessDetector
         {
             internal bool Listening = true;
+            internal readonly List<int> AdditionalListeners = new();
             internal bool CanInspect = true;
             internal bool? ExistsOverride;
             internal bool ThrowOnExists;
@@ -844,7 +860,12 @@ namespace MCPForUnityTests.Editor.Services
                 return CanInspect;
             }
 
-            public List<int> GetListeningProcessIdsForPort(int port) => Listening ? new List<int> { ServerPid } : new List<int>();
+            public List<int> GetListeningProcessIdsForPort(int port)
+            {
+                var listeners = Listening ? new List<int> { ServerPid } : new List<int>();
+                listeners.AddRange(AdditionalListeners);
+                return listeners;
+            }
 
             public int GetCurrentProcessId() => 98765;
 

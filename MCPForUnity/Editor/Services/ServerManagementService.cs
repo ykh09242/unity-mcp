@@ -784,11 +784,10 @@ namespace MCPForUnity.Editor.Services
             // Reuse expensive OS inspection only for the same process-frozen /health identity and launch.
             // Retry an inaccessible process, and always independently verify again at the stop action.
             if (
-                endpoint.ServerId.Length == 0
-                || _listenerIdentity.ServerId != endpoint.ServerId
+                _listenerIdentity.ServerId != endpoint.ServerId
                 || _listenerIdentity.Pid != pid
                 || _listenerIdentity.LaunchToken != launchToken
-                || (!_listenerIdentity.Owned && DateTime.UtcNow - _listenerIdentity.CheckedAt > TimeSpan.FromSeconds(5))
+                || ((!_listenerIdentity.Owned || endpoint.ServerId.Length == 0) && DateTime.UtcNow - _listenerIdentity.CheckedAt > TimeSpan.FromSeconds(5))
             )
                 _listenerIdentity = (endpoint.ServerId, launchToken, pid, DateTime.UtcNow, VerifyListenerProcess(uri.Port, pid, launchToken));
             return _listenerIdentity.Owned ? LocalHttpServerState.OwnedServer : LocalHttpServerState.ExternalServer;
@@ -837,18 +836,26 @@ namespace MCPForUnity.Editor.Services
         }
 
         private bool VerifyListenerProcess(int port, int pid, string launchToken) =>
-            GetListeningProcessIdsForPort(port).Contains(pid)
+            IsOnlyListener(GetListeningProcessIdsForPort(port), pid)
             && !(_pidFileManager is PidFileManager pids && pids.HasProcessCreationMismatch(pid, port, launchToken, launcher: false))
             && TryProcessCommandLineContainsInstanceToken(pid, launchToken, out bool matches)
             && matches;
 
         public bool VerifyListenerOwnership(string localUrl)
         {
-            return IsLocalUrl(localUrl)
+            bool verified =
+                IsLocalUrl(localUrl)
                 && Uri.TryCreate(localUrl, UriKind.Absolute, out var uri)
                 && TryGetListenerIdentity(uri.Port, out int pid, out string launchToken)
                 && VerifyListenerProcess(uri.Port, pid, launchToken);
+            if (!verified)
+                _listenerIdentity = default;
+            return verified;
         }
+
+        // Process discovery spans all local addresses on the port. Multiple rows for a
+        // single process are normal, but distinct PIDs cannot identify this endpoint.
+        private static bool IsOnlyListener(List<int> listeners, int pid) => listeners.Count > 0 && listeners.All(listener => listener == pid);
 
         private static bool TryConnectToLocalPort(string host, int port, int timeoutMs, CancellationToken token = default)
         {
@@ -990,6 +997,11 @@ namespace MCPForUnity.Editor.Services
                     }
                     return RefuseStop("The managed PID is no longer the listener. The port may have been reused; stop its owner manually.", quiet);
                 }
+                if (!IsOnlyListener(listeningPids, pid))
+                    return RefuseStop(
+                        "Multiple processes listen on different addresses at this port. The configured endpoint's ownership could not be verified.",
+                        quiet
+                    );
                 if (_pidFileManager is PidFileManager ownedPids && ownedPids.HasProcessCreationMismatch(pid, port, instanceToken, launcher: false))
                     return RefuseStop("The listener no longer matches the managed process creation identity. Refusing to stop a reused PID.", quiet);
                 if (!TryProcessCommandLineContainsInstanceToken(pid, instanceToken, out bool tokenMatches))
