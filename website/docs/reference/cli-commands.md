@@ -2202,7 +2202,7 @@ Lighting operations - create, modify lights and lighting settings.
 
 ## `unity-mcp lighting create`
 
-Create a new light. Configuration failures retain the created object and confirmed progress in lightingCreation. Inspect that object before retrying to avoid duplicates. A lost response leaves the failed step's outcome unknown. Examples: unity-mcp lighting create "MainLight" --type Directional unity-mcp lighting create "PointLight1" --position 0 5 0 --intensity 2 unity-mcp lighting create "RedLight" --type Spot --color 1 0 0
+Create a new light. The Editor creates the GameObject and configures its Light in one command. If the response is lost, inspect the scene before retrying. Examples: unity-mcp lighting create "MainLight" --type Directional unity-mcp lighting create "PointLight1" --position 0 5 0 --intensity 2 unity-mcp lighting create "RedLight" --type Spot --color 1 0 0
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -3729,7 +3729,7 @@ Observe one audit without starting or cancelling work.
 
 ## `unity-mcp raw`
 
-Send a raw command to Unity. Examples: unity-mcp raw manage_scene '&#123;"action": "get_hierarchy"&#125;' unity-mcp raw read_console '&#123;"count": 10&#125;' JSON input also accepts @file or -/@- stdin.
+Send a native command to the Unity Editor. This sends JSON to /api/command, or /api/context-command when a project guard is active. Python-composed MCP tools use dedicated CLI commands over tools/call. For a verification report, use \`verification report\` with the exact --instance Name@hash and --no-project-context. Examples: unity-mcp raw manage_scene '&#123;"action": "get_active"&#125;' unity-mcp raw read_console '&#123;"count": 10&#125;' JSON input also accepts @file or -/@- stdin.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -3924,15 +3924,15 @@ Create a new scene, optionally from a template. Templates: empty - Empty scene, 
 
 ## `unity-mcp scene hierarchy`
 
-Get the scene hierarchy. Examples: unity-mcp scene hierarchy unity-mcp scene hierarchy --max-depth 3 unity-mcp scene hierarchy --parent "Canvas" --include-transform unity-mcp --format json scene hierarchy
+List one page of roots, or the direct children of --parent. Use a returned instance ID as --parent to descend one level. For more siblings, pass next_cursor to --cursor with the same parent. Examples: unity-mcp scene hierarchy unity-mcp scene hierarchy --parent 1234 --limit 20 unity-mcp scene hierarchy --parent "Canvas" --include-transform unity-mcp --format json scene hierarchy
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | --parent | text | optional | nargs=1 | — | — | Parent GameObject to list children of (name, path, or instance ID). |
-| --max-depth / -d | integer | optional | nargs=1 | — | — | Maximum depth to traverse. |
+| --max-depth / -d | integer | optional | nargs=1 | — | — | Only one level is supported (1). |
 | --include-transform / -t | boolean | optional | nargs=1, flag | — | — | Include transform data for each node. |
 | --limit / -l | integer | optional | nargs=1 | 50 | — | Maximum nodes to return. |
-| --cursor / -c | integer | optional | nargs=1 | 0 | — | Pagination cursor. |
+| --cursor / -c | integer | optional | nargs=1 | 0 | — | Use next_cursor for the same parent. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp scene load`
