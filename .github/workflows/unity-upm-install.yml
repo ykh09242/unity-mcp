@@ -133,7 +133,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ needs.matrix.outputs.checked_sha }}
           persist-credentials: false
 
       - name: Verify beta push commit
@@ -162,9 +162,22 @@ jobs:
         id: package
         env:
           UNITY_VERSION: ${{ matrix.unity.version }}
-        run: >-
-          python3 tools/unity_upm_smoke.py prepare --unity-version "$UNITY_VERSION"
-          --output ".unity-ci/upm-$UNITY_VERSION"
+          CANDIDATE_SHA: ${{ needs.matrix.outputs.checked_sha }}
+          REQUIRE_GIT: ${{ inputs.require_upm_install }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output=".unity-ci/upm-$UNITY_VERSION"
+          args=(prepare --unity-version "$UNITY_VERSION" --output "$output")
+          if [[ "$REQUIRE_GIT" == true ]]; then
+            args+=(--git-revision "$CANDIDATE_SHA" --editor-workspace /github/workspace)
+          fi
+          python3 tools/unity_upm_smoke.py "${args[@]}"
+          if [[ "$REQUIRE_GIT" == true ]]; then
+            # GameCI's Linux container runs as root. Give its local upload-pack
+            # ownership of this disposable bare repository for Git's owner check.
+            sudo chown root:root -- "$output/source.git"
+          fi
 
       - name: Prepare Unity preferences and license directory
         run: mkdir -p "$HOME/.local/share/unity3d/Unity"
@@ -212,6 +225,13 @@ jobs:
         run: >-
           python3 tools/check_unity_test_results.py "$RESULTS_XML" --runner-outcome "$TEST_RUN_OUTCOME"
           --require-test UntouchedUpmSmoke.UntouchedPackageInstallTests.OriginalManifestImportsAndResolvesDependencies
+
+      - name: Verify locked Git installation at the selected subfolder and commit
+        if: inputs.require_upm_install
+        env:
+          PROJECT_PATH: ${{ steps.package.outputs.project_path }}
+          CANDIDATE_SHA: ${{ needs.matrix.outputs.checked_sha }}
+        run: python3 tools/unity_upm_smoke.py check-git-lock --project "$PROJECT_PATH" --revision "$CANDIDATE_SHA"
 
       - name: Upload UPM installation evidence
         if: always()

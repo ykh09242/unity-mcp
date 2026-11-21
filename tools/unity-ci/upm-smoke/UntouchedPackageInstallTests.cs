@@ -23,6 +23,7 @@ namespace UntouchedUpmSmoke
         {
             public string packageName = null;
             public string manifestSha256 = null;
+            public string gitRevision = null;
             public Dependency[] dependencies = null;
         }
 
@@ -33,8 +34,16 @@ namespace UntouchedUpmSmoke
             var expected = JsonUtility.FromJson<ExpectedInstallation>(File.ReadAllText(Path.Combine(project, ".upm-smoke.json")));
             var registered = PackageInfo.GetAllRegisteredPackages();
             var package = registered.Single(item => item.name == expected.packageName);
-            Assert.That(package.source, Is.EqualTo(PackageSource.Local));
-            Assert.That(Path.GetFullPath(package.resolvedPath), Is.EqualTo(Path.GetFullPath(Path.Combine(project, "../package"))));
+            if (string.IsNullOrEmpty(expected.gitRevision))
+            {
+                Assert.That(package.source, Is.EqualTo(PackageSource.Local));
+                Assert.That(Path.GetFullPath(package.resolvedPath), Is.EqualTo(Path.GetFullPath(Path.Combine(project, "../package"))));
+            }
+            else
+            {
+                Assert.That(package.source, Is.EqualTo(PackageSource.Git));
+                Assert.That(package.git.hash, Is.EqualTo(expected.gitRevision));
+            }
             using (var sha = SHA256.Create())
             {
                 var bytes = File.ReadAllBytes(Path.Combine(package.resolvedPath, "package.json"));

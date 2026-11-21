@@ -6,17 +6,22 @@
 **6000.6.10f1**. The selector fails if either role is missing or ambiguous; the
 workflow does not maintain a second set of Editor pins.
 
-The job creates a fresh project and copies `MCPForUnity` without changing any
-`package.json` bytes. The project manifest contains only the local package
-reference. It supplies no direct dependency overrides, embedded dependency
-closure, copied test-project settings, existing package lock or Library cache.
-Unity Package Manager must import the package and resolve its declared
-dependencies itself. Local folder references follow Unity's
-[UPM path rules](https://docs.unity.com/en-us/engine/6000.6/manual/packages-list/dependencies-lp/upm-localpath).
+Exact release qualification installs from a read-only local Git source. The job
+clones the checked-out commit into a disposable bare repository and gives a fresh
+project a single dependency of the form
+`file:///.../source.git?path=/MCPForUnity#<full-commit>`. The bare repository
+is visible inside the Editor container. Unity resolves the same package subfolder
+and revision syntax used in the README, with no credentials or remote Git host.
+Ordinary integration runs use the original local folder installation. Each project
+starts without dependency overrides, a package lock or a Library cache.
+[Unity Git dependency syntax](https://docs.unity3d.com/2021.3/Documentation/Manual/upm-git.html)
 
-The native EditMode fixture checks the registered local package path, the original
-manifest SHA256, all declared dependency registrations, and loading the package's
-Editor assembly and types. The result gate requires the exact fixture body to
+The native EditMode fixture checks `PackageSource.Git` and the resolved commit
+in release qualification, or the registered local path in integration. In both
+cases, it checks the original manifest SHA256, all declared dependency registrations,
+and loading the package's Editor assembly and types. Git qualification also checks
+the direct entry in Unity's generated `Packages/packages-lock.json` against the
+requested URL, subfolder and commit. The result gate requires the exact fixture body to
 pass; missing XML, zero tests, skipped tests, failed runner execution and a missing
 required body fail the job. Reservation/observation records and package manifests
 are uploaded for review. This is an installation/import smoke; the existing curated
@@ -31,12 +36,13 @@ To prepare a disposable local fixture without starting Unity:
 ```sh
 python tools/unity_upm_smoke.py matrix
 python tools/unity_upm_smoke.py prepare --unity-version 2021.3.45f2 --output .unity-ci/upm-floor
+python tools/unity_upm_smoke.py prepare --unity-version 2021.3.45f2 --output .unity-ci/upm-git --git-revision "$(git rev-parse HEAD)"
 ```
 
 Use a new output directory for each preparation. Licensed native execution is
 performed by the trusted workflow or an explicitly authorized owned test fixture.
 
-Manual release qualification requires both floor/current native installation results
+Release qualification requires both floor/current native Git installation results
 at the exact receiving commit, in addition to the curated bridge and other evidence.
 The reusable contract exports `checked_sha` only after the role selector, license
 gate and complete native matrix succeed. Qualification rejects skipped, missing,

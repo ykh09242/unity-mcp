@@ -2,12 +2,17 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import yaml
 
 from tools import unity_upm_smoke as smoke
+from tests.test_update_source_pins import git, put
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,6 +49,92 @@ def test_smoke_matrix_uses_existing_floor_and_current_roles():
     assert len(selected) == 2
 
 
+@pytest.fixture
+def git_package(tmp_path):
+    repo = tmp_path / "fixture with spaces"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    relative = "MCPForUnity/package.json"
+    original = '{"name":"com.example.smoke","version":"1.0.0"}\n'
+    put(repo, relative, original)
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "candidate")
+    revision = git(repo, "rev-parse", "HEAD")
+    put(repo, relative, '{"name":"com.example.changed"}')
+    return repo, revision, original.encode()
+
+
+def test_mirror_url_resolves_only_the_committed_package(git_package, tmp_path):
+    repo, revision, original = git_package
+    project = smoke.prepare("2021.3.45f2", repo / ".unity-ci/upm", repo=repo, git_revision=revision)
+    manifest = json.loads((project / "Packages/manifest.json").read_bytes())
+    url = urlsplit(manifest["dependencies"]["com.example.smoke"])
+    assert url.scheme == "file" and url.path.endswith("/source.git") and "%20" in url.path
+    assert url.fragment == revision and parse_qs(url.query) == {"path": ["/MCPForUnity"]}
+    clone = tmp_path / "consumer"
+    git(tmp_path, "clone", url._replace(query="", fragment="").geturl(), str(clone))
+    path = parse_qs(url.query)["path"][0].lstrip("/")
+    assert smoke.git(clone, "show", f"{url.fragment}:{path}/package.json") == original
+    for invalid in (f"{'a' * 40}:{path}/package.json", f"{revision}:wrong/package.json"):
+        with pytest.raises(subprocess.CalledProcessError):
+            git(clone, "show", invalid)
+    expected = json.loads((project / ".upm-smoke.json").read_bytes())
+    assert expected["gitRevision"] == revision
+    assert expected["manifestSha256"] == hashlib.sha256(original).hexdigest()
+    assert not (project / "Packages/packages-lock.json").exists()
+    assert not (project.parent / "package").exists()
+
+
+def test_staging_rejects_different_head_and_missing_committed_subfolder(git_package):
+    repo, revision, _ = git_package
+    output = repo / ".unity-ci/upm"
+    with pytest.raises(smoke.packages.PreparationError, match="candidate commit"):
+        smoke.prepare("2021.3.45f2", output, repo=repo, git_revision="a" * 40)
+    git(repo, "mv", "MCPForUnity", "elsewhere")
+    git(repo, "commit", "-qam", "move package")
+    with pytest.raises(smoke.packages.PreparationError, match="Git show failed"):
+        smoke.prepare("2021.3.45f2", output, repo=repo, git_revision=git(repo, "rev-parse", "HEAD"))
+    assert not output.exists()
+
+
+def test_git_install_can_clone_a_shallow_detached_ci_checkout(git_package, tmp_path):
+    repo, revision, _ = git_package
+    checkout = tmp_path / "checkout"
+    git(tmp_path, "clone", "--depth=1", repo.as_uri(), str(checkout))
+    git(checkout, "checkout", "--detach", revision)
+    project = smoke.prepare("2021.3.45f2", checkout / "upm", repo=checkout, git_revision=revision)
+    assert git(project.parent / "source.git", "rev-parse", "HEAD") == revision
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ["", "local", "wrong-folder", "unbound-request", "wrong-revision", "wrong-lock", "transitive"],
+)
+def test_git_lock_binds_requested_subfolder_and_actual_commit(tmp_path, fault):
+    revision = "a" * 40
+    other = "b" * 40
+    url = f"file:///github/workspace/.unity-ci/upm/source.git?path=/MCPForUnity#{revision}"
+    if fault == "wrong-folder":
+        url = url.replace("/MCPForUnity", "/Other")
+    if fault == "wrong-revision":
+        url = url.replace(revision, other)
+    entry = {
+        "version": url if fault != "unbound-request" else url + "-other",
+        "source": "local" if fault == "local" else "git",
+        "hash": other if fault == "wrong-lock" else revision,
+        "depth": 1 if fault == "transitive" else 0,
+    }
+    name = "com.example.smoke"
+    put(tmp_path, ".upm-smoke.json", json.dumps({"packageName": name, "gitRevision": revision}))
+    put(tmp_path, "Packages/manifest.json", json.dumps({"dependencies": {name: url}}))
+    put(tmp_path, "Packages/packages-lock.json", json.dumps({"dependencies": {name: entry}}))
+    if fault:
+        with pytest.raises(smoke.packages.PreparationError, match="UPM lock"):
+            smoke.check_git_lock(tmp_path, revision)
+    else:
+        smoke.check_git_lock(tmp_path, revision)
+
+
 @pytest.mark.parametrize("roles", [["floor"], ["floor", "floor", "current"]])
 def test_smoke_matrix_rejects_missing_or_ambiguous_support_roles(tmp_path, roles):
     config = json.loads((ROOT / "tools/unity-versions.json").read_text())
@@ -74,8 +165,60 @@ def test_smoke_workflow_requires_native_body_under_existing_license_gate():
     assert not gate.get("continue-on-error")
     assert not any("actions/cache@" in step.get("uses", "") for step in job["steps"])
     commands = "\n".join(step.get("run", "") for step in job["steps"])
-    assert "unity_upm_smoke.py prepare" in commands
+    stage = next(step for step in job["steps"] if step.get("id") == "package")
+    assert stage["env"]["REQUIRE_GIT"] == "${{ inputs.require_upm_install }}"
+    assert stage["env"]["CANDIDATE_SHA"] == "${{ needs.matrix.outputs.checked_sha }}"
+    assert '--git-revision "$CANDIDATE_SHA" --editor-workspace /github/workspace' in stage["run"]
+    verify_lock = next(step for step in job["steps"] if "check-git-lock" in step.get("run", ""))
+    assert verify_lock["if"] == "inputs.require_upm_install"
+    assert verify_lock["env"]["CANDIDATE_SHA"] == stage["env"]["CANDIDATE_SHA"]
+    assert not verify_lock.get("continue-on-error")
     assert "unity_ci_packages.py prepare" not in commands
+
+
+@pytest.mark.parametrize("require_git", [False, True])
+def test_workflow_stages_releases_as_git_and_integration_as_local(require_git):
+    bash = shutil.which("bash")
+    if os.name == "nt" and Path("C:/Program Files/Git/bin/bash.exe").is_file():
+        bash = "C:/Program Files/Git/bin/bash.exe"
+    if not bash:
+        pytest.skip("Bash is required to exercise the hosted staging command")
+    jobs = yaml.safe_load((ROOT / ".github/workflows/unity-upm-install.yml").read_text())["jobs"]
+    stage = next(
+        step for step in jobs["untouchedUpmInstall"]["steps"] if step.get("id") == "package"
+    )
+    version = "2021.3.45f2"
+    sha = "a" * 40
+    result = subprocess.run(
+        [
+            bash,
+            "--noprofile",
+            "--norc",
+            "-c",
+            "python3() { printf '%s\\0' \"$@\"; }\nsudo() { :; }\n" + stage["run"],
+        ],
+        env={
+            **os.environ,
+            "UNITY_VERSION": version,
+            "CANDIDATE_SHA": sha,
+            "REQUIRE_GIT": str(require_git).lower(),
+        },
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+    args = result.stdout.decode().split("\0")[:-1]
+    expected = [
+        "tools/unity_upm_smoke.py",
+        "prepare",
+        "--unity-version",
+        version,
+        "--output",
+        ".unity-ci/upm-" + version,
+    ]
+    if require_git:
+        expected += ["--git-revision", sha, "--editor-workspace", "/github/workspace"]
+    assert args == expected
 
 
 @pytest.mark.parametrize("job", ["matrix", "license", "untouchedUpmInstall"])

@@ -226,9 +226,11 @@ With `UNITY_RUN_LICENSED_TESTS=true`, qualification requires all of these jobs:
   Its checkout and test evidence use S, the immutable server commit selected by the receiving
   package. The final gate compares its tested SHA to that selection.
 - The untouched UPM install workflow on both the minimum supported and current supported
-  Editors, using the original package manifest from the exact receiving SHA. Both rows require
-  the native `OriginalManifestImportsAndResolvesDependencies` test to pass. The final gate
-  checks the installation workflow's returned package SHA.
+  Editors, using a bare Git mirror of the exact receiving SHA. Each Editor resolves
+  `?path=/MCPForUnity#<sha>`, and its native `OriginalManifestImportsAndResolvesDependencies`
+  test checks the resolved Git commit, manifest digest, dependencies and Editor assembly.
+  Both rows verify the Git subfolder and commit in Unity's package lock before the
+  workflow returns the installed package SHA.
 - The real E2E bridge using the receiving package and its installed immutable selected
   server archive, with smoke, EditMode and strict PlayMode legs. The reusable
   `require_native=true` input passes `--strict-playmode`, so any failing PlayMode
