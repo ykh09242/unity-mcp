@@ -59,9 +59,9 @@ def check(condition, label):
         print('FAIL', label)
 
 scene_cases = [
-    (['hierarchy', '--limit', '0', '--cursor', '0', '--max-depth', '0',
+    (['hierarchy', '--limit', '0', '--cursor', '0', '--max-depth', '1',
       '--parent', '0', '--include-transform'],
-     {'action': 'get_hierarchy', 'pageSize': 0, 'cursor': 0, 'maxDepth': 0,
+     {'action': 'get_hierarchy', 'pageSize': 0, 'cursor': 0, 'maxDepth': 1,
       'parent': '0', 'includeTransform': True}),
     (['active'], {'action': 'get_active'}),
     (['load', '0', '--by-index'], {'action': 'load', 'buildIndex': 0}),
@@ -171,6 +171,8 @@ for group, args in (
     ('scene', ['load', 'bad', '--by-index']),
     ('scene', ['create', 'Fixture', '--template', 'bad']),
     ('scene', ['hierarchy', '--cursor', 'bad']),
+    ('scene', ['hierarchy', '--max-depth', '0']),
+    ('scene', ['hierarchy', '--max-depth', '2']),
     ('prefab', ['modify', 'Assets/Fixture.prefab', '--position', '1,2']),
     ('prefab', ['modify', 'Assets/Fixture.prefab', '--set-property', 'bad']),
     ('prefab', ['modify', 'Assets/Fixture.prefab', '--create-child', '[]']),
