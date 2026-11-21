@@ -31,6 +31,7 @@ from services.verification.runner import VerificationRunner
 from services.verification.player_candidate import prepare_candidate
 from services.verification.player_runner import PlayerVerificationRunner
 from transport.legacy.unity_connection import async_send_command_with_retry
+from transport.native_arbitration import VerifiedQueueRefusal
 from transport.unity_transport import send_with_unity_instance
 
 
@@ -117,8 +118,7 @@ class VerificationIO:
                 "error": str(error)[:256] or "test_admission_deadline",
                 "data": {"test_job_created": False},
             }
-        if before_send is not None:
-            before_send()
+        on_refusal = before_send() if before_send is not None else None
         response = await asyncio.wait_for(
             send_with_unity_instance(
                 async_send_command_with_retry,
@@ -135,6 +135,8 @@ class VerificationIO:
             ),
             max(0, deadline - monotonic()),
         )
+        if on_refusal is not None and isinstance(response, VerifiedQueueRefusal):
+            on_refusal()
         # Mutating acknowledgments are never reissued even when their connection retires.
         value = (
             response.model_dump(exclude_none=True) if hasattr(response, "model_dump") else response
@@ -402,6 +404,7 @@ class VerificationService:
                     preparation["baseline_id"] = job_id
                     # Keep the local terminal witness even after the job map evicts it.
                     preparation["baseline_job"] = ctx.fastmcp._script_quality_service.jobs[job_id]
+                    return lambda: preparation.update(baseline_id=None)
 
                 try:
                     await io.authorize("manage_script_quality", {"action": "capture_baseline"})

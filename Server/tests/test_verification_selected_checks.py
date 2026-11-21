@@ -178,6 +178,35 @@ async def test_unknown_scenario_start_observes_only_its_owned_id_and_blocks_repl
 
 
 @pytest.mark.asyncio
+async def test_bound_scenario_refusal_settles_original_child_after_target_retires(
+    mapped, service, child
+):
+    from transport.native_arbitration import VerifiedQueueRefusal
+
+    subject, ctx, native, _, jobs, _ = mapped
+    _, _, target, _ = service
+    dispatch = native.side_effect
+
+    async def retire(*args, **kwargs):
+        if args[2] == "manage_play_scenario" and args[3]["action"] == "run":
+            assert kwargs["_preserve_queue_refusal"]
+            target.is_current = lambda: False
+            return VerifiedQueueRefusal(success=False, error="private queue receipt")
+        return await dispatch(*args, **kwargs)
+
+    native.side_effect = retire
+    response = await subject.execute(ctx, "run", {**OPTIONS, "wait_seconds": 0})
+    run_id = response["data"]["run_id"]
+    await subject.tasks[run_id]
+    report = subject.store.read(run_id, target.scope.key)
+    (scenario,) = (entry for entry in report["children"] if entry["kind"] == "editor_scenario")
+    assert scenario["settled"] and scenario["dispatch"] == "refused" and report["native_settled"]
+    assert not jobs and "private queue receipt" not in str(report)
+    hidden = await subject.execute(ctx, "status", {"run_id": run_id})
+    assert hidden["code"] == "verification_target_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_foreign_scenario_definition_never_settles_or_receives_cancel(mapped, child):
     subject, ctx, native, _, jobs, _ = mapped
     dispatch = native.side_effect

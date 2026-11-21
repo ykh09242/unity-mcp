@@ -95,9 +95,65 @@ async def test_bound_stdio_queue_refusal_releases_verification_capacity(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["run", "prepare"])
+@pytest.mark.parametrize("revocation", ["target", "permission"])
+async def test_refused_analysis_releases_original_owner_when_access_changes(
+    analysis_service, service, action, revocation
+):
+    from transport.native_arbitration import VerifiedQueueRefusal
+
+    subject, ctx, quality, send = analysis_service
+    _, _, target, _ = service
+    revoked = False
+    target.is_current = lambda: not (revoked and revocation == "target")
+
+    async def authorize(_command, _params):
+        def check():
+            if revoked and revocation == "permission":
+                raise PermissionError("permission revoked")
+
+        return check
+
+    target.authorize_public = authorize
+
+    async def refuse(*_args, **kwargs):
+        nonlocal revoked
+        assert kwargs["_preserve_queue_refusal"]
+        revoked = True
+        return VerifiedQueueRefusal(success=False, error="private queue receipt")
+
+    send.side_effect = refuse
+    for _ in range(3):
+        revoked = False
+        options = {"paths": ["Assets/A.cs"]}
+        if action == "prepare":
+            error = ConnectionError if revocation == "target" else PermissionError
+            with pytest.raises(error, match="analysis_target_changed|permission revoked"):
+                await subject.execute(ctx, action, {**options, "capture_baseline": True})
+            assert not subject.preparations
+        else:
+            started = await subject.execute(ctx, action, {**options, "wait_seconds": 0})
+            run_id = started["data"]["run_id"]
+            await subject.tasks[run_id]
+            report = subject.store.read(run_id, target.scope.key)
+            (child,) = report["children"]
+            assert child["settled"] and child["dispatch"] == "refused" and report["native_settled"]
+            assert "private queue receipt" not in str(report)
+            if revocation == "target":
+                hidden = await subject.execute(ctx, "status", {"run_id": run_id})
+                assert hidden["code"] == "verification_target_unavailable"
+            else:
+                with pytest.raises(PermissionError, match="permission revoked"):
+                    await subject.execute(ctx, "status", {"run_id": run_id})
+        assert not quality.results.active
+    assert send.await_count == 3
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["tests", "import", "compile"])
+@pytest.mark.parametrize("retire", [False, True])
 async def test_bound_queue_refusal_settles_only_the_current_native_child(
-    service, monkeypatch, kind
+    service, monkeypatch, kind, retire
 ):
     from models.verification import VerificationProfile
     from services import source_freshness
@@ -122,7 +178,10 @@ async def test_bound_queue_refusal_settles_only_the_current_native_child(
             }
         if kind == "compile" and command == "refresh_unity" and params["compile"] == "none":
             return {"success": True}
-        return await send_with_unity_instance(send_fn, instance, command, params, **kwargs)
+        receipt = await send_with_unity_instance(send_fn, instance, command, params, **kwargs)
+        if retire:
+            target.is_current = lambda: False
+        return receipt
 
     monkeypatch.setattr(source_freshness.unity_transport, "send_with_unity_instance", route)
     monkeypatch.setattr(source_freshness, "remote_operation_allowed", AsyncMock(return_value=True))
@@ -134,6 +193,12 @@ async def test_bound_queue_refusal_settles_only_the_current_native_child(
         try:
             if kind == "tests":
                 await runner.run_test_job("a" * 64, SimpleNamespace(window_id=None))
+                if retire:
+                    with pytest.raises(ConnectionError, match="verification_target_unavailable"):
+                        await io.check()
+            elif retire:
+                with pytest.raises(ConnectionError, match="verification_target_unavailable"):
+                    await io.freshness("if_needed", monotonic() + 5)
             else:
                 evidence = await io.freshness("if_needed", monotonic() + 5)
                 assert evidence["reason"] == "refresh_not_dispatched"

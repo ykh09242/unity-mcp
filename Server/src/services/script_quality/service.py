@@ -206,20 +206,31 @@ class ScriptQualityService:
             params.pop("cursor", None)
             params["page_size"] = 500
         deadline = monotonic() + 30
-        dispatched = False
+        dispatch = "pending"
 
         def start_dispatch():
-            nonlocal dispatched
-            if on_dispatch is not None:
-                on_dispatch(job_id)
-            dispatched = True
+            nonlocal dispatch
+            notify_refusal = on_dispatch(job_id) if on_dispatch is not None else None
+            dispatch = "sent"
+
+            def refuse():
+                nonlocal dispatch
+                dispatch = "refused"
+                job.terminal = True
+                self.results.settle(job_id, owner)
+                if notify_refusal is not None:
+                    notify_refusal()
+
+            return refuse
 
         try:
             response = await self._send(
                 target, instance, params, deadline, before_send=start_dispatch if starting else None
             )
         except (TimeoutError, ConnectionError):
-            if starting and not dispatched:
+            if dispatch == "refused":
+                raise
+            if starting and dispatch == "pending":
                 return admission_error(
                     "analysis_dispatch_refused", "Analysis dispatch did not start."
                 )
@@ -231,14 +242,12 @@ class ScriptQualityService:
                 "job_id": job_id,
             }
         finally:
-            if starting and not dispatched:
+            if starting and dispatch == "pending":
                 self.results.settle(job_id, owner)
                 del self.jobs[job_id]
         if isinstance(response, MCPResponse):
             response = response.model_dump(exclude_none=True)
-        if starting and isinstance(response, VerifiedQueueRefusal):
-            job.terminal = True
-            self.results.settle(job_id, owner)
+        if dispatch == "refused":
             return {**response, "job_id": job_id, "analysis_job_created": False}
         if job_id is not None and isinstance(response, dict):
             data = response.get("data")
@@ -373,8 +382,7 @@ class ScriptQualityService:
         remaining = deadline - monotonic()
         if remaining <= 0:
             raise TimeoutError()
-        if before_send is not None:
-            before_send()
+        on_refusal = before_send() if before_send is not None else None
         response = await asyncio.wait_for(
             send_with_unity_instance(
                 async_send_command_with_retry,
@@ -387,6 +395,9 @@ class ScriptQualityService:
             ),
             remaining,
         )
+        # Settle this attempt before rechecking access to its public response.
+        if on_refusal is not None and isinstance(response, VerifiedQueueRefusal):
+            on_refusal()
         if not target.is_current():
             raise ConnectionError("analysis_target_changed")
         if check is not None:

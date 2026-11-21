@@ -155,6 +155,7 @@ class VerificationRunner:
             # Preserve ownership even if the outer wait is interrupted before acknowledgment.
             child["job_id"] = identity
             self.publish()
+            return lambda: child.update(dispatch="refused", settled=True)
 
         try:
             response = await self.io.quality("analyze", options, deadline, on_dispatch=on_dispatch)
