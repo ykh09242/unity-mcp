@@ -293,11 +293,15 @@ def list_instances(ctx: Context):
 @pass_context
 @handle_unity_errors
 def raw_command(ctx: Context, command_type: str, params: tuple):
-    """Send a raw command to Unity.
+    """Send a native command to the Unity Editor.
+
+    This sends JSON to /api/command, or /api/context-command when a project guard is active.
+    Python-composed MCP tools use dedicated CLI commands over tools/call. For a verification
+    report, use `verification report` with the exact --instance Name@hash and --no-project-context.
 
     \b
     Examples:
-        unity-mcp raw manage_scene '{"action": "get_hierarchy"}'
+        unity-mcp raw manage_scene '{"action": "get_active"}'
         unity-mcp raw read_console '{"count": 10}'
 
     JSON input also accepts @file or -/@- stdin.

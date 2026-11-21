@@ -1145,10 +1145,10 @@ directory.
 
 ### Raw Commands
 
-For advanced usage, send raw tool calls:
+Use `raw` to send a Unity Editor native command and its JSON parameters. It uses
+`/api/command`, or `/api/context-command` when a project guard is active.
 
 ```bash
-# Send any MCP tool directly
 unity-mcp raw manage_scene '{"action": "get_active"}'
 unity-mcp raw manage_gameobject '{"action": "create", "name": "Test"}'
 unity-mcp raw manage_components '{"action": "add", "target": "Test", "componentType": "Rigidbody"}'
@@ -1156,6 +1156,16 @@ unity-mcp raw manage_editor '{"action": "play"}'
 unity-mcp raw manage_camera '{"action": "screenshot", "include_image": true}'
 unity-mcp raw manage_graphics '{"action": "volume_get_info", "target": "PostProcessing"}'
 unity-mcp raw manage_packages '{"action": "list_packages"}'
+```
+
+Python-composed MCP tools use dedicated CLI commands over MCP `tools/call`.
+For example, `verification report` calls the `report` action of `manage_verification`.
+Use the exact `Name@hash` from `unity-mcp instance list` and the `run_id` returned by
+your verification run. Explicitly disable project context for this MCP call.
+
+```bash
+unity-mcp --no-project-context --instance "MyGame@0123456789abcdef" verification report \
+  --options '{"run_id":"0123456789abcdef0123456789abcdef"}'
 ```
 
 ---
