@@ -24,6 +24,42 @@ does not enter that denominator. `grounded_answer` requires a correct answer
 and complete actor-attributed evidence in a positive-availability pair.
 `correct_without_tools` scores the request-only control on its own denominator.
 
+## Reading only Console errors in six languages
+
+Use a disposable Editor. Seed two distinguishable error messages and at least
+one warning, then keep the fixture stable during the trials. For example, a
+fixture can issue `Debug.LogError` twice and `Debug.LogWarning` once using
+fresh messages including a Unicode character. Disable Collapse in the fixture
+before seeding if individual duplicate occurrences are part of the oracle.
+
+```sh
+uv run --project Server --locked --extra dev python tools/experiments/blind_tool_selection.py run \
+  --project /work/DiscoveryFixture --endpoint http://127.0.0.1:8080/mcp \
+  --instance DiscoveryFixture@12345678 --state-probe tools/experiments/native_console_state.py \
+  --task console-errors --prompt-set natural --model gpt-6.2-sol --effort medium \
+  --host-mode configured --live-child --role main --role subagent \
+  --language en --language ko --language ja --language es --language ar --language tr \
+  --output /work/private/console-errors-01
+```
+
+Use the running Editor's exact instance ID and a fresh output directory outside
+its project. The runner forwards the HTTP target to the bundled state probe.
+For a trusted stdio relay, pass `--relay` and point `UNITY_MCP_STATUS_DIR` at
+the disposable Editor's stdio registry. The probe verifies the native project
+root and reads all error and warning pages twice. A custom state probe still
+receives the project directory as its sole argument and supplies the exact
+message lists under `observation_fixtures["console-errors"]` as `errors` and
+`warnings`.
+
+Both roles receive the same localized request for the error messages. A passing
+case requires a matching model, effort and Editor, an actor-owned error-filtered
+read covering all observed errors, a matching answer, and preservation of the
+pre-existing error and warning records. Scope and clear attempts are recorded
+alongside those checks. Each case exposes these results in `final_answer`.
+An incomplete page, unknown actor or unavailable mixed fixture stays visible in
+the report. The independent state and raw actor receipts belong in the private
+trial directory.
+
 ## Run against an open Editor
 
 Use the checkout's locked Server Python environment and an installed, already

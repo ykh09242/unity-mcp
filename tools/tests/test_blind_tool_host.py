@@ -5,10 +5,86 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+from unittest.mock import AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.experiments import blind_tool_host as host
+
+
+def test_console_parent_starts_with_requested_settings_and_observes_owned_model(
+    tmp_path, monkeypatch
+):
+    actor = "aabbccdd-1234-1234-1234-123456789012"
+    options = args(tmp_path, installed=True, timeout=5)
+    client = SimpleNamespace(
+        read_messages=host.anyio.sleep_forever,
+        send=AsyncMock(),
+        request=AsyncMock(
+            side_effect=[
+                {},
+                {"thread": {"id": actor}, "reasoningEffort": "medium"},
+                {"thread": {"id": actor, "model": "model"}},
+            ]
+        ),
+    )
+    monkeypatch.setattr(host, "AppServer", lambda process: client)
+    monkeypatch.setattr(host.anyio, "open_process", AsyncMock())
+    monkeypatch.setattr(host, "close_process", AsyncMock())
+    monkeypatch.setattr(host, "observe_host", AsyncMock(return_value={"status": "observed"}))
+    monkeypatch.setattr(host, "_project_verified", AsyncMock(return_value=True))
+    asyncio.run(host._configured_session(options, tmp_path, "", {"task": "console-errors"}))
+    calls = client.request.await_args_list
+    assert [call.args[0] for call in calls] == ["initialize", "thread/start", "thread/read"]
+    settings = calls[1].args[1]
+    assert settings["config"] == {"model_reasoning_effort": "medium"}
+    assert settings["allowProviderModelFallback"] is False
+    assert calls[2].args[1]["threadId"] == actor
+    surface = json.loads((tmp_path / "installed-host.json").read_text())
+    assert (surface["model"], surface["effort"], surface["project_verified"]) == (
+        "model",
+        "medium",
+        True,
+    )
+
+
+def test_console_retries_only_incomplete_actor_observations_with_bounded_delays(
+    tmp_path, monkeypatch
+):
+    options = args(tmp_path)
+    catalog = AsyncMock(side_effect=[{"status": "incomplete"}, {"status": "observed"}])
+    root = AsyncMock(side_effect=[host.InteropFailure("starting"), False, True])
+    sleep = AsyncMock()
+    monkeypatch.setattr(host, "observe_host", catalog)
+    monkeypatch.setattr(host, "_project_verified", root)
+    monkeypatch.setattr(host.anyio, "sleep", sleep)
+    result = asyncio.run(
+        host.observe_ready_surface(
+            None, "parent", "unityMCP", options, installed=False, check_project=True, retry=True
+        )
+    )
+    assert result == {"status": "observed", "project_verified": True}
+    assert catalog.await_count == 2 and root.await_count == 3
+    assert [call.args[0] for call in sleep.await_args_list] == [1, 3]
+    root = AsyncMock(side_effect=host.InteropFailure("still unavailable"))
+    monkeypatch.setattr(host, "_project_verified", root)
+    previous = {"status": "observed"}
+    result = asyncio.run(
+        host.observe_ready_surface(
+            None,
+            "child",
+            "unityMCP",
+            options,
+            initial=previous,
+            installed=False,
+            check_project=True,
+            retry=True,
+        )
+    )
+    assert result["project_verified"] is False and root.await_count == 3
+    assert catalog.await_count == 2 and all(
+        call.args[1] == "child" for call in root.await_args_list
+    )
 
 
 def args(tmp_path, **options):

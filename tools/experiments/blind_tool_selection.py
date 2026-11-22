@@ -25,6 +25,7 @@ from tools.experiments import blind_tool_observations as observations
 from tools.experiments.blind_tool_comparison import compare_directories, paired_schedule
 from tools.experiments.blind_tool_trace import score_case, score_directory
 from tools.experiments import blind_tool_actions as actions
+from tools.experiments import blind_tool_console as console
 
 TASKS = (
     "request-label",
@@ -37,6 +38,7 @@ TASKS = (
     "context",
     *observations.TASKS,
     *actions.FIELDS,
+    console.TASK,
 )
 LANGUAGES = ("en", "ko", "ja", "es", "ar", "tr")
 ROLES = ("main", "subagent")
@@ -72,7 +74,7 @@ def task_prompt(
         x=point[0],
         y=point[1],
     )
-    return f"{request}\n\n{prompts['limits'][language]}"
+    return request if task == console.TASK else f"{request}\n\n{prompts['limits'][language]}"
 
 
 def delivery_prompt(args: argparse.Namespace, task: str, language: str, role: str) -> str:
@@ -86,7 +88,9 @@ def delivery_prompt(args: argparse.Namespace, task: str, language: str, role: st
     if getattr(args, "study", None) in (STUDY, observations.STUDY):
         with Path(__file__).with_name("blind_tool_tasks.json").open(encoding="utf-8") as stream:
             prompt += "\n" + json.load(stream)["observation_scope"][language]
-    if getattr(args, "answer_format", "prose") == "json":
+    if task == console.TASK and role == "main":
+        return prompt
+    if task != console.TASK and getattr(args, "answer_format", "prose") == "json":
         prompt += "\n\n" + answer_instruction(task, getattr(args, "answer_protocol", "v1"))
     if role == "main":
         return f"Perform this task yourself, without delegating.\n\n{prompt}"
@@ -176,6 +180,8 @@ def run_case(
     case_dir.mkdir()
     args = copy(args)
     args.observation_fixture = observations.observation_fixture(args, task)
+    if task == console.TASK and role == "subagent" and args.delegation == "v2":
+        args.live_child = True
     prompt = delivery_prompt(args, task, language, role)
     metadata = {
         "task": task,
@@ -205,6 +211,19 @@ def run_case(
     }
     environment = {**os.environ, "PYTHONUTF8": "1"}
     try:
+        if task == console.TASK:
+            metadata["answer_format"] = "prose"
+            metadata["answer_protocol"] = "console-verbatim"
+            if not getattr(args, "pair_gate", None):
+                metadata["fixture_availability"] = observations.fixture_availability(
+                    args.observation_fixture, metadata.get("editor_start_state")
+                )
+                if metadata["fixture_availability"] != "positive":
+                    metadata.update(
+                        runner_status="fixture_unavailable",
+                        fixture_reason="mixed_console_unverified",
+                    )
+                    return
         if reason := observations.missing_fixture(args.observation_fixture):
             metadata.update(
                 runner_status="fixture_unavailable",
@@ -245,9 +264,11 @@ def run_case(
         metadata["runner_status"] = "launch_failed"
         metadata["failure_type"] = type(error).__name__
     finally:
-        if (getattr(args, "study", None) or getattr(args, "pair_gate", None)) and metadata.get(
-            "runner_phase"
-        ) == "model_turn":
+        if (
+            (task == console.TASK and metadata.get("fixture_availability") == "positive")
+            or (getattr(args, "study", None) or getattr(args, "pair_gate", None))
+            and metadata.get("runner_phase") == "model_turn"
+        ):
             metadata["editor_end_state"] = probe_state(args)
         (case_dir / "case.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
@@ -408,9 +429,18 @@ def validate_backend(parser: argparse.ArgumentParser, args: argparse.Namespace) 
 def probe_state(args: argparse.Namespace) -> dict | None:
     if not args.state_probe:
         return None
+    command = [sys.executable, "-X", "utf8", str(args.state_probe), str(args.project)]
+    if args.state_probe == Path(__file__).resolve().with_name("native_console_state.py"):
+        endpoint = (
+            args.installed_endpoint
+            if getattr(args, "installed", False)
+            else getattr(args, "endpoint", None)
+        )
+        if endpoint:
+            command.extend(["--endpoint", endpoint, "--instance", args.instance])
     try:
         result = subprocess.run(
-            [sys.executable, "-X", "utf8", str(args.state_probe), str(args.project)],
+            command,
             capture_output=True,
             timeout=min(args.timeout, 60),
             check=True,
@@ -444,7 +474,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif not all((args.task, args.language, args.role)):
             parser.error("provide --task, --language and --role or select --study")
         prepared = getattr(args, "prepare_pairs", False)
-        args.host_mode = args.host_mode or ("configured" if study or prepared else "isolated")
+        if console.TASK in args.task and not args.state_probe:
+            parser.error("console-errors requires an independent --state-probe")
+        if console.TASK in args.task and args.host_mode == "isolated":
+            parser.error(
+                "console-errors requires --host-mode configured to verify the answering actor and its Editor project"
+            )
+        args.host_mode = args.host_mode or (
+            "configured" if study or prepared or console.TASK in args.task else "isolated"
+        )
         args.answer_protocol = args.answer_protocol or ("v3" if study or prepared else "v2")
         if prepared and (
             args.host_mode != "configured"

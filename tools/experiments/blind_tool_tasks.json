@@ -1,4 +1,12 @@
 {
+  "console-errors": {
+    "en": "List the current Unity Console error messages verbatim, one per line.",
+    "ko": "현재 유니티 콘솔의 오류 메시지를 한 줄에 하나씩 그대로 알려 주세요.",
+    "ja": "現在の Unity コンソールのエラーメッセージを一行ずつそのまま示してください。",
+    "es": "Enumera literalmente los mensajes de error actuales de la consola de Unity, uno por línea.",
+    "ar": "اعرض رسائل الخطأ الحالية في وحدة تحكم Unity بنصها الأصلي، كل رسالة في سطر.",
+    "tr": "Unity konsolundaki güncel hata mesajlarını her biri ayrı satırda olacak şekilde aynen listeleyin."
+  },
   "request-label": {
     "en": "Return the label supplied in this message exactly as written: {label}.",
     "ko": "이 메시지에서 제공한 표기를 정확히 그대로 반환해 주세요. {label}",

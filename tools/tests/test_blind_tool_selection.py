@@ -21,7 +21,7 @@ from tools.experiments.blind_tool_http import (
     create_observation_proxy,
     loopback_port,
 )
-from tools.experiments.blind_tool_selection import LANGUAGES, TASKS, main, task_prompt
+from tools.experiments.blind_tool_selection import LANGUAGES, TASKS, main, probe_state, task_prompt
 from tools.experiments.blind_tool_trace import (
     GAME_VIEW,
     GAME_VIEW_RESOURCE,
@@ -135,7 +135,7 @@ def test_blind_prompt_translates_the_same_task_without_tool_identifiers(task, la
         assert fixture["compile_id"] in prompt
     if task == "pointer-order":
         assert all(str(value) in prompt for value in (fixture["target"], *fixture["point"]))
-    assert "Assets/Resources/GameData" in prompt
+    assert ("Assets/Resources/GameData" in prompt) == (task != "console-errors")
     assert (ASSET in prompt) == task.startswith("graph")
     assert not any(
         token in prompt
@@ -800,3 +800,31 @@ def test_wire_records_real_results_and_never_forwards_mutation(tmp_path):
     assert audit[0]["channel"] == "blocked"
     assert audit[1] == {"event": "response", "sequence": 1, "outcome": "error"}
     assert audit[-1]["observation"] == {"render_size": [800, 600]}
+
+
+@pytest.mark.parametrize("installed", [False, True])
+def test_console_observer_uses_the_selected_endpoint_without_changing_custom_probes(
+    tmp_path, monkeypatch, installed
+):
+    calls = []
+
+    def run(command, **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout=b'{"measured": true}')
+
+    monkeypatch.setattr(subprocess, "run", run)
+    address = "http://127.0.0.1:8080/mcp"
+    args = SimpleNamespace(
+        project=tmp_path,
+        state_probe=EXPERIMENTS / "native_console_state.py",
+        timeout=60,
+        installed=installed,
+        installed_endpoint=address if installed else None,
+        endpoint=None if installed else address,
+        instance="Game@12345678",
+    )
+    assert probe_state(args) == {"measured": True}
+    assert calls[-1][4:] == [str(tmp_path), "--endpoint", address, "--instance", args.instance]
+    args.state_probe = tmp_path / "native_console_state.py"
+    assert probe_state(args) == {"measured": True}
+    assert calls[-1][4:] == [str(tmp_path)]

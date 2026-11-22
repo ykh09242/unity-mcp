@@ -7,6 +7,7 @@ import re
 import sys
 
 from tools.experiments import blind_tool_actions as actions
+from tools.experiments import blind_tool_console as console
 
 
 STUDY = "observation-choices"
@@ -80,6 +81,11 @@ def fixture_availability(fixture, state):
     if missing:
         return missing
     task = fixture.get("task")
+    if task == console.TASK:
+        data = console.snapshot(state)
+        return (
+            "unverified" if data is None else "positive" if console.mixed(data) else "unavailable"
+        )
     if task not in ("compile-outcome", "pointer-order", "graph-open"):
         return "positive"
     proof = ((state or {}).get("observation_fixtures") or {}).get(task)
@@ -120,7 +126,7 @@ def observation_fixture(args, task):
         return {"task": task, "graph_asset": args.graph_asset}
     if task == actions.UI_TASK:
         return {"task": task, "ui_asset": getattr(args, "ui_asset", None)}
-    if task in {actions.CAMERA_TASK, actions.MENU_TASK}:
+    if task in {actions.CAMERA_TASK, actions.MENU_TASK, console.TASK}:
         return {"task": task}
     if task == "compile-outcome":
         return {"task": task, "compile_id": getattr(args, "existing_compile_id", None)}
@@ -145,6 +151,8 @@ def missing_fixture(fixture):
 
 def permitted(route, args, fixture):
     """Return a decision only for routes whose read scope depends on the selected task."""
+    if route in console.ROUTES:
+        return fixture.get("task") == console.TASK and console.permitted(args)
     action = actions.permitted(route, args, fixture)
     if action is not None:
         return action

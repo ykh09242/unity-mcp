@@ -1,4 +1,12 @@
 {
+  "console-errors": {
+    "en": "What errors are showing in the Unity Console right now? Show me the messages, one per line.",
+    "ko": "유니티 콘솔에 지금 어떤 오류가 떠 있어? 메시지를 한 줄씩 그대로 보여줘.",
+    "ja": "今、Unity のコンソールにどんなエラーが出てる？ メッセージを一行ずつそのまま見せて。",
+    "es": "¿Qué errores aparecen ahora en la consola de Unity? Muéstrame los mensajes tal como salen, uno por línea.",
+    "ar": "ما الأخطاء التي تظهر الآن في وحدة تحكم Unity؟ اعرض الرسائل كما هي، كل رسالة في سطر.",
+    "tr": "Şu an Unity konsolunda hangi hatalar görünüyor? Mesajları olduğu gibi, her biri ayrı satırda göster."
+  },
   "game-view": {
     "en": "What pixel size is the game actually drawing at right now? Give me width × height and the selected preset label if you can see it.",
     "ko": "지금 Game 뷰에 실제로 몇 × 몇 픽셀로 그려져? 선택된 프리셋 이름도 보이면 같이 알려줘.",

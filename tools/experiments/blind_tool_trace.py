@@ -35,6 +35,7 @@ from tools.experiments.blind_tool_diagnostics import SEARCH_ROUTES
 from tools.experiments.blind_tool_shell import shell_purpose, shell_receipt
 from tools.experiments import blind_tool_observations as choices
 from tools.experiments import blind_tool_actions as actions
+from tools.experiments import blind_tool_console as console
 
 EDITOR_STATE = "mcpforunity://editor/state"
 PROJECT_INFO = "mcpforunity://project/info"
@@ -45,6 +46,7 @@ GRAPH_ROUTES = {GRAPH, GRAPH_RESOURCE, "inspect_shader_graph"}
 SAVED_FILE = "shell.read_saved_graph"
 ACTIVE_SCENE = {"scene_inspect.get_active", "manage_scene.get_active"}
 ROUTES = {
+    console.TASK: console.ROUTES,
     "request-label": set(),
     actions.CAMERA_TASK: actions.CAMERA_ROUTES,
     actions.UI_TASK: actions.UI_ROUTES,
@@ -169,6 +171,14 @@ def route_name(method: str, params: dict[str, Any]) -> tuple[str, dict[str, Any]
     return method, {}
 
 
+def recorded_route(route, channel, fixture):
+    if channel != "blocked" or (
+        (fixture or {}).get("task") == console.TASK and route == "read_console.clear"
+    ):
+        return route
+    return "unapproved_route"
+
+
 def decision(
     route: str, args: dict[str, Any], graph_asset: str, *, endpoint: bool = False, fixture=None
 ) -> str:
@@ -230,6 +240,8 @@ def unpack(response: dict[str, Any], route: str = "") -> tuple[str, dict[str, An
         blocks = result.get("contents") or result.get("content") or []
         if isinstance(blocks, list) and blocks:
             value = json_object(string(mapping(blocks[0]).get("text")))
+    if route in console.ROUTES and set(value) == {"result"}:
+        value = mapping(value["result"])
     if (
         value.get("success") is False
         or value.get("error")
@@ -271,6 +283,8 @@ def unpack(response: dict[str, Any], route: str = "") -> tuple[str, dict[str, An
                 ),
             }
     if value.get("success") is True:
+        if route in console.ROUTES:
+            return "returned", {"console_payload": value.get("data")}
         if route in actions.MENU_INVENTORIES:
             declarations = value.get("data")
             if isinstance(declarations, list) and actions.FRAME_DEBUGGER in declarations:
@@ -305,9 +319,11 @@ def positive_size(value: Any) -> list[int] | None:
 
 
 def observation(
-    route: str, data: dict[str, Any], fixture=None, *, graph_asset=""
+    route: str, data: dict[str, Any], fixture=None, *, graph_asset="", arguments=None
 ) -> dict[str, Any]:
     """Retain the documented evidence fields for the scored read operations."""
+    if route in console.ROUTES and (fixture or {}).get("task") == console.TASK:
+        return console.read_facts(arguments or {}, data.get("console_payload"))
     if route in choices.OPEN_GRAPH_ROUTES:
         return choices.open_graph_observation(graph_asset, data)
     if route in actions.MENU_ROUTES:
@@ -477,7 +493,9 @@ def observation(
 
 
 def page_number(route: str, args: dict[str, Any]) -> int:
-    """Graph pages are distinct work. A second request for a page is a repeat."""
+    """Use graph page numbers and the Console's zero-based row offsets."""
+    if route in console.ROUTES:
+        return console.requested_offset(args)
     page = args.get("page_number", 1)
     if route == GRAPH_RESOURCE:
         page = parse_qs(urlsplit(string(args.get("uri"))).query).get("page_number", ["1"])[0]
@@ -490,7 +508,7 @@ def relay_stdio(
     relay: list[str], audit_dir: Path, graph_asset: str, *, endpoint: bool, fixture=None
 ) -> None:
     """Audit actual JSON-RPC requests while forwarding bytes through the vetted relay."""
-    pending: dict[str | int, tuple[int, str, str]] = {}
+    pending: dict[str | int, tuple[int, str, str, dict]] = {}
     lock = Lock()
     audit_path = audit_dir / f"mcp-{os.getpid()}.jsonl"
     with (
@@ -530,7 +548,7 @@ def relay_stdio(
                         channel = decision(
                             route, args, graph_asset, endpoint=endpoint, fixture=fixture
                         )
-                        label = route if channel != "blocked" else "unapproved_route"
+                        label = recorded_route(route, channel, fixture)
                         sequence += 1
                         with lock:
                             actor, binding = actor_binding(params)
@@ -555,7 +573,12 @@ def relay_stdio(
                                 record(event="response", sequence=sequence, outcome="error")
                                 send_to_host((json.dumps(response) + "\n").encode())
                                 continue
-                            pending[request_id] = (sequence, route, channel)
+                            pending[request_id] = (
+                                sequence,
+                                route,
+                                channel,
+                                args if route in console.ROUTES else {},
+                            )
                     elif method not in {"notifications/initialized", "notifications/cancelled"}:
                         continue
                     bridge.stdin.write(payload)
@@ -573,12 +596,14 @@ def relay_stdio(
             with lock:
                 request = pending.pop(request_id, None) if type(request_id) in (str, int) else None
                 if request is not None:
-                    sequence, route, channel = request
+                    sequence, route, channel, arguments = request
                     outcome, data = unpack(response, route)
                     if route == RAYCAST and data.get("status") == "failed":
                         outcome = "error"
                     detail = (
-                        observation(route, data, fixture, graph_asset=graph_asset)
+                        observation(
+                            route, data, fixture, graph_asset=graph_asset, arguments=arguments
+                        )
                         if channel == "unity" or route in SEARCH_ROUTES
                         else {}
                     )
@@ -768,7 +793,7 @@ def client_trace(
                     call = trace.calls.setdefault(
                         item_id,
                         Call(
-                            route if channel != "blocked" else "unapproved_route",
+                            recorded_route(route, channel, fixture),
                             channel,
                             len(trace.calls) + 1,
                             page=page_number(route, args),
@@ -788,7 +813,9 @@ def client_trace(
                                 call.evidence = mapping(receipt.get("facts"))
                             elif result and call.status == "completed":
                                 call.status, data = unpack({"result": result}, route)
-                                call.evidence = observation(route, data, fixture, graph_asset=asset)
+                                call.evidence = observation(
+                                    route, data, fixture, graph_asset=asset, arguments=args
+                                )
                                 if route == RAYCAST and data.get("status") == "failed":
                                     call.status = "error"
                 case "item.started" | "item.completed", "mcp_tool_call" | "other_tool":
@@ -984,11 +1011,17 @@ def role_status(
     return "unverified", "missing-actor-evidence"
 
 
-def evidence_grade(task: str, calls: list[Call]) -> str:
+def evidence_grade(task: str, calls: list[Call], *, oracle=None) -> str:
     """Require task-specific live facts and separate limitations from complete answers."""
     evidence = [call for call in calls if call.evidence and call.status == "returned"]
     if not evidence:
         return "none"
+    if task == console.TASK:
+        if console.mixed(oracle) and console.witnessed(
+            [c.evidence for c in evidence], oracle["errors"]
+        ):
+            return "complete"
+        return "partial"
     if task == "graph-open":
         from tools.experiments.blind_tool_answers import expected_facts
 
@@ -1035,19 +1068,22 @@ def evidence_grade(task: str, calls: list[Call]) -> str:
     return "complete"
 
 
+def attempt_key(call: Call) -> tuple[str, int]:
+    if call.route in SIZE_ROUTES:
+        return GAME_VIEW, call.page
+    if call.route in GRAPH_ROUTES:
+        return GRAPH, call.page
+    if call.route in console.ROUTES:
+        return "read_console", call.page
+    return call.route, call.page
+
+
 def repeat_counts(calls: list[Call]) -> tuple[int, int]:
     """Count repeats and the subset that follow a recorded error on the same operation/page."""
     prior: dict[tuple[str, int], str] = {}
     repeated = retries = 0
     for call in calls:
-        family = (
-            GAME_VIEW
-            if call.route in SIZE_ROUTES
-            else GRAPH
-            if call.route in GRAPH_ROUTES
-            else call.route
-        )
-        key = family, call.page
+        key = attempt_key(call)
         if key in prior:
             repeated += 1
             retries += int(prior[key] in {"error", "failed", "approval_blocked"})
@@ -1055,7 +1091,7 @@ def repeat_counts(calls: list[Call]) -> tuple[int, int]:
     return repeated, retries
 
 
-def timing_metrics(task: str, calls: list[Call]) -> tuple[int | None, int | None]:
+def timing_metrics(task: str, calls: list[Call], *, oracle=None) -> tuple[int | None, int | None]:
     """Only earlier responses on a common timeline can justify a later attempt."""
     if (
         any(not c.request_at or not c.timeline for c in calls)
@@ -1065,20 +1101,13 @@ def timing_metrics(task: str, calls: list[Call]) -> tuple[int | None, int | None
     seen = set()
     count = early_rays = 0
     for call in calls:
-        family = (
-            GAME_VIEW
-            if call.route in SIZE_ROUTES
-            else GRAPH
-            if call.route in GRAPH_ROUTES
-            else call.route
-        )
-        key = (family, call.page)
+        key = attempt_key(call)
         prior = sorted(
             (c for c in calls if 0 < c.response_at < call.request_at), key=lambda c: c.response_at
         )
         if key in seen:
             complete = any(c.route == SAVED_FILE and c.status == "returned" for c in prior)
-            count += int(complete or evidence_grade(task, prior) == "complete")
+            count += int(complete or evidence_grade(task, prior, oracle=oracle) == "complete")
         if call.route == RAYCAST:
             size, _ = current_view(
                 [{"route": c.route, **c.evidence} for c in prior if c.status == "returned"]
@@ -1115,6 +1144,18 @@ def merge_business_calls(host: list[Call], wire: list[Call]) -> list[Call]:
             offset = match + 1
     calls.extend(wire[offset:])
     return calls
+
+
+def console_control_issues(surface, requested_model, requested_effort):
+    issues = []
+    if surface.get("status") != "observed":
+        issues.append("catalog")
+    if surface.get("project_verified") is not True:
+        issues.append("project")
+    for key, wanted in (("model", requested_model), ("effort", requested_effort)):
+        if not wanted or surface.get(key) != wanted:
+            issues.append(key)
+    return issues
 
 
 def score_case(case_dir: Path) -> dict[str, Any]:
@@ -1183,7 +1224,9 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     relevant = [call for call in unity if call.route in evidence_routes]
     # Wire response order is established only within a connection.
     relevant = sorted(relevant, key=lambda c: (c.timeline, c.response_at))
-    wire_grade = evidence_grade(task, relevant)
+    oracle = console.snapshot(row.get("editor_start_state")) if task == console.TASK else None
+
+    wire_grade = evidence_grade(task, relevant, oracle=oracle)
     host_business = [call for call in host.calls.values() if call.channel != "discovery"]
     host_only = row.get("backend") == "installed-host" and row.get("host_mode") == "configured"
     if host_only:
@@ -1192,7 +1235,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             for call in host_business
             if call.channel == "unity" and call.route in evidence_routes
         ]
-    grade = evidence_grade(task, relevant)
+    grade = evidence_grade(task, relevant, oracle=oracle)
     attributed = grade if role == "confirmed" or grade == "none" else "unattributed"
     task_evidence = attributed
     if task == "graph-saved" and host.saved_reads:
@@ -1248,12 +1291,15 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     first_success = next(
         (
             call
-            for call in sequence
+            for i, call in enumerate(sequence)
             if call.status == "returned"
             and call.evidence
             and (
-                task not in (*choices.TASKS, "graph-open")
-                or evidence_grade(task, [call]) == "complete"
+                task not in (*choices.TASKS, "graph-open", console.TASK)
+                or evidence_grade(
+                    task, sequence[: i + 1] if task == console.TASK else [call], oracle=oracle
+                )
+                == "complete"
             )
         ),
         None,
@@ -1275,7 +1321,8 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             and c.evidence
         ]
         if (
-            len(matches) == 1
+            task != console.TASK
+            and len(matches) == 1
             and sum((c.route, c.page) == (call.route, call.page) for c in relevant) == 1
             and all(matches[0].evidence.get(k) == v for k, v in detail.items())
         ):
@@ -1287,7 +1334,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
             or task in choices.TASKS
         ):
             live_observations.append({"route": call.route, **detail})
-    redundant, early_rays = timing_metrics(task, sequence)
+    redundant, early_rays = timing_metrics(task, sequence, oracle=oracle)
     selected_actor = (
         parent.parent_actor if row["role"] == "main" else next(iter(parent.child_actors), "")
     )
@@ -1380,6 +1427,43 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     saved_graph = host.saved_reads or any(
         r["route"] in GRAPH_ROUTES and "nodes" in r for r in live_observations
     )
+    if task == console.TASK:
+        scoped = all(
+            call.channel == "unity"
+            or call.channel == "shell"
+            and call.shell_purpose in {"instruction_read", "working_directory"}
+            for call in business
+        )
+        actor_verified = bool(
+            role == "confirmed"
+            and selected_actor
+            and actor_host
+            and actor_host.completed
+            and parent.completed
+        )
+        console_answer = console.outcome(
+            case_dir,
+            row,
+            live_observations,
+            actor_host.final_message if actor_host else "",
+            actor_verified=actor_verified,
+            project_verified=inventory.get("project_verified") is True,
+            scoped=scoped,
+        )
+        requested = row.get("model"), row.get("effort")
+        issues = {row["role"]: console_control_issues(inventory, *requested)}
+        if row["role"] == "subagent":
+            parent_path = case_dir / "host.json"
+            parent_surface = json_object(parent_path.read_bytes()) if parent_path.is_file() else {}
+            issues["parent"] = console_control_issues(parent_surface, *requested)
+        console_answer["unverified_controls"] = {
+            who: missing for who, missing in issues.items() if missing
+        }
+        if console_answer["unverified_controls"] and console_answer["status"] == "correct":
+            console_answer["status"] = "needs_review"
+        console_answer["clear_attempted"] = any(
+            call.route == "read_console.clear" for call in business
+        )
     return {
         **row,
         **(
@@ -1388,7 +1472,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
                     {"task": task, "graph_asset": asset}, row.get("editor_start_state")
                 )
             }
-            if task == "graph-open"
+            if task in {"graph-open", console.TASK}
             else {}
         ),
         **(
@@ -1499,7 +1583,9 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         "unsaved_graph_observed": open_graph.get("has_unsaved_changes") is True
         if task.startswith("graph")
         else None,
-        "final_answer": final_answer(
+        "final_answer": console_answer
+        if task == console.TASK
+        else final_answer(
             case_dir,
             task,
             live_observations if role == "confirmed" or row.get("answer_protocol") != "v3" else [],

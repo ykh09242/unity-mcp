@@ -19,6 +19,7 @@ import anyio
 
 from tools.check_codex_interop import AppServer, InteropFailure, close_process
 from tools.experiments import blind_tool_actions as actions
+from tools.experiments import blind_tool_console as console
 
 RECORDED_SERVER = "unityMCP_trial"
 IDENTIFIER = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
@@ -490,6 +491,12 @@ def project_item(item, server, asset, project="", fixture=None):
             args = item.get("arguments") or {}
             if not isinstance(args, dict):
                 return projected
+            if (
+                name == "read_console"
+                and (fixture or {}).get("task") == console.TASK
+                and args.get("action") == "clear"
+            ):
+                projected["arguments"] = {"action": "clear"}
             if name == "execute_menu_item" and (fixture or {}).get("task") == actions.MENU_TASK:
                 mode = args.get("action", "execute")
                 if mode in ("execute", "inspect", "exists", "evaluate_availability"):
@@ -504,6 +511,9 @@ def project_item(item, server, asset, project="", fixture=None):
                 clean = {
                     k: v for k, v in args.items() if k in {"action", "page_number", "page_size"}
                 }
+                if route in console.ROUTES and args.get("cursor") is not None:
+                    offset = console.requested_offset(args)
+                    clean["cursor"] = offset if offset >= 0 else "[invalid]"
                 if route in actions.MENU_LOOKUPS:
                     clean["menu_path"] = (
                         actions.FRAME_DEBUGGER
@@ -530,7 +540,9 @@ def project_item(item, server, asset, project="", fixture=None):
                     status = "error"
                 projected["observed_result"] = {
                     "status": status,
-                    "facts": observation(route, data, fixture, graph_asset=asset),
+                    "facts": observation(
+                        route, data, fixture, graph_asset=asset, arguments=arguments
+                    ),
                     "has_decoded_data": bool(data),
                 }
         if item.get("error"):
@@ -599,6 +611,40 @@ async def _project_verified(client, thread, server, instance, project):
     return False
 
 
+async def observe_ready_surface(
+    client, thread, server, args, *, installed, check_project=False, retry=False, initial=None
+):
+    """Use the prepared-host readiness budget for this actor's catalog and target."""
+    surface = initial or {}
+    for delay in (0, 1, 3) if retry else (0,):
+        if delay:
+            await anyio.sleep(delay)
+        if surface.get("status") != "observed":
+            surface = await observe_host(client, thread, server, args.instance, installed=installed)
+        if check_project and surface.get("project_verified") is not True:
+            try:
+                surface["project_verified"] = await _project_verified(
+                    client, thread, server, args.instance, args.project
+                )
+            except (
+                InteropFailure,
+                TimeoutError,
+                OSError,
+                KeyError,
+                ValueError,
+                TypeError,
+                AttributeError,
+            ):
+                if not retry:
+                    raise
+                surface["project_verified"] = False
+        if surface.get("status") == "observed" and (
+            not check_project or surface["project_verified"]
+        ):
+            break
+    return surface
+
+
 def same_installation(normal, guarded):
     return (
         normal.get("status") == guarded.get("status") == "observed"
@@ -633,7 +679,11 @@ async def run_configured(args, case_dir, prompt, metadata):
 
 async def _configured_session(args, case_dir, prompt, metadata, expected=None):
     """Use the app-server protocol to observe the exact ephemeral thread before its model turn."""
-    from tools.experiments.blind_tool_trace import thread_digest, wire_checkpoint
+    from tools.experiments.blind_tool_trace import (
+        console_control_issues,
+        thread_digest,
+        wire_checkpoint,
+    )
     from tools.experiments.blind_tool_child import (
         child_permissions as delivered_permissions,
         verify_live_child,
@@ -652,6 +702,8 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
         workers.start_soon(client.read_messages)
         try:
             gate = getattr(args, "pair_gate", None)
+            console_trial = metadata.get("task") == console.TASK
+            controlled = bool(getattr(args, "study", None) or gate or console_trial)
             with anyio.fail_after(args.timeout * (4 if gate else 1)):
                 await client.request(
                     "initialize",
@@ -675,44 +727,35 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                     options["experimentalRawEvents"] = True
                 if args.approval == "auto-review":
                     options["approvalsReviewer"] = "auto_review"
-                if getattr(args, "study", None) or gate:
+                if controlled:
                     options["config"] = {"model_reasoning_effort": args.effort}
                     options["allowProviderModelFallback"] = False
                 started = await client.request("thread/start", options)
                 thread = _host_id(started["thread"]["id"])
                 if not thread:
                     raise ValueError("No host thread ID")
-                surface = await observe_host(
+                surface = await observe_ready_surface(
                     client,
                     thread,
                     server,
-                    args.instance,
+                    args,
                     installed=args.installed or expected is not None,
+                    check_project=bool(args.installed or expected is not None or controlled),
+                    retry=bool(gate or console_trial),
                 )
-                if gate and surface["status"] != "observed":
-                    for delay in (1, 3):
-                        await anyio.sleep(delay)
-                        surface = await observe_host(
-                            client,
-                            thread,
-                            server,
-                            args.instance,
-                            installed=args.installed or expected is not None,
-                        )
-                        if surface["status"] == "observed":
-                            break
                 surface["permissions"] = observed_permissions(started)
                 settings = model_settings(started)
-                if getattr(args, "study", None) or gate:
+                if controlled:
                     settings = await owned_model_settings(client, thread, settings)
                 surface.update(settings)
-                if args.installed or expected is not None or getattr(args, "study", None) or gate:
-                    surface["project_verified"] = await _project_verified(
-                        client, thread, server, args.instance, args.project
-                    )
                 (case_dir / ("installed-host.json" if args.installed else "host.json")).write_text(
                     json.dumps(surface, indent=2) + "\n", encoding="utf-8"
                 )
+                if console_trial:
+                    issues = console_control_issues(surface, args.model, args.effort)
+                    if issues:
+                        metadata["unverified_parent_controls"] = issues
+                        raise ValueError("Console parent controls were not verified")
                 if args.installed:
                     return surface
                 if expected is not None and not same_installation(expected, surface):
@@ -744,6 +787,12 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                     metadata["fixture_availability"] = fixture_availability(
                         getattr(args, "observation_fixture", {}), metadata["editor_start_state"]
                     )
+                    if (
+                        metadata.get("task") == console.TASK
+                        and metadata["fixture_availability"] != "positive"
+                    ):
+                        metadata["fixture_reason"] = "mixed_console_unverified"
+                        raise ValueError("Prepared host did not observe a mixed Console")
                     if not await anyio.to_thread.run_sync(
                         gate.arrive, arm, thread_digest(thread), surface, metadata
                     ):
@@ -831,12 +880,13 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                         model_settings(params.get("thread") or {})
                                     )
                                     if not children.get(linked):
-                                        child_surface = await observe_host(
+                                        child_surface = await observe_ready_surface(
                                             client,
                                             linked,
                                             server,
-                                            args.instance,
+                                            args,
                                             installed=expected is not None,
+                                            retry=console_trial,
                                         )
                                         (
                                             case_dir / f"host-child-{thread_digest(linked)}.json"
@@ -908,23 +958,19 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                                             )
                                         else:
                                             child_surface = {}
-                                        if child_surface.get("status") != "observed":
-                                            child_surface = await observe_host(
-                                                client,
-                                                linked,
-                                                server,
-                                                args.instance,
-                                                installed=expected is not None,
-                                            )
-                                        if getattr(args, "study", None) or gate or live_child:
-                                            child_surface[
-                                                "project_verified"
-                                            ] = await _project_verified(
-                                                client, linked, server, args.instance, args.project
-                                            )
+                                        child_surface = await observe_ready_surface(
+                                            client,
+                                            linked,
+                                            server,
+                                            args,
+                                            initial=child_surface,
+                                            installed=expected is not None,
+                                            check_project=controlled or live_child,
+                                            retry=console_trial,
+                                        )
                                         child_surface["permissions"] = child_permissions.get(linked)
                                         settings = child_models.get(linked, {})
-                                        if getattr(args, "study", None) or gate or live_child:
+                                        if controlled or live_child:
                                             settings = await owned_model_settings(
                                                 client, linked, settings
                                             )
