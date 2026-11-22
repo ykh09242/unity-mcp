@@ -534,7 +534,7 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 Target and discover
 - Use the bound Editor or resolve via mcpforunity://instances. Sessionless: pass unity_instance=Name@hash on tools and _meta.unity_instance on resources, or use supported set_active_instance.
 - Use an advertised operation by meaning in any language. Preserve names, paths and text verbatim. Bind templates with observed values.
-- If unsure, search_unity_tools by observation_source and required_values. For lexical search keep query original and put English action/target in catalog_query. Compare route_groups (route_surfaces="tools" for tools only).
+- For search_unity_tools, keep query in the original language. Choose intent by purpose: observe, interact or edit. For required evidence use observation_source and/or required_values. For action-only discovery omit evidence selectors and optionally supply English action/target terms in catalog_query. Compare route_groups (route_surfaces="tools" for tools only).
 - Browse manage_tools(action="catalog") by intent, follow next_offset and describe the operation. Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck relevant scene/mode.
 - Missing tools: inspect manage_tools(action="list_groups").discovery. Check client scope/project binding, Editor toggles and consent. Fixed inventory: restart with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full and reconnect. {custom_tools_note}
 

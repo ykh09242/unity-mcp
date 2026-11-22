@@ -32,14 +32,66 @@ from services.registry.task_search import RequiredValues, RouteSurfaces
 
 logger = logging.getLogger("mcp-for-unity-server")
 
+_SearchQuery = Annotated[
+    str | None,
+    Field(
+        max_length=512,
+        description=(
+            "The original user request in its own language. Keep names, paths and text verbatim. "
+            "Optional when selecting evidence fields or an evidence source."
+        ),
+    ),
+]
+_CatalogQuery = Annotated[
+    str | None,
+    Field(
+        max_length=512,
+        description=(
+            "Optional English action and target terms or an exact tool/action identifier for "
+            "lexical search. Keep the original request in query. Use with intent for action "
+            "searches without evidence constraints."
+        ),
+    ),
+]
+_ObservationSource = Annotated[
+    ObservationSource | None,
+    Field(
+        description=(
+            "Where required evidence must come from: the current Editor (editor_live), a saved "
+            "file (asset_file), import results (imported_asset), a compilation job (compile_job), "
+            "or a Play Scenario job (scenario_job). Omit for an action-only search."
+        ),
+    ),
+]
+_RequiredValues = Annotated[
+    RequiredValues | None,
+    Field(
+        description=(
+            "Choose every declared result field the route must supply as evidence. Use with "
+            "observation_source when provenance matters. Omit for an action-only search."
+        ),
+    ),
+]
+_INTENT_DESCRIPTION = (
+    "Choose the requested purpose by meaning in any language: observe for reading state, "
+    "interact for operating the Editor or running game, edit for changing project content."
+)
+_SEARCH_DESCRIPTION = (
+    "Keep the original query. For required evidence, select observation_source and/or "
+    "required_values. To perform an operation, choose intent and supply catalog_query when "
+    "useful. Omit evidence selectors unless the route must return evidence."
+)
+
 
 @mcp_for_unity_tool(
     unity_target=None,
     group=None,
     description=(
         "Search Unity tools, actions and readable resources without changing selection or invoking "
-        "Unity. Choose observation_source and required_values by meaning in any language, or search "
-        "catalog text. Inspect route_groups for invocations and evidence limits, or no_match for scoped alternatives."
+        "Unity. "
+        + _SEARCH_DESCRIPTION
+        + " Inspect route_groups for invocations and evidence limits, "
+        "or no_match for scoped alternatives."
     ),
     annotations=ToolAnnotations(
         title="Search Unity Tools",
@@ -51,24 +103,12 @@ logger = logging.getLogger("mcp-for-unity-server")
 )
 async def search_unity_tools(
     ctx: Context,
-    query: Annotated[
-        str | None,
-        Field(max_length=512),
-        "Original request in its own language or a lexical query.",
-    ] = None,
+    query: _SearchQuery = None,
     limit: Annotated[int, Field(strict=True, ge=1, le=20), "Maximum results per page."] = 5,
-    catalog_query: Annotated[
-        str | None,
-        Field(max_length=512),
-        "Optional English action and target terms for lexical search.",
-    ] = None,
-    intent: Annotated[ActionIntent | None, "Requested operation purpose."] = None,
-    observation_source: Annotated[
-        ObservationSource | None, "Origin of the required evidence."
-    ] = None,
-    required_values: Annotated[
-        RequiredValues | None, "Select every result field the observation must supply."
-    ] = None,
+    catalog_query: _CatalogQuery = None,
+    intent: Annotated[ActionIntent | None, Field(description=_INTENT_DESCRIPTION)] = None,
+    observation_source: _ObservationSource = None,
+    required_values: _RequiredValues = None,
     route_surfaces: Annotated[
         RouteSurfaces | None, "Group tools, resources or both (default)."
     ] = None,
@@ -106,12 +146,38 @@ async def search_unity_tools(
     entries, visible = await _catalog_inventory(
         ctx, get_registered_tools(), getattr(ctx.fastmcp, "_tool_discovery", None)
     )
-    return search_catalog(
+    outcome = search_catalog(
         request,
         list(entries.values()),
         visible_names=set(visible),
         resources=await _catalog_resources(ctx),
     )
+    if (
+        outcome["matching"] == "observation"
+        and "no_match" in outcome
+        and request.intent in ("interact", "edit")
+    ):
+        hint = (
+            "No route matched both the requested intent and evidence constraints. If the action "
+            "need not return evidence, retry the same search without observation_source or "
+            "required_values. Keep the target, surface and host scope. Use catalog_query for "
+            "English action and target terms if helpful. If the resulting state also needs "
+            "verification, find an observation route separately."
+        )
+        retry: dict[str, Any] = {}
+        if request.query is not None:
+            retry = {
+                "retry_search": {
+                    "arguments": request.model_dump(
+                        include={"query", "catalog_query", "intent"}, exclude_none=True, mode="json"
+                    ),
+                    "omit": ["observation_source", "required_values"],
+                }
+            }
+        else:
+            hint += " Supply query with the original request for the action search."
+        return {**outcome, "hint": hint, **retry}
+    return outcome
 
 
 @mcp_for_unity_tool(
@@ -124,9 +190,10 @@ async def search_unity_tools(
         "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore configured profile), describe (full schema for one tool, optionally bind operation), "
         "catalog (choose a domain by purpose, then browse tools, actions or readable resources), "
-        "search (match declared observation_source and required_values directly from a task in any language, or search by text), "
+        "search (discover routes for a task in any language), "
         "inspect_inventory (compare server advertisement with this host's exact-name evidence). "
-        "Selection changes server tools/list; it does not confirm the client's callable inventory. "
+        + _SEARCH_DESCRIPTION
+        + " Selection changes server tools/list; it does not confirm the client's callable inventory. "
         "Use sync after toggling tools in the Unity Editor GUI."
     ),
     annotations=ToolAnnotations(
@@ -163,11 +230,7 @@ async def manage_tools(
         str | None,
         "Single exact tool name for activate/deactivate/describe/catalog/inspect_inventory.",
     ] = None,
-    query: Annotated[
-        str | None,
-        Field(max_length=512),
-        "Optional original task text when searching by observation, or a lexical query (1..512 characters).",
-    ] = None,
+    query: _SearchQuery = None,
     limit: Annotated[
         int, Field(strict=True, ge=1, le=20), "Maximum search or catalog page entries (1..20)."
     ] = 5,
@@ -176,11 +239,7 @@ async def manage_tools(
         Field(strict=True),
         "On single-tool activation attach schema and readiness. On inspect_inventory include the advertised inputSchema and its SHA-256.",
     ] = False,
-    catalog_query: Annotated[
-        str | None,
-        Field(max_length=512),
-        "Optional English action and target terms or exact API identifier for lexical search.",
-    ] = None,
+    catalog_query: _CatalogQuery = None,
     offset: Annotated[
         int, Field(strict=True, ge=0), "Catalog page offset for a selected group or tool."
     ] = 0,
@@ -191,20 +250,13 @@ async def manage_tools(
     ] = None,
     intent: Annotated[
         ActionIntent | None,
-        "Optional purpose interpreted from any language. For search or catalog with a tool/group: observe state, interact with the running game/editor, or edit project content. Classified routes only; inspect action effects separately.",
-    ] = None,
-    observation_source: Annotated[
-        ObservationSource | None,
         Field(
-            description="For search, interpret the request in its own language. Select where the evidence must originate: current Editor state (editor_live), saved file contents (asset_file), Unity import results (imported_asset), or a retained compilation request (compile_job)."
+            description=_INTENT_DESCRIPTION
+            + " Use for search or catalog with a tool/group. Applies to classified routes."
         ),
     ] = None,
-    required_values: Annotated[
-        RequiredValues | None,
-        Field(
-            description="For search, select every result field the request needs. Game View pixels use render_size.width and render_size.height; saved graph totals use nodeCount and edgeCount. A route must declare all selected values. No query or translation is needed."
-        ),
-    ] = None,
+    observation_source: _ObservationSource = None,
+    required_values: _RequiredValues = None,
     route_surfaces: Annotated[
         RouteSurfaces | None,
         "For search, choose both (default), tools, or resources for route_groups. Use tools for a "
