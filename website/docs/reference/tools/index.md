@@ -42,7 +42,7 @@ Camera setup, Cinemachine and view capture
 - **[`manage_cameras`](./camera/manage_cameras.md)** — Create or list cameras, select targets and configure lenses or priority.
 - **[`manage_cinemachine`](./camera/manage_cinemachine.md)** — Configure Cinemachine brains, tracking, extensions and camera blends.
 
-## `core` &nbsp; (47 tools)
+## `core` &nbsp; (48 tools)
 Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`asset_inspect`](./core/asset_inspect.md)** — Search assets or inspect their metadata and components.
@@ -51,7 +51,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`debug_request_context`](./core/debug_request_context.md)** — Return the current FastMCP request context details (client_id, session_id, and meta dump).
 - **[`delete_script`](./core/delete_script.md)** — Delete a C# script by URI or Assets-relative path.
 - **[`execute_custom_tool`](./core/execute_custom_tool.md)** — Execute a project-scoped custom tool registered by Unity.
-- **[`execute_menu_item`](./core/execute_menu_item.md)** — Inspect menu declarations or invoke a menu by exact path. inspect/exists never evaluate validation callbacks.
+- **[`execute_menu_item`](./core/execute_menu_item.md)** — Find an unknown menu path with list_menu_declarations or read mcpforunity://menu-items.
 - **[`find_gameobjects`](./core/find_gameobjects.md)** — Search GameObjects by name, tag, layer, component, path or ID; defaults to IDs only.
 - **[`find_in_file`](./core/find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers, excerpts and identities of the searched snapshot. bytes_sha256 identifies raw file bytes when supplied by the Editor; sha256 identifies decoded UTF-8 content.
 - **[`gameobject_create`](./core/gameobject_create.md)** — Create a named GameObject with transform, components and optional prefab output. name must contain non-whitespace text. save_as_prefab=true requires a nonempty .prefab prefab_path or prefab_folder for the generated name.prefab destination.
@@ -61,6 +61,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`get_sha`](./core/get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`inspect_editor_state`](./core/inspect_editor_state.md)** — Read the selected Editor snapshot including active scene and current compiling flag.
 - **[`inspect_scene_cameras`](./core/inspect_scene_cameras.md)** — Read the selected Editor's scene camera inventory. unityCameras includes each camera's name, depth, fieldOfView and brain attachment. cinemachineCameras includes names, priorities, pipeline components and follow/lookAt targets.
+- **[`list_menu_declarations`](./core/list_menu_declarations.md)** — List managed MenuItem declarations in the selected Editor to find a command's exact menu path.
 - **[`manage_addressables`](./core/manage_addressables.md)** — Use capabilities without a settings asset for per-action provider availability.
 - **[`manage_audio`](./core/manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./core/manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.

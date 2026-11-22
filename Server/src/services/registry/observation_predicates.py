@@ -44,7 +44,9 @@ class EvidencePredicates(TypedDict):
     by_value: dict[str, list[Predicate]]
 
 
-def _field(data: dict, path: str):
+def _field(data: dict | list, path: str):
+    if path == "$":
+        return data
     if not isinstance(path, str) or len(path) > 128:
         return None
     keys = path.split(".")
@@ -58,7 +60,7 @@ def _field(data: dict, path: str):
     return value
 
 
-def _satisfies(data: dict, clause: Predicate) -> bool:
+def _satisfies(data: dict | list, clause: Predicate) -> bool:
     if not isinstance(clause, dict):
         return False
     value = _field(data, clause.get("path"))
@@ -143,7 +145,7 @@ def evaluate_observation(
         type(observation) is not dict
         or type(reply) is not dict
         or reply.get("success") is not True
-        or type(reply.get("data")) is not dict
+        or type(reply.get("data")) not in (dict, list)
     ):
         return passed
     data = reply["data"]

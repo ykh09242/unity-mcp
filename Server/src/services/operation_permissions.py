@@ -15,7 +15,11 @@ from services.animator_actions import (
     animator_runtime_opt_in,
     guarded_animator_parameters,
 )
-from services.registry.capability_catalog import CAMERA_INVENTORY_TOOL, CAPABILITIES
+from services.registry.capability_catalog import (
+    CAMERA_INVENTORY_TOOL,
+    MENU_DECLARATIONS_TOOL,
+    CAPABILITIES,
+)
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 from services.texture_actions import CHECKED_TEXTURE_ACTIONS, checked_texture_parameters
 
@@ -412,6 +416,7 @@ _DEFAULT_ACTIONS: Final = {"read_console": "get", "execute_menu_item": "execute"
 _FIXED_RESOURCE_READ_COMMANDS: Final = {
     "inspect_editor_state": "get_editor_state",
     CAMERA_INVENTORY_TOOL: "get_cameras",
+    MENU_DECLARATIONS_TOOL: "get_menu_items",
 }
 _RESOURCE_PATHS: Final = _names(
     "capabilities capabilities/scoped doctor doctor/runtime doctor/config tool-diagnostics custom-tools editor/active-tool editor/game-view-size editor/state scene/cameras scene/gameobject-api project/layers menu-items editor/prefab-stage prefab-api project/info pipeline/renderer-features rendering/stats editor/selection project/tags tests tool-groups instances scene/volumes editor/windows"

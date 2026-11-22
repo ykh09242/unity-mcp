@@ -461,6 +461,12 @@ NATIVE_HANDLERS = {
 
 CAMERA_INVENTORY_URI = "mcpforunity://scene/cameras"
 CAMERA_INVENTORY_TOOL = "inspect_scene_cameras"
+MENU_DECLARATIONS_TOOL = "list_menu_declarations"
+MENU_DECLARATIONS_URI = "mcpforunity://menu-items"
+RESOURCE_INVENTORIES = {
+    CAMERA_INVENTORY_TOOL: CAMERA_INVENTORY_URI,
+    MENU_DECLARATIONS_TOOL: MENU_DECLARATIONS_URI,
+}
 CAMERA_INVENTORY_READ = (
     f"For a read-only inventory, call {CAMERA_INVENTORY_TOOL} or read {CAMERA_INVENTORY_URI}."
 )

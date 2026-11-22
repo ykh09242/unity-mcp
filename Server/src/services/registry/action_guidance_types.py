@@ -23,6 +23,7 @@ ObservationValue = Literal[
     "rendered_image",
     "pointer_hit_order",
     "console.entries",
+    "menu.declared_paths",
     "active_scene.name",
     "active_scene.path",
     "compilation.is_compiling",

@@ -10,7 +10,7 @@ from pydantic import Field, StrictInt, StrictStr
 
 from models import MCPResponse
 from services.registry import mcp_for_unity_tool
-from services.registry.integration_action_guidance import MENU_DECLARATIONS_READ
+from services.registry.capability_catalog import MENU_DECLARATIONS_TOOL, MENU_DECLARATIONS_URI
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -20,8 +20,9 @@ ALL_ACTIONS = ["execute", "inspect", "exists", "evaluate_availability"]
 
 @mcp_for_unity_tool(
     description=(
-        "Inspect menu declarations or invoke a menu by exact path. inspect/exists never evaluate "
-        f"validation callbacks. {MENU_DECLARATIONS_READ} "
+        f"Find an unknown menu path with {MENU_DECLARATIONS_TOOL} or read {MENU_DECLARATIONS_URI}. "
+        "Use this tool once you know the exact path. inspect/exists checks its declaration "
+        "without evaluating validation callbacks. "
         "Opt into evaluate_availability to call Menu.GetEnabled, which can "
         "run project validation callbacks and requires read, edit and run grants plus Editor consent. "
         "Default execution reports invocation only; arbitrary completion and modal handling "

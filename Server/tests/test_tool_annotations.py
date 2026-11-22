@@ -50,6 +50,7 @@ READ_ONLY = {
     "inspect_open_shader_graph",
     "inspect_editor_state",
     "inspect_scene_cameras",
+    "list_menu_declarations",
     "inspect_ugui_hit_order",
     "get_sha",
     "get_test_job",

@@ -39,7 +39,7 @@ from services.execution_receipt_identity import (
 from transport.local_project_context import full_hash
 from transport.local_http_target import configured_default, select_local_session
 from services.registry import get_registered_tools
-from services.registry.capability_catalog import CAMERA_INVENTORY_TOOL, CAMERA_INVENTORY_URI
+from services.registry.capability_catalog import RESOURCE_INVENTORIES
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 from services.registry.operation_invocation import trusted_tool, wrap_tool
 from services.verification.edits import after_operation
@@ -1133,7 +1133,7 @@ class UnityInstanceMiddleware(Middleware):
         uri = str(getattr(context.message, "uri", ""))
         await authorize_remote_resource(uri)
         if (
-            uri == CAMERA_INVENTORY_URI
+            uri in RESOURCE_INVENTORIES.values()
             and internal_resource_read_target(context.fastmcp_context, uri) is not None
         ):
             return await call_next(context)
@@ -1218,11 +1218,16 @@ class UnityInstanceMiddleware(Middleware):
             tools = [tool for tool in tools if getattr(tool, "name", None) in builtin_names]
 
         tool_names_from_fastmcp = sorted(getattr(t, "name", "?") for t in tools)
-        if CAMERA_INVENTORY_TOOL in tool_names_from_fastmcp:
-            from services.resources.cameras import camera_inventory_available
+        bindings = {
+            name: uri
+            for name, uri in RESOURCE_INVENTORIES.items()
+            if name in tool_names_from_fastmcp
+        }
+        if bindings:
+            from services.resource_inventory import unavailable_inventories
 
-            if not await camera_inventory_available(ctx):
-                tools = [tool for tool in tools if tool.name != CAMERA_INVENTORY_TOOL]
+            unavailable = await unavailable_inventories(ctx, bindings)
+            tools = [tool for tool in tools if tool.name not in unavailable]
         # A projected read cannot advertise a parent hidden by this SDK session,
         # even when its Unity-side command is available to the project.
         tools = [

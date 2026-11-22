@@ -60,6 +60,7 @@ class SkillLink(TypedDict):
 
 
 OBSERVATION_META: Final = "io.github.ykh09242.unity-mcp/observation"
+SEARCH_TERMS_META: Final = "io.github.ykh09242.unity-mcp/search-terms"
 ACTION_OBSERVATIONS_META: Final = "io.github.ykh09242.unity-mcp/action-observations"
 GAME_VIEW_OBSERVATION: Final[Observation] = {
     "source": "editor_live",

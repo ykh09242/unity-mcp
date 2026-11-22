@@ -32,6 +32,7 @@ from services.registry.action_catalog import (
     ObservationValue,
     CatalogTool as SearchResult,
     RESOURCE_TEMPLATE_EXPANSION,
+    SEARCH_TERMS_META,
     action_guidance,
     action_intent,
     catalog_navigation,
@@ -43,8 +44,14 @@ from services.registry.action_catalog import (
 )
 from services.registry.open_shader_graph_observation import OPEN_GRAPH_OBSERVATION
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
-from services.registry.capability_catalog import CAMERA_INVENTORY_TOOL, CAMERA_INVENTORY_URI
+from services.registry.capability_catalog import (
+    CAMERA_INVENTORY_TOOL,
+    CAMERA_INVENTORY_URI,
+    MENU_DECLARATIONS_TOOL,
+    MENU_DECLARATIONS_URI,
+)
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
+from services.registry.integration_action_guidance import MENU_INVENTORY_OBSERVATION
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
@@ -217,6 +224,7 @@ class EquivalentRead:
 
 # Each relationship is backed by the same native read implementation.
 _EQUIVALENT_READS: Final = (
+    EquivalentRead(MENU_DECLARATIONS_TOOL, MENU_DECLARATIONS_URI, MENU_INVENTORY_OBSERVATION),
     EquivalentRead(
         CAMERA_INVENTORY_TOOL,
         CAMERA_INVENTORY_URI,
@@ -355,7 +363,10 @@ def _route_evidence(
         )
         if value
     ]
-    terms = sorted(words & _words(" ".join([*identifiers, route["purpose"]])))
+    terms = sorted(
+        set(route.get("matched_terms", ()))
+        | (words & _words(" ".join([*identifiers, route["purpose"]])))
+    )
     route["matched_terms"] = terms
     identifier_words = _words(" ".join(identifiers))
     # Short words in English catalog prose can coincide with fragments of an
@@ -660,7 +671,19 @@ def search_catalog(
             identifier = resource["uri"]
             route.update(resource_observation(resource))
             route["uri"] = identifier
+            # A declared catalog phrase describes the data this URI provides. Ranking it
+            # here also serves its equivalent tool when the client can call only tools.
+            alias = (resource.get("kwargs", {}).get("meta") or {}).get(SEARCH_TERMS_META)
+            anchor = alias.get("anchor") if isinstance(alias, dict) else None
+            phrase = alias.get("phrase") if isinstance(alias, dict) else None
             evidence = _term_evidence(query_words, (resource["name"], 8), (purpose, 6))
+            if isinstance(anchor, str) and anchor in query_words and isinstance(phrase, str):
+                # A domain word anchors the phrase. Generic identifier words such
+                # as "items" must not promote the inventory for unrelated tasks.
+                augmented = _term_evidence(query_words, (phrase[:256], 9))
+                route["matched_terms"] = sorted(augmented)
+                for term, strength in augmented.items():
+                    evidence[term] = max(strength, evidence.get(term, 0))
         route["name"] = resource["name"]
         key = _route_key(route)
         if read := _READ_BY_ROUTE.get(key):

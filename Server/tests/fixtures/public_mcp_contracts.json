@@ -7435,6 +7435,36 @@
             "type": "object"
           }
         },
+        "list_menu_declarations": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "manage_addressables": {
           "annotations": {
             "destructiveHint": true,
@@ -22324,6 +22354,7 @@
                         "rendered_image",
                         "pointer_hit_order",
                         "console.entries",
+                        "menu.declared_paths",
                         "active_scene.name",
                         "active_scene.path",
                         "compilation.is_compiling",
@@ -26303,6 +26334,7 @@
                         "rendered_image",
                         "pointer_hit_order",
                         "console.entries",
+                        "menu.declared_paths",
                         "active_scene.name",
                         "active_scene.path",
                         "compilation.is_compiling",
@@ -35240,6 +35272,36 @@
             "type": "object"
           }
         },
+        "list_menu_declarations": {
+          "annotations": {
+            "destructiveHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "manage_addressables": {
           "annotations": {
             "destructiveHint": true,
@@ -50129,6 +50191,7 @@
                         "rendered_image",
                         "pointer_hit_order",
                         "console.entries",
+                        "menu.declared_paths",
                         "active_scene.name",
                         "active_scene.path",
                         "compilation.is_compiling",
@@ -54108,6 +54171,7 @@
                         "rendered_image",
                         "pointer_hit_order",
                         "console.entries",
+                        "menu.declared_paths",
                         "active_scene.name",
                         "active_scene.path",
                         "compilation.is_compiling",

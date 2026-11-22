@@ -1,7 +1,7 @@
 ---
 title: execute_menu_item
 sidebar_label: execute_menu_item
-description: "Inspect menu declarations or invoke a menu by exact path. inspect/exists never evaluate validation callbacks."
+description: "Find an unknown menu path with list_menu_declarations or read mcpforunity://menu-items."
 ---
 
 # `execute_menu_item`
@@ -14,7 +14,7 @@ description: "Inspect menu declarations or invoke a menu by exact path. inspect/
 
 ## Description
 
-Inspect menu declarations or invoke a menu by exact path. inspect/exists never evaluate validation callbacks. To discover an unknown path, mcpforunity://menu-items lists managed MenuItem declarations. A match confirms that declaration. Some native menu entries may be absent. Opt into evaluate_availability to call Menu.GetEnabled, which can run project validation callbacks and requires read, edit and run grants plus Editor consent. Default execution reports invocation only; arbitrary completion and modal handling are not guaranteed. Only Window/General/Console supports console_window_open observation. CONTEXT execution is unsupported and File/Quit is blocked. Inspection and observation require native support; unsupported peers refuse without falling back to execution.
+Find an unknown menu path with list_menu_declarations or read mcpforunity://menu-items. Use this tool once you know the exact path. inspect/exists checks its declaration without evaluating validation callbacks. Opt into evaluate_availability to call Menu.GetEnabled, which can run project validation callbacks and requires read, edit and run grants plus Editor consent. Default execution reports invocation only; arbitrary completion and modal handling are not guaranteed. Only Window/General/Console supports console_window_open observation. CONTEXT execution is unsupported and File/Quit is blocked. Inspection and observation require native support; unsupported peers refuse without falling back to execution.
 
 ## Parameters
 

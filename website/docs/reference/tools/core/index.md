@@ -15,7 +15,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`debug_request_context`](./debug_request_context.md)** — Return the current FastMCP request context details (client_id, session_id, and meta dump).
 - **[`delete_script`](./delete_script.md)** — Delete a C# script by URI or Assets-relative path.
 - **[`execute_custom_tool`](./execute_custom_tool.md)** — Execute a project-scoped custom tool registered by Unity.
-- **[`execute_menu_item`](./execute_menu_item.md)** — Inspect menu declarations or invoke a menu by exact path. inspect/exists never evaluate validation callbacks.
+- **[`execute_menu_item`](./execute_menu_item.md)** — Find an unknown menu path with list_menu_declarations or read mcpforunity://menu-items.
 - **[`find_gameobjects`](./find_gameobjects.md)** — Search GameObjects by name, tag, layer, component, path or ID; defaults to IDs only.
 - **[`find_in_file`](./find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers, excerpts and identities of the searched snapshot. bytes_sha256 identifies raw file bytes when supplied by the Editor; sha256 identifies decoded UTF-8 content.
 - **[`gameobject_create`](./gameobject_create.md)** — Create a named GameObject with transform, components and optional prefab output. name must contain non-whitespace text. save_as_prefab=true requires a nonempty .prefab prefab_path or prefab_folder for the generated name.prefab destination.
@@ -25,6 +25,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`get_sha`](./get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`inspect_editor_state`](./inspect_editor_state.md)** — Read the selected Editor snapshot including active scene and current compiling flag.
 - **[`inspect_scene_cameras`](./inspect_scene_cameras.md)** — Read the selected Editor's scene camera inventory. unityCameras includes each camera's name, depth, fieldOfView and brain attachment. cinemachineCameras includes names, priorities, pipeline components and follow/lookAt targets.
+- **[`list_menu_declarations`](./list_menu_declarations.md)** — List managed MenuItem declarations in the selected Editor to find a command's exact menu path.
 - **[`manage_addressables`](./manage_addressables.md)** — Use capabilities without a settings asset for per-action provider availability.
 - **[`manage_audio`](./manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.

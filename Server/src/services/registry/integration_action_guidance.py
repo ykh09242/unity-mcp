@@ -74,6 +74,17 @@ MENU_DECLARATIONS_READ = (
     "A match confirms that declaration. Some native menu entries may be absent."
 )
 
+MENU_INVENTORY_OBSERVATION: Final[Observation] = {
+    "source": "editor_live",
+    "values": ["menu.declared_paths"],
+    "unavailable": [],
+    "conditions": "A matching managed declaration supplies its exact path. Enabled state and native-only entries are outside this inventory.",
+    "predicates": {
+        "all": [],
+        "by_value": {"menu.declared_paths": [{"op": "type", "path": "$", "type": "array"}]},
+    },
+}
+
 SCENARIO_JOB_OBSERVATION: Final[Observation] = {
     "source": "scenario_job",
     "values": ["scenario_job.outcome"],
