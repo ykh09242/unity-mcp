@@ -24,7 +24,7 @@ name = "ykh09242-unity-mcp-evidence"
 version = {json.dumps(project["version"])}
 description = "Offline Unity MCP verification evidence reader"
 requires-python = {json.dumps(project["requires-python"])}
-license = {json.dumps(project["license"])}
+license = "MIT"
 license-files = ["LICENSE"]
 dependencies = ["click=={click}"]
 

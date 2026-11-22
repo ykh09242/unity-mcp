@@ -32,6 +32,36 @@ envelope, and successful lookup does not imply the recorded operation succeeded.
 See the [CLI receipt guide](../../../website/docs/guides/cli.md#recover-a-command-after-response-loss)
 for enablement, key limits, examples and unknown-outcome rules.
 
+## Optional local search model
+
+Search can use a local CPU copy of LaBSE for multilingual ranking. Install it
+as the user who runs the MCP server. The CLI and server read the same per-user
+cache. To use a custom location, set `UNITY_MCP_SEARCH_MODEL_DIR` to the same
+absolute directory for the install command and the server process. For a remote
+server, run the install on that server's host.
+
+```sh
+unity-mcp search-model status
+unity-mcp search-model install
+unity-mcp search-model status --verify
+```
+
+The install command requires `uv` on `PATH`. It creates an isolated CPython 3.13
+environment for the CPU worker and fetches hashed wheels plus about 488 MB of
+pinned model files. `uv` can fetch CPython 3.13 if needed. The worker runs
+independently of the Python version that runs Unity MCP, including Python 3.15.
+The wheel profiles cover Windows x64 and ARM64, Linux x64 and ARM64 with glibc
+2.28 or later, macOS 14 or later on Apple Silicon, and macOS 13 or later on Intel.
+Inference and status verification run locally without network access. Search uses
+the bundled model if this profile is unavailable.
+
+To reuse model files, put the pinned `labse.onnx`, `labse-tokenizer.json`, and
+`labse-dense.safetensors` in one directory and pass `--from-directory DIR`.
+Add `--offline` if the matching Python runtime and wheels are already in uv's
+local cache. A failed or interrupted installation can be run again. The profile
+becomes available after the artifact hashes and local inference test pass.
+See the [pinned model sources and license](../services/registry/model/README.md).
+
 ## JSON files and stdin
 
 Explicit JSON arguments accept inline JSON, `@path/to/input.json`, or `-` / `@-`

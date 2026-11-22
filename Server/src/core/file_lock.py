@@ -14,7 +14,7 @@ class FileLockError(OSError):
 
 
 @contextmanager
-def file_lock(path: Path, *, wait: bool = True) -> Iterator[None]:
+def file_lock(path: Path, *, wait: bool = True, timeout_seconds: float = 30) -> Iterator[None]:
     """Keep a stable inode; removing lock files can split cross-process ownership."""
     try:
         info = path.lstat()
@@ -27,7 +27,7 @@ def file_lock(path: Path, *, wait: bool = True) -> Iterator[None]:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
             raise ValueError("Lock files must be regular files without additional links")
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + timeout_seconds
         while True:
             try:
                 if os.name == "nt":
