@@ -2,6 +2,8 @@
 
 import re
 
+from services.registry.localized_read_search import lookup_text
+
 
 # Pair a menu expression with a location or declaration cue in either order.
 # Connectors admit particles and inflections without treating a file path elsewhere
@@ -49,9 +51,6 @@ _PAIRS = tuple(
     re.compile(f"({first}){connector}({second})")
     for menu, connector, lookup in _CUES
     for first, second in ((menu, lookup), (lookup, menu))
-)
-_ARABIC_MARKS = str.maketrans(
-    "", "", "\u0640\u064b\u064c\u064d\u064e\u064f\u0650\u0651\u0652\u0670"
 )
 _ASSET_REFERENCE = re.compile(
     r"\b(?:assets|packages)/[\w ./-]*?(?:\.\w+(?![\w./-])"
@@ -112,6 +111,7 @@ _OTHER_LOCATION = re.compile(
 )
 _MOVE_WINDOW = re.compile(
     r"옮[겨길기]|이동시|재배치|移動|移[すし]|ドラッグ|\b(?:mover|mueve|reubica|arrastra)\w*"
+    r"|(?:창|위치|배치).{0,24}(?:바꿔|바꾸|변경해)|\bcambi\w*\s+(?:la |su |de )?(?:posici[oó]n|lugar|ubicaci[oó]n)\b"
     r"|(?:انقل|أنقل|نقل)\b|\b(?:taşı|sürükle|yerleştir)\w*"
 )
 _WINDOW_NOUN = re.compile(
@@ -121,8 +121,7 @@ _WINDOW_NOUN = re.compile(
 
 def localized_menu_path_terms(query: str) -> set[str]:
     """Return matched declaration or window-location cues from a normalized query."""
-    lookup = _ASSET_REFERENCE.sub(" ", query)
-    lookup = lookup.translate(_ARABIC_MARKS).replace("i\u0307", "i")
+    lookup = lookup_text(_ASSET_REFERENCE.sub(" ", query))
     if _LITERAL_PATH.search(lookup) or (
         _GAME_UI.search(lookup) and not _EDITOR_MENU.search(lookup)
     ):

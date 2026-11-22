@@ -53,11 +53,15 @@ from services.registry.capability_catalog import (
 )
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
 from services.registry.integration_action_guidance import MENU_INVENTORY_OBSERVATION
+from services.registry.localized_read_search import localized_read_terms
 from services.registry.menu_path_search import localized_menu_path_terms
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
 RouteSurfaces = Literal["both", "tools", "resources"]
+# Contextual cues jointly identify a read. Each outranks an independent token
+# in an action name (9), such as a word in the name of an Editor window.
+_LOCAL_CUE_WEIGHT: Final = 10
 
 
 class SearchRequest(BaseModel):
@@ -362,9 +366,7 @@ def _menu_path_evidence(query: str, resources: list[CatalogResource]) -> dict[st
                 and alias.get("anchor") == "menu"
                 and meta.get(OBSERVATION_META) == MENU_INVENTORY_OBSERVATION
             ):
-                # A connected domain and lookup cue outrank independent action-name
-                # tokens (9 each), such as the two words in a window's display name.
-                return dict.fromkeys(localized_menu_path_terms(query), 10)
+                return dict.fromkeys(localized_menu_path_terms(query), _LOCAL_CUE_WEIGHT)
     return {}
 
 
@@ -569,15 +571,18 @@ def search_catalog(
     query = _normalized(matched_query or "")
     query_words = _words(query)
     available_resources = concrete_resources(resources or [])
-    menu_evidence = (
-        _menu_path_evidence(query, available_resources)
-        if query and request.intent in (None, "observe")
-        else {}
-    )
+    reader_evidence: dict[str, dict[str, int]] = {}
+    console_evidence: dict[str, int] = {}
+    if query and request.intent in (None, "observe"):
+        console_terms, camera_terms = localized_read_terms(query)
+        reader_evidence[MENU_DECLARATIONS_TOOL] = _menu_path_evidence(query, available_resources)
+        reader_evidence[CAMERA_INVENTORY_TOOL] = dict.fromkeys(camera_terms, _LOCAL_CUE_WEIGHT)
+        console_evidence = dict.fromkeys(console_terms, _LOCAL_CUE_WEIGHT)
     occurrences: Counter[str] = Counter()
     for entry in entries:
         name = entry["name"]
         result = tool_capability(entry, visible_names=visible_names)
+        local_terms: dict[str, dict[str, int]] = {}
         if result["advertised"] is not False:
             for action in result["actions"] or [None]:
                 key: RouteKey = ("tool", name, action or "")
@@ -588,6 +593,8 @@ def search_catalog(
                 binding = _equivalent_binding(route, read)
                 if binding and read.allowed(unavailable_parents):
                     available_equivalents[key] = binding
+                    if evidence := reader_evidence.get(read.tool):
+                        local_terms[action or ""] = evidence
         if structured:
             selected_actions = []
             for action in result["actions"] or [None]:
@@ -623,9 +630,7 @@ def search_catalog(
             (" ".join(aliases), 2),
             (description + " " + (entry.get("group") or ""), 1),
         )
-        menu_reader = name == MENU_DECLARATIONS_TOOL and ("tool", name, "") in available_equivalents
-        if menu_reader:
-            terms.update(menu_evidence)
+        terms.update(local_terms.get("", {}))
         score = sum(terms.values())
         score += 1000 if query == _normalized(name) else 0
         score += 100 if query in _normalized(name) else 0
@@ -636,6 +641,18 @@ def search_catalog(
             action_terms = _term_evidence(
                 query_words, (action, 9), (guidance.purpose if guidance else "", 6)
             )
+            if (
+                console_evidence
+                and name == "read_console"
+                and action == "get"
+                and result["advertised"] is not False
+                and guidance
+                and guidance.intent == "observe"
+                and guidance.observation
+                and "console.entries" in guidance.observation["values"]
+            ):
+                local_terms[action] = console_evidence
+            action_terms.update(local_terms.get(action, {}))
             if not action_terms:
                 continue
             entry_terms.update(action_terms)
@@ -660,11 +677,14 @@ def search_catalog(
             ]
         for index, (weight, action, guidance) in enumerate(suggested_actions):
             ranked = routes if index < 3 else additional_routes
-            ranked.append((-(weight + score), name, action, _tool_route(result, action, guidance)))
+            route = _tool_route(result, action, guidance)
+            if action in local_terms:
+                route["matched_terms"] = sorted(local_terms[action])
+            ranked.append((-(weight + score), name, action, route))
         if not action_matches:
             route = _tool_route(result, None, action_guidance(entry, None))
-            if menu_reader and menu_evidence:
-                route["matched_terms"] = sorted(menu_evidence)
+            if "" in local_terms:
+                route["matched_terms"] = sorted(local_terms[""])
             routes.append((-score, name, "", route))
     available_templates = resource_templates(resources or [])
     for resource in [*available_resources, *available_templates]:
@@ -710,8 +730,11 @@ def search_catalog(
                 # A domain word anchors the phrase. Generic identifier words such
                 # as "items" must not promote the inventory for unrelated tasks.
                 augmented = _term_evidence(query_words, (phrase[:256], 9))
-            if identifier == MENU_DECLARATIONS_URI:
-                augmented.update(menu_evidence)
+            if read := _READ_BY_ROUTE.get(("resource", identifier, "")):
+                if route.get("observation") == read.observation and read.allowed(
+                    unavailable_parents
+                ):
+                    augmented.update(reader_evidence.get(read.tool, {}))
             if augmented:
                 route["matched_terms"] = sorted(augmented)
                 for term, strength in augmented.items():

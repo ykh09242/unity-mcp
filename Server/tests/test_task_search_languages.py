@@ -95,6 +95,8 @@ def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
         "게임 일시정지 창은 어디에서 열 수 있어?",
         "에디터에서 이 창을 어디로 옮길까요?",
         "¿A qué parte del editor puedo mover esa ventana?",
+        "에디터에서 오디오 믹서 창의 위치를 어디로 바꿔야 해?",
+        "¿En qué parte del editor se cambia la posición de la ventana del mezclador?",
     ],
 )
 def test_unrelated_actions_and_known_paths_do_not_add_menu_discovery_terms(query):
