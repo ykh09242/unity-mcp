@@ -775,3 +775,109 @@ environment.
 uv run --project Server --locked --extra dev python -m pytest -q -c Server/tests/pytest.ini \
   -p no:cacheprovider tools/tests/test_menu_discovery_probe.py -k raw_localized
 ```
+
+### Window locations, Console errors and camera depth
+
+These catalog replays used Korean, Japanese, Spanish, Arabic and Turkish user
+text without a translation, catalog hint or intent filter. The SDK requested
+three groups from each of the core and full profiles. Tool and combined
+surfaces counted a Console hit only for `read_console.get`. Menu and camera
+inventories also had a resource surface.
+
+| Query family | Distinct inputs | Top-three hits at `b840efa71` | First place at `f5412477d` |
+| --- | ---: | ---: | ---: |
+| Editor location without the word “menu” | 5 | 0/30 | 30/30 |
+| Explicit menu location | 10 | 60/60 | 60/60 |
+| Current Console errors | 10 | 4/40 | 40/40 |
+| Highest Unity Camera depth | 10 | 10/60 | 60/60 |
+
+The four earlier Console hits came from the formal Spanish request. The ten
+earlier camera hits came from the full-profile resource view. At the final
+revision, the menu and camera representatives were `list_menu_declarations`
+and `inspect_scene_cameras` on tool and combined surfaces, and their respective
+inventory URIs on the resource surface.
+
+An independent writer prepared one further question per language and task
+before the first candidate source was frozen. On first exposure, `ed47f72d0`
+ranked the intended group first in 70/80 searches. The Turkish menu and
+Console questions accounted for all ten misses across profiles and surfaces.
+After those two questions were opened for diagnosis, `f5412477d` ranked all
+80 first. A second Turkish pair was sealed separately. Both questions ranked
+first on both revisions in direct searches through `search_unity_tools` and
+`manage_tools.search`. The independent second pair therefore showed the same
+result on both revisions.
+
+The checked-in replay uses the locked server environment from the repository root.
+
+```sh
+uv run --project Server --locked --extra dev python -m pytest -q -c Server/tests/pytest.ini \
+  -p no:cacheprovider tools/tests/test_localized_discovery_holdout.py
+```
+
+#### Native actor trials
+
+The primary cohort used the frozen server at `ed47f72d0`. Each of the five
+languages had one main actor and one native subagent perform each of the
+three tasks, for 30 planned cells. Each role received the same original user
+question in a fresh session. A separate four-cell cohort on `f5412477d` used the
+second Turkish pair. Both roles used `gpt-6.2-sol` at medium reasoning effort.
+
+Independent native probes in Unity 6000.0.69f1 established the targets. The
+Editor exposed one managed Frame Debugger path, two distinct errors and a
+warning, and three Unity cameras with one unique greatest depth. Before and
+after snapshots checked the project, instance, process, Play Mode, Frame
+Debugger window count, declared path, camera rows and Console entries. A
+grounded answer required an observation from the responding actor. For a
+subagent, the coordinator's read could not supply that evidence.
+
+The first business tool excludes instruction-file and working-directory
+reads and catalog discovery. Other shell calls remain business attempts
+even if the retained projection cannot identify their purpose. The scorer
+also reports the first action with explicit discovery included. A rejected
+or repeated menu execution still counts as an attempt. The project's MCP
+relay and CodeGraph were the two configured MCP servers. Built-in host tools,
+including shell and web search, were also available.
+
+| Primary task | Suitable first business tool | Suitable first action including discovery | Grounded, automatic | Factual answer confirmed with native evidence |
+| --- | ---: | ---: | ---: | ---: |
+| Menu path | 5/10 | 5/10 | 10/10 | 10/10 |
+| Console errors | 9/10 | 9/10 | 10/10 | 10/10 |
+| Greatest camera depth | 5/10 | 2/10 | 1/10 | 10/10 |
+
+The main actors selected a suitable first business tool in 11/15 cases and
+the subagents in 8/15. By language, the counts were 2/6 for Korean, 3/6 for
+Japanese, 4/6 for Spanish, 6/6 for Arabic and 4/6 for Turkish. Each count
+represents one run per task and role.
+
+At the host level every actor started with a shell call. The retained calls
+identified 28 instruction reads, one other file read and one unclassified
+call. Eight actors made an unclassified shell call before the task read.
+Additional host-wrapper observations were available for 15 of the 30 selected
+turns and expression-level observations for ten. The first-tool figures above
+use the common projection available for every cell.
+
+Eight menu actors returned just the requested path. Both Japanese actors
+supplied the correct path plus explanatory text or a documentation link, and
+used built-in web search before the native inventory read. None of the ten
+attempted to execute a menu item. All ten Console actors returned both
+error messages and omitted the warning.
+
+The strict camera parser accepted one answer automatically. Manual review
+of the other nine checked the responding actor's native camera rows, the
+unique winning name and the exact depth against the final answer. All ten
+identified the correct camera and depth. The Turkish main actor answered in
+Korean. Factual correctness and response-language adherence differ in that cell.
+
+The original Arabic menu subagent read the inventory, but its terminal receipt
+was missing. The first pass therefore produced 29 eligible turns out of 30.
+The original evidence was retained and one fresh run of the same cell supplied
+the missing actor receipt. The table uses that replacement. No model answer
+was repeated because of its score.
+
+In the separate Turkish follow-up on the shipped source, both menu actors
+returned only the correct path with native evidence. Neither attempted to
+execute it. Both used a shell tool before the menu read. Both Console actors
+selected the error read first and returned the exact two messages. All four
+answers met the automatic grounding checks and all four state comparisons
+matched. The follow-up contributed four fresh actors and four separate
+outcomes. Its two questions are in `blind_tool_tasks_followup_tr.json`.
