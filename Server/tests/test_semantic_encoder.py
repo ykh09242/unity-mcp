@@ -66,6 +66,15 @@ def test_damaged_ready_profile_falls_back_without_repairing_it(tmp_path, monkeyp
     assert not any((tmp_path / asset.name).exists() for asset in semantic_profile.MODEL_FILES)
 
 
+def test_server_without_a_home_directory_can_use_the_bundled_model(monkeypatch):
+    def no_home():
+        raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.setattr(semantic_profile, "profile_dir", no_home)
+    model, scores = encoder.semantic_scores("Find trains", ("railway train", "bake bread"))
+    assert model == encoder.MODEL_ID and scores[0] > scores[1]
+
+
 def test_binary_worker_keeps_one_catalog_and_preserves_score_order(tmp_path, monkeypatch):
     worker_script = tmp_path / "echo_worker.py"
     worker_script.write_text(

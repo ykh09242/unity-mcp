@@ -107,7 +107,11 @@ def quality_scores(query: str, documents: tuple[str, ...]) -> tuple[float, ...] 
     global _worker, _failed_profile, _retry_after
     if not documents:
         return None
-    profile = semantic_profile.profile_dir()
+    try:
+        profile = semantic_profile.profile_dir()
+    except (OSError, RuntimeError):
+        # Unix service accounts may have neither a home variable nor a passwd entry.
+        return None
     if not _GUARD.acquire(timeout=10):
         return None
     try:
