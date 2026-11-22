@@ -65,6 +65,15 @@ async def test_menu_reader_preserves_resource_read_policy(command_hub, monkeypat
     server.add_middleware(DenyMenus())
     async with Client(server, mode="legacy", cache=False) as client:
         assert TOOL not in {tool.name for tool in await client.list_tools()}
+        result = (
+            await client.call_tool("search_unity_tools", {"query": "메뉴 경로는 어디야?"})
+        ).structured_content
+        assert TOOL not in [entry["name"] for entry in result["results"]]
+        assert all(
+            binding.get("tool") != TOOL and binding.get("uri") != URI
+            for group in result["route_groups"]
+            for binding in (group["representative"], *group["alternatives"])
+        )
         with pytest.raises(ToolError):
             await client.call_tool(TOOL, SELECT)
     assert not command_hub.sent

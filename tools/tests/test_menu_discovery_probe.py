@@ -20,6 +20,41 @@ from services.resources import register_all_resources
 from services.tools import register_all_tools
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["core", "full"])
+@pytest.mark.parametrize("prompt_file", ["blind_tool_tasks.json", "blind_tool_tasks_natural.json"])
+async def test_raw_localized_menu_requests_find_each_advertised_binding(
+    monkeypatch, profile, prompt_file
+):
+    monkeypatch.delenv("UNITY_MCP_TOOL_GROUPS", raising=False)
+    monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", profile)
+    prompts = json.loads(
+        (Path(__file__).resolve().parents[1] / "experiments" / prompt_file).read_text(
+            encoding="utf-8"
+        )
+    )["menu-declaration"]
+    server = FastMCP("raw-menu-requests")
+    register_all_tools(server)
+    register_all_resources(server)
+    async with Client(server) as client:
+        for locale in ("ko", "ja", "es", "ar", "tr"):
+            query = prompts[locale]
+            for surface, target in (
+                ("tools", "list_menu_declarations"),
+                ("resources", "mcpforunity://menu-items"),
+                ("both", "list_menu_declarations"),
+            ):
+                reply = await client.call_tool(
+                    "search_unity_tools", {"query": query, "limit": 3, "route_surfaces": surface}
+                )
+                result = reply.structured_content
+                assert result["query"] == result["matched_query"] == query
+                groups = [group["representative"] for group in result["route_groups"]]
+                assert target in [r.get("tool") or r.get("uri") for r in groups], (locale, surface)
+                assert "list_menu_declarations" in [r["name"] for r in result["results"]]
+                assert result["recommended_action"] == "inspect_candidates"
+
+
 def test_wording_preserves_query_arguments_and_equally_worded_unrelated_descriptions():
     payload = {
         "query": MENU_PREFIX,
@@ -29,6 +64,40 @@ def test_wording_preserves_query_arguments_and_equally_worded_unrelated_descript
         ],
     }
     assert earlier_menu_prose(payload) == payload
+
+
+@pytest.mark.asyncio
+async def test_only_the_ranking_factor_promotes_the_raw_menu_query(monkeypatch):
+    monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", "core")
+    result = await probe("照明ウィンドウはどのメニューに登録されている？", None, "tools")
+    assert [arm["inventory_rank"] for arm in result["arms"]] == [None, 1, None, 1]
+
+
+@pytest.mark.asyncio
+async def test_menu_lookup_respects_explicit_search_and_host_filters(monkeypatch):
+    monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", "core")
+    server = FastMCP("menu-lookup-controls")
+    register_all_tools(server)
+    register_all_resources(server)
+    async with Client(server) as client:
+        for override in (
+            {"catalog_query": "find assets by name"},
+            {"intent": "edit"},
+            {"required_values": ["nodeCount"]},
+            {"host_tool_names": ["manage_tools"]},
+        ):
+            args = {
+                "action": "search",
+                "query": "메뉴 경로를 알려줘.",
+                "route_surfaces": "tools",
+                **override,
+            }
+            result = (await client.call_tool("manage_tools", args)).structured_content
+            assert all(
+                group["representative"].get("tool") != "list_menu_declarations"
+                for group in result["route_groups"]
+            )
+            assert "list_menu_declarations" not in [tool["name"] for tool in result["results"]]
 
 
 @pytest.mark.asyncio

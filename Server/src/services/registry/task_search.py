@@ -27,6 +27,7 @@ from services.registry.action_catalog import (
     CatalogResource,
     GAME_VIEW_OBSERVATION,
     GRAPH_FILE_OBSERVATION,
+    OBSERVATION_META,
     Observation,
     ObservationSource,
     ObservationValue,
@@ -52,6 +53,7 @@ from services.registry.capability_catalog import (
 )
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
 from services.registry.integration_action_guidance import MENU_INVENTORY_OBSERVATION
+from services.registry.menu_path_search import localized_menu_path_terms
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
@@ -349,6 +351,23 @@ def _term_evidence(words: set[str], *fields: tuple[str, int]) -> dict[str, int]:
     return evidence
 
 
+def _menu_path_evidence(query: str, resources: list[CatalogResource]) -> dict[str, int]:
+    # The readable resource owns the search terms for both of its catalog bindings.
+    for resource in resources:
+        if resource["uri"] == MENU_DECLARATIONS_URI:
+            meta = resource.get("kwargs", {}).get("meta") or {}
+            alias = meta.get(SEARCH_TERMS_META)
+            if (
+                isinstance(alias, dict)
+                and alias.get("anchor") == "menu"
+                and meta.get(OBSERVATION_META) == MENU_INVENTORY_OBSERVATION
+            ):
+                # A connected domain and lookup cue outrank independent action-name
+                # tokens (9 each), such as the two words in a window's display name.
+                return dict.fromkeys(localized_menu_path_terms(query), 10)
+    return {}
+
+
 def _route_evidence(
     route: SearchRoute, query: str, words: set[str], distinctive: set[str]
 ) -> MatchBasis:
@@ -549,6 +568,12 @@ def search_catalog(
     matched_query = None if structured else request.catalog_query or request.query
     query = _normalized(matched_query or "")
     query_words = _words(query)
+    available_resources = concrete_resources(resources or [])
+    menu_evidence = (
+        _menu_path_evidence(query, available_resources)
+        if query and request.intent in (None, "observe")
+        else {}
+    )
     occurrences: Counter[str] = Counter()
     for entry in entries:
         name = entry["name"]
@@ -598,6 +623,9 @@ def search_catalog(
             (" ".join(aliases), 2),
             (description + " " + (entry.get("group") or ""), 1),
         )
+        menu_reader = name == MENU_DECLARATIONS_TOOL and ("tool", name, "") in available_equivalents
+        if menu_reader:
+            terms.update(menu_evidence)
         score = sum(terms.values())
         score += 1000 if query == _normalized(name) else 0
         score += 100 if query in _normalized(name) else 0
@@ -634,10 +662,10 @@ def search_catalog(
             ranked = routes if index < 3 else additional_routes
             ranked.append((-(weight + score), name, action, _tool_route(result, action, guidance)))
         if not action_matches:
-            routes.append(
-                (-score, name, "", _tool_route(result, None, action_guidance(entry, None)))
-            )
-    available_resources = concrete_resources(resources or [])
+            route = _tool_route(result, None, action_guidance(entry, None))
+            if menu_reader and menu_evidence:
+                route["matched_terms"] = sorted(menu_evidence)
+            routes.append((-score, name, "", route))
     available_templates = resource_templates(resources or [])
     for resource in [*available_resources, *available_templates]:
         description = resource.get("description") or ""
@@ -677,10 +705,14 @@ def search_catalog(
             anchor = alias.get("anchor") if isinstance(alias, dict) else None
             phrase = alias.get("phrase") if isinstance(alias, dict) else None
             evidence = _term_evidence(query_words, (resource["name"], 8), (purpose, 6))
+            augmented = {}
             if isinstance(anchor, str) and anchor in query_words and isinstance(phrase, str):
                 # A domain word anchors the phrase. Generic identifier words such
                 # as "items" must not promote the inventory for unrelated tasks.
                 augmented = _term_evidence(query_words, (phrase[:256], 9))
+            if identifier == MENU_DECLARATIONS_URI:
+                augmented.update(menu_evidence)
+            if augmented:
                 route["matched_terms"] = sorted(augmented)
                 for term, strength in augmented.items():
                     evidence[term] = max(strength, evidence.get(term, 0))

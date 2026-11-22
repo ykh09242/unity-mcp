@@ -10,6 +10,79 @@ import pytest
 @pytest.mark.parametrize(
     "query",
     [
+        unicodedata.normalize("NFD", "색상 보정 창은 어느 메뉴에 등록돼 있나요?"),
+        "照明ウィンドウのﾒﾆｭｰ内の場所を教えて。",
+        "¿En qué menú del editor encuentro el mezclador de audio?",
+        "¿Dónde está el menú de Frame Debugger?",
+        "Necesito la ruta del menu para el mezclador de audio.",
+        "ما مسار أمر الإضاءة في قَوَائِم المحرر؟",
+        "ما هو مسار القائمة لنافذة Frame Debugger؟",
+        "أين توجد أداة Frame Debugger في قائمة Unity؟",
+        "SES KARIŞTIRICI HANGİ MENÜDE?",
+        "Assets/Audio/Mixer.asset 작업에 쓰는 창의 메뉴 경로가 뭐야?",
+        "Assets/Audio Mixers/Mixer.asset 작업에 쓰는 창의 메뉴 경로가 뭐야?",
+        "Assets/Audio Mixers 폴더 작업에 쓰는 창은 어느 메뉴에 등록돼 있나요?",
+        "게임 내 사운드를 보려면 편집기의 메뉴 경로가 어디야?",
+    ],
+)
+def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
+    from cli.main import cli
+
+    run = CliRunner().invoke(
+        cli,
+        ["--format", "json", "tool", "search", query, "--limit", "3", "--route-surfaces", "tools"],
+    )
+    assert run.exit_code == 0, run.output
+    result = json.loads(run.stdout)
+    assert query == result["query"] == result["matched_query"]
+    assert any(
+        group["representative"].get("tool") == "list_menu_declarations"
+        for group in result["route_groups"]
+    )
+    assert "list_menu_declarations" in [row["name"] for row in result["results"]]
+    assert result["recommended_action"] == "inspect_candidates"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "파일 경로를 복사하고 메뉴를 닫아줘.",
+        "메뉴 항목을 실행해 줘.",
+        "이 도구를 메뉴에 등록해 줘.",
+        "Assets/메뉴경로.asset 파일은 어디에 있어?",
+        "Window/Analysis/Profiler 메뉴 경로가 맞는지 확인해.",
+        "Assets/Create/Material 메뉴 경로를 확인해.",
+        "도구/분석/프로파일러 메뉴 경로를 실행해 줘.",
+        "도구 / 분석 / 프로파일러 메뉴 경로를 실행해 줘.",
+        "도구 › 분석 › 프로파일러 메뉴 경로를 실행해 줘.",
+        "게임 내 일시정지 메뉴 위치를 화면 중앙으로 옮겨 줘.",
+        "에디터에서 게임 내 일시정지 메뉴 위치를 화면 중앙으로 옮겨 줘.",
+        "メニューを閉じて、シェーダーのパスを表示して。",
+        "そのメニューを実行して。",
+        "このコマンドをメニューに登録してください。",
+        "ゲーム内のポーズメニューの位置を変更して。",
+        "Cierra el menú y copia la ruta del archivo.",
+        "Ejecuta el comando del menú.",
+        "¿Dónde está el menú de pausa del juego?",
+        "ما مسار قائمة الأغاني؟",
+        "أين قائمة الملفات في المحرر؟",
+        "افتح قائمة الأدوات.",
+        "ما هو مسار القائمة داخل اللعبة؟",
+        "Menüyü kapat ve dosya yolunu kopyala.",
+        "Menü komutunu çalıştır.",
+        "Oyun içi menü konumunu değiştir.",
+    ],
+)
+def test_unrelated_actions_and_known_paths_do_not_add_menu_discovery_terms(query):
+    from services.registry.menu_path_search import localized_menu_path_terms
+    from services.registry.task_search import _normalized
+
+    assert not localized_menu_path_terms(_normalized(query))
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
         "셰이더그래프 검사",
         "シェーダーグラフを検査",
         "检查着色器图",
