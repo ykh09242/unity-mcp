@@ -18,6 +18,8 @@ CASES: Final = (
     "tests/test_workflow_discovery.py::test_search_and_normalized_resource_branch_stay_within_the_original_request",
     "tests/test_workflow_discovery.py::test_resource_catalog_keeps_per_call_project_selection",
     "tests/test_workflow_discovery.py::test_transport_tool_is_discoverable_from_its_actual_wire_schema",
+    "tests/test_manifest_tools.py::test_manifest_lists_exactly_the_registered_tools",
+    "tests/test_observation_search.py::test_wire_fact_vocabulary_matches_the_reviewed_observations",
 )
 
 

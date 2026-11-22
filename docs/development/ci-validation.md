@@ -60,9 +60,10 @@ uv run --project Server --python 3.14 --locked --extra dev python tools/check_tr
 ```
 
 The check covers disconnected Editor selection, remote tool membership isolation, catalog
-scope ownership, and actual SDK tool, resource and resource-template inventory. It runs with
-warnings treated as errors, disables telemetry, and requires the selected cases to execute
-without skips. The [installed SDK comparison workflow](../../.github/workflows/dependency-sdk-comparison.yml)
+scope ownership, and actual SDK tool, resource and resource-template inventory. It also
+compares the bundled tool manifest with the registry and the search vocabulary with
+advertised observations. It treats warnings as errors, disables telemetry, and fails if a
+selected case is skipped. The [installed SDK comparison workflow](../../.github/workflows/dependency-sdk-comparison.yml)
 runs the same command before its Python 3.14 comparison on affected pull requests and beta
 pushes, and on manual runs. The complete Python matrix continues to exercise broader behavior.
 

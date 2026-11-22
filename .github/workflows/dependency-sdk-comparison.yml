@@ -6,6 +6,7 @@ on:
     paths: &dependency-inputs
       - Server/**
       - MCPForUnity/package.json
+      - manifest.json
       - tools/check_transport_catalog.py
       - tools/experiments/dependencies/**
       - .github/workflows/dependency-sdk-comparison.yml
