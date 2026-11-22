@@ -3,7 +3,10 @@
 import re
 import unicodedata
 
+import regex
+
 from services.registry import semantic_profile
+from services.registry.semantic_encoder import MODEL_ID as STATIC_MODEL_ID
 from services.registry.semantic_encoder import fragmented_label, semantic_scores as encode_scores
 from services.registry.semantic_worker_client import rerank_scores
 
@@ -12,6 +15,9 @@ RouteKey = tuple[str, str, str]
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _QUOTED = re.compile(r'''`[^`\n]+`|"[^"\n]+"''')
 _TOKENS = re.compile(r"[\w.-]+(?:[/\\][\w.-]+)*")
+_NAME_SUFFIX = re.compile(r"['’][^\W\d_]+")
+_PLATFORM = re.compile(r"\bUnity\b", re.IGNORECASE)
+_SENTENCE_TERMINAL = regex.compile(r"\p{Sentence_Terminal}")
 _DOCUMENTED_ACTION = re.compile(r"^\s*[-*]\s+`?([\w]+)`?\s*:\s*(\S.*)$", re.MULTILINE)
 
 
@@ -74,7 +80,23 @@ def documented_actions(description: str) -> dict[str, str]:
     return dict(_DOCUMENTED_ACTION.findall(description))
 
 
-def _request_context(query: str) -> str:
+def _has_multiple_clauses(text: str) -> bool:
+    seen_letter = seen_break = False
+    for index, char in enumerate(text):
+        if char.isalpha():
+            if seen_break:
+                return True
+            seen_letter = True
+        elif seen_letter and (
+            _SENTENCE_TERMINAL.fullmatch(char) or unicodedata.name(char, "").endswith("SEMICOLON")
+        ):
+            if char == "." and text[index - 1].isalnum() and text[index + 1 : index + 2].isalnum():
+                continue  # A dot inside an identifier or version number.
+            seen_break = True
+    return False
+
+
+def _request_context(query: str, *, compact: bool = False) -> str:
     """Remove literal paths and conventionally capitalized names for a second comparison."""
     text = _QUOTED.sub(" ", query)
     spans = []
@@ -90,7 +112,13 @@ def _request_context(query: str) -> str:
             spans.append((token.start(), token.end(), path))
     for start, end, is_literal in reversed(spans):
         if is_literal:
+            if compact and (suffix := _NAME_SUFFIX.match(text, end)):
+                end = suffix.end()
             text = text[:start] + " " + text[end:]
+    if compact and (text.strip() != query.strip() or _has_multiple_clauses(query)):
+        # Keep a simple instruction intact. For a request with separate arguments or
+        # clauses, its second view emphasizes the operation in a catalog entirely for Unity.
+        text = _PLATFORM.sub(" ", text)
     return text.strip()
 
 
@@ -129,11 +157,16 @@ def semantic_scores(
     model, values = encode_scores(query, texts)
     # Paths, quoted values and multiword product names can occur in unrelated
     # operations. Also compare the surrounding request to the same declarations.
-    context = _request_context(query)
-    if context != query and sum(c.isalpha() for c in context) >= 5:
+    compact = model == STATIC_MODEL_ID
+    context = _request_context(query, compact=compact)
+    if context != (query.strip() if compact else query) and sum(c.isalpha() for c in context) >= 5:
         context_model, surrounding = encode_scores(context, texts)
         if context_model == model:
-            values = tuple(0.4 * a + 0.6 * b for a, b in zip(values, surrounding, strict=True))
+            original_weight, context_weight = (1 / 3, 2 / 3) if compact else (0.4, 0.6)
+            values = tuple(
+                original_weight * a + context_weight * b
+                for a, b in zip(values, surrounding, strict=True)
+            )
     similarities = dict(zip(texts, values, strict=True))
     scores = {
         key: max(similarities[text] for text in descriptions)
