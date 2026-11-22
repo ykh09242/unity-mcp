@@ -149,3 +149,66 @@ The default CI regression uses both frozen corpora with the real bundled encoder
 | Public assisted replay v1 | `cfde8dd87c56b4719c27fed33b6f6c19820d8231c894d530bc983707875d7570` |
 | Public assisted replay v2 | `b3948e0e1c76e1c9d1a7af1721f11973ebb1d4f93687dbda44bda5d85c6aac13` |
 | Published normalized hints | `1cb249745ac8da44deea17555c690109b0222e708afd0a032f196b7e7b71047b` |
+
+## Post-publication replay after CI
+
+CI exposed a regression in an older discovery suite. The corrective runtime `a4b0b0bb487d1ae5b2f182fe039fdef157ca1a2d` revised bundled scoring and shortened the startup guidance. This check replayed all six invocations from that exact Git archive against the already published corpora and caller hints. The preceding tables retain the original independent measurements at `46f9f64b5845ff50a3117b0808d30108943c296b`.
+
+| Retrieval | Corpus | Profile | Advertised | Top 1 / 3 | Lowest top 1 | Lowest top 3 | Wrong effect 1 / 3 | Empty | Absolute gate |
+| --- | --- | --- | ---: | --- | --- | --- | ---: | ---: | --- |
+| Bundled | v1 | core | 66/72 | 31/72 / 40/72 | 33.3% (vi) | 41.7% (fi) | 1 / 8 | 0 | Missed top1, top3, worst language top1, worst language top3 |
+| Bundled | v1 | full | 72/72 | 39/72 / 52/72 | 41.7% (th, vi) | 50.0% (fi) | 2 / 17 | 0 | Missed top1, top3, worst language top3 |
+| Bundled | v2 | core | 42/48 | 17/48 / 23/48 | 25.0% (th, vi) | 37.5% (fi, th, vi) | 1 / 9 | 0 | Missed top1, top3, worst language top1, worst language top3 |
+| Bundled | v2 | full | 48/48 | 18/48 / 23/48 | 25.0% (th, vi) | 25.0% (vi) | 1 / 12 | 0 | Missed top1, top3, worst language top1, worst language top3 |
+| LaBSE+BGE | v1 | core | 66/72 | 44/72 / 50/72 | 41.7% (fi) | 58.3% (fi, pt) | 1 / 25 | 0 | Missed top3 |
+| LaBSE+BGE | v1 | full | 72/72 | 52/72 / 63/72 | 66.7% (de, fi, th) | 75.0% (fi) | 2 / 32 | 0 | Pass |
+| LaBSE+BGE | v2 | core | 42/48 | 29/48 / 38/48 | 37.5% (vi) | 75.0% (de, fi, vi, zh) | 3 / 16 | 0 | Missed top3, worst language top1 |
+| LaBSE+BGE | v2 | full | 48/48 | 31/48 / 39/48 | 37.5% (vi) | 62.5% (fi) | 2 / 15 | 0 | Missed worst language top1 |
+| Caller hints | v1 | core | 66/72 | 36/72 / 36/72 | 50.0% (all six) | 50.0% (all six) | 0 / 0 | 6 | Replay only |
+| Caller hints | v1 | full | 72/72 | 48/72 / 48/72 | 66.7% (all six) | 66.7% (all six) | 0 / 0 | 0 | Replay only |
+| Caller hints | v2 | core | 42/48 | 18/48 / 18/48 | 37.5% (all six) | 37.5% (all six) | 0 / 6 | 6 | Replay only |
+| Caller hints | v2 | full | 48/48 | 24/48 / 24/48 | 50.0% (all six) | 50.0% (all six) | 0 / 12 | 0 | Replay only |
+
+The published bundled CI floors for top 1 / top 3 are 31 / 40 and 39 / 52 in v1 core / full, and 17 / 23 and 18 / 23 in v2 core / full. The independent bundled measurement and the current replay agree at each of those floors. All six language-specific availability and rank floors held in all four corpus and profile combinations. Indicative wrong effects in the top three fell from 10 to 9 in bundled v2 core. The other bundled wrong-effect totals held. The reference pytest passed on the replayed archive in 31.86 seconds with the same reference and effect ceilings. [Bundled reference](universal_discovery_bundled_reference.json)
+
+Both bundled result files differ from their published counterparts. Both LaBSE+BGE outputs and both assisted outputs reproduce their published JSON byte for byte. The model receipt counts and identities are the same as in the original report. All four raw corpus commands retained exit 1 under the fixed preregistered gate. At the profile level, LaBSE+BGE v1 full retained its pass. Both assisted invocations exited 0. The six invocations preserved catalog visibility and recorded zero business calls or native dispatch attempts.
+
+To reproduce this follow-up, use `a4b0b0bb487d1ae5b2f182fe039fdef157ca1a2d` as the Git archive ref in the preceding commands. All scoring options and fixture bytes are the same.
+
+| Replay | SHA-256 |
+| --- | --- |
+| quality-v1 | `0a19621d87abfc3799b1b9ee5898e388df155311b41692acbead10d67bec6526` |
+| quality-v2 | `598e98ec776fa10a873d187c6aea36bf640613d9fb46e017d3699f78045475ec` |
+| bundled-v1 | `cb6cb23685b8f422fccdac363aa08fed0dc8d9f841afc67ebfc189f4d511902b` |
+| bundled-v2 | `53219104f660eb3523398ab1f15b08be66518af90602714739fba111de95bb49` |
+| assisted-v1 | `cfde8dd87c56b4719c27fed33b6f6c19820d8231c894d530bc983707875d7570` |
+| assisted-v2 | `b3948e0e1c76e1c9d1a7af1721f11973ebb1d4f93687dbda44bda5d85c6aac13` |
+| Comparison summary | `55ace864405823cdcc9226251918579338a43620904ba585478b29ed237f3c01` |
+
+## Shipping token-boundary replay
+
+The shipping runtime `9d3216d30226b84ee2a2e93f7a77d78eab4e0f36` adjusts token boundaries around punctuation in literal names. The exact archive was used for the same six replays. All aggregate scores, worst-language results, model receipts, and preregistered outcomes match the after-CI table. In bundled v1, one offered-candidate list changed in each profile and the scored fields held.
+
+Every published bundled language floor held. The archived reference pytest passed both tests in 35.49 seconds. All six invocations preserved catalog visibility with zero business calls and native dispatch attempts. LaBSE+BGE v1 full remains the sole profile-level absolute pass. Both LaBSE+BGE and both assisted outputs also match their original publication byte for byte.
+
+| Replay | Exit | Byte match to `a4b0b0bb` | SHA-256 |
+| --- | ---: | --- | --- |
+| quality-v1 | 1 | Yes | `0a19621d87abfc3799b1b9ee5898e388df155311b41692acbead10d67bec6526` |
+| quality-v2 | 1 | Yes | `598e98ec776fa10a873d187c6aea36bf640613d9fb46e017d3699f78045475ec` |
+| bundled-v1 | 1 | Different candidate lists | `7c3d924c21585d2f45446c3a733e3d638c2a34847b0447c8fef3701cc5f803c7` |
+| bundled-v2 | 1 | Yes | `53219104f660eb3523398ab1f15b08be66518af90602714739fba111de95bb49` |
+| assisted-v1 | 0 | Yes | `cfde8dd87c56b4719c27fed33b6f6c19820d8231c894d530bc983707875d7570` |
+| assisted-v2 | 0 | Yes | `b3948e0e1c76e1c9d1a7af1721f11973ebb1d4f93687dbda44bda5d85c6aac13` |
+
+The shipping replay comparison summary has SHA-256 `f181f1dea705e40058f3c2de6f0185ceda72eae174780766ff267b283bb9fdfa`. Use the shipping commit as the archive ref in the reproduction steps.
+
+## Five-language menu lookup on the shipping runtime
+
+A separate public acceptance suite asks for the path to an Editor menu entry in Korean, Japanese, Spanish, Arabic and Turkish. Each language has two original requests. Each request ran against core and full catalogs on three invocation surfaces (tools, resources, and both). That gives twelve observations per language and sixty per model profile. The MCP client sent the original query with a limit of three. A tool or combined search expected `list_menu_declarations`, and a resource search expected `mcpforunity://menu-items`. Each returned representative was scored at its actual rank. [First prompt set](blind_tool_tasks.json) · [Second prompt set](blind_tool_tasks_natural.json) · [Public MCP acceptance test](../tests/test_menu_discovery_probe.py)
+
+| Ranking on the shipping source | Korean | Japanese | Spanish | Arabic | Turkish | Total first | Within top three |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Bundled encoders | 12/12 | 8/12 | 12/12 | 12/12 | 12/12 | 56/60 | 60/60 |
+| LaBSE+BGE | 12/12 | 12/12 | 12/12 | 8/12 | 12/12 | 56/60 | 60/60 |
+
+The five language columns count first-place results. Every other result was second. On the tools-only surface, the lookup tool was first in 20/20 bundled searches and 18/20 LaBSE+BGE searches. A separate earlier suite replayed seventeen original menu, Console and camera requests in ninety combinations of catalog and eligible invocation surface. The shipping bundled encoders placed the expected representative first in all ninety checks. [Earlier observation regression](../tests/test_localized_discovery_holdout.py)
