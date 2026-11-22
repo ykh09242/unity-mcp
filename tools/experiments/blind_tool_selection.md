@@ -703,3 +703,45 @@ serves the ordinary catalog. Record search use across eligible actors and
 declaration-inventory placement among actors whose first search returned a
 ranking. An empty ranking counts as a miss. A direct read can establish the
 answer without contributing a search rank.
+
+### Native trial results for November 22, 2026
+
+The trials used a disposable Unity 6000.0.69f1 Editor and `gpt-6.2-sol` at
+medium effort for both the main actor and a fresh native subagent. The host
+exposed the Editor through a local stdio relay, with local CodeGraph as the
+competing service. An independent Editor probe recorded state before and after
+each trial.
+
+**Console.** Each role received one natural request in English, Korean,
+Japanese, Spanish, Arabic and Turkish. All 12 actors made an error-filtered
+read and returned the exact two errors, including the Unicode fixture. All 12
+preserved both errors and the warning, with zero clear attempts. Ten met every
+scope check (all six main actors and four subagents). The English and Spanish
+subagents each made an additional shell call whose purpose the scorer could
+not verify. Both remain `needs_review`. The Turkish subagent count uses a
+fresh trial after the Editor's command retention limit interrupted the first.
+
+**Menu discovery.** English and Korean main actors and subagents looked up the
+Frame Debugger's registered path. Each factor had four eligible pairs, two in
+each arm order, using the same runtime source and Editor across arms. A grounded
+answer required the actor's own inventory evidence and the correct full path.
+
+| Changed factor | Arm | Grounded answers | Actors using search | Inventory in first search's top three |
+| --- | --- | ---: | ---: | ---: |
+| Tool description | Baseline | 4/4 | 0/4 | No ranked searches |
+| Tool description | Shipped | 4/4 | 1/4 | 1/1 |
+| Retrieval terms | Baseline | 4/4 | 0/4 | No ranked searches |
+| Retrieval terms | Shipped | 4/4 | 0/4 | No ranked searches |
+
+The two changes produced the same observed answer rate in this sample. The
+single ranked search came from the Korean subagent in the description trial.
+Pairs interrupted by command retention or a missing child completion receipt
+were repeated in their original arm order.
+
+Replaying the six original prompts directly against the catalog measured the
+retrieval change independently. The English prompt moved the declaration
+inventory from outside the top three to first place. It remained outside the
+top three for the other five prompts. In a separate tools-only replay, keeping
+the Korean prompt and supplying the English catalog query
+`find registered editor menu command path` moved the inventory from third
+to first.
