@@ -1,0 +1,8 @@
+{
+  "menu-declaration": {
+    "tr": "Bu Unity editöründe Frame Debugger'a hangi bölümden ulaşılıyor? İzlenecek yolu baştan sona yaz, başka bir şey ekleme."
+  },
+  "console-errors": {
+    "tr": "Unity konsolunda şu an hangi hatalar kayıtlı? Cevabına yalnızca hata mesajlarının özgün metnini koy; konsoldaki kayıtlara dokunma."
+  }
+}
