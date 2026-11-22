@@ -1,0 +1,151 @@
+# Multilingual Unity discovery evaluation
+
+The catalog ranks a next Unity operation or readable resource. The two corpora were authored independently. v1 was sealed before edits to the production ranker. v2 was sealed before the interim v1 aggregate rank counts were shared for further tuning. Each corpus uses Chinese (`zh`), Vietnamese (`vi`), Portuguese (`pt`), German (`de`), Finnish (`fi`), and Thai (`th`). The core and full profiles receive the same original requests.
+
+| Corpus | Requests | Business contracts | SHA-256 |
+| --- | ---: | ---: | --- |
+| [v1](universal_discovery_queries.json) | 72 | 12 | `645d3fcd1924820fd62fa9320bfde872c8a6af10793f974b4cbd70f93fa8d841` |
+| [v2](universal_discovery_queries_v2.json) | 48 | 8 | `8c96401f5fb62cf3a385ec0e0b1683a53dc29187958e67f857fe308e49c9d797` |
+
+The real MCP client submitted `search_unity_tools` with the original `query` and `limit=3`. Scoring used each returned group's representative. Available alternatives have a separate measure in the JSON reports. An independent MCP inventory identified advertised bindings, including actions behind permissive legacy selectors. The denominator includes targets unavailable in the current profile. An indicative wrong-effect count records whether a representative matched a prespecified adverse operation at the stated rank. Every replay separately checked that catalog visibility stayed unchanged and recorded attempts to call business tools, read live resources, or dispatch native commands.
+
+The lexical baseline used `bd12b2195400d7718b90cdf74d1ddca0518d2fad`. The interim LaBSE-only run used `a0ad6c76283a9f4c476f03621968217874b35ac4`, with v1 measured before the second corpus was available. Bundled and LaBSE+BGE runs used the final frozen runtime `46f9f64b5845ff50a3117b0808d30108943c296b`. Each replay imported its archived server source and ran with the locked Python environment.
+
+## Raw catalog ranking
+
+The fixed preregistered gate requires at least 60% top-1, 80% top-3, 40% worst-language top-1, 55% worst-language top-3, and at most five indicative wrong first choices per profile. It also requires hybrid matching, complete model receipts, stable inventory, and zero dispatch. These targets apply to each corpus and profile. The gate remains available as `--preregistered`.
+
+| Corpus | Retrieval | Profile | Advertised | Top 1 | Top 3 | Worst language top 1 / 3 | Wrong effect top 1 / 3 | Empty | Gate |
+| --- | --- | --- | ---: | ---: | ---: | --- | ---: | ---: | --- |
+| v1 | Lexical baseline | core | 66/72 | 4/72 | 8/72 | 0.0% / 0.0% | 2 / 4 | 37 | Comparison |
+| v1 | Lexical baseline | full | 72/72 | 5/72 | 6/72 | 0.0% / 0.0% | 1 / 2 | 37 | Comparison |
+| v1 | Bundled | core | 66/72 | 31/72 | 40/72 | 33.3% / 41.7% | 1 / 8 | 0 | Below target |
+| v1 | Bundled | full | 72/72 | 39/72 | 52/72 | 41.7% / 50.0% | 2 / 17 | 0 | Below target |
+| v1 | LaBSE only | core | 66/72 | 38/72 | 43/72 | 41.7% / 50.0% | 0 / 18 | 0 | Below target |
+| v1 | LaBSE only | full | 72/72 | 42/72 | 54/72 | 41.7% / 66.7% | 0 / 18 | 0 | Below target |
+| v1 | LaBSE+BGE | core | 66/72 | 44/72 | 50/72 | 41.7% / 58.3% | 1 / 25 | 0 | Below target |
+| v1 | LaBSE+BGE | full | 72/72 | 52/72 | 63/72 | 66.7% / 75.0% | 2 / 32 | 0 | Pass |
+| v2 | Lexical baseline | core | 42/48 | 2/48 | 2/48 | 0.0% / 0.0% | 0 / 2 | 24 | Comparison |
+| v2 | Lexical baseline | full | 48/48 | 2/48 | 2/48 | 0.0% / 0.0% | 0 / 3 | 23 | Comparison |
+| v2 | Bundled | core | 42/48 | 17/48 | 23/48 | 25.0% / 37.5% | 1 / 10 | 0 | Below target |
+| v2 | Bundled | full | 48/48 | 18/48 | 23/48 | 25.0% / 25.0% | 1 / 12 | 0 | Below target |
+| v2 | LaBSE+BGE | core | 42/48 | 29/48 | 38/48 | 37.5% / 75.0% | 3 / 16 | 0 | Below target |
+| v2 | LaBSE+BGE | full | 48/48 | 31/48 | 39/48 | 37.5% / 62.5% | 2 / 15 | 0 | Below target |
+
+Both bundled commands exited 1 and reproduced the archived `0572b3e6f` reference reports byte for byte. Primary static / Potion receipt counts were v1 core 60 / 12, v1 full 60 / 12, v2 core 41 / 7, v2 full 41 / 7. All final optional-model requests recorded the pinned LaBSE+BGE receipt.
+
+LaBSE+BGE v1 full passed every preregistered criterion. v1 core missed aggregate top-3. v2 core missed aggregate top-3 and worst-language top-1. v2 full missed worst-language top-1. Both optional-model corpus commands exited 1. Every raw replay preserved catalog visibility and recorded zero business calls or native dispatch attempts.
+
+### Counts by language
+
+Each cell is correct first / correct within three / indicative wrong first. The denominators are twelve per language in v1 and eight per language in v2.
+
+#### v1
+
+| Retrieval | Profile | zh | vi | pt | de | fi | th |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Lexical baseline | core | 1 / 1 / 0 | 0 / 1 / 1 | 2 / 5 / 1 | 1 / 1 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+| Lexical baseline | full | 1 / 1 / 0 | 0 / 1 / 1 | 3 / 3 / 0 | 1 / 1 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+| Bundled | core | 5 / 8 / 1 | 4 / 6 / 0 | 6 / 7 / 0 | 5 / 6 / 0 | 5 / 5 / 0 | 6 / 8 / 0 |
+| Bundled | full | 7 / 11 / 1 | 5 / 7 / 0 | 8 / 11 / 1 | 8 / 10 / 0 | 6 / 6 / 0 | 5 / 7 / 0 |
+| LaBSE only | core | 6 / 8 / 0 | 6 / 7 / 0 | 6 / 6 / 0 | 8 / 8 / 0 | 7 / 7 / 0 | 5 / 7 / 0 |
+| LaBSE only | full | 5 / 9 / 0 | 6 / 8 / 0 | 8 / 9 / 0 | 9 / 11 / 0 | 9 / 9 / 0 | 5 / 8 / 0 |
+| LaBSE+BGE | core | 10 / 10 / 0 | 7 / 8 / 0 | 7 / 7 / 0 | 8 / 9 / 1 | 5 / 7 / 0 | 7 / 9 / 0 |
+| LaBSE+BGE | full | 10 / 11 / 0 | 9 / 11 / 0 | 9 / 11 / 0 | 8 / 10 / 1 | 8 / 9 / 1 | 8 / 11 / 0 |
+| Caller hints | core | 6 / 6 / 0 | 6 / 6 / 0 | 6 / 6 / 0 | 6 / 6 / 0 | 6 / 6 / 0 | 6 / 6 / 0 |
+| Caller hints | full | 8 / 8 / 0 | 8 / 8 / 0 | 8 / 8 / 0 | 8 / 8 / 0 | 8 / 8 / 0 | 8 / 8 / 0 |
+
+#### v2
+
+| Retrieval | Profile | zh | vi | pt | de | fi | th |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Lexical baseline | core | 0 / 0 / 0 | 0 / 0 / 0 | 2 / 2 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+| Lexical baseline | full | 0 / 0 / 0 | 0 / 0 / 0 | 2 / 2 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+| Bundled | core | 3 / 5 / 0 | 2 / 3 / 1 | 4 / 5 / 0 | 3 / 4 / 0 | 3 / 3 / 0 | 2 / 3 / 0 |
+| Bundled | full | 4 / 5 / 0 | 2 / 2 / 1 | 4 / 6 / 0 | 3 / 4 / 0 | 3 / 3 / 0 | 2 / 3 / 0 |
+| LaBSE+BGE | core | 6 / 6 / 0 | 3 / 6 / 2 | 4 / 7 / 0 | 6 / 6 / 0 | 5 / 6 / 1 | 5 / 7 / 0 |
+| LaBSE+BGE | full | 6 / 6 / 0 | 3 / 7 / 1 | 6 / 8 / 0 | 6 / 7 / 0 | 4 / 5 / 0 | 6 / 6 / 1 |
+| Caller hints | core | 3 / 3 / 0 | 3 / 3 / 0 | 3 / 3 / 0 | 3 / 3 / 0 | 3 / 3 / 0 | 3 / 3 / 0 |
+| Caller hints | full | 4 / 4 / 0 | 4 / 4 / 0 | 4 / 4 / 0 | 4 / 4 / 0 | 4 / 4 / 0 | 4 / 4 / 0 |
+
+### Exploratory packaged CLI query
+
+A separate full-profile, tools-only check used the Thai request `ขอเส้นทางเมนูสำหรับหน้าต่าง Frame Debugger ของ Unity Editor`. The bundled encoders placed `list_menu_declarations` outside the top three. LaBSE+BGE placed it first. This was a new query after the two corpora had been frozen.
+
+## Blind caller hints
+
+One `gpt-6.2-sol` caller at medium reasoning effort saw a single shuffled batch of 120 unique opaque IDs and the original requests. It received the public `search_unity_tools` schema. The batch supplied no catalog contents, expected answers, or case labels. The caller proposed `catalog_query`, `intent`, and any optional observation constraints without executing tools. The replay verified exact ID coverage and original-query equality before forwarding the proposals. The normalized plan contains only the resulting hints for each published corpus key and the source digests. [Normalized caller hints](universal_discovery_assisted_hints.json)
+
+| Corpus | Profile | Top 1 | Top 3 | Worst language top 1 / 3 | Wrong effect top 1 / 3 | Observation / lexical |
+| --- | --- | ---: | ---: | --- | ---: | ---: |
+| v1 | core | 36/72 | 36/72 | 50.0% / 50.0% | 0 / 0 | 42 / 30 |
+| v1 | full | 48/72 | 48/72 | 66.7% / 66.7% | 0 / 0 | 42 / 30 |
+| v2 | core | 18/48 | 18/48 | 37.5% / 37.5% | 0 / 6 | 30 / 18 |
+| v2 | full | 24/48 | 24/48 | 50.0% / 50.0% | 0 / 12 | 30 / 18 |
+
+Each assisted replay used the final frozen source. All replies reported observation or lexical matching. The original text and the caller's constraints entered the same public MCP endpoint. Inventory stayed stable and both dispatch counters remained zero. Public normalized replays matched every scored field in the private replay.
+
+The live-editor study used a read-only subset of v1. Eight of twelve actors chose a suitable first business tool on `a0ad6c762`, and eleven answered as requested on manual review. On the final `46f9f64b5` runtime, nine of twelve fresh actors chose a suitable first business tool. All twelve obtained matching live evidence and answered as requested on manual review. The strict scorer accepted eleven. Five actors searched with structured observation constraints. [Native actor study](universal_discovery_actors.md#replay-on-the-final-runtime)
+
+## Reproduce
+
+Use the checkout's locked Server Python and a fresh scratch directory. The PowerShell example imports a frozen source archive while reusing the current evaluation runner and fixtures. Choose a fresh scratch directory for each source commit.
+
+```powershell
+$discoveryRoot = Join-Path $PWD '.work/universal-discovery-replay'
+New-Item -ItemType Directory -Path $discoveryRoot
+git archive --format=zip --output "$discoveryRoot/server-src.zip" 46f9f64b5845ff50a3117b0808d30108943c296b Server/src
+Expand-Archive -LiteralPath "$discoveryRoot/server-src.zip" -DestinationPath "$discoveryRoot/source"
+$env:PYTHONPATH = "$discoveryRoot/source/Server/src"
+$discoveryPython = 'Server/.venv/Scripts/python.exe'
+$discoveryRunner = 'tools/experiments/universal_discovery_evaluation.py'
+$discoveryV1 = 'tools/experiments/universal_discovery_queries.json'
+$discoveryV2 = 'tools/experiments/universal_discovery_queries_v2.json'
+```
+
+For the bundled replay, point the model directory at a fresh unprovisioned location. Both IDs are allowed and the report counts how many requests each handled.
+
+```powershell
+$env:UNITY_MCP_SEARCH_MODEL_DIR = "$discoveryRoot/unprovisioned"
+$discoveryPrimary = 'sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8'
+$discoveryCoverage = 'minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2'
+& $discoveryPython $discoveryRunner --fixture $discoveryV1 --preregistered --expect-model $discoveryPrimary --expect-model $discoveryCoverage --output "$discoveryRoot/bundled-v1.json"
+& $discoveryPython $discoveryRunner --fixture $discoveryV2 --preregistered --expect-model $discoveryPrimary --expect-model $discoveryCoverage --output "$discoveryRoot/bundled-v2.json"
+```
+
+Use an installed LaBSE+BGE profile for the combined replay. `unity-mcp search-model status --verify` reports `encoder-reranker` in `quality_profile` for that installation. [Search model installation](../../Server/src/cli/CLI_USAGE_GUIDE.md#optional-local-search-model)
+
+```powershell
+$env:UNITY_MCP_SEARCH_MODEL_DIR = 'C:/path/to/verified-encoder-reranker-profile'
+$discoveryReranked = 'labse-onnx-int8:147002d501fc76ecd313c631999ea796520fea74:836121a0533e5664b21c7aacc5d22951f2b8b25b+bge-reranker-v2-m3-onnx-int8:6f5ff65298512715a1e669753bc754d2bc8f367b'
+& $discoveryPython $discoveryRunner --fixture $discoveryV1 --preregistered --expect-model $discoveryReranked --output "$discoveryRoot/reranked-v1.json"
+& $discoveryPython $discoveryRunner --fixture $discoveryV2 --preregistered --expect-model $discoveryReranked --output "$discoveryRoot/reranked-v2.json"
+```
+
+For the earlier lexical comparison, archive `bd12b2195400d7718b90cdf74d1ddca0518d2fad` and run each fixture in report mode by omitting `--preregistered` and `--expect-model`. For the interim v1 LaBSE-only score, archive `a0ad6c76283a9f4c476f03621968217874b35ac4`, select an encoder-only profile, and expect `labse-onnx-int8:147002d501fc76ecd313c631999ea796520fea74:836121a0533e5664b21c7aacc5d22951f2b8b25b`.
+
+For the assisted replay, use the final archive and the normalized plan. The plan is keyed by fixture digest, language, and task. Inspect that file to audit the exact forwarded hints. The original `query` comes from the fixture. The recorded response file digest is `f370b5cfbcaf8192241b0a14223be3afb196a9df3e6c94977efe0347c4d5d428`. A rerun can use the published normalized plan and inspect each ranked result without retrieving private actor logs.
+
+```powershell
+$discoveryHints = 'tools/experiments/universal_discovery_assisted_hints.json'
+& $discoveryPython $discoveryRunner --fixture $discoveryV1 --assisted-hints $discoveryHints --output "$discoveryRoot/assisted-v1.json"
+& $discoveryPython $discoveryRunner --fixture $discoveryV2 --assisted-hints $discoveryHints --output "$discoveryRoot/assisted-v2.json"
+```
+
+The default CI regression uses both frozen corpora with the real bundled encoders. It checks recorded rank and availability counts for each language and profile, effect ceilings, returned model IDs, and the dispatch and inventory invariants. The independent absolute benchmarks retain their original cases and targets. [Measured bundled regression reference](universal_discovery_bundled_reference.json) · [CI regression test](../tests/test_universal_discovery_evaluation.py)
+
+## Receipt digests
+
+| Evidence | SHA-256 |
+| --- | --- |
+| Lexical baseline v1 | `2197cef29eba4cce09843cda71f103bfb89ee90f1397ab9414360568c716f94a` |
+| Lexical baseline v2 | `84b3bfcb6102e640cc3a3b7bed0162ae63afd1f91204c805d71624409e5e51c5` |
+| Interim LaBSE only v1 | `e53099930a573658b657af17d01572d84c1ba8a6a8c452a7e438b51bba315719` |
+| Final bundled v1 | `f9f4751021a5c92e2d908b8f35f424ec73e35b0db9504d72548c3414cf70759b` |
+| Final bundled v2 | `763fa76b097fd762c4aa36ce35a8882359917642b810aee51c9e95c5ddcc9f34` |
+| Final LaBSE+BGE v1 | `0a19621d87abfc3799b1b9ee5898e388df155311b41692acbead10d67bec6526` |
+| Final LaBSE+BGE v2 | `598e98ec776fa10a873d187c6aea36bf640613d9fb46e017d3699f78045475ec` |
+| Private assisted summary | `0163b639dcabf9c815333d0b45617f61a1c337284b024c76cab3dcc8eb6e2147` |
+| Public assisted replay v1 | `cfde8dd87c56b4719c27fed33b6f6c19820d8231c894d530bc983707875d7570` |
+| Public assisted replay v2 | `b3948e0e1c76e1c9d1a7af1721f11973ebb1d4f93687dbda44bda5d85c6aac13` |
+| Published normalized hints | `1cb249745ac8da44deea17555c690109b0222e708afd0a032f196b7e7b71047b` |
