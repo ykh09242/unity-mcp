@@ -97,9 +97,9 @@ _WINDOW_LOCATIONS = tuple(
         ),
         (
             r"\b(?:editör|düzenleyici|pencere|panel|unity)\w*",
-            r"\b(?:nere(?:de\w*|den|ye)|hangi (?:bölüm|yol|konum|sekme)\w*)\b",
-            r"\b(?:aç[ıia]\w*|ulaş\w*|bul[ua]\w*|eriş\w*)\b",
-            r"\b(?:yalnızca|sadece) (?:\w+ )?(?:yol|konum|yer)\w*\b",
+            r"\b(?:nere(?:de\w*|ye|si\w*)|hangi (?:bölüm|yol|konum|sekme|başlık|kısım|kısm|adım)\w*)\b",
+            r"\b(?:aç(?:[ıia]\w*|mak)|ulaş\w*|bul(?:[ua]\w*|mak)|eriş\w*|izle\w*)\b",
+            r"\b(?:yalnızca|sadece|bir tek)\s+(?:[\w'-]+\s+){0,4}(?:yol|konum|yer|adım)\w*\b",
         ),
     )
 )

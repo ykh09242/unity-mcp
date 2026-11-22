@@ -31,6 +31,8 @@ import pytest
         "에디터에서 오디오 믹서를 어디서 엽니까?",
         "프로파일러 창이 어디야?",
         "¿En qué parte del editor se abre el mezclador de audio?",
+        "Bu düzenleyicide Işık Gezgini nerede? Sadece oraya giden tam yolu belirt.",
+        "Editörün neresinden Aydınlatma penceresine erişebilirim?",
     ],
 )
 def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
@@ -97,6 +99,7 @@ def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
         "¿A qué parte del editor puedo mover esa ventana?",
         "에디터에서 오디오 믹서 창의 위치를 어디로 바꿔야 해?",
         "¿En qué parte del editor se cambia la posición de la ventana del mezclador?",
+        "Editörde şu dosyayı nerede bulabilirim? Yalnızca oraya giden tam yolu yaz.",
     ],
 )
 def test_unrelated_actions_and_known_paths_do_not_add_menu_discovery_terms(query):

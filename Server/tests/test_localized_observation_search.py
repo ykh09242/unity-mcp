@@ -55,6 +55,8 @@ async def test_real_catalog_finds_error_read_and_scene_camera_inventory(monkeypa
         "Borra los mensajes de error actuales de la consola.",
         "امسح رسائل الخطأ الحالية في وحدة التحكم.",
         "Konsoldaki güncel hata mesajlarını temizle.",
+        "Konsoldaki hata iletilerini sil.",
+        "Konsoldaki hata iletilerini dosyaya aktar.",
         "카메라 깊이를 가장 큰 값으로 설정해 줘.",
         "カメラの深度を最大に変更してください。",
         "Ajusta la profundidad de la cámara al valor máximo.",
@@ -83,6 +85,7 @@ def test_unrelated_and_mutating_queries_do_not_acquire_localized_read_evidence(q
         "Lee los errores de la consola.",
         "اقرأ أخطاء وحدة التحكم.",
         "Konsoldaki hataları oku.",
+        "Konsoldaki hata iletilerini aynen aktar. Kayıtları silme.",
     ],
 )
 def test_direct_requests_to_read_errors_provide_evidence_in_every_locale(query):
