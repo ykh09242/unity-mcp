@@ -1,0 +1,118 @@
+{
+  "schema": 1,
+  "tasks": {
+    "open_scenes": {
+      "expected": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes"
+      ],
+      "wrong_effect": [
+        "scene_lifecycle.close_scene",
+        "manage_scene.close_scene",
+        "scene_lifecycle.load",
+        "manage_scene.load",
+        "scene_lifecycle.set_active_scene",
+        "manage_scene.set_active_scene"
+      ]
+    },
+    "layer_numbers": {
+      "expected": [
+        "mcpforunity://project/layers"
+      ],
+      "wrong_effect": [
+        "manage_editor.add_layer",
+        "manage_editor.remove_layer"
+      ]
+    },
+    "prior_view_size": {
+      "expected": [
+        "manage_editor.restore_game_view_size"
+      ],
+      "wrong_effect": [
+        "manage_editor.set_game_view_size",
+        "manage_editor.undo",
+        "manage_editor.redo"
+      ]
+    },
+    "script_fingerprint": {
+      "expected": [
+        "get_sha"
+      ],
+      "wrong_effect": [
+        "apply_text_edits",
+        "script_apply_edits",
+        "delete_script",
+        "manage_script.delete"
+      ]
+    },
+    "empty_console": {
+      "expected": [
+        "read_console.clear"
+      ],
+      "wrong_effect": [
+        "manage_editor.play",
+        "manage_editor.stop",
+        "manage_editor.undo",
+        "manage_editor.redo"
+      ]
+    }
+  },
+  "queries": {
+    "hi": {
+      "open_scenes": "एडिटर में मैंने कुछ सीन एक साथ खोल रखे हैं। अभी कौन-कौन से खुले हैं? पूरी सूची चाहिए।",
+      "layer_numbers": "टक्कर की जाँच के लिए मास्क बना रहा हूँ। इस प्रोजेक्ट में हर लेयर का नाम और उसका नंबर बता दो।",
+      "prior_view_size": "फ़ोन वाला लेआउट जाँच लिया। साइज़ बदलते समय जो टोकन मिला था, उससे गेम व्यू का पुराना साइज़ वापस लगा दो।",
+      "script_fingerprint": "अगले बदलाव से पहले मुझे Assets/Scripts/Bell.cs के मौजूदा टेक्स्ट का SHA-256 चाहिए। फ़ाइल का कोड मत भेजना।",
+      "empty_console": "अभी गेम रुका हुआ है। उसे ऐसे ही रहने दो और यूनिटी कंसोल के सारे पुराने संदेश साफ़ कर दो।"
+    },
+    "id": {
+      "open_scenes": "Tadi aku sempat buka beberapa scene barengan. Bisa tampilkan semua scene yang masih terbuka di editor?",
+      "layer_numbers": "Aku lagi menyusun mask untuk tabrakan. Tolong tampilkan nama setiap layer di proyek ini beserta nomor indeksnya.",
+      "prior_view_size": "Tes tampilan ponselnya sudah selesai. Pakai token yang tadi kudapat waktu mengganti ukuran untuk mengembalikan Game View ke ukuran semula.",
+      "script_fingerprint": "Sebelum aku mengubah Assets/Scripts/Bell.cs, kirim nilai SHA-256 dari teksnya saat ini. Aku cuma perlu hash-nya.",
+      "empty_console": "Bersihkan semua pesan lama di Console Unity, ya. Game sedang dijeda dan harus tetap begitu."
+    },
+    "sw": {
+      "open_scenes": "Nilifungua mandhari kadhaa kwa pamoja kwenye kihariri cha Unity. Nionyeshe orodha ya zote ambazo bado ziko wazi.",
+      "layer_numbers": "Ninaandaa mask ya migongano. Naomba orodha ya layer za mradi huu, kila moja ikiwa na jina na namba yake.",
+      "prior_view_size": "Nimemaliza kujaribu mwonekano wa simu. Tumia tokeni niliyopewa nilipobadili ukubwa wa Game View ili kuurudisha kama ulivyokuwa.",
+      "script_fingerprint": "Kabla sijahariri Assets/Scripts/Bell.cs, nipe SHA-256 ya maandishi yaliyomo sasa. Nahitaji hash pekee.",
+      "empty_console": "Mchezo umesitishwa kwa muda. Ondoa ujumbe wote wa zamani kwenye Console ya Unity na uuache mchezo katika hali hiyo."
+    },
+    "it": {
+      "open_scenes": "Ho aperto più scene insieme e ho perso il conto. Mi elenchi tutte quelle che sono ancora aperte nell’editor?",
+      "layer_numbers": "Sto preparando una maschera per le collisioni. Mi servono i nomi di tutti i layer definiti nel progetto, ciascuno con il suo indice.",
+      "prior_view_size": "Ho finito la prova per il telefono. Usa il token che mi è stato restituito al ridimensionamento per rimettere la finestra Game alle dimensioni di prima.",
+      "script_fingerprint": "Prima di toccare Assets/Scripts/Bell.cs mi serve lo SHA-256 del testo attuale. Mandami solo l’impronta.",
+      "empty_console": "Il gioco è in pausa. Svuota la console di Unity dai vecchi messaggi e lascia il gioco in pausa."
+    },
+    "pl": {
+      "open_scenes": "Mam w edytorze kilka scen otwartych jednocześnie. Możesz wypisać wszystkie, które są teraz wczytane?",
+      "layer_numbers": "Układam maskę kolizji. Podaj mi nazwy warstw zdefiniowanych w projekcie wraz z ich numerami.",
+      "prior_view_size": "Test widoku na telefonie już skończony. Przy zmianie rozmiaru dostałem token. Użyj go, żeby przywrócić poprzedni rozmiar okna Game.",
+      "script_fingerprint": "Zanim poprawię Assets/Scripts/Bell.cs, podaj mi skrót SHA-256 jego obecnej treści. Nie potrzebuję samego kodu.",
+      "empty_console": "Gra jest teraz wstrzymana. Wyczyść wszystkie stare komunikaty w konsoli Unity i zostaw grę w tym stanie."
+    },
+    "sv": {
+      "open_scenes": "Jag öppnade flera scener samtidigt i editorn. Vilka är fortfarande öppna? Jag vill se hela listan.",
+      "layer_numbers": "Jag håller på med en kollisionsmask. Kan du lista projektets lager med både namn och lagernummer?",
+      "prior_view_size": "Nu är jag klar med mobiltestet. Använd den token jag fick när jag ändrade storleken på spelvyn så att den får sin förra storlek igen.",
+      "script_fingerprint": "Jag ska ändra i Assets/Scripts/Bell.cs. Ge mig först SHA-256 för texten som den ser ut nu, utan att skicka själva koden.",
+      "empty_console": "Spelet står på paus. Töm Unitys konsol på gamla meddelanden och låt spelet vara pausat."
+    },
+    "el": {
+      "open_scenes": "Είχα ανοίξει πολλές σκηνές μαζί στον editor. Μπορείς να μου δείξεις όλες όσες παραμένουν ανοιχτές;",
+      "layer_numbers": "Φτιάχνω μια μάσκα συγκρούσεων. Χρειάζομαι τα ονόματα όλων των layers του έργου μαζί με τον αριθμό του καθενός.",
+      "prior_view_size": "Τελείωσα τη δοκιμή για κινητό. Χρησιμοποίησε το token που πήρα όταν άλλαξα το μέγεθος του Game View για να το επαναφέρεις στο προηγούμενο μέγεθος.",
+      "script_fingerprint": "Πριν πειράξω το Assets/Scripts/Bell.cs, δώσε μου το SHA-256 του κειμένου του όπως είναι τώρα. Δεν χρειάζομαι τον κώδικα.",
+      "empty_console": "Το παιχνίδι είναι σε παύση. Σβήσε όλα τα παλιά μηνύματα από την κονσόλα του Unity και άφησε το παιχνίδι σε παύση."
+    },
+    "vi": {
+      "open_scenes": "Mình mở mấy scene cùng lúc trong Editor rồi quên mất. Liệt kê giúp mình tất cả scene hiện còn mở nhé.",
+      "layer_numbers": "Mình đang làm mask va chạm. Cho mình danh sách các layer trong project, kèm tên và số thứ tự của từng layer nhé.",
+      "prior_view_size": "Test giao diện điện thoại xong rồi. Dùng token trả về lúc đổi kích thước để đưa Game View về đúng kích thước trước đó giúp mình.",
+      "script_fingerprint": "Trước khi sửa Assets/Scripts/Bell.cs, mình cần SHA-256 của phần văn bản hiện tại trong file. Chỉ gửi mã băm thôi nhé.",
+      "empty_console": "Game đang pause, cứ để nguyên như vậy nhé. Xóa hết các thông báo cũ trong Console của Unity giúp mình."
+    }
+  }
+}
