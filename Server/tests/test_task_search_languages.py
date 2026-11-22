@@ -23,6 +23,11 @@ import pytest
         "Assets/Audio Mixers/Mixer.asset 작업에 쓰는 창의 메뉴 경로가 뭐야?",
         "Assets/Audio Mixers 폴더 작업에 쓰는 창은 어느 메뉴에 등록돼 있나요?",
         "게임 내 사운드를 보려면 편집기의 메뉴 경로가 어디야?",
+        "이 편집기에서 오디오 믹서 창을 어디서 여는지 경로만 알려줘.",
+        "オーディオミキサーをどこから開きますか。場所だけ教えてください。",
+        "¿Desde dónde se accede al mezclador de audio del editor? Solo la ruta.",
+        "من أين أفتح مازج الصوت في المحرر؟ أحتاج المسار فقط.",
+        "Düzenleyicide Ses Karıştırıcı'ya nereden ulaşabilirim? Yalnızca yolunu yaz.",
     ],
 )
 def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
@@ -71,6 +76,18 @@ def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
         "Menüyü kapat ve dosya yolunu kopyala.",
         "Menü komutunu çalıştır.",
         "Oyun içi menü konumunu değiştir.",
+        "오디오 믹서 창을 열어줘.",
+        "オーディオミキサーを開いてください。",
+        "Abre la ventana del mezclador de audio.",
+        "افتح نافذة مازج الصوت في المحرر.",
+        "Düzenleyicide Ses Karıştırıcı penceresini aç.",
+        "에디터에서 이 파일을 어디서 여는지 경로만 알려줘.",
+        "このエディターで設定ファイルをどこから開きますか。場所だけ教えて。",
+        "¿Desde dónde se abre la carpeta del proyecto en el editor? Solo la ruta.",
+        "من أين أفتح الملف في المحرر؟ أحتاج المسار فقط.",
+        "Düzenleyicide bu dosyaya nereden ulaşabilirim? Yalnızca yolunu yaz.",
+        "에디터 창에서 이 URL을 어디서 여나요?",
+        "¿Desde dónde se abre la ventana de pausa del juego? Solo la ruta.",
     ],
 )
 def test_unrelated_actions_and_known_paths_do_not_add_menu_discovery_terms(query):

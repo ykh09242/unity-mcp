@@ -67,9 +67,55 @@ _EDITOR_MENU = re.compile(
     r"|(?:قائمة|قوائم) (?:هذا )?المحرر\b|\b(?:editör|düzenleyici)\w*\s+menü|\beditor menu\b"
 )
 
+# A window location can be requested without calling it a menu. When even the
+# Editor/window is implicit, require both a way of opening it and a path-only cue.
+_WINDOW_LOCATIONS = tuple(
+    tuple(re.compile(pattern) for pattern in row)
+    for row in (
+        (
+            r"에디터|편집기|유니티|unity|창(?:을|은|이|의|에|으|만|\s|$)",
+            r"어디|어느\s*(?:곳|위치|경로|항목)|어떤\s*경로",
+            r"여는|여나|열[려수어]|열\s*수|찾[아을는]|접근|들어가|어디에?\s*있",
+            r"(?:경로|위치|장소)\s*만",
+        ),
+        (
+            r"エディター?|ウィンドウ|ウインドウ|パネル|unity",
+            r"どこ|どちら|どの(?:場所|項目|階層|経路)",
+            r"開[くきけい]|見つ[かけ]|アクセス|たど[るれ]|どこに(?:ある|あり)",
+            r"(?:場所|位置|パス|経路|手順)(?:だけ|のみ)",
+        ),
+        (
+            r"\b(?:editor|ventanas?|panel(?:es)?|unity)\b",
+            r"\b(?:d[oó]nde|(?:qu[ée]|cu[áa]l) (?:es la )?(?:ruta|ubicaci[oó]n))\b",
+            r"\b(?:abr(?:ir|[eo])|acced\w*|enc(?:uentr|ontr)\w*|lleg\w*|est[áa])\b",
+            r"\b(?:s[oó]lo|solamente|[úu]nicamente) (?:la |su )?(?:ruta|ubicaci[oó]n)\b",
+        ),
+        (
+            r"المحرر|نافذة|النافذة|لوحة|يونيتي|unity",
+            r"(?:أين|اين|أي\s+(?:قسم|مكان|مسار))",
+            r"(?:أفتح|افتح|فتح|أجد|اجد|أصل|الوصول|العثور|توجد|يوجد)",
+            r"(?:المسار|مساره[ا]?|المكان|الموقع)\s+(?:فقط|وحده)",
+        ),
+        (
+            r"\b(?:editör|düzenleyici|pencere|panel|unity)\w*",
+            r"\b(?:nere(?:de\w*|den|ye)|hangi (?:bölüm|yol|konum|sekme)\w*)\b",
+            r"\b(?:aç[ıia]\w*|ulaş\w*|bul[ua]\w*|eriş\w*)\b",
+            r"\b(?:yalnızca|sadece) (?:\w+ )?(?:yol|konum|yer)\w*\b",
+        ),
+    )
+)
+_OTHER_LOCATION = re.compile(
+    r"파일|폴더|웹\s*(?:주소|사이트)|ファイル|フォルダ|ウェブ|"
+    r"(?<![a-z])(?:url|https?)(?![a-z])|\b(?:carpeta|archivo|sitio web|dosya\w*|klasör\w*)\b"
+    r"|(?:ملف|مجلد|الرابط)"
+)
+_WINDOW_NOUN = re.compile(
+    r"창(?:을|은|이|의|에|\s|$)|ウ[ィイ]ンドウ|パネル|\b(?:ventana|panel|pencere)|نافذة|لوحة"
+)
+
 
 def localized_menu_path_terms(query: str) -> set[str]:
-    """Return the two matched cues in a normalized query, preserving the caller's input."""
+    """Return matched declaration or window-location cues from a normalized query."""
     lookup = _ASSET_REFERENCE.sub(" ", query)
     lookup = lookup.translate(_ARABIC_MARKS).replace("i\u0307", "i")
     if _LITERAL_PATH.search(lookup) or (
@@ -79,4 +125,12 @@ def localized_menu_path_terms(query: str) -> set[str]:
     for pair in _PAIRS:
         if match := pair.search(lookup):
             return set(match.groups())
+    if not (_OTHER_LOCATION.search(lookup) or _ASSET_REFERENCE.search(query)):
+        for domain, location, opening, path_only in _WINDOW_LOCATIONS:
+            where, path = location.search(lookup), path_only.search(lookup)
+            if not (where or path):
+                continue
+            context, access = domain.search(lookup), opening.search(lookup)
+            if (context and (access or path or _WINDOW_NOUN.search(lookup))) or (path and access):
+                return {match[0] for match in (where, path, context, access) if match}
     return set()
