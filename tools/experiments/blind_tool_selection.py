@@ -7,11 +7,11 @@ import json
 import math
 import os
 import re
-from copy import copy
 import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
+from copy import copy
 from hashlib import sha256
 from itertools import product
 from pathlib import Path, PurePosixPath
@@ -20,13 +20,14 @@ from uuid import uuid4
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.experiments.blind_tool_answers import REQUEST_LABEL, answer_instruction
-from tools.experiments import blind_tool_observations as observations
-from tools.experiments.blind_tool_comparison import compare_directories, paired_schedule
-from tools.experiments.blind_tool_trace import score_case, score_directory
 from tools.experiments import blind_tool_actions as actions
 from tools.experiments import blind_tool_console as console
 from tools.experiments import blind_tool_holdout as holdout
+from tools.experiments import blind_tool_observations as observations
+from tools.experiments.blind_tool_answers import REQUEST_LABEL, answer_instruction
+from tools.experiments.blind_tool_comparison import compare_directories, paired_schedule
+from tools.experiments.blind_tool_trace import score_case, score_directory
+from tools.experiments.discovery_evaluation_fixture import load_suite
 
 TASKS = (
     "request-label",
@@ -88,12 +89,17 @@ def task_prompt(
 
 
 def delivery_prompt(args: argparse.Namespace, task: str, language: str, role: str) -> str:
-    prompt = task_prompt(
-        task,
-        language,
-        args.graph_asset,
-        observations.observation_fixture(args, task),
-        prompt_set=getattr(args, "prompt_set", "baseline"),
+    external_prompts = getattr(args, "external_prompts", None)
+    prompt = (
+        external_prompts[task, language]
+        if external_prompts is not None
+        else task_prompt(
+            task,
+            language,
+            args.graph_asset,
+            observations.observation_fixture(args, task),
+            prompt_set=getattr(args, "prompt_set", "baseline"),
+        )
     )
     if getattr(args, "study", None) in (STUDY, observations.STUDY):
         with Path(__file__).with_name("blind_tool_tasks.json").open(encoding="utf-8") as stream:
@@ -224,6 +230,11 @@ def run_case(
         "answer_protocol": getattr(args, "answer_protocol", "v1"),
         "prompt_digest": sha256(prompt.encode()).hexdigest(),
         "prompt_set": getattr(args, "prompt_set", "baseline"),
+        **(
+            {"prompt_fixture_sha256": args.prompt_fixture_sha256}
+            if getattr(args, "prompt_fixture_sha256", None)
+            else {}
+        ),
         **({"observation_fixture": args.observation_fixture} if args.observation_fixture else {}),
         **getattr(args, "case_metadata", {}),
     }
@@ -312,7 +323,11 @@ def create_parser() -> argparse.ArgumentParser:
     launch.add_argument("--model", required=True)
     launch.add_argument("--effort", required=True)
     launch.add_argument("--task", choices=TASKS, action="append")
-    launch.add_argument("--language", choices=LANGUAGES, action="append")
+    launch.add_argument(
+        "--language",
+        action="append",
+        help=f"Stock languages are {', '.join(LANGUAGES)}. External fixtures declare their own.",
+    )
     launch.add_argument(
         "--prompt-set",
         choices=("baseline", "natural", holdout.PROMPT_SET),
@@ -320,6 +335,11 @@ def create_parser() -> argparse.ArgumentParser:
         help="Wording shared by both roles and both comparison arms",
     )
     launch.add_argument("--role", choices=ROLES, action="append")
+    launch.add_argument(
+        "--holdout-prompts",
+        type=Path,
+        help="Use original requests from a sealed discovery evaluation fixture in holdout mode",
+    )
     launch.add_argument(
         "--host-mode",
         choices=("isolated", "configured"),
@@ -484,6 +504,32 @@ def probe_state(args: argparse.Namespace) -> dict | None:
         return None
 
 
+def select_prompt_fixture(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if not args.holdout_prompts:
+        if unsupported := set(args.language) - set(LANGUAGES):
+            parser.error(f"unsupported stock languages: {', '.join(sorted(unsupported))}")
+        return
+    if args.prompt_set != holdout.PROMPT_SET:
+        parser.error("--holdout-prompts requires --prompt-set holdout")
+    try:
+        suite = load_suite(args.holdout_prompts)
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        parser.error(f"invalid holdout prompt fixture: {error}")
+    prompts = {}
+    for row in suite.requests:
+        if row.actor_task not in holdout.TASKS:
+            continue
+        key = row.actor_task, row.language
+        if key in prompts:
+            parser.error(f"duplicate holdout prompt cell {row.actor_task}/{row.language}")
+        prompts[key] = row.query
+    for task, language in product(args.task, args.language):
+        if (task, language) not in prompts:
+            parser.error(f"holdout prompt fixture does not cover {task}/{language}")
+    args.external_prompts = prompts
+    args.prompt_fixture_sha256 = suite.sha256
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
@@ -506,6 +552,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.prepare_pairs = True
         elif not all((args.task, args.language, args.role)):
             parser.error("provide --task, --language and --role or select --study")
+        select_prompt_fixture(parser, args)
         is_holdout = args.prompt_set == holdout.PROMPT_SET
         if is_holdout:
             unsupported = set(args.task) - set(holdout.TASKS)

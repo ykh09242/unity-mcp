@@ -1,0 +1,319 @@
+{
+  "schema": 1,
+  "source_commit": "0572b3e6f7717a2316c2027849f4526643bb3c97",
+  "suites": {
+    "universal_discovery_queries.json": {
+      "fixture_sha256": "645d3fcd1924820fd62fa9320bfde872c8a6af10793f974b4cbd70f93fa8d841",
+      "preregistered_exit_code": 1,
+      "preregistered_report_sha256": "f9f4751021a5c92e2d908b8f35f424ec73e35b0db9504d72548c3414cf70759b",
+      "preregistered_gate": {
+        "preset": "universal-discovery-absolute-v1",
+        "min_top1": 0.6,
+        "min_top3": 0.8,
+        "min_language_top1": 0.4,
+        "min_language_top3": 0.55,
+        "max_wrong_effect_top1": 5,
+        "require_matching": "hybrid",
+        "require_model": true,
+        "expect_model": [
+          "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8",
+          "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2"
+        ]
+      },
+      "profiles": {
+        "core": {
+          "summary": {
+            "count": 72,
+            "available": 66,
+            "unavailable": 6,
+            "unknown": 0,
+            "top1": 31,
+            "top3": 40,
+            "available_top1": 31,
+            "available_top3": 40,
+            "any_binding_top1": 31,
+            "any_binding_top3": 40,
+            "no_result": 0,
+            "hidden_expected_route": 0,
+            "wrong_effect_top1": 1,
+            "wrong_effect_top3": 8
+          },
+          "languages": {
+            "de": {
+              "count": 12,
+              "available": 11,
+              "top1": 5,
+              "top3": 6
+            },
+            "fi": {
+              "count": 12,
+              "available": 11,
+              "top1": 5,
+              "top3": 5
+            },
+            "pt": {
+              "count": 12,
+              "available": 11,
+              "top1": 6,
+              "top3": 7
+            },
+            "th": {
+              "count": 12,
+              "available": 11,
+              "top1": 6,
+              "top3": 8
+            },
+            "vi": {
+              "count": 12,
+              "available": 11,
+              "top1": 4,
+              "top3": 6
+            },
+            "zh": {
+              "count": 12,
+              "available": 11,
+              "top1": 5,
+              "top3": 8
+            }
+          },
+          "semantic_models": {
+            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8": 60,
+            "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 12
+          },
+          "worst_language_top1": 0.3333333333333333,
+          "worst_language_top3": 0.4166666666666667,
+          "preregistered_failures": [
+            "top1 43.06% < 60.00%",
+            "top3 55.56% < 80.00%",
+            "worst language top1 33.33% < 40.00%",
+            "worst language top3 41.67% < 55.00%"
+          ]
+        },
+        "full": {
+          "summary": {
+            "count": 72,
+            "available": 72,
+            "unavailable": 0,
+            "unknown": 0,
+            "top1": 39,
+            "top3": 52,
+            "available_top1": 39,
+            "available_top3": 52,
+            "any_binding_top1": 39,
+            "any_binding_top3": 52,
+            "no_result": 0,
+            "hidden_expected_route": 0,
+            "wrong_effect_top1": 2,
+            "wrong_effect_top3": 17
+          },
+          "languages": {
+            "de": {
+              "count": 12,
+              "available": 12,
+              "top1": 8,
+              "top3": 10
+            },
+            "fi": {
+              "count": 12,
+              "available": 12,
+              "top1": 6,
+              "top3": 6
+            },
+            "pt": {
+              "count": 12,
+              "available": 12,
+              "top1": 8,
+              "top3": 11
+            },
+            "th": {
+              "count": 12,
+              "available": 12,
+              "top1": 5,
+              "top3": 7
+            },
+            "vi": {
+              "count": 12,
+              "available": 12,
+              "top1": 5,
+              "top3": 7
+            },
+            "zh": {
+              "count": 12,
+              "available": 12,
+              "top1": 7,
+              "top3": 11
+            }
+          },
+          "semantic_models": {
+            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8": 60,
+            "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 12
+          },
+          "worst_language_top1": 0.4166666666666667,
+          "worst_language_top3": 0.5,
+          "preregistered_failures": [
+            "top1 54.17% < 60.00%",
+            "top3 72.22% < 80.00%",
+            "worst language top3 50.00% < 55.00%"
+          ]
+        }
+      }
+    },
+    "universal_discovery_queries_v2.json": {
+      "fixture_sha256": "8c96401f5fb62cf3a385ec0e0b1683a53dc29187958e67f857fe308e49c9d797",
+      "preregistered_exit_code": 1,
+      "preregistered_report_sha256": "763fa76b097fd762c4aa36ce35a8882359917642b810aee51c9e95c5ddcc9f34",
+      "preregistered_gate": {
+        "preset": "universal-discovery-absolute-v1",
+        "min_top1": 0.6,
+        "min_top3": 0.8,
+        "min_language_top1": 0.4,
+        "min_language_top3": 0.55,
+        "max_wrong_effect_top1": 5,
+        "require_matching": "hybrid",
+        "require_model": true,
+        "expect_model": [
+          "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8",
+          "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2"
+        ]
+      },
+      "profiles": {
+        "core": {
+          "summary": {
+            "count": 48,
+            "available": 42,
+            "unavailable": 6,
+            "unknown": 0,
+            "top1": 17,
+            "top3": 23,
+            "available_top1": 17,
+            "available_top3": 23,
+            "any_binding_top1": 17,
+            "any_binding_top3": 23,
+            "no_result": 0,
+            "hidden_expected_route": 0,
+            "wrong_effect_top1": 1,
+            "wrong_effect_top3": 10
+          },
+          "languages": {
+            "de": {
+              "count": 8,
+              "available": 7,
+              "top1": 3,
+              "top3": 4
+            },
+            "fi": {
+              "count": 8,
+              "available": 7,
+              "top1": 3,
+              "top3": 3
+            },
+            "pt": {
+              "count": 8,
+              "available": 7,
+              "top1": 4,
+              "top3": 5
+            },
+            "th": {
+              "count": 8,
+              "available": 7,
+              "top1": 2,
+              "top3": 3
+            },
+            "vi": {
+              "count": 8,
+              "available": 7,
+              "top1": 2,
+              "top3": 3
+            },
+            "zh": {
+              "count": 8,
+              "available": 7,
+              "top1": 3,
+              "top3": 5
+            }
+          },
+          "semantic_models": {
+            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8": 41,
+            "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 7
+          },
+          "worst_language_top1": 0.25,
+          "worst_language_top3": 0.375,
+          "preregistered_failures": [
+            "top1 35.42% < 60.00%",
+            "top3 47.92% < 80.00%",
+            "worst language top1 25.00% < 40.00%",
+            "worst language top3 37.50% < 55.00%"
+          ]
+        },
+        "full": {
+          "summary": {
+            "count": 48,
+            "available": 48,
+            "unavailable": 0,
+            "unknown": 0,
+            "top1": 18,
+            "top3": 23,
+            "available_top1": 18,
+            "available_top3": 23,
+            "any_binding_top1": 18,
+            "any_binding_top3": 23,
+            "no_result": 0,
+            "hidden_expected_route": 0,
+            "wrong_effect_top1": 1,
+            "wrong_effect_top3": 12
+          },
+          "languages": {
+            "de": {
+              "count": 8,
+              "available": 8,
+              "top1": 3,
+              "top3": 4
+            },
+            "fi": {
+              "count": 8,
+              "available": 8,
+              "top1": 3,
+              "top3": 3
+            },
+            "pt": {
+              "count": 8,
+              "available": 8,
+              "top1": 4,
+              "top3": 6
+            },
+            "th": {
+              "count": 8,
+              "available": 8,
+              "top1": 2,
+              "top3": 3
+            },
+            "vi": {
+              "count": 8,
+              "available": 8,
+              "top1": 2,
+              "top3": 2
+            },
+            "zh": {
+              "count": 8,
+              "available": 8,
+              "top1": 4,
+              "top3": 5
+            }
+          },
+          "semantic_models": {
+            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8": 41,
+            "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 7
+          },
+          "worst_language_top1": 0.25,
+          "worst_language_top3": 0.25,
+          "preregistered_failures": [
+            "top1 37.50% < 60.00%",
+            "top3 47.92% < 80.00%",
+            "worst language top1 25.00% < 40.00%",
+            "worst language top3 25.00% < 55.00%"
+          ]
+        }
+      }
+    }
+  }
+}

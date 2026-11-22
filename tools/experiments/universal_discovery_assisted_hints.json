@@ -1,0 +1,729 @@
+{
+  "schema": 1,
+  "caller": {
+    "model": "gpt-6.2-sol",
+    "reasoning_effort": "medium",
+    "request_manifest_sha256": "500bf43a448a83b7da7edefae6aed8630b7767600d5aed7b35873541eb3d0004",
+    "response_sha256": "f370b5cfbcaf8192241b0a14223be3afb196a9df3e6c94977efe0347c4d5d428"
+  },
+  "suites": {
+    "645d3fcd1924820fd62fa9320bfde872c8a6af10793f974b4cbd70f93fa8d841": {
+      "zh": {
+        "menu-path": {
+          "intent": "observe",
+          "catalog_query": "find Frame Debugger Unity Editor menu path",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "menu-open": {
+          "intent": "interact",
+          "catalog_query": "execute Unity Editor menu item Window/General/Console"
+        },
+        "console-read": {
+          "intent": "observe",
+          "catalog_query": "read existing Unity Console error entries with exact message text",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "console-clear": {
+          "intent": "interact",
+          "catalog_query": "clear all Unity Console messages"
+        },
+        "camera-read": {
+          "intent": "observe",
+          "catalog_query": "list scene Camera components with GameObject names and depth values",
+          "observation_source": "editor_live",
+          "required_values": [
+            "unityCameras"
+          ]
+        },
+        "camera-lens": {
+          "intent": "edit",
+          "catalog_query": "set existing perspective Camera component field of view"
+        },
+        "game-view-pixels": {
+          "intent": "observe",
+          "catalog_query": "get Game View actual rendered pixel width and height",
+          "observation_source": "editor_live",
+          "required_values": [
+            "render_size.width",
+            "render_size.height"
+          ]
+        },
+        "game-view-resize": {
+          "intent": "interact",
+          "catalog_query": "set Game View fixed pixel resolution preset"
+        },
+        "scene-inventory": {
+          "intent": "observe",
+          "catalog_query": "list open Editor scenes with loaded and active flags",
+          "observation_source": "editor_live"
+        },
+        "scene-activate": {
+          "intent": "interact",
+          "catalog_query": "set already loaded scene as active scene"
+        },
+        "saved-graph": {
+          "intent": "observe",
+          "catalog_query": "inspect saved Shader Graph node and edge counts",
+          "observation_source": "asset_file",
+          "required_values": [
+            "nodeCount",
+            "edgeCount"
+          ]
+        },
+        "active-transform-tool": {
+          "intent": "observe",
+          "catalog_query": "get active Editor transform tool Move Rotate Scale",
+          "observation_source": "editor_live"
+        }
+      },
+      "vi": {
+        "menu-path": {
+          "intent": "observe",
+          "catalog_query": "find Frame Debugger Unity Editor menu path",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "menu-open": {
+          "intent": "interact",
+          "catalog_query": "execute Unity Editor menu item Window/General/Console"
+        },
+        "console-read": {
+          "intent": "observe",
+          "catalog_query": "read existing Unity Console error entries with exact message text",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "console-clear": {
+          "intent": "interact",
+          "catalog_query": "clear all Unity Console messages"
+        },
+        "camera-read": {
+          "intent": "observe",
+          "catalog_query": "list scene Camera components with GameObject names and depth values",
+          "observation_source": "editor_live",
+          "required_values": [
+            "unityCameras"
+          ]
+        },
+        "camera-lens": {
+          "intent": "edit",
+          "catalog_query": "set existing perspective Camera component field of view"
+        },
+        "game-view-pixels": {
+          "intent": "observe",
+          "catalog_query": "get Game View actual rendered pixel width and height",
+          "observation_source": "editor_live",
+          "required_values": [
+            "render_size.width",
+            "render_size.height"
+          ]
+        },
+        "game-view-resize": {
+          "intent": "interact",
+          "catalog_query": "set Game View fixed pixel resolution preset"
+        },
+        "scene-inventory": {
+          "intent": "observe",
+          "catalog_query": "list open Editor scenes with loaded and active flags",
+          "observation_source": "editor_live"
+        },
+        "scene-activate": {
+          "intent": "interact",
+          "catalog_query": "set already loaded scene as active scene"
+        },
+        "saved-graph": {
+          "intent": "observe",
+          "catalog_query": "inspect saved Shader Graph node and edge counts",
+          "observation_source": "asset_file",
+          "required_values": [
+            "nodeCount",
+            "edgeCount"
+          ]
+        },
+        "active-transform-tool": {
+          "intent": "observe",
+          "catalog_query": "get active Editor transform tool Move Rotate Scale",
+          "observation_source": "editor_live"
+        }
+      },
+      "pt": {
+        "menu-path": {
+          "intent": "observe",
+          "catalog_query": "find Frame Debugger Unity Editor menu path",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "menu-open": {
+          "intent": "interact",
+          "catalog_query": "execute Unity Editor menu item Window/General/Console"
+        },
+        "console-read": {
+          "intent": "observe",
+          "catalog_query": "read existing Unity Console error entries with exact message text",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "console-clear": {
+          "intent": "interact",
+          "catalog_query": "clear all Unity Console messages"
+        },
+        "camera-read": {
+          "intent": "observe",
+          "catalog_query": "list scene Camera components with GameObject names and depth values",
+          "observation_source": "editor_live",
+          "required_values": [
+            "unityCameras"
+          ]
+        },
+        "camera-lens": {
+          "intent": "edit",
+          "catalog_query": "set existing perspective Camera component field of view"
+        },
+        "game-view-pixels": {
+          "intent": "observe",
+          "catalog_query": "get Game View actual rendered pixel width and height",
+          "observation_source": "editor_live",
+          "required_values": [
+            "render_size.width",
+            "render_size.height"
+          ]
+        },
+        "game-view-resize": {
+          "intent": "interact",
+          "catalog_query": "set Game View fixed pixel resolution preset"
+        },
+        "scene-inventory": {
+          "intent": "observe",
+          "catalog_query": "list open Editor scenes with loaded and active flags",
+          "observation_source": "editor_live"
+        },
+        "scene-activate": {
+          "intent": "interact",
+          "catalog_query": "set already loaded scene as active scene"
+        },
+        "saved-graph": {
+          "intent": "observe",
+          "catalog_query": "inspect saved Shader Graph node and edge counts",
+          "observation_source": "asset_file",
+          "required_values": [
+            "nodeCount",
+            "edgeCount"
+          ]
+        },
+        "active-transform-tool": {
+          "intent": "observe",
+          "catalog_query": "get active Editor transform tool Move Rotate Scale",
+          "observation_source": "editor_live"
+        }
+      },
+      "de": {
+        "menu-path": {
+          "intent": "observe",
+          "catalog_query": "find Frame Debugger Unity Editor menu path",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "menu-open": {
+          "intent": "interact",
+          "catalog_query": "execute Unity Editor menu item Window/General/Console"
+        },
+        "console-read": {
+          "intent": "observe",
+          "catalog_query": "read existing Unity Console error entries with exact message text",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "console-clear": {
+          "intent": "interact",
+          "catalog_query": "clear all Unity Console messages"
+        },
+        "camera-read": {
+          "intent": "observe",
+          "catalog_query": "list scene Camera components with GameObject names and depth values",
+          "observation_source": "editor_live",
+          "required_values": [
+            "unityCameras"
+          ]
+        },
+        "camera-lens": {
+          "intent": "edit",
+          "catalog_query": "set existing perspective Camera component field of view"
+        },
+        "game-view-pixels": {
+          "intent": "observe",
+          "catalog_query": "get Game View actual rendered pixel width and height",
+          "observation_source": "editor_live",
+          "required_values": [
+            "render_size.width",
+            "render_size.height"
+          ]
+        },
+        "game-view-resize": {
+          "intent": "interact",
+          "catalog_query": "set Game View fixed pixel resolution preset"
+        },
+        "scene-inventory": {
+          "intent": "observe",
+          "catalog_query": "list open Editor scenes with loaded and active flags",
+          "observation_source": "editor_live"
+        },
+        "scene-activate": {
+          "intent": "interact",
+          "catalog_query": "set already loaded scene as active scene"
+        },
+        "saved-graph": {
+          "intent": "observe",
+          "catalog_query": "inspect saved Shader Graph node and edge counts",
+          "observation_source": "asset_file",
+          "required_values": [
+            "nodeCount",
+            "edgeCount"
+          ]
+        },
+        "active-transform-tool": {
+          "intent": "observe",
+          "catalog_query": "get active Editor transform tool Move Rotate Scale",
+          "observation_source": "editor_live"
+        }
+      },
+      "fi": {
+        "menu-path": {
+          "intent": "observe",
+          "catalog_query": "find Frame Debugger Unity Editor menu path",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "menu-open": {
+          "intent": "interact",
+          "catalog_query": "execute Unity Editor menu item Window/General/Console"
+        },
+        "console-read": {
+          "intent": "observe",
+          "catalog_query": "read existing Unity Console error entries with exact message text",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "console-clear": {
+          "intent": "interact",
+          "catalog_query": "clear all Unity Console messages"
+        },
+        "camera-read": {
+          "intent": "observe",
+          "catalog_query": "list scene Camera components with GameObject names and depth values",
+          "observation_source": "editor_live",
+          "required_values": [
+            "unityCameras"
+          ]
+        },
+        "camera-lens": {
+          "intent": "edit",
+          "catalog_query": "set existing perspective Camera component field of view"
+        },
+        "game-view-pixels": {
+          "intent": "observe",
+          "catalog_query": "get Game View actual rendered pixel width and height",
+          "observation_source": "editor_live",
+          "required_values": [
+            "render_size.width",
+            "render_size.height"
+          ]
+        },
+        "game-view-resize": {
+          "intent": "interact",
+          "catalog_query": "set Game View fixed pixel resolution preset"
+        },
+        "scene-inventory": {
+          "intent": "observe",
+          "catalog_query": "list open Editor scenes with loaded and active flags",
+          "observation_source": "editor_live"
+        },
+        "scene-activate": {
+          "intent": "interact",
+          "catalog_query": "set already loaded scene as active scene"
+        },
+        "saved-graph": {
+          "intent": "observe",
+          "catalog_query": "inspect saved Shader Graph node and edge counts",
+          "observation_source": "asset_file",
+          "required_values": [
+            "nodeCount",
+            "edgeCount"
+          ]
+        },
+        "active-transform-tool": {
+          "intent": "observe",
+          "catalog_query": "get active Editor transform tool Move Rotate Scale",
+          "observation_source": "editor_live"
+        }
+      },
+      "th": {
+        "menu-path": {
+          "intent": "observe",
+          "catalog_query": "find Frame Debugger Unity Editor menu path",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "menu-open": {
+          "intent": "interact",
+          "catalog_query": "execute Unity Editor menu item Window/General/Console"
+        },
+        "console-read": {
+          "intent": "observe",
+          "catalog_query": "read existing Unity Console error entries with exact message text",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "console-clear": {
+          "intent": "interact",
+          "catalog_query": "clear all Unity Console messages"
+        },
+        "camera-read": {
+          "intent": "observe",
+          "catalog_query": "list scene Camera components with GameObject names and depth values",
+          "observation_source": "editor_live",
+          "required_values": [
+            "unityCameras"
+          ]
+        },
+        "camera-lens": {
+          "intent": "edit",
+          "catalog_query": "set existing perspective Camera component field of view"
+        },
+        "game-view-pixels": {
+          "intent": "observe",
+          "catalog_query": "get Game View actual rendered pixel width and height",
+          "observation_source": "editor_live",
+          "required_values": [
+            "render_size.width",
+            "render_size.height"
+          ]
+        },
+        "game-view-resize": {
+          "intent": "interact",
+          "catalog_query": "set Game View fixed pixel resolution preset"
+        },
+        "scene-inventory": {
+          "intent": "observe",
+          "catalog_query": "list open Editor scenes with loaded and active flags",
+          "observation_source": "editor_live"
+        },
+        "scene-activate": {
+          "intent": "interact",
+          "catalog_query": "set already loaded scene as active scene"
+        },
+        "saved-graph": {
+          "intent": "observe",
+          "catalog_query": "inspect saved Shader Graph node and edge counts",
+          "observation_source": "asset_file",
+          "required_values": [
+            "nodeCount",
+            "edgeCount"
+          ]
+        },
+        "active-transform-tool": {
+          "intent": "observe",
+          "catalog_query": "get active Editor transform tool Move Rotate Scale",
+          "observation_source": "editor_live"
+        }
+      }
+    },
+    "8c96401f5fb62cf3a385ec0e0b1683a53dc29187958e67f857fe308e49c9d797": {
+      "zh": {
+        "menu-exists": {
+          "intent": "observe",
+          "catalog_query": "check exact path in declared Unity Editor menu items",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "console-follow": {
+          "intent": "observe",
+          "catalog_query": "tail Unity Console from current end with cursor and read new entries only",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "camera-create": {
+          "intent": "edit",
+          "catalog_query": "create new scene Camera GameObject with field of view"
+        },
+        "object-tag-search": {
+          "intent": "observe",
+          "catalog_query": "find GameObjects by tag across loaded scenes include inactive return instance IDs",
+          "observation_source": "editor_live"
+        },
+        "build-scene-list": {
+          "intent": "observe",
+          "catalog_query": "list Build Settings scene paths and enabled states",
+          "observation_source": "editor_live"
+        },
+        "prefab-context": {
+          "intent": "observe",
+          "catalog_query": "get current isolated Prefab Stage and prefab asset path",
+          "observation_source": "editor_live"
+        },
+        "pause-running-game": {
+          "intent": "interact",
+          "catalog_query": "pause running game in Unity Editor Play Mode"
+        },
+        "game-view-restore": {
+          "intent": "interact",
+          "catalog_query": "restore previous Game View size preset using restore token"
+        }
+      },
+      "vi": {
+        "menu-exists": {
+          "intent": "observe",
+          "catalog_query": "check exact path in declared Unity Editor menu items",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "console-follow": {
+          "intent": "observe",
+          "catalog_query": "tail Unity Console from current end with cursor and read new entries only",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "camera-create": {
+          "intent": "edit",
+          "catalog_query": "create new scene Camera GameObject with field of view"
+        },
+        "object-tag-search": {
+          "intent": "observe",
+          "catalog_query": "find GameObjects by tag across loaded scenes include inactive return instance IDs",
+          "observation_source": "editor_live"
+        },
+        "build-scene-list": {
+          "intent": "observe",
+          "catalog_query": "list Build Settings scene paths and enabled states",
+          "observation_source": "editor_live"
+        },
+        "prefab-context": {
+          "intent": "observe",
+          "catalog_query": "get current isolated Prefab Stage and prefab asset path",
+          "observation_source": "editor_live"
+        },
+        "pause-running-game": {
+          "intent": "interact",
+          "catalog_query": "pause running game in Unity Editor Play Mode"
+        },
+        "game-view-restore": {
+          "intent": "interact",
+          "catalog_query": "restore previous Game View size preset using restore token"
+        }
+      },
+      "pt": {
+        "menu-exists": {
+          "intent": "observe",
+          "catalog_query": "check exact path in declared Unity Editor menu items",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "console-follow": {
+          "intent": "observe",
+          "catalog_query": "tail Unity Console from current end with cursor and read new entries only",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "camera-create": {
+          "intent": "edit",
+          "catalog_query": "create new scene Camera GameObject with field of view"
+        },
+        "object-tag-search": {
+          "intent": "observe",
+          "catalog_query": "find GameObjects by tag across loaded scenes include inactive return instance IDs",
+          "observation_source": "editor_live"
+        },
+        "build-scene-list": {
+          "intent": "observe",
+          "catalog_query": "list Build Settings scene paths and enabled states",
+          "observation_source": "editor_live"
+        },
+        "prefab-context": {
+          "intent": "observe",
+          "catalog_query": "get current isolated Prefab Stage and prefab asset path",
+          "observation_source": "editor_live"
+        },
+        "pause-running-game": {
+          "intent": "interact",
+          "catalog_query": "pause running game in Unity Editor Play Mode"
+        },
+        "game-view-restore": {
+          "intent": "interact",
+          "catalog_query": "restore previous Game View size preset using restore token"
+        }
+      },
+      "de": {
+        "menu-exists": {
+          "intent": "observe",
+          "catalog_query": "check exact path in declared Unity Editor menu items",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "console-follow": {
+          "intent": "observe",
+          "catalog_query": "tail Unity Console from current end with cursor and read new entries only",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "camera-create": {
+          "intent": "edit",
+          "catalog_query": "create new scene Camera GameObject with field of view"
+        },
+        "object-tag-search": {
+          "intent": "observe",
+          "catalog_query": "find GameObjects by tag across loaded scenes include inactive return instance IDs",
+          "observation_source": "editor_live"
+        },
+        "build-scene-list": {
+          "intent": "observe",
+          "catalog_query": "list Build Settings scene paths and enabled states",
+          "observation_source": "editor_live"
+        },
+        "prefab-context": {
+          "intent": "observe",
+          "catalog_query": "get current isolated Prefab Stage and prefab asset path",
+          "observation_source": "editor_live"
+        },
+        "pause-running-game": {
+          "intent": "interact",
+          "catalog_query": "pause running game in Unity Editor Play Mode"
+        },
+        "game-view-restore": {
+          "intent": "interact",
+          "catalog_query": "restore previous Game View size preset using restore token"
+        }
+      },
+      "fi": {
+        "menu-exists": {
+          "intent": "observe",
+          "catalog_query": "check exact path in declared Unity Editor menu items",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "console-follow": {
+          "intent": "observe",
+          "catalog_query": "tail Unity Console from current end with cursor and read new entries only",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "camera-create": {
+          "intent": "edit",
+          "catalog_query": "create new scene Camera GameObject with field of view"
+        },
+        "object-tag-search": {
+          "intent": "observe",
+          "catalog_query": "find GameObjects by tag across loaded scenes include inactive return instance IDs",
+          "observation_source": "editor_live"
+        },
+        "build-scene-list": {
+          "intent": "observe",
+          "catalog_query": "list Build Settings scene paths and enabled states",
+          "observation_source": "editor_live"
+        },
+        "prefab-context": {
+          "intent": "observe",
+          "catalog_query": "get current isolated Prefab Stage and prefab asset path",
+          "observation_source": "editor_live"
+        },
+        "pause-running-game": {
+          "intent": "interact",
+          "catalog_query": "pause running game in Unity Editor Play Mode"
+        },
+        "game-view-restore": {
+          "intent": "interact",
+          "catalog_query": "restore previous Game View size preset using restore token"
+        }
+      },
+      "th": {
+        "menu-exists": {
+          "intent": "observe",
+          "catalog_query": "check exact path in declared Unity Editor menu items",
+          "observation_source": "editor_live",
+          "required_values": [
+            "menu.declared_paths"
+          ]
+        },
+        "console-follow": {
+          "intent": "observe",
+          "catalog_query": "tail Unity Console from current end with cursor and read new entries only",
+          "observation_source": "editor_live",
+          "required_values": [
+            "console.entries"
+          ]
+        },
+        "camera-create": {
+          "intent": "edit",
+          "catalog_query": "create new scene Camera GameObject with field of view"
+        },
+        "object-tag-search": {
+          "intent": "observe",
+          "catalog_query": "find GameObjects by tag across loaded scenes include inactive return instance IDs",
+          "observation_source": "editor_live"
+        },
+        "build-scene-list": {
+          "intent": "observe",
+          "catalog_query": "list Build Settings scene paths and enabled states",
+          "observation_source": "editor_live"
+        },
+        "prefab-context": {
+          "intent": "observe",
+          "catalog_query": "get current isolated Prefab Stage and prefab asset path",
+          "observation_source": "editor_live"
+        },
+        "pause-running-game": {
+          "intent": "interact",
+          "catalog_query": "pause running game in Unity Editor Play Mode"
+        },
+        "game-view-restore": {
+          "intent": "interact",
+          "catalog_query": "restore previous Game View size preset using restore token"
+        }
+      }
+    }
+  }
+}

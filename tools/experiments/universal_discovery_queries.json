@@ -1,0 +1,226 @@
+{
+  "schema": 1,
+  "tasks": {
+    "menu-path": {
+      "expected": [
+        "list_menu_declarations",
+        "mcpforunity://menu-items"
+      ],
+      "wrong_effect": [
+        "execute_menu_item.execute",
+        "execute_menu_item.evaluate_availability"
+      ],
+      "actor_task": "menu-declaration"
+    },
+    "menu-open": {
+      "expected": [
+        "execute_menu_item.execute"
+      ],
+      "wrong_effect": [
+        "execute_menu_item.evaluate_availability"
+      ]
+    },
+    "console-read": {
+      "expected": [
+        "read_console.get"
+      ],
+      "wrong_effect": [
+        "read_console.clear",
+        "execute_menu_item.execute"
+      ],
+      "actor_task": "console-errors"
+    },
+    "console-clear": {
+      "expected": [
+        "read_console.clear"
+      ],
+      "wrong_effect": [
+        "execute_menu_item.execute"
+      ]
+    },
+    "camera-read": {
+      "expected": [
+        "inspect_scene_cameras",
+        "mcpforunity://scene/cameras",
+        "manage_camera.list_cameras",
+        "manage_cameras.list_cameras"
+      ],
+      "wrong_effect": [
+        "manage_camera.set_lens",
+        "manage_cameras.set_lens",
+        "manage_camera.create_camera",
+        "manage_cameras.create_camera",
+        "manage_camera.force_camera",
+        "manage_cinemachine.force_camera"
+      ],
+      "actor_task": "camera-depth"
+    },
+    "camera-lens": {
+      "expected": [
+        "manage_camera.set_lens",
+        "manage_cameras.set_lens"
+      ],
+      "wrong_effect": [
+        "manage_camera.create_camera",
+        "manage_cameras.create_camera",
+        "manage_camera.force_camera",
+        "manage_cinemachine.force_camera"
+      ]
+    },
+    "game-view-pixels": {
+      "expected": [
+        "get_game_view_size",
+        "mcpforunity://editor/game-view-size",
+        "manage_editor.get_game_view_size"
+      ],
+      "wrong_effect": [
+        "manage_editor.set_game_view_size",
+        "manage_editor.restore_game_view_size",
+        "manage_editor.play"
+      ],
+      "actor_task": "game-view"
+    },
+    "game-view-resize": {
+      "expected": [
+        "manage_editor.set_game_view_size"
+      ],
+      "wrong_effect": [
+        "manage_editor.restore_game_view_size",
+        "manage_editor.play"
+      ]
+    },
+    "scene-inventory": {
+      "expected": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes"
+      ],
+      "wrong_effect": [
+        "scene_lifecycle.load",
+        "scene_lifecycle.close_scene",
+        "scene_lifecycle.set_active_scene",
+        "manage_scene.load",
+        "manage_scene.close_scene",
+        "manage_scene.set_active_scene"
+      ]
+    },
+    "scene-activate": {
+      "expected": [
+        "scene_lifecycle.set_active_scene",
+        "manage_scene.set_active_scene"
+      ],
+      "wrong_effect": [
+        "scene_lifecycle.load",
+        "scene_lifecycle.close_scene",
+        "manage_scene.load",
+        "manage_scene.close_scene"
+      ]
+    },
+    "saved-graph": {
+      "expected": [
+        "inspect_shader_graph",
+        "mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}",
+        "manage_shader.inspect_graph"
+      ],
+      "wrong_effect": [
+        "manage_shader.create",
+        "manage_shader.modify",
+        "refresh_unity"
+      ],
+      "actor_task": "graph-saved"
+    },
+    "active-transform-tool": {
+      "expected": [
+        "mcpforunity://editor/active-tool"
+      ],
+      "wrong_effect": [
+        "manage_editor.set_active_tool"
+      ]
+    }
+  },
+  "queries": {
+    "zh": {
+      "menu-path": "在这个编辑器里，帧调试器要从哪个菜单进去？把完整菜单路径告诉我就好，先别打开。",
+      "menu-open": "请直接执行菜单项「Window/General/Console」，把控制台窗口打开。",
+      "console-read": "刚才控制台里的报错是什么？只抄错误信息的原文，现有记录一条也别删。",
+      "console-clear": "把 Unity 控制台里现有的消息全清空，日志不用抄给我。",
+      "camera-read": "当前场景里，哪个挂了 Camera 组件的物体深度最大？只给物体名和数值，别调整镜头。",
+      "camera-lens": "把「燕尾_37」这台透视相机的视野角改到 47 度，其他镜头设置保持原样。",
+      "game-view-pixels": "游戏窗口眼下实际画出来的画面有多少像素宽、多少像素高？不用改预设，也不用截图。",
+      "game-view-resize": "把打开的游戏视图切成固定的 864×486 像素。别进入运行模式。",
+      "scene-inventory": "列出层级窗口里目前打开的各个场景，标清哪些已加载、哪个是活动场景。不要切换。",
+      "scene-activate": "场景「玉箔_71」已经加载。设为活动场景，其他场景继续保留。",
+      "saved-graph": "查一下磁盘上 Assets/LookDev/JadeCoil.shadergraph 保存了多少个节点和多少条连线。忽略图编辑器里还没保存的改动。",
+      "active-transform-tool": "编辑器里平移、旋转和缩放这几个工具，当前选的是哪个？看看就行，别换。"
+    },
+    "vi": {
+      "menu-path": "Muốn tìm Trình gỡ lỗi khung hình trong Unity thì đi theo những mục menu nào? Cho mình đúng đường dẫn, đừng mở cửa sổ.",
+      "menu-open": "Mở cửa sổ bảng điều khiển giúp mình bằng đúng mục Window/General/Console.",
+      "console-read": "Trong bảng điều khiển đang báo những lỗi gì? Chép nguyên văn phần thông báo lỗi thôi và để nguyên nhật ký.",
+      "console-clear": "Xóa hết nội dung bảng điều khiển của Unity giúp mình, khỏi cần đọc lại các thông báo.",
+      "camera-read": "Trong cảnh hiện tại, vật thể nào gắn máy quay có độ sâu lớn nhất? Cho mình tên vật thể và giá trị số, đừng chỉnh máy quay.",
+      "camera-lens": "Đổi góc nhìn của máy quay phối cảnh Trầm_52 thành 49 độ. Giữ nguyên các thông số ống kính còn lại.",
+      "game-view-pixels": "Khung hình thực tế trong cửa sổ trò chơi đang rộng và cao bao nhiêu điểm ảnh? Chỉ xem số đo, đừng đổi kích thước.",
+      "game-view-resize": "Đặt cửa sổ trò chơi đang mở ở kích thước cố định 912 × 513 điểm ảnh, không cần chạy thử.",
+      "scene-inventory": "Liệt kê các cảnh hiện đang mở trong trình biên tập và cho biết cảnh nào đã nạp, cảnh nào đang hoạt động. Để nguyên trạng thái.",
+      "scene-activate": "Cảnh VỏSò_28 đã được nạp rồi. Đặt nó làm cảnh hoạt động, đừng đóng hay nạp lại cảnh khác.",
+      "saved-graph": "Đếm số nút và đường nối trong bản đã lưu ở Assets/LookDev/NacreTurn.shadergraph. Không tính các chỉnh sửa chưa lưu trong cửa sổ đồ thị.",
+      "active-transform-tool": "Xem hộ mình trình biên tập đang chọn công cụ di chuyển, xoay hay đổi tỷ lệ. Đừng chuyển sang công cụ khác."
+    },
+    "pt": {
+      "menu-path": "Em que menu deste editor fica o depurador de quadros? Passe o caminho completo e deixe a janela fechada.",
+      "menu-open": "Abra a janela do console pelo item Window/General/Console, por favor.",
+      "console-read": "Transcreva exatamente as mensagens de erro que estão no console agora. Deixe o histórico intacto.",
+      "console-clear": "Pode limpar todas as mensagens do console do Unity agora. Não precisa transcrever nada.",
+      "camera-read": "Qual objeto da cena está com o componente de câmera de maior profundidade? Quero o nome do objeto e o número, sem alterar nada.",
+      "camera-lens": "Ajuste para 51 graus o campo de visão da câmera em perspectiva chamada Bruma_64. Preserve os outros parâmetros da lente.",
+      "game-view-pixels": "Quantos pixels de largura e de altura a janela do jogo está renderizando agora? Só consulte as dimensões reais, sem mudar a configuração.",
+      "game-view-resize": "Defina a resolução fixa da janela do jogo para 960 por 540 pixels, sem iniciar o jogo.",
+      "scene-inventory": "Quais cenas estão abertas no editor agora? Indique quais estão carregadas e marque a que está ativa. Não abra nem feche nenhuma.",
+      "scene-activate": "Torne ativa a cena Névoa_59, que já está carregada. Mantenha as outras cenas como estão.",
+      "saved-graph": "Quantos nós e conexões tem a versão gravada de Assets/LookDev/FendaRasa.shadergraph? Ignore as mudanças que ainda estão só na janela do gráfico.",
+      "active-transform-tool": "Qual ferramenta de transformação está selecionada no editor, mover, girar ou escalar? Não troque a seleção."
+    },
+    "de": {
+      "menu-path": "Wo ist in diesem Editor der Frame-Debugger im Menü versteckt? Gib mir nur den vollständigen Menüpfad und öffne kein Fenster.",
+      "menu-open": "Bitte öffne die Konsole über den Menüeintrag Window/General/Console.",
+      "console-read": "Schreib mir die aktuellen Fehlermeldungen aus der Konsole wortgetreu ab. Lass den Inhalt der Konsole stehen.",
+      "console-clear": "Leere die Unity-Konsole komplett. Du brauchst mir keine Meldungen abzuschreiben.",
+      "camera-read": "Welches Objekt in der aktuellen Szene besitzt die Kamera mit dem höchsten Tiefenwert? Nenne den Objektnamen und den Zahlenwert, ohne eine Kamera zu verstellen.",
+      "camera-lens": "Stell den Blickwinkel der perspektivischen Kamera Kammzug_42 auf 53 Grad. Lass die übrigen Linseneinstellungen stehen.",
+      "game-view-pixels": "Wie breit und hoch wird das Bild im Spielfenster tatsächlich gerendert, in Pixeln? Bitte die Einstellung nur ablesen.",
+      "game-view-resize": "Stell für das geöffnete Spielfenster eine feste Auflösung von 1008 mal 567 Pixeln ein. Starte dabei das Spiel nicht.",
+      "scene-inventory": "Liste die derzeit geöffneten Szenen auf. Kennzeichne die geladenen Szenen und die aktive Szene. Lass die Zuordnung unverändert.",
+      "scene-activate": "Die Szene Kiefernknick_36 ist schon geladen. Mach sie zur aktiven Szene und lass alle anderen offen.",
+      "saved-graph": "Wie viele Knoten und Kanten enthält die gespeicherte Datei Assets/LookDev/Farnbogen.shadergraph? Änderungen, die nur im Graphfenster stehen, zählen nicht.",
+      "active-transform-tool": "Welches Werkzeug ist im Editor gerade aktiv: Verschieben, Drehen oder Skalieren? Bitte nur nachsehen."
+    },
+    "fi": {
+      "menu-path": "Mistä valikosta löydän ruutukohtaisen virheenjäljittimen? Kerro koko valikkopolku, mutta älä avaa sitä.",
+      "menu-open": "Avaa konsoli valitsemalla valikosta Window/General/Console.",
+      "console-read": "Kopioi konsolissa juuri nyt näkyvät virheilmoitukset sellaisinaan. Jätä kaikki merkinnät paikoilleen.",
+      "console-clear": "Tyhjennä Unityn konsoli kokonaan. Viestejä ei tarvitse luetella.",
+      "camera-read": "Millä nykyisen kohtauksen pelioliolla on kamera, jonka syvyysarvo on suurin? Kerro olion nimi ja lukuarvo säätämättä kameroita.",
+      "camera-lens": "Vaihda perspektiivikameran Huuru_83 näkökentäksi 55 astetta. Säilytä muut linssiasetukset.",
+      "game-view-pixels": "Mikä on peli-ikkunan renderöidyn kuvan nykyinen leveys ja korkeus pikseleinä? Älä vaihda kokoasetusta.",
+      "game-view-resize": "Aseta avoimen peli-ikkunan kiinteäksi kooksi 1056 × 594 pikseliä käynnistämättä peliä.",
+      "scene-inventory": "Luettele editorissa auki olevat kohtaukset ja merkitse, mitkä on ladattu ja mikä on aktiivinen. Älä vaihda aktiivista kohtausta.",
+      "scene-activate": "Kohtaus Juurakko_74 on jo ladattu. Vaihda se aktiiviseksi ja jätä muut kohtaukset auki.",
+      "saved-graph": "Laske tiedostoon Assets/LookDev/KaislanKierre.shadergraph tallennetut solmut ja yhteydet. Älä ota mukaan tallentamattomia muutoksia.",
+      "active-transform-tool": "Onko editorissa nyt käytössä siirto-, kierto- vai skaalaustyökalu? Katso vain, älä vaihda työkalua."
+    },
+    "th": {
+      "menu-path": "ถ้าจะหาเครื่องมือดีบักทีละเฟรมในยูนิตี ต้องเข้าจากเมนูไหนบ้าง บอกเส้นทางเต็ม ๆ ก็พอ ยังไม่ต้องเปิด",
+      "menu-open": "ช่วยเปิดหน้าต่างคอนโซลผ่านเมนู Window/General/Console ให้หน่อย",
+      "console-read": "คัดเฉพาะข้อความข้อผิดพลาดที่มีอยู่ในคอนโซลตอนนี้มาให้ตรงตามต้นฉบับ อย่าล้างข้อความในคอนโซล",
+      "console-clear": "ล้างข้อความทั้งหมดในคอนโซลของยูนิตีให้ที ไม่ต้องคัดข้อความมา",
+      "camera-read": "ในฉากที่เปิดอยู่ วัตถุไหนมีกล้องที่มีค่าความลึกสูงที่สุด ขอชื่อวัตถุกับตัวเลข ไม่ต้องแก้ค่ากล้อง",
+      "camera-lens": "ปรับมุมมองของกล้องแบบเพอร์สเปกทีฟชื่อ ไพลิน_26 เป็น 57 องศา ค่าเลนส์อื่นคงเดิม",
+      "game-view-pixels": "ตอนนี้ภาพที่เรนเดอร์ในหน้าต่างเกมกว้างและสูงกี่พิกเซล ขอขนาดภาพจริงโดยไม่ต้องเปลี่ยนการตั้งค่า",
+      "game-view-resize": "ตั้งหน้าต่างเกมที่เปิดอยู่ให้มีขนาดคงที่ 1104 คูณ 621 พิกเซล โดยไม่ต้องเริ่มเล่น",
+      "scene-inventory": "ช่วยแจกแจงฉากที่เปิดอยู่ในตัวแก้ไข ระบุว่าฉากไหนโหลดแล้วและฉากไหนเป็นฉากที่ใช้งานอยู่ ไม่ต้องสลับฉาก",
+      "scene-activate": "ฉาก สายหมอก_95 โหลดอยู่แล้ว ตั้งให้เป็นฉากที่ใช้งานอยู่โดยเปิดฉากอื่นค้างไว้เหมือนเดิม",
+      "saved-graph": "นับจำนวนโหนดกับเส้นเชื่อมในไฟล์ Assets/LookDev/BlueReed.shadergraph ตามที่บันทึกลงดิสก์แล้ว ไม่นับสิ่งที่แก้ในหน้าต่างกราฟแต่ยังไม่ได้บันทึก",
+      "active-transform-tool": "ตอนนี้ในตัวแก้ไขเลือกเครื่องมือย้าย หมุน หรือปรับขนาดอยู่ ดูอย่างเดียวไม่ต้องสลับเครื่องมือ"
+    }
+  }
+}

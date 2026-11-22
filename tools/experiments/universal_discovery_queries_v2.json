@@ -1,0 +1,156 @@
+{
+  "schema": 1,
+  "tasks": {
+    "menu-exists": {
+      "expected": [
+        "execute_menu_item.exists",
+        "execute_menu_item.inspect",
+        "list_menu_declarations",
+        "mcpforunity://menu-items"
+      ],
+      "wrong_effect": [
+        "execute_menu_item.execute",
+        "execute_menu_item.evaluate_availability"
+      ]
+    },
+    "console-follow": {
+      "expected": [
+        "read_console.get"
+      ],
+      "wrong_effect": [
+        "read_console.clear",
+        "execute_menu_item.execute"
+      ]
+    },
+    "camera-create": {
+      "expected": [
+        "manage_cameras.create_camera",
+        "manage_camera.create_camera"
+      ],
+      "wrong_effect": [
+        "manage_camera.set_lens",
+        "manage_cameras.set_lens",
+        "manage_camera.force_camera",
+        "manage_cinemachine.force_camera"
+      ]
+    },
+    "object-tag-search": {
+      "expected": [
+        "find_gameobjects"
+      ],
+      "wrong_effect": [
+        "gameobject_create.create",
+        "gameobject_edit.modify",
+        "manage_gameobject.modify",
+        "manage_gameobject.create"
+      ]
+    },
+    "build-scene-list": {
+      "expected": [
+        "scene_inspect.get_build_settings",
+        "manage_scene.get_build_settings",
+        "manage_build.scenes"
+      ],
+      "wrong_effect": [
+        "manage_build.build",
+        "manage_build.build_from_plan",
+        "manage_build.clean_output",
+        "scene_lifecycle.load",
+        "manage_scene.load"
+      ]
+    },
+    "prefab-context": {
+      "expected": [
+        "mcpforunity://editor/prefab-stage"
+      ],
+      "wrong_effect": [
+        "prefab_stage.open_prefab_stage",
+        "prefab_stage.close_prefab_stage",
+        "prefab_stage.save_prefab_stage",
+        "manage_prefabs.open_prefab_stage",
+        "manage_prefabs.close_prefab_stage",
+        "manage_prefabs.save_prefab_stage"
+      ]
+    },
+    "pause-running-game": {
+      "expected": [
+        "manage_editor.pause"
+      ],
+      "wrong_effect": [
+        "manage_editor.play",
+        "manage_editor.stop"
+      ]
+    },
+    "game-view-restore": {
+      "expected": [
+        "manage_editor.restore_game_view_size"
+      ],
+      "wrong_effect": [
+        "manage_editor.set_game_view_size",
+        "manage_editor.play"
+      ]
+    }
+  },
+  "queries": {
+    "zh": {
+      "menu-exists": "确认编辑器有没有声明 Tools/AmberFold/Batch Atlas 这个菜单项。别点它，也不用测它现在是不是灰的。",
+      "console-follow": "从当前记录的末尾开始跟踪 Unity 控制台，之后只看新增消息。已有的日志请保留。",
+      "camera-create": "在场景里添一台相机，命名为「回声井_62」，视野角用 41 度，原来的相机保持原样。",
+      "object-tag-search": "找出所有已加载场景中打了「浮岛_63」标签的物体，连没激活的也算上。请给各物体的实例编号。",
+      "build-scene-list": "构建设置里列了哪些场景？把路径和勾选状态给我看一下，先别开始构建。",
+      "prefab-context": "编辑器现在是在单独编辑某个预制件吗？如果是，告诉我对应文件的路径。别打开或退出编辑模式。",
+      "pause-running-game": "游戏已经在运转了。暂停在当前位置，我想稍后从这里接着跑。",
+      "game-view-restore": "用刚才拿到的恢复凭据 5086b0b99a2b45dc9ac57b5b643f36d2，把游戏窗口切回改尺寸前的预设。"
+    },
+    "vi": {
+      "menu-exists": "Cho mình biết mục Tools/WillowArc/Create Palette có được khai báo trong menu của trình biên tập không. Đừng bấm vào mục đó hay thử xem nó có đang bật không.",
+      "console-follow": "Bắt đầu theo dõi bảng điều khiển từ cuối danh sách hiện tại. Chỉ lấy những dòng xuất hiện sau thời điểm này, giữ nguyên lịch sử.",
+      "camera-create": "Thêm một máy quay tên ThạchRêu_34 vào cảnh với góc nhìn 43 độ. Đừng sửa các máy quay đang có.",
+      "object-tag-search": "Trong những cảnh đang được nạp, tìm các vật thể mang thẻ GióNồm_25, kể cả vật thể đang tắt. Mình cần mã định danh của chúng.",
+      "build-scene-list": "Đọc danh sách cảnh trong thiết lập bản dựng, ghi đường dẫn và cảnh nào được chọn. Đừng bắt đầu dựng trò chơi.",
+      "prefab-context": "Trình biên tập có đang mở riêng một prefab để sửa không? Nếu có thì cho mình đường dẫn tệp của nó, chỉ kiểm tra thôi.",
+      "pause-running-game": "Cho trò chơi đang chạy tạm dừng ở đúng chỗ này để lát nữa mình tiếp tục. Đừng thoát chế độ chơi.",
+      "game-view-restore": "Khôi phục thiết lập kích thước cửa sổ trò chơi trước lần chỉnh vừa rồi bằng mã 412de2ff451a426f8e29b90ae6d342c9."
+    },
+    "pt": {
+      "menu-exists": "Confira se Tools/CinderLake/Pack Sheets é um item declarado no menu do editor. Não execute o comando nem rode a validação de disponibilidade.",
+      "console-follow": "Comece a acompanhar o console da posição atual e traga só o que chegar daqui em diante. Deixe as mensagens antigas no lugar.",
+      "camera-create": "Crie mais uma câmera na cena com o nome Cascalho_48 e campo de visão de 45 graus. Deixe as câmeras antigas como estão.",
+      "object-tag-search": "Quero os IDs dos objetos com a etiqueta PingoFino_84 em todas as cenas carregadas, incluindo os desativados.",
+      "build-scene-list": "Veja quais cenas constam na configuração de compilação e quais estão marcadas para entrar na versão. Só consulte os caminhos e os estados.",
+      "prefab-context": "Há algum prefab aberto no modo de edição isolado neste momento? Se houver, me passe o caminho do arquivo sem trocar de modo.",
+      "pause-running-game": "Dê pausa no jogo em execução para eu poder continuar do mesmo ponto depois.",
+      "game-view-restore": "Volte à configuração anterior de tamanho da janela do jogo usando o código de restauração e820a20cf90e4ceb9b6164c863827590."
+    },
+    "de": {
+      "menu-exists": "Ist Tools/FrostElm/Rebuild Index im Editor als Menüeintrag deklariert? Bitte den Eintrag weder ausführen noch seine Aktivierung prüfen.",
+      "console-follow": "Beginne am Ende der aktuellen Konsole und lies von jetzt an nur neu hinzukommende Meldungen. Lass die bisherigen Zeilen stehen.",
+      "camera-create": "Lege eine zusätzliche Kamera namens Moorsteg_97 mit einem Sichtfeld von 47 Grad in der Szene an. Lass die vorhandenen Kameras unverändert.",
+      "object-tag-search": "Such in allen geladenen Szenen nach Objekten mit dem Tag Tannenharz_33. Gib auch für deaktivierte Objekte die Instanz-ID an.",
+      "build-scene-list": "Welche Szenen stehen in der Build-Konfiguration, und welche sind angehakt? Lies die Pfade und Häkchen ab, ohne einen Build anzustoßen.",
+      "prefab-context": "Bearbeitet das Editorfenster gerade ein Prefab im Isolationsmodus? Falls ja, nenne den Asset-Pfad. Den Bearbeitungsmodus bitte so lassen.",
+      "pause-running-game": "Halte das laufende Spiel an dieser Stelle vorübergehend an, damit ich gleich weiterspielen kann.",
+      "game-view-restore": "Stell die vorige Größenwahl des Spielfensters mit dem Rücksetzcode daaf67e5b3524b5c982e46efa04d301a wieder her."
+    },
+    "fi": {
+      "menu-exists": "Onko Tools/PeatFern/Refresh Palette määritelty editorin valikossa? Tarkista merkintä, mutta älä suorita komentoa tai testaa, onko se käytettävissä.",
+      "console-follow": "Aloita konsolin seuranta nykyisen listan lopusta. Lue vain sen jälkeen ilmestyvät viestit ja jätä vanhat viestit ennalleen.",
+      "camera-create": "Lisää kohtaukseen kamera nimeltä Kaislikko_24 ja aseta sen näkökentäksi 49 astetta. Älä koske muihin kameroihin.",
+      "object-tag-search": "Etsi ladatuista kohtauksista kaikki pelioliot, joilla on tunniste Aarnisuo_75. Palauta myös käytöstä poistettujen olioiden instanssitunnukset.",
+      "build-scene-list": "Mitkä kohtaukset löytyvät koosteen asetuksista ja mitkä niistä on merkitty mukaan? Anna tiedostopolut ja valintojen tilat. Älä käynnistä koostetta.",
+      "prefab-context": "Onko editorissa parhaillaan jokin prefab erillisessä muokkaustilassa? Jos on, kerro tiedostopolku. Älä vaihda muokkaustilaa.",
+      "pause-running-game": "Keskeytä käynnissä oleva peli tähän kohtaan, jotta voin jatkaa myöhemmin siitä mihin jäin.",
+      "game-view-restore": "Palauta peli-ikkunan edellinen kokoasetus käyttämällä palautuskoodia 6d6ff5cbc7254f969c36ac2eec242b35."
+    },
+    "th": {
+      "menu-exists": "เช็กหน่อยว่ามีรายการ Tools/LotusPier/Bake Masks ประกาศไว้ในเมนูของตัวแก้ไขไหม ไม่ต้องกดใช้หรือทดสอบว่ารายการเปิดใช้อยู่หรือเปล่า",
+      "console-follow": "เริ่มติดตามคอนโซลจากท้ายรายการตอนนี้ แล้วอ่านเฉพาะข้อความที่เพิ่มเข้ามาหลังจากนี้ เก็บข้อความเดิมไว้ทั้งหมด",
+      "camera-create": "เพิ่มกล้องชื่อ ริมธาร_67 ในฉาก ให้มีมุมมอง 51 องศา กล้องที่มีอยู่แล้วไม่ต้องแก้",
+      "object-tag-search": "ค้นหาวัตถุที่ติดแท็ก หินฝน_46 ในทุกฉากที่โหลดอยู่ รวมวัตถุที่ปิดใช้งานด้วย ขอรหัสประจำอินสแตนซ์ของแต่ละตัว",
+      "build-scene-list": "ดูให้หน่อยว่ารายการฉากในการตั้งค่าการสร้างเกมมีไฟล์อะไรบ้าง และฉากไหนถูกติ๊กไว้ ขอแค่ข้อมูล ไม่ต้องเริ่มสร้างเกม",
+      "prefab-context": "ตอนนี้ตัวแก้ไขกำลังเปิดพรีแฟบแยกไว้แก้ไขหรือเปล่า ถ้าเปิดอยู่ขอเส้นทางไฟล์ด้วย อย่าเปลี่ยนโหมด",
+      "pause-running-game": "หยุดเกมที่กำลังเล่นไว้ชั่วคราวตรงนี้ เดี๋ยวจะกลับมาเล่นต่อจากจุดเดิม",
+      "game-view-restore": "คืนการตั้งค่าขนาดของหน้าต่างเกมเป็นค่าก่อนแก้ครั้งล่าสุดด้วยรหัสกู้คืน 959cde2969634d15a4801cc0000e0459"
+    }
+  }
+}
