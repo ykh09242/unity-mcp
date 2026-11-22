@@ -365,13 +365,14 @@ INTEGRATION_ACTIONS: Final = {
     },
     "execute_menu_item": {
         "inspect": _observe(
-            "Read the declaration for an exact Editor menu path without invoking its validation callback. "
-            + MENU_DECLARATIONS_READ,
+            "Look up the registered declaration for an Editor menu command by its exact path. "
+            "The lookup does not invoke its validation callback. " + MENU_DECLARATIONS_READ,
             "menu_path",
             effects=READ_ONLY_EFFECTS,
         ),
         "exists": _observe(
-            "Check the exact menu declaration's existence without evaluating availability.",
+            "Check whether a menu item is registered at the supplied Editor menu path. "
+            "Availability is not evaluated.",
             "menu_path",
             effects=READ_ONLY_EFFECTS,
         ),

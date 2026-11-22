@@ -1,8 +1,7 @@
-"""Offline, CPU-only inference over a bundled multilingual static embedding model."""
+"""Offline multilingual catalog inference with the two bundled static embedding models."""
 
 import hashlib
 import math
-import operator
 import re
 import string
 import struct
@@ -11,10 +10,13 @@ from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 
+import regex
+
 from services.registry import semantic_coverage
 
 MODEL_REVISION = "b68f4122911bcffcd6e1f695f2d99cd6788972d8"
 MODEL_ID = f"sentence-transformers/static-similarity-mrl-multilingual-v1@{MODEL_REVISION}/256d-q8"
+COMBINED_MODEL_ID = f"{MODEL_ID}+{semantic_coverage.MODEL_ID}"
 DIMENSIONS = 256
 _ARTIFACT = Path(__file__).with_name("model") / "static-multilingual-v1.q8"
 _BYTES = 28_400_434
@@ -24,12 +26,8 @@ _MAX_CHARS = 1024
 _MAX_CACHED_DOCUMENTS = 2048
 _CACHE_LOCK = Lock()
 _SPECIAL = re.compile(r"\[(?:PAD|UNK|CLS|SEP|MASK)\]")
-# The pinned BertNormalizer isolates these CJK ideograph ranges before decomposing accents.
-_IDEOGRAPHS = re.compile(
-    "[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
-    "\U00020000-\U0002a6df\U0002a700-\U0002b73f\U0002b740-\U0002b81f"
-    "\U0002b920-\U0002ceaf\U0002f800-\U0002fa1f]"
-)
+# WordPiece isolates unified ideographs and their canonically equivalent forms before NFD.
+_IDEOGRAPHS = regex.compile(r"\p{Unified_Ideograph}|(?=\p{Ideographic})\p{dt=Canonical}")
 
 
 class SemanticModelUnavailable(RuntimeError):
@@ -138,12 +136,9 @@ def _catalog_vectors(documents: tuple[str, ...]) -> tuple[tuple[float, ...], ...
     return tuple(_encode(document, model) for document in documents)
 
 
-def _static_scores(query: str, documents: tuple[str, ...]) -> tuple[float, ...]:
-    """Return pooled and word-aligned scores in declaration order."""
-    from services.registry.semantic_alignment import rerank
+def _pooled_scores(query: str, documents: tuple[str, ...]) -> tuple[float, ...]:
+    from services.registry.semantic_alignment import _dot
 
-    if not documents:
-        return ()
     # Only shared initialization needs serialization. Query scoring uses immutable data.
     with _CACHE_LOCK:
         model = _model()
@@ -153,23 +148,48 @@ def _static_scores(query: str, documents: tuple[str, ...]) -> tuple[float, ...]:
             else (_encode(text, model) for text in documents)
         )
     query_vector = _encode(query, model)
-    pooled = tuple(sum(map(operator.mul, query_vector, vector)) for vector in vectors)
-    return rerank(query, documents, pooled, model)
+    return tuple(
+        _dot(query_vector, vector) if query_vector and vector else 0.0 for vector in vectors
+    )
 
 
 def semantic_scores(query: str, documents: tuple[str, ...]) -> tuple[str, tuple[float, ...]]:
-    """Score with a verified packaged model and report its actual identity."""
-    if documents:
-        try:
-            vocab, _ = _model()
-        except SemanticModelUnavailable:
-            return semantic_coverage.MODEL_ID, semantic_coverage.similarities(query, documents)
-        if semantic_coverage.needs_fallback(query, vocab):
-            try:
-                return semantic_coverage.MODEL_ID, semantic_coverage.similarities(query, documents)
-            except SemanticModelUnavailable:
-                pass  # The intact WordPiece model can still rank its recognized query terms.
-    return MODEL_ID, _static_scores(query, documents)
+    """Score with verified bundled weights and return the encoder identity."""
+    from services.registry.semantic_alignment import rerank
+
+    if not documents:
+        return MODEL_ID, ()
+    try:
+        with _CACHE_LOCK:
+            model = _model()
+    except SemanticModelUnavailable:
+        model = None
+    try:
+        other = semantic_coverage.similarities(query, documents)
+    except SemanticModelUnavailable:
+        if model is None:
+            raise
+        return MODEL_ID, rerank(query, documents, _pooled_scores(query, documents), model)
+    if model is None or semantic_coverage.needs_fallback(query, model[0]):
+        return semantic_coverage.MODEL_ID, rerank(query, documents, other, None, unigram_weight=1.0)
+    primary = _pooled_scores(query, documents)
+    if not any(primary):
+        # A well-covered query can still face an entirely unrepresented catalog.
+        if any(other) and any(char.isalnum() for char in query[:_MAX_CHARS]):
+            return semantic_coverage.MODEL_ID, rerank(
+                query, documents, other, None, unigram_weight=1.0
+            )
+        return MODEL_ID, primary
+    if not any(other):
+        return MODEL_ID, rerank(query, documents, primary, model)
+    # Both models see the same text. Their vocabularies and learned spaces were trained independently.
+    unigram_weight = 0.4
+    pooled = tuple(
+        (1 - unigram_weight) * a + unigram_weight * b for a, b in zip(primary, other, strict=True)
+    )
+    return COMBINED_MODEL_ID, rerank(
+        query, documents, pooled, model, unigram_weight=unigram_weight, primary=primary
+    )
 
 
 def semantic_similarities(query: str, documents: tuple[str, ...]) -> tuple[float, ...]:

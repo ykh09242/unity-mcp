@@ -5,10 +5,14 @@ The upstream model card declares the MIT license and credits the Model2Vec team,
 Stephan Tulkens and Thomas van Dongen. [Pinned model card](https://huggingface.co/minishlab/potion-multilingual-128M/blob/6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/README.md)
 [MinishLab license](POTION-LICENSE.txt)
 
-The coverage model is loaded on demand when the primary WordPiece tokenizer
-recognizes less than 80% of a query's normalized letters and digits, or splits
-whole words into individual characters. All languages share the same selector,
-Unigram tokenizer and learned weights. All 500,353 source vocabulary entries,
+The Unigram encoder contributes pooled cosine similarity and norm-weighted
+token alignment to the joint ranking. It can also score a request on its own
+when WordPiece recognizes less than 80% of its normalized letters and digits or
+fragments whole words into individual characters. In that case, the pooled
+sentence score carries more weight when its peak cosine is higher. Agreement
+between the sentence and token rankings widens the lead over lower-scoring
+passages. All queries use the same
+tokenizers and learned weights. All 500,353 source vocabulary entries,
 their scores, the precompiled normalization table and all 256 embedding dimensions
 are present. The converter represents each weight by a two-bit code and stores
 one binary16 RMS scale per row. The encoder pools and L2-normalizes the token

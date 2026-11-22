@@ -25,6 +25,12 @@ def test_unigram_scores_arbitrary_new_documents_in_order():
     assert coverage.similarities("anything", ()) == ()
 
 
+def test_unigram_supplies_scores_when_only_the_catalog_lacks_wordpiece_coverage():
+    docs = ("รถไฟกำลังเข้าสถานี", "อบขนมปังในเตาอบ")
+    model, scores = encoder.semantic_scores("a train at the station", docs)
+    assert model == coverage.MODEL_ID and scores[0] > scores[1]
+
+
 def test_unigram_normalization_and_segmentation_match_pinned_tokenizer():
     model = coverage._load()
     assert list(model.tokenize("กล้องในฉาก")) == [408122, 1199, 136953]

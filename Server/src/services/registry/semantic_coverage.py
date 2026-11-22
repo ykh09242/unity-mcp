@@ -1,9 +1,8 @@
-"""Offline Unigram embeddings for queries the primary WordPiece vocabulary cannot cover."""
+"""Offline Unigram embeddings for joint catalog scoring and sparse WordPiece coverage."""
 
 from array import array
 from functools import lru_cache
 from math import sqrt
-from operator import mul
 from pathlib import Path
 import hashlib
 import re
@@ -187,6 +186,8 @@ _document_vector = lru_cache(maxsize=2048)(_encode)
 
 def similarities(query: str, documents: tuple[str, ...]) -> tuple[float, ...]:
     """Compare arbitrary registered descriptions in the same 256-dimensional space."""
+    from services.registry.semantic_alignment import _dot
+
     if not documents:
         return ()
     with _LOAD_LOCK:
@@ -195,5 +196,6 @@ def similarities(query: str, documents: tuple[str, ...]) -> tuple[float, ...]:
     if not vector:
         return (0.0,) * len(documents)
     return tuple(
-        sum(map(mul, vector, _document_vector(model, document[:_LIMIT]))) for document in documents
+        _dot(vector, doc) if (doc := _document_vector(model, document[:_LIMIT])) else 0.0
+        for document in documents
     )

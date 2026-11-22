@@ -16,7 +16,7 @@ def test_bundled_weights_rank_unseen_domain_without_network(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", no_network)
     docs = ("The train arrives at the station.", "Bake a chocolate cake in the oven.")
     model, scores = encoder.semantic_scores("Faire cuire un gâteau au chocolat.", docs)
-    assert model == encoder.MODEL_ID
+    assert model == encoder.COMBINED_MODEL_ID
     assert scores[1] > scores[0]
     assert encoder.semantic_similarities("🔥", docs) == (0, 0)
 
@@ -41,7 +41,7 @@ def test_bundled_model_does_not_require_a_home_directory(monkeypatch):
 
     monkeypatch.setattr(Path, "home", no_home)
     model, scores = encoder.semantic_scores("Find trains", ("railway train", "bake bread"))
-    assert model == encoder.MODEL_ID and scores[0] > scores[1]
+    assert model == encoder.COMBINED_MODEL_ID and scores[0] > scores[1]
 
 
 def test_pinned_uncased_wordpiece_preserves_boundaries_and_ignores_unknown_words():
@@ -69,4 +69,12 @@ def test_pinned_uncased_wordpiece_preserves_boundaries_and_ignores_unknown_words
     actual = [
         offset for word in encoder._words(text) for offset in encoder._piece_offsets(word, vocab)
     ]
+    assert actual == [vocab[token] for token in expected]
+
+
+def test_ideographs_and_nonideographic_word_continuations_follow_the_vocabulary():
+    vocab, _ = encoder._model()
+    text = "A深B A〆B A〇B"
+    expected = ["a", "深", "b", "a", "##〆", "##b", "a", "##〇", "##b"]
+    actual = [i for word in encoder._words(text) for i in encoder._piece_offsets(word, vocab)]
     assert actual == [vocab[token] for token in expected]

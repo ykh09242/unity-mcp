@@ -5,7 +5,7 @@ import unicodedata
 
 import regex
 
-from services.registry.semantic_encoder import MODEL_ID as STATIC_MODEL_ID
+from services.registry.semantic_encoder import COMBINED_MODEL_ID, MODEL_ID as STATIC_MODEL_ID
 from services.registry.semantic_encoder import fragmented_label, semantic_scores as encode_scores
 
 
@@ -53,6 +53,10 @@ def _request_context(query: str, *, compact: bool = False) -> str:
     spans = []
     for token in (_COMPACT_TOKENS if compact else _TOKENS).finditer(text):
         word = token[0]
+        # A standalone platform name is not part of the next named argument.
+        # Otherwise "Unity Camera" loses the object of the request along with the platform.
+        if compact and _PLATFORM.fullmatch(word):
+            continue
         literal = "/" in word or "\\" in word or (compound and bool(_QUALIFIED.search(word)))
         if not literal and not (word[0].isupper() and any(c.islower() for c in word)):
             continue
@@ -108,7 +112,7 @@ def semantic_scores(
     model, values = encode_scores(query, texts)
     # Paths, quoted values and multiword product names can occur in unrelated
     # operations. Also compare the surrounding request to the same declarations.
-    compact = model == STATIC_MODEL_ID
+    compact = model in (STATIC_MODEL_ID, COMBINED_MODEL_ID)
     context = _request_context(query, compact=compact)
     if context != (query.strip() if compact else query) and sum(c.isalpha() for c in context) >= 5:
         context_model, surrounding = encode_scores(context, texts)

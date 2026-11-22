@@ -36,3 +36,26 @@ def test_alignment_limits_word_count_and_keeps_candidates_outside_shortlist_in_o
 
     assert first == longer
     assert min(first[:2]) >= first[2] > first[3]
+
+
+def test_close_joint_ranking_uses_independent_word_evidence():
+    scores = {0: 0.55, 1: 0.54, 2: 0.45}
+    primary = (0.4, 0.6, 0.2)
+    alignment._corroborate(scores, [1, 0, 2], primary, {})
+    assert scores[1] > scores[0] > scores[2]
+    assert scores[0] - scores[2] > 0.1
+
+
+def test_single_encoder_cannot_promote_a_distant_passage():
+    scores = {0: 0.7, 1: 0.45, 2: 0.44}
+    primary = (0.4, 0.7, 0.3)
+    alignment._corroborate(scores, [1, 0, 2], primary, {})
+    assert scores[0] > scores[1] > scores[2]
+
+
+def test_single_model_agreement_preserves_the_peak_and_separates_weak_alternatives():
+    pooled = (0.7, 0.6, 0.3)
+    agreed = alignment._single_model_scores(pooled, (0.7, 0.65, 0.4))
+    assert agreed[0] == max(pooled)
+    assert agreed[0] - agreed[1] > pooled[0] - pooled[1]
+    assert agreed[2] < agreed[1]

@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from services.registry.semantic_coverage import MODEL_ID as COVERAGE_ID
+from services.registry.semantic_encoder import COMBINED_MODEL_ID
 from services.registry.semantic_encoder import MODEL_ID as PRIMARY_ID
 
 from tools.experiments.discovery_evaluation_fixture import FIXTURE, Request, load_suite
@@ -54,16 +55,13 @@ def compare_bundled_reference(actual: ProfileResult, expected: dict) -> list[str
 
 
 @pytest.mark.asyncio
-async def test_raw_multilingual_ranking_does_not_regress_from_the_shipped_bundle(
-    monkeypatch, tmp_path
-):
+async def test_raw_multilingual_ranking_does_not_regress_from_the_shipped_bundle():
     # Given the two frozen corpora and the independent measurement of the shipped ranking.
     reference = json.loads(REFERENCE.read_bytes())
-    monkeypatch.setenv("UNITY_MCP_SEARCH_MODEL_DIR", str(tmp_path / "unprovisioned"))
     limits = argparse.Namespace(
         require_matching="hybrid",
         require_model=True,
-        expect_model=(PRIMARY_ID, COVERAGE_ID),
+        expect_model=(PRIMARY_ID, COVERAGE_ID, COMBINED_MODEL_ID),
         min_top1=0.0,
         min_top3=0.0,
         min_language_top1=0.0,
@@ -85,8 +83,9 @@ async def test_raw_multilingual_ranking_does_not_regress_from_the_shipped_bundle
     for (name, profile), report in reports.items():
         snapshot = reference["suites"][name]["profiles"][profile]
         reasons = gate_failures(report, limits) + compare_bundled_reference(report, snapshot)
-        if set(report["semantic_models"]) != {PRIMARY_ID, COVERAGE_ID}:
-            reasons.append("both bundled model paths must be exercised")
+        models = set(report["semantic_models"])
+        if COMBINED_MODEL_ID not in models and not {PRIMARY_ID, COVERAGE_ID} <= models:
+            reasons.append("both bundled encoders must contribute to the evaluation")
         if reasons:
             failures[name, profile] = reasons
     assert not failures, failures

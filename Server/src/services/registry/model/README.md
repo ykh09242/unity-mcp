@@ -22,22 +22,23 @@ uses no task examples or language-specific search terms. [License](LICENSE.txt)
 To reproduce the conversion, save the two upstream files in one directory
 under their original filenames. From the repository root, run
 `python tools/build_catalog_encoder.py <source-directory>`. The script verifies
-both source digests before reading their contents. Python's standard library is
-sufficient for conversion and inference.
+both source digests before reading their contents. Conversion uses Python's
+standard library. The server uses its existing Unicode property support to
+isolate ideographs during WordPiece tokenization.
 
 Search uses the pinned tokenizer's uncased, accent-stripping BERT WordPiece
-configuration, ignores unknown words and special tokens, pools token vectors,
-and compares L2-normalized vectors using cosine similarity. For the closest 64
-descriptions, the server also compares the best match of each query word to a
-description word and vice versa, up to 48 words on each side. Both scores are
-insensitive to word order. Search scores measure textual similarity and vary
-with the language and wording. Tool availability and action permissions are
-determined separately.
+configuration and ignores unknown words and special tokens. It combines pooled
+WordPiece and Unigram cosine similarities with weights of 60% and 40%. For the
+64 nearest passages it compares the closest matching terms in both directions,
+using up to 48 terms per text in each encoder. It also checks the strongest
+WordPiece alternative over that encoder's own nearest 64 passages. Agreement
+widens the lead over alternatives. A stronger independent word match can
+resolve a close joint ranking.
 
-When the WordPiece vocabulary covers too little of a request, search uses a
-second bundled encoder with a 500,353-entry Unigram vocabulary. Selection uses
-the proportion of recognized text and token fragmentation. Both encoders can
-score new tool descriptions at runtime. The response records whichever encoder
-supplied the scores. [Unigram model, license and reproduction steps](POTION.md)
+If WordPiece recognizes too little of the query, the bundled Unigram model
+scores it directly. If either artifact is unavailable, the other can score the
+current declarations. The response identifies the model or pair that supplied
+the scores. Ranking varies with wording and vocabulary coverage. Tool availability
+and permissions are determined separately. [Unigram model and reproduction steps](POTION.md)
 
 Run `unity-mcp search-model status --verify` to check both packaged model files locally.

@@ -557,7 +557,8 @@ TOOL_GUIDANCE: Final = {
                 intent="interact",
             ),
             "pause": ActionGuidance(
-                "Toggle between paused and resumed while the Editor is in Play Mode.",
+                "Pause the running game at its current state or resume the paused game in Play Mode. "
+                "This action toggles the current pause state.",
                 intent="interact",
             ),
             "stop": ActionGuidance(
@@ -632,7 +633,8 @@ TOOL_GUIDANCE: Final = {
                 "or a unique preset label. Returns the resulting size and a restore_token.",
             ),
             "restore_game_view_size": ActionGuidance(
-                "Restore the original Game View preset using the token from set_game_view_size. "
+                "Use the saved restore token to return the open Game View to its previous preset. "
+                "The token comes from set_game_view_size. "
                 "The original Game View, build-target group and preset must still be available.",
                 ("restore_token",),
             ),
