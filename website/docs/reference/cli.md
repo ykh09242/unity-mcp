@@ -15,7 +15,7 @@ This page is authored, not the generated MCP tool schema. Follow [CLI setup](../
 | Executable | Purpose |
 |---|---|
 | `mcp-for-unity` | Run the Python MCP server; accepts server transport/bind/auth flags. |
-| `unity-mcp` | Send Editor commands and source-quality workflows to an already-running server. |
+| `unity-mcp` | Send Editor commands and source-quality workflows to a running server, or manage local tool-search models. |
 
 They are **not aliases for one another**. Both are installed from the matching immutable `mcpServerSource`; neither should implicitly install an upstream PyPI distribution. Most `unity-mcp` commands use the local REST interface, which stdio and hosted HTTP do not provide. The source-quality commands described below use public MCP composition.
 
@@ -36,7 +36,9 @@ Place global options before subcommands. HTTP tokens are discovered automaticall
 
 ## Command groups
 
-The top-level commands are `animation`, `asset`, `asset-gen`, `audio`, `batch`, `blender`, `build`, `camera`, `code`, `component`, `custom_tool`, `docs`, `doctor`, `editor`, `gameobject`, `graphics`, `instance`, `instances`, `lighting`, `material`, `packages`, `physics`, `play-scenario`, `prefab`, `probuilder`, `profiler`, `project-auditor`, `raw`, `receipt`, `reflect`, `scenario-recording`, `scene`, `scene-edit`, `script`, `shader`, `sprite`, `status`, `texture`, `tool`, `ui`, `verification`, `verification-candidate`, `verification-evidence`, and `vfx`.
+The top-level commands are `animation`, `asset`, `asset-gen`, `audio`, `batch`, `blender`, `build`, `camera`, `code`, `component`, `custom_tool`, `docs`, `doctor`, `editor`, `gameobject`, `graphics`, `instance`, `instances`, `lighting`, `material`, `packages`, `physics`, `play-scenario`, `prefab`, `probuilder`, `profiler`, `project-auditor`, `raw`, `receipt`, `reflect`, `scenario-recording`, `scene`, `scene-edit`, `script`, `search-model`, `shader`, `sprite`, `status`, `texture`, `tool`, `ui`, `verification`, `verification-candidate`, `verification-evidence`, and `vfx`.
+
+`unity-mcp search-model install` installs the optional local ranking models on the server machine. `unity-mcp search-model status --verify` checks the installed files. [Tool search setup](../guides/cli.md#find-a-tool-in-the-users-language)
 
 CLI verbs/flags are not automatically generated from MCP tool parameters. Use exact help:
 
