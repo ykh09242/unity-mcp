@@ -10,9 +10,11 @@ CAMERA_TASK = "camera-depth"
 UI_TASK = "saved-ui-controls"
 MENU_TASK = "menu-declaration"
 MENU_RESOURCE = "mcpforunity://menu-items"
+MENU_READER = "list_menu_declarations"
+MENU_INVENTORIES = {MENU_RESOURCE, MENU_READER}
 FRAME_DEBUGGER = "Window/Analysis/Frame Debugger"
 MENU_LOOKUPS = {"execute_menu_item.inspect", "execute_menu_item.exists"}
-MENU_ROUTES = {MENU_RESOURCE, *MENU_LOOKUPS}
+MENU_ROUTES = MENU_INVENTORIES | MENU_LOOKUPS
 CAMERA_RESOURCE = "mcpforunity://scene/cameras"
 CAMERA_READER = "inspect_scene_cameras"
 CAMERA_ROUTES = {
@@ -47,6 +49,8 @@ def valid_ui_path(path):
 
 
 def permitted(route, args, fixture):
+    if route == MENU_READER:
+        return fixture.get("task") == MENU_TASK and set(args) <= {"unity_instance"}
     if route == MENU_RESOURCE:
         return fixture.get("task") == MENU_TASK and not args.get("url_query")
     if route in MENU_LOOKUPS:

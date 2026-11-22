@@ -271,7 +271,7 @@ def unpack(response: dict[str, Any], route: str = "") -> tuple[str, dict[str, An
                 ),
             }
     if value.get("success") is True:
-        if route == actions.MENU_RESOURCE:
+        if route in actions.MENU_INVENTORIES:
             declarations = value.get("data")
             if isinstance(declarations, list) and actions.FRAME_DEBUGGER in declarations:
                 return "returned", {"menu_path": actions.FRAME_DEBUGGER}
@@ -312,7 +312,7 @@ def observation(
         return choices.open_graph_observation(graph_asset, data)
     if route in actions.MENU_ROUTES:
         if data.get("menu_path") == actions.FRAME_DEBUGGER and (
-            route == actions.MENU_RESOURCE or mapping(data.get("existence")).get("value") is True
+            route in actions.MENU_INVENTORIES or mapping(data.get("existence")).get("value") is True
         ):
             return {"menu_path": actions.FRAME_DEBUGGER}
         return {}
@@ -1223,7 +1223,16 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         or (task == "graph-saved" and call.route == SAVED_FILE)
         or (task == actions.UI_TASK and call.route == actions.SAVED_UI)
     ]
-    first_suitable = next(iter(sequence), None)
+    # This task withholds the menu path. Exact lookups can verify an observed
+    # path, but cannot discover it without first supplying a candidate.
+    first_suitable = next(
+        (
+            call
+            for call in sequence
+            if task != actions.MENU_TASK or call.route in actions.MENU_INVENTORIES
+        ),
+        None,
+    )
     absent_window = next(
         (
             index
@@ -1335,6 +1344,11 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     )
     if searches:
         receipt = diagnosis["first_search"] or {}
+        if task == actions.MENU_TASK and isinstance(receipt.get("top3"), list):
+            diagnosis["first_search_top3_menu_inventory"] = any(
+                actions.MENU_INVENTORIES.intersection(group) for group in receipt["top3"]
+            )
+            diagnosis["first_search_top3_suitable"] = diagnosis["first_search_top3_menu_inventory"]
         if "top3" not in receipt:
             diagnosis["search_capture"] = "attempt_without_rank"
         else:

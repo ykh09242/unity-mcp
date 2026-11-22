@@ -110,8 +110,8 @@ def test_menu_trial_admits_only_declaration_lookups_and_preserves_approval_attem
     )
 
 
-def test_menu_receipt_retains_only_an_independently_observed_frame_debugger_path():
-    resource = actions.MENU_RESOURCE
+@pytest.mark.parametrize("resource", [actions.MENU_RESOURCE, actions.MENU_READER])
+def test_menu_receipt_retains_only_an_independently_observed_frame_debugger_path(resource):
     details = {"success": True, "data": ["Private/Menu", actions.FRAME_DEBUGGER]}
     reply = {"result": {"contents": [{"text": json.dumps(details)}]}}
     status, safe = unpack(reply, resource)
@@ -124,6 +124,70 @@ def test_menu_receipt_retains_only_an_independently_observed_frame_debugger_path
     assert observation(route, expected) == {}
     details["data"] = ["Private/Menu"]
     assert unpack({"result": {"structuredContent": details}}, resource) == ("returned", {})
+
+
+@pytest.mark.parametrize("first_is_list", [False, True])
+def test_unknown_menu_first_attempt_and_search_need_a_declaration_inventory(
+    tmp_path, first_is_list
+):
+    from tools.experiments.blind_tool_trace import score_case, thread_digest
+
+    actor = "01800000-0000-4000-8100-000000000001"
+    lookup = "execute_menu_item.inspect"
+    first, second = (
+        (actions.MENU_READER, lookup) if first_is_list else (lookup, actions.MENU_READER)
+    )
+    (tmp_path / "case.json").write_text(
+        json.dumps(
+            {
+                "role": "main",
+                "task": actions.MENU_TASK,
+                "host_mode": "configured",
+                "graph_asset": "",
+            }
+        )
+    )
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join(
+            map(
+                json.dumps,
+                [{"type": "thread.started", "thread_id": actor}, {"type": "turn.completed"}],
+            )
+        )
+    )
+    rows = []
+    for seq, (route, channel, observation_result) in enumerate(
+        [
+            ("search_unity_tools", "discovery", {"top3": [[first]]}),
+            (first, "unity", {"menu_path": actions.FRAME_DEBUGGER}),
+            (second, "unity", {"menu_path": actions.FRAME_DEBUGGER}),
+        ],
+        1,
+    ):
+        rows.extend(
+            [
+                {
+                    "event": "request",
+                    "actor": thread_digest(actor),
+                    "sequence": seq,
+                    "route": route,
+                    "channel": channel,
+                },
+                {
+                    "event": "response",
+                    "sequence": seq,
+                    "outcome": "returned",
+                    "observation": observation_result,
+                },
+            ]
+        )
+    (tmp_path / "mcp-1.jsonl").write_text("\n".join(map(json.dumps, rows)))
+    case = score_case(tmp_path)
+    assert case["role_status"] == "confirmed"
+    assert case["first_observation_attempt_suitable"] is first_is_list
+    assert case["selection_diagnosis"]["first_search_top3_suitable"] is first_is_list
+    assert case["first_suitable_business_call"] == actions.MENU_READER
+    assert case["first_successful_suitable_call"] == first
 
 
 def test_maximum_requires_the_full_unique_unity_camera_result():

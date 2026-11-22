@@ -631,3 +631,39 @@ corresponding integrated-source actors above.
 | --- | --- | --- | --- | --- |
 | Korean main | Shell instruction read | Fixed camera reader | Fixed reader on call 1 | Matched the oracle |
 | English direct child | Shell instruction read | Editor state | Fixed reader on call 2 | Matched the oracle |
+
+### Finding a registered menu with an unknown path
+
+The `menu-declaration` task gives the actor a window label and asks for its
+registered path while leaving the window closed. A tools-only host can use
+`list_menu_declarations`. A resource-capable host can read
+`mcpforunity://menu-items`. Both return the selected Editor's managed
+`MenuItem` declarations. Use a separate availability observation if the task
+asks whether the command is enabled. An exact-path inspection can verify a
+path once it is known. The scorer credits an inventory lookup as the first
+suitable discovery attempt for an unknown path.
+
+Replay a query against the four combinations of description and search rank
+using the repository's locked Server environment. Run from the repository root.
+
+```sh
+uv run --project Server --locked --extra dev python -m tools.experiments.menu_discovery_probe \
+  --query "Where is Frame Debugger registered in this Editor's menu?" --surface tools
+```
+
+The probe reports the first three groups for each combination. Repeat with
+`--surface resources` or `--surface both` to check the other bindings. Use
+`--catalog-query` only when testing a separate retrieval phrase, and preserve
+the user's original wording in `--query`. These are scripted rankings.
+
+For model trials, use the matched procedure above with the natural prompt,
+the same native Editor, its independently observed declaration list, and two
+relays serving identical runtime source. In the baseline relay install
+`menu-wording-baseline` to restore the earlier tool description in the
+advertised inventory and discovery responses while holding search rank fixed.
+In a separate pair install `menu-ranking-baseline` to remove the additional
+menu retrieval terms while keeping the shipped wording. The candidate relay
+serves the ordinary catalog. Record search use across eligible actors and
+declaration-inventory placement among actors whose first search returned a
+ranking. An empty ranking counts as a miss. A direct read can establish the
+answer without contributing a search rank.
