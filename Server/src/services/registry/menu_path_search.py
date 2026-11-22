@@ -59,7 +59,7 @@ _ASSET_REFERENCE = re.compile(
 )
 _LITERAL_PATH = re.compile(r"\b[^\W\d_][\w.-]*[ \t]*[/›»>][ \t]*[\w.-]+")
 _GAME_UI = re.compile(
-    r"게임\s*(?:내|속)|ゲーム(?:内|画面)|\b(?:del|en el) juego\b|(?:في|داخل) اللعبة\b"
+    r"게임\s*(?:내|속|화면|일시\s*정지)|ゲーム(?:内|画面|のポーズ)|\b(?:del|en el) (?:video)?juego\b|(?:في|داخل) اللعبة\b"
     r"|\boyun(?:daki|\s+içi\w*)\b"
 )
 _EDITOR_MENU = re.compile(
@@ -75,7 +75,7 @@ _WINDOW_LOCATIONS = tuple(
         (
             r"에디터|편집기|유니티|unity|창(?:을|은|이|의|에|으|만|\s|$)",
             r"어디|어느\s*(?:곳|위치|경로|항목)|어떤\s*경로",
-            r"여는|여나|열[려수어]|열\s*수|찾[아을는]|접근|들어가|어디에?\s*있",
+            r"여는|여나|엽(?:니까|니다)|열[려수어죠까]|열\s*수|찾[아을는]|접근|들어가|어디에?\s*있",
             r"(?:경로|위치|장소)\s*만",
         ),
         (
@@ -86,7 +86,7 @@ _WINDOW_LOCATIONS = tuple(
         ),
         (
             r"\b(?:editor|ventanas?|panel(?:es)?|unity)\b",
-            r"\b(?:d[oó]nde|(?:qu[ée]|cu[áa]l) (?:es la )?(?:ruta|ubicaci[oó]n))\b",
+            r"\b(?:d[oó]nde|(?:qu[ée]|cu[áa]l) (?:es la )?(?:ruta|ubicaci[oó]n|parte|secci[oó]n|apartado))\b",
             r"\b(?:abr(?:ir|[eo])|acced\w*|enc(?:uentr|ontr)\w*|lleg\w*|est[áa])\b",
             r"\b(?:s[oó]lo|solamente|[úu]nicamente) (?:la |su )?(?:ruta|ubicaci[oó]n)\b",
         ),
@@ -105,9 +105,14 @@ _WINDOW_LOCATIONS = tuple(
     )
 )
 _OTHER_LOCATION = re.compile(
-    r"파일|폴더|웹\s*(?:주소|사이트)|ファイル|フォルダ|ウェブ|"
-    r"(?<![a-z])(?:url|https?)(?![a-z])|\b(?:carpeta|archivo|sitio web|dosya\w*|klasör\w*)\b"
-    r"|(?:ملف|مجلد|الرابط)"
+    r"(?<!프로)파일|폴더|프리팹|에셋|게임\s*오브젝트|웹\s*(?:주소|사이트)|"
+    r"ファイル|フォルダ|ウェブ|プレハブ|アセット|ゲームオブジェクト|"
+    r"(?<![a-z])(?:url|https?|prefabs?|gameobjects?)(?![a-z])|"
+    r"\b(?:carpetas?|archivos?|sitio web|dosya\w*|klasör\w*)\b|(?:ملف|مجلد|الرابط)"
+)
+_MOVE_WINDOW = re.compile(
+    r"옮[겨길기]|이동시|재배치|移動|移[すし]|ドラッグ|\b(?:mover|mueve|reubica|arrastra)\w*"
+    r"|(?:انقل|أنقل|نقل)\b|\b(?:taşı|sürükle|yerleştir)\w*"
 )
 _WINDOW_NOUN = re.compile(
     r"창(?:을|은|이|의|에|\s|$)|ウ[ィイ]ンドウ|パネル|\b(?:ventana|panel|pencere)|نافذة|لوحة"
@@ -125,7 +130,11 @@ def localized_menu_path_terms(query: str) -> set[str]:
     for pair in _PAIRS:
         if match := pair.search(lookup):
             return set(match.groups())
-    if not (_OTHER_LOCATION.search(lookup) or _ASSET_REFERENCE.search(query)):
+    if not (
+        _OTHER_LOCATION.search(lookup)
+        or _ASSET_REFERENCE.search(query)
+        or _MOVE_WINDOW.search(lookup)
+    ):
         for domain, location, opening, path_only in _WINDOW_LOCATIONS:
             where, path = location.search(lookup), path_only.search(lookup)
             if not (where or path):

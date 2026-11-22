@@ -28,6 +28,9 @@ import pytest
         "¿Desde dónde se accede al mezclador de audio del editor? Solo la ruta.",
         "من أين أفتح مازج الصوت في المحرر؟ أحتاج المسار فقط.",
         "Düzenleyicide Ses Karıştırıcı'ya nereden ulaşabilirim? Yalnızca yolunu yaz.",
+        "에디터에서 오디오 믹서를 어디서 엽니까?",
+        "프로파일러 창이 어디야?",
+        "¿En qué parte del editor se abre el mezclador de audio?",
     ],
 )
 def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
@@ -88,6 +91,10 @@ def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
         "Düzenleyicide bu dosyaya nereden ulaşabilirim? Yalnızca yolunu yaz.",
         "에디터 창에서 이 URL을 어디서 여나요?",
         "¿Desde dónde se abre la ventana de pausa del juego? Solo la ruta.",
+        "이 프리팹은 에디터 어디에서 열 수 있나요?",
+        "게임 일시정지 창은 어디에서 열 수 있어?",
+        "에디터에서 이 창을 어디로 옮길까요?",
+        "¿A qué parte del editor puedo mover esa ventana?",
     ],
 )
 def test_unrelated_actions_and_known_paths_do_not_add_menu_discovery_terms(query):
