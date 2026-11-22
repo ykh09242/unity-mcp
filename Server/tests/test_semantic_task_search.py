@@ -70,3 +70,52 @@ def test_dispatcher_operation_prose_cannot_cross_action_boundaries():
         "read_sample": "Report the sample.",
         "clear_sample": "Erase the sample.",
     }
+
+
+def test_resource_candidates_are_scored_against_the_requested_surface(monkeypatch):
+    def scores(query, texts):
+        return "local-test-model", tuple(
+            0.92 if t.startswith("read errors.") else 0.42 for t in texts
+        )
+
+    monkeypatch.setattr(semantic_catalog, "encode_scores", scores)
+    resource = {
+        "uri": "mcpforunity://editor/logs",
+        "name": "journal",
+        "description": "List recent error messages.",
+        "kwargs": {},
+    }
+    response = task_search.search_catalog(
+        task_search.SearchRequest(
+            query="Afficher les erreurs actuelles du compilateur",
+            route_surfaces="resources",
+            limit=1,
+        ),
+        [entry("read_errors", "Show compiler errors.")],
+        visible_names={"read_errors"},
+        resources=[resource],
+    )
+    assert response["route_groups"][0]["representative"]["uri"] == resource["uri"]
+    assert response["match_basis"] == "semantic_similarity"
+
+
+def test_hidden_identifier_cannot_supply_the_displayed_groups_evidence(monkeypatch):
+    monkeypatch.setattr(
+        semantic_catalog,
+        "encode_scores",
+        lambda q, texts: ("local-test-model", (0.48,) * len(texts)),
+    )
+    resource = {
+        "uri": "mcpforunity://editor/history",
+        "name": "console_history",
+        "description": "Previous events.",
+        "kwargs": {},
+    }
+    response = task_search.search_catalog(
+        task_search.SearchRequest(query="archive_logs", route_surfaces="resources", limit=1),
+        [entry("archive_logs", "Archive logs.")],
+        visible_names=set(),
+        resources=[resource],
+    )
+    assert response["route_groups"][0]["representative"]["uri"] == resource["uri"]
+    assert response["match_basis"] == "semantic_similarity"

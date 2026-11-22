@@ -364,11 +364,12 @@ def _lexical_score(evidence: dict[str, int], words: set[str], hybrid: bool) -> i
 
 
 def semantic_documents(
-    capabilities, resources, unavailable_parents, intent=None, *, exact_query=None
+    capabilities, resources, unavailable_parents, intent=None, *, exact_query=None, surfaces="both"
 ):
     """Build semantic documents from eligible declarations; an exact identifier bypasses ranking."""
     documents: dict[RouteKey, tuple[str, ...]] = {}
     equivalent_keys: dict[str, list[RouteKey]] = {}
+    exact_keys: set[RouteKey] = set()
     query = _normalized(exact_query) if exact_query is not None else None
 
     def add(key, name, action, purpose, observation, examples=()):
@@ -385,22 +386,21 @@ def semantic_documents(
         name = result["name"]
         if result["advertised"] is False:
             continue
-        if query == _normalized(name):
-            return None
         action_descriptions = documented_actions(tool_description(entry))
         for action in result["actions"] or [None]:
-            if action and query == _normalized(action):
-                return None
             guidance = action_guidance(entry, action)
             if intent and intent != action_intent(guidance, result):
                 continue
+            key = ("tool", name, action or "")
+            if query == _normalized(name) or (action and query == _normalized(action)):
+                exact_keys.add(key)
             purpose = (
                 guidance.purpose
                 if guidance
                 else (action_descriptions.get(action, "") if action else result["description"])
             )
             add(
-                ("tool", name, action or ""),
+                key,
                 name,
                 action,
                 purpose,
@@ -409,12 +409,12 @@ def semantic_documents(
             )
     for resource in resources:
         identifier = resource.get("uri") or resource["uri_template"]
-        if query in (_normalized(identifier), _normalized(resource["name"])):
-            return None
         if intent not in (None, "observe"):
             continue
         template = "uri_template" in resource
         key = ("resource_template" if template else "resource", identifier, "")
+        if query in (_normalized(identifier), _normalized(resource["name"])):
+            exact_keys.add(key)
         meta = resource.get("kwargs", {}).get("meta") or {}
         alias = meta.get(SEARCH_TERMS_META) or {}
         add(
@@ -429,12 +429,25 @@ def semantic_documents(
         descriptions = tuple(dict.fromkeys(text for key in keys for text in documents[key]))
         for key in keys:
             documents[key] = descriptions
-    return documents
+    if surfaces != "both":
+        eligible = {key for key in documents if (key[0] == "tool") == (surfaces == "tools")}
+        # Keep the tool-level view of a matched resource (and vice versa). These
+        # bindings score the same documents and cannot change the cutoff.
+        for keys in equivalent_keys.values():
+            if eligible.intersection(keys):
+                eligible.update(keys)
+        documents = {key: texts for key, texts in documents.items() if key in eligible}
+    return None if exact_keys.intersection(documents) else documents
 
 
-def _semantic_catalog(original, capabilities, resources, unavailable_parents, intent):
+def _semantic_catalog(original, capabilities, resources, unavailable_parents, intent, surfaces):
     documents = semantic_documents(
-        capabilities, resources, unavailable_parents, intent, exact_query=original
+        capabilities,
+        resources,
+        unavailable_parents,
+        intent,
+        exact_query=original,
+        surfaces=surfaces,
     )
     return semantic_scores(original, documents) if documents else None
 
@@ -657,6 +670,7 @@ def search_catalog(
                 [*available_resources, *available_templates],
                 unavailable_parents,
                 request.intent,
+                request.route_surfaces,
             )
             if encoded is not None:
                 model, semantic = encoded
@@ -849,13 +863,28 @@ def search_catalog(
     documents = len(entries) + len(available_resources) + len(available_templates)
     distinctive = {term for term, count in occurrences.items() if count <= max(1, documents // 4)}
     basis: MatchBasis = "none"
-    if structured and selected_routes:
+    if structured and groups:
         basis = "declared_observation"
     elif not structured:
-        bases = [
-            _route_evidence(route, query, query_words, distinctive) for route in selected_routes
-        ]
-        basis = bases[0] if bases else "none"
+        for route in selected_routes:
+            _route_evidence(route, query, query_words, distinctive)
+        if groups:
+            first = groups[0]
+            group_bases = {
+                _route_evidence(route, query, query_words, distinctive)
+                for route in [first["representative"], *first["alternatives"]]
+            }
+            basis = next(
+                b
+                for b in (
+                    "exact_identifier",
+                    "multiple_terms",
+                    "semantic_similarity",
+                    "single_term",
+                    "incidental",
+                )
+                if b in group_bases
+            )
     if structured:
         next_action = "inspect_candidates" if groups else "browse_catalog"
     elif matches:
