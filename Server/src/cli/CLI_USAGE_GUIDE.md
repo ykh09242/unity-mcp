@@ -32,7 +32,7 @@ envelope, and successful lookup does not imply the recorded operation succeeded.
 See the [CLI receipt guide](../../../website/docs/guides/cli.md#recover-a-command-after-response-loss)
 for enablement, key limits, examples and unknown-outcome rules.
 
-## Optional local search model
+## Bundled search models
 
 `unity-mcp tool search` accepts the original request in the user's language.
 The bundled encoders select candidates by the meanings of individual operations
@@ -41,42 +41,17 @@ the ranked `route_groups`. For example, `--route-surfaces tools --limit 3`
 returns up to three groups with a callable tool binding. The CLI lists local
 declarations. Use the MCP search tool to rank the current host's visible catalog.
 
-Search can use a local LaBSE encoder and BGE reranker for multilingual ranking.
-Install them as the user who runs the MCP server. The CLI and server read the
-same per-user cache. To use a custom location, set `UNITY_MCP_SEARCH_MODEL_DIR`
-to the same absolute directory for the install command and the server process.
-For a remote server, run the install on that server's host.
+The server package includes both multilingual encoders and their licenses.
+Use the CLI on the server's host to check its local package. The status command
+reports availability for each encoder. The `--verify` flag returns a nonzero
+exit code if either encoder is missing or damaged.
 
 ```sh
 unity-mcp search-model status
-unity-mcp search-model install
 unity-mcp search-model status --verify
 ```
 
-The install command requires `uv` on `PATH`. It creates an isolated CPython 3.13
-environment for the CPU workers and fetches hashed wheels plus about 1.08 GB of
-pinned model files. `uv` can fetch CPython 3.13 if needed. The workers run
-independently of the Python version that runs Unity MCP, including Python 3.15.
-The wheel profiles cover Windows x64 and ARM64, Linux x64 and ARM64 with glibc
-2.28 or later, macOS 14 or later on Apple Silicon, and macOS 13 or later on Intel.
-Inference and status verification run locally. Ordinary search requests do not
-download models. Search uses the bundled model when LaBSE is unavailable.
-
-Use `unity-mcp search-model install --encoder-only` for the 488 MB LaBSE profile.
-Running the default install later adds about 588 MB of BGE files and reuses the
-already-verified LaBSE files and runtime. Each stage becomes available after its
-hashes and local inference test pass. LaBSE remains available if the BGE upgrade
-fails. An interrupted download can be resumed by running the install again.
-`status --verify` tests each installed model and reports `encoder-only` or
-`encoder-reranker` in `quality_profile`.
-
-To reuse model files, put the pinned `labse.onnx`, `labse-tokenizer.json`,
-`labse-dense.safetensors`, `reranker.onnx`, and `reranker-tokenizer.json` in one
-directory and pass `--from-directory DIR`. Only provide files missing from the
-target cache. Add `--offline` to use files and wheels already available locally.
-See the [LaBSE sources and license](../services/registry/model/README.md), the
-[BGE source model](https://huggingface.co/BAAI/bge-reranker-v2-m3), and its
-[pinned int8 conversion](https://huggingface.co/onnx-community/bge-reranker-v2-m3-ONNX/tree/6f5ff65298512715a1e669753bc754d2bc8f367b).
+See the [bundled model sources and licenses](../services/registry/model/README.md).
 
 ## JSON files and stdin
 

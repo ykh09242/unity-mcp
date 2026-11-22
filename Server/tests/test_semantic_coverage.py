@@ -34,7 +34,6 @@ def test_unigram_normalization_and_segmentation_match_pinned_tokenizer():
 
 
 def test_fallback_receipts_identify_the_model_that_actually_scored(monkeypatch):
-    monkeypatch.setattr(encoder, "quality_scores", lambda *args: None)
     docs = ("Bake bread in an oven.", "The train arrives at the railway station.")
     model, scores = encoder.semantic_scores("รถไฟกำลังเข้าสถานี", docs)
     assert model == coverage.MODEL_ID and scores[1] > scores[0]

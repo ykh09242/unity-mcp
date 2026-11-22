@@ -151,9 +151,7 @@ COMMANDS = (
         module="scene_edits",
     ),
     LazyCommand("script", "Script operations - create, read, edit C# scripts."),
-    LazyCommand(
-        "search-model", "Install or inspect the optional offline LaBSE and BGE search profile."
-    ),
+    LazyCommand("search-model", "Inspect the bundled offline search models."),
     LazyCommand("shader", "Shader operations - create, read, update, delete shaders."),
     LazyCommand(
         "sprite", "Sprite sheet operations - slice sheets, build clips and Animator controllers."

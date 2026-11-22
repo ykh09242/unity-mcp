@@ -138,8 +138,7 @@ def _offset(unit: int) -> int:
     return (unit >> 10) << ((unit & 0x200) >> 6)
 
 
-@lru_cache(maxsize=1)
-def _load() -> _CoverageModel:
+def _read_weights() -> bytes:
     from services.registry.semantic_encoder import SemanticModelUnavailable
 
     try:
@@ -149,7 +148,17 @@ def _load() -> _CoverageModel:
         raise SemanticModelUnavailable("Bundled Unigram search encoder is unavailable.") from exc
     if len(data) != _BYTES or hashlib.sha256(data).hexdigest() != _SHA256:
         raise SemanticModelUnavailable("Bundled Unigram search encoder failed its integrity check.")
-    return _CoverageModel(data)
+    return data
+
+
+def verify_model() -> None:
+    """Check the current packaged bytes independently of the inference cache."""
+    _read_weights()
+
+
+@lru_cache(maxsize=1)
+def _load() -> _CoverageModel:
+    return _CoverageModel(_read_weights())
 
 
 @lru_cache(maxsize=2048)

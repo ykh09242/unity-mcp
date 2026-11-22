@@ -148,26 +148,30 @@ def test_hidden_identifier_cannot_supply_the_displayed_groups_evidence(monkeypat
     assert response["match_basis"] == "semantic_similarity"
 
 
-def test_route_exposes_the_first_stage_similarity_and_actual_reranking_score(monkeypatch):
-    read = ("tool", "observe_log", "")
-    clear = ("tool", "empty_log", "")
+def test_embedded_similarity_ranks_the_closest_routes_and_reports_their_scores(monkeypatch):
+    scores = {
+        "empty log. Erase the log.": 0.59,
+        "observe log. Report entries.": 0.69,
+        "inspect archive. Read historical data.": 0.42,
+    }
 
-    def score(query, catalog):
-        assert set(catalog) == {read, clear}
-        return "encoder+reranker", semantic_catalog.RerankedScores(
-            {clear: 0.69, read: 0.57}, {clear: -4.0, read: 3.0}
-        )
+    def encode(query, texts):
+        assert query == "quelles erreurs"
+        return semantic_catalog.STATIC_MODEL_ID, tuple(scores[text] for text in texts)
 
-    monkeypatch.setattr(task_search, "semantic_scores", score)
+    monkeypatch.setattr(semantic_catalog, "encode_scores", encode)
     response = task_search.search_catalog(
         task_search.SearchRequest(query="quelles erreurs", route_surfaces="tools"),
-        [entry("empty_log", "Erase the log."), entry("observe_log", "Report entries.")],
+        [
+            entry("empty_log", "Erase the log."),
+            entry("observe_log", "Report entries."),
+            entry("inspect_archive", "Read historical data."),
+        ],
     )
-    assert response["semantic_model"] == "encoder+reranker"
-    assert response["match_basis"] == "semantic_reranking"
-    best = response["route_groups"][0]["representative"]
-    assert (best["tool"], best["semantic_similarity"], best["reranker_score"]) == (
-        "observe_log",
-        0.57,
-        3.0,
-    )
+    assert response["semantic_model"] == semantic_catalog.STATIC_MODEL_ID
+    assert response["match_basis"] == "semantic_similarity"
+    routes = [group["representative"] for group in response["route_groups"]]
+    assert [(route["tool"], route["semantic_similarity"]) for route in routes] == [
+        ("observe_log", 0.69),
+        ("empty_log", 0.59),
+    ]

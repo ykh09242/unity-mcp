@@ -4113,30 +4113,19 @@ Validate a C# script for errors. Examples: unity-mcp script validate "Assets/Scr
 
 ## `unity-mcp search-model`
 
-Install or inspect the optional offline LaBSE and BGE search profile.
+Inspect the bundled offline search models.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
-
-## `unity-mcp search-model install`
-
-Install the isolated CPU runtime, LaBSE encoder, and BGE reranker.
-
-| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
-| --- | --- | --- | --- | --- | --- | --- |
-| --from-directory | text | optional | nargs=1 | — | — | Use local copies of the pinned model files. |
-| --offline | boolean | optional | nargs=1, flag | — | — | Use only local model files and uv's local Python and wheel cache. |
-| --encoder-only | boolean | optional | nargs=1, flag | — | — | Install or verify LaBSE without adding BGE. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp search-model status`
 
-Show installation status for the current server user's cache.
+Check both bundled model files locally and report their status.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| --verify | boolean | optional | nargs=1, flag | — | — | Check hashes and test each installed model locally. |
+| --verify | boolean | optional | nargs=1, flag | — | — | Exit with an error if either bundled model fails. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp shader`

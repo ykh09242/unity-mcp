@@ -11,8 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 
-from services.registry import semantic_coverage, semantic_profile
-from services.registry.semantic_worker_client import quality_scores
+from services.registry import semantic_coverage
 
 MODEL_REVISION = "b68f4122911bcffcd6e1f695f2d99cd6788972d8"
 MODEL_ID = f"sentence-transformers/static-similarity-mrl-multilingual-v1@{MODEL_REVISION}/256d-q8"
@@ -37,8 +36,7 @@ class SemanticModelUnavailable(RuntimeError):
     """The packaged encoder data is missing or damaged."""
 
 
-@lru_cache(maxsize=1)
-def _model() -> tuple[dict[str, int], bytes]:
+def _read_weights() -> bytes:
     try:
         with _ARTIFACT.open("rb") as file:
             data = file.read(_BYTES + 1)
@@ -46,6 +44,17 @@ def _model() -> tuple[dict[str, int], bytes]:
         raise SemanticModelUnavailable("Bundled catalog encoder is unavailable.") from exc
     if len(data) != _BYTES or hashlib.sha256(data).hexdigest() != _SHA256:
         raise SemanticModelUnavailable("Bundled catalog encoder failed its integrity check.")
+    return data
+
+
+def verify_model() -> None:
+    """Check the current packaged bytes independently of the inference cache."""
+    _read_weights()
+
+
+@lru_cache(maxsize=1)
+def _model() -> tuple[dict[str, int], bytes]:
+    data = _read_weights()
     start = 4 + int.from_bytes(data[:4], "little")
     vocab = data[4:start].decode("utf-8").split("\n")
     offsets = {token: start + index * _ROW.size for index, token in enumerate(vocab)}
@@ -149,10 +158,7 @@ def _static_scores(query: str, documents: tuple[str, ...]) -> tuple[float, ...]:
 
 
 def semantic_scores(query: str, documents: tuple[str, ...]) -> tuple[str, tuple[float, ...]]:
-    """Score with the highest available verified local profile and report its actual identity."""
-    scores = quality_scores(query, documents)
-    if scores is not None:
-        return semantic_profile.MODEL_ID, scores
+    """Score with a verified packaged model and report its actual identity."""
     if documents:
         try:
             vocab, _ = _model()

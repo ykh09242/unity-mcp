@@ -90,8 +90,6 @@ services = ["skills_bundle.json", "test_results_view.html"]
     "model/potion-256.q2",
     "model/POTION-LICENSE.txt",
     "model/POTION.md",
-    "model/labse-catalog.f16",
-    "model/labse-cpu-py313.lock",
     "model/LICENSE.txt",
     "model/README.md",
 ]

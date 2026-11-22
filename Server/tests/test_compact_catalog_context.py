@@ -6,7 +6,7 @@ from click.testing import CliRunner
 import pytest
 
 from services.registry import semantic_catalog as catalog
-from services.registry import semantic_coverage, semantic_profile
+from services.registry import semantic_coverage
 
 
 @pytest.mark.parametrize(
@@ -14,7 +14,6 @@ from services.registry import semantic_coverage, semantic_profile
     [
         (catalog.STATIC_MODEL_ID, "in find panel"),
         (semantic_coverage.MODEL_ID, "in Unity find ’s panel"),
-        (semantic_profile.MODEL_ID, "in Unity find ’s panel"),
     ],
 )
 def test_platform_and_attached_name_suffix_are_neutral_only_for_static_model(
@@ -28,7 +27,6 @@ def test_platform_and_attached_name_suffix_are_neutral_only_for_static_model(
         return model, (0.7,) * len(documents)
 
     monkeypatch.setattr(catalog, "encode_scores", encode)
-    monkeypatch.setattr(catalog, "rerank_scores", lambda *_: None)
     key = ("tool", "inspect_panel", "")
     actual_model, scores = catalog.semantic_scores(query, {key: ("inspect the panel",)})
     assert actual_model == model and scores[key] == pytest.approx(0.7)
@@ -59,10 +57,9 @@ def test_compound_request_uses_surrounding_operation_context(separator):
 
 
 @pytest.mark.parametrize("tag", ["_foo._bar", "Assets/रंग/नीला.asset"])
-def test_cli_keeps_console_read_first_with_literal_log_tag(monkeypatch, tmp_path, tag):
+def test_cli_keeps_console_read_first_with_literal_log_tag(tag):
     from cli.main import cli
 
-    monkeypatch.setenv("UNITY_MCP_SEARCH_MODEL_DIR", str(tmp_path / "unprovisioned"))
     query = f"Get warnings from the console in Unity; {tag} is the log tag"
     outcome = CliRunner().invoke(cli, ["--format", "json", "tool", "search", query])
     assert outcome.exit_code == 0, outcome.output

@@ -24,13 +24,10 @@ For another installed Unity revision, use its `mcpServerSource`. If `unity-mcp` 
 
 Pass the original request to `tool search`. The bundled encoders rank individual
 operations and readable resources on the local CPU, including in an offline
-installation. A more accurate local profile retrieves candidates with LaBSE
-and reranks them with BGE. Install it once on the machine and user account
-that runs the server. Set `UNITY_MCP_SEARCH_MODEL_DIR` on both processes if
-they need a custom shared cache.
+installation. Both model files ship with the server package. Use
+`search-model status --verify` to check them on the machine running the server.
 
 ```bash
-unity-mcp search-model install
 unity-mcp search-model status --verify
 unity-mcp --format json tool search "Where is the editor window in the menu?" --route-surfaces tools --limit 3
 ```
@@ -41,7 +38,7 @@ model that actually scored the request. In an MCP session, use
 `intent` and English action and target terms in `catalog_query`. For a
 required read, `observation_source` and `required_values` select declarations
 that return those fields. Search suggests routes and leaves the Editor state
-unchanged. [Install profiles and offline options](https://github.com/ykh09242/unity-mcp/blob/beta/Server/src/cli/CLI_USAGE_GUIDE.md)
+unchanged.
 
 ## Inspect and select
 

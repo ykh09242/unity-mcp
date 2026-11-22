@@ -1,6 +1,5 @@
 """Bounded local task matching over declarations; never an admission mechanism."""
 
-import math
 import unicodedata
 from collections import Counter
 from collections.abc import Collection
@@ -55,7 +54,6 @@ from services.registry.capability_catalog import (
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
 from services.registry.integration_action_guidance import MENU_INVENTORY_OBSERVATION
 from services.registry.semantic_catalog import (
-    RerankedScores,
     documented_actions,
     search_texts,
     semantic_scores,
@@ -107,7 +105,6 @@ MatchBasis = Literal[
     "incidental",
     "declared_observation",
     "semantic_similarity",
-    "semantic_reranking",
     "none",
 ]
 
@@ -166,7 +163,6 @@ class SearchRoute(TypedDict):
     intent: NotRequired[ActionIntent | None]
     matched_terms: NotRequired[list[str]]
     semantic_similarity: NotRequired[float]
-    reranker_score: NotRequired[float]
     distinctive_terms: NotRequired[list[str]]
 
 
@@ -502,8 +498,6 @@ def _route_evidence(
         return "exact_identifier"
     if len(route["distinctive_terms"]) >= 2:
         return "multiple_terms"
-    if "reranker_score" in route and route["reranker_score"] >= 0:
-        return "semantic_reranking"
     if route.get("semantic_similarity", 0.0) >= 0.22:
         return "semantic_similarity"
     return "single_term" if route["distinctive_terms"] else "incidental"
@@ -695,21 +689,11 @@ def search_catalog(
                 model, semantic = encoded
         except SemanticModelUnavailable:
             model_unavailable = True
-    logits = semantic.reranker_logits if isinstance(semantic, RerankedScores) else {}
-    # A bounded monotonic transform lets the logit rank operations on the same
-    # scale as catalog term evidence. Responses expose the original raw scores.
-    weights = {
-        key: 160 / (1 + math.exp(-max(-80, min(80, logits[key])) / 4))
-        if key in logits
-        else 160 * cosine
-        for key, cosine in semantic.items()
-    }
+    weights = {key: 160 * cosine for key, cosine in semantic.items()}
 
     def add_semantic_evidence(route: SearchRoute, key: RouteKey) -> None:
         if key in semantic:
             route["semantic_similarity"] = round(semantic[key], 4)
-        if key in logits:
-            route["reranker_score"] = round(logits[key], 4)
 
     occurrences: Counter[str] = Counter()
     for entry, result in capabilities:
@@ -909,7 +893,6 @@ def search_catalog(
                 for b in (
                     "exact_identifier",
                     "multiple_terms",
-                    "semantic_reranking",
                     "semantic_similarity",
                     "single_term",
                     "incidental",
@@ -986,7 +969,6 @@ def search_catalog(
             "exact_identifier",
             "declared_observation",
             "semantic_similarity",
-            "semantic_reranking",
         }
         else "browse_catalog",
         "match_basis": basis,
