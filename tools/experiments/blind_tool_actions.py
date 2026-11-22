@@ -14,7 +14,12 @@ MENU_READER = "list_menu_declarations"
 MENU_INVENTORIES = {MENU_RESOURCE, MENU_READER}
 FRAME_DEBUGGER = "Window/Analysis/Frame Debugger"
 MENU_LOOKUPS = {"execute_menu_item.inspect", "execute_menu_item.exists"}
+MENU_AVAILABILITY = "execute_menu_item.evaluate_availability"
 MENU_ROUTES = MENU_INVENTORIES | MENU_LOOKUPS
+MENU_EXECUTION = "execute_menu_item.execute"
+MENU_EXECUTION_ROUTES = {"execute_menu_item", MENU_EXECUTION}
+MENU_INVALID_ACTION = "invalid_action"
+MENU_INVALID_ROUTE = "execute_menu_item." + MENU_INVALID_ACTION
 CAMERA_RESOURCE = "mcpforunity://scene/cameras"
 CAMERA_READER = "inspect_scene_cameras"
 CAMERA_ROUTES = {
@@ -23,6 +28,7 @@ CAMERA_ROUTES = {
     "manage_camera.list_cameras",
     "manage_cameras.list_cameras",
 }
+INVENTORY_READS = MENU_INVENTORIES | {CAMERA_RESOURCE, CAMERA_READER}
 UI_ROUTES = {"ui_source.read", "manage_ui.read"}
 SAVED_UI = "shell.read_saved_ui"
 FIELDS = {
@@ -30,6 +36,14 @@ FIELDS = {
     UI_TASK: ("buttons", "text_fields"),
     MENU_TASK: ("menu_path",),
 }
+
+
+def menu_action(value):
+    if value is None:
+        return "execute"
+    if value in ("execute", "inspect", "exists", "evaluate_availability"):
+        return value
+    return MENU_INVALID_ACTION
 
 
 def valid_ui_path(path):

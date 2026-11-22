@@ -117,7 +117,7 @@ class ScopedObservation(Middleware):
     async def on_read_resource(self, context, call_next) -> ResourceResult:
         uri = str(context.message.uri)
         route, args = route_name("resources/read", {"uri": uri})
-        channel = decision(route, args, self.graph_asset, endpoint=True)
+        channel = decision(route, args, self.graph_asset, endpoint=True, fixture=self.fixture)
         meta = context.fastmcp_context.request_context.meta or {}
         if meta.get("unity_instance", self.instance) != self.instance or channel == "blocked":
             raise ResourceError("Outside this project's permitted observations")

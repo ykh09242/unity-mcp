@@ -1,0 +1,26 @@
+{
+  "menu-declaration": {
+    "en": "Someone pointed me to Frame Debugger in this Unity Editor. Where would I find it? Just give me the full path.",
+    "ko": "이 Unity 에디터에서 Frame Debugger가 어디에 있어? 찾을 수 있는 전체 경로만 알려줘.",
+    "ja": "いまの Unity エディターだと Frame Debugger はどこにある？ たどる場所を省略せずに教えて。",
+    "es": "Me han mencionado Frame Debugger en este editor de Unity. ¿Dónde está? Dame solo la ruta completa.",
+    "ar": "أين أجد Frame Debugger في محرر Unity هذا؟ اكتب المسار الكامل فقط.",
+    "tr": "Bu Unity editöründe Frame Debugger nerede? Yalnızca oraya giden tam yolu yaz."
+  },
+  "console-errors": {
+    "en": "What error messages are currently in the Unity Console? Copy only the exact messages and leave the Console as it is.",
+    "ko": "현재 Unity 콘솔에 뜬 오류 메시지만 원문 그대로 옮겨줘. 콘솔은 지우지 말고 그대로 둬.",
+    "ja": "Unity のコンソールに今出ているエラーメッセージだけを、そのまま書き出して。コンソールの内容は消さないで。",
+    "es": "Copia tal cual los mensajes de error que hay ahora en la consola de Unity. Solo los errores, y deja la consola intacta.",
+    "ar": "انسخ رسائل الخطأ الموجودة الآن في وحدة تحكم Unity حرفيًا. أريد الأخطاء فقط، واترك محتويات الوحدة كما هي.",
+    "tr": "Unity konsolunda şu anda bulunan hata iletilerini aynen aktar. Yalnızca hataları yaz ve konsolun içeriğini silme."
+  },
+  "camera-depth": {
+    "en": "Which GameObject in the open scene has the Unity Camera with the highest depth? Give the GameObject name and the numeric depth.",
+    "ko": "현재 열린 씬에서 Unity Camera의 depth가 가장 큰 GameObject는 뭐야? GameObject 이름과 depth 값을 알려줘.",
+    "ja": "開いているシーンで Unity の Camera の depth が一番高いのはどの GameObject？ 名前と depth の数値を教えて。",
+    "es": "En la escena abierta, ¿qué GameObject tiene la Camera de Unity con el depth más alto? Dame el nombre y el valor numérico de depth.",
+    "ar": "في المشهد المفتوح، أي GameObject يحمل مكوّن Camera في Unity بأعلى قيمة depth؟ اذكر اسم الكائن والقيمة الرقمية.",
+    "tr": "Açık sahnede en yüksek depth değerine sahip Unity Camera hangi GameObject üzerinde? GameObject adını ve sayısal değeri yaz."
+  }
+}

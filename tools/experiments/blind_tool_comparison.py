@@ -317,6 +317,9 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
                     reasons.append(f"different:{name}")
             if left["role_status"] != "confirmed" or right["role_status"] != "confirmed":
                 reasons.append("unconfirmed_role")
+            for arm, case in (("baseline", left), ("candidate", right)):
+                if "holdout" in case:
+                    reasons.extend(f"{arm}:{reason}" for reason in case["holdout"]["exclusions"])
             if any(
                 c.get("runner_status") != "finished" or not c["turn_completed"]
                 for c in (left, right)
@@ -344,6 +347,8 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
         }
         for arm, case in (("baseline", left), ("candidate", right)):
             pair[arm] = {k: case.get(k) for k in METRICS} if case else None
+            if case and "holdout" in case:
+                pair[arm]["holdout"] = case["holdout"]
         pairs.append(pair)
     eligible = [p for p in pairs if p["eligible"]]
     summaries = {}
@@ -361,6 +366,16 @@ def compare_directories(baseline: Path, candidate: Path) -> dict:
         "eligible_order_counts": dict(Counter(p["order"] for p in eligible)),
         "eligible_summary": summaries,
         "observed_by_requested_role": observed_by_role,
+        **(
+            {
+                "holdout_by_arm": {
+                    arm: report.get("holdout")
+                    for arm, report in zip(("baseline", "candidate"), reports, strict=True)
+                }
+            }
+            if any("holdout" in report for report in reports)
+            else {}
+        ),
         "coverage": {
             "overall": study_stratum(pairs),
             "language_by_role": {

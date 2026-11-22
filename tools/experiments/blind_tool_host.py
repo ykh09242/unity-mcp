@@ -20,6 +20,7 @@ import anyio
 from tools.check_codex_interop import AppServer, InteropFailure, close_process
 from tools.experiments import blind_tool_actions as actions
 from tools.experiments import blind_tool_console as console
+from tools.experiments import blind_tool_holdout as holdout
 
 RECORDED_SERVER = "unityMCP_trial"
 IDENTIFIER = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
@@ -488,8 +489,15 @@ def project_item(item, server, asset, project="", fixture=None):
                 unpack,
             )
 
-            args = item.get("arguments") or {}
+            args = item.get("arguments")
+            args = {} if args is None else args
+            menu_call = name == "execute_menu_item" and (
+                (fixture or {}).get("task") == actions.MENU_TASK
+                or (fixture or {}).get("prompt_set") == holdout.PROMPT_SET
+            )
             if not isinstance(args, dict):
+                if menu_call:
+                    projected["arguments"] = {"action": actions.MENU_INVALID_ACTION}
                 return projected
             if (
                 name == "read_console"
@@ -497,10 +505,8 @@ def project_item(item, server, asset, project="", fixture=None):
                 and args.get("action") == "clear"
             ):
                 projected["arguments"] = {"action": "clear"}
-            if name == "execute_menu_item" and (fixture or {}).get("task") == actions.MENU_TASK:
-                mode = args.get("action", "execute")
-                if mode in ("execute", "inspect", "exists", "evaluate_availability"):
-                    projected["arguments"] = {"action": mode}
+            if menu_call:
+                projected["arguments"] = {"action": actions.menu_action(args.get("action"))}
             if name == "read_mcp_resource":
                 route, arguments = route_name("resources/read", args)
             else:
@@ -514,6 +520,11 @@ def project_item(item, server, asset, project="", fixture=None):
                 if route in console.ROUTES and args.get("cursor") is not None:
                     offset = console.requested_offset(args)
                     clean["cursor"] = offset if offset >= 0 else "[invalid]"
+                if (
+                    route in console.ROUTES
+                    and (fixture or {}).get("prompt_set") == holdout.PROMPT_SET
+                ):
+                    projected["error_filter"] = console.error_filter(args)
                 if route in actions.MENU_LOOKUPS:
                     clean["menu_path"] = (
                         actions.FRAME_DEBUGGER
@@ -703,7 +714,8 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
         try:
             gate = getattr(args, "pair_gate", None)
             console_trial = metadata.get("task") == console.TASK
-            controlled = bool(getattr(args, "study", None) or gate or console_trial)
+            is_holdout = metadata.get("prompt_set") == holdout.PROMPT_SET
+            controlled = bool(getattr(args, "study", None) or gate or console_trial or is_holdout)
             with anyio.fail_after(args.timeout * (4 if gate else 1)):
                 await client.request(
                     "initialize",
@@ -770,7 +782,7 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                 metadata["competitor_digest"] = surface["competitor_digest"]
                 metadata["competition_observed"] = surface.get("competition_observed")
                 metadata["observed_server_commit"] = surface["source"]["server_commit"]
-                if getattr(args, "study", None) or gate:
+                if getattr(args, "study", None) or gate or is_holdout:
                     from tools.experiments.blind_tool_selection import probe_state
 
                     if not surface.get("project_verified"):
@@ -779,6 +791,12 @@ async def _configured_session(args, case_dir, prompt, metadata, expected=None):
                     metadata["editor_start_state"] = await anyio.to_thread.run_sync(
                         probe_state, args
                     )
+                    if is_holdout:
+                        if not holdout.oracle(metadata["task"], metadata["editor_start_state"]):
+                            metadata["fixture_reason"] = "independent_holdout_oracle_unavailable"
+                            raise ValueError(
+                                "Configured host did not independently observe the holdout fixture"
+                            )
                 if gate:
                     metadata["runner_phase"] = "pair_preflight"
                     arm = metadata["arm"]

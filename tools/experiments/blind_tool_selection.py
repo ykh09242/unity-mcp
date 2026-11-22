@@ -26,6 +26,7 @@ from tools.experiments.blind_tool_comparison import compare_directories, paired_
 from tools.experiments.blind_tool_trace import score_case, score_directory
 from tools.experiments import blind_tool_actions as actions
 from tools.experiments import blind_tool_console as console
+from tools.experiments import blind_tool_holdout as holdout
 
 TASKS = (
     "request-label",
@@ -50,6 +51,15 @@ def task_prompt(
     task: str, language: str, graph_asset: str, fixture=None, *, prompt_set="baseline"
 ) -> str:
     """Return the identical user task text for either execution role."""
+    if prompt_set == holdout.PROMPT_SET:
+        if task not in holdout.TASKS:
+            raise ValueError(f"--prompt-set holdout supports --task {', '.join(holdout.TASKS)}")
+        with (
+            Path(__file__)
+            .with_name("blind_tool_tasks_holdout.json")
+            .open(encoding="utf-8") as stream
+        ):
+            return json.load(stream)[task][language]
     with Path(__file__).with_name("blind_tool_tasks.json").open(encoding="utf-8") as stream:
         prompts = json.load(stream)
     if prompt_set == "natural":
@@ -88,9 +98,14 @@ def delivery_prompt(args: argparse.Namespace, task: str, language: str, role: st
     if getattr(args, "study", None) in (STUDY, observations.STUDY):
         with Path(__file__).with_name("blind_tool_tasks.json").open(encoding="utf-8") as stream:
             prompt += "\n" + json.load(stream)["observation_scope"][language]
-    if task == console.TASK and role == "main":
+    is_holdout = getattr(args, "prompt_set", None) == holdout.PROMPT_SET
+    if task == console.TASK and role == "main" and not is_holdout:
         return prompt
-    if task != console.TASK and getattr(args, "answer_format", "prose") == "json":
+    if (
+        not is_holdout
+        and task != console.TASK
+        and getattr(args, "answer_format", "prose") == "json"
+    ):
         prompt += "\n\n" + answer_instruction(task, getattr(args, "answer_protocol", "v1"))
     if role == "main":
         return f"Perform this task yourself, without delegating.\n\n{prompt}"
@@ -180,7 +195,10 @@ def run_case(
     case_dir.mkdir()
     args = copy(args)
     args.observation_fixture = observations.observation_fixture(args, task)
-    if task == console.TASK and role == "subagent" and args.delegation == "v2":
+    is_holdout = getattr(args, "prompt_set", None) == holdout.PROMPT_SET
+    if is_holdout:
+        args.observation_fixture["prompt_set"] = holdout.PROMPT_SET
+    if (is_holdout or task == console.TASK) and role == "subagent" and args.delegation == "v2":
         args.live_child = True
     prompt = delivery_prompt(args, task, language, role)
     metadata = {
@@ -211,6 +229,16 @@ def run_case(
     }
     environment = {**os.environ, "PYTHONUTF8": "1"}
     try:
+        if is_holdout:
+            metadata.update(answer_format="prose", answer_protocol="holdout-verbatim")
+            if not getattr(args, "pair_gate", None) and not holdout.oracle(
+                task, metadata.get("editor_start_state")
+            ):
+                metadata.update(
+                    runner_status="fixture_unavailable",
+                    fixture_reason="independent_holdout_oracle_unavailable",
+                )
+                return
         if task == console.TASK:
             metadata["answer_format"] = "prose"
             metadata["answer_protocol"] = "console-verbatim"
@@ -266,7 +294,7 @@ def run_case(
     finally:
         if (
             (task == console.TASK and metadata.get("fixture_availability") == "positive")
-            or (getattr(args, "study", None) or getattr(args, "pair_gate", None))
+            or (is_holdout or getattr(args, "study", None) or getattr(args, "pair_gate", None))
             and metadata.get("runner_phase") == "model_turn"
         ):
             metadata["editor_end_state"] = probe_state(args)
@@ -287,7 +315,7 @@ def create_parser() -> argparse.ArgumentParser:
     launch.add_argument("--language", choices=LANGUAGES, action="append")
     launch.add_argument(
         "--prompt-set",
-        choices=("baseline", "natural"),
+        choices=("baseline", "natural", holdout.PROMPT_SET),
         default="baseline",
         help="Wording shared by both roles and both comparison arms",
     )
@@ -385,6 +413,11 @@ def create_parser() -> argparse.ArgumentParser:
     compare.add_argument("candidate", type=Path)
     score = modes.add_parser("score", help="Score stored observations without launching a client")
     score.add_argument("output", type=Path)
+    score.add_argument(
+        "--prompt-set",
+        choices=(holdout.PROMPT_SET,),
+        help="Score a holdout plan even without any captured cells",
+    )
     return parser
 
 
@@ -473,6 +506,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.prepare_pairs = True
         elif not all((args.task, args.language, args.role)):
             parser.error("provide --task, --language and --role or select --study")
+        is_holdout = args.prompt_set == holdout.PROMPT_SET
+        if is_holdout:
+            unsupported = set(args.task) - set(holdout.TASKS)
+            if unsupported:
+                parser.error(
+                    f"--prompt-set holdout supports --task {', '.join(holdout.TASKS)}. "
+                    f"Remove unsupported tasks: {', '.join(sorted(unsupported))}"
+                )
+            if not args.state_probe or args.host_mode == "isolated":
+                parser.error(
+                    "--prompt-set holdout requires --host-mode configured and an independent --state-probe"
+                )
+            if args.answer_format == "json" or args.answer_protocol:
+                parser.error("--prompt-set holdout uses verbatim answers. Omit JSON answer options")
         prepared = getattr(args, "prepare_pairs", False)
         if console.TASK in args.task and not args.state_probe:
             parser.error("console-errors requires an independent --state-probe")
@@ -481,13 +528,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "console-errors requires --host-mode configured to verify the answering actor and its Editor project"
             )
         args.host_mode = args.host_mode or (
-            "configured" if study or prepared or console.TASK in args.task else "isolated"
+            "configured"
+            if is_holdout or study or prepared or console.TASK in args.task
+            else "isolated"
         )
         args.answer_protocol = args.answer_protocol or ("v3" if study or prepared else "v2")
         if prepared and (
             args.host_mode != "configured"
             or not args.state_probe
-            or args.answer_format == "prose"
+            or (args.answer_format == "prose" and not is_holdout)
             or args.answer_protocol != "v3"
         ):
             parser.error(
@@ -542,7 +591,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 parser.error("invalid configured --unity-server name")
         if not args.codex or not args.project.is_dir():
             parser.error("run requires an installed Codex CLI and the Unity project directory")
-        args.answer_format = args.answer_format or ("json" if args.mode == "matched" else "prose")
+        args.answer_format = args.answer_format or (
+            "json" if args.mode == "matched" and not is_holdout else "prose"
+        )
         if args.state_probe:
             args.state_probe = args.state_probe.resolve()
             if not args.state_probe.is_file():
@@ -659,7 +710,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return int(
             report["eligible_pairs"] != report["planned_pairs"] or not report["planned_pairs"]
         )
-    report = score_directory(args.output)
+    report = score_directory(args.output, prompt_set=args.prompt_set)
     print(json.dumps(report, indent=2))
     return int(bool(report["runner_failures"] or report["unrun_cases"]))
 

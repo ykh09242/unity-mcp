@@ -36,6 +36,7 @@ from tools.experiments.blind_tool_shell import shell_purpose, shell_receipt
 from tools.experiments import blind_tool_observations as choices
 from tools.experiments import blind_tool_actions as actions
 from tools.experiments import blind_tool_console as console
+from tools.experiments import blind_tool_holdout as holdout
 
 EDITOR_STATE = "mcpforunity://editor/state"
 PROJECT_INFO = "mcpforunity://project/info"
@@ -158,8 +159,15 @@ def route_name(method: str, params: dict[str, Any]) -> tuple[str, dict[str, Any]
     """Identify the action as well as the tool without retaining user-supplied text."""
     if method == "tools/call":
         name = string(params.get("name"))
-        args = mapping(params.get("arguments"))
+        raw_args = params.get("arguments")
+        args = mapping(raw_args)
         action = string(args.get("action"))
+        if name == "execute_menu_item":
+            action = (
+                actions.menu_action(args.get("action"))
+                if raw_args is None or isinstance(raw_args, dict)
+                else actions.MENU_INVALID_ACTION
+            )
         return (f"{name}.{action}" if action else name), args
     if method == "resources/read":
         uri = string(params.get("uri"))
@@ -172,8 +180,16 @@ def route_name(method: str, params: dict[str, Any]) -> tuple[str, dict[str, Any]
 
 
 def recorded_route(route, channel, fixture):
+    fixture = fixture or {}
+    if fixture.get("prompt_set") == holdout.PROMPT_SET:
+        if route in actions.MENU_EXECUTION_ROUTES:
+            return actions.MENU_EXECUTION
+        if route in actions.MENU_ROUTES | actions.CAMERA_ROUTES | console.ROUTES or (
+            route in (actions.MENU_AVAILABILITY, actions.MENU_INVALID_ROUTE)
+        ):
+            return route
     if channel != "blocked" or (
-        (fixture or {}).get("task") == console.TASK and route == "read_console.clear"
+        fixture.get("task") == console.TASK and route == "read_console.clear"
     ):
         return route
     return "unapproved_route"
@@ -193,7 +209,16 @@ def decision(
         return "blocked"
     allowed = choices.permitted(route, args, fixture or {})
     if endpoint and route in actions.CAMERA_ROUTES | actions.UI_ROUTES | actions.MENU_ROUTES:
-        return "blocked"
+        if (fixture or {}).get(
+            "prompt_set"
+        ) != holdout.PROMPT_SET or route not in actions.INVENTORY_READS:
+            return "blocked"
+        if route == actions.CAMERA_RESOURCE:
+            return (
+                "unity"
+                if fixture.get("task") == actions.CAMERA_TASK and not args.get("url_query")
+                else "blocked"
+            )
     if allowed is not None:
         return "unity" if allowed else "blocked"
     if route in choices.OPEN_GRAPH_ROUTES:
@@ -560,6 +585,12 @@ def relay_stdio(
                                 page=page_number(route, args),
                                 actor=actor,
                                 actor_binding=binding,
+                                **(
+                                    {"error_filter": console.error_filter(args)}
+                                    if route in console.ROUTES
+                                    and (fixture or {}).get("prompt_set") == holdout.PROMPT_SET
+                                    else {}
+                                ),
                             )
                             if channel == "blocked":
                                 response = {
@@ -632,6 +663,7 @@ class Call:
     request_at: int = 0
     response_at: int = 0
     shell_purpose: str = ""
+    error_filter: bool | None = None
 
 
 def wire_trace(path: Path, *, after: int = 0, through: int | None = None) -> list[Call]:
@@ -658,6 +690,7 @@ def wire_trace(path: Path, *, after: int = 0, through: int | None = None) -> lis
                         actor_binding=string(row.get("actor_binding")),
                         timeline=path.name,
                         request_at=ordinal,
+                        error_filter=row.get("error_filter"),
                     )
                 case "response" if number in calls:
                     call = calls[number]
@@ -797,6 +830,11 @@ def client_trace(
                             channel,
                             len(trace.calls) + 1,
                             page=page_number(route, args),
+                            error_filter=(
+                                item.get("error_filter", console.error_filter(args))
+                                if route in console.ROUTES
+                                else None
+                            ),
                         ),
                     )
                     if event.get("type") == "item.completed":
@@ -1464,8 +1502,44 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         console_answer["clear_attempted"] = any(
             call.route == "read_console.clear" for call in business
         )
+    held_out = None
+    if row.get("prompt_set") == holdout.PROMPT_SET and task in holdout.TASKS:
+        # The selected host transcript establishes actor ownership and launch order.
+        # Host discovery items establish which discovery was actor-initiated.
+        # Connection traffic can also contain protocol setup or operator probes.
+        visible = list(actor_host.calls.values()) if actor_host else []
+        authored_discovery = {call.route for call in visible if call.channel == "discovery"}
+        actor_calls = (
+            merge_business_calls(
+                visible,
+                [
+                    call
+                    for call in wire
+                    if call.actor == selected_actor
+                    and (call.channel != "discovery" or call.route in authored_discovery)
+                ],
+            )
+            if selected_actor and actor_host and (role == "confirmed" or child is actor_host)
+            else None
+        )
+        controls = console_control_issues(inventory, row.get("model"), row.get("effort"))
+        if row["role"] == "subagent" and any(
+            call.channel == "discovery" for call in parent.calls.values()
+        ):
+            controls.append("delegating_parent_used_discovery")
+        held_out = holdout.assess(
+            row,
+            actor_calls,
+            actor_host.final_message if actor_host else "",
+            role=role,
+            actor_completed=bool(
+                actor_host and actor_host.completed and parent.completed and selected_actor
+            ),
+            controls=controls,
+        )
     return {
         **row,
+        **({"holdout": held_out} if held_out is not None else {}),
         **(
             {
                 "fixture_availability": choices.fixture_availability(
@@ -1585,6 +1659,8 @@ def score_case(case_dir: Path) -> dict[str, Any]:
         else None,
         "final_answer": console_answer
         if task == console.TASK
+        else {"status": held_out["oracle_answer_status"], "protocol": "holdout-verbatim"}
+        if held_out is not None
         else final_answer(
             case_dir,
             task,
@@ -1610,7 +1686,7 @@ def score_case(case_dir: Path) -> dict[str, Any]:
     }
 
 
-def score_directory(output: Path) -> dict[str, Any]:
+def score_directory(output: Path, *, prompt_set=None) -> dict[str, Any]:
     """Summarize the captured trial matrix while keeping missing cells visible."""
     if not output.is_dir():
         raise FileNotFoundError(f"Trial directory does not exist: {output}")
@@ -1629,6 +1705,11 @@ def score_directory(output: Path) -> dict[str, Any]:
         "cases_with_approval_blocks": sum(bool(case["approval_blocks"]) for case in cases),
         "runner_failures": sum(case.get("runner_status") != "finished" for case in cases),
         "cases": cases,
+        **(
+            {"holdout": holdout.summarize(output, planned, cases)}
+            if prompt_set == holdout.PROMPT_SET or any("holdout" in case for case in cases)
+            else {}
+        ),
     }
 
 
