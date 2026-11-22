@@ -6,6 +6,7 @@ on:
     paths: &dependency-inputs
       - Server/**
       - MCPForUnity/package.json
+      - tools/check_transport_catalog.py
       - tools/experiments/dependencies/**
       - .github/workflows/dependency-sdk-comparison.yml
   push:
@@ -31,11 +32,21 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        id: toolchain
         with:
           version: '0.13.9'
           python-version: ${{ matrix.python }}
           enable-cache: false
+      - name: Precheck locked transport and catalog regressions
+        if: matrix.python == '3.14'
+        env:
+          EXPECTED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          uv run --project Server --python 3.14 --locked --extra dev python tools/check_transport_catalog.py
       - name: Compare independently installed SDKs with the same server wheel
+        # Keep comparison evidence available when the locked precheck fails.
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         env:
           EXPECTED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
           UV_HTTP_RETRIES: '5'

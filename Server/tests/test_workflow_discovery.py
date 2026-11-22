@@ -41,6 +41,43 @@ def test_internal_catalog_requires_the_scoped_method_and_server():
 
 
 @pytest.mark.asyncio
+async def test_real_sdk_lists_external_catalog_with_unity_routing(monkeypatch):
+    from core.config import config
+    from fastmcp import Client, FastMCP
+    from tests.plugin_hub_lifespan import isolated_plugin_hub
+    from transport.unity_instance_middleware import UnityInstanceMiddleware
+
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(config, "transport_mode", "http")
+    server = FastMCP("external-catalog")
+    server.add_middleware(UnityInstanceMiddleware())
+
+    @server.tool
+    def sample_tool() -> str:
+        pytest.fail("Listing invoked a tool")
+
+    @server.resource("mcpforunity://sample")
+    def sample_resource() -> str:
+        pytest.fail("Listing read a resource")
+
+    @server.resource("mcpforunity://sample/{name}")
+    def sample_template(name: str) -> str:
+        pytest.fail(f"Listing read the resource for {name}")
+
+    async with (
+        isolated_plugin_hub(monkeypatch),
+        Client(server, timeout=10, init_timeout=10) as client,
+    ):
+        tools = await client.list_tools()
+        resources = await client.list_resources()
+        templates = await client.list_resource_templates()
+
+    assert {tool.name for tool in tools} == {"sample_tool"}
+    assert {str(resource.uri) for resource in resources} == {"mcpforunity://sample"}
+    assert {str(template.uri_template) for template in templates} == {"mcpforunity://sample/{name}"}
+
+
+@pytest.mark.asyncio
 async def test_transport_tool_is_discoverable_from_its_actual_wire_schema():
     from fastmcp import Client, FastMCP
     from jsonschema import Draft202012Validator
@@ -130,12 +167,14 @@ async def test_search_and_normalized_resource_branch_stay_within_the_original_re
 
 @pytest.mark.asyncio
 async def test_resource_catalog_keeps_per_call_project_selection(monkeypatch):
-    from fastmcp import Client, Context, FastMCP
     from core.config import config
+    from fastmcp import Client, Context, FastMCP
+    from tests.plugin_hub_lifespan import isolated_plugin_hub
     from transport.unity_instance_middleware import UnityInstanceMiddleware
 
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "require_explicit_target", False)
+    monkeypatch.setattr(config, "transport_mode", "http")
     server = FastMCP("per-call resource catalog")
     routing = UnityInstanceMiddleware()
     server.add_middleware(routing)
@@ -150,7 +189,10 @@ async def test_resource_catalog_keeps_per_call_project_selection(monkeypatch):
             "session": await routing.get_active_instance(ctx),
         }
 
-    async with Client(server, mode="legacy") as client:
+    async with (
+        isolated_plugin_hub(monkeypatch),
+        Client(server, mode="legacy", timeout=10, init_timeout=10) as client,
+    ):
         result = await client.call_tool("inspect_catalog_selection", {})
         assert result.structured_content == {
             "request": "PerCall@bbbbbbbb",

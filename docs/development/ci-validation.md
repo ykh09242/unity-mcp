@@ -52,6 +52,20 @@ Python 3.11, 3.12, 3.13, 3.14 and 3.15. Minor-version selectors allow the availa
 advance without editing every workflow. The server and tool suites use separate matrix jobs,
 so tool tests do not wait for the longer server suite.
 
+Run the focused transport and catalog regressions from the repository root with the locked
+server development environment.
+
+```sh
+uv run --project Server --python 3.14 --locked --extra dev python tools/check_transport_catalog.py
+```
+
+The check covers disconnected Editor selection, remote tool membership isolation, catalog
+scope ownership, and actual SDK tool, resource and resource-template inventory. It runs with
+warnings treated as errors, disables telemetry, and requires the selected cases to execute
+without skips. The [installed SDK comparison workflow](../../.github/workflows/dependency-sdk-comparison.yml)
+runs the same command before its Python 3.14 comparison on affected pull requests and beta
+pushes, and on manual runs. The complete Python matrix continues to exercise broader behavior.
+
 - Pylint runs once, in the Python 3.15 tools job. Its two independent source groups run
   concurrently with isolated import roots and complete, ordered diagnostics. Each group
   retains `--jobs=1` on 3.15 until dill supports the interpreter's code-object changes.
