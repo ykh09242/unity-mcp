@@ -57,6 +57,8 @@ async def test_real_catalog_finds_error_read_and_scene_camera_inventory(monkeypa
         "Konsoldaki güncel hata mesajlarını temizle.",
         "Konsoldaki hata iletilerini sil.",
         "Konsoldaki hata iletilerini dosyaya aktar.",
+        "Konsoldaki hata iletilerini metin dosyasına aktar.",
+        "Konsoldaki hata iletilerini temizler misin?",
         "카메라 깊이를 가장 큰 값으로 설정해 줘.",
         "カメラの深度を最大に変更してください。",
         "Ajusta la profundidad de la cámara al valor máximo.",

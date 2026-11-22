@@ -64,7 +64,8 @@ _CONSOLE_CHANGE = re.compile(
     r"지워|지우세요|비워|고쳐|(?:삭제|수정|해결|초기화)(?:해|하(?!지)|할|시켜)|(?:消去|削除|クリア|修正)して|消して|直して|"
     r"(?<!no )\b(?:borra|borre|limpia|limpie|elimina|corrige|arregla)\w*\b|"
     r"(?<!\w)(?:امسح|احذف|أصلح|اصلح)\b|\b(?:sil|silin|temizle|temizleyin|düzelt|düzeltin)\b"
-    r"|\bdosyaya\s+(?:yaz|aktar|kaydet)\w*"
+    r"|\b(?:siler|silebilir|temizler|temizleyebilir|düzeltir|düzeltebilir)\s+mi(?:sin(?:iz)?)?\b"
+    r"|\bdosya(?:ya|sına|lara|larına)\s+(?:yaz|aktar|kaydet)\w*"
 )
 _OTHER_CONSOLE = re.compile(
     r"브라우저|터미널|ブラウザ|ターミナル|\b(?:browser|devtools|navegador|terminal|shell|tarayıcı)\w*"
