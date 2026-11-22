@@ -745,3 +745,33 @@ top three for the other five prompts. In a separate tools-only replay, keeping
 the Korean prompt and supplying the English catalog query
 `find registered editor menu command path` moved the inventory from third
 to first.
+
+### Raw menu search in five languages
+
+The follow-up replay sent both checked-in menu requests for each language
+(natural and original) directly to `search_unity_tools`, with a limit of three.
+The original user string was the sole search input. The same SDK client
+queried the core and full server profiles. Every query was
+repeated on the tool, resource and combined surfaces.
+
+| Language | Top-three hits before | Top-three hits after | Rank after |
+| --- | ---: | ---: | ---: |
+| Korean | 0/12 | 12/12 | 1 |
+| Japanese | 0/12 | 12/12 | 1 |
+| Spanish | 0/12 | 12/12 | 1 |
+| Arabic | 0/12 | 12/12 | 1 |
+| Turkish | 0/12 | 12/12 | 1 |
+
+The replay compared the server source at `2dbff299e` with `9736d4c5c`.
+The tool and combined surfaces returned `list_menu_declarations` first. The resource surface
+returned `mcpforunity://menu-items` first. The flat tool list also ranked the
+reader first. These counts cover ten distinct inputs and measure catalog
+placement. The native actor trials above measure tool choice separately.
+
+Run the replay assertions from the repository root with the locked server
+environment.
+
+```sh
+uv run --project Server --locked --extra dev python -m pytest -q -c Server/tests/pytest.ini \
+  -p no:cacheprovider tools/tests/test_menu_discovery_probe.py -k raw_localized
+```
