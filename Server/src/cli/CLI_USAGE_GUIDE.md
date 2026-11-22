@@ -34,6 +34,13 @@ for enablement, key limits, examples and unknown-outcome rules.
 
 ## Optional local search model
 
+`unity-mcp tool search` accepts the original request in the user's language.
+The bundled encoders select candidates by the meanings of individual operations
+and readable resources. JSON output includes the actual `semantic_model` and
+the ranked `route_groups`. For example, `--route-surfaces tools --limit 3`
+returns up to three groups with a callable tool binding. The CLI lists local
+declarations. Use the MCP search tool to rank the current host's visible catalog.
+
 Search can use a local CPU copy of LaBSE for multilingual ranking. Install it
 as the user who runs the MCP server. The CLI and server read the same per-user
 cache. To use a custom location, set `UNITY_MCP_SEARCH_MODEL_DIR` to the same

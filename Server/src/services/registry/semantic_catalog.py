@@ -90,7 +90,7 @@ def semantic_scores(
     # Keep a bounded neighborhood of the closest match. Very weak or out-of-vocabulary
     # input should still allow the ordinary no-match and catalog navigation paths.
     peak = max(scores.values())
-    if peak < 0.4 and fragmented_label(query):
+    if peak < 0.4 and fragmented_label(query, model):
         return model, {}
     threshold = max(0.16, peak - 0.12)
     return model, {key: value for key, value in scores.items() if value >= threshold}

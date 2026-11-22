@@ -34,6 +34,12 @@ insensitive to word order. Search scores measure textual similarity and vary
 with the language and wording. Tool availability and action permissions are
 determined separately.
 
+When the WordPiece vocabulary covers too little of a request, search uses a
+second bundled encoder with a 500,353-entry Unigram vocabulary. Selection uses
+the proportion of recognized text and token fragmentation. Both encoders can
+score new tool descriptions at runtime. The response records whichever encoder
+supplied the scores. [Unigram model, license and reproduction steps](POTION.md)
+
 ## Optional LaBSE profile
 
 `unity-mcp search-model install` provisions an isolated local CPU runtime and

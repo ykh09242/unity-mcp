@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 
-from services.registry import semantic_profile
+from services.registry import semantic_coverage, semantic_profile
 from services.registry.semantic_worker_client import quality_scores
 
 MODEL_REVISION = "b68f4122911bcffcd6e1f695f2d99cd6788972d8"
@@ -109,9 +109,9 @@ def _encode(text: str, model: tuple[dict[str, int], bytes]) -> tuple[float, ...]
     return tuple(value / norm for value in vector) if norm else ()
 
 
-def fragmented_label(text: str) -> bool:
+def fragmented_label(text: str, model_id: str) -> bool:
     """Whether a single unrecognized label was split into many WordPiece fragments."""
-    if not text.isalpha():
+    if model_id == semantic_coverage.MODEL_ID or not text.isalpha():
         return False
     words = list(_words(text))
     if len(words) != 1:
@@ -153,6 +153,16 @@ def semantic_scores(query: str, documents: tuple[str, ...]) -> tuple[str, tuple[
     scores = quality_scores(query, documents)
     if scores is not None:
         return semantic_profile.MODEL_ID, scores
+    if documents:
+        try:
+            vocab, _ = _model()
+        except SemanticModelUnavailable:
+            return semantic_coverage.MODEL_ID, semantic_coverage.similarities(query, documents)
+        if semantic_coverage.needs_fallback(query, vocab):
+            try:
+                return semantic_coverage.MODEL_ID, semantic_coverage.similarities(query, documents)
+            except SemanticModelUnavailable:
+                pass  # The intact WordPiece model can still rank its recognized query terms.
     return MODEL_ID, _static_scores(query, documents)
 
 

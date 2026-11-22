@@ -24,9 +24,11 @@ def test_distribution_includes_source_and_model_licenses() -> None:
     assert license_files == [
         server_root / "LICENSE",
         server_root / "src/services/registry/model/LICENSE.txt",
+        server_root / "src/services/registry/model/POTION-LICENSE.txt",
     ]
     assert license_files[0].read_bytes() == (server_root.parent / "LICENSE").read_bytes()
     assert "Apache License" in license_files[1].read_text(encoding="utf-8")
+    assert "Permission is hereby granted" in license_files[2].read_text(encoding="utf-8")
 
 
 def test_version_uses_installed_fork_when_upstream_is_also_installed(
