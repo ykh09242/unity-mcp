@@ -60,3 +60,30 @@ The suitable business tool came first in three of four menu cells, all four Cons
 Five selected actors searched the MCP catalog, the Portuguese and Thai pairs and the German child. Each sent its complete original prompt with structured observation constraints and no `catalog_query`. All five received the suitable observation inventory at rank one. Zero selected actors issued an unstructured free-text-only search or attempted menu execution. The guarded relay recorded no blocked Unity mutation request. The final native state matched all 48 selected before-and-after snapshots across the two runs.
 
 The replay reuses the original questions. Differences in first-tool selection and answers are descriptive. These actor observations do not isolate the effect of the reranker.
+
+## November 23, 2026 replay after CI fixes
+
+The 12 predeclared cells ran once each after the compact ranking and startup instruction changes. All 12 actors and all 12 parent sessions were fresh. The main and delegating-parent delivery digests matched both earlier runs. The live server supplied 3,199 UTF-8 bytes of startup instructions. Before the actors ran, unstructured calls to both `search_unity_tools` and `manage_tools.search` returned `matching=hybrid` and identified the pinned LaBSE encoder and BGE reranker. [Measured source a4b0b0bb4](https://github.com/ykh09242/unity-mcp/commit/a4b0b0bb487d1ae5b2f182fe039fdef157ca1a2d)
+
+| Role | Completed | Suitable first action | Suitable first business tool | Matching live evidence | Strict grounded answer | Grounded answer after manual review |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Main | 6/6 | 4/6 | 6/6 | 6/6 | 6/6 | 6/6 |
+| Subagent | 6/6 | 2/6 | 3/6 | 6/6 | 5/6 | 6/6 |
+| **All** | **12/12** | **6/12** | **9/12** | **12/12** | **11/12** | **12/12** |
+
+| Language and task | Main first action / business tool | Child first action / business tool | Strict grounded, main / child |
+| --- | --- | --- | --- |
+| Chinese menu | Menu list / menu list | Catalog search / menu list | Yes / yes |
+| Vietnamese console | Console read / console read | Console read / console read | Yes / yes |
+| Portuguese camera | Catalog search / camera inspection | Shell / shell | Yes / no |
+| German menu | Menu list / menu list | Menu list / menu list | Yes / yes |
+| Finnish console | Console read / console read | Shell / shell | Yes / yes |
+| Thai camera | Catalog search / camera inspection | Catalog search / loaded scenes | Yes / yes |
+
+All four menu actors returned only the requested path. All four console actors returned both original error messages without call stacks. All four camera actors gave the name of the unique highest-depth camera and its exact depth. The strict parser rejected the Portuguese child's correct name and comma-decimal value separated by a middle dot. No answer contained enough natural-language prose to assess response language.
+
+Four actors sent their entire original request to `search_unity_tools`: the Chinese child, Portuguese main and both Thai actors. Each supplied structured observation constraints and received the relevant inventory at rank one with `matching=observation`. The Chinese child also supplied an English `catalog_query`. No actor issued an unstructured search. All six native child turns included an attributable tool read and final answer. The exact original text was absent from all six captured initial spawn-message fields. Five parents sent later messages whose text the capture did not retain. The two child-issued exact search strings establish verbatim use for those two children. Verbatim forwarding is unverified for the other four.
+
+All 12 host traces showed a tool-list expression and a shell operation before the requested Unity read. The first projected shell operation was a recognized instruction read in 11 cases and was unclassified in one. Neither blocked Unity mutations nor menu-execution attempts were recorded. The two Vietnamese actors recovered from initial console-read errors. The Thai child encountered a host approval block before completing the camera read. All 24 before-and-after snapshots matched the independently sampled fixture state, including instance, PID, menu declaration, open Frame Debugger windows, Play mode, errors, warnings and complete camera inventory. This replay used the same six questions as the two earlier cohorts.
+
+The shipping commit changed literal preprocessing in the bundled WordPiece profile. A separate live preflight on that archive verified the same pinned LaBSE and BGE identifiers and `matching=hybrid` through both unstructured search entry points. The live startup instructions remained 3,199 bytes. The native state still matched all 24 actor snapshots. The isolated Editor exited normally, its registry entry and scoped helpers cleared, and the original Editor stayed running. The actor results above are from a4b0b0bb4. The shipping commit received this preflight only. [Shipping source 9d3216d30](https://github.com/ykh09242/unity-mcp/commit/9d3216d30226b84ee2a2e93f7a77d78eab4e0f36)
