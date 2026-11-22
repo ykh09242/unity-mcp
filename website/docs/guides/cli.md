@@ -20,6 +20,29 @@ uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/f541
 
 For another installed Unity revision, use its `mcpServerSource`. If `unity-mcp` is already installed from the matching source, the shorter commands below work directly. Otherwise prepend the same `uvx --python ">=3.11" --from` prefix to each command.
 
+## Find a tool in the user's language
+
+Pass the original request to `tool search`. The bundled encoders rank individual
+operations and readable resources on the local CPU, including in an offline
+installation. A more accurate local profile retrieves candidates with LaBSE
+and reranks them with BGE. Install it once on the machine and user account
+that runs the server. Set `UNITY_MCP_SEARCH_MODEL_DIR` on both processes if
+they need a custom shared cache.
+
+```bash
+unity-mcp search-model install
+unity-mcp search-model status --verify
+unity-mcp --format json tool search "Where is the editor window in the menu?" --route-surfaces tools --limit 3
+```
+
+Read `route_groups` for the ranked candidates and `semantic_model` for the
+model that actually scored the request. In an MCP session, use
+`search_unity_tools` to search the current host's catalog. Agents can supply
+`intent` and English action and target terms in `catalog_query`. For a
+required read, `observation_source` and `required_values` select declarations
+that return those fields. Search suggests routes and leaves the Editor state
+unchanged. [Install profiles and offline options](https://github.com/ykh09242/unity-mcp/blob/beta/Server/src/cli/CLI_USAGE_GUIDE.md)
+
 ## Inspect and select
 
 ```bash

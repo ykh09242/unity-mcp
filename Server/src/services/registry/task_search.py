@@ -1,5 +1,6 @@
 """Bounded local task matching over declarations; never an admission mechanism."""
 
+import math
 import unicodedata
 from collections import Counter
 from collections.abc import Collection
@@ -53,7 +54,12 @@ from services.registry.capability_catalog import (
 )
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
 from services.registry.integration_action_guidance import MENU_INVENTORY_OBSERVATION
-from services.registry.semantic_catalog import documented_actions, search_texts, semantic_scores
+from services.registry.semantic_catalog import (
+    RerankedScores,
+    documented_actions,
+    search_texts,
+    semantic_scores,
+)
 from services.registry.semantic_encoder import SemanticModelUnavailable
 
 
@@ -101,6 +107,7 @@ MatchBasis = Literal[
     "incidental",
     "declared_observation",
     "semantic_similarity",
+    "semantic_reranking",
     "none",
 ]
 
@@ -159,6 +166,7 @@ class SearchRoute(TypedDict):
     intent: NotRequired[ActionIntent | None]
     matched_terms: NotRequired[list[str]]
     semantic_similarity: NotRequired[float]
+    reranker_score: NotRequired[float]
     distinctive_terms: NotRequired[list[str]]
 
 
@@ -386,8 +394,12 @@ def semantic_documents(
         name = result["name"]
         if result["advertised"] is False:
             continue
+        if surfaces != "resources" and query == _normalized(name):
+            return None
         action_descriptions = documented_actions(tool_description(entry))
         for action in result["actions"] or [None]:
+            if surfaces != "resources" and action and query == _normalized(action):
+                return None
             guidance = action_guidance(entry, action)
             if intent and intent != action_intent(guidance, result):
                 continue
@@ -409,6 +421,11 @@ def semantic_documents(
             )
     for resource in resources:
         identifier = resource.get("uri") or resource["uri_template"]
+        if surfaces != "tools" and query in (
+            _normalized(identifier),
+            _normalized(resource["name"]),
+        ):
+            return None
         if intent not in (None, "observe"):
             continue
         template = "uri_template" in resource
@@ -485,6 +502,8 @@ def _route_evidence(
         return "exact_identifier"
     if len(route["distinctive_terms"]) >= 2:
         return "multiple_terms"
+    if "reranker_score" in route and route["reranker_score"] >= 0:
+        return "semantic_reranking"
     if route.get("semantic_similarity", 0.0) >= 0.22:
         return "semantic_similarity"
     return "single_term" if route["distinctive_terms"] else "incidental"
@@ -676,6 +695,22 @@ def search_catalog(
                 model, semantic = encoded
         except SemanticModelUnavailable:
             model_unavailable = True
+    logits = semantic.reranker_logits if isinstance(semantic, RerankedScores) else {}
+    # A bounded monotonic transform lets the logit rank operations on the same
+    # scale as catalog term evidence. Responses expose the original raw scores.
+    weights = {
+        key: 160 / (1 + math.exp(-max(-80, min(80, logits[key])) / 4))
+        if key in logits
+        else 160 * cosine
+        for key, cosine in semantic.items()
+    }
+
+    def add_semantic_evidence(route: SearchRoute, key: RouteKey) -> None:
+        if key in semantic:
+            route["semantic_similarity"] = round(semantic[key], 4)
+        if key in logits:
+            route["reranker_score"] = round(logits[key], 4)
+
     occurrences: Counter[str] = Counter()
     for entry, result in capabilities:
         name = entry["name"]
@@ -688,8 +723,7 @@ def search_catalog(
                 route = _tool_route(result, action, action_guidance(entry, action))
                 binding = _equivalent_binding(route, read)
                 if binding and read.allowed(unavailable_parents):
-                    if key in semantic:
-                        binding["semantic_similarity"] = round(semantic[key], 4)
+                    add_semantic_evidence(binding, key)
                     available_equivalents[key] = binding
         if structured:
             selected_actions = []
@@ -726,9 +760,9 @@ def search_catalog(
             (" ".join(aliases), 2),
             (description + " " + (entry.get("group") or ""), 1),
         )
-        standalone_similarity = semantic.get(("tool", name, ""), 0.0)
+        standalone_key = ("tool", name, "")
         lexical = _lexical_score(terms, query_words, bool(semantic))
-        score = lexical + standalone_similarity * 160
+        score = lexical + weights.get(standalone_key, 0.0)
         score += 1000 if query == _normalized(name) else 0
         score += 100 if query in _normalized(name) else 0
         action_matches = []
@@ -738,8 +772,8 @@ def search_catalog(
             action_terms = _term_evidence(
                 query_words, (action, 9), (guidance.purpose if guidance else "", 6)
             )
-            similarity = semantic.get(("tool", name, action), 0.0)
-            if not action_terms and not similarity:
+            key = ("tool", name, action)
+            if not action_terms and key not in semantic:
                 continue
             entry_terms.update(action_terms)
             # A repeated domain word in tool/title/action cannot crowd out the words
@@ -748,7 +782,7 @@ def search_catalog(
             for word, strength in action_terms.items():
                 operation_terms[word] = max(strength, terms.get(word, 0))
             weight = _lexical_score(operation_terms, query_words, bool(semantic)) - lexical
-            weight += similarity * 160
+            weight += weights.get(key, 0.0)
             if query == _normalized(action):
                 weight += 150
             action_matches.append((weight, action, guidance))
@@ -766,13 +800,11 @@ def search_catalog(
         for index, (weight, action, guidance) in enumerate(suggested_actions):
             ranked = routes if index < 3 else additional_routes
             route = _tool_route(result, action, guidance)
-            if similarity := semantic.get(("tool", name, action)):
-                route["semantic_similarity"] = round(similarity, 4)
+            add_semantic_evidence(route, ("tool", name, action))
             ranked.append((-(weight + score), name, action, route))
         if not action_matches:
             route = _tool_route(result, None, action_guidance(entry, None))
-            if standalone_similarity:
-                route["semantic_similarity"] = round(standalone_similarity, 4)
+            add_semantic_evidence(route, standalone_key)
             routes.append((-score, name, "", route))
     for resource in [*available_resources, *available_templates]:
         description = resource.get("description") or ""
@@ -826,8 +858,7 @@ def search_catalog(
         if read := _READ_BY_ROUTE.get(key):
             binding = _equivalent_binding(route, read)
             if binding and read.allowed(unavailable_parents):
-                if key in semantic:
-                    binding["semantic_similarity"] = round(semantic[key], 4)
+                add_semantic_evidence(binding, key)
                 available_equivalents[key] = binding
         if structured:
             if route.get("observation") and (not request.intent or request.intent == "observe"):
@@ -838,9 +869,8 @@ def search_catalog(
             continue
         occurrences.update(evidence.keys())
         weight = _lexical_score(evidence, query_words, bool(semantic))
-        if similarity := semantic.get(key):
-            weight += similarity * 160
-            route["semantic_similarity"] = round(similarity, 4)
+        weight += weights.get(key, 0.0)
+        add_semantic_evidence(route, key)
         if exact_name or query == _normalized(identifier):
             weight += 1000
         if weight:
@@ -879,6 +909,7 @@ def search_catalog(
                 for b in (
                     "exact_identifier",
                     "multiple_terms",
+                    "semantic_reranking",
                     "semantic_similarity",
                     "single_term",
                     "incidental",
@@ -950,7 +981,13 @@ def search_catalog(
         "recommended_action": "inspect_candidates"
         if groups
         and basis
-        in {"multiple_terms", "exact_identifier", "declared_observation", "semantic_similarity"}
+        in {
+            "multiple_terms",
+            "exact_identifier",
+            "declared_observation",
+            "semantic_similarity",
+            "semantic_reranking",
+        }
         else "browse_catalog",
         "match_basis": basis,
         "intent": request.intent,

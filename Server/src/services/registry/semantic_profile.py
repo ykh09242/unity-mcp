@@ -1,4 +1,4 @@
-"""Pinned provenance and cache contract for the optional local LaBSE profile."""
+"""Pinned provenance and cache contract for local semantic search models."""
 
 from __future__ import annotations
 
@@ -16,6 +16,14 @@ MODEL_ID: Final = f"labse-onnx-int8:{MODEL_REVISION}:{DENSE_REVISION}"
 MODEL_LICENSE: Final = "Apache-2.0"
 READY_FILE: Final = "READY"
 READY_BYTES: Final = f"{MODEL_ID}\n".encode("ascii")
+RERANKER_REVISION: Final = "6f5ff65298512715a1e669753bc754d2bc8f367b"
+RERANKER_ID: Final = f"bge-reranker-v2-m3-onnx-int8:{RERANKER_REVISION}"
+COMBINED_MODEL_ID: Final = f"{MODEL_ID}+{RERANKER_ID}"
+RERANKER_READY_FILE: Final = "RERANKER_READY"
+RERANKER_READY_BYTES: Final = f"{RERANKER_ID}\n".encode("ascii")
+_RERANKER_URL: Final = (
+    f"https://huggingface.co/onnx-community/bge-reranker-v2-m3-ONNX/resolve/{RERANKER_REVISION}"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +53,21 @@ MODEL_FILES: Final = (
         f"{DENSE_REVISION}/2_Dense/model.safetensors",
         2_362_528,
         "f866c945fa2147ce4940c8ead0b4b20af4217e0f4664bd35f41c2a0967c4fe77",
+    ),
+)
+
+RERANKER_FILES: Final = (
+    ModelFile(
+        "reranker.onnx",
+        f"{_RERANKER_URL}/onnx/model_quantized.onnx",
+        570_727_094,
+        "912fc1215c2dbff6499700534bd8d31253af01573861abbfc43afd1fab6cce5d",
+    ),
+    ModelFile(
+        "reranker-tokenizer.json",
+        f"{_RERANKER_URL}/tokenizer.json",
+        17_082_900,
+        "8bf8afbfd11306bd872018c53bfdf2e160a56f8edbcf49933324404791c148d3",
     ),
 )
 
@@ -81,14 +104,27 @@ def runtime_python(profile: Path) -> Path:
     return profile / "runtime" / "bin" / "python"
 
 
-def ready_profile(profile: Path) -> bool:
-    """Check whether provisioning published this model and its runtime."""
+def _has_marker(path: Path, expected: bytes) -> bool:
     try:
-        with (profile / READY_FILE).open("rb") as marker:
-            ready = marker.read(len(READY_BYTES) + 1) == READY_BYTES
-        return ready and runtime_python(profile).is_file()
+        with path.open("rb") as marker:
+            return marker.read(len(expected) + 1) == expected
     except OSError:
         return False
+
+
+def ready_profile(profile: Path) -> bool:
+    """Check whether provisioning published the LaBSE encoder and its runtime."""
+    try:
+        return _has_marker(profile / READY_FILE, READY_BYTES) and runtime_python(profile).is_file()
+    except OSError:
+        return False
+
+
+def reranker_ready(profile: Path) -> bool:
+    """Check whether provisioning published BGE alongside its LaBSE profile."""
+    return ready_profile(profile) and _has_marker(
+        profile / RERANKER_READY_FILE, RERANKER_READY_BYTES
+    )
 
 
 def verify_model_file(path: Path, artifact: ModelFile) -> None:
@@ -101,6 +137,12 @@ def verify_model_file(path: Path, artifact: ModelFile) -> None:
 
 
 def verify_weights(profile: Path) -> None:
-    """Verify every model file needed by the offline worker."""
+    """Verify every LaBSE model file needed by the offline encoder."""
     for artifact in MODEL_FILES:
+        verify_model_file(profile / artifact.name, artifact)
+
+
+def verify_reranker_weights(profile: Path) -> None:
+    """Verify every BGE model file needed by the offline reranker."""
+    for artifact in RERANKER_FILES:
         verify_model_file(profile / artifact.name, artifact)

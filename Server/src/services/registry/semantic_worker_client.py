@@ -1,4 +1,4 @@
-"""Private, bounded request/response pipe to one optional local encoder per server."""
+"""Private, bounded request/response pipes to the optional local search workers."""
 
 import atexit
 import json
@@ -13,17 +13,21 @@ from time import monotonic
 from services.registry import semantic_profile
 
 
-_GUARD = Lock()
 _WORKER_PATH = Path(__file__).with_name("semantic_labse_worker.py")
+_RERANKER_PATH = Path(__file__).with_name("semantic_reranker_worker.py")
 _MAX_DOCS = 2048
 _MAX_CHARS = 1024
 
 
 class LocalWorker:
-    def __init__(self, profile: Path):
-        semantic_profile.verify_weights(profile)
+    def __init__(self, profile: Path, *, reranker: bool = False):
+        if reranker:
+            semantic_profile.verify_reranker_weights(profile)
+        else:
+            semantic_profile.verify_weights(profile)
+        script = _RERANKER_PATH if reranker else _WORKER_PATH
         self.process = subprocess.Popen(
-            [str(semantic_profile.runtime_python(profile)), "-I", str(_WORKER_PATH), str(profile)],
+            [str(semantic_profile.runtime_python(profile)), "-I", str(script), str(profile)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -88,52 +92,56 @@ class LocalWorker:
         return values
 
 
-_worker: LocalWorker | None = None
-_failed_profile: Path | None = None
-_retry_after = 0.0
+class WorkerSlot:
+    def __init__(self, *, reranker: bool = False):
+        self.reranker = reranker
+        self.guard = Lock()
+        self.worker: LocalWorker | None = None
+        self.failed_profile: Path | None = None
+        self.retry_after = 0.0
+        atexit.register(self.stop)
 
+    def stop(self) -> None:
+        if self.worker is not None:
+            self.worker.stop()
+            self.worker = None
 
-def _stop() -> None:
-    global _worker
-    if _worker is not None:
-        _worker.stop()
-        _worker = None
-
-
-atexit.register(_stop)
-
-
-def quality_scores(query: str, documents: tuple[str, ...]) -> tuple[float, ...] | None:
-    global _worker, _failed_profile, _retry_after
-    if not documents:
-        return None
-    try:
-        profile = semantic_profile.profile_dir()
-    except (OSError, RuntimeError):
-        # Unix service accounts may have neither a home variable nor a passwd entry.
-        return None
-    if not _GUARD.acquire(timeout=10):
-        return None
-    try:
-        if not semantic_profile.ready_profile(profile):
-            _stop()
-            return None
-        if _worker is not None and _worker.profile != profile:
-            _stop()
-        if _failed_profile == profile and monotonic() < _retry_after:
+    def score(self, query: str, documents: tuple[str, ...]) -> tuple[float, ...] | None:
+        if not documents:
             return None
         try:
-            if _worker is None:
-                _worker = LocalWorker(profile)
+            profile = semantic_profile.profile_dir()
+        except (OSError, RuntimeError):
+            # Unix service accounts may have neither a home variable nor a passwd entry.
+            return None
+        if not self.guard.acquire(timeout=10):
+            return None
+        try:
+            ready = (
+                semantic_profile.reranker_ready if self.reranker else semantic_profile.ready_profile
+            )
+            if not ready(profile):
+                self.stop()
+                return None
+            if self.worker is not None and self.worker.profile != profile:
+                self.stop()
+            if self.failed_profile == profile and monotonic() < self.retry_after:
+                return None
+            if self.worker is None:
+                self.worker = LocalWorker(profile, reranker=self.reranker)
             scores = []
             for start in range(0, len(documents), _MAX_DOCS):
                 batch = tuple(text[:_MAX_CHARS] for text in documents[start : start + _MAX_DOCS])
-                scores.extend(_worker.query(query, batch))
+                scores.extend(self.worker.query(query, batch))
             return tuple(scores)
         except (OSError, ValueError, subprocess.SubprocessError):
-            _stop()
-            _failed_profile = profile
-            _retry_after = monotonic() + 60
+            self.stop()
+            self.failed_profile = profile
+            self.retry_after = monotonic() + 60
             return None
-    finally:
-        _GUARD.release()
+        finally:
+            self.guard.release()
+
+
+quality_scores = WorkerSlot().score
+rerank_scores = WorkerSlot(reranker=True).score

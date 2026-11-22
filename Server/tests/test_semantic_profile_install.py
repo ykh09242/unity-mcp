@@ -19,8 +19,10 @@ from services.registry.semantic_profile import (
 from services.registry.semantic_profile_install import ProfileInstallError
 
 
-def _artifact(body: bytes, url: str = "https://example.invalid/model") -> ModelFile:
-    return ModelFile("model.onnx", url, len(body), hashlib.sha256(body).hexdigest())
+def _artifact(
+    body: bytes, url: str = "https://example.invalid/model", *, name: str = "model.onnx"
+) -> ModelFile:
+    return ModelFile(name, url, len(body), hashlib.sha256(body).hexdigest())
 
 
 @contextmanager
@@ -98,7 +100,7 @@ def test_failed_worker_check_never_activates_profile(tmp_path, monkeypatch):
     monkeypatch.setattr(semantic_profile_install, "verify_installation", verify)
 
     with pytest.raises(ProfileInstallError, match="valid embedding"):
-        semantic_profile_install.install_profile(profile, offline=True)
+        semantic_profile_install.install_profile(profile, offline=True, encoder_only=True)
 
     assert not (profile / READY_FILE).exists()
 
@@ -136,7 +138,9 @@ def test_concurrent_installs_share_one_completed_profile(tmp_path, monkeypatch):
 
     def install_again() -> None:
         assert first_claimed.wait(10)
-        semantic_profile_install.install_profile(profile, source=source, offline=True)
+        semantic_profile_install.install_profile(
+            profile, source=source, offline=True, encoder_only=True
+        )
 
     monkeypatch.setattr(semantic_profile_install, "file_lock", observe_contention)
     monkeypatch.setattr(semantic_profile_install, "_provision_runtime", provision)
@@ -146,7 +150,11 @@ def test_concurrent_installs_share_one_completed_profile(tmp_path, monkeypatch):
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(
-            semantic_profile_install.install_profile, profile, source=source, offline=True
+            semantic_profile_install.install_profile,
+            profile,
+            source=source,
+            offline=True,
+            encoder_only=True,
         )
         second = pool.submit(install_again)
         first.result(timeout=10)
@@ -184,3 +192,110 @@ def test_regular_cli_verify_fails_with_install_command_for_missing_profile(tmp_p
     assert result.exit_code == 1, result.output
     assert "unity-mcp search-model install" in result.stderr
     assert not profile.exists()
+
+
+@pytest.fixture
+def verified_encoder_fixture(tmp_path, monkeypatch) -> Path:
+    profile = tmp_path / "profile"
+    encoder = b"verified encoder"
+    encoder_files = (_artifact(encoder, name="encoder.onnx"),)
+    reranker_files = (_artifact(b"verified reranker", name="reranker.onnx"),)
+    for module in (semantic_profile, semantic_profile_install):
+        monkeypatch.setattr(module, "MODEL_FILES", encoder_files)
+        monkeypatch.setattr(module, "RERANKER_FILES", reranker_files)
+    worker = semantic_profile.runtime_python(profile)
+    worker.parent.mkdir(parents=True)
+    worker.touch()
+    (profile / "encoder.onnx").write_bytes(encoder)
+    (profile / READY_FILE).write_bytes(semantic_profile.READY_BYTES)
+    return profile
+
+
+def test_unsuccessful_reranker_check_preserves_published_encoder(
+    tmp_path, monkeypatch, verified_encoder_fixture
+):
+    profile = verified_encoder_fixture
+    before = (profile / READY_FILE).stat().st_mtime_ns
+    source = tmp_path / "verified-source"
+    source.mkdir()
+    (source / "reranker.onnx").write_bytes(b"verified reranker")
+
+    def check_worker(command: list[str], *, timeout: int, task: str) -> None:
+        if Path(command[2]).name == "semantic_reranker_worker.py":
+            raise ProfileInstallError("Reranker could not produce a relevance score")
+
+    monkeypatch.setattr(semantic_profile_install, "_run", check_worker)
+
+    with pytest.raises(ProfileInstallError, match="relevance score"):
+        semantic_profile_install.install_profile(profile, source=source, offline=True)
+
+    assert semantic_profile.ready_profile(profile)
+    assert (profile / READY_FILE).stat().st_mtime_ns == before
+    assert not semantic_profile.reranker_ready(profile)
+
+
+def test_default_install_verifies_and_reports_both_models(
+    tmp_path, monkeypatch, verified_encoder_fixture
+):
+    profile = verified_encoder_fixture
+    source = tmp_path / "verified-source"
+    source.mkdir()
+    (source / "reranker.onnx").write_bytes(b"verified reranker")
+    monkeypatch.setattr(semantic_profile_install, "_run", lambda *args, **kwargs: None)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "search-model",
+            "install",
+            "--offline",
+            "--from-directory",
+            str(source),
+        ],
+        env={PROFILE_ENV: str(profile)},
+    )
+
+    assert result.exit_code == 0, result.output
+    receipt = json.loads(result.stdout)
+    assert receipt["quality_profile"] == "encoder-reranker"
+    assert receipt["verified"] and receipt["reranker_verified"]
+    assert semantic_profile.reranker_ready(profile)
+
+
+def test_verify_encoder_only_reports_reranker_unavailable(monkeypatch, verified_encoder_fixture):
+    profile = verified_encoder_fixture
+    monkeypatch.setattr(semantic_profile_install, "_run", lambda *args, **kwargs: None)
+
+    result = CliRunner().invoke(
+        cli,
+        ["--format", "json", "search-model", "status", "--verify"],
+        env={PROFILE_ENV: str(profile)},
+    )
+
+    assert result.exit_code == 0, result.output
+    receipt = json.loads(result.stdout)
+    assert receipt["quality_profile"] == "encoder-only"
+    assert receipt["verified"] is True
+    assert receipt["reranker_status"] == "unavailable"
+    assert receipt["reranker_verified"] is False
+
+
+def test_verify_rejects_corrupt_reranker_without_hiding_encoder(
+    monkeypatch, verified_encoder_fixture
+):
+    profile = verified_encoder_fixture
+    (profile / "reranker.onnx").write_bytes(b"corrupt reranker!")
+    (profile / semantic_profile.RERANKER_READY_FILE).write_bytes(
+        semantic_profile.RERANKER_READY_BYTES
+    )
+    monkeypatch.setattr(semantic_profile_install, "_run", lambda *args, **kwargs: None)
+
+    result = CliRunner().invoke(
+        cli, ["search-model", "status", "--verify"], env={PROFILE_ENV: str(profile)}
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "reranker.onnx failed SHA-256" in result.stderr
+    assert semantic_profile.ready_profile(profile)

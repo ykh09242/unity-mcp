@@ -11,6 +11,7 @@ Hosted remote availability follows the authenticated user's Unity catalog;
 session group activation cannot grant access to a Unity-disabled tool.
 """
 
+import asyncio
 import logging
 from typing import Annotated, Any, Literal
 
@@ -146,7 +147,9 @@ async def search_unity_tools(
     entries, visible = await _catalog_inventory(
         ctx, get_registered_tools(), getattr(ctx.fastmcp, "_tool_discovery", None)
     )
-    outcome = search_catalog(
+    # Resolve the caller's inventory on its MCP context before local CPU inference.
+    outcome = await asyncio.to_thread(
+        search_catalog,
         request,
         list(entries.values()),
         visible_names=set(visible),

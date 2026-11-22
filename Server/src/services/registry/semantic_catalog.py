@@ -3,7 +3,9 @@
 import re
 import unicodedata
 
+from services.registry import semantic_profile
 from services.registry.semantic_encoder import fragmented_label, semantic_scores as encode_scores
+from services.registry.semantic_worker_client import rerank_scores
 
 
 RouteKey = tuple[str, str, str]
@@ -11,6 +13,56 @@ _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _QUOTED = re.compile(r'''`[^`\n]+`|"[^"\n]+"''')
 _TOKENS = re.compile(r"[\w.-]+(?:[/\\][\w.-]+)*")
 _DOCUMENTED_ACTION = re.compile(r"^\s*[-*]\s+`?([\w]+)`?\s*:\s*(\S.*)$", re.MULTILINE)
+
+
+_MAX_RERANK_GROUPS = 24
+
+
+class RerankedScores(dict[RouteKey, float]):
+    """First-stage similarities and separate cross-encoder logits for the same bindings."""
+
+    def __init__(self, similarities: dict[RouteKey, float], logits: dict[RouteKey, float]):
+        super().__init__(similarities)
+        self.reranker_logits = logits
+
+
+def _rerank(
+    query: str,
+    catalog: dict[RouteKey, tuple[str, ...]],
+    similarities: dict[str, float],
+    scores: dict[RouteKey, float],
+    peak: float,
+) -> RerankedScores | None:
+    # Equivalent tool/resource bindings share passages. Count them once so aliases cannot
+    # consume the shortlist. Text tie breaks keep dynamic quantization batches reproducible.
+    groups: dict[tuple[str, ...], list[RouteKey]] = {}
+    threshold = max(0.16, peak - 0.25)
+    for key, score in scores.items():
+        if score >= threshold:
+            group = tuple(sorted(catalog[key]))
+            groups.setdefault(group, []).append(key)
+    if not groups:
+        return None
+    shortlist = sorted(groups, key=lambda texts: (-scores[groups[texts][0]], texts))[
+        :_MAX_RERANK_GROUPS
+    ]
+    passages = {
+        group: sorted(group, key=lambda text: (-similarities[text], text))[:2]
+        for group in shortlist
+    }
+    texts = tuple(
+        sorted({text for items in passages.values() for text in items}, key=lambda t: (len(t), t))
+    )
+    logits = rerank_scores(query, texts)
+    if logits is None:
+        return None
+    by_text = dict(zip(texts, logits, strict=True))
+    by_route = {
+        key: max(by_text[text] for text in passages[group])
+        for group in shortlist
+        for key in groups[group]
+    }
+    return RerankedScores({key: scores[key] for key in by_route}, by_route)
 
 
 def _label(identifier: str) -> str:
@@ -92,5 +144,9 @@ def semantic_scores(
     peak = max(scores.values())
     if peak < 0.4 and fragmented_label(query, model):
         return model, {}
+    if model == semantic_profile.MODEL_ID:
+        ranked = _rerank(query, catalog, similarities, scores, peak)
+        if ranked is not None:
+            return semantic_profile.COMBINED_MODEL_ID, ranked
     threshold = max(0.16, peak - 0.12)
     return model, {key: value for key, value in scores.items() if value >= threshold}

@@ -15,15 +15,21 @@ from services.registry.semantic_profile import (
     MODEL_FILES,
     READY_BYTES,
     READY_FILE,
+    RERANKER_FILES,
+    RERANKER_READY_BYTES,
+    RERANKER_READY_FILE,
     ModelFile,
     ModelIntegrityError,
     ready_profile,
+    reranker_ready,
     runtime_python,
     verify_model_file,
+    verify_reranker_weights,
     verify_weights,
 )
 
 _WORKER: Final = Path(__file__).with_name("semantic_labse_worker.py")
+_RERANKER_WORKER: Final = Path(__file__).with_name("semantic_reranker_worker.py")
 _REQUIREMENTS: Final = Path(__file__).with_name("model") / "labse-cpu-py313.lock"
 _CHUNK_SIZE: Final = 1024 * 1024
 _DEFAULT_INDEX: Final = "https://pypi.org/simple"
@@ -164,7 +170,7 @@ def _provision_runtime(profile: Path, *, offline: bool) -> None:
 
 
 def verify_installation(profile: Path) -> None:
-    """Check pinned model bytes and execute the same worker used by search."""
+    """Check pinned LaBSE files and execute the same encoder used by search."""
     verify_weights(profile)
     _run(
         [str(runtime_python(profile)), "-I", str(_WORKER), "--check", str(profile)],
@@ -173,24 +179,62 @@ def verify_installation(profile: Path) -> None:
     )
 
 
-def install_profile(profile: Path, *, source: Path | None = None, offline: bool = False) -> None:
-    """Provision, verify, and atomically publish a local search profile."""
+def verify_reranker_installation(profile: Path) -> None:
+    """Check pinned BGE files and execute the same reranker used by search."""
+    verify_reranker_weights(profile)
+    _run(
+        [str(runtime_python(profile)), "-I", str(_RERANKER_WORKER), "--check", str(profile)],
+        timeout=90,
+        task="Checking offline BGE reranking",
+    )
+
+
+def _publish_ready(marker: Path, contents: bytes) -> None:
+    pending = marker.with_suffix(".part")
+    pending.write_bytes(contents)
+    pending.replace(marker)
+
+
+def _install_encoder(profile: Path, source: Path | None, *, offline: bool) -> None:
+    if ready_profile(profile):
+        try:
+            verify_installation(profile)
+            return
+        except (OSError, ModelIntegrityError, ProfileInstallError):
+            pass
+
+    marker = profile / READY_FILE
+    marker.unlink(missing_ok=True)
+    # Fail on a missing or unsupported runtime before fetching the large model.
+    _provision_runtime(profile, offline=offline)
+    for artifact in MODEL_FILES:
+        _stage_model(profile, artifact, source, offline=offline)
+    verify_installation(profile)
+    _publish_ready(marker, READY_BYTES)
+
+
+def _install_reranker(profile: Path, source: Path | None, *, offline: bool) -> None:
+    if reranker_ready(profile):
+        try:
+            verify_reranker_installation(profile)
+            return
+        except (OSError, ModelIntegrityError, ProfileInstallError):
+            pass
+
+    marker = profile / RERANKER_READY_FILE
+    marker.unlink(missing_ok=True)
+    for artifact in RERANKER_FILES:
+        _stage_model(profile, artifact, source, offline=offline)
+    verify_reranker_installation(profile)
+    _publish_ready(marker, RERANKER_READY_BYTES)
+
+
+def install_profile(
+    profile: Path, *, source: Path | None = None, offline: bool = False, encoder_only: bool = False
+) -> None:
+    """Provision the encoder and enable the reranker as a separate update."""
     profile.mkdir(parents=True, exist_ok=True)
     with file_lock(profile / ".install.lock", timeout_seconds=900):
-        if ready_profile(profile):
-            try:
-                verify_installation(profile)
-                return
-            except (OSError, ModelIntegrityError, ProfileInstallError):
-                pass
-
-        marker = profile / READY_FILE
-        marker.unlink(missing_ok=True)
-        # Fail on a missing or unsupported runtime before fetching the large model.
-        _provision_runtime(profile, offline=offline)
-        for artifact in MODEL_FILES:
-            _stage_model(profile, artifact, source, offline=offline)
-        verify_installation(profile)
-        pending = marker.with_suffix(".part")
-        pending.write_bytes(READY_BYTES)
-        pending.replace(marker)
+        _install_encoder(profile, source, offline=offline)
+        if not encoder_only:
+            _install_reranker(profile, source, offline=offline)
