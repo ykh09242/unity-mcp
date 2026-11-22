@@ -108,7 +108,7 @@
     },
     {
       "name": "execute_menu_item",
-      "description": "Execute Unity Editor menu items"
+      "description": "Inspect or invoke a Unity Editor menu command by its exact path."
     },
     {
       "name": "export_test_job",
@@ -209,6 +209,10 @@
     {
       "name": "inspect_ugui_hit_order",
       "description": "Read strict native uGUI hit order without input, custom filters or a layout refresh."
+    },
+    {
+      "name": "list_menu_declarations",
+      "description": "List managed menu commands in the selected Editor to find their registered paths."
     },
     {
       "name": "manage_addressables",

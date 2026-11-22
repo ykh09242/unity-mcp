@@ -266,9 +266,12 @@ def test_structured_search_excludes_unadvertised_tool_and_undeclared_action():
     assert "hidden_read" not in result["navigation"]["server_tools"]
 
 
-def test_wire_fact_vocabulary_matches_the_reviewed_observations():
+@pytest.mark.asyncio
+async def test_wire_fact_vocabulary_matches_the_reviewed_observations(monkeypatch):
     from typing import get_args
-    from services.registry.action_catalog import ObservationValue, TOOL_GUIDANCE
+    from services.registry.action_catalog import OBSERVATION_META, TOOL_GUIDANCE, ObservationValue
+    from services.resources import register_all_resources
+    from services.tools import register_all_tools
 
     observations = [
         guidance.observation
@@ -276,9 +279,22 @@ def test_wire_fact_vocabulary_matches_the_reviewed_observations():
         for guidance in tool.actions.values()
         if guidance.observation
     ]
-    from services.registry.action_catalog import COMPILE_JOB_OBSERVATION, EDITOR_STATE_OBSERVATION
+    monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", "full")
+    server = FastMCP("observation-vocabulary")
+    register_all_tools(server, project_scoped_tools=False)
+    register_all_resources(server, project_scoped_tools=False)
+    async with Client(server) as client:
+        for inventory in (
+            await client.list_tools(),
+            await client.list_resources(),
+            await client.list_resource_templates(),
+        ):
+            observations.extend(
+                item.meta[OBSERVATION_META]
+                for item in inventory
+                if item.meta and OBSERVATION_META in item.meta
+            )
 
-    observations.extend([COMPILE_JOB_OBSERVATION, EDITOR_STATE_OBSERVATION])
     assert set(get_args(ObservationValue)) == {
         value for record in observations for value in [*record["values"], *record["unavailable"]]
     }
