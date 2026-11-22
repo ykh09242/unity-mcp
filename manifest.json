@@ -23,7 +23,7 @@
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/9736d4c5c5a013df2061e75719bc0d0faa93f92d.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/ed47f72d09e66b182d48669de4debf8dd0f84605.zip#subdirectory=Server",
         "mcp-for-unity"
       ],
       "env": {}
