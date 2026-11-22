@@ -15,8 +15,10 @@ RouteKey = tuple[str, str, str]
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _QUOTED = re.compile(r'''`[^`\n]+`|"[^"\n]+"''')
 _TOKENS = re.compile(r"[\w.-]+(?:[/\\][\w.-]+)*")
+_COMPACT_TOKENS = regex.compile(_TOKENS.pattern)
+_QUALIFIED = regex.compile(r"\w\.\w")
 _NAME_SUFFIX = re.compile(r"['’][^\W\d_]+")
-_PLATFORM = re.compile(r"\bUnity\b", re.IGNORECASE)
+_PLATFORM = regex.compile(r"(?<![\w.-])Unity(?!\w|[.-]\w)", regex.IGNORECASE)
 _SENTENCE_TERMINAL = regex.compile(r"\p{Sentence_Terminal}")
 _DOCUMENTED_ACTION = re.compile(r"^\s*[-*]\s+`?([\w]+)`?\s*:\s*(\S.*)$", re.MULTILINE)
 
@@ -90,8 +92,8 @@ def _has_multiple_clauses(text: str) -> bool:
         elif seen_letter and (
             _SENTENCE_TERMINAL.fullmatch(char) or unicodedata.name(char, "").endswith("SEMICOLON")
         ):
-            if char == "." and text[index - 1].isalnum() and text[index + 1 : index + 2].isalnum():
-                continue  # A dot inside an identifier or version number.
+            if char == "." and regex.match(r"\w", text, pos=index + 1):
+                continue  # A qualified identifier, numeric version or file extension.
             seen_break = True
     return False
 
@@ -99,23 +101,24 @@ def _has_multiple_clauses(text: str) -> bool:
 def _request_context(query: str, *, compact: bool = False) -> str:
     """Remove literal paths and conventionally capitalized names for a second comparison."""
     text = _QUOTED.sub(" ", query)
+    compound = compact and _has_multiple_clauses(query)
     spans = []
-    for token in _TOKENS.finditer(text):
+    for token in (_COMPACT_TOKENS if compact else _TOKENS).finditer(text):
         word = token[0]
-        path = "/" in word or "\\" in word
-        if not path and not (word[0].isupper() and any(c.islower() for c in word)):
+        literal = "/" in word or "\\" in word or (compound and bool(_QUALIFIED.search(word)))
+        if not literal and not (word[0].isupper() and any(c.islower() for c in word)):
             continue
         if spans and text[spans[-1][1] : token.start()].isspace():
             start, _, _ = spans[-1]
             spans[-1] = (start, token.end(), True)
         else:
-            spans.append((token.start(), token.end(), path))
+            spans.append((token.start(), token.end(), literal))
     for start, end, is_literal in reversed(spans):
         if is_literal:
             if compact and (suffix := _NAME_SUFFIX.match(text, end)):
                 end = suffix.end()
             text = text[:start] + " " + text[end:]
-    if compact and (text.strip() != query.strip() or _has_multiple_clauses(query)):
+    if compact and (text.strip() != query.strip() or compound):
         # Keep a simple instruction intact. For a request with separate arguments or
         # clauses, its second view emphasizes the operation in a catalog entirely for Unity.
         text = _PLATFORM.sub(" ", text)

@@ -1,5 +1,8 @@
 """The static model compares operation context without dropping the original request."""
 
+import json
+
+from click.testing import CliRunner
 import pytest
 
 from services.registry import semantic_catalog as catalog
@@ -53,3 +56,30 @@ def test_compound_request_uses_surrounding_operation_context(separator):
     query = f"show the Unity warnings{separator}copy the complete messages"
     assert "Unity" not in catalog._request_context(query, compact=True)
     assert catalog._request_context(query) == query
+
+
+@pytest.mark.parametrize("tag", ["_foo._bar", "Assets/रंग/नीला.asset"])
+def test_cli_keeps_console_read_first_with_literal_log_tag(monkeypatch, tmp_path, tag):
+    from cli.main import cli
+
+    monkeypatch.setenv("UNITY_MCP_SEARCH_MODEL_DIR", str(tmp_path / "unprovisioned"))
+    query = f"Get warnings from the console in Unity; {tag} is the log tag"
+    outcome = CliRunner().invoke(cli, ["--format", "json", "tool", "search", query])
+    assert outcome.exit_code == 0, outcome.output
+    result = json.loads(outcome.stdout)
+    assert result["query"] == result["matched_query"] == query
+    assert result["semantic_model"] == catalog.STATIC_MODEL_ID
+    first = result["route_groups"][0]["representative"]
+    assert (first["tool"], first["operation"]) == ("read_console", "get")
+    assert " ".join(catalog._request_context(query, compact=True).split()) == (
+        "Get warnings from the console in ; is the log tag"
+    )
+
+
+def test_platform_name_is_not_removed_from_a_file_extension_or_part_of_a_qualified_name():
+    simple = "find Unity input.actions with the .unity extension"
+    assert catalog._request_context(simple, compact=True) == simple
+    compound = "list the .unity scenes in unity-mcp; unity.inputactions is the tag"
+    assert " ".join(catalog._request_context(compound, compact=True).split()) == (
+        "list the .unity scenes in unity-mcp; is the tag"
+    )
