@@ -108,6 +108,37 @@ def test_scores_split_no_search_unrecorded_and_naturally_ranked():
     assert arm["attempted_cases"] == 6
 
 
+def test_conditional_menu_ranks_and_console_fixtures_have_observed_denominators():
+    def pair(task, capture, inventory_hit=None, available="positive"):
+        diagnosis = {"search_capture": capture, "first_search_top3_suitable": True}
+        if inventory_hit is not None:
+            diagnosis["first_search_top3_menu_inventory"] = inventory_hit
+        case = {
+            "role_status": "confirmed",
+            "wire_evidence": "complete",
+            "task_evidence": "complete",
+            "calls_before_first_success": 0,
+            "fixture_availability": available,
+            "selection_diagnosis": diagnosis,
+            "final_answer": {"status": "correct"},
+        }
+        return {"task": task, "eligible": True, "baseline": case, "candidate": case.copy()}
+
+    changed = pair("console-errors", "no_search")
+    changed["candidate"]["fixture_availability"] = "unavailable"
+    pairs = [
+        pair("menu-declaration", "ranked", True),
+        pair("menu-declaration", "empty", False),
+        pair("menu-declaration", "no_search"),
+        pair("menu-declaration", "attempt_without_rank"),
+        pair("console-errors", "no_search"),
+        changed,
+    ]
+    for arm in study_stratum(pairs)["arms"].values():
+        assert arm["menu_inventory_in_first_search_top3"] == {"numerator": 1, "denominator": 2}
+        assert arm["grounded_answer"] == {"numerator": 5, "denominator": 5}
+
+
 def test_natural_prompts_preserve_literals_and_share_role_payloads():
     from tools.experiments.blind_tool_answers import REQUEST_LABEL
 

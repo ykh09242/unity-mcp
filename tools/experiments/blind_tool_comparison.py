@@ -118,7 +118,8 @@ def study_stratum(pairs):
             for pair in eligible
             if pair["task"] != "request-label"
             and (
-                pair["task"] not in {"compile-outcome", "pointer-order", "graph-open"}
+                pair["task"]
+                not in {"compile-outcome", "pointer-order", "graph-open", "console-errors"}
                 or all(
                     pair[name].get("fixture_availability") == "positive"
                     for name in ("baseline", "candidate")
@@ -129,10 +130,16 @@ def study_stratum(pairs):
             (case.get("selection_diagnosis") or {}).get("search_capture", "unknown")
             for case in positive
         )
-        ranked = [
-            case["selection_diagnosis"]["first_search_top3_suitable"]
+        returned_rankings = [
+            case["selection_diagnosis"]
             for case in positive
             if (case.get("selection_diagnosis") or {}).get("search_capture") in {"ranked", "empty"}
+        ]
+        ranked = [diagnosis["first_search_top3_suitable"] for diagnosis in returned_rankings]
+        menu_ranks = [
+            diagnosis["first_search_top3_menu_inventory"]
+            for diagnosis in returned_rankings
+            if isinstance(diagnosis.get("first_search_top3_menu_inventory"), bool)
         ]
         direct = [
             case
@@ -198,6 +205,7 @@ def study_stratum(pairs):
             "suitable_in_first_search_top3": ratio(
                 sum(value is True for value in ranked), sum(value is not None for value in ranked)
             ),
+            "menu_inventory_in_first_search_top3": ratio(sum(menu_ranks), len(menu_ranks)),
             "answer_status": dict(Counter(c["final_answer"]["status"] for c in answered)),
             "valid_answer_format": ratio(
                 sum(c["final_answer"].get("format_valid") is True for c in answered),
