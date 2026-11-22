@@ -15,7 +15,7 @@ MAX_DOCS = 2048
 MAX_CHARS = 1024
 MAX_LINE = MAX_DOCS * MAX_CHARS * 6 + 65536
 _INDEX = Path(__file__).with_name("model") / "labse-catalog.f16"
-_INDEX_SHA256 = "1aa462ee1cbd18e33636f9bab3ec71ee249490abe9580d271e8cad07feae6601"
+_INDEX_SHA256 = "b748b06db76ae5e2c69e7b8d0a467718f5e3669efc30d4cefea0849815dca155"
 _ROW_BYTES = 32 + 2 * DIMENSIONS
 
 

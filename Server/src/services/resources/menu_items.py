@@ -25,6 +25,16 @@ class GetMenuItemsResponse(MCPResponse):
         SEARCH_TERMS_META: {
             "anchor": "menu",
             "phrase": "find registered editor menu command path by name; locate full declared menu paths",
+            "examples": (
+                "Which menu is this editor command under? Give the complete menu path.",
+                "Where do I open this window in the editor? I just need directions to find it.",
+                "Tell me the location of a window in the editor menu.",
+                "Where is the window for this tool? In which menu can I find it?",
+                "What is the menu path to the editor window for working with this asset?",
+                "Show where the window is registered in the editor menu hierarchy.",
+                "Which editor menu do I use to inspect something in my game? Give me the menu path.",
+                "What is the complete menu path for opening the window? Check what the editor declares without opening it.",
+            ),
         },
     },
     description="Lists managed MenuItem attribute declarations; this is not a complete native menu inventory or availability report.\n\nURI: mcpforunity://menu-items",

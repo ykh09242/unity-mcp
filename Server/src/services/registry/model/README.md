@@ -27,7 +27,7 @@ sufficient for conversion and inference.
 
 Search uses the pinned tokenizer's uncased, accent-stripping BERT WordPiece
 configuration, ignores unknown words and special tokens, pools token vectors,
-and compares L2-normalized vectors using cosine similarity. For the closest 32
+and compares L2-normalized vectors using cosine similarity. For the closest 64
 descriptions, the server also compares the best match of each query word to a
 description word and vice versa, up to 48 words on each side. Both scores are
 insensitive to word order. Search scores measure textual similarity and vary

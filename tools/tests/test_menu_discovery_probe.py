@@ -6,6 +6,7 @@ import sys
 
 import pytest
 from fastmcp import Client, FastMCP
+from fastmcp.server.middleware import Middleware
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -16,6 +17,8 @@ from tools.experiments.blind_tool_factors import (
     earlier_menu_prose,
     install_factor,
 )
+from services.registry.action_catalog import SEARCH_TERMS_META
+from services.registry.capability_catalog import MENU_DECLARATIONS_URI
 from services.resources import register_all_resources
 from services.tools import register_all_tools
 
@@ -67,10 +70,37 @@ def test_wording_preserves_query_arguments_and_equally_worded_unrelated_descript
 
 
 @pytest.mark.asyncio
-async def test_only_the_ranking_factor_promotes_the_raw_menu_query(monkeypatch):
+@pytest.mark.parametrize("tool", ["search_unity_tools", "manage_tools"])
+async def test_ranking_factor_withholds_only_menu_search_metadata(monkeypatch, tool):
     monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", "core")
-    result = await probe("照明ウィンドウはどのメニューに登録されている？", None, "tools")
-    assert [arm["inventory_rank"] for arm in result["arms"]] == [None, 1, None, 1]
+    listings = []
+
+    class CaptureResources(Middleware):
+        async def on_list_resources(self, context, call_next):
+            resources = await call_next(context)
+            listings.append({str(row.uri): row.model_dump() for row in resources})
+            return resources
+
+    server = FastMCP("menu-ranking-metadata")
+    register_all_tools(server)
+    register_all_resources(server)
+    install_factor(server, "menu-ranking-baseline")
+    server.middleware.insert(0, CaptureResources())
+
+    query = "照明ウィンドウはどのメニューに登録されている？"
+    args = {"query": query, "limit": 3, "route_surfaces": "resources"}
+    if tool == "manage_tools":
+        args["action"] = "search"
+    async with Client(server, mode="legacy", cache=False) as client:
+        await client.list_resources()
+        response = await client.call_tool(tool, args)
+        await client.list_resources()
+    assert response.structured_content["matched_query"] == query
+    assert len(listings) == 3
+    before = listings[0]
+    assert before == listings[2]
+    assert before[MENU_DECLARATIONS_URI]["meta"].pop(SEARCH_TERMS_META)
+    assert listings[1] == before
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ from operator import mul
 from services.registry import semantic_encoder as encoder
 
 
-_CANDIDATES = 32
+_CANDIDATES = 64
 _MAX_WORDS = 48
 
 # Python 3.12 and later implement sumprod in C.

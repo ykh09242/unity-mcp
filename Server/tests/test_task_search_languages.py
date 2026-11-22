@@ -1,10 +1,18 @@
-"""Language interpretation is explicit at the caller boundary; ranking is shared."""
+"""Raw multilingual discovery and caller-selected lexical ranking use the same catalog."""
 
 import json
 import unicodedata
 
 from click.testing import CliRunner
 import pytest
+
+
+def cli_search(query, *options):
+    from cli.main import cli
+
+    run = CliRunner().invoke(cli, ["--format", "json", "tool", "search", query, *options])
+    assert run.exit_code == 0, run.output
+    return json.loads(run.stdout)
 
 
 @pytest.mark.parametrize(
@@ -36,19 +44,10 @@ import pytest
     ],
 )
 def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
-    from cli.main import cli
-
-    run = CliRunner().invoke(
-        cli,
-        ["--format", "json", "tool", "search", query, "--limit", "3", "--route-surfaces", "tools"],
-    )
-    assert run.exit_code == 0, run.output
-    result = json.loads(run.stdout)
+    result = cli_search(query, "--limit", "3", "--route-surfaces", "tools")
     assert query == result["query"] == result["matched_query"]
-    assert any(
-        group["representative"].get("tool") == "list_menu_declarations"
-        for group in result["route_groups"]
-    )
+    representatives = [group["representative"].get("tool") for group in result["route_groups"]]
+    assert "list_menu_declarations" in representatives
     assert "list_menu_declarations" in [row["name"] for row in result["results"]]
     assert result["recommended_action"] == "inspect_candidates"
 
@@ -102,11 +101,34 @@ def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
         "Editörde şu dosyayı nerede bulabilirim? Yalnızca oraya giden tam yolu yaz.",
     ],
 )
-def test_unrelated_actions_and_known_paths_do_not_add_menu_discovery_terms(query):
-    from services.registry.menu_path_search import localized_menu_path_terms
-    from services.registry.task_search import _normalized
+def test_raw_menu_related_requests_suggest_routes_without_binding_a_menu_path(query):
+    result = cli_search(query, "--limit", "3", "--route-surfaces", "tools")
+    assert result["query"] == result["matched_query"] == query
+    assert result["matching"] in {"hybrid", "lexical"}
+    assert result["match_basis"] != "declared_observation"
+    assert {"required_values", "observation_source"}.isdisjoint(result)
+    assert result["recommended_action"] in {"inspect_candidates", "browse_catalog"}
+    for group in result["route_groups"]:
+        for route in (group["representative"], *group["alternatives"]):
+            assert route["readiness"] == "unobserved"
+            assert route["advertised"] is None
+            assert "inputSchema" not in route
+            assert "menu_path" not in route.get("arguments", {})
 
-    assert not localized_menu_path_terms(_normalized(query))
+
+def test_explicit_menu_evidence_rejects_asset_file_as_the_source():
+    query = "Window/Analysis/Profiler 메뉴 경로가 맞는지 확인해."
+    result = cli_search(
+        query,
+        "--required-value",
+        "menu.declared_paths",
+        "--observation-source",
+        "asset_file",
+    )
+    assert result["query"] == query and result["matching"] == "observation"
+    assert result["route_groups"] == []
+    assert result["no_match"]["reason"] == "wrong_source"
+    assert result["no_match"]["alternatives"][0]["observation"]["source"] == "editor_live"
 
 
 @pytest.mark.parametrize(
@@ -123,33 +145,14 @@ def test_unrelated_actions_and_known_paths_do_not_add_menu_discovery_terms(query
     ],
 )
 def test_caller_normalized_intent_has_identical_ranking_in_every_language(query):
-    from cli.main import cli
-
-    result = CliRunner().invoke(
-        cli,
-        [
-            "--format",
-            "json",
-            "tool",
-            "search",
-            query,
-            "--catalog-query",
-            "shader graph inspect",
-            "--limit",
-            "3",
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.stdout)
-    baseline = CliRunner().invoke(
-        cli, ["--format", "json", "tool", "search", "shader graph inspect", "--limit", "3"]
-    )
-    assert baseline.exit_code == 0, baseline.output
+    catalog_query = "shader graph inspect"
+    payload = cli_search(query, "--catalog-query", catalog_query, "--limit", "3")
+    baseline = cli_search(catalog_query, "--catalog-query", catalog_query, "--limit", "3")
     assert payload["query"] == query
     assert payload["matched_query"] == "shader graph inspect"
     assert payload["matching"] == "lexical"
     assert payload["results"][0]["name"] == "manage_shader"
-    assert payload["results"] == json.loads(baseline.stdout)["results"]
+    assert payload["results"] == baseline["results"]
     assert all(item["readiness"] == "unobserved" for item in payload["results"])
 
 
@@ -182,7 +185,7 @@ def test_caseless_matching_normalizes_composition_after_case_folding(text, query
     query = text.upper() if query_upper else text
     description = text if query_upper else text.upper()
     entries = [{"name": "inspect", "group": None, "description": description, "kwargs": {}}]
-    result = search_catalog(SearchRequest(query=query), entries)
+    result = search_catalog(SearchRequest(query=query, catalog_query=query), entries)
     assert [entry["name"] for entry in result["results"]] == ["inspect"]
 
 

@@ -42,7 +42,25 @@ async def test_menu_inventory_is_equal_on_both_surfaces_and_never_invokes(comman
             result = (await client.call_tool("search_unity_tools", query)).structured_content
             (group,) = result["route_groups"]
             assert group["representative"][key] == identifier and not group["alternatives"]
+
+        raw = f"Execute this exact Unity editor menu item: {PATHS[0]}"
+        result = (
+            await client.call_tool(
+                "search_unity_tools",
+                {"query": raw, "route_surfaces": "tools", "limit": 3},
+                meta=SELECT,
+            )
+        ).structured_content
+        assert result["query"] == result["matched_query"] == raw
+        route = next(
+            item
+            for item in result["routes"]
+            if (item.get("tool"), item.get("operation")) == ("execute_menu_item", "execute")
+        )
+        assert "menu_path" not in route.get("arguments", {})
+        assert route["readiness"] == "unobserved"
         assert not command_hub.sent
+
         fixed = (await client.call_tool(TOOL, SELECT)).structured_content
         direct = json.loads((await client.read_resource(URI, meta=SELECT))[0].text)
         assert fixed == direct and fixed["data"] == PATHS

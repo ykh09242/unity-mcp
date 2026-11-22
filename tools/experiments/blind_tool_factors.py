@@ -60,7 +60,7 @@ def projected_result(result, projected):
 
 
 def install_menu_factor(server, factor):
-    """Withhold one intervention on its own request surface; multiple factors can be combined."""
+    """Restore earlier wording or withhold the menu resource's search metadata."""
     from fastmcp.server.middleware import Middleware
     from services.registry.action_catalog import SEARCH_TERMS_META
     from services.registry.capability_catalog import MENU_DECLARATIONS_URI

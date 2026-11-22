@@ -109,6 +109,20 @@ def _encode(text: str, model: tuple[dict[str, int], bytes]) -> tuple[float, ...]
     return tuple(value / norm for value in vector) if norm else ()
 
 
+def fragmented_label(text: str) -> bool:
+    """Whether a single unrecognized label was split into many WordPiece fragments."""
+    if not text.isalpha():
+        return False
+    words = list(_words(text))
+    if len(words) != 1:
+        return False
+    try:
+        vocab, _ = _model()
+    except SemanticModelUnavailable:
+        return False
+    return len(_piece_offsets(words[0], vocab)) >= 6
+
+
 @lru_cache(maxsize=1)
 def _catalog_vectors(documents: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
     model = _model()
