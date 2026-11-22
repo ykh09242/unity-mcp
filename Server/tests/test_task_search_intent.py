@@ -53,9 +53,19 @@ def test_short_identifier_words_still_corroborate_a_match():
 
     route = {"kind": "tool", "tool": "inspect_ui_id", "purpose": "Read UI ID on a panel."}
     words = {"ui", "id", "on"}
-    assert _route_evidence(route, "ui id on", words, words) == "multiple_terms"
+    assert _route_evidence(route, "ui id on", words, words, set()) == "multiple_terms"
     assert route["matched_terms"] == ["id", "on", "ui"]
     assert route["distinctive_terms"] == ["id", "ui"]
+
+
+@pytest.mark.parametrize("term", ["et", "λ", "값", "层"])
+def test_short_prose_terms_use_catalog_frequency_across_scripts(term):
+    from services.registry.task_search import _route_evidence
+
+    route = {"kind": "tool", "tool": "inspect_item", "purpose": term}
+    words = {term}
+    assert _route_evidence(route, term, words, words, set()) == "incidental"
+    assert _route_evidence(route, term, words, words, words) == "single_term"
 
 
 def test_domain_navigation_distinguishes_hit_order_from_dispatch_without_shared_words():

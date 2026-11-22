@@ -466,7 +466,7 @@ def _semantic_catalog(original, capabilities, resources, unavailable_parents, in
 
 
 def _route_evidence(
-    route: SearchRoute, query: str, words: set[str], distinctive: set[str]
+    route: SearchRoute, query: str, words: set[str], distinctive: set[str], unique_terms: set[str]
 ) -> MatchBasis:
     identifiers = [
         value
@@ -485,14 +485,18 @@ def _route_evidence(
     )
     route["matched_terms"] = terms
     identifier_words = _words(" ".join(identifiers))
-    # Short words in English catalog prose can coincide with fragments of an
-    # untranslated request. Keep the match, but corroborate a short Latin
-    # abbreviation such as UI or ID with the route's own identifiers.
+    # Short prose terms need corroboration from a route identifier or a term
+    # unique to one catalog entry. Apply the same evidence rule to every script.
     route["distinctive_terms"] = [
         word
         for word in terms
         if word in distinctive
-        and (word in identifier_words or len(word) > 2 or not (word.isascii() and word.isalpha()))
+        and (
+            word in identifier_words
+            or word in unique_terms
+            or sum(char.isalpha() for char in word) > 2
+            or any(char.isdecimal() for char in word)
+        )
     ]
     if any(query == _normalized(identifier) for identifier in identifiers):
         return "exact_identifier"
@@ -876,16 +880,17 @@ def search_catalog(
     # corroborate a route. This derives common vocabulary from the catalog itself.
     documents = len(entries) + len(available_resources) + len(available_templates)
     distinctive = {term for term, count in occurrences.items() if count <= max(1, documents // 4)}
+    unique_terms = {term for term, count in occurrences.items() if count == 1}
     basis: MatchBasis = "none"
     if structured and groups:
         basis = "declared_observation"
     elif not structured:
         for route in selected_routes:
-            _route_evidence(route, query, query_words, distinctive)
+            _route_evidence(route, query, query_words, distinctive, unique_terms)
         if groups:
             first = groups[0]
             group_bases = {
-                _route_evidence(route, query, query_words, distinctive)
+                _route_evidence(route, query, query_words, distinctive, unique_terms)
                 for route in [first["representative"], *first["alternatives"]]
             }
             basis = next(
