@@ -4,7 +4,7 @@ The catalog ranks a next Unity operation or readable resource. Each evaluation s
 
 ## Bundled-only search
 
-The runtime at `b660777b3584696effdb7913137b675f4e83ffd3` combines the two encoders already shipped in the server package. The comparison used the previous bundled runtime at `9d3216d30226b84ee2a2e93f7a77d78eab4e0f36`. The MCP client submitted original queries without caller hints. Counts include queries whose expected operation was unavailable. A wrong effect is a suggested operation with a prespecified adverse effect.
+The server combines the two encoders already shipped in its package. The comparison used the previous bundled runtime at `9d3216d30226b84ee2a2e93f7a77d78eab4e0f36` and the current runtime at `48a0203e01b6212269f52fa9a102fba7d7d666a3`. The latter also recognizes a complete tool name with reordered words in raw hybrid searches. The MCP client submitted original queries without caller hints. Counts include queries whose expected operation was unavailable. A wrong effect is a suggested operation with a prespecified adverse effect.
 
 | Corpus | Catalog | Available | First, previous → current | Within three, previous → current | Wrong first, previous → current | Wrong within three, previous → current |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -13,7 +13,9 @@ The runtime at `b660777b3584696effdb7913137b675f4e83ffd3` combines the two encod
 | v3 | core | 40/40 | 9 → 14 | 21 → 24 | 6 → 7 | 15 → 16 |
 | v3 | full | 40/40 | 11 → 15 | 24 → 26 | 5 → 6 | 13 → 14 |
 
-An independent model author wrote five requests per language in Hindi, Indonesian, Swahili, Italian, Polish, Swedish, Greek and Vietnamese. The fixture was sealed before ranker changes. The first candidate replay used the frozen shipping runtime, and the original prompts have not received native-speaker review. The full catalog placed the intended action within three more often, but also placed an adverse action first on one additional request. All replays preserved the advertised catalog and recorded zero business calls or native dispatches. [v3 corpus, SHA-256 `e78c2897240a0b33735471c33760f58528ca4d0b9fcf903f4d01d5cd492934ff`](universal_discovery_queries_v3.json)
+The final wheel reproduced the complete v1, v2 and v3 reports from `b660777b3` byte for byte, including the returned candidates for each request. The 60 recorded menu ranks also matched.
+
+An independent model author wrote five requests per language in Hindi, Indonesian, Swahili, Italian, Polish, Swedish, Greek and Vietnamese. The fixture was sealed before ranker changes, and its first candidate replay used the frozen runtime at `b660777b3`. The original prompts have not received native-speaker review. The full catalog placed the intended action within three more often, but also placed an adverse action first on one additional request. All replays preserved the advertised catalog and recorded zero business calls or native dispatches. [v3 corpus, SHA-256 `e78c2897240a0b33735471c33760f58528ca4d0b9fcf903f4d01d5cd492934ff`](universal_discovery_queries_v3.json)
 
 Across the separate Korean, Japanese, Spanish, Arabic and Turkish menu cases, first-place results increased from 56/60 to 60/60. These are ten distinct prompts across two catalogs and three search surfaces. Tool and combined searches expected `list_menu_declarations`. Resource searches expected `mcpforunity://menu-items`. Tools-only searches placed the lookup tool first in 20/20 cases in both versions. [Menu acceptance test](../tests/test_menu_discovery_probe.py)
 
@@ -31,7 +33,7 @@ $unigram = 'minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a
 & $studyPython $studyRunner --fixture $studyFixture --preregistered --expect-model $wordPiece --expect-model $unigram --expect-model "$wordPiece+$unigram" --output "$env:TEMP/unity-discovery-v3.json"
 ```
 
-The tested wheel had SHA-256 `8d8ccd6bf58fdaf1bbc48b9d36f2ca471b69c062440bfd37deffecfe5ac9eac1`. A fresh installation verified both packaged weight files with `search-model status --verify`. CLI `tool search`, MCP `search_unity_tools` and `manage_tools` search all returned the expected menu tool with external network access and child processes blocked. No external connection or process launch was attempted. Initial installation can fetch the server, Python and its standard package dependencies.
+The tested wheel had SHA-256 `9658a2ccbd735b06967c17f4067c527594dcd0be51f2767cedbabf3c60ac5cd1`. A fresh installation verified both packaged weight files with `search-model status --verify`. CLI `tool search`, MCP `search_unity_tools` and `manage_tools` search all returned the expected menu tool with external network access and child processes blocked. No external connection or process launch was attempted. Initial installation can fetch the server, Python and its standard package dependencies.
 
 ## Earlier evaluations
 

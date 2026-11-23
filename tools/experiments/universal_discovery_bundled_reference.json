@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_commit": "b660777b3584696effdb7913137b675f4e83ffd3",
+  "source_commit": "48a0203e01b6212269f52fa9a102fba7d7d666a3",
   "suites": {
     "universal_discovery_queries.json": {
       "fixture_sha256": "645d3fcd1924820fd62fa9320bfde872c8a6af10793f974b4cbd70f93fa8d841",
