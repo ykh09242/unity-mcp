@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "tasks": {
+    "layer_inventory": {
+      "expected": ["mcpforunity://project/layers"],
+      "wrong_effect": ["manage_editor.add_layer", "manage_editor.remove_layer"]
+    },
+    "retire_layer": {
+      "expected": ["manage_editor.remove_layer"],
+      "wrong_effect": ["mcpforunity://project/layers", "manage_editor.add_layer"]
+    },
+    "tag_inventory": {
+      "expected": ["mcpforunity://project/tags"],
+      "wrong_effect": ["manage_editor.add_tag", "manage_editor.remove_tag"]
+    },
+    "register_tag": {
+      "expected": ["manage_editor.add_tag"],
+      "wrong_effect": ["mcpforunity://project/tags", "manage_editor.remove_tag"]
+    },
+    "open_scenes": {
+      "expected": ["scene_inspect.get_loaded_scenes", "manage_scene.get_loaded_scenes"],
+      "wrong_effect": [
+        "scene_lifecycle.set_active_scene", "manage_scene.set_active_scene",
+        "scene_lifecycle.load", "manage_scene.load",
+        "scene_lifecycle.close_scene", "manage_scene.close_scene"
+      ]
+    },
+    "activate_scene": {
+      "expected": ["scene_lifecycle.set_active_scene", "manage_scene.set_active_scene"],
+      "wrong_effect": [
+        "scene_inspect.get_loaded_scenes", "manage_scene.get_loaded_scenes",
+        "scene_lifecycle.load", "manage_scene.load",
+        "scene_lifecycle.close_scene", "manage_scene.close_scene"
+      ]
+    }
+  },
+  "queries": {
+    "ko": {
+      "layer_inventory": "이 프로젝트에서 쓰는 레이어 이름이랑 인덱스를 쭉 보여줄래?",
+      "retire_layer": "이제 안 쓰는 FogMask 레이어를 프로젝트 설정에서 지워 줘.",
+      "tag_inventory": "지금 프로젝트에 등록돼 있는 태그가 뭐뭐야?",
+      "register_tag": "프로젝트에 새 태그를 하나 만들어 줘. 이름은 Beacon이야.",
+      "open_scenes": "에디터에 어떤 씬들이 열려 있는지 알려 줘.",
+      "activate_scene": "열어 둔 씬 중에서 기차역을 활성 씬으로 바꿔 줘."
+    },
+    "ja": {
+      "layer_inventory": "プロジェクトに設定されている各レイヤーの名前と番号を一覧で見たい。",
+      "retire_layer": "プロジェクト設定から「残像」レイヤーを削除して。",
+      "tag_inventory": "このプロジェクトで使えるタグを全部教えてくれる？",
+      "register_tag": "「隠し扉」というタグをプロジェクトに追加してほしい。",
+      "open_scenes": "今エディターで開いているシーンはどれ？",
+      "activate_scene": "すでに開いてある「中庭」をアクティブなシーンにして。"
+    },
+    "ar": {
+      "layer_inventory": "ما أسماء الطبقات المعرّفة في المشروع، وما رقم كل طبقة؟",
+      "retire_layer": "احذف طبقة «الضباب» من إعدادات المشروع.",
+      "tag_inventory": "أريد أن أعرف أي وسوم متاحة حاليا في هذا المشروع.",
+      "register_tag": "أضف إلى المشروع وسما جديدا باسم «منارة».",
+      "open_scenes": "اعرض لي أسماء جميع المشاهد المفتوحة الآن في المحرر.",
+      "activate_scene": "مشهد «الميناء» مفتوح بالفعل. اجعله المشهد النشط."
+    },
+    "tr": {
+      "layer_inventory": "Projede tanımlı katmanların adlarını, her birinin indeksiyle birlikte sıralar mısın?",
+      "retire_layer": "EskiGölge adlı katmanı proje ayarlarından kaldır.",
+      "tag_inventory": "Bu projede hangi etiketleri kullanabiliyorum?",
+      "register_tag": "Projeye Fener adında yeni bir etiket ekler misin?",
+      "open_scenes": "Şu anda editörde hangi sahneler açık?",
+      "activate_scene": "Açık sahnelerden Tersane'yi etkin sahne olarak ayarla."
+    },
+    "fi": {
+      "layer_inventory": "Mitkä tasot tähän projektiin on määritelty? Tarvitsen jokaisesta nimen ja indeksin.",
+      "retire_layer": "Poista projektin asetuksista taso nimeltä Sumu.",
+      "tag_inventory": "Näytä tämän projektin kaikki tagit.",
+      "register_tag": "Lisäisitkö projektiin uuden tagin nimeltä Lyhty?",
+      "open_scenes": "Mitkä scenet minulla on nyt auki editorissa?",
+      "activate_scene": "Satama on jo auki. Aseta se aktiiviseksi sceneksi."
+    },
+    "el": {
+      "layer_inventory": "Ποια layers έχουν οριστεί στο έργο; Θέλω το όνομα και τον αριθμό του καθενός.",
+      "retire_layer": "Διέγραψε το layer «Ομίχλη» από τις ρυθμίσεις του έργου.",
+      "tag_inventory": "Μπορώ να δω όλες τις ετικέτες που υπάρχουν ήδη στο έργο;",
+      "register_tag": "Πρόσθεσε στο έργο μια καινούργια ετικέτα με το όνομα «Φάρος».",
+      "open_scenes": "Ποιες σκηνές έχω ανοιχτές αυτή τη στιγμή στον editor;",
+      "activate_scene": "Από τις ανοιχτές σκηνές, όρισε το «Λιμάνι» ως ενεργή σκηνή."
+    },
+    "th": {
+      "layer_inventory": "โปรเจกต์นี้มีเลเยอร์อะไรบ้าง ขอชื่อกับหมายเลขของแต่ละเลเยอร์ด้วย",
+      "retire_layer": "ช่วยลบเลเยอร์ชื่อ หมอก ออกจากการตั้งค่าโปรเจกต์ให้หน่อย",
+      "tag_inventory": "ขอดูแท็กทั้งหมดที่มีอยู่ในโปรเจกต์ตอนนี้หน่อย",
+      "register_tag": "เพิ่มแท็กใหม่ชื่อ ประภาคาร ให้โปรเจกต์นี้หน่อย",
+      "open_scenes": "ตอนนี้ในเอดิเตอร์เปิดซีนไหนค้างไว้บ้าง",
+      "activate_scene": "ซีนท่าเรือเปิดอยู่แล้ว ช่วยตั้งให้เป็นซีนที่แอ็กทีฟหน่อย"
+    },
+    "uk": {
+      "layer_inventory": "Покажи назви всіх шарів, визначених у проєкті, та індекс кожного з них.",
+      "retire_layer": "Прибери шар «Туман» із налаштувань проєкту.",
+      "tag_inventory": "Які теги вже є в цьому проєкті?",
+      "register_tag": "Додай до проєкту тег із назвою «Маяк».",
+      "open_scenes": "Нагадай, які сцени зараз відкриті в редакторі.",
+      "activate_scene": "Серед відкритих сцен зроби «Причал» активною."
+    }
+  }
+}
