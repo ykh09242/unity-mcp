@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "tasks": {
+    "activate_scene": {
+      "expected": ["scene_lifecycle.set_active_scene", "manage_scene.set_active_scene"],
+      "wrong_effect": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes",
+        "scene_inspect.get_active",
+        "manage_scene.get_active",
+        "scene_lifecycle.load",
+        "manage_scene.load",
+        "scene_lifecycle.close_scene",
+        "manage_scene.close_scene"
+      ]
+    },
+    "activate_named_scene": {
+      "expected": ["scene_lifecycle.set_active_scene", "manage_scene.set_active_scene"],
+      "wrong_effect": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes",
+        "scene_inspect.get_active",
+        "manage_scene.get_active",
+        "scene_lifecycle.load",
+        "manage_scene.load",
+        "scene_lifecycle.close_scene",
+        "manage_scene.close_scene"
+      ]
+    },
+    "open_scenes": {
+      "expected": ["scene_inspect.get_loaded_scenes", "manage_scene.get_loaded_scenes"],
+      "wrong_effect": [
+        "scene_lifecycle.set_active_scene",
+        "manage_scene.set_active_scene",
+        "scene_lifecycle.load",
+        "manage_scene.load",
+        "scene_lifecycle.close_scene",
+        "manage_scene.close_scene"
+      ]
+    },
+    "active_scene": {
+      "expected": ["scene_inspect.get_active", "manage_scene.get_active"],
+      "wrong_effect": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes",
+        "scene_lifecycle.set_active_scene",
+        "manage_scene.set_active_scene",
+        "scene_lifecycle.load",
+        "manage_scene.load",
+        "scene_lifecycle.close_scene",
+        "manage_scene.close_scene"
+      ]
+    }
+  },
+  "queries": {
+    "ja": {
+      "activate_scene": "開いてある「朝霧の埠頭」で作業を続けたいので、このシーンをアクティブにして。",
+      "activate_named_scene": "「灯台」と「潮だまり」を同時に開いています。アクティブなシーンを「潮だまり」に切り替えてもらえますか？",
+      "open_scenes": "今エディターに読み込まれているシーンを全部教えて。",
+      "active_scene": "いまアクティブに設定されているシーンの名前は何ですか？"
+    },
+    "es": {
+      "activate_scene": "Pon como activa la escena «Cantera», que ya está abierta. Voy a seguir editando ahí.",
+      "activate_named_scene": "Tengo el invernadero, el patio y la estación abiertos a la vez. Deja activa la escena «Estación del Norte».",
+      "open_scenes": "¿Qué escenas están cargadas ahora mismo en el editor?",
+      "active_scene": "Dime el nombre de la escena activa."
+    },
+    "ta": {
+      "activate_scene": "ஏற்கெனவே திறந்திருக்கும் ‘மணல் மேடு’ காட்சியைச் செயலில் வைங்க. அதில்தான் அடுத்த திருத்தம் செய்யணும்.",
+      "activate_named_scene": "‘கலங்கரை விளக்கம்’, ‘படகுத்துறை’ ரெண்டையும் திறந்து வச்சிருக்கேன். இப்போ செயலில் இருக்கும் காட்சியா ‘படகுத்துறை’யை மாத்துங்க.",
+      "open_scenes": "இப்போ எடிட்டரில் திறந்திருக்கும் காட்சிகள் எல்லாத்தையும் பட்டியலிடுங்க.",
+      "active_scene": "இப்போதைக்கு எந்தக் காட்சி செயலில் இருக்கு? அதன் பெயர் மட்டும் சொல்லுங்க."
+    },
+    "fr": {
+      "activate_scene": "J’ai déjà ouvert « Verrière ». Mets-la en scène active pour que je puisse y placer les lumières.",
+      "activate_named_scene": "Plusieurs scènes sont ouvertes dans l’éditeur. Passe « Cour intérieure » en scène active.",
+      "open_scenes": "Tu peux me donner la liste des scènes actuellement chargées ?",
+      "active_scene": "Comment s’appelle la scène qui est active en ce moment dans l’éditeur ?"
+    },
+    "sw": {
+      "activate_scene": "Nataka kuendelea kuhariri mandhari ya «Soko la Usiku». Tayari nimeifungua. Tafadhali iweke kuwa mandhari amilifu.",
+      "activate_named_scene": "Nimefungua mandhari kadhaa pamoja. Weka «Gati la Lamu» kuwa mandhari amilifu.",
+      "open_scenes": "Ni mandhari gani zimepakiwa kwenye kihariri kwa sasa?",
+      "active_scene": "Niambie jina la mandhari iliyo amilifu sasa kwenye kihariri."
+    },
+    "cs": {
+      "activate_scene": "Nastav otevřenou scénu „Starý lom“ jako aktivní, chci v ní pokračovat v úpravách.",
+      "activate_named_scene": "Mám najednou otevřené „Nádraží“, „Podchod“ a „Nástupiště“. Přepni aktivní scénu na „Podchod“.",
+      "open_scenes": "Vypiš všechny scény, které jsou teď načtené v editoru.",
+      "active_scene": "Jak se jmenuje scéna, která je teď v editoru aktivní?"
+    }
+  }
+}
