@@ -15,11 +15,11 @@
       "heldout": {
         "core": {
           "observe": {"count": 24, "top1": 13, "top3": 17, "wrong_effect_top1": 2, "wrong_effect_top3": 2},
-          "edit": {"count": 32, "top1": 16, "top3": 16, "wrong_effect_top1": 5, "wrong_effect_top3": 20}
+          "edit": {"count": 32, "top1": 19, "top3": 19, "wrong_effect_top1": 2, "wrong_effect_top3": 20}
         },
         "full": {
           "observe": {"count": 24, "top1": 13, "top3": 15, "wrong_effect_top1": 3, "wrong_effect_top3": 3},
-          "edit": {"count": 32, "top1": 16, "top3": 17, "wrong_effect_top1": 5, "wrong_effect_top3": 16}
+          "edit": {"count": 32, "top1": 18, "top3": 20, "wrong_effect_top1": 3, "wrong_effect_top3": 16}
         }
       }
     },

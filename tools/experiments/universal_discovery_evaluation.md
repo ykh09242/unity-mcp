@@ -21,7 +21,7 @@ Four confirmation languages (Czech, French, Spanish and Tamil) were absent from 
 
 This experiment measures how much the shared operation metric helps when a tool family first appears at search time. Two independent fits each withhold one registered source owner, its forwarded selectors, fixed tools, equivalent read surfaces and any alternative accepted by the training oracle for the same request. The Editor boundary also covers its resource namespace and the project layer and tag inventories. A request that names an excluded binding as a correct or wrong effect is removed along with normalized duplicates. All remaining declarations compete as negatives, and their baseline neighborhoods are recomputed after the split. The bundled encoders and the catalog's authored descriptions are shared across all three variants. [Split implementation](discovery_family_split.py)
 
-The complete fit used 223 declarations and 190 eligible requests. The scene-excluded fit retained 211 declarations and 148 requests. The editor-excluded fit retained 193 declarations and 98 requests. Each fitted test artifact is 12,488 bytes and lives under the benchmark directory. [Training selection and artifact digests](discovery_family_metrics/reference.json)
+The complete fit used 223 declarations and 190 eligible requests. The scene-excluded fit retained 211 declarations and 148 requests. The editor-excluded fit retained 193 declarations and 98 requests. The initial measurements below used the 12,488-byte v1 test artifacts. [Initial training selection and artifact digests](https://github.com/ykh09242/unity-mcp/blob/7e17b756c301f9d16b327eec744b7fe4e57bef9c/tools/experiments/discovery_family_metrics/reference.json)
 
 The MCP client replayed all 104 distinct original requests in three existing evaluation corpora, covering 15 languages across both families. It sent only the query and a limit of three, with the normal catalog restored in each profile. Every expected operation was available. Each count measures the representative offered to the caller. An opposite is one of the wrong effects explicitly labelled for that request. “Unadapted” bypasses the learned operation metric. “Family excluded” loads the corresponding refit. “Shipped” loads the complete published fit.
 
@@ -37,6 +37,21 @@ The MCP client replayed all 104 distinct original requests in three existing eva
 | Editor edit | full | 32 | 28 | 27 | 29 | 2 | 9 |
 
 Scene activation accounts for all 32 scene edits. Withholding that family costs eight top-three hits in core and five in full compared with the complete fit. On full-catalog Editor edits, calibration on the other families loses one hit and introduces one additional labelled opposite in the top three compared with the unadapted ranker. The results cover these two source families and the published prompts.
+
+### Shared effect calibration
+
+Version 2 adds 528 bytes of coefficients to predict whether a request asks to observe or act. Each fold learns these coefficients from its retained requests and declarations. At search time, the encoders must agree before the ranker can use a retrieved read as evidence for an action on the same property of the leading family. The change preserves the original retrieval projections byte for byte. [Model and reproduction](../../Server/src/services/registry/model/README.md)
+
+The same 104 published regression requests produced the following representative ranks. Each arrow compares v1 with v2. Observations retained their first-place, top-three and labelled opposite counts in all four excluded-family/profile combinations. [Current CI limits](discovery_family_metrics/reference.json)
+
+| Excluded family, edit requests | Profile | Cases | Correct first | Correct in top 3 | Opposite first | Opposite in top 3 | Top 3 using the complete fit |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Scene activation | core | 32 | 16 → 19 | 16 → 19 | 5 → 2 | 20 → 20 | 24 → 26 |
+| Scene activation | full | 32 | 16 → 18 | 17 → 20 | 5 → 3 | 16 → 16 | 22 → 25 |
+| Editor edits | core | 32 | 19 → 19 | 28 → 28 | 2 → 2 | 9 → 9 | 29 → 29 |
+| Editor edits | full | 32 | 20 → 20 | 27 → 27 | 2 → 2 | 9 → 9 | 29 → 29 |
+
+The scene top-three gap between the complete and excluded-family fits narrowed from eight to seven cases in core and remained five cases in full. A third control excluded the Console family from calibration, retaining 221 declarations and 164 requests. On 26 excluded Console requests in 13 languages, enabling the new stage preserved 12/14 top-three clear actions and 10/12 top-three reads in each profile, with zero labelled opposite first choices.
 
 Run from the repository root in the existing server environment. The replay writes the training and corpus digests, model identities, per-language scores and offered routes to the optional output file. CI replays the two excluded-family fits and guards correct first and top-three counts and opposite-effect ceilings independently for each profile and direction. [Public MCP replay](evaluate_discovery_families.py) · [CI regression tests](../tests/test_discovery_family_transfer.py)
 
