@@ -1,0 +1,161 @@
+{
+  "schema": 1,
+  "tasks": {
+    "activate_scene": {
+      "expected": [
+        "scene_lifecycle.set_active_scene",
+        "manage_scene.set_active_scene"
+      ],
+      "wrong_effect": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes",
+        "scene_inspect.get_active",
+        "manage_scene.get_active",
+        "scene_lifecycle.load",
+        "manage_scene.load",
+        "scene_lifecycle.close_scene",
+        "manage_scene.close_scene"
+      ]
+    },
+    "activate_named_scene": {
+      "expected": [
+        "scene_lifecycle.set_active_scene",
+        "manage_scene.set_active_scene"
+      ],
+      "wrong_effect": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes",
+        "scene_inspect.get_active",
+        "manage_scene.get_active",
+        "scene_lifecycle.load",
+        "manage_scene.load",
+        "scene_lifecycle.close_scene",
+        "manage_scene.close_scene"
+      ]
+    },
+    "open_scenes": {
+      "expected": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes"
+      ],
+      "wrong_effect": [
+        "scene_lifecycle.set_active_scene",
+        "manage_scene.set_active_scene",
+        "scene_lifecycle.load",
+        "manage_scene.load",
+        "scene_lifecycle.close_scene",
+        "manage_scene.close_scene"
+      ]
+    },
+    "retire_layer": {
+      "expected": [
+        "manage_editor.remove_layer"
+      ],
+      "wrong_effect": [
+        "manage_editor.add_layer",
+        "mcpforunity://project/layers"
+      ]
+    },
+    "create_layer": {
+      "expected": [
+        "manage_editor.add_layer"
+      ],
+      "wrong_effect": [
+        "manage_editor.remove_layer",
+        "mcpforunity://project/layers"
+      ]
+    },
+    "tag_inventory": {
+      "expected": [
+        "mcpforunity://project/tags"
+      ],
+      "wrong_effect": [
+        "manage_editor.remove_tag",
+        "manage_editor.add_tag"
+      ]
+    },
+    "register_tag": {
+      "expected": [
+        "manage_editor.add_tag"
+      ],
+      "wrong_effect": [
+        "manage_editor.remove_tag",
+        "mcpforunity://project/tags"
+      ]
+    }
+  },
+  "queries": {
+    "ko": {
+      "activate_scene": "이미 열려 있는 안개나루 씬을 활성 씬으로 바꿔 줘.",
+      "activate_named_scene": "심야작업실 열어 뒀어. 이번엔 그 씬을 활성화해 줄래?",
+      "open_scenes": "편집기에 지금 열려 있는 씬이 뭐뭐야?",
+      "retire_layer": "프로젝트에서 '임시 그림자' 레이어를 지워 줘.",
+      "create_layer": "바람길이라는 새 레이어를 프로젝트에 만들어 줘.",
+      "tag_inventory": "이 프로젝트에 등록된 태그 목록 좀 보여 줘.",
+      "register_tag": "분실물이라는 새 태그를 프로젝트에 등록해 줘."
+    },
+    "ja": {
+      "activate_scene": "開いてある「灯台裏」をアクティブシーンにしてください。",
+      "activate_named_scene": "石畳広場は開いてあるので、今度はそっちをアクティブにしてもらえますか？",
+      "open_scenes": "エディターで今開いてるシーンを一覧で見せて。",
+      "retire_layer": "仮の当たり判定というレイヤー、もう使わないのでプロジェクトから削除して。",
+      "create_layer": "「遠景の鳥」という名前で、このプロジェクトにレイヤーを一つ作ってください。",
+      "tag_inventory": "このプロジェクトではどんなタグが使えますか？",
+      "register_tag": "見回り役というタグをプロジェクトに追加しておいて。"
+    },
+    "ar": {
+      "activate_scene": "اجعل مشهد «فناء النخيل» هو المشهد النشط. المشهد مفتوح بالفعل.",
+      "activate_named_scene": "مخزن الحبوب مفتوح عندي. أريده أن يكون المشهد النشط الآن.",
+      "open_scenes": "ما المشاهد المفتوحة حاليًا في المحرر؟ اعرضها في قائمة.",
+      "retire_layer": "احذف طبقة الضباب البنفسجي من المشروع.",
+      "create_layer": "أضف إلى المشروع طبقة جديدة باسم «حواف السطح».",
+      "tag_inventory": "أرني الوسوم المتاحة في هذا المشروع.",
+      "register_tag": "سجّل في المشروع وسمًا جديدًا اسمه قابل للكسر."
+    },
+    "es": {
+      "activate_scene": "Pon como activa la escena «Mirador del río», que ya está abierta.",
+      "activate_named_scene": "Tengo abierta la Arboleda. Quiero que esa sea la escena activa ahora.",
+      "open_scenes": "¿Me pasas la lista de escenas que están abiertas ahora mismo en el editor?",
+      "retire_layer": "Borra del proyecto la capa Reflejos de prueba.",
+      "create_layer": "Crea una capa nueva en el proyecto con el nombre Cristales rotos.",
+      "tag_inventory": "¿Qué etiquetas hay disponibles en este proyecto?",
+      "register_tag": "Da de alta una etiqueta llamada Pasadizo oculto en el proyecto."
+    },
+    "tr": {
+      "activate_scene": "Açık olan Sisli İskele sahnesini etkin sahne yap.",
+      "activate_named_scene": "Bu kez etkin sahnemiz Çatı Bahçesi olsun, zaten açık.",
+      "open_scenes": "Düzenleyicide şu an açık olan sahneleri sıralar mısın?",
+      "retire_layer": "Geçici Işıklar katmanını projeden kaldırır mısın?",
+      "create_layer": "Projeye “Kıyı Köpüğü” adında yeni bir katman ekle.",
+      "tag_inventory": "Bu projede hangi etiketler var?",
+      "register_tag": "Devriye Noktası adında bir etiket ekleyelim projeye."
+    },
+    "ta": {
+      "activate_scene": "ஏற்கெனவே திறந்திருக்கும் ‘மலைக்குகை’ காட்சியைச் செயலில் உள்ள காட்சியாக அமைக்கவும்.",
+      "activate_named_scene": "கல் முற்றம் ஏற்கெனவே திறந்திருக்கிறது. இப்போது அதுதான் செயலில் உள்ள காட்சியாக இருக்கட்டும்.",
+      "open_scenes": "இப்போது திறந்திருக்கும் காட்சிகள் என்னென்ன?",
+      "retire_layer": "திட்டத்திலிருந்து பழைய வேலிகள் என்ற அடுக்கை நீக்குங்கள்.",
+      "create_layer": "மழைத்துளிகள் என்ற பெயரில் திட்டத்தில் ஒரு புதிய அடுக்கை உருவாக்குங்கள்.",
+      "tag_inventory": "இந்தத் திட்டத்தில் உள்ள குறிச்சொற்களின் பட்டியலைக் காட்டுங்கள்.",
+      "register_tag": "நீரூற்று என்ற புதிய குறிச்சொல்லைத் திட்டத்தில் சேர்க்கவும்."
+    },
+    "ka": {
+      "activate_scene": "აქტიურ სცენად დააყენე უკვე გახსნილი „ყინულის ხიდი“.",
+      "activate_named_scene": "ძველი მარანი უკვე მაქვს გახსნილი. ახლა ეგ იყოს აქტიური სცენა.",
+      "open_scenes": "მაჩვენე, რომელი სცენებია ახლა გახსნილი რედაქტორში.",
+      "retire_layer": "პროექტის ფენებიდან ამოშალე „ხის ყუთები“.",
+      "create_layer": "პროექტში ახალი ფენა დამიმატე სახელად კლდის კიდეები.",
+      "tag_inventory": "ამ პროექტში რა ტეგებია ხელმისაწვდომი?",
+      "register_tag": "პროექტს ახალი ტეგი დაუმატე სახელად ხელოსანი."
+    },
+    "pl": {
+      "activate_scene": "Ustaw otwartą scenę „Wieża zegarowa” jako aktywną.",
+      "activate_named_scene": "Teraz aktywna ma być Przystań. Mam ją już otwartą.",
+      "open_scenes": "Jakie sceny są teraz otwarte w edytorze?",
+      "retire_layer": "Usuń z projektu warstwę Próba Oświetlenia.",
+      "create_layer": "Dodaj w projekcie nową warstwę o nazwie Mgła nad Wodą.",
+      "tag_inventory": "Pokaż, jakie tagi są dostępne w tym projekcie.",
+      "register_tag": "Dopisz do projektu nowy tag Gniazdo Sowy."
+    }
+  }
+}
