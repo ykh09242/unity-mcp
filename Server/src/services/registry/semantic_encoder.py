@@ -130,10 +130,9 @@ def fragmented_label(text: str, model_id: str) -> bool:
     return len(_piece_offsets(words[0], vocab)) >= 6
 
 
-@lru_cache(maxsize=1)
-def _catalog_vectors(documents: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
-    model = _model()
-    return tuple(_encode(document, model) for document in documents)
+@lru_cache(maxsize=_MAX_CACHED_DOCUMENTS)
+def _document_vector(text: str) -> tuple[float, ...]:
+    return _encode(text, _model())
 
 
 def _pooled_scores(query: str, documents: tuple[str, ...]) -> tuple[float, ...]:
@@ -142,11 +141,11 @@ def _pooled_scores(query: str, documents: tuple[str, ...]) -> tuple[float, ...]:
     # Only shared initialization needs serialization. Query scoring uses immutable data.
     with _CACHE_LOCK:
         model = _model()
-        vectors = (
-            _catalog_vectors(tuple(text[:_MAX_CHARS] for text in documents))
-            if len(documents) <= _MAX_CACHED_DOCUMENTS
-            else (_encode(text, model) for text in documents)
-        )
+    vectors = (
+        (_document_vector(text[:_MAX_CHARS]) for text in documents)
+        if len(documents) <= _MAX_CACHED_DOCUMENTS
+        else (_encode(text, model) for text in documents)
+    )
     query_vector = _encode(query, model)
     return tuple(
         _dot(query_vector, vector) if query_vector and vector else 0.0 for vector in vectors

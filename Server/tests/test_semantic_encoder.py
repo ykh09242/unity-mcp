@@ -21,6 +21,22 @@ def test_bundled_weights_rank_unseen_domain_without_network(monkeypatch):
     assert encoder.semantic_similarities("🔥", docs) == (0, 0)
 
 
+def test_overlapping_catalogs_reuse_declarations_and_encode_each_request(monkeypatch):
+    from unittest.mock import Mock
+
+    encode = Mock(wraps=encoder._encode)
+    monkeypatch.setattr(encoder, "_encode", encode)
+    query = "switch the signal at the railway station"
+    common = "set the railway signal"
+    first = encoder._pooled_scores(query, (common, "inspect the signal"))
+    second = encoder._pooled_scores(query, ("remove the signal", common))
+
+    assert first[0] == second[1]
+    texts = [call.args[0] for call in encode.call_args_list]
+    assert texts.count(common) == 1
+    assert texts.count(query) == 2
+
+
 @pytest.mark.parametrize("module", [encoder, semantic_coverage])
 def test_verify_checks_current_bytes_after_warming_inference(module, tmp_path, monkeypatch):
     encoder.semantic_scores("railway station", ("ride the train", "bake a cake"))
