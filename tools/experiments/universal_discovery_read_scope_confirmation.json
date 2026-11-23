@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "tasks": {
+    "current_scene": {
+      "expected": [
+        "scene_inspect.get_active",
+        "manage_scene.get_active"
+      ],
+      "wrong_effect": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes"
+      ]
+    },
+    "scene_list": {
+      "expected": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes"
+      ],
+      "wrong_effect": [
+        "scene_inspect.get_active",
+        "manage_scene.get_active"
+      ]
+    },
+    "installed_package": {
+      "expected": [
+        "manage_packages.get_package_info"
+      ],
+      "wrong_effect": [
+        "manage_packages.list_packages"
+      ]
+    },
+    "package_list": {
+      "expected": [
+        "manage_packages.list_packages"
+      ],
+      "wrong_effect": [
+        "manage_packages.get_package_info"
+      ]
+    },
+    "selected_agent": {
+      "expected": [
+        "manage_navigation.read"
+      ],
+      "wrong_effect": [
+        "manage_navigation.list"
+      ]
+    },
+    "agent_list": {
+      "expected": [
+        "manage_navigation.list"
+      ],
+      "wrong_effect": [
+        "manage_navigation.read"
+      ]
+    }
+  },
+  "queries": {
+    "ko": {
+      "current_scene": "작업 중인 Unity 프로젝트에서 지금 기준으로 잡힌 활성 씬 이름 하나만 알고 싶어.",
+      "scene_list": "씬을 여러 개 띄웠어. 현재 열어 둔 씬들을 전부 확인해 줘.",
+      "installed_package": "내 프로젝트에 들어간 `com.unity.splines` 패키지의 등록 정보는 어떻게 돼?",
+      "package_list": "프로젝트 패키지 관리자가 설치됐다고 표시하는 패키지 이름을 모두 보고 싶어.",
+      "selected_agent": "씬에서 고른 NavMeshAgent 하나의 이동 속도 값을 읽어 줘.",
+      "agent_list": "이 씬에 붙어 있는 NavMeshAgent 컴포넌트가 어느 오브젝트에 있는지 전부 찾아 줘."
+    },
+    "en": {
+      "current_scene": "I have several scenes open. Which one does Unity consider the active scene?",
+      "scene_list": "Show the whole set of scenes open in this editor, including whichever one is active.",
+      "installed_package": "What does the package manager say about the installed `com.unity.splines` package?",
+      "package_list": "I want the names of all the packages currently installed in this project.",
+      "selected_agent": "What is the speed configured on the NavMeshAgent I selected?",
+      "agent_list": "Could you show every NavMeshAgent component in this scene?"
+    },
+    "zh": {
+      "current_scene": "编辑器里开着好几个场景，当前活动的是哪一个？",
+      "scene_list": "把 Unity 编辑器里打开的场景名称全部列出来。",
+      "installed_package": "项目中已安装的 `com.unity.splines` 这个包，具体信息是什么？",
+      "package_list": "包管理器里哪些包已经安装了？把整个列表给我看一下。",
+      "selected_agent": "我选中的这个 NavMeshAgent 的移动速度现在设为多少？",
+      "agent_list": "列出这个场景里所有挂载了 NavMeshAgent 的对象。"
+    },
+    "id": {
+      "current_scene": "Ada beberapa scene yang terbuka di Unity. Yang mana scene aktif saat ini?",
+      "scene_list": "Tolong tampilkan nama semua scene yang sedang terbuka di editor.",
+      "installed_package": "Saya ingin melihat informasi paket `com.unity.splines` yang sudah terpasang di proyek ini.",
+      "package_list": "Paket apa saja yang tercatat sebagai terpasang di Package Manager proyek ini?",
+      "selected_agent": "Berapa kecepatan yang diatur pada komponen NavMeshAgent yang saya pilih?",
+      "agent_list": "Sebutkan semua komponen NavMeshAgent yang ada di scene ini."
+    },
+    "cs": {
+      "current_scene": "V editoru mám otevřených víc scén. Která z nich je právě aktivní?",
+      "scene_list": "Vypiš názvy všech scén, které mám v Unity právě otevřené.",
+      "installed_package": "Jaké údaje má správce balíčků o nainstalovaném balíčku `com.unity.splines`?",
+      "package_list": "Chci seznam všech balíčků, které jsou v projektu nainstalované.",
+      "selected_agent": "Jakou rychlost má nastavenou vybraný NavMeshAgent?",
+      "agent_list": "Najdi všechny komponenty NavMeshAgent v této scéně a vypiš je."
+    },
+    "nl": {
+      "current_scene": "Ik heb een paar scènes open in Unity. Wat is de naam van de actieve scène?",
+      "scene_list": "Laat me alle scènes zien die op dit moment openstaan in de editor.",
+      "installed_package": "Welke gegevens staan er in de pakketbeheerder bij het geïnstalleerde pakket `com.unity.splines`?",
+      "package_list": "Welke pakketten staan in dit project als geïnstalleerd geregistreerd? Geef de hele lijst.",
+      "selected_agent": "Op welke snelheid staat de geselecteerde NavMeshAgent ingesteld?",
+      "agent_list": "Geef me een overzicht van alle NavMeshAgent-componenten in deze scène."
+    }
+  }
+}
