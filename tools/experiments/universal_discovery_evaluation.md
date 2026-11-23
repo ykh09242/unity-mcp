@@ -2,9 +2,34 @@
 
 The catalog ranks a next Unity operation or readable resource. Each evaluation submits the same original requests to the core and full catalogs.
 
+## Read and edit requests
+
+The paired evaluations distinguish listing project layers from removing a layer, listing project tags from adding a tag, and listing open scenes from activating a loaded scene. Every language contributes three reads and three edits. The MCP client supplied only the original query and a limit of three. The first-place and top-three counts use the representative of each result group. The wrong-effect counts cover only the alternatives listed in each fixture.
+
+An independent model author wrote the first 48 requests in Arabic, Finnish, Greek, Japanese, Korean, Thai, Turkish and Ukrainian. Its first replay used the frozen runtime at `f3d0447b0`. A separate author wrote another 24 requests in Bengali, Hebrew, Indonesian and Romanian before the final runtime was frozen. Neither corpus has received native-speaker review. [Initial pairs](universal_discovery_effect_pairs.json) · [Confirmation pairs](universal_discovery_effect_confirmation.json)
+
+The table compares the previously shipped runtime `48a0203e0` with `1c4bfeacfdff810ca7b9632f795f2547e2630dbc`. All expected bindings were available. The fixtures' SHA-256 digests are pinned in the regression test, which checks reads and edits separately in each catalog. [Regression test](../tests/test_universal_discovery_evaluation.py)
+
+| Corpus | Catalog | Request | Cases | First | Top three | Wrong first | Wrong in top three |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Initial | core | Read | 24 | 7 → 18 | 12 → 20 | 3 → 1 | 5 → 3 |
+| Initial | core | Edit | 24 | 11 → 12 | 14 → 17 | 0 → 4 | 9 → 12 |
+| Initial | full | Read | 24 | 9 → 19 | 14 → 20 | 2 → 1 | 3 → 3 |
+| Initial | full | Edit | 24 | 13 → 16 | 16 → 19 | 1 → 2 | 12 → 10 |
+| Confirmation | core | Read | 12 | 6 → 11 | 7 → 12 | 2 → 0 | 4 → 3 |
+| Confirmation | core | Edit | 12 | 5 → 6 | 7 → 7 | 0 → 1 | 5 → 5 |
+| Confirmation | full | Read | 12 | 7 → 11 | 8 → 12 | 2 → 0 | 5 → 4 |
+| Confirmation | full | Edit | 12 | 8 → 9 | 9 → 10 | 0 → 1 | 6 → 4 |
+
+Across both corpora, 11 of 12 layer-inventory requests placed the readable resource first and all 12 placed it within three in both catalogs. Scene activation was harder. Core placed the intended edit first in 0 of 12 raw requests and within three in 2 of 12. Full placed it first in 7 of 12. The explicit identifier with the `edit` filter returned the advertised activation binding first in both catalogs. Across all 36 edit requests the count of wrong first choices increased from 0 to 5 in core and from 1 to 3 in full. These are search suggestions. The replays recorded zero business calls, resource reads or native dispatches.
+
+The previously published v3 corpus now serves as a development check. Layer-number requests placed the resource first in 8/8 languages in both catalogs, up from 2/8. Wrong first choices across all 40 v3 requests fell from 7 to 1 in core and from 6 to 0 in full. The separate five-language menu acceptance test retained all 60 first-place results across the three search surfaces and two catalogs.
+
+The final wheel had SHA-256 `135e8c32bac8a9cedc98f0e6aff896ebffec618825b0a3904e6e190a5b0d0974`. The wheel and source distribution matched 541 Git files, including both bundled encoders. A fresh offline installation verified both weight files and returned the menu lookup first through CLI search and both MCP search entry points. The search process attempted zero external connections or child processes.
+
 ## Bundled-only search
 
-The server combines the two encoders already shipped in its package. The comparison used the previous bundled runtime at `9d3216d30226b84ee2a2e93f7a77d78eab4e0f36` and the current runtime at `48a0203e01b6212269f52fa9a102fba7d7d666a3`. The latter also recognizes a complete tool name with reordered words in raw hybrid searches. The MCP client submitted original queries without caller hints. Counts include queries whose expected operation was unavailable. A wrong effect is a suggested operation with a prespecified adverse effect.
+The server combines the two encoders already shipped in its package. This earlier comparison used the bundled runtimes at `9d3216d30226b84ee2a2e93f7a77d78eab4e0f36` and `48a0203e01b6212269f52fa9a102fba7d7d666a3`. The latter also recognizes a complete tool name with reordered words in raw hybrid searches. The MCP client submitted original queries without caller hints. Counts include queries whose expected operation was unavailable. A wrong effect is a suggested operation with a prespecified adverse effect.
 
 | Corpus | Catalog | Available | First, previous → current | Within three, previous → current | Wrong first, previous → current | Wrong within three, previous → current |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
