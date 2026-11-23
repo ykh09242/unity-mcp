@@ -17,6 +17,41 @@ The following are raw `search_unity_tools` results from an installed wheel, with
 
 Four confirmation languages (Czech, French, Spanish and Tamil) were absent from the calibration corpora. Their eight activation requests went from 1 to 7 top-three hits in core and from 4 to 5 in full. Across all six confirmation languages the core catalog missed the named-scene requests in Japanese and Tamil and both Swahili activation requests. In the original 72 read/edit requests, wrong first choices on the 36 edits decreased from 5 to 2 in core and 3 to 1 in full. The earlier five-language menu test retained first place in all 60 combinations of wording, profile and route surface. These finite corpora have no native-speaker review and do not establish accuracy for every language. [Regression gates](../tests/test_universal_discovery_evaluation.py)
 
+## Transfer to a family excluded from calibration
+
+This experiment measures how much the shared operation metric helps when a tool family first appears at search time. Two independent fits each withhold one registered source owner, its forwarded selectors, fixed tools, equivalent read surfaces and any alternative accepted by the training oracle for the same request. The Editor boundary also covers its resource namespace and the project layer and tag inventories. A request that names an excluded binding as a correct or wrong effect is removed along with normalized duplicates. All remaining declarations compete as negatives, and their baseline neighborhoods are recomputed after the split. The bundled encoders and the catalog's authored descriptions are shared across all three variants. [Split implementation](discovery_family_split.py)
+
+The complete fit used 223 declarations and 190 eligible requests. The scene-excluded fit retained 211 declarations and 148 requests. The editor-excluded fit retained 193 declarations and 98 requests. Each fitted test artifact is 12,488 bytes and lives under the benchmark directory. [Training selection and artifact digests](discovery_family_metrics/reference.json)
+
+The MCP client replayed all 104 distinct original requests in three existing evaluation corpora, covering 15 languages across both families. It sent only the query and a limit of three, with the normal catalog restored in each profile. Every expected operation was available. Each count measures the representative offered to the caller. An opposite is one of the wrong effects explicitly labelled for that request. “Unadapted” bypasses the learned operation metric. “Family excluded” loads the corresponding refit. “Shipped” loads the complete published fit.
+
+| Family and request | Profile | Cases | Top 3 unadapted | Top 3 family excluded | Top 3 shipped | Opposite first, family excluded | Opposite in top 3, family excluded |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Scene read | core | 24 | 17 | 17 | 18 | 2 | 2 |
+| Scene edit | core | 32 | 15 | 16 | 24 | 5 | 20 |
+| Scene read | full | 24 | 15 | 15 | 16 | 3 | 3 |
+| Scene edit | full | 32 | 17 | 17 | 22 | 5 | 16 |
+| Editor read | core | 16 | 12 | 13 | 13 | 1 | 7 |
+| Editor edit | core | 32 | 28 | 28 | 29 | 2 | 9 |
+| Editor read | full | 16 | 13 | 14 | 15 | 1 | 7 |
+| Editor edit | full | 32 | 28 | 27 | 29 | 2 | 9 |
+
+Scene activation accounts for all 32 scene edits. Withholding that family costs eight top-three hits in core and five in full compared with the complete fit. On full-catalog Editor edits, calibration on the other families loses one hit and introduces one additional labelled opposite in the top three compared with the unadapted ranker. The results cover these two source families and the published prompts.
+
+Run from the repository root in the existing server environment. The replay writes the training and corpus digests, model identities, per-language scores and offered routes to the optional output file. CI replays the two excluded-family fits and guards correct first and top-three counts and opposite-effect ceilings independently for each profile and direction. [Public MCP replay](evaluate_discovery_families.py) · [CI regression tests](../tests/test_discovery_family_transfer.py)
+
+```sh
+python tools/experiments/evaluate_discovery_families.py --output family-results.json
+python -m pytest tools/tests/test_discovery_family_split.py tools/tests/test_discovery_family_transfer.py
+```
+
+To reproduce a test artifact, capture the training inputs in the server environment. Run the second command in the existing NumPy maintainer environment described in the metric reproduction guide. Replace `manage_scene` with `manage_editor` to check the other fold. Omitting `--exclude-family` captures the complete production fit. [Metric reproduction guide](../../Server/src/services/registry/model/README.md)
+
+```sh
+python tools/experiments/fit_discovery_metric.py capture scene-training.json.gz --exclude-family manage_scene
+python tools/experiments/fit_discovery_metric.py fit scene-training.json.gz tools/experiments/discovery_family_metrics/manage_scene.q8 --check
+```
+
 ## Read and edit requests
 
 The paired evaluations distinguish listing project layers from removing a layer, listing project tags from adding a tag, and listing open scenes from activating a loaded scene. Every language contributes three reads and three edits. The MCP client supplied only the original query and a limit of three. The first-place and top-three counts use the representative of each result group. The wrong-effect counts cover only the alternatives listed in each fixture.
