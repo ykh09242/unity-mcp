@@ -54,14 +54,20 @@ class Fold:
 
 
 def prepare_fold(family, sources):
-    documents, operations, training, held = training_inputs(family)
+    effects = {}
+    documents, operations, training, held = training_inputs(family, effects=effects)
     training_queries = {query_identity(r.query) for r in training}
     selection = digest(
         [
             [semantic_encoder._SHA256, semantic_coverage._SHA256, semantic_metric._SHA256],
             sorted(held),
             [
-                [key, texts, semantic_metric.document_fields(key, texts, operations.get(key))]
+                [
+                    key,
+                    texts,
+                    semantic_metric.document_fields(key, texts, operations.get(key)),
+                    effects[key],
+                ]
                 for key, texts in sorted(documents.items())
             ],
             [[r.query, sorted(r.expected), sorted(r.wrong_effect)] for r in training],
@@ -108,7 +114,7 @@ def metric_variant(family, variant, expected_digest):
                 patch.object(
                     task_search,
                     "recall_operation",
-                    lambda query, docs, ops, base, canonical: canonical,
+                    lambda query, docs, ops, base, canonical, effects=None: canonical,
                 )
             )
         elif variant != "shipped":

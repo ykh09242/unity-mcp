@@ -1,6 +1,7 @@
 """Rebuild the bundled operation metric using the local catalog and published training queries."""
 
 import argparse
+from collections import Counter
 from dataclasses import replace
 import gzip
 from hashlib import sha256
@@ -25,7 +26,7 @@ TRAINING = {
 }
 
 
-def training_inputs(exclude_family=None):
+def training_inputs(exclude_family=None, *, effects=None):
     """Read the registered core catalog before ranking and select the calibration population."""
     import anyio
 
@@ -40,7 +41,7 @@ def training_inputs(exclude_family=None):
 
     # Capture the same scoped declarations the public search tool receives from FastMCP.
     # Intercept before ranking so the new metric cannot teach itself from its own results.
-    documents, operations = {}, {}
+    documents, operations, declared_effects = {}, {}, {}
 
     def snapshot(_query, capabilities, resources, unavailable_parents, intent, surfaces):
         documents.update(
@@ -51,6 +52,7 @@ def training_inputs(exclude_family=None):
                 intent,
                 surfaces=surfaces,
                 operations=operations,
+                effects=declared_effects,
             )
         )
 
@@ -59,12 +61,15 @@ def training_inputs(exclude_family=None):
 
     requests = tuple(request for suite in suites for request in suite.requests)
     documents, eligible, held = partition(documents, requests, exclude_family)
+    if effects is not None:
+        effects.update((key, declared_effects[key]) for key in documents)
     return documents, {k: v for k, v in operations.items() if k in documents}, eligible, held
 
 
 def capture(output, *, exclude_family=None):
     """Compute fields, vectors and negative neighborhoods only after partitioning the catalog."""
-    documents, operations, requests, _ = training_inputs(exclude_family)
+    effects = {}
+    documents, operations, requests, _ = training_inputs(exclude_family, effects=effects)
     from services.registry import semantic_coverage, semantic_encoder
     from services.registry.semantic_catalog import semantic_scores
     from services.registry.semantic_metric import document_fields, query_views
@@ -76,6 +81,8 @@ def capture(output, *, exclude_family=None):
         return indices.setdefault(text, len(indices))
 
     fields, bindings = [], []
+    declared, labelled = {}, []
+    directions = [effects[key] for key in documents]
     for key, descriptions in documents.items():
         label, purpose, examples, subject = document_fields(key, descriptions, operations.get(key))
         fields.append(
@@ -85,12 +92,20 @@ def capture(output, *, exclude_family=None):
             ]
         )
         bindings.append(binding_name(key))
+        if effect := effects[key]:
+            sign = -1 if effect == "observe" else 1
+            for text in (label, purpose, *examples):
+                views = tuple(index(t) for t in query_views(text))
+                declared.setdefault((views, sign), ([len(fields) - 1], sign, views))
 
     queries, targets, baseline = [], [], []
     for request in requests:
         matches = [i for i, name in enumerate(bindings) if name in request.expected]
         queries.append([index(text) for text in query_views(request.query)])
         targets.append(matches)
+        labels = {directions[i] for i in matches}
+        if len(labels) == 1 and (effect := labels.pop()):
+            labelled.append((matches, -1 if effect == "observe" else 1, queries[-1]))
         _, scores = semantic_scores(request.query, documents)
         baseline.append([scores.get(key, 0.0) for key in documents])
 
@@ -100,7 +115,11 @@ def capture(output, *, exclude_family=None):
     )
     vectors = [[encode(text) or [0.0] * 256 for text in indices] for encode in encoders]
     with gzip.open(output, "wt", encoding="utf-8") as file:
-        json.dump([fields, queries, targets, baseline, vectors], file, separators=(",", ":"))
+        json.dump(
+            [fields, queries, targets, baseline, vectors, [labelled, list(declared.values())]],
+            file,
+            separators=(",", ":"),
+        )
     print(f"Captured {len(documents)} declarations and {len(queries)} eligible training requests")
 
 
@@ -125,12 +144,35 @@ def projections(np, query, document, target, baseline):
     return (left[:, :12] * strength[:12]).T * signs, right * signs
 
 
+def effect_axis(np, vectors, populations, unit):
+    """Fit a shared read/action contrast with equal class and operation mass per population."""
+    features, outcomes, masses = [], [], []
+    for examples in populations:
+        groups = [(tuple(bindings), sign) for bindings, sign, _ in examples]
+        counts = Counter(groups)
+        classes = Counter(sign for _, sign in counts)
+        if set(classes) != {-1, 1}:
+            raise ValueError("Effect calibration requires observations and actions")
+        for group, (_, sign, (raw, masked)) in zip(groups, examples, strict=True):
+            features.append(unit(vectors[raw] + vectors[masked]))
+            outcomes.append(sign)
+            masses.append(len(populations[0]) / (2 * classes[sign] * counts[group]))
+    x = np.asarray(features, dtype="float64")
+    mean = np.average(x, weights=masses, axis=0)
+    scale = np.sqrt(masses)
+    centered = (x - mean) * scale[:, None]
+    axis = np.linalg.solve(
+        centered.T @ centered + np.eye(x.shape[1]), centered.T @ (scale * outcomes)
+    )
+    return axis, -float(mean @ axis)
+
+
 def fit(source, output, *, check=False):
     """Only this offline maintainer stage needs NumPy for matrix factorization."""
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
     np = import_module("numpy")
     with gzip.open(source, "rt", encoding="utf-8") as file:
-        fields, queries, targets, baseline, encoders = json.load(file)
+        fields, queries, targets, baseline, encoders, populations = json.load(file)
     baseline = np.asarray(baseline, dtype="float32")
     target = np.zeros((len(targets), len(fields)))
     for row, matches in enumerate(targets):
@@ -139,7 +181,12 @@ def fit(source, output, *, check=False):
     def unit(vector):
         return vector / max(np.linalg.norm(vector), 0.00001)
 
-    artifact = bytearray(b"UMOPMET1")
+    def quantize(row):
+        scale = max(map(abs, row)) / 127 or 1.0
+        return struct.pack("<f256b", scale, *(round(value / scale) for value in row))
+
+    artifact = bytearray(b"UMOPMET2")
+    effects = bytearray()
     for vectors in encoders:
         vectors = np.asarray(vectors, dtype="float32")
         query = np.array([unit(vectors[raw] + vectors[masked]) for raw, masked in queries])
@@ -154,10 +201,10 @@ def fit(source, output, *, check=False):
         )
         for matrix in projections(np, query, document, target, baseline):
             for row in matrix.tolist():
-                scale = max(map(abs, row)) / 127 or 1.0
-                artifact.extend(
-                    struct.pack("<f256b", scale, *(round(value / scale) for value in row))
-                )
+                artifact.extend(quantize(row))
+        axis, offset = effect_axis(np, vectors, populations, unit)
+        effects.extend(quantize(axis.tolist()) + struct.pack("<f", offset))
+    artifact.extend(effects)
     if check:
         if output.read_bytes() != artifact:
             raise SystemExit(f"Rebuilt metric differs from {output}")

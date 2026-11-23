@@ -380,6 +380,7 @@ def semantic_documents(
     exact_query=None,
     surfaces="both",
     operations=None,
+    effects=None,
 ):
     """Build semantic documents from eligible declarations; an exact identifier bypasses ranking."""
     documents: dict[RouteKey, tuple[str, ...]] = {}
@@ -436,6 +437,8 @@ def semantic_documents(
                 guidance.observation if guidance else None,
                 examples,
             )
+            if effects is not None and key in documents:
+                effects[key] = action_intent(guidance, result)
             if operations is not None and action and key in documents:
                 card = canonical or guidance
                 operations[key] = Operation(
@@ -467,6 +470,8 @@ def semantic_documents(
             resource.get("observation") if template else meta.get(OBSERVATION_META),
             alias.get("examples", ()) if isinstance(alias, dict) else (),
         )
+        if effects is not None and key in documents:
+            effects[key] = "observe"
     for keys in equivalent_keys.values():
         descriptions = tuple(dict.fromkeys(text for key in keys for text in documents[key]))
         for key in keys:
@@ -483,7 +488,7 @@ def semantic_documents(
 
 
 def _semantic_catalog(original, capabilities, resources, unavailable_parents, intent, surfaces):
-    operations = {}
+    operations, effects = {}, {}
     documents = semantic_documents(
         capabilities,
         resources,
@@ -492,6 +497,7 @@ def _semantic_catalog(original, capabilities, resources, unavailable_parents, in
         exact_query=original,
         surfaces=surfaces,
         operations=operations,
+        effects=effects,
     )
     if not documents:
         return None
@@ -505,7 +511,7 @@ def _semantic_catalog(original, capabilities, resources, unavailable_parents, in
     ):
         return baseline
     canonical = rank_operations(original, documents, operations, baseline, semantic_scores)
-    return recall_operation(original, documents, operations, baseline, canonical)
+    return recall_operation(original, documents, operations, baseline, canonical, effects)
 
 
 def _route_evidence(

@@ -5,23 +5,31 @@ import struct
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
+from typing import NamedTuple
 
 import regex
 from services.registry import semantic_coverage as coverage
 from services.registry import semantic_encoder as encoder
 from services.registry.semantic_alignment import _dot, _unit
 from services.registry.semantic_catalog import _NEIGHBORHOOD, _label, _request_context
-from services.registry.semantic_operations import Operation, _fields, _terms
+from services.registry.semantic_operations import Operation, _fields, _terms, effect_pairs
 
-_ARTIFACT = Path(__file__).with_name("model") / "operation-metric-v1.q8"
-_SHA256 = "f7e5cf1573b141f2bd907a85ea7d1990ec42ddb73ac44530b42860cd2e75ec56"
-_HEADER = b"UMOPMET1"
+_ARTIFACT = Path(__file__).with_name("model") / "operation-metric-v2.q8"
+_SHA256 = "fcb6cd5179fb9b9fb9d87f25e14d78b982aa911512d04fcfcba8ce5381a98eb7"
+_HEADER = b"UMOPMET2"
 _RANK = 12
 _ROW = struct.Struct("<f256b")
-_SIZE = len(_HEADER) + 4 * _RANK * _ROW.size
+_AXIS = struct.Struct("<f256bf")
+_PROJECTION_END = len(_HEADER) + 4 * _RANK * _ROW.size
+_SIZE = _PROJECTION_END + 2 * _AXIS.size
 _QUOTED = regex.compile(
     r"`[^`\n]+`|\p{Quotation_Mark}[^\n\p{Quotation_Mark}]+\p{Quotation_Mark}|\b\w+_\d+\b"
 )
+
+
+class MetricWeights(NamedTuple):
+    projections: tuple
+    effects: tuple
 
 
 @lru_cache(maxsize=1)
@@ -39,9 +47,15 @@ def _weights():
         return None
     rows = tuple(
         tuple(scale * code for code in codes)
-        for scale, *codes in _ROW.iter_unpack(data[len(_HEADER) :])
+        for scale, *codes in _ROW.iter_unpack(data[len(_HEADER) : _PROJECTION_END])
     )
-    return tuple(rows[i : i + _RANK] for i in range(0, len(rows), _RANK))
+    return MetricWeights(
+        tuple(rows[i : i + _RANK] for i in range(0, len(rows), _RANK)),
+        tuple(
+            (tuple(scale * code for code in codes), offset)
+            for scale, *codes, offset in _AXIS.iter_unpack(data[_PROJECTION_END:])
+        ),
+    )
 
 
 def _weighted_unit(vectors, weights):
@@ -99,14 +113,10 @@ def _document(fields, index):
         for field in ((label,), (purpose,), examples, (tail,))
     ]
     vector = _weighted_unit(passages, (0.20, 0.30, 0.35, 0.15))
-    return vector, _project(vector, weights[2 * index + 1])
+    return vector, _project(vector, weights.projections[2 * index + 1])
 
 
-def _adapted_scores(query, catalog, operations, base):
-    model, previous = base
-    weights = _weights()
-    if weights is None:
-        return None
+def _query_vectors(query, model):
     if model == encoder.COMBINED_MODEL_ID:
         encoders = ((0, 0.6), (1, 0.4))
     elif model == encoder.MODEL_ID:
@@ -114,17 +124,25 @@ def _adapted_scores(query, catalog, operations, base):
     elif model == coverage.MODEL_ID:
         encoders = ((1, 1.0),)
     else:
-        return None
+        return
     raw, context = query_views(query)
-    scores = {key: 0.22 * previous.get(key, 0.0) for key in catalog}
-    supported = set()
     for index, fraction in encoders:
         q = _encode(raw, index, document=False)
         if context != raw:
             q = _weighted_unit((q, _encode(context, index, document=False)), (1, 1))
-        if not q:
-            continue
-        projected = _project(q, weights[2 * index])
+        if q:
+            yield index, fraction, q
+
+
+def _adapted_scores(query, catalog, operations, base):
+    model, previous = base
+    weights = _weights()
+    if weights is None:
+        return None
+    scores = {key: 0.22 * previous.get(key, 0.0) for key in catalog}
+    supported = set()
+    for index, fraction, q in _query_vectors(query, model):
+        projected = _project(q, weights.projections[2 * index])
         direct = {}
         for key, texts in catalog.items():
             fields = document_fields(key, texts, operations.get(key))
@@ -140,10 +158,10 @@ def _adapted_scores(query, catalog, operations, base):
             operations.get(k, k) for k in sorted(direct, key=direct.__getitem__, reverse=True)
         )
         supported.update(tuple(distinct)[:3])
-    return scores, supported
+    return (scores, supported) if supported else None
 
 
-def recall_operation(query, catalog, operations, baseline, canonical):
+def _recall_alternative(query, catalog, operations, baseline, canonical):
     """Offer one alternative from the learned metric within the original visible catalog."""
     model, scores = canonical
     if not scores or not baseline[1]:
@@ -194,3 +212,72 @@ def recall_operation(query, catalog, operations, baseline, canonical):
     preferred = next((key for key in candidates if operation and key[1] == operation.owner), winner)
     result[preferred] = max(result.get(preferred, 0.0), alternative)
     return model, result
+
+
+def _rank_effect(query, catalog, operations, effects, ranked):
+    model, scores = ranked
+    primary = max(scores, key=scores.__getitem__)
+    incumbent = operations.get(primary)
+    if incumbent is None:
+        return ranked
+    words = _terms(query)
+    _, _, heads, owner_words = _fields(incumbent)
+    if words and words[0] in heads and owner_words.intersection(words):
+        return ranked
+    pairs = effect_pairs(catalog, operations, effects, scores, incumbent.owner)
+    if not pairs or (weights := _weights()) is None:
+        return ranked
+    vectors = tuple(_query_vectors(query, model))
+    votes = []
+    for index, fraction, vector in vectors:
+        axis, offset = weights.effects[index]
+        votes.append((fraction, _dot(vector, axis) + offset))
+    margin = sum(fraction * value for fraction, value in votes)
+    if not votes or any(value <= 0 for _, value in votes):
+        return ranked
+
+    direct = {}
+
+    def similarity(key):
+        if key not in direct:
+            fields = document_fields(key, catalog[key], operations[key])
+            score = 0.0
+            for index, fraction, vector in vectors:
+                document, _ = _document(fields, index)
+                label = _encode(fields[0], index, document=True)
+                field_match = _dot(vector, document) if document else 0.0
+                label_match = _dot(vector, label) if label else 0.0
+                score += fraction * (field_match + label_match) / 2
+            direct[key] = score
+        return direct[key]
+
+    edit, read = max(pairs, key=lambda pair: scores[pair[1]] + similarity(pair[0]))
+    if operations[edit] == incumbent:
+        return ranked
+    # A single encoder needs a second signal from the candidate's own description.
+    if len(votes) == 1 and similarity(edit) <= similarity(read):
+        return ranked
+    peak = scores[primary]
+    if effects.get(primary) == "observe":
+        score = min(1.0, peak + min(margin, _NEIGHBORHOOD))
+    else:
+        runner_up = max((s for s in scores.values() if s < peak), default=peak - 0.002)
+        score = (peak + runner_up) / 2
+    preferred = ("tool", operations[edit].owner, operations[edit].selector)
+    if (
+        preferred in catalog
+        and operations.get(preferred) == operations[edit]
+        and effects.get(preferred) == effects[edit]
+    ):
+        edit = preferred
+    return model, {**scores, edit: max(score, scores.get(edit, 0.0))}
+
+
+def recall_operation(query, catalog, operations, baseline, canonical, effects=None):
+    ranked = _recall_alternative(query, catalog, operations, baseline, canonical)
+    if not effects or not ranked[1] or not baseline[1]:
+        return ranked
+    try:
+        return _rank_effect(query, catalog, operations, effects, ranked)
+    except encoder.SemanticModelUnavailable:
+        return ranked

@@ -83,3 +83,76 @@ def test_independent_metric_must_overcome_the_best_siblings_measured_lead(
     _, scores = metric.recall_operation("fermez le dossier", docs, OPS, base, base)
     assert (scores[SEAL] > scores[INSPECT]) is expected
     assert scores[unrelated] > scores[SEAL]
+
+
+@pytest.mark.parametrize(
+    ("votes", "direct_support", "should_promote"),
+    [
+        ((0.4, 0.6), False, True),
+        ((0.9, -0.1), True, False),
+        ((0.4,), False, False),
+        ((0.4,), True, True),
+        ((), True, False),
+    ],
+)
+def test_read_and_edit_of_a_new_property_require_agreement(
+    monkeypatch, votes, direct_support, should_promote
+):
+    read = ("tool", "channel_status", "inspect_default_channel")
+    choose = ("tool", "channel_setup", "choose_default_channel")
+    backup = ("tool", "channel_setup", "choose_backup_channel")
+    hidden = ("tool", "channel_manager", "choose_default_channel")
+    ops = {
+        read: Operation("channel_manager", read[2], "Inspect the default channel.", ()),
+        choose: Operation("channel_manager", choose[2], "Choose the default channel.", ()),
+        backup: Operation("channel_manager", backup[2], "Choose a backup channel.", ()),
+    }
+    ops[hidden] = ops[choose]
+    catalog = {key: (op.purpose,) for key, op in ops.items() if key != hidden}
+    effects = {read: "observe", choose: "edit", backup: "edit", hidden: "edit"}
+    leader = ("fixture", {read: 0.65})
+    monkeypatch.setattr(
+        metric,
+        "_query_vectors",
+        lambda *_: [(i, 1 / len(votes), (1.0,)) for i in range(len(votes))],
+    )
+    monkeypatch.setattr(
+        metric, "_weights", lambda: metric.MetricWeights((), tuple(((v,), 0.0) for v in votes))
+    )
+
+    def vector(text):
+        return (0.5 if "inspect" in text else float(direct_support),)
+
+    monkeypatch.setattr(metric, "_document", lambda fields, _: (vector(fields[0]), ()))
+    monkeypatch.setattr(metric, "_encode", lambda text, *a, **kw: vector(text))
+    _, scores = metric._rank_effect("request", catalog, ops, effects, leader)
+    assert (max(scores, key=scores.__getitem__) == choose) == should_promote
+    assert set(scores) <= {read, choose}
+    assert leader[1] == {read: 0.65}
+
+
+def test_action_direction_cannot_introduce_an_edit_from_a_different_owner():
+    from services.registry.semantic_operations import effect_pairs
+
+    read = ("tool", "notebook", "inspect_default_format")
+    edit = ("tool", "printer", "set_default_format")
+    ops = {
+        read: Operation("notebook", read[2], "Inspect the default format.", ()),
+        edit: Operation("printer", edit[2], "Set the default format.", ()),
+    }
+    assert not effect_pairs(ops, ops, {read: "observe", edit: "edit"}, {read: 0.5}, "notebook")
+
+
+def test_direction_alone_cannot_choose_between_opposite_edits_of_the_same_property():
+    from services.registry.semantic_operations import effect_pairs
+
+    selectors = ("inspect_labels", "attach_labels", "detach_labels")
+    ops = {
+        ("tool", "notebook", selector): Operation(
+            "notebook", selector, selector.replace("_", " "), ()
+        )
+        for selector in selectors
+    }
+    read, attach, detach = ops
+    effects = {read: "observe", attach: "edit", detach: "edit"}
+    assert not effect_pairs(ops, ops, effects, {read: 0.7}, "notebook")

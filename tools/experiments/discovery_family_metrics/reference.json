@@ -9,9 +9,9 @@
       "training": {
         "declarations": 211,
         "requests": 148,
-        "selection_sha256": "3cb83c32453502a331d44f131adf89d79c9f2e33dadddfc09732ee0069928614"
+        "selection_sha256": "19b3c86e222d107df9833609a43e21f3d2dfec7d3dca959ef335a9e5c41c99ca"
       },
-      "metric_sha256": "fcfa64330e686bbd4059a27c4d10908a45da03efe527a5a481e7640c70a06f45",
+      "metric_sha256": "5562d89097796993bd495239c90e87585aa6344477ff72e6b105f9b5c7921721",
       "heldout": {
         "core": {
           "observe": {"count": 24, "top1": 13, "top3": 17, "wrong_effect_top1": 2, "wrong_effect_top3": 2},
@@ -27,9 +27,9 @@
       "training": {
         "declarations": 193,
         "requests": 98,
-        "selection_sha256": "9ba3d7d7eaf6242af1544a2debdc6b2e46398138e1935d5145808a4a6448332b"
+        "selection_sha256": "34a3aa88edae9204f87cb27bf95f7f7961d6fe32fa406ef14e14dd7c96b562d9"
       },
-      "metric_sha256": "55b7f82e6231f444b50bb9879d09d9b01f3273353cbd280869e9f521b58c260b",
+      "metric_sha256": "14ac8a83d435a977c1bf5080ec648807e5f858a29df249e2e7039d3c83e94f1e",
       "heldout": {
         "core": {
           "observe": {"count": 16, "top1": 12, "top3": 13, "wrong_effect_top1": 1, "wrong_effect_top3": 7},

@@ -10,7 +10,7 @@ import regex
 
 from services.registry.action_catalog import TOOL_GUIDANCE
 from services.registry.capability_catalog import CAPABILITIES
-from services.registry.semantic_catalog import RouteKey, search_texts
+from services.registry.semantic_catalog import RouteKey, _label, search_texts
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +77,47 @@ def _target_overlap(operations, words):
         op: math.fsum(math.log(distinct / frequency[w]) for w in (terms & words) - _fields(op)[3])
         for op, terms in descriptions.items()
     }
+
+
+@lru_cache(maxsize=2048)
+def _effect_terms(op):
+    selector = _terms(_label(op.selector))
+    target = frozenset(selector[1:]) - set(_terms(_label(op.owner.removeprefix("manage_"))))
+    observed = target.union(_terms(op.purpose.partition(". ")[0]))
+    return target, observed
+
+
+def effect_pairs(catalog, operations, effects, ranked, owner):
+    """Connect a retrieved read to an advertised action on the same named property."""
+    leaders = {}
+    for key in sorted(ranked, key=ranked.__getitem__, reverse=True):
+        leaders.setdefault(operations.get(key, key), key)
+        if len(leaders) == 3:
+            break
+    reads = [
+        (op, key)
+        for op, key in leaders.items()
+        if isinstance(op, Operation) and op.owner == owner and effects.get(key) == "observe"
+    ]
+    if not reads:
+        return ()
+    actions = {}
+    for key, op in operations.items():
+        if op.owner != owner or key not in catalog or effects.get(key) not in ("edit", "interact"):
+            continue
+        target, _ = _effect_terms(op)
+        if target:
+            actions.setdefault(target, {}).setdefault(op.selector, []).append(key)
+    pairs = []
+    for target, selectors in actions.items():
+        # The read/action contrast cannot choose between two writes on the same property.
+        # Multiple bindings of one selector still describe a single operation.
+        if len(selectors) == 1:
+            selector, keys = next(iter(selectors.items()))
+            for read, read_key in reads:
+                if read.selector != selector and target <= _effect_terms(read)[1]:
+                    pairs.extend((key, read_key) for key in keys)
+    return pairs
 
 
 def _lexical_owner(words, by_key, leader, rank_catalog, query, model):
