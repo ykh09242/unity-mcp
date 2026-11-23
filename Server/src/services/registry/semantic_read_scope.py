@@ -94,6 +94,7 @@ def _request_scope(query, model, weights):
     parts = _clauses(metric._QUOTED.sub(" ", raw))
     signs = []
     focused = []
+    combined = 0.0
     for i, fraction, v in vectors:
         score = _score(v, weights[2 * i])
         focus = metric._encode(parts[-1], i, document=False) if len(parts) > 1 else ()
@@ -101,9 +102,12 @@ def _request_scope(query, model, weights):
             score = (score + _score(focus, weights[2 * i])) / 2
         focused.append((i, fraction, focus or v))
         signs.append(score)
-    # A request can ask for a collection and then describe fields to annotate.
-    # A disputed reading of that second instruction cannot reverse the first.
-    if max(signs) == 0 or (min(signs) <= 0 < max(signs) and _has_multiple_clauses(raw)):
+        combined += fraction * score
+    # A field to annotate can look like a request for one item. Overriding the
+    # inventory requires independent support from the combined request scores.
+    if max(signs) == 0 or (
+        min(signs) <= 0 < max(signs) and (combined <= 0 or _has_multiple_clauses(raw))
+    ):
         return None
     return parts, focused, signs
 
@@ -197,6 +201,13 @@ def _rank(query, catalog, operations, effects, ranked):
     key = peers[best]
     peak = scores[primary]
     if incumbent in anchors:
+        # A third read may concern a different subject in the same family. A
+        # scope comparison cannot override its stronger match to the request.
+        pair_topic = max(matches[best], observations[incumbent][1])
+        for key_in_scores in scores:
+            peer = operations.get(key_in_scores)
+            if peer in observations and peer not in anchors and observations[peer][1] > pair_topic:
+                return ranked
         weight = min(1.0, peak + _NEIGHBORHOOD)
     else:
         # An independently retrieved family can offer the requested scope as

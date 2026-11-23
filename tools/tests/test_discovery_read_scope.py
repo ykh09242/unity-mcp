@@ -1,6 +1,7 @@
 """Guard raw discovery and isolate requested cardinality on real registered reads."""
 
 from collections import Counter
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -14,7 +15,12 @@ from services.registry.semantic_catalog import semantic_scores
 from services.registry.semantic_operations import Operation
 from services.registry.semantic_read_scope import rank_observations
 
-from tools.experiments.discovery_evaluation_fixture import FIXTURE, load_suite
+from tools.experiments.discovery_evaluation_fixture import (
+    FIXTURE,
+    EvaluationSuite,
+    Request,
+    load_suite,
+)
 from tools.experiments.discovery_family_split import query_identity
 from tools.experiments.fit_discovery_metric import TRAINING
 from tools.experiments.fit_observation_scope import PAIRS
@@ -91,6 +97,37 @@ def _binding(routes):
         bindings.add(("tool", operation_owner(tool, selector), selector))
     assert len(bindings) == 1
     return bindings.pop()
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+@pytest.mark.asyncio
+async def test_raw_search_preserves_the_scope_and_subject_of_the_answer(profile):
+    examples = {r.task: r for r in CONFIRMATION.requests}
+    requests = (
+        replace(examples["current_scene"], language="ko", query="현재 활성 씬이 뭐야?"),
+        replace(
+            examples["scene_list"],
+            language="en",
+            query="List my loaded scenes and mark the active one.",
+        ),
+        replace(
+            examples["scene_list"],
+            language="en",
+            query="Which scenes are open and which one is active?",
+        ),
+        Request(
+            "en",
+            "package_job",
+            "What is the state of my package installation job?",
+            frozenset({"manage_packages.status"}),
+            frozenset({"manage_packages.get_package_info"}),
+            None,
+        ),
+    )
+    report = await evaluate_profile(profile, EvaluationSuite("review-regressions", requests))
+    for row, limit in zip(report["rows"], (1, 1, 1, 2), strict=True):
+        assert row["rank"] is not None and row["rank"] <= limit, row
+        assert not row["wrong_effect_top1"], row
 
 
 def test_registered_read_pairs_can_correct_the_wrong_scope_and_preserve_the_right_one():
