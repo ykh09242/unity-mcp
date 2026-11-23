@@ -8,6 +8,14 @@ from services.registry import action_catalog, semantic_operations as ranking, ta
 from services.registry.action_guidance_types import ActionGuidance, ToolGuidance
 
 
+def test_declaration_passages_follow_unicode_sentence_and_word_boundaries():
+    op = ranking.Operation(
+        "projector", "select_frame", "現在の場面を選択する。次の映像へ進む。", ()
+    )
+    _, passages, _, _ = ranking._fields(op)
+    assert passages == ("現在の場面を選択する", "次の映像へ進む")
+
+
 def test_new_forwarder_gets_source_meaning_and_keeps_its_own_parameters(monkeypatch):
     source, adapter = "sample_vault", "vault_doors"
     edit = ActionGuidance("Seal a vault door.", required=("master_key",), intent="edit")

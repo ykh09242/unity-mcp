@@ -6,6 +6,8 @@ from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
 
+import regex
+
 from services.registry.action_catalog import TOOL_GUIDANCE
 from services.registry.capability_catalog import CAPABILITIES
 from services.registry.semantic_catalog import RouteKey, search_texts
@@ -20,7 +22,8 @@ class Operation:
 
 
 _WORDS = re.compile(r"[^\W\d_]+")
-_CLAUSES = re.compile(r"[.;\n]+|,\s+|\s+(?:and|then)\s+")
+_CLAUSES = regex.compile(r"[\p{Terminal_Punctuation}\n]+")
+_WORD_BOUNDARY = regex.compile(r"\b", regex.WORD)
 _NEIGHBORHOOD = 0.12
 _FORWARDERS = {}
 for _capability in CAPABILITIES:
@@ -41,7 +44,7 @@ def _fields(op: Operation):
             clause.strip(" .")
             for text in (op.purpose, *op.examples)
             for clause in _CLAUSES.split(text)
-            if len(clause.split()) >= 3
+            if sum(any(c.isalnum() for c in part) for part in _WORD_BOUNDARY.split(clause)) >= 3
         )
     )
     heads = frozenset(
