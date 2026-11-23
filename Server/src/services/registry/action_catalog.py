@@ -6,9 +6,11 @@ remain authoritative and never consult these hints for admission or retries.
 
 import inspect
 import re
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from copy import deepcopy
 from dataclasses import replace
+from functools import lru_cache
+from types import MappingProxyType
 from typing import Final, Literal, NotRequired, TypedDict, get_args, get_origin
 
 from mcp.types import ToolAnnotations
@@ -942,6 +944,17 @@ def _required_tool_parameters(entry: CatalogEntry) -> list[str]:
     ]
 
 
+_DOCUMENTED_ACTION = re.compile(
+    r"^[^\S\r\n]*[-*][^\S\r\n]+`?(\w+)`?[^\S\r\n]*:[^\S\r\n]*(\S[^\r\n]*)", re.MULTILINE
+)
+
+
+@lru_cache(maxsize=1)
+def documented_actions(description: str) -> Mapping[str, str]:
+    """Reuse the current dispatcher's declared action lines across its individual cards."""
+    return MappingProxyType(dict(_DOCUMENTED_ACTION.findall(description)))
+
+
 def action_guidance(entry: CatalogEntry, action: str | None) -> ActionGuidance | None:
     """Use reviewed action evidence or the tool's own wire schema alternative."""
     if action is None:
@@ -968,8 +981,11 @@ def action_guidance(entry: CatalogEntry, action: str | None) -> ActionGuidance |
             variant.get("properties", {}).get("action") if isinstance(variant, dict) else None
         )
         if isinstance(selector, dict) and selector.get("const") == action:
+            purpose = variant.get("description")
+            if not isinstance(purpose, str) or not purpose.strip():
+                purpose = documented_actions(tool_description(entry)).get(action, "")
             return ActionGuidance(
-                variant.get("description", ""),
+                purpose,
                 tuple(name for name in variant.get("required", ()) if name != "action"),
             )
     return None

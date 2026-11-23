@@ -38,6 +38,7 @@ from services.registry.action_catalog import (
     action_intent,
     catalog_navigation,
     concrete_resources,
+    documented_actions,
     resource_observation,
     resource_templates,
     tool_capability,
@@ -54,7 +55,6 @@ from services.registry.capability_catalog import (
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
 from services.registry.integration_action_guidance import MENU_INVENTORY_OBSERVATION
 from services.registry.semantic_catalog import (
-    documented_actions,
     search_texts,
     semantic_scores,
 )

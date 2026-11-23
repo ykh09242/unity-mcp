@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from services.registry import semantic_catalog, task_search
+from services.registry.action_catalog import describe_action, documented_actions
 from services.registry.semantic_encoder import SemanticModelUnavailable
 
 
@@ -103,14 +104,55 @@ def test_literal_context_retains_original_query_for_full_comparison(query):
 
 
 def test_dispatcher_operation_prose_cannot_cross_action_boundaries():
-    declarations = (
-        "Operations:\n- read_sample: Report the sample.\n- clear_sample: Erase the sample."
-    )
-    descriptions = semantic_catalog.documented_actions(declarations)
+    declarations = "Operations:\n- empty:  \r\n- read_sample: Report the sample.\n- clear_sample: Erase the sample."
+    descriptions = documented_actions(declarations)
     assert descriptions == {
         "read_sample": "Report the sample.",
         "clear_sample": "Erase the sample.",
     }
+
+
+@pytest.mark.parametrize("description", [{}, {"description": " \t "}])
+def test_dynamic_action_uses_its_own_declared_purpose_in_search_and_describe(description):
+    item = entry(
+        "stock_desk",
+        "Inventory operations.\n- alpha: Report remaining stock.\n- beta: Discard damaged stock.",
+    )
+    item["input_schema"] = {
+        "properties": {"action": {"enum": ["alpha", "beta", "gamma"]}, "aisle": {"type": "string"}},
+        "oneOf": [
+            {
+                "properties": {"action": {"const": "alpha"}},
+                "required": ["action", "aisle"],
+                **description,
+            },
+            {"properties": {"action": {"const": "beta"}}, "description": "Remove damaged stock."},
+            {"properties": {"action": {"const": "gamma"}}},
+        ],
+    }
+    capabilities = [(item, task_search.tool_capability(item))]
+
+    assert task_search.semantic_documents(capabilities, [], set(), None) == {
+        ("tool", "stock_desk", "alpha"): ("stock desk alpha. Report remaining stock.",),
+        ("tool", "stock_desk", "beta"): ("stock desk beta. Remove damaged stock.",),
+        ("tool", "stock_desk", "gamma"): ("stock desk gamma",),
+    }
+    for action, purpose, source, required in (
+        ("alpha", "Report remaining stock.", "declared", ["aisle"]),
+        ("beta", "Remove damaged stock.", "declared", []),
+        ("gamma", "gamma", "identifier", []),
+    ):
+        result = task_search.search_catalog(task_search.SearchRequest(query=action), [item])
+        route = result["route_groups"][0]["representative"]
+        assert (route["operation"], route["purpose"]) == (action, purpose)
+        bound = describe_action(item, {"inputSchema": item["input_schema"]}, action)
+        card = bound["operation"]
+        assert (card["purpose"], card["purpose_source"], card["required_parameters"]) == (
+            purpose,
+            source,
+            required,
+        )
+        assert bound["tool"]["inputSchema"]["required"] == ["action", *required]
 
 
 def test_resource_candidates_are_scored_against_the_requested_surface(monkeypatch):

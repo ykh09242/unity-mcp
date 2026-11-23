@@ -18,16 +18,10 @@ _QUALIFIED = regex.compile(r"\w\.\w")
 _NAME_SUFFIX = re.compile(r"['’][^\W\d_]+")
 _PLATFORM = regex.compile(r"(?<![\w.-])Unity(?!\w|[.-]\w)", regex.IGNORECASE)
 _SENTENCE_TERMINAL = regex.compile(r"\p{Sentence_Terminal}")
-_DOCUMENTED_ACTION = re.compile(r"^\s*[-*]\s+`?([\w]+)`?\s*:\s*(\S.*)$", re.MULTILINE)
 
 
 def _label(identifier: str) -> str:
     return _CAMEL.sub(" ", identifier.replace("_", " ").replace(".", " ")).strip()
-
-
-def documented_actions(description: str) -> dict[str, str]:
-    """Extract action-specific descriptions that dispatchers publish in their schemas."""
-    return dict(_DOCUMENTED_ACTION.findall(description))
 
 
 def _has_multiple_clauses(text: str) -> bool:
