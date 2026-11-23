@@ -118,6 +118,18 @@ def _evidence(op, focused, weights, sign):
     return extents, topic
 
 
+def _links(candidate, opposite, sign):
+    anchors, contracts = {}, set()
+    for peer in opposite:
+        detail, inventory = (candidate, peer) if sign > 0 else (peer, candidate)
+        subject = _shared_subject(detail, inventory)
+        if subject is not None:
+            anchors[peer] = subject
+            if set(inventory.required) < set(detail.required):
+                contracts.add(peer)
+    return anchors, contracts
+
+
 def _rank(query, catalog, operations, effects, ranked):
     model, scores = ranked
     primary = max(scores, key=scores.__getitem__)
@@ -146,20 +158,29 @@ def _rank(query, catalog, operations, effects, ranked):
     opposite = [op for op, (extents, _) in observations.items() if max(extents) < 0]
     if not matches or not opposite:
         return ranked
-    best = max(matches, key=matches.__getitem__)
-    if best == incumbent:
-        return ranked
-    anchors = {}
-    for op in opposite:
-        detail, inventory = (best, op) if sign > 0 else (op, best)
-        subject = _shared_subject(detail, inventory)
-        if subject is not None:
-            anchors[op] = subject
+    ordered = sorted(matches, key=matches.__getitem__, reverse=True)
+    best = ordered[0]
+    anchors, contracts = _links(best, opposite, sign)
     if not anchors:
+        # A detail operation may need an identifier in addition to all the
+        # inventory parameters. That declared relationship can recover a pair
+        # even when a generic status check has a higher semantic similarity.
+        for candidate in ordered[1:]:
+            if matches[candidate] < matches[best] - _NEIGHBORHOOD:
+                break
+            alternatives, identified = _links(candidate, opposite, sign)
+            if identified:
+                best, anchors, contracts = candidate, alternatives, identified
+                break
+    if not anchors or best == incumbent:
         return ranked
     # Singular/plural wording alone is ambiguous. Require the detail actually
     # requested, or independent topical support from the question's own clause.
-    anchor = incumbent if incumbent in anchors else max(anchors, key=lambda op: observations[op][1])
+    anchor = (
+        incumbent
+        if incumbent in anchors
+        else max(contracts or anchors, key=lambda op: observations[op][1])
+    )
     subject = anchors[anchor]
     if not subject and matches[best] <= observations[anchor][1]:
         return ranked
@@ -171,7 +192,7 @@ def _rank(query, catalog, operations, effects, ranked):
         if disputed and strength < max(_NEIGHBORHOOD, -min(signs)):
             return ranked
         clarified = len(parts) > 1 and matches[best] > observations[anchor][1]
-        if strength < _NEIGHBORHOOD and not clarified:
+        if strength < max(_NEIGHBORHOOD, observations[anchor][1]) and not clarified:
             return ranked
     key = peers[best]
     peak = scores[primary]
@@ -185,9 +206,10 @@ def _rank(query, catalog, operations, effects, ranked):
                 operations.get(k, k) for k in sorted(scores, key=scores.__getitem__, reverse=True)
             )
         )[:3]
-        if not any(op in anchors or op == best for op in leading):
+        if not contracts and not any(op in anchors or op == best for op in leading):
             return ranked
-        if matches[best] < max(topic for _, topic in observations.values()):
+        allowance = _NEIGHBORHOOD if contracts else 0.0
+        if matches[best] < max(topic for _, topic in observations.values()) - allowance:
             return ranked
         runner_up = max((s for s in scores.values() if s < peak), default=peak - 0.002)
         weight = (peak + runner_up) / 2

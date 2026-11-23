@@ -108,7 +108,10 @@ or an inventory when the request asks for multiple results. A separate clause
 can supply topical evidence for a question about one item in an open set.
 Conflicting interpretations across sentences retain the existing rank when
 the encoders disagree. The same inference runs for each supported encoder
-configuration. Missing or damaged scope weights preserve ordinary retrieval.
+configuration. A detail read that requires an identifying argument in addition
+to the inventory's arguments can enter the alternatives when the incoming
+request also supports its declared subject. Missing or damaged scope weights
+preserve ordinary retrieval.
 
 Build the snapshot with the server environment and fit it with the existing
 NumPy maintainer environment. Both commands use local files.

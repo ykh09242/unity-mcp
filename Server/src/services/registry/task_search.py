@@ -447,6 +447,7 @@ def semantic_documents(
                     action,
                     card.purpose if card else purpose,
                     tuple(card.search_examples) if card else (),
+                    tuple(card.required) if card else (),
                 )
     for resource in resources:
         identifier = resource.get("uri") or resource["uri_template"]

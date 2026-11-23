@@ -19,6 +19,7 @@ class Operation:
     selector: str
     purpose: str
     examples: tuple[str, ...]
+    required: tuple[str, ...] = ()
 
 
 _WORDS = re.compile(r"[^\W\d_]+")

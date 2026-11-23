@@ -1,6 +1,7 @@
 """Scope transfer, filtered registrations and optional-asset fallbacks."""
 
 from unittest.mock import patch
+from dataclasses import replace
 
 import pytest
 
@@ -94,3 +95,28 @@ def test_clause_boundaries_preserve_qualified_identifiers():
         "For com.example.device",
         "which port is active",
     )
+
+
+@pytest.mark.parametrize(
+    ("required", "recover"),
+    [(("hub", "port_id"), True), (("port_id",), False), (("hub",), False)],
+)
+def test_only_a_nested_input_contract_can_recover_an_unranked_read_pair(
+    monkeypatch, required, recover
+):
+    ops = {
+        DETAIL: replace(OPS[DETAIL], required=required),
+        LIST: replace(OPS[LIST], required=("hub",)),
+        EDIT: OPS[EDIT],
+    }
+    # The ordinary retriever placed a different action first. No read from this pair
+    # was in its leading neighborhood. Both purposes and the request prefer the list.
+    ranked = (MODEL, {EDIT: 0.61})
+    monkeypatch.setattr(scope, "_request_scope", lambda *args: (("request",), (), [-1.0]))
+    monkeypatch.setattr(
+        scope, "_evidence", lambda op, *args: ([1.0], 0.7) if op == ops[LIST] else ([-1.0], 0.5)
+    )
+    _, scores = scope.rank_observations("request", DOCS, ops, EFFECTS, ranked)
+    assert (LIST in scores) == recover
+    assert max(scores, key=scores.__getitem__) == EDIT
+    assert DETAIL not in scores
