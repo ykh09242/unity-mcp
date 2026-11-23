@@ -68,16 +68,25 @@ def test_group_pages_are_stable_and_keep_unadvertised_tools(entries):
 
 def test_scene_inventory_and_activation_expose_distinct_action_contracts(entries):
     from services.registry.action_catalog import action_card
+    from services.registry.task_search import SearchRequest, search_catalog
 
     by_name = {entry["name"]: entry for entry in entries}
     focused = action_card(by_name["scene_inspect"], "get_loaded_scenes")
     dispatcher = action_card(by_name["manage_scene"], "get_loaded_scenes")
     activate = action_card(by_name["manage_scene"], "set_active_scene")
+    focused_activate = action_card(by_name["scene_lifecycle"], "set_active_scene")
 
     assert focused["intent"] == dispatcher["intent"] == "observe"
     assert focused["purpose"] == dispatcher["purpose"]
-    assert activate["intent"] == "edit"
+    assert activate["intent"] == focused_activate["intent"] == "edit"
+    assert activate["purpose"] in focused_activate["purpose"]
     assert activate["purpose"] != dispatcher["purpose"]
+    for name in ("scene_lifecycle", "manage_scene"):
+        result = search_catalog(
+            SearchRequest(query="set_active_scene", intent="edit"), [by_name[name]]
+        )
+        route = result["route_groups"][0]["representative"]
+        assert (route["tool"], route["operation"]) == (name, "set_active_scene")
 
 
 @pytest.mark.parametrize("past_end", [False, True])

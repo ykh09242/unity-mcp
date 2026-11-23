@@ -894,6 +894,16 @@ TOOL_GUIDANCE["scene_inspect"] = ToolGuidance(
         ),
     }
 )
+_SCENE_ACTIVATION: Final = TOOL_GUIDANCE["manage_scene"].actions["set_active_scene"]
+TOOL_GUIDANCE["scene_lifecycle"] = ToolGuidance(
+    actions={
+        "set_active_scene": replace(
+            _SCENE_ACTIVATION,
+            purpose=f"Make this the destination for new GameObjects. {_SCENE_ACTIVATION.purpose}",
+            search_examples=(),
+        )
+    }
+)
 
 _CAPABILITIES: Final = {item.name: item for item in CAPABILITIES}
 

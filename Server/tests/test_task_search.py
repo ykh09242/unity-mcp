@@ -174,6 +174,28 @@ def test_task_phrases_rank_the_dedicated_tool_first(query, expected):
     assert all(item["readiness"] == "unobserved" for item in payload["results"])
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["core", "full"])
+async def test_scene_activation_is_discoverable_with_edit_intent(monkeypatch, profile):
+    from fastmcp import Client, FastMCP
+
+    from services.tools import register_all_tools
+
+    monkeypatch.delenv("UNITY_MCP_TOOL_GROUPS", raising=False)
+    monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", profile)
+    server = FastMCP("scene-activation-discovery")
+    register_all_tools(server)
+    async with Client(server) as client:
+        reply = await client.call_tool(
+            "search_unity_tools", {"query": "set_active_scene", "intent": "edit", "limit": 3}
+        )
+
+    route = reply.structured_content["route_groups"][0]["representative"]
+    assert route["tool"] in {"scene_lifecycle", "manage_scene"}
+    assert route["operation"] == "set_active_scene"
+    assert route["intent"] == "edit" and route["advertised"]
+
+
 def test_original_query_can_reach_official_skill_without_claiming_readiness():
     from cli.main import cli
 
