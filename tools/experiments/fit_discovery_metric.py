@@ -14,6 +14,9 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
+if not __package__:
+    sys.path[:0] = [str(ROOT / "Server/src"), str(ROOT)]
+
 TRAINING = {
     "universal_discovery_queries.json": "645d3fcd1924820fd62fa9320bfde872c8a6af10793f974b4cbd70f93fa8d841",
     "universal_discovery_queries_v2.json": "8c96401f5fb62cf3a385ec0e0b1683a53dc29187958e67f857fe308e49c9d797",
@@ -22,15 +25,13 @@ TRAINING = {
 }
 
 
-def capture(output):
-    """Run this stage in the server environment. All inputs come from the checkout."""
-    sys.path[:0] = [str(ROOT / "Server/src"), str(ROOT)]
+def training_inputs(exclude_family=None):
+    """Read the registered core catalog before ranking and select the calibration population."""
     import anyio
 
-    from services.registry import semantic_coverage, semantic_encoder, task_search
-    from services.registry.semantic_catalog import semantic_scores
-    from services.registry.semantic_metric import document_fields, query_views
+    from services.registry import task_search
     from tools.experiments.discovery_evaluation_fixture import FIXTURE, load_suite
+    from tools.experiments.discovery_family_split import partition
     from tools.experiments.universal_discovery_evaluation import evaluate_profile
 
     suites = [load_suite(FIXTURE.with_name(name)) for name in TRAINING]
@@ -56,6 +57,19 @@ def capture(output):
     with patch.object(task_search, "_semantic_catalog", snapshot):
         anyio.run(evaluate_profile, "core", replace(suites[0], requests=suites[0].requests[:1]))
 
+    requests = tuple(request for suite in suites for request in suite.requests)
+    documents, eligible, held = partition(documents, requests, exclude_family)
+    return documents, {k: v for k, v in operations.items() if k in documents}, eligible, held
+
+
+def capture(output, *, exclude_family=None):
+    """Compute fields, vectors and negative neighborhoods only after partitioning the catalog."""
+    documents, operations, requests, _ = training_inputs(exclude_family)
+    from services.registry import semantic_coverage, semantic_encoder
+    from services.registry.semantic_catalog import semantic_scores
+    from services.registry.semantic_metric import document_fields, query_views
+    from tools.experiments.discovery_family_split import binding_name
+
     indices = {}
 
     def index(text):
@@ -70,18 +84,15 @@ def capture(output):
                 for group in ((label,), (purpose,), examples, (subject,))
             ]
         )
-        bindings.append(".".join(value for value in key[1:] if value))
+        bindings.append(binding_name(key))
 
     queries, targets, baseline = [], [], []
-    for suite in suites:
-        for request in suite.requests:
-            matches = [i for i, name in enumerate(bindings) if name in request.expected]
-            if not matches:
-                continue
-            queries.append([index(text) for text in query_views(request.query)])
-            targets.append(matches)
-            _, scores = semantic_scores(request.query, documents)
-            baseline.append([scores.get(key, 0.0) for key in documents])
+    for request in requests:
+        matches = [i for i, name in enumerate(bindings) if name in request.expected]
+        queries.append([index(text) for text in query_views(request.query)])
+        targets.append(matches)
+        _, scores = semantic_scores(request.query, documents)
+        baseline.append([scores.get(key, 0.0) for key in documents])
 
     encoders = (
         lambda text: semantic_encoder._encode(text, semantic_encoder._model()),
@@ -158,13 +169,15 @@ def fit(source, output, *, check=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("capture").add_argument("snapshot", type=Path)
+    snapshot = commands.add_parser("capture")
+    snapshot.add_argument("snapshot", type=Path)
+    snapshot.add_argument("--exclude-family", help="Omit a source family from calibration.")
     build = commands.add_parser("fit")
     build.add_argument("snapshot", type=Path)
     build.add_argument("output", type=Path)
     build.add_argument("--check", action="store_true", help="Compare without replacing the file.")
     args = parser.parse_args()
     if args.command == "capture":
-        capture(args.snapshot)
+        capture(args.snapshot, exclude_family=args.exclude_family)
     else:
         fit(args.snapshot, args.output, check=args.check)
