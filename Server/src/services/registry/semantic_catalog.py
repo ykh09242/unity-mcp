@@ -5,6 +5,7 @@ import unicodedata
 
 import regex
 
+from services.registry.semantic_direction import contrast_siblings
 from services.registry.semantic_encoder import COMBINED_MODEL_ID, MODEL_ID as STATIC_MODEL_ID
 from services.registry.semantic_encoder import fragmented_label, semantic_scores as encode_scores
 
@@ -18,6 +19,7 @@ _QUALIFIED = regex.compile(r"\w\.\w")
 _NAME_SUFFIX = re.compile(r"['’][^\W\d_]+")
 _PLATFORM = regex.compile(r"(?<![\w.-])Unity(?!\w|[.-]\w)", regex.IGNORECASE)
 _SENTENCE_TERMINAL = regex.compile(r"\p{Sentence_Terminal}")
+_NEIGHBORHOOD = 0.12
 
 
 def _label(identifier: str) -> str:
@@ -126,5 +128,8 @@ def semantic_scores(
     peak = max(scores.values())
     if peak < 0.4 and fragmented_label(query, model):
         return model, {}
-    threshold = max(0.16, peak - 0.12)
+    scores = contrast_siblings(
+        query, model, catalog, similarities, scores, neighborhood=_NEIGHBORHOOD
+    )
+    threshold = max(0.16, peak - _NEIGHBORHOOD)
     return model, {key: value for key, value in scores.items() if value >= threshold}
