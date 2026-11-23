@@ -2,6 +2,21 @@
 
 The catalog ranks a next Unity operation or readable resource. Each evaluation submits the same original requests to the core and full catalogs.
 
+## Shared operation retrieval
+
+The runtime resolves each visible action against its registered source declaration, compares sibling actions with the same target, and uses a single learned comparison per bundled encoder. New registrations supply the same selector and purpose fields. Language tags, route IDs and translated requests are absent from the numerical projections. The four previously published training corpora include the initial 48 read/edit requests. The other 24 published read/edit requests, the 56-request development corpus, and the final 24-request confirmation corpus were excluded from fitting. [Weights and reproduction](../../Server/src/services/registry/model/README.md)
+
+The following are raw `search_unity_tools` results from an installed wheel, with `limit=3`, no hints, and external network and subprocess calls blocked. Counts compare the previous installed runtime `1c4bfeacfdff` with `9031f0f5b1a6`. An independently authored 24-request corpus was sealed at `766de34d2`. Its first replay at `5a7e744c3` took place after the weights and ranking were frozen. Subsequent independent code review corrected an English reference-inspection regression. The 56-request development corpus and 24-request confirmation corpus each contain two activation formulations per language. Their read controls ask for existing state. [56 development requests](universal_discovery_edit_holdout.json) · [24 confirmation requests](universal_discovery_activation_confirmation.json)
+
+| Corpus | Catalog | Activation in top three | Opposite first on edits | Correct read in top three | Opposite first on reads |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Development, 8 languages | core | 2 → 12 / 16 | 10 → 4 / 40 | 11 → 12 / 16 | 1 → 1 / 16 |
+| Development, 8 languages | full | 10 → 13 / 16 | 3 → 4 / 40 | 12 → 14 / 16 | 1 → 1 / 16 |
+| Confirmation, 6 languages | core | 1 → 8 / 12 | 7 → 3 / 12 | 6 → 7 / 12 | 1 → 2 / 12 |
+| Confirmation, 6 languages | full | 4 → 5 / 12 | 3 → 2 / 12 | 4 → 5 / 12 | 2 → 3 / 12 |
+
+Four confirmation languages (Czech, French, Spanish and Tamil) were absent from the calibration corpora. Their eight activation requests went from 1 to 7 top-three hits in core and from 4 to 5 in full. Across all six confirmation languages the core catalog missed the named-scene requests in Japanese and Tamil and both Swahili activation requests. In the original 72 read/edit requests, wrong first choices on the 36 edits decreased from 5 to 2 in core and 3 to 1 in full. The earlier five-language menu test retained first place in all 60 combinations of wording, profile and route surface. These finite corpora have no native-speaker review and do not establish accuracy for every language. [Regression gates](../tests/test_universal_discovery_evaluation.py)
+
 ## Read and edit requests
 
 The paired evaluations distinguish listing project layers from removing a layer, listing project tags from adding a tag, and listing open scenes from activating a loaded scene. Every language contributes three reads and three edits. The MCP client supplied only the original query and a limit of three. The first-place and top-three counts use the representative of each result group. The wrong-effect counts cover only the alternatives listed in each fixture.
