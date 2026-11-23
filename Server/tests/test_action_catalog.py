@@ -66,6 +66,20 @@ def test_group_pages_are_stable_and_keep_unadvertised_tools(entries):
     assert first["scope"] == "mcp_context"
 
 
+def test_scene_inventory_and_activation_expose_distinct_action_contracts(entries):
+    from services.registry.action_catalog import action_card
+
+    by_name = {entry["name"]: entry for entry in entries}
+    focused = action_card(by_name["scene_inspect"], "get_loaded_scenes")
+    dispatcher = action_card(by_name["manage_scene"], "get_loaded_scenes")
+    activate = action_card(by_name["manage_scene"], "set_active_scene")
+
+    assert focused["intent"] == dispatcher["intent"] == "observe"
+    assert focused["purpose"] == dispatcher["purpose"]
+    assert activate["intent"] == "edit"
+    assert activate["purpose"] != dispatcher["purpose"]
+
+
 @pytest.mark.parametrize("past_end", [False, True])
 def test_tool_pages_construct_only_selected_action_cards(entries, past_end):
     from services.registry import action_catalog

@@ -275,18 +275,14 @@ URI: mcpforunity://project/info
 
 **URI:** `mcpforunity://project/layers`
 
-All layers defined in the project's TagManager with their indices (0-31). Read this before using add_layer or remove_layer tools.
-
-URI: mcpforunity://project/layers
+List the name and number of every named layer in the project. The result maps layer indices (0-31) to names and omits unused slots.
 
 
 ## `project_tags`
 
 **URI:** `mcpforunity://project/tags`
 
-All tags defined in the project's TagManager. Read this before using add_tag or remove_tag tools.
-
-URI: mcpforunity://project/tags
+List the names of all tags currently defined in the project.
 
 
 ## `renderer_features`

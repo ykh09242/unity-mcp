@@ -405,14 +405,18 @@ TOOL_GUIDANCE: Final = {
                 intent="edit",
             ),
             "set_active_scene": ActionGuidance(
-                "Make an already loaded scene active. Select it by scene_path or a unique "
-                "scene_name (name is also accepted).",
+                "Set the active scene to one that is already loaded. Select it by scene_path "
+                "or a unique scene_name (name is also accepted).",
+                intent="edit",
+                search_examples=("Switch to the scene I named and make it the active scene.",),
             ),
             "get_loaded_scenes": ActionGuidance(
-                "List the Editor's open scene entries and their loaded, active and dirty flags. "
+                "List all scenes currently open in the Editor with their names, paths and "
+                "loaded, active and dirty flags. "
                 "Use a loaded scene's scene_handle to identify it exactly for save or validate.",
                 evidence_limit=_SCENE_OBSERVATION_IMPORT,
                 intent="observe",
+                search_examples=("Which scenes are currently open?",),
             ),
             "move_to_scene": ActionGuidance(
                 "Move a root GameObject to an already loaded scene selected by scene_path "
@@ -575,20 +579,28 @@ TOOL_GUIDANCE: Final = {
                 "Choose the active Unity transform tool using tool_name.", ("tool_name",)
             ),
             "add_tag": ActionGuidance(
-                "Add tag_name to the project's TagManager.", ("tag_name",), intent="edit"
+                "Create a new tag in the project with the supplied name.",
+                ("tag_name",),
+                intent="edit",
+                search_examples=("Add a new tag to the project.",),
             ),
             "remove_tag": ActionGuidance(
-                "Remove tag_name from the project's TagManager.", ("tag_name",), intent="edit"
+                "Delete an existing tag from the project by name.",
+                ("tag_name",),
+                intent="edit",
+                search_examples=("Remove an existing tag from the project.",),
             ),
             "add_layer": ActionGuidance(
-                "Assign layer_name to an available user layer slot in the project.",
+                "Create a new layer with the supplied name in the first available user layer slot.",
                 ("layer_name",),
                 intent="edit",
+                search_examples=("Add a new layer to the project.",),
             ),
             "remove_layer": ActionGuidance(
-                "Clear the user layer slot named layer_name in the project.",
+                "Delete a named user layer from the project by clearing its slot.",
                 ("layer_name",),
                 intent="edit",
+                search_examples=("Remove an existing layer from the project.",),
             ),
             "deploy_package": ActionGuidance(
                 "Replace the Unity MCP package from its stored source. Requires an enabled "
@@ -870,10 +882,19 @@ for capability in CAPABILITIES:
             },
         )
 
-# The focused adapter forwards get_active to the same implementation and preflight.
+# Both reads forward to manage_scene. Keep the focused inventory's original
+# identifier searchable on its own alongside the newly shared description.
+_SCENE_INVENTORY: Final = TOOL_GUIDANCE["manage_scene"].actions["get_loaded_scenes"]
 TOOL_GUIDANCE["scene_inspect"] = ToolGuidance(
-    actions={"get_active": TOOL_GUIDANCE["manage_scene"].actions["get_active"]}
+    actions={
+        "get_active": TOOL_GUIDANCE["manage_scene"].actions["get_active"],
+        "get_loaded_scenes": replace(
+            _SCENE_INVENTORY,
+            search_examples=(*_SCENE_INVENTORY.search_examples, "scene inspect get loaded scenes"),
+        ),
+    }
 )
+
 _CAPABILITIES: Final = {item.name: item for item in CAPABILITIES}
 
 

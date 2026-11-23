@@ -1,6 +1,7 @@
 """Guard the shipped bundled ranking separately from the absolute evaluation targets."""
 
 import argparse
+from dataclasses import replace
 import json
 import sys
 from pathlib import Path
@@ -89,6 +90,21 @@ async def test_raw_multilingual_ranking_does_not_regress_from_the_shipped_bundle
         if reasons:
             failures[name, profile] = reasons
     assert not failures, failures
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+@pytest.mark.asyncio
+async def test_layer_number_queries_rank_the_readable_resource_first(profile):
+    suite = load_suite(FIXTURE.with_name("universal_discovery_queries_v3.json"))
+    requests = tuple(request for request in suite.requests if request.task == "layer_numbers")
+    assert len(requests) == len({request.language for request in suite.requests}) == 8
+    report = await evaluate_profile(profile, replace(suite, requests=requests))
+
+    assert report["inventory_unchanged"]
+    assert not report["unexpected_business_calls"]
+    assert not report["native_dispatch_attempts"]
+    assert all(row["availability"] == "available" and row["rank"] == 1 for row in report["rows"])
+    assert report["summary"]["hidden_expected_route"] == 0
 
 
 def test_unadvertised_action_cannot_earn_rank_or_disappear_from_the_record():
