@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "tasks": {
+    "layer_inventory": {
+      "expected": [
+        "mcpforunity://project/layers"
+      ],
+      "wrong_effect": [
+        "manage_editor.add_layer",
+        "manage_editor.remove_layer"
+      ]
+    },
+    "retire_layer": {
+      "expected": [
+        "manage_editor.remove_layer"
+      ],
+      "wrong_effect": [
+        "mcpforunity://project/layers",
+        "manage_editor.add_layer"
+      ]
+    },
+    "tag_inventory": {
+      "expected": [
+        "mcpforunity://project/tags"
+      ],
+      "wrong_effect": [
+        "manage_editor.add_tag",
+        "manage_editor.remove_tag"
+      ]
+    },
+    "register_tag": {
+      "expected": [
+        "manage_editor.add_tag"
+      ],
+      "wrong_effect": [
+        "mcpforunity://project/tags",
+        "manage_editor.remove_tag"
+      ]
+    },
+    "open_scenes": {
+      "expected": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes"
+      ],
+      "wrong_effect": [
+        "scene_lifecycle.set_active_scene",
+        "manage_scene.set_active_scene",
+        "scene_lifecycle.load",
+        "manage_scene.load",
+        "scene_lifecycle.close_scene",
+        "manage_scene.close_scene"
+      ]
+    },
+    "activate_scene": {
+      "expected": [
+        "scene_lifecycle.set_active_scene",
+        "manage_scene.set_active_scene"
+      ],
+      "wrong_effect": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes",
+        "scene_lifecycle.load",
+        "manage_scene.load",
+        "scene_lifecycle.close_scene",
+        "manage_scene.close_scene"
+      ]
+    }
+  },
+  "queries": {
+    "bn": {
+      "layer_inventory": "প্রকল্পে নির্ধারিত সব লেয়ারের নাম আর নম্বর পাশাপাশি দেখাও।",
+      "retire_layer": "প্রকল্পের সেটিংস থেকে ‘ধোঁয়া’ লেয়ারটা মুছে দাও।",
+      "tag_inventory": "এই প্রকল্পে এখন কী কী ট্যাগ আছে?",
+      "register_tag": "‘পুরস্কার’ নামে একটা নতুন ট্যাগ দরকার। প্রকল্পে সেটা যোগ করে দাও।",
+      "open_scenes": "এডিটরে এখন যতগুলো সিন খোলা আছে, সবগুলোর নাম বলো।",
+      "activate_scene": "খোলা সিনগুলোর মধ্যে ‘বাজার’ সিনটাকে সক্রিয় করো।"
+    },
+    "ro": {
+      "layer_inventory": "Ce straturi sunt configurate în proiect? Vreau să văd numele și numărul fiecăruia.",
+      "retire_layer": "Scoate stratul «Ceață» din setările proiectului.",
+      "tag_inventory": "Arată-mi lista etichetelor care există deja în proiect.",
+      "register_tag": "Am nevoie de o etichetă nouă în proiect. Adaug-o cu numele «Comoară».",
+      "open_scenes": "Enumeră toate scenele deschise în acest moment în editor.",
+      "activate_scene": "Dintre scenele deja deschise, fă activă scena «Debarcader»."
+    },
+    "he": {
+      "layer_inventory": "אפשר לקבל את השמות והמספרים של כל השכבות שמוגדרות בפרויקט?",
+      "retire_layer": "מחק מהגדרות הפרויקט את השכבה ״צל״.",
+      "tag_inventory": "אני רוצה לראות אילו תגיות כבר קיימות בפרויקט.",
+      "register_tag": "תוסיף לפרויקט תגית חדשה בשם ״מפתח״.",
+      "open_scenes": "אילו סצנות פתוחות כרגע בעורך? הצג את כולן.",
+      "activate_scene": "הסצנה ״גשר״ כבר פתוחה בעורך. הפוך אותה לסצנה הפעילה."
+    },
+    "id": {
+      "layer_inventory": "Di proyek ini, lapisan apa saja yang sudah diatur? Tampilkan nomor dan nama masing-masing.",
+      "retire_layer": "Lapisan ‘Semak’ sudah tidak dipakai. Hapus dari pengaturan proyek.",
+      "tag_inventory": "Apa saja penanda yang sudah terdaftar di proyek ini?",
+      "register_tag": "Tolong daftarkan penanda baru bernama ‘Suara’ untuk proyek ini.",
+      "open_scenes": "Sebutkan semua adegan yang saat ini terbuka di penyunting.",
+      "activate_scene": "Dari adegan yang sudah terbuka, jadikan ‘Halaman’ sebagai adegan aktif."
+    }
+  }
+}
