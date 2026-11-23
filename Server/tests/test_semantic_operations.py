@@ -32,6 +32,51 @@ def test_one_observation_with_two_bindings_keeps_its_original_rank(monkeypatch):
     assert task_search._semantic_catalog("selection", [], [], set(), None, "both") is baseline
 
 
+def test_question_openers_in_examples_cannot_select_an_unrelated_sibling():
+    records = ("tool", "archive", "list_entries")
+    gaps = ("tool", "archive", "check_links")
+    listing = ranking.Operation(
+        "archive", "list_entries", "List the entries.", ("Which entries exist?",)
+    )
+    check = ranking.Operation("archive", "check_links", "Check for missing links.", ())
+    query = "Which archive entries have missing links?"
+    _, _, listing_heads, _ = ranking._fields(listing)
+    assert "list" in listing_heads and "which" not in listing_heads
+
+    def match(text, candidates):
+        assert text == query and set(candidates) == {records, gaps}
+        return "bundle", {records: 0.4, gaps: 0.6}
+
+    assert ranking._lexical_owner(
+        ranking._terms(query), {records: listing, gaps: check}, gaps, match, query, "bundle"
+    ) == (check, False)
+    verb_query = "List the missing links in the archive."
+    assert ranking._lexical_owner(
+        ranking._terms(verb_query),
+        {records: listing, gaps: check},
+        gaps,
+        match,
+        verb_query,
+        "bundle",
+    ) == (check, False)
+
+
+def test_restricted_semantic_match_needs_target_evidence_to_displace_full_request():
+    check = ranking.Operation("archive", "check_links", "Check broken record links.", ())
+    repair = ranking.Operation("archive", "repair_links", "Repair broken record links.", ())
+    listing = ranking.Operation("archive", "list_records", "List the records.", ())
+    ops = {("tool", op.owner, op.selector): op for op in (check, repair, listing)}
+    incumbent = ("tool", "archive", "check_links")
+    query = "What record links in the archive are broken?"
+
+    def restricted_match(text, candidates):
+        return "bundle", {key: 0.6 if ops[key] == listing else 0.4 for key in candidates}
+
+    assert ranking._lexical_owner(
+        ranking._terms(query), ops, incumbent, restricted_match, query, "bundle"
+    ) == (check, False)
+
+
 def test_new_forwarder_gets_source_meaning_and_keeps_its_own_parameters(monkeypatch):
     source, adapter = "sample_vault", "vault_doors"
     edit = ActionGuidance("Seal a vault door.", required=("master_key",), intent="edit")

@@ -47,9 +47,9 @@ def _fields(op: Operation):
             if sum(any(c.isalnum() for c in part) for part in _WORD_BOUNDARY.split(clause)) >= 3
         )
     )
-    heads = frozenset(
-        tokens[0] for text in (op.selector, purpose, *op.examples) if (tokens := _terms(text))
-    )
+    # An example may start with a question word shared by unrelated operations.
+    # Only the selector and declared purpose identify what the operation does.
+    heads = frozenset(tokens[0] for text in (op.selector, purpose) if (tokens := _terms(text)))
     subject = frozenset(_terms(op.owner.removeprefix("manage_")))
     return document, passages, heads, subject
 
@@ -69,6 +69,16 @@ def _shared_declarations(op: Operation):
     return tuple(dict.fromkeys(texts))
 
 
+def _target_overlap(operations, words):
+    descriptions = {op: set(_terms(op.purpose.partition(". ")[0])) for op in operations}
+    frequency = Counter(word for terms in descriptions.values() for word in terms)
+    distinct = len(descriptions)
+    return {
+        op: math.fsum(math.log(distinct / frequency[w]) for w in (terms & words) - _fields(op)[3])
+        for op, terms in descriptions.items()
+    }
+
+
 def _lexical_owner(words, by_key, leader, rank_catalog, query, model):
     """Resolve an explicitly named subject against its full set of eligible sibling actions."""
     scoped = {key: op for key, op in by_key.items() if _fields(op)[3].intersection(words)}
@@ -76,6 +86,18 @@ def _lexical_owner(words, by_key, leader, rank_catalog, query, model):
         return None
     direct = {key: op for key, op in scoped.items() if words[0] in _fields(op)[2]}
     if direct:
+        # An explicit verb can describe more than one task. Preserve the full-query
+        # winner when its declared target explains distinctive words the verb match misses.
+        incumbent = scoped.get(leader)
+        if incumbent and incumbent not in direct.values():
+            peers = [op for op in scoped.values() if op.owner == incumbent.owner]
+            competing = [op for op in direct.values() if op.owner == incumbent.owner]
+            if competing:
+                overlap = _target_overlap(peers, set(words[1:]))
+                single_word = math.log(len(overlap))
+                rival = max(overlap[op] for op in competing)
+                if overlap[incumbent] > single_word and overlap[incumbent] - rival >= single_word:
+                    return incumbent, False
         scoped = direct
     elif leader in by_key:
         scoped = {key: op for key, op in scoped.items() if op.owner == by_key[leader].owner}
@@ -88,17 +110,13 @@ def _lexical_owner(words, by_key, leader, rank_catalog, query, model):
         return None
     winner = scoped[max(local, key=local.__getitem__)]
     if not direct:
-        # Give a distinctive word its full information value within the named subject.
-        descriptions = {op: set(_terms(op.purpose.partition(". ")[0])) for op in scoped.values()}
-        frequency = Counter(word for terms in descriptions.values() for word in terms)
-        evidence = set(words) - _fields(winner)[3]
-        overlap = {
-            op: sum(math.log(len(descriptions) / frequency[w]) for w in terms & evidence)
-            for op, terms in descriptions.items()
-        }
+        overlap = _target_overlap(scoped.values(), set(words))
         ordered = sorted(overlap, key=overlap.__getitem__, reverse=True)
         if len(ordered) > 1 and overlap[ordered[0]] - overlap[ordered[1]] >= math.log(len(ordered)):
             winner = ordered[0]
+        elif overlap[winner] <= overlap[by_key[leader]]:
+            # A restricted catalog alone cannot displace a better full-request match.
+            winner = by_key[leader]
     return winner, bool(direct)
 
 
