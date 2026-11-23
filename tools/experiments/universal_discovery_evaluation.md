@@ -2,6 +2,32 @@
 
 The catalog ranks a next Unity operation or readable resource. Each evaluation submits the same original requests to the core and full catalogs.
 
+## Current state and inventory lookup
+
+The bundled ranker compares what the request asks to return with what each visible read operation returns. A list can mention the current item's state in its description. The ranker therefore checks whether the request singles out that property. It also uses the declared inputs when a single-record query requires an identifier beyond the inputs for the corresponding inventory. The 1,064-byte weights were fit offline on 49 generic request pairs and 24 declaration pairs outside the Unity catalog. [Calibration data](observation_scope_pairs.json) · [Weight reproduction](../../Server/src/services/registry/model/README.md)
+
+The first 48 original requests were sealed at `7137f965d`. Replaying them on `04dd8ba04` revealed a lost inventory result and limited recovery in the other families. These results informed the final ranking change at `6cae0aefb`. A second set of 36 was then written in Korean, English, Chinese, Indonesian, Czech and Dutch and sealed at `d0ac304f0` before its first replay. Neither set supplied calibration pairs. The public MCP client sent each original with `limit=3` against both the core and full catalogs. [First 48 requests](universal_discovery_read_scope.json) · [Fresh 36 requests](universal_discovery_read_scope_confirmation.json)
+
+The previous installed runtime was `fc5b1de9d`. With external network and subprocess access blocked, the new installed wheel reproduced the source runtime's complete results for all 168 searches. Catalog visibility was unchanged and search made no business or native calls.
+
+| Fresh requests, previous → revised | Core | Full |
+| --- | ---: | ---: |
+| Correct operation first, all requests | 8 → 10 / 36 | 7 → 9 / 36 |
+| Correct operation in top three, all requests | 12 → 15 / 36 | 12 → 15 / 36 |
+| Active scene first | 0 → 1 / 6 | 0 → 1 / 6 |
+| Open-scene list first when asked for the active scene | 3 → 2 / 6 | 2 → 1 / 6 |
+| Open-scene list in top three when requested | 4 → 4 / 6 | 4 → 4 / 6 |
+| Named package details in top three | 5 → 6 / 6 | 5 → 6 / 6 |
+| Selected navigation agent settings in top three | 0 → 1 / 6 | 0 → 1 / 6 |
+| Installed package list in top three | 0 → 0 / 6 | 0 → 0 / 6 |
+
+On the first 48 requests, top-three hits rose from 15 to 22 in core and from 14 to 22 in full. Both catalogs kept open-scene inventories first for seven of eight inventory requests. In a separate diagnostic, supplying both registered reads and seeding the opposite first recovered the requested scope in 25 of 48 cases. Seeding the requested read first preserved it in 46. The per-task regression checks run through the public catalog as well as this controlled pair test. [Regression checks](../tests/test_discovery_read_scope.py)
+
+```sh
+python tools/experiments/universal_discovery_evaluation.py --fixture tools/experiments/universal_discovery_read_scope_confirmation.json
+python -m pytest tools/tests/test_discovery_read_scope.py
+```
+
 ## Shared operation retrieval
 
 The runtime resolves each visible action against its registered source declaration, compares sibling actions with the same target, and uses a single learned comparison per bundled encoder. New registrations supply the same selector and purpose fields. Language tags, route IDs and translated requests are absent from the numerical projections. The four previously published training corpora include the initial 48 read/edit requests. The other 24 published read/edit requests, the 56-request development corpus, and the final 24-request confirmation corpus were excluded from fitting. [Weights and reproduction](../../Server/src/services/registry/model/README.md)
