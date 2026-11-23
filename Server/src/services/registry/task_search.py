@@ -34,11 +34,13 @@ from services.registry.action_catalog import (
     CatalogTool as SearchResult,
     RESOURCE_TEMPLATE_EXPANSION,
     SEARCH_TERMS_META,
+    TOOL_GUIDANCE,
     action_guidance,
     action_intent,
     catalog_navigation,
     concrete_resources,
     documented_actions,
+    operation_owner,
     resource_observation,
     resource_templates,
     tool_capability,
@@ -59,6 +61,7 @@ from services.registry.semantic_catalog import (
     semantic_scores,
 )
 from services.registry.semantic_encoder import SemanticModelUnavailable
+from services.registry.semantic_operations import Operation, rank_operations
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
@@ -368,7 +371,14 @@ def _lexical_score(evidence: dict[str, int], words: set[str], hybrid: bool) -> i
 
 
 def semantic_documents(
-    capabilities, resources, unavailable_parents, intent=None, *, exact_query=None, surfaces="both"
+    capabilities,
+    resources,
+    unavailable_parents,
+    intent=None,
+    *,
+    exact_query=None,
+    surfaces="both",
+    operations=None,
 ):
     """Build semantic documents from eligible declarations; an exact identifier bypasses ranking."""
     documents: dict[RouteKey, tuple[str, ...]] = {}
@@ -402,19 +412,37 @@ def semantic_documents(
             key = ("tool", name, action or "")
             if query == _normalized(name) or (action and query == _normalized(action)):
                 exact_keys.add(key)
+            owner = operation_owner(name, action) if action else name
+            local = action_guidance(entry, action, inherit=False) if owner != name else guidance
+            canonical = (
+                TOOL_GUIDANCE[owner].actions.get(action)
+                if owner in TOOL_GUIDANCE and action
+                else None
+            )
             purpose = (
-                guidance.purpose
-                if guidance
+                local.purpose
+                if local
                 else (action_descriptions.get(action, "") if action else result["description"])
             )
+            examples = local.search_examples if local else ()
+            if canonical and owner != name and local and local.purpose != canonical.purpose:
+                examples = tuple(ex for ex in examples if ex not in canonical.search_examples)
             add(
                 key,
                 name,
                 action,
                 purpose,
                 guidance.observation if guidance else None,
-                guidance.search_examples if guidance else (),
+                examples,
             )
+            if operations is not None and action and key in documents:
+                card = canonical or guidance
+                operations[key] = Operation(
+                    owner,
+                    action,
+                    card.purpose if card else purpose,
+                    tuple(card.search_examples) if card else (),
+                )
     for resource in resources:
         identifier = resource.get("uri") or resource["uri_template"]
         if surfaces != "tools" and query in (
@@ -454,6 +482,7 @@ def semantic_documents(
 
 
 def _semantic_catalog(original, capabilities, resources, unavailable_parents, intent, surfaces):
+    operations = {}
     documents = semantic_documents(
         capabilities,
         resources,
@@ -461,8 +490,13 @@ def _semantic_catalog(original, capabilities, resources, unavailable_parents, in
         intent,
         exact_query=original,
         surfaces=surfaces,
+        operations=operations,
     )
-    return semantic_scores(original, documents) if documents else None
+    if not documents:
+        return None
+    return rank_operations(
+        original, documents, operations, semantic_scores(original, documents), semantic_scores
+    )
 
 
 def _route_evidence(

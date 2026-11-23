@@ -900,12 +900,16 @@ TOOL_GUIDANCE["scene_lifecycle"] = ToolGuidance(
         "set_active_scene": replace(
             _SCENE_ACTIVATION,
             purpose=f"Make this the destination for new GameObjects. {_SCENE_ACTIVATION.purpose}",
-            search_examples=(),
         )
     }
 )
-
 _CAPABILITIES: Final = {item.name: item for item in CAPABILITIES}
+
+
+def operation_owner(name: str, selector: str) -> str:
+    """Resolve only selectors actually forwarded by a registered capability."""
+    capability = _CAPABILITIES.get(name)
+    return capability.source if capability and selector in capability.actions else name
 
 
 def action_maturity(name: str) -> dict[str, ToolMaturity]:
@@ -986,7 +990,9 @@ def documented_actions(description: str) -> Mapping[str, str]:
     return MappingProxyType(dict(_DOCUMENTED_ACTION.findall(description)))
 
 
-def action_guidance(entry: CatalogEntry, action: str | None) -> ActionGuidance | None:
+def action_guidance(
+    entry: CatalogEntry, action: str | None, *, inherit: bool = True
+) -> ActionGuidance | None:
     """Use reviewed action evidence or the tool's own wire schema alternative."""
     if action is None:
         observation = (entry.get("kwargs", {}).get("meta") or {}).get(OBSERVATION_META)
@@ -1007,6 +1013,9 @@ def action_guidance(entry: CatalogEntry, action: str | None) -> ActionGuidance |
             effects=READ_ONLY_EFFECTS if contract.read_only else CapabilityEffects(),
             intent="observe" if contract.read_only else "edit",
         )
+    owner = operation_owner(entry["name"], action)
+    source = TOOL_GUIDANCE.get(owner) if inherit and owner != entry["name"] else None
+    shared = source.actions.get(action) if source else None
     for variant in entry.get("input_schema", {}).get("oneOf", ()):
         selector = (
             variant.get("properties", {}).get("action") if isinstance(variant, dict) else None
@@ -1016,9 +1025,18 @@ def action_guidance(entry: CatalogEntry, action: str | None) -> ActionGuidance |
             if not isinstance(purpose, str) or not purpose.strip():
                 purpose = documented_actions(tool_description(entry)).get(action, "")
             return ActionGuidance(
-                purpose,
+                purpose or (shared.purpose if shared else ""),
                 tuple(name for name in variant.get("required", ()) if name != "action"),
+                intent=shared.intent if shared else None,
             )
+    # A focused adapter forwards this exact selector. Its public schema still
+    # owns parameters, evidence and permissions. Share the underlying operation's
+    # meaning so selecting a catalog profile cannot turn a declared edit into an
+    # unknown action or drop its description from search.
+    if shared:
+        return ActionGuidance(
+            shared.purpose, intent=shared.intent, search_examples=shared.search_examples
+        )
     return None
 
 
