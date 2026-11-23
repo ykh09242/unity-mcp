@@ -16,6 +16,22 @@ def test_declaration_passages_follow_unicode_sentence_and_word_boundaries():
     assert passages == ("現在の場面を選択する", "次の映像へ進む")
 
 
+def test_one_observation_with_two_bindings_keeps_its_original_rank(monkeypatch):
+    selection = ("tool", "read_selection", "")
+    resource = ("resource", "project://selection", "")
+    update = ("tool", "selection_tools", "replace")
+    documents = {
+        selection: ("Return the selection.",),
+        resource: ("Return the selection.",),
+        update: ("Replace the selection.",),
+    }
+    baseline = "fixture", {selection: 0.55, resource: 0.55}
+    monkeypatch.setattr(task_search, "semantic_documents", lambda *a, **kw: documents)
+    monkeypatch.setattr(task_search, "semantic_scores", lambda *a: baseline)
+    monkeypatch.setattr(task_search, "rank_operations", lambda *a: pytest.fail("one read"))
+    assert task_search._semantic_catalog("selection", [], [], set(), None, "both") is baseline
+
+
 def test_new_forwarder_gets_source_meaning_and_keeps_its_own_parameters(monkeypatch):
     source, adapter = "sample_vault", "vault_doors"
     edit = ActionGuidance("Seal a vault door.", required=("master_key",), intent="edit")

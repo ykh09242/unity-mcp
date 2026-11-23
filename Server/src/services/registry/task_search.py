@@ -62,6 +62,7 @@ from services.registry.semantic_catalog import (
 )
 from services.registry.semantic_encoder import SemanticModelUnavailable
 from services.registry.semantic_operations import Operation, rank_operations
+from services.registry.semantic_metric import recall_operation
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
@@ -494,9 +495,17 @@ def _semantic_catalog(original, capabilities, resources, unavailable_parents, in
     )
     if not documents:
         return None
-    return rank_operations(
-        original, documents, operations, semantic_scores(original, documents), semantic_scores
-    )
+    baseline = semantic_scores(original, documents)
+    scores = baseline[1]
+    # A tool and a resource can expose the same observation. If it is the only document
+    # in the retrieved neighborhood, there is no competing operation to disambiguate.
+    if surfaces == "resources" or (
+        len({key[0] == "tool" for key in scores}) == 2
+        and len({documents[key] for key in scores}) == 1
+    ):
+        return baseline
+    canonical = rank_operations(original, documents, operations, baseline, semantic_scores)
+    return recall_operation(original, documents, operations, baseline, canonical)
 
 
 def _route_evidence(
