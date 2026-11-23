@@ -752,7 +752,11 @@ def search_catalog(
         lexical = _lexical_score(terms, query_words, bool(semantic))
         score = lexical + weights.get(standalone_key, 0.0)
         score += 1000 if query == _normalized(name) else 0
-        score += 100 if query in _normalized(name) else 0
+        if query in _normalized(name):
+            score += 100
+        elif semantic and len(query_words) > 1 and query_words == _words(name):
+            # Corroborate a hybrid match when the request reorders the complete tool name.
+            score += lexical
         action_matches = []
         entry_terms = set(terms)
         for action in actions:

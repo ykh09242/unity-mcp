@@ -77,6 +77,20 @@ def test_broken_encoder_degrades_to_lexical_without_a_model_receipt(monkeypatch)
 
 
 @pytest.mark.parametrize(
+    ("query", "expected"), [("촬영 장면", "장면_촬영"), ("촬영 장면 지금", "장면_목록")]
+)
+def test_reordered_name_requires_all_query_words(monkeypatch, query, expected):
+    entries = [entry("장면_촬영", ""), entry("장면_목록", "")]
+    scores = {("tool", "장면_촬영", ""): 0.50, ("tool", "장면_목록", ""): 0.575}
+    monkeypatch.setattr(task_search, "semantic_scores", lambda *_: ("test-model", scores))
+
+    response = task_search.search_catalog(task_search.SearchRequest(query=query), entries)
+
+    assert response["results"][0]["name"] == expected
+    assert response["route_groups"][0]["representative"]["tool"] == expected
+
+
+@pytest.mark.parametrize(
     "query",
     [
         'locate "My Tool" please',
