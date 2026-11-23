@@ -63,6 +63,7 @@ from services.registry.semantic_catalog import (
 from services.registry.semantic_encoder import SemanticModelUnavailable
 from services.registry.semantic_operations import Operation, rank_operations
 from services.registry.semantic_metric import recall_operation
+from services.registry.semantic_read_scope import rank_observations
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
@@ -511,7 +512,8 @@ def _semantic_catalog(original, capabilities, resources, unavailable_parents, in
     ):
         return baseline
     canonical = rank_operations(original, documents, operations, baseline, semantic_scores)
-    return recall_operation(original, documents, operations, baseline, canonical, effects)
+    ranked = recall_operation(original, documents, operations, baseline, canonical, effects)
+    return rank_observations(original, documents, operations, effects, ranked)
 
 
 def _route_evidence(

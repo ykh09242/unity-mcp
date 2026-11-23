@@ -113,6 +113,13 @@ def metric_variant(family, variant, expected_digest):
             stack.enter_context(
                 patch.object(
                     task_search,
+                    "rank_observations",
+                    lambda query, docs, ops, effects, ranked: ranked,
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    task_search,
                     "recall_operation",
                     lambda query, docs, ops, base, canonical, effects=None: canonical,
                 )
