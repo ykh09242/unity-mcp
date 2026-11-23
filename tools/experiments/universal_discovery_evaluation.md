@@ -1,6 +1,41 @@
 # Multilingual Unity discovery evaluation
 
-The catalog ranks a next Unity operation or readable resource. The two corpora were authored independently. v1 was sealed before edits to the production ranker. v2 was sealed before the interim v1 aggregate rank counts were shared for further tuning. Each corpus uses Chinese (`zh`), Vietnamese (`vi`), Portuguese (`pt`), German (`de`), Finnish (`fi`), and Thai (`th`). The core and full profiles receive the same original requests.
+The catalog ranks a next Unity operation or readable resource. Each evaluation submits the same original requests to the core and full catalogs.
+
+## Bundled-only search
+
+The runtime at `b660777b3584696effdb7913137b675f4e83ffd3` combines the two encoders already shipped in the server package. The comparison used the previous bundled runtime at `9d3216d30226b84ee2a2e93f7a77d78eab4e0f36`. The MCP client submitted original queries without caller hints. Counts include queries whose expected operation was unavailable. A wrong effect is a suggested operation with a prespecified adverse effect.
+
+| Corpus | Catalog | Available | First, previous → current | Within three, previous → current | Wrong first, previous → current | Wrong within three, previous → current |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| v1 + v2 | core | 108/120 | 48 → 61 | 63 → 69 | 2 → 1 | 17 → 12 |
+| v1 + v2 | full | 120/120 | 57 → 70 | 75 → 91 | 3 → 2 | 29 → 19 |
+| v3 | core | 40/40 | 9 → 14 | 21 → 24 | 6 → 7 | 15 → 16 |
+| v3 | full | 40/40 | 11 → 15 | 24 → 26 | 5 → 6 | 13 → 14 |
+
+An independent model author wrote five requests per language in Hindi, Indonesian, Swahili, Italian, Polish, Swedish, Greek and Vietnamese. The fixture was sealed before ranker changes. The first candidate replay used the frozen shipping runtime, and the original prompts have not received native-speaker review. The full catalog placed the intended action within three more often, but also placed an adverse action first on one additional request. All replays preserved the advertised catalog and recorded zero business calls or native dispatches. [v3 corpus, SHA-256 `e78c2897240a0b33735471c33760f58528ca4d0b9fcf903f4d01d5cd492934ff`](universal_discovery_queries_v3.json)
+
+Across the separate Korean, Japanese, Spanish, Arabic and Turkish menu cases, first-place results increased from 56/60 to 60/60. These are ten distinct prompts across two catalogs and three search surfaces. Tool and combined searches expected `list_menu_declarations`. Resource searches expected `mcpforunity://menu-items`. Tools-only searches placed the lookup tool first in 20/20 cases in both versions. [Menu acceptance test](../tests/test_menu_discovery_probe.py)
+
+CI checks the measured v1 and v2 rank and availability floors for each language and profile, wrong-effect ceilings and dispatch invariants. The independent absolute targets remain fixed. On this runtime, only v1 full met all absolute targets. v3 missed those targets in both profiles, including the maximum of five wrong first choices. [Bundled regression reference](universal_discovery_bundled_reference.json) · [CI regression test](../tests/test_universal_discovery_evaluation.py)
+
+To replay v3 from this checkout in a locked Server environment, run the following PowerShell commands. The runner writes per-request results and returns exit code 1 if a profile misses an absolute target.
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path 'Server/src').Path
+$studyPython = 'Server/.venv/Scripts/python.exe'
+$studyRunner = 'tools/experiments/universal_discovery_evaluation.py'
+$studyFixture = 'tools/experiments/universal_discovery_queries_v3.json'
+$wordPiece = 'sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8'
+$unigram = 'minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2'
+& $studyPython $studyRunner --fixture $studyFixture --preregistered --expect-model $wordPiece --expect-model $unigram --expect-model "$wordPiece+$unigram" --output "$env:TEMP/unity-discovery-v3.json"
+```
+
+The tested wheel had SHA-256 `8d8ccd6bf58fdaf1bbc48b9d36f2ca471b69c062440bfd37deffecfe5ac9eac1`. A fresh installation verified both packaged weight files with `search-model status --verify`. CLI `tool search`, MCP `search_unity_tools` and `manage_tools` search all returned the expected menu tool with external network access and child processes blocked. No external connection or process launch was attempted. Initial installation can fetch the server, Python and its standard package dependencies.
+
+## Earlier evaluations
+
+The first two corpora were authored independently. v1 was sealed before edits to the production ranker. v2 was sealed before the interim v1 aggregate rank counts were shared for further tuning. Both use Chinese (`zh`), Vietnamese (`vi`), Portuguese (`pt`), German (`de`), Finnish (`fi`), and Thai (`th`).
 
 | Corpus | Requests | Business contracts | SHA-256 |
 | --- | ---: | ---: | --- |
@@ -113,10 +148,11 @@ $discoveryCoverage = 'minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8d
 & $discoveryPython $discoveryRunner --fixture $discoveryV2 --preregistered --expect-model $discoveryPrimary --expect-model $discoveryCoverage --output "$discoveryRoot/bundled-v2.json"
 ```
 
-Use an installed LaBSE+BGE profile for the combined replay. `unity-mcp search-model status --verify` reports `encoder-reranker` in `quality_profile` for that installation. [Search model installation](../../Server/src/cli/CLI_USAGE_GUIDE.md#optional-local-search-model)
+The historical combined replay used LaBSE+BGE on source `46f9f64b5`. Point the archived runtime at the previously provisioned directory and run its CLI through the archive's `PYTHONPATH`. Its status response reports `encoder-reranker` in `quality_profile`. [Archived setup and diagnostics](https://github.com/ykh09242/unity-mcp/blob/46f9f64b5845ff50a3117b0808d30108943c296b/Server/src/cli/CLI_USAGE_GUIDE.md#optional-local-search-model)
 
 ```powershell
 $env:UNITY_MCP_SEARCH_MODEL_DIR = 'C:/path/to/verified-encoder-reranker-profile'
+& $discoveryPython -m cli.main --format json search-model status --verify
 $discoveryReranked = 'labse-onnx-int8:147002d501fc76ecd313c631999ea796520fea74:836121a0533e5664b21c7aacc5d22951f2b8b25b+bge-reranker-v2-m3-onnx-int8:6f5ff65298512715a1e669753bc754d2bc8f367b'
 & $discoveryPython $discoveryRunner --fixture $discoveryV1 --preregistered --expect-model $discoveryReranked --output "$discoveryRoot/reranked-v1.json"
 & $discoveryPython $discoveryRunner --fixture $discoveryV2 --preregistered --expect-model $discoveryReranked --output "$discoveryRoot/reranked-v2.json"
@@ -132,7 +168,7 @@ $discoveryHints = 'tools/experiments/universal_discovery_assisted_hints.json'
 & $discoveryPython $discoveryRunner --fixture $discoveryV2 --assisted-hints $discoveryHints --output "$discoveryRoot/assisted-v2.json"
 ```
 
-The default CI regression uses both frozen corpora with the real bundled encoders. It checks recorded rank and availability counts for each language and profile, effect ceilings, returned model IDs, and the dispatch and inventory invariants. The independent absolute benchmarks retain their original cases and targets. [Measured bundled regression reference](universal_discovery_bundled_reference.json) · [CI regression test](../tests/test_universal_discovery_evaluation.py)
+At publication, CI checked both frozen corpora with the bundled encoders. It checked recorded rank and availability counts for each language and profile, effect ceilings, returned model IDs, and the dispatch and inventory invariants. [Archived bundled regression reference](https://github.com/ykh09242/unity-mcp/blob/fa076d6df2c00d0a6d8a40dc82467efa5bee2177/tools/experiments/universal_discovery_bundled_reference.json)
 
 ## Receipt digests
 
@@ -169,7 +205,7 @@ CI exposed a regression in an older discovery suite. The corrective runtime `a4b
 | Caller hints | v2 | core | 42/48 | 18/48 / 18/48 | 37.5% (all six) | 37.5% (all six) | 0 / 6 | 6 | Replay only |
 | Caller hints | v2 | full | 48/48 | 24/48 / 24/48 | 50.0% (all six) | 50.0% (all six) | 0 / 12 | 0 | Replay only |
 
-The published bundled CI floors for top 1 / top 3 are 31 / 40 and 39 / 52 in v1 core / full, and 17 / 23 and 18 / 23 in v2 core / full. The independent bundled measurement and the current replay agree at each of those floors. All six language-specific availability and rank floors held in all four corpus and profile combinations. Indicative wrong effects in the top three fell from 10 to 9 in bundled v2 core. The other bundled wrong-effect totals held. The reference pytest passed on the replayed archive in 31.86 seconds with the same reference and effect ceilings. [Bundled reference](universal_discovery_bundled_reference.json)
+The published bundled CI floors for top 1 / top 3 were 31 / 40 and 39 / 52 in v1 core / full, and 17 / 23 and 18 / 23 in v2 core / full. The independent bundled measurement and this replay agreed at each of those floors. All six language-specific availability and rank floors held in all four corpus and profile combinations. Indicative wrong effects in the top three fell from 10 to 9 in bundled v2 core. The other bundled wrong-effect totals held. The reference pytest passed on the replayed archive in 31.86 seconds with the same reference and effect ceilings. [Archived bundled reference](https://github.com/ykh09242/unity-mcp/blob/fa076d6df2c00d0a6d8a40dc82467efa5bee2177/tools/experiments/universal_discovery_bundled_reference.json)
 
 Both bundled result files differ from their published counterparts. Both LaBSE+BGE outputs and both assisted outputs reproduce their published JSON byte for byte. The model receipt counts and identities are the same as in the original report. All four raw corpus commands retained exit 1 under the fixed preregistered gate. At the profile level, LaBSE+BGE v1 full retained its pass. Both assisted invocations exited 0. The six invocations preserved catalog visibility and recorded zero business calls or native dispatch attempts.
 

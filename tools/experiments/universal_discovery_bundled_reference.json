@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "source_commit": "0572b3e6f7717a2316c2027849f4526643bb3c97",
+  "source_commit": "b660777b3584696effdb7913137b675f4e83ffd3",
   "suites": {
     "universal_discovery_queries.json": {
       "fixture_sha256": "645d3fcd1924820fd62fa9320bfde872c8a6af10793f974b4cbd70f93fa8d841",
       "preregistered_exit_code": 1,
-      "preregistered_report_sha256": "f9f4751021a5c92e2d908b8f35f424ec73e35b0db9504d72548c3414cf70759b",
+      "preregistered_report_sha256": "1bd26e238345af1237f7330252416a1aae795b8ebb3944d3f6713bf65d01a3a8",
       "preregistered_gate": {
         "preset": "universal-discovery-absolute-v1",
         "min_top1": 0.6,
@@ -17,7 +17,8 @@
         "require_model": true,
         "expect_model": [
           "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8",
-          "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2"
+          "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2",
+          "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8+minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2"
         ]
       },
       "profiles": {
@@ -27,34 +28,34 @@
             "available": 66,
             "unavailable": 6,
             "unknown": 0,
-            "top1": 31,
-            "top3": 40,
-            "available_top1": 31,
-            "available_top3": 40,
-            "any_binding_top1": 31,
-            "any_binding_top3": 40,
+            "top1": 37,
+            "top3": 41,
+            "available_top1": 37,
+            "available_top3": 41,
+            "any_binding_top1": 37,
+            "any_binding_top3": 41,
             "no_result": 0,
             "hidden_expected_route": 0,
-            "wrong_effect_top1": 1,
+            "wrong_effect_top1": 0,
             "wrong_effect_top3": 8
           },
           "languages": {
             "de": {
               "count": 12,
               "available": 11,
-              "top1": 5,
+              "top1": 6,
               "top3": 6
             },
             "fi": {
               "count": 12,
               "available": 11,
-              "top1": 5,
-              "top3": 5
+              "top1": 6,
+              "top3": 6
             },
             "pt": {
               "count": 12,
               "available": 11,
-              "top1": 6,
+              "top1": 7,
               "top3": 7
             },
             "th": {
@@ -66,27 +67,26 @@
             "vi": {
               "count": 12,
               "available": 11,
-              "top1": 4,
+              "top1": 5,
               "top3": 6
             },
             "zh": {
               "count": 12,
               "available": 11,
-              "top1": 5,
+              "top1": 7,
               "top3": 8
             }
           },
           "semantic_models": {
-            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8": 60,
+            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8+minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 60,
             "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 12
           },
-          "worst_language_top1": 0.3333333333333333,
-          "worst_language_top3": 0.4166666666666667,
+          "worst_language_top1": 0.4166666666666667,
+          "worst_language_top3": 0.5,
           "preregistered_failures": [
-            "top1 43.06% < 60.00%",
-            "top3 55.56% < 80.00%",
-            "worst language top1 33.33% < 40.00%",
-            "worst language top3 41.67% < 55.00%"
+            "top1 51.39% < 60.00%",
+            "top3 56.94% < 80.00%",
+            "worst language top3 50.00% < 55.00%"
           ]
         },
         "full": {
@@ -95,29 +95,29 @@
             "available": 72,
             "unavailable": 0,
             "unknown": 0,
-            "top1": 39,
-            "top3": 52,
-            "available_top1": 39,
-            "available_top3": 52,
-            "any_binding_top1": 39,
-            "any_binding_top3": 52,
+            "top1": 46,
+            "top3": 60,
+            "available_top1": 46,
+            "available_top3": 60,
+            "any_binding_top1": 46,
+            "any_binding_top3": 60,
             "no_result": 0,
             "hidden_expected_route": 0,
-            "wrong_effect_top1": 2,
-            "wrong_effect_top3": 17
+            "wrong_effect_top1": 1,
+            "wrong_effect_top3": 14
           },
           "languages": {
             "de": {
               "count": 12,
               "available": 12,
-              "top1": 8,
+              "top1": 9,
               "top3": 10
             },
             "fi": {
               "count": 12,
               "available": 12,
-              "top1": 6,
-              "top3": 6
+              "top1": 7,
+              "top3": 10
             },
             "pt": {
               "count": 12,
@@ -129,39 +129,35 @@
               "count": 12,
               "available": 12,
               "top1": 5,
-              "top3": 7
+              "top3": 8
             },
             "vi": {
               "count": 12,
               "available": 12,
-              "top1": 5,
-              "top3": 7
+              "top1": 7,
+              "top3": 10
             },
             "zh": {
               "count": 12,
               "available": 12,
-              "top1": 7,
+              "top1": 10,
               "top3": 11
             }
           },
           "semantic_models": {
-            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8": 60,
+            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8+minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 60,
             "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 12
           },
           "worst_language_top1": 0.4166666666666667,
-          "worst_language_top3": 0.5,
-          "preregistered_failures": [
-            "top1 54.17% < 60.00%",
-            "top3 72.22% < 80.00%",
-            "worst language top3 50.00% < 55.00%"
-          ]
+          "worst_language_top3": 0.6666666666666666,
+          "preregistered_failures": []
         }
       }
     },
     "universal_discovery_queries_v2.json": {
       "fixture_sha256": "8c96401f5fb62cf3a385ec0e0b1683a53dc29187958e67f857fe308e49c9d797",
       "preregistered_exit_code": 1,
-      "preregistered_report_sha256": "763fa76b097fd762c4aa36ce35a8882359917642b810aee51c9e95c5ddcc9f34",
+      "preregistered_report_sha256": "4ebf6972d0d79eaea2017b8d7d876cd0039eb7aa088e980be157ab5a70337571",
       "preregistered_gate": {
         "preset": "universal-discovery-absolute-v1",
         "min_top1": 0.6,
@@ -173,7 +169,8 @@
         "require_model": true,
         "expect_model": [
           "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8",
-          "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2"
+          "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2",
+          "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8+minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2"
         ]
       },
       "profiles": {
@@ -183,23 +180,23 @@
             "available": 42,
             "unavailable": 6,
             "unknown": 0,
-            "top1": 17,
-            "top3": 23,
-            "available_top1": 17,
-            "available_top3": 23,
-            "any_binding_top1": 17,
-            "any_binding_top3": 23,
+            "top1": 24,
+            "top3": 28,
+            "available_top1": 24,
+            "available_top3": 28,
+            "any_binding_top1": 24,
+            "any_binding_top3": 28,
             "no_result": 0,
             "hidden_expected_route": 0,
             "wrong_effect_top1": 1,
-            "wrong_effect_top3": 10
+            "wrong_effect_top3": 4
           },
           "languages": {
             "de": {
               "count": 8,
               "available": 7,
-              "top1": 3,
-              "top3": 4
+              "top1": 5,
+              "top3": 5
             },
             "fi": {
               "count": 8,
@@ -210,20 +207,20 @@
             "pt": {
               "count": 8,
               "available": 7,
-              "top1": 4,
-              "top3": 5
+              "top1": 5,
+              "top3": 6
             },
             "th": {
               "count": 8,
               "available": 7,
-              "top1": 2,
-              "top3": 3
+              "top1": 4,
+              "top3": 5
             },
             "vi": {
               "count": 8,
               "available": 7,
-              "top1": 2,
-              "top3": 3
+              "top1": 4,
+              "top3": 4
             },
             "zh": {
               "count": 8,
@@ -233,15 +230,15 @@
             }
           },
           "semantic_models": {
-            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8": 41,
+            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8+minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 41,
             "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 7
           },
-          "worst_language_top1": 0.25,
+          "worst_language_top1": 0.375,
           "worst_language_top3": 0.375,
           "preregistered_failures": [
-            "top1 35.42% < 60.00%",
-            "top3 47.92% < 80.00%",
-            "worst language top1 25.00% < 40.00%",
+            "top1 50.00% < 60.00%",
+            "top3 58.33% < 80.00%",
+            "worst language top1 37.50% < 40.00%",
             "worst language top3 37.50% < 55.00%"
           ]
         },
@@ -251,47 +248,47 @@
             "available": 48,
             "unavailable": 0,
             "unknown": 0,
-            "top1": 18,
-            "top3": 23,
-            "available_top1": 18,
-            "available_top3": 23,
-            "any_binding_top1": 18,
-            "any_binding_top3": 23,
+            "top1": 24,
+            "top3": 31,
+            "available_top1": 24,
+            "available_top3": 31,
+            "any_binding_top1": 24,
+            "any_binding_top3": 31,
             "no_result": 0,
             "hidden_expected_route": 0,
             "wrong_effect_top1": 1,
-            "wrong_effect_top3": 12
+            "wrong_effect_top3": 5
           },
           "languages": {
             "de": {
               "count": 8,
               "available": 8,
-              "top1": 3,
-              "top3": 4
+              "top1": 5,
+              "top3": 7
             },
             "fi": {
               "count": 8,
               "available": 8,
               "top1": 3,
-              "top3": 3
+              "top3": 4
             },
             "pt": {
               "count": 8,
               "available": 8,
-              "top1": 4,
-              "top3": 6
+              "top1": 5,
+              "top3": 7
             },
             "th": {
               "count": 8,
               "available": 8,
-              "top1": 2,
-              "top3": 3
+              "top1": 3,
+              "top3": 4
             },
             "vi": {
               "count": 8,
               "available": 8,
-              "top1": 2,
-              "top3": 2
+              "top1": 4,
+              "top3": 4
             },
             "zh": {
               "count": 8,
@@ -301,16 +298,16 @@
             }
           },
           "semantic_models": {
-            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8": 41,
+            "sentence-transformers/static-similarity-mrl-multilingual-v1@b68f4122911bcffcd6e1f695f2d99cd6788972d8/256d-q8+minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 41,
             "minishlab/potion-multilingual-128M@6fea87d68483744bdb34f8ddab7f5c31a94dc0b8/256d-q2": 7
           },
-          "worst_language_top1": 0.25,
-          "worst_language_top3": 0.25,
+          "worst_language_top1": 0.375,
+          "worst_language_top3": 0.5,
           "preregistered_failures": [
-            "top1 37.50% < 60.00%",
-            "top3 47.92% < 80.00%",
-            "worst language top1 25.00% < 40.00%",
-            "worst language top3 25.00% < 55.00%"
+            "top1 50.00% < 60.00%",
+            "top3 64.58% < 80.00%",
+            "worst language top1 37.50% < 40.00%",
+            "worst language top3 50.00% < 55.00%"
           ]
         }
       }
