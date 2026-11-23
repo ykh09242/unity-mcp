@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "tasks": {
+    "current_scene": {
+      "expected": [
+        "scene_inspect.get_active",
+        "manage_scene.get_active"
+      ],
+      "wrong_effect": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes"
+      ]
+    },
+    "scene_list": {
+      "expected": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes"
+      ],
+      "wrong_effect": [
+        "scene_inspect.get_active",
+        "manage_scene.get_active"
+      ]
+    },
+    "installed_package": {
+      "expected": [
+        "manage_packages.get_package_info"
+      ],
+      "wrong_effect": [
+        "manage_packages.list_packages"
+      ]
+    },
+    "package_list": {
+      "expected": [
+        "manage_packages.list_packages"
+      ],
+      "wrong_effect": [
+        "manage_packages.get_package_info"
+      ]
+    },
+    "selected_agent": {
+      "expected": [
+        "manage_navigation.read"
+      ],
+      "wrong_effect": [
+        "manage_navigation.list"
+      ]
+    },
+    "agent_list": {
+      "expected": [
+        "manage_navigation.list"
+      ],
+      "wrong_effect": [
+        "manage_navigation.read"
+      ]
+    }
+  },
+  "queries": {
+    "ko": {
+      "current_scene": "씬을 몇 개 열어 놨는데 지금 활성 씬 이름이 뭐야?",
+      "scene_list": "에디터에 열어 둔 씬 이름을 빠짐없이 보여줘.",
+      "installed_package": "설치한 패키지 중 `com.unity.timeline`의 버전을 확인해 줘.",
+      "package_list": "패키지 관리자에서 지금 설치돼 있는 패키지 전체를 보고 싶어.",
+      "selected_agent": "선택한 NavMeshAgent는 지금 속도와 반경이 어떻게 설정돼 있어?",
+      "agent_list": "이 씬에 있는 NavMeshAgent를 하나씩 나열해 줘."
+    },
+    "ja": {
+      "current_scene": "複数のシーンを開いています。現在アクティブなシーンの名前は何ですか？",
+      "scene_list": "エディターで今開いているシーンの名前をすべて教えて。",
+      "installed_package": "導入済みのパッケージの中で、`com.unity.timeline` のバージョンを知りたい。",
+      "package_list": "パッケージマネージャーにインストール済みとして出てくるパッケージを全部挙げて。",
+      "selected_agent": "選択した NavMeshAgent の現在の速度と半径を確認したい。",
+      "agent_list": "このシーンに配置されている NavMeshAgent を一覧にして。"
+    },
+    "fr": {
+      "current_scene": "J’ai plusieurs scènes ouvertes dans Unity. Comment s’appelle celle qui est active ?",
+      "scene_list": "Peux-tu me donner le nom de toutes les scènes ouvertes dans l’éditeur ?",
+      "installed_package": "Quelle version du paquet `com.unity.timeline` est installée dans le projet ?",
+      "package_list": "Quels paquets figurent actuellement dans la liste des paquets installés ?",
+      "selected_agent": "Quels sont le rayon et la vitesse du NavMeshAgent sélectionné ?",
+      "agent_list": "Donne-moi la liste des NavMeshAgent présents dans cette scène."
+    },
+    "vi": {
+      "current_scene": "Tôi đang mở vài cảnh trong Unity. Cảnh nào hiện được chọn làm cảnh hoạt động?",
+      "scene_list": "Cho tôi tên tất cả các cảnh đang mở trong trình biên tập.",
+      "installed_package": "Trong các gói đã cài, phiên bản của `com.unity.timeline` là bao nhiêu?",
+      "package_list": "Trình quản lý gói đang liệt kê những gói nào đã cài trong dự án?",
+      "selected_agent": "NavMeshAgent đang chọn có tốc độ và bán kính bao nhiêu?",
+      "agent_list": "Liệt kê toàn bộ NavMeshAgent có trong cảnh này."
+    },
+    "pt": {
+      "current_scene": "Tenho várias cenas abertas no Unity. Qual delas é a cena ativa agora?",
+      "scene_list": "Quais são os nomes de todas as cenas abertas no editor neste momento?",
+      "installed_package": "Dos pacotes instalados, qual é a versão de `com.unity.timeline`?",
+      "package_list": "Mostra a lista completa dos pacotes instalados no projeto.",
+      "selected_agent": "Qual é a velocidade e o raio do NavMeshAgent selecionado?",
+      "agent_list": "Que componentes NavMeshAgent existem nesta cena? Quero ver a lista."
+    },
+    "pl": {
+      "current_scene": "Mam otwartych kilka scen. Jak nazywa się ta, która jest teraz aktywna?",
+      "scene_list": "Podaj nazwy wszystkich scen otwartych teraz w edytorze Unity.",
+      "installed_package": "Którą wersję pakietu `com.unity.timeline` mam zainstalowaną?",
+      "package_list": "Pokaż wszystkie pakiety zainstalowane w tym projekcie.",
+      "selected_agent": "Jaką prędkość i promień ma obecnie zaznaczony NavMeshAgent?",
+      "agent_list": "Wypisz wszystkie komponenty NavMeshAgent znajdujące się na tej scenie."
+    },
+    "ar": {
+      "current_scene": "فتحت عدة مشاهد في محرر Unity. ما اسم المشهد النشط الآن؟",
+      "scene_list": "أريد أسماء جميع المشاهد المفتوحة حاليا في المحرر.",
+      "installed_package": "ما إصدار الحزمة `com.unity.timeline` المثبت في المشروع؟",
+      "package_list": "اعرض القائمة الكاملة للحزم المثبتة في هذا المشروع.",
+      "selected_agent": "ما سرعة مكوّن NavMeshAgent المحدد وما نصف قطره حاليا؟",
+      "agent_list": "اعرض جميع مكوّنات NavMeshAgent الموجودة في هذا المشهد."
+    },
+    "it": {
+      "current_scene": "Ho aperto più scene in Unity. Come si chiama la scena attiva in questo momento?",
+      "scene_list": "Mi dai i nomi di tutte le scene che sono aperte nell'editor?",
+      "installed_package": "Tra i pacchetti installati, che versione ha `com.unity.timeline`?",
+      "package_list": "Vorrei l'elenco di tutti i pacchetti installati nel progetto.",
+      "selected_agent": "Che velocità e che raggio ha il NavMeshAgent selezionato?",
+      "agent_list": "Elenca tutti i NavMeshAgent presenti in questa scena."
+    }
+  }
+}
