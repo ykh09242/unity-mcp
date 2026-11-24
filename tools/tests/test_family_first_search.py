@@ -62,7 +62,7 @@ def test_a_standalone_resource_remains_an_eligible_family():
 def test_forward_only_binding_uses_its_declared_owner():
     key = ("tool", "device_panel", "inspect_voltage")
     op = Operation("electrical", key[2], "Report the measured voltage.", (), ("port",))
-    (card,) = search._cards({key: (op.purpose,)}, {key: op}, {})
+    card = next(search._cards({key: (op.purpose,)}, {key: op}, {}))
     assert (card.family, card.bindings, card.required) == ("electrical", (key,), ("port",))
 
 

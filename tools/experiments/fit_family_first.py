@@ -3,6 +3,7 @@
 import argparse
 from dataclasses import replace
 import gzip
+from importlib import import_module
 import json
 import os
 from pathlib import Path
@@ -127,9 +128,9 @@ def capture(output):
 
 def fit(source, output):
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
-    import numpy as np
     from tools.experiments import family_first_metric as metric
 
+    np = import_module("numpy")
     with gzip.open(source, "rt", encoding="utf-8") as stream:
         data = json.load(stream)
     labels = data["labels"]

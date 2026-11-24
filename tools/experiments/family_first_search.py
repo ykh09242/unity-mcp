@@ -35,7 +35,7 @@ def _cards(catalog, operations, effects):
     for (_, effect), keys in groups.items():
         op = operations.get(keys[0])
         if op:
-            keys.sort(key=lambda k: (k[1] != op.owner, k))
+            keys.sort(key=lambda k, owner=op.owner: (k[1] != owner, k))
         key = keys[0]
         texts = tuple(dict.fromkeys(t for k in keys for t in catalog[k]))
         heading, _, description = catalog[key][0].partition(". ")
