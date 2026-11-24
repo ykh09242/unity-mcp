@@ -110,10 +110,11 @@ def _best_family(families, similarity, predicate):
 
 def _preferred_pair(pairs, vectors, weights, similarity, predicate):
     """Blend the extent requested in the query with both declarations' relevance."""
-    evidence = {
-        op: (predicate(op) + similarity(lambda i: scope._declaration(op, i)[1])) / 2
-        for op in dict.fromkeys(op for pair in pairs for op in pair)
-    }
+
+    def relevance(op):
+        return (predicate(op) + similarity(lambda i: scope._declaration(op, i)[1])) / 2
+
+    evidence = {op: relevance(op) for op in dict.fromkeys(op for pair in pairs for op in pair)}
 
     def pair_score(pair):
         detail, inventory = pair
