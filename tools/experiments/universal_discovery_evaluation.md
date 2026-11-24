@@ -2,6 +2,32 @@
 
 The catalog ranks a next Unity operation or readable resource. Each evaluation submits the same original requests to the core and full catalogs.
 
+## Recovering reads outside the first tool family
+
+The ranker can recover a state or inventory lookup even when the first result belongs to a different family. It compares the request with the purposes of visible operations, counts forwarding aliases once, and looks for two related reads that return different scopes. Their declared property or required inputs connect a single-record read to its inventory. When two inventory selectors share an action word, the ranker also checks the subject of each selector against the request. It uses the existing bundled encoders and weights. Searching requires no additional download, service, language tag or route-specific rule.
+
+The [48 confirmation requests](universal_discovery_read_recall_confirmation.json) were written independently and sealed at `39bdef65b` before this ranking was frozen at `2177fc80f`. They cover six tasks in Korean, English, Japanese, Spanish, Greek, Indonesian, Czech and Ukrainian. Each request went through the public MCP client with a limit of three and no hints. The comparison uses the previously pinned server at `074e8ea2d`. The earlier 84 requests were available during development.
+
+| Fresh originals | Core, previous → revised | Full, previous → revised |
+| --- | ---: | ---: |
+| Correct first | 13 → 13 / 48 | 11 → 12 / 48 |
+| Correct in top three | 17 → 20 / 48 | 14 → 17 / 48 |
+| Opposite scope first | 4 → 4 / 48 | 3 → 3 / 48 |
+| Opposite scope in top three | 12 → 13 / 48 | 10 → 11 / 48 |
+
+| Correct in top three by requested answer | Core | Full |
+| --- | ---: | ---: |
+| Active scene | 5 → 5 / 8 | 2 → 3 / 8 |
+| Open scenes | 7 → 7 / 8 | 7 → 6 / 8 |
+| Named package details | 2 → 2 / 8 | 2 → 2 / 8 |
+| Installed package inventory | 0 → 0 / 8 | 0 → 0 / 8 |
+| Selected navigation agent settings | 2 → 4 / 8 | 2 → 4 / 8 |
+| Navigation agent inventory | 1 → 2 / 8 | 1 → 2 / 8 |
+
+The short Korean active-scene question reached first place in both catalogs. In full, one Czech request for open scenes lost its third-place inventory to the single-scene read. The fresh package inventory requests remained outside the top three. On the earlier 84, top-three hits rose from 37 to 48 in each catalog. On those same requests, first-place hits rose from 21 to 25 in core and from 21 to 24 in full. These results measure the sampled phrasings and tasks.
+
+The installed wheel reproduced the frozen source ranking on all 264 searches across the three suites and two profiles with external network access and child processes blocked. No search changed the inventory or dispatched a native or business operation. [Public regression tests](../tests/test_discovery_read_scope.py) · [Registration and visibility tests](../../Server/tests/test_semantic_family_recall.py)
+
 ## Current state and inventory lookup
 
 The bundled ranker compares what the request asks to return with what each visible read operation returns. A list can mention the current item's state in its description. The ranker therefore checks whether the request singles out that property. It also uses the declared inputs when a single-record query requires an identifier beyond the inputs for the corresponding inventory. The 1,064-byte weights were fit offline on 49 generic request pairs and 24 declaration pairs outside the Unity catalog. [Calibration data](observation_scope_pairs.json) · [Weight reproduction](../../Server/src/services/registry/model/README.md)

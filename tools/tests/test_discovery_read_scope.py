@@ -28,29 +28,41 @@ from tools.experiments.universal_discovery_evaluation import PROFILES, evaluate_
 
 SUITE = load_suite(FIXTURE.with_name("universal_discovery_read_scope.json"))
 CONFIRMATION = load_suite(FIXTURE.with_name("universal_discovery_read_scope_confirmation.json"))
+CATALOG_RECALL = load_suite(FIXTURE.with_name("universal_discovery_read_recall_confirmation.json"))
 
 # Per task and profile: correct first, correct in the first three, and opposite first.
 REGRESSION_LIMITS = {
     "current_scene": ((2, 3, 3), (3, 3, 3)),
     "scene_list": ((7, 7, 0), (7, 7, 0)),
-    "installed_package": ((0, 3, 0), (0, 3, 0)),
-    "package_list": ((1, 3, 0), (1, 3, 0)),
-    "selected_agent": ((0, 1, 0), (0, 2, 0)),
-    "agent_list": ((1, 5, 0), (1, 4, 0)),
+    "installed_package": ((0, 4, 0), (0, 4, 0)),
+    "package_list": ((3, 5, 0), (3, 5, 0)),
+    "selected_agent": ((0, 2, 0), (0, 3, 0)),
+    "agent_list": ((1, 6, 0), (1, 5, 0)),
 }
 CONFIRMATION_LIMITS = {
-    "current_scene": ((1, 1, 2), (1, 1, 1)),
+    "current_scene": ((1, 2, 2), (1, 2, 1)),
     "scene_list": ((2, 4, 0), (2, 4, 0)),
     "installed_package": ((5, 6, 0), (5, 6, 0)),
-    "package_list": ((0, 0, 0), (0, 0, 0)),
-    "selected_agent": ((0, 1, 0), (0, 1, 0)),
-    "agent_list": ((2, 3, 0), (1, 3, 0)),
+    "package_list": ((1, 3, 0), (1, 3, 0)),
+    "selected_agent": ((1, 2, 0), (0, 2, 0)),
+    "agent_list": ((2, 4, 0), (1, 4, 0)),
+}
+CATALOG_RECALL_LIMITS = {
+    "current_scene": ((4, 5, 2), (3, 3, 1)),
+    "scene_list": ((5, 7, 0), (5, 6, 0)),
+    "installed_package": ((2, 2, 0), (2, 2, 0)),
+    "package_list": ((0, 0, 2), (0, 0, 2)),
+    "selected_agent": ((2, 4, 0), (2, 4, 0)),
+    "agent_list": ((0, 2, 0), (0, 2, 0)),
 }
 
 
 def test_scope_confirmation_is_outside_both_calibrations():
     assert SUITE.sha256 == "e41a771653167454c49a1c4c03f85b149d6d7a2a3da0e2e21fb6b1104f1d0f75"
     assert CONFIRMATION.sha256 == "db0940e98e3c88fe625f2d57fa59299bbfea205b638fb353f4038192363b70b7"
+    assert (
+        CATALOG_RECALL.sha256 == "cb2fd8781718d0bbdedda39db2f68309c3706d15edcf5e63b3595f58316c5a20"
+    )
     pairs = json.loads(PAIRS.read_bytes())
     training = {query_identity(t) for group in pairs.values() for pair in group for t in pair}
     training.update(
@@ -58,7 +70,7 @@ def test_scope_confirmation_is_outside_both_calibrations():
         for name in TRAINING
         for r in load_suite(FIXTURE.with_name(name)).requests
     )
-    for suite, size in ((SUITE, 8), (CONFIRMATION, 6)):
+    for suite, size in ((SUITE, 8), (CONFIRMATION, 6), (CATALOG_RECALL, 8)):
         queries = {query_identity(r.query) for r in suite.requests}
         assert len(queries) == len(suite.requests) == 6 * size
         assert not training.intersection(queries)
@@ -68,8 +80,12 @@ def test_scope_confirmation_is_outside_both_calibrations():
 
 @pytest.mark.parametrize(
     ("suite", "limits"),
-    [(SUITE, REGRESSION_LIMITS), (CONFIRMATION, CONFIRMATION_LIMITS)],
-    ids=("original", "confirmation"),
+    [
+        (SUITE, REGRESSION_LIMITS),
+        (CONFIRMATION, CONFIRMATION_LIMITS),
+        (CATALOG_RECALL, CATALOG_RECALL_LIMITS),
+    ],
+    ids=("original", "confirmation", "catalog-recall"),
 )
 @pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.asyncio
@@ -83,6 +99,8 @@ async def test_public_raw_lookup_scope(profile, suite, limits):
     assert report["summary"]["available"] == len(suite.requests)
     assert not report["summary"]["hidden_expected_route"]
     assert report["matching"] == {"hybrid": len(suite.requests)}
+    if suite is CATALOG_RECALL:
+        assert report["summary"]["wrong_effect_top3"] <= (13, 11)[PROFILES.index(profile)]
     assert set(report["tasks"]) == set(limits)
     for task, metrics in report["tasks"].items():
         top1, top3, opposite = limits[task][PROFILES.index(profile)]
@@ -107,6 +125,9 @@ async def test_raw_search_preserves_the_scope_and_subject_of_the_answer(profile)
         replace(examples["current_scene"], language="ko", query="현재 활성 씬이 뭐야?"),
         replace(examples["current_scene"], language="ko", query="지금 활성 씬이 뭐야?"),
         replace(
+            examples["package_list"], language="ko", query="프로젝트에 설치된 패키지 목록 보여줘"
+        ),
+        replace(
             examples["scene_list"],
             language="en",
             query="List my loaded scenes and mark the active one.",
@@ -126,7 +147,7 @@ async def test_raw_search_preserves_the_scope_and_subject_of_the_answer(profile)
         ),
     )
     report = await evaluate_profile(profile, EvaluationSuite("review-regressions", requests))
-    for row, limit in zip(report["rows"], (1, 1, 1, 1, 2), strict=True):
+    for row, limit in zip(report["rows"], (1, 1, 1, 1, 1, 2), strict=True):
         assert row["rank"] is not None and row["rank"] <= limit, row
         assert not row["wrong_effect_top1"], row
 
