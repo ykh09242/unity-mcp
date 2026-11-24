@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "tasks": {
+    "current_scene": {
+      "expected": [
+        "scene_inspect.get_active",
+        "manage_scene.get_active"
+      ],
+      "wrong_effect": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes"
+      ]
+    },
+    "scene_list": {
+      "expected": [
+        "scene_inspect.get_loaded_scenes",
+        "manage_scene.get_loaded_scenes"
+      ],
+      "wrong_effect": [
+        "scene_inspect.get_active",
+        "manage_scene.get_active"
+      ]
+    },
+    "installed_package": {
+      "expected": [
+        "manage_packages.get_package_info"
+      ],
+      "wrong_effect": [
+        "manage_packages.list_packages"
+      ]
+    },
+    "package_list": {
+      "expected": [
+        "manage_packages.list_packages"
+      ],
+      "wrong_effect": [
+        "manage_packages.get_package_info"
+      ]
+    },
+    "selected_agent": {
+      "expected": [
+        "manage_navigation.read"
+      ],
+      "wrong_effect": [
+        "manage_navigation.list"
+      ]
+    },
+    "agent_list": {
+      "expected": [
+        "manage_navigation.list"
+      ],
+      "wrong_effect": [
+        "manage_navigation.read"
+      ]
+    }
+  },
+  "queries": {
+    "ko": {
+      "current_scene": "지금 활성 씬 뭐야?",
+      "scene_list": "유니티에 열어 둔 씬들 다 보여줘. 그중 어느 게 활성인지도 표시해 줘.",
+      "installed_package": "설치돼 있는 시네머신 패키지의 레지스트리 정보 좀 보여줘.",
+      "package_list": "이 프로젝트에 설치된 패키지 뭐뭐 있어?",
+      "selected_agent": "하이어라키에서 선택한 순찰병의 NavMeshAgent 설정값 보여줘.",
+      "agent_list": "이 씬에 붙어 있는 NavMeshAgent 전부 찾아서 오브젝트 이름 알려줘."
+    },
+    "en": {
+      "current_scene": "I have Dockyard and Lighting open together. Which one is Unity treating as the active scene?",
+      "scene_list": "What's open in the editor's hierarchy right now? I need the names of the scenes that are loaded.",
+      "installed_package": "Could you pull up the package registry entry for our installed Unity Timeline package? I need its description and publisher.",
+      "package_list": "Give me the installed package inventory for this Unity project, with the version we actually have for each.",
+      "selected_agent": "I clicked the courier in the hierarchy. Can you read its NavMeshAgent settings, especially acceleration and stopping distance?",
+      "agent_list": "Show me every GameObject with a NavMeshAgent in this scene."
+    },
+    "ja": {
+      "current_scene": "複数のシーンを開いたまま作業してたんだけど、今はどれがアクティブ？",
+      "scene_list": "エディターで開いているシーンを一覧にして、アクティブになっているものには印を付けてください。",
+      "installed_package": "このプロジェクトに入っている Input System のパッケージについて、レジストリに登録されている詳細が見たいです。",
+      "package_list": "引き継ぎメモ用に、プロジェクトに入ってるパッケージ名とバージョンをまとめて出して。",
+      "selected_agent": "選択中の「門番」に付いている NavMeshAgent の設定、今どうなってる？",
+      "agent_list": "このシーンで NavMeshAgent が付いているオブジェクトを洗い出してもらえますか？"
+    },
+    "es": {
+      "current_scene": "De todas las escenas que tengo abiertas, ¿cuál está marcada como activa en Unity ahora?",
+      "scene_list": "Acabo de abrir Puerto de Cádiz de forma aditiva. ¿Qué escenas están cargadas en el editor en este momento?",
+      "installed_package": "Enséñame la ficha del registro para Addressables, que ya lo tenemos instalado. Quiero ver de dónde viene y qué versión usamos.",
+      "package_list": "Sácame una lista de los paquetes que tenemos instalados en este proyecto.",
+      "selected_agent": "Tengo seleccionado al sereno. ¿Me puedes enseñar los valores actuales de su componente NavMeshAgent?",
+      "agent_list": "¿Qué objetos de esta escena llevan un NavMeshAgent? Pásame la lista completa."
+    },
+    "el": {
+      "current_scene": "Ποια από τις ανοιχτές σκηνές έχει οριστεί ως ενεργή αυτή τη στιγμή στο Unity;",
+      "scene_list": "Μου δείχνεις ποιες σκηνές είναι ανοιχτές στον επεξεργαστή; Βάλε κι ένα σημάδι δίπλα στην ενεργή.",
+      "installed_package": "Θέλω να δω τα στοιχεία του πακέτου 2D Sprite στο μητρώο. Το έχουμε ήδη εγκατεστημένο στο έργο.",
+      "package_list": "Δείξε μου όλα τα εγκατεστημένα πακέτα του έργου μαζί με τις εκδόσεις τους.",
+      "selected_agent": "Έχω επιλέξει τον Φύλακα. Ποιες τιμές έχει τώρα το NavMeshAgent αυτού του αντικειμένου;",
+      "agent_list": "Ψάξε στη σκηνή για αντικείμενα με NavMeshAgent και δώσε μου όλα τα ονόματα σε μια λίστα."
+    },
+    "id": {
+      "current_scene": "Tadi aku buka Pasar Gede bareng scene pencahayaan. Yang jadi scene aktif sekarang yang mana?",
+      "scene_list": "Coba sebutin semua scene yang lagi kebuka di editor.",
+      "installed_package": "Bisa cek detail di registry buat paket Localization yang sudah terpasang di proyek ini? Aku perlu nama resmi dan versi paketnya.",
+      "package_list": "Paket apa aja yang sudah terpasang di proyek Unity ini?",
+      "selected_agent": "Aku lagi pilih objek Penjaga Pasar di Hierarchy. Tolong lihat pengaturan NavMeshAgent-nya, terutama radius dan kecepatannya.",
+      "agent_list": "Cari semua NavMeshAgent di scene ini. Tampilkan nama objek yang punya komponen itu."
+    },
+    "cs": {
+      "current_scene": "Která z otevřených scén je teď v Unity nastavená jako aktivní?",
+      "scene_list": "Vypiš mi scény, které jsou teď načtené v editoru, a u aktivní scény to prosím uveď.",
+      "installed_package": "V projektu máme nainstalovaný balíček Shader Graph. Potřebuju si přečíst jeho záznam v registru balíčků.",
+      "package_list": "Projdi tenhle projekt a vypiš, jaké balíčky už v něm máme nainstalované.",
+      "selected_agent": "V hierarchii mám vybraného Strážce mostu. Mrkni, jaké má nastavení komponenty NavMeshAgent.",
+      "agent_list": "Vypiš všechny objekty v téhle scéně, které mají komponentu NavMeshAgent."
+    },
+    "uk": {
+      "current_scene": "Глянь, яка сцена зараз активна в Unity. Я відкрив кілька й не пам’ятаю, яку зробив активною.",
+      "scene_list": "Які сцени зараз відкриті в редакторі? Потрібен повний список завантажених сцен.",
+      "installed_package": "Покажи дані з реєстру про ProBuilder, який уже встановлено в цьому проєкті.",
+      "package_list": "Збираю відомості для передачі проєкту. Випиши всі встановлені пакети Unity та їхні версії.",
+      "selected_agent": "Я виділив об’єкт «Листоноша» в ієрархії. Покажи поточні налаштування його NavMeshAgent.",
+      "agent_list": "Знайди у цій сцені всіх NavMeshAgent і переліч об’єкти, до яких вони прикріплені."
+    }
+  }
+}
