@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "tasks": {
+    "current_loading_address": {
+      "expected": ["manage_addressables.inspect"],
+      "wrong_effect": ["manage_addressables.set_address"]
+    },
+    "replace_loading_address": {
+      "expected": ["manage_addressables.set_address"],
+      "wrong_effect": ["manage_addressables.inspect"]
+    },
+    "missing_table_text": {
+      "expected": ["manage_localization.inspect"],
+      "wrong_effect": ["manage_localization.set_string_entry"]
+    },
+    "correct_table_text": {
+      "expected": ["manage_localization.set_string_entry"],
+      "wrong_effect": ["manage_localization.inspect"]
+    },
+    "video_frame_progress": {
+      "expected": ["manage_recording.status", "wait_for_operation"],
+      "wrong_effect": ["manage_recording.stop"]
+    },
+    "finish_current_video": {
+      "expected": ["manage_recording.stop"],
+      "wrong_effect": ["manage_recording.status", "wait_for_operation"]
+    }
+  },
+  "queries": {
+    "da": {
+      "current_loading_address": "Hvilken adresse skal jeg bruge for at indlæse fyrtårnet? Slå den op i projektets Addressables.",
+      "replace_loading_address": "Fyrtårnet ligger allerede i Addressables. Ret adressen til kyst/fyr, så jeg kan indlæse det under det navn.",
+      "missing_table_text": "Er der stadig nøgler uden dansk oversættelse i teksttabellen til pausemenuen? Jeg vil gerne se hvilke.",
+      "correct_table_text": "Ret den danske tekst for den eksisterende nøgle RESUME i pausemenuens oversættelsestabel til »Spil videre«.",
+      "video_frame_progress": "Lad videooptagelsen af spilvinduet køre. Hvor mange billeder er der kommet med indtil nu?",
+      "finish_current_video": "Vi har fået det klip, vi skal bruge. Stop optagelsen af spilvinduet nu, så videofilen bliver gemt."
+    },
+    "hu": {
+      "current_loading_address": "Megnéznéd az Addressables beállításaiban, milyen címen tölthető be most a malom modellje?",
+      "replace_loading_address": "Írd át a malommodell betöltési címét az Addressables-ben erre: falu/malom. A fájl neve maradjon a régi.",
+      "missing_table_text": "A küldetésnapló magyar szövegtáblájából melyik kulcsokhoz hiányzik még a fordítás?",
+      "correct_table_text": "A küldetésnapló magyar fordítási táblájában az ACCEPT kulcs szövege mostantól „Elvállalom” legyen. Mentsd el a javítást.",
+      "video_frame_progress": "Hány képkockánál tart a játéknézetről készülő videó? Közben menjen tovább a felvétel.",
+      "finish_current_video": "Ennyi elég a jelenetnézetből. Állítsd le a most futó videofelvételt, hogy megkapjuk az MP4-et."
+    },
+    "bg": {
+      "current_loading_address": "Трябва ми адресът, на който в момента е записана иконата на компаса в Addressables. Какъв е?",
+      "replace_loading_address": "Промени адреса на иконата на компаса в Addressables на icons/compass. Самата икона си остава в същата група.",
+      "missing_table_text": "Виж в българската таблица с репликите на търговеца кои ключове още нямат превод.",
+      "correct_table_text": "В българската таблица с репликите на търговеца смени текста за съществуващия ключ SOLD с „Продадено“. Запази промяната.",
+      "video_frame_progress": "Колко кадъра са записани дотук във видеото от прозореца на играта? Остави записа да върви.",
+      "finish_current_video": "Спри текущия видеозапис на прозореца на играта и запази заснетото като MP4."
+    },
+    "ms": {
+      "current_loading_address": "Nak muatkan model jeti dalam permainan. Apa alamat model itu dalam tetapan Addressables sekarang?",
+      "replace_loading_address": "Tukar alamat model jeti yang sedia ada dalam Addressables kepada pesisir/jeti. Biarkan fail di tempat asal.",
+      "missing_table_text": "Dalam jadual terjemahan bahasa Melayu untuk skrin tetapan, kunci mana yang masih belum ada terjemahan?",
+      "correct_table_text": "Untuk kunci APPLY dalam jadual terjemahan bahasa Melayu bagi skrin tetapan, gantikan teks lama dengan “Gunakan”.",
+      "video_frame_progress": "Semasa rakaman video paparan permainan masih berjalan, boleh tengok berapa banyak bingkai yang sudah dirakam setakat ini?",
+      "finish_current_video": "Bahagian yang saya perlukan dah habis. Hentikan rakaman video paparan permainan sekarang dan simpan klip itu."
+    },
+    "fa": {
+      "current_loading_address": "برای بارگذاری مدل آسیاب چه آدرسی باید بدهم؟ ببین الان در تنظیمات Addressables چه آدرسی برایش ثبت شده.",
+      "replace_loading_address": "آدرس مدل آسیاب را در Addressables به village/mill تغییر بده. خود فایل همان‌جا بماند.",
+      "missing_table_text": "در جدول متن‌های فارسیِ منوی خرید، کدام کلیدها هنوز ترجمه ندارند؟ فقط همان‌ها را نشان بده.",
+      "correct_table_text": "در جدول ترجمهٔ فارسیِ منوی خرید، متن کلید موجود PAY را به «پرداخت» تغییر بده و ذخیره کن.",
+      "video_frame_progress": "از ویدیویی که الان از نمای بازی ضبط می‌شود تا این لحظه چند فریم ثبت شده؟ بگذار ضبط ادامه پیدا کند.",
+      "finish_current_video": "همین مقدار از نمای بازی کافی است. ضبط ویدیو را همین حالا تمام کن و کلیپ را نگه دار."
+    },
+    "mr": {
+      "current_loading_address": "किल्ल्याचं मॉडेल लोड करताना कोणता पत्ता द्यावा लागतो? Addressables मध्ये त्यासाठी सध्या कोणता पत्ता नोंदला आहे ते बघ.",
+      "replace_loading_address": "Addressables मध्ये किल्ल्याच्या मॉडेलचा पत्ता बदलून forts/main कर. मूळ फाइलचं नाव तसंच राहू दे.",
+      "missing_table_text": "मदत मेनूच्या मराठी भाषांतराच्या तक्त्यात अजून कोणत्या नोंदींचं भाषांतर राहिलं आहे? त्यांच्या कळा दाखव.",
+      "correct_table_text": "मदत मेनूच्या मराठी भाषांतराच्या तक्त्यात BACK या कळीचा मजकूर बदलून ‘मागे जा’ असा जतन कर.",
+      "video_frame_progress": "गेमच्या खिडकीचा जो व्हिडिओ रेकॉर्ड होतोय त्यात आत्तापर्यंत किती फ्रेम्स नोंदल्या गेल्या? रेकॉर्डिंग चालू राहू दे.",
+      "finish_current_video": "गेमच्या खिडकीचं सध्या चालू असलेलं व्हिडिओ रेकॉर्डिंग इथेच थांबव आणि आतापर्यंत रेकॉर्ड झालेला भाग जतन कर."
+    },
+    "eu": {
+      "current_loading_address": "Itsasargia jokoan kargatu nahi dut. Zein helbide dauka modelo horrek proiektuko Addressables ezarpenetan?",
+      "replace_loading_address": "Aldatu itsasargiaren modeloak Addressables-en duen helbidea: hemendik aurrera kosta/itsasargia izan dadila.",
+      "missing_table_text": "Zein gako daude oraindik itzuli gabe inbentarioko euskarazko testuen taulan?",
+      "correct_table_text": "Inbentarioko euskarazko itzulpenen taulan, ordezkatu DROP gakoaren testua «Lurrera bota» testuarekin.",
+      "video_frame_progress": "Jokoaren leihoko bideoa grabatzen ari da. Zenbat fotograma jaso ditu dagoeneko? Utzi grabatzen.",
+      "finish_current_video": "Nahikoa dugu jokoaren leihotik hartutako irudiekin. Amaitu uneko bideo-grabazioa eta gorde klipa."
+    },
+    "et": {
+      "current_loading_address": "Millise aadressiga saab praegu paadimudelit laadida? Vaata järele projekti Addressablesi seadetest.",
+      "replace_loading_address": "Pane paadimudeli uueks laadimisaadressiks Addressablesis sadam/paat. Mudelifail ise jäägu paika.",
+      "missing_table_text": "Millistel võtmetel puudub veel eestikeelne tõlge poe tekstide tõlketabelis? Näita neid mulle.",
+      "correct_table_text": "Paranda poe eestikeelses tõlketabelis võtme REFUND tekst ära. Uus tekst olgu „Tagasta raha”.",
+      "video_frame_progress": "Mänguvaatest tehakse parajasti videosalvestist. Mitu kaadrit on seni salvestatud? Las salvestus kestab edasi.",
+      "finish_current_video": "Lõpeta praegu käiv stseenivaate videosalvestus, et saaksin valmis MP4-faili."
+    }
+  }
+}
