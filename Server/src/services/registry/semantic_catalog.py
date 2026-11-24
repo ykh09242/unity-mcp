@@ -20,6 +20,7 @@ _NAME_SUFFIX = re.compile(r"['’][^\W\d_]+")
 _PLATFORM = regex.compile(r"(?<![\w.-])Unity(?!\w|[.-]\w)", regex.IGNORECASE)
 _SENTENCE_TERMINAL = regex.compile(r"\p{Sentence_Terminal}")
 _NEIGHBORHOOD = 0.12
+SEMANTIC_EVIDENCE_FLOOR = 0.22
 
 
 def _label(identifier: str) -> str:

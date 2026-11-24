@@ -105,6 +105,7 @@ async def test_raw_search_preserves_the_scope_and_subject_of_the_answer(profile)
     examples = {r.task: r for r in CONFIRMATION.requests}
     requests = (
         replace(examples["current_scene"], language="ko", query="현재 활성 씬이 뭐야?"),
+        replace(examples["current_scene"], language="ko", query="지금 활성 씬이 뭐야?"),
         replace(
             examples["scene_list"],
             language="en",
@@ -125,7 +126,7 @@ async def test_raw_search_preserves_the_scope_and_subject_of_the_answer(profile)
         ),
     )
     report = await evaluate_profile(profile, EvaluationSuite("review-regressions", requests))
-    for row, limit in zip(report["rows"], (1, 1, 1, 2), strict=True):
+    for row, limit in zip(report["rows"], (1, 1, 1, 1, 2), strict=True):
         assert row["rank"] is not None and row["rank"] <= limit, row
         assert not row["wrong_effect_top1"], row
 

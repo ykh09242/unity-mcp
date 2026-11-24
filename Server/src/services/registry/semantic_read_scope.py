@@ -9,7 +9,12 @@ import regex
 
 from services.registry import semantic_metric as metric
 from services.registry.semantic_alignment import _dot
-from services.registry.semantic_catalog import _NEIGHBORHOOD, _has_multiple_clauses, _label
+from services.registry.semantic_catalog import (
+    SEMANTIC_EVIDENCE_FLOOR,
+    _NEIGHBORHOOD,
+    _has_multiple_clauses,
+    _label,
+)
 from services.registry.semantic_direction import _matches, _snippets
 from services.registry.semantic_operations import _effect_terms, _fields, _terms
 
@@ -137,6 +142,19 @@ def _links(candidate, opposite, sign):
 def _rank(query, catalog, operations, effects, ranked):
     model, scores = ranked
     primary = max(scores, key=scores.__getitem__)
+    if primary not in operations and scores[primary] < SEMANTIC_EVIDENCE_FLOOR:
+        # A standalone hit can share a weak neighborhood with a read whose
+        # sibling answers the question. Keep the read's own score as its prior.
+        floor = scores[primary] - _NEIGHBORHOOD
+        neighbors = (
+            key
+            for key in scores
+            if key in operations
+            and key in catalog
+            and effects.get(key) == "observe"
+            and scores[key] >= floor
+        )
+        primary = max(neighbors, key=scores.__getitem__, default=primary)
     incumbent = operations.get(primary)
     if not incumbent:
         return ranked

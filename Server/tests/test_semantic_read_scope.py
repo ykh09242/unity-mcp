@@ -62,6 +62,16 @@ def test_scoped_catalog_and_explicit_selector_keep_their_bindings():
     assert scope.rank_observations(query, DOCS, ops, {**effects, DETAIL: "edit"}, ranked) is ranked
 
 
+def test_a_weak_standalone_leader_can_reveal_a_better_scoped_read_in_its_neighborhood():
+    resource = ("resource", "device://preferences", "")
+    docs = {**DOCS, resource: ("Read the workspace preferences.",)}
+    query = "Which port is active now?"
+    for peak, expected in ((0.21, DETAIL), (0.60, resource)):
+        ranked = (MODEL, {resource: peak, LIST: peak - 0.01})
+        _, scores = scope.rank_observations(query, docs, OPS, EFFECTS, ranked)
+        assert max(scores, key=scores.__getitem__) == expected
+
+
 @pytest.mark.parametrize("corrupt", [False, True])
 def test_missing_or_corrupt_scope_weights_preserve_rank(tmp_path, monkeypatch, corrupt):
     artifact = tmp_path / "scope.q8"

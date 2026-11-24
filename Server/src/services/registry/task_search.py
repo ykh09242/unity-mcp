@@ -57,6 +57,7 @@ from services.registry.capability_catalog import (
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
 from services.registry.integration_action_guidance import MENU_INVENTORY_OBSERVATION
 from services.registry.semantic_catalog import (
+    SEMANTIC_EVIDENCE_FLOOR,
     search_texts,
     semantic_scores,
 )
@@ -554,7 +555,7 @@ def _route_evidence(
         return "exact_identifier"
     if len(route["distinctive_terms"]) >= 2:
         return "multiple_terms"
-    if route.get("semantic_similarity", 0.0) >= 0.22:
+    if route.get("semantic_similarity", 0.0) >= SEMANTIC_EVIDENCE_FLOOR:
         return "semantic_similarity"
     return "single_term" if route["distinctive_terms"] else "incidental"
 
