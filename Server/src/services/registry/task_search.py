@@ -64,7 +64,7 @@ from services.registry.semantic_catalog import (
 from services.registry.semantic_encoder import SemanticModelUnavailable
 from services.registry.semantic_operations import Operation, rank_operations
 from services.registry.semantic_metric import recall_operation
-from services.registry.semantic_read_scope import rank_observations
+from services.registry.semantic_family_recall import rank_observations
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
