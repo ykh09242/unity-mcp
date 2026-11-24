@@ -2,6 +2,8 @@
 
 The catalog ranks a next Unity operation or readable resource. Each evaluation submits the same original requests to the core and full catalogs.
 
+A family-first challenger improved both raw top-three retrieval and blinded agent choices on eight held-out languages and three new families. Existing menu-path and state-lookup regressions prevented deployment. [Replacement trial and release decision](family_first_discovery.md)
+
 ## Recovering reads outside the first tool family
 
 The ranker can recover a state or inventory lookup even when the first result belongs to a different family. It compares the request with the purposes of visible operations, counts forwarding aliases once, and looks for two related reads that return different scopes. Their declared property or required inputs connect a single-record read to its inventory. When two inventory selectors share an action word, the ranker also checks the subject of each selector against the request. It uses the existing bundled encoders and weights. Searching requires no additional download, service, language tag or route-specific rule.

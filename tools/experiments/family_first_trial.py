@@ -12,6 +12,7 @@ if not __package__:
 
 from tools.experiments.discovery_evaluation_fixture import load_suite
 from tools.experiments.evaluate_family_first import HOLDOUT, HOLDOUT_SHA256
+from tools.experiments.check_family_first_compatibility import CONTRACTS
 
 ARMS = ("shipping", "candidate")
 PROFILES = ("core", "full")
@@ -109,7 +110,25 @@ def passed(metrics):
     )
 
 
-def report(suite, captures, responses, candidate_revision):
+def compatible(checks):
+    wanted = {Path(path).stem for path in CONTRACTS}
+    old, new = (checks[arm] for arm in ARMS)
+    for arm, check in zip(ARMS, (old, new), strict=True):
+        if check["arm"] != arm or set(check["suites"]) != wanted:
+            raise ValueError("Incomplete compatibility evidence")
+    if not old["test_ids_sha256"] or old["test_ids_sha256"] != new["test_ids_sha256"]:
+        raise ValueError("The engines ran different compatibility cases")
+    for name, suite in old["suites"].items():
+        if (
+            suite["unsuccessful"]
+            or suite["count"] <= 0
+            or suite["count"] != new["suites"][name]["count"]
+        ):
+            raise ValueError("The shipping compatibility control was incomplete or unsuccessful")
+    return not any(suite["unsuccessful"] for suite in new["suites"].values())
+
+
+def report(suite, captures, responses, candidate_revision, checks):
     records, packets = prepare(suite, captures)
     if len(responses) != len(packets):
         raise ValueError("Missing first-choice packet")
@@ -131,6 +150,7 @@ def report(suite, captures, responses, candidate_revision):
             "first_choice": responses[actor][key],
         }
     metrics = summarize(suite, rows.values())
+    contracts_passed = compatible(checks)
     return {
         "corpus_sha256": suite.sha256,
         "shipping_revision": BASELINE,
@@ -138,7 +158,9 @@ def report(suite, captures, responses, candidate_revision):
         "packet_sha256": [digest(packet) for packet in packets],
         "choice_sha256": [digest(choices) for choices in responses],
         "metrics": metrics,
-        "replace": passed(metrics),
+        "heldout_gate_passed": passed(metrics),
+        "compatibility": checks,
+        "replace": passed(metrics) and contracts_passed,
         "rows": list(rows.values()),
     }
 
@@ -160,18 +182,33 @@ def verify_record(suite, record):
     if [digest(packet) for packet in choices] != record["choice_sha256"]:
         raise ValueError("Changed first choices")
     metrics = summarize(suite, rows)
-    if metrics != record["metrics"] or passed(metrics) != record["replace"]:
+    contracts_passed = compatible(record["compatibility"])
+    if (
+        metrics != record["metrics"]
+        or passed(metrics) != record["heldout_gate_passed"]
+        or (passed(metrics) and contracts_passed) != record["replace"]
+    ):
         raise ValueError("Changed replacement decision")
+    return choices
+
+
+def verify_replay(suite, captures, record, checks):
+    """Check the public packet contents against the original choices, without new judgments."""
+    choices = verify_record(suite, record)
+    rebuilt = report(suite, captures, choices, record["candidate_revision"], checks)
+    if rebuilt != record:
+        raise ValueError("Public results or blinded packet contents differ from the trial")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("packets", "score"))
+    parser.add_argument("command", choices=("packets", "score", "verify"))
     parser.add_argument(
         "directory", type=Path, help="Directory containing shipping.json and candidate.json."
     )
     parser.add_argument("--candidate-revision")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--record", type=Path)
     args = parser.parse_args()
     suite = load_suite(HOLDOUT)
     captures = {arm: read_json(args.directory / f"{arm}.json") for arm in ARMS}
@@ -184,16 +221,25 @@ def main():
                 encoding="utf-8",
                 newline="\n",
             )
+    elif args.command == "verify":
+        if not args.record:
+            parser.error("verify requires --record")
+        checks = {arm: read_json(args.directory / f"compat-{arm}.json") for arm in ARMS}
+        verify_replay(suite, captures, read_json(args.record), checks)
+        print("Public packets, first choices and replacement decision match the record.")
     else:
         if not args.candidate_revision or not args.output:
             parser.error("score requires --candidate-revision and --output")
         choices = [read_json(args.directory / f"choice-{i}.json") for i in range(len(CELLS))]
-        result = report(suite, captures, choices, args.candidate_revision)
+        checks = {arm: read_json(args.directory / f"compat-{arm}.json") for arm in ARMS}
+        result = report(suite, captures, choices, args.candidate_revision, checks)
         verify_record(suite, result)
         args.output.write_text(
             json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
         )
-        print(json.dumps({"metrics": result["metrics"], "replace": result["replace"]}))
+        print(
+            json.dumps({key: result[key] for key in ("metrics", "heldout_gate_passed", "replace")})
+        )
 
 
 if __name__ == "__main__":
