@@ -35,7 +35,17 @@ namespace MCPForUnity.Editor.Services.Transport
         // A resumed build may exclude only its own child and parent reservations.
         // Lost invocations and all other native families remain admission fences.
         internal static bool TryGetBuildContinuationBlocker(string jobId, string batchId, out NativeAdmissionBlocker blocker) =>
-            Evaluate("manage_build", null, Capture(buildJobId: jobId, buildBatchId: batchId), out blocker);
+            Evaluate(null, null, Capture(buildJobId: jobId, buildBatchId: batchId), out blocker);
+
+        internal static bool TryGetTestContinuationBlocker(string jobId, out NativeAdmissionBlocker blocker)
+        {
+            if (string.IsNullOrEmpty(jobId) || jobId != TestJobManager.CurrentJobId)
+            {
+                blocker = new NativeAdmissionBlocker("stale_parent", false);
+                return true;
+            }
+            return Evaluate(null, null, Capture(startingTestJobId: jobId), out blocker);
+        }
 
         internal static bool TryGetScenarioBlocker(string startingJobId, string suiteChildId, out NativeAdmissionBlocker blocker) =>
             Evaluate(null, null, Capture(startingJobId: startingJobId, suiteChildId: suiteChildId), out blocker);
@@ -51,7 +61,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 state.OwnedCompilation = null;
                 state.CompilationRecovery = null;
             }
-            return Evaluate("manage_script", null, state, out blocker);
+            return Evaluate(null, null, state, out blocker);
         }
 
         // General readiness shares ordinary-read admission. Read-only UPM queries
@@ -67,7 +77,8 @@ namespace MCPForUnity.Editor.Services.Transport
             string buildJobId = null,
             string buildBatchId = null,
             string startingJobId = null,
-            string suiteChildId = null
+            string suiteChildId = null,
+            string startingTestJobId = null
         )
         {
             var retired = TestRunnerService.RetiredRunRecoveryDetails;
@@ -113,8 +124,11 @@ namespace MCPForUnity.Editor.Services.Transport
                 Importing = EditorApplication.isUpdating,
                 Transitioning = EditorStateCache.IsDomainReloadPending || EditorStateCache.IsPlayModeTransition || PlayModeReadiness.HasPendingPlayRequest,
                 OwnedJob =
-                    TestJobManager.HasRunningJob
-                    || TestJobManager.NativeAdmissionBlocked
+                    (
+                        startingTestJobId == null
+                            ? TestJobManager.HasRunningJob || TestJobManager.NativeAdmissionBlocked
+                            : TestJobManager.OtherNativeAdmissionBlocked(startingTestJobId)
+                    )
                     || TestRunnerService.HasOwnedNativeRun
                     || (buildJobId == null ? BuildRunner.HasNativeOwner : BuildRunner.HasForeignNativeOwner(buildJobId, buildBatchId))
                     || BuildPipeline.isBuildingPlayer

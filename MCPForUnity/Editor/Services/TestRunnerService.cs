@@ -279,6 +279,7 @@ namespace MCPForUnity.Editor.Services
             try
             {
                 await _operationLock.WaitAsync(admission.Cancellation.Token).ConfigureAwait(true);
+                return await RunAdmittedTestsAsync(mode, filterOptions, admission).ConfigureAwait(true);
             }
             catch (OperationCanceledException) when (admission.RetirementError != null)
             {
@@ -292,11 +293,11 @@ namespace MCPForUnity.Editor.Services
                     admission.Cancellation.Dispose();
                 }
             }
-            return await RunAdmittedTestsAsync(mode, filterOptions, admission.JobId, admission.RetirementError).ConfigureAwait(true);
         }
 
-        private async Task<TestRunResult> RunAdmittedTestsAsync(TestMode mode, TestFilterOptions filterOptions, string jobId, string retirementError)
+        private async Task<TestRunResult> RunAdmittedTestsAsync(TestMode mode, TestFilterOptions filterOptions, PendingRunAdmission admission)
         {
+            string jobId = admission.JobId;
             Task<TestRunResult> runTask;
             TaskCompletionSource<TestRunResult> completionSource = null;
             bool nativeInvoked = false;
@@ -307,8 +308,8 @@ namespace MCPForUnity.Editor.Services
                 ThrowIfDisposed();
                 ThrowIfRetiredRunPending();
                 nativeControl?.CheckAdmission();
-                if (retirementError != null || (jobId != null && TestJobManager.CurrentJobId != jobId))
-                    throw new InvalidOperationException(retirementError ?? "Test job was retired before execution started.");
+                if (admission.RetirementError != null || (jobId != null && TestJobManager.CurrentJobId != jobId))
+                    throw new InvalidOperationException(admission.RetirementError ?? "Test job was retired before execution started.");
                 if (_runCompletionSource != null && !_runCompletionSource.Task.IsCompleted)
                 {
                     throw new InvalidOperationException("A Unity test run is already in progress.");
@@ -318,17 +319,6 @@ namespace MCPForUnity.Editor.Services
                 {
                     throw new InvalidOperationException("Cannot start a test run while the Editor is in or entering Play Mode. Stop Play Mode and try again.");
                 }
-
-                // Persisted jobs and reload callbacks retain ownership across the project's
-                // normal Play Mode transition. Do not alter its domain/scene reload semantics.
-                _leafResults.Clear();
-                completionSource = new TaskCompletionSource<TestRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-                _trackedJobId = jobId;
-                _activeRunOwner = this;
-                _runCompletionSource = completionSource;
-                runTask = completionSource.Task;
-                // Mark running immediately so readiness snapshots reflect the busy state even before callbacks fire.
-                TestRunStatus.MarkStarted(mode);
 
                 var filter = new Filter
                 {
@@ -340,13 +330,13 @@ namespace MCPForUnity.Editor.Services
                 };
                 var settings = new ExecutionSettings(filter);
 
+                // Discovery or a reload may have delayed this job before it acquired the
+                // service semaphore. Check the exact reservation before saving scenes.
+                if (jobId != null && Transport.NativeOperationBarriers.TryGetTestContinuationBlocker(jobId, out var preparationBlocker))
+                    throw new InvalidOperationException("Test preparation blocked: " + preparationBlocker.Reason);
                 // Save dirty scenes for all test modes to prevent modal dialogs blocking MCP
                 // (Issue #525: EditMode tests were blocked by save dialog)
                 SaveDirtyScenesIfNeeded();
-
-                // EditMode also needs background Editor ticks before RunStarted is delivered.
-                appliedNoThrottling = true;
-                TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
 
                 nativeControl?.CheckAdmission();
                 // Recheck after queued admission and scene preparation, immediately before Execute.
@@ -356,7 +346,7 @@ namespace MCPForUnity.Editor.Services
                     );
                 if (filterOptions?.RequireSourceFreshness == true)
                 {
-                    using var freshnessDeadline = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
+                    using var freshnessDeadline = CancellationTokenSource.CreateLinkedTokenSource(admission.Cancellation.Token);
                     freshnessDeadline.CancelAfter(TimeSpan.FromSeconds(30));
                     var sourceCheck = SourceAdmissionForTests ?? SourceFreshness.SourceFreshnessService.CheckAdmissionAsync;
                     if (!await sourceCheck(filterOptions.SourceToken, freshnessDeadline.Token))
@@ -364,13 +354,26 @@ namespace MCPForUnity.Editor.Services
                     nativeControl?.CheckAdmission();
                     ThrowIfDisposed();
                     ThrowIfRetiredRunPending();
-                    if (retirementError != null || (jobId != null && TestJobManager.CurrentJobId != jobId))
-                        throw new InvalidOperationException("Test job was retired during source observation.");
+                    if (admission.RetirementError != null || (jobId != null && TestJobManager.CurrentJobId != jobId))
+                        throw new InvalidOperationException(admission.RetirementError ?? "Test job was retired during source observation.");
                     if (EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode)
                         throw new InvalidOperationException("Play Mode started during source observation.");
                 }
+                if (jobId != null && Transport.NativeOperationBarriers.TryGetTestContinuationBlocker(jobId, out var blocker))
+                    throw new InvalidOperationException("Test execution blocked before native dispatch: " + blocker.Reason);
+                // Untagged Unity callbacks can arrive during asynchronous source observation.
+                // Only the native invocation owns them and the temporary Editor preferences.
+                appliedNoThrottling = true;
+                TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
                 TestJobManager.MarkRunExecuting(jobId);
                 nativeControl?.MarkExecuting();
+                _leafResults.Clear();
+                completionSource = new TaskCompletionSource<TestRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _trackedJobId = jobId;
+                _activeRunOwner = this;
+                _runCompletionSource = completionSource;
+                runTask = completionSource.Task;
+                TestRunStatus.MarkStarted(mode);
                 nativeInvoked = true;
                 string nativeGuid = ExecuteForTests != null ? ExecuteForTests(settings) : _testRunnerApi.Execute(settings);
                 nativeControl?.BindGuid(nativeGuid);
@@ -394,8 +397,8 @@ namespace MCPForUnity.Editor.Services
                 {
                     TestRunnerNoThrottle.RestoreAfterRun();
                 }
-                // Ensure the status is cleared if we failed to start the run.
-                TestRunStatus.MarkFinished();
+                if (completionSource != null)
+                    TestRunStatus.MarkFinished();
 
                 if (!_disposed)
                     _operationLock.Release();
@@ -531,7 +534,7 @@ namespace MCPForUnity.Editor.Services
 
         public void OnError(string message)
         {
-            if (!TestJobManager.ControlOwnsCallback(_trackedJobId))
+            if ((_runCompletionSource == null && _trackedJobId == null) || !TestJobManager.ControlOwnsCallback(_trackedJobId))
                 return;
             // Build/prebuild failures use IErrorCallbacks instead of RunFinished.
             CompleteRun(null, new InvalidOperationException(message ?? "Unity test run failed."));

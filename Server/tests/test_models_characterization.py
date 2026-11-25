@@ -590,6 +590,28 @@ class TestNormalizeUnityResponse:
         assert result["success"] is False
         assert result["error"] == "Something went wrong"
 
+    def test_dispatcher_refusal_preserves_owner_without_lifting_transport_claims(self):
+        owner = {
+            "native_coordination": {
+                "blocked": True,
+                "reason": "recovery_required",
+                "retryable": False,
+            }
+        }
+        raw = {
+            "status": "error",
+            "error": "Native operation is busy",
+            "code": "recovery_required",
+            "data": owner,
+            "native_arbitration": {"disposition": "not_started", "retryable": True},
+        }
+        normalized = normalize_unity_response(raw)
+        assert normalized["success"] is False
+        assert normalized["data"] == owner
+        assert "native_arbitration" not in normalized
+        raw["result"] = {"error": "inner", "data": {"reason": "handler_error"}}
+        assert normalize_unity_response(raw)["data"] == {"reason": "handler_error"}
+
     def test_normalize_with_data_payload(self):
         """Test normalizing response with data in result."""
         response = {

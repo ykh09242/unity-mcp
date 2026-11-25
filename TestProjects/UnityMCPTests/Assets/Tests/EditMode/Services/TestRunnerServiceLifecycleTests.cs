@@ -92,6 +92,7 @@ namespace MCPForUnityTests.Editor.Services
             SessionState.SetBool("TestRunnerNoThrottle_SettingsCaptured", false);
             _originalService = (ITestRunnerService)typeof(MCPServiceLocator).GetField("_testRunnerService", StaticPrivate).GetValue(null);
             _originalOwner = typeof(TestRunnerService).GetField("_activeRunOwner", StaticPrivate).GetValue(null);
+            typeof(TestRunnerService).GetField("_activeRunOwner", StaticPrivate).SetValue(null, null);
             _service = new TestRunnerService();
             _runner = new CapturingRunner(_service);
             MCPServiceLocator.Register<ITestRunnerService>(_runner);
@@ -410,6 +411,87 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(current ? 1 : 0, invoked);
             StringAssert.Contains(current ? "native-execution-witness" : "source_freshness_changed", message);
             Assert.IsFalse(TestRunStatus.IsRunning);
+        }
+
+        [Test]
+        public async Task SourceObservationIgnoresUnrelatedNativeCallbacks()
+        {
+            var observation = new TaskCompletionSource<bool>();
+            _service.SourceAdmissionForTests = (_, _) => observation.Task;
+            string id = TestJobManager.StartJob(TestMode.EditMode, new TestFilterOptions { RequireSourceFreshness = true, SourceToken = new string('c', 64) });
+            try
+            {
+                _service.RunStarted(null);
+                _service.OnError("unrelated-native-error");
+                _service.RunFinished(null);
+                Assert.AreEqual(id, TestJobManager.CurrentJobId);
+                Assert.IsFalse(Jobs[id].ExecutionStarted);
+                Assert.AreEqual(TestJobStatus.Running, Jobs[id].Status);
+            }
+            finally
+            {
+                observation.TrySetResult(false);
+            }
+            await ExpectFailure(_runner.LastRun, "source_freshness_changed");
+        }
+
+        [Test]
+        public async Task ClearingDuringSourceObservationCancelsTheScanWithoutQuarantiningNativeExecution()
+        {
+            var observation = new TaskCompletionSource<bool>();
+            CancellationToken scan = default;
+            int executions = 0;
+            _service.SourceAdmissionForTests = (_, cancellation) =>
+            {
+                scan = cancellation;
+                return observation.Task;
+            };
+            SetSchedule(_ =>
+            {
+                executions++;
+                return "unexpected";
+            });
+            TestJobManager.StartJob(TestMode.EditMode, new TestFilterOptions { RequireSourceFreshness = true, SourceToken = new string('d', 64) });
+            try
+            {
+                Assert.IsTrue(TestJobManager.ClearStuckJob());
+                Assert.IsTrue(scan.IsCancellationRequested);
+                Assert.IsFalse(TestRunnerService.HasRetiredRun);
+            }
+            finally
+            {
+                observation.TrySetResult(true);
+            }
+            await ExpectFailure(_runner.LastRun, "Job cleared manually");
+            Assert.Zero(executions);
+        }
+
+        [Test]
+        public async Task ReloadThatStartsDuringSourceObservationBlocksNativeExecution()
+        {
+            var pending = typeof(EditorStateCache).GetField("_domainReloadPending", StaticPrivate);
+            bool wasPending = (bool)pending.GetValue(null);
+            int executions = 0;
+            SetSchedule(_ =>
+            {
+                executions++;
+                throw new InvalidOperationException("unexpected-execution");
+            });
+            _service.SourceAdmissionForTests = (_, _) =>
+            {
+                pending.SetValue(null, true);
+                return Task.FromResult(true);
+            };
+            try
+            {
+                TestJobManager.StartJob(TestMode.EditMode, new TestFilterOptions { RequireSourceFreshness = true, SourceToken = new string('e', 64) });
+                await ExpectFailure(_runner.LastRun, "blocked before native dispatch");
+                Assert.Zero(executions);
+            }
+            finally
+            {
+                pending.SetValue(null, wasPending);
+            }
         }
 
         [Test]

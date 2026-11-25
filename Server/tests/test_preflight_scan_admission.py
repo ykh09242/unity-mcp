@@ -66,6 +66,36 @@ async def admit():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("owner_reason", ["recovery_required", "native_job_active"])
+async def test_recovery_preflight_preserves_only_matching_owner(
+    admission, monkeypatch, owner_reason
+):
+    owner = {
+        "blocked": True,
+        "reason": owner_reason,
+        "retryable": False,
+        "recovery": {
+            "source": "build",
+            "phase": "owner_lost",
+            "reason": "build_completion_observer_lost",
+            "mode": "restart_required",
+            "message": "Inspect build ownership.",
+            "job_id": "known-build",
+        },
+    }
+    state = {"advice": {"blocking_reasons": ["recovery_required"]}, "native_coordination": owner}
+    read = AsyncMock(return_value={"success": True, "data": state})
+    monkeypatch.setattr(editor_state, "get_editor_state_authoritative", read)
+    result = await admit()
+    assert result.data["retryable"] is False
+    if owner_reason == "recovery_required":
+        assert result.data["native_coordination"]["recovery"]["job_id"] == "known-build"
+    else:
+        assert "native_coordination" not in result.data
+    read.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_finished_limited_scan_fails_closed_without_pending_retry(local_scanner, admission):
     # Given a completed filesystem pass with an unreadable-by-policy package manifest.
     scanner, root = local_scanner

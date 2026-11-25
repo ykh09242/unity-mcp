@@ -50,6 +50,10 @@ def normalize_unity_response(response: Any) -> Any:
     error = payload.get("error") or response.get("error")
 
     data = payload.get("data") if payload else result
+    # Dispatcher refusals have no nested handler result. Keep their bounded
+    # diagnostic payload; it carries no transport receipt or replay authority.
+    if status == "error" and "result" not in response:
+        data = response.get("data")
 
     normalized: dict[str, Any] = {
         "success": success,

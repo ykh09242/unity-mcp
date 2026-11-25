@@ -7,6 +7,7 @@ from typing import Any
 
 from core.config import config
 from models import MCPResponse
+from models.native_recovery import parse_coordination
 from models.response_lifetime import ResponsePollLifetime
 from services.operation_permissions import remote_operation_allowed
 
@@ -246,11 +247,20 @@ async def _preflight_test_run(ctx, observations, refresh_if_dirty, max_wait_s):
             advice = data.get("advice") if isinstance(data.get("advice"), dict) else {}
             blocking = advice.get("blocking_reasons") or []
             if "recovery_required" in blocking:
+                refusal = {"reason": "recovery_required", "retryable": False}
+                coordination = parse_coordination(data.get("native_coordination"))
+                if (
+                    coordination is not None
+                    and coordination.blocked is True
+                    and coordination.reason == "recovery_required"
+                    and coordination.retryable is False
+                ):
+                    refusal["native_coordination"] = coordination.model_dump(exclude_none=True)
                 return MCPResponse(
                     success=False,
                     error="recovery_required",
                     hint="inspect_editor",
-                    data={"reason": "recovery_required", "retryable": False},
+                    data=refusal,
                 )
             known = isinstance(compilation, dict) and all(
                 type(compilation.get(key)) is bool

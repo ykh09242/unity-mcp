@@ -52,6 +52,24 @@ def test_legacy_or_incomplete_recovery_never_infers_restart(monkeypatch, detail)
     assert result["advice"]["recommended_next_action"] == "inspect_native_work"
 
 
+def test_pending_scene_operation_preserves_its_native_wait_action(monkeypatch):
+    monkeypatch.setattr(editor_state, "_now_unix_ms", lambda: 5000)
+    state = blocked_state(
+        {
+            "source": "scene_operation",
+            "phase": "operation_pending",
+            "reason": "scene_operation_pending",
+            "mode": "recoverable",
+            "message": "Wait for the current scene operation.",
+        },
+        reason="native_job_active",
+    )
+    state["native_coordination"].update(retryable=True, recovery_action="wait_for_scene_operation")
+    result = editor_state._enrich_advice_and_staleness(state)
+    assert result["advice"]["ready_for_tools"] is False
+    assert result["native_coordination"]["recovery_action"] == "wait_for_scene_operation"
+
+
 def test_recovery_evidence_survives_state_and_capabilities(monkeypatch):
     # Given: the native owner supplies bounded evidence explaining a required restart.
     monkeypatch.setattr(editor_state, "_now_unix_ms", lambda: 5000)

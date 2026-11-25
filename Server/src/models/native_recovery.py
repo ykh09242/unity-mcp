@@ -11,6 +11,7 @@ RecoveryAction = Literal[
     "inspect_native_work_then_restart_editor",
     "wait_for_native_work",
     "wait_for_test_cleanup",
+    "wait_for_scene_operation",
     "wait_for_source_preparation",
     "wait_for_compilation_start",
     "wait_for_pipeline_finish",
@@ -21,6 +22,7 @@ WAIT_ACTIONS = frozenset(
     {
         "wait_for_native_work",
         "wait_for_test_cleanup",
+        "wait_for_scene_operation",
         "wait_for_source_preparation",
         "wait_for_compilation_start",
         "wait_for_pipeline_finish",
