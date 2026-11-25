@@ -14,6 +14,7 @@ on:
       # All routes participate in the local-link contract.
       - website/docs/**
       # Local link targets are inputs even when the referring page is unchanged.
+      - CHANGELOG.md
       - docs/**
       - CODE_OF_CONDUCT.md
       - LICENSE
