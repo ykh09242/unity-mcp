@@ -1,6 +1,7 @@
 """Tail opt-in must not inherit legacy defaults, retries or wire semantics."""
 
 import importlib
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -176,6 +177,46 @@ async def test_console_source_diagnostics_survive_public_tail_validation(console
     result = await module.read_console(SimpleNamespace(), tail_cursor=token)
     assert result == {**send.return_value, "observation": {"status": "available"}}
     assert result["data"]["items"][0]["entry"]["diagnostics"] == entry["diagnostics"]
+
+
+@pytest.mark.asyncio
+async def test_compact_native_tail_page_survives_the_payload_boundary(console):
+    # Given a partial page below the native compact UTF-8 item budget.
+    module, _, send = console
+    token = f"ct1.{'a' * 32}.{'d' * 32}"
+    entry = {
+        "type": "Log",
+        "message": "x" * 1221,
+        "file": "",
+        "line": 0,
+        "stackTrace": None,
+        "diagnostics": {
+            "source": "unity_console",
+            "location": "not_provided_by_unity",
+            "stack_trace": "not_requested",
+            "stack_trace_source": "unity_utf16_boundary",
+        },
+    }
+    items = [{"sequence": n, "entry": entry} for n in range(1, 179)]
+    send.return_value = page(
+        module,
+        cursor=token,
+        items=items,
+        snapshot_rows=179,
+        native_entry_reads=179,
+        has_more=True,
+        stop_reason="payload_budget",
+    )
+    overflow = [*items, {"sequence": 179, "entry": entry}]
+    compact_items = json.dumps(items, separators=(",", ":")).encode("utf-8")
+    compact_overflow = json.dumps(overflow, separators=(",", ":")).encode("utf-8")
+    assert len(compact_items) <= 262144 - 2048 < len(compact_overflow)
+
+    # When the public tool validates the page and continuation cursor.
+    result = await module.read_console(SimpleNamespace(), tail_cursor=token, page_size=200)
+
+    # Then the valid partial page is delivered without losing rows or the cursor.
+    assert result == {**send.return_value, "observation": {"status": "available"}}
 
 
 @pytest.mark.parametrize(

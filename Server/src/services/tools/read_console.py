@@ -434,7 +434,9 @@ async def read_console(
                 return _tail_error("invalid_tail_response")
             if tail_cursor == "begin" and (page.items or page.scanned_rows or page.has_more):
                 return _tail_error("invalid_tail_response")
-            if len(json.dumps(response["data"], ensure_ascii=False).encode("utf-8")) > 262144:
+            # Unity budgets compact UTF-8 JSON, including the page envelope.
+            encoded = json.dumps(response["data"], ensure_ascii=False, separators=(",", ":"))
+            if len(encoded.encode("utf-8")) > 262144:
                 return _tail_error("invalid_tail_response")
         except (ValidationError, UnicodeEncodeError):
             return _tail_error("invalid_tail_response")
