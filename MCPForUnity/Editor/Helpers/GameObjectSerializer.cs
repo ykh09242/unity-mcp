@@ -693,6 +693,12 @@ namespace MCPForUnity.Editor.Helpers
                             else // materials
                                 value = propInfo.DeclaringType == typeof(Renderer) ? ReadSharedMaterials(renderer) : renderer.sharedMaterials;
                         }
+#if MCP_FOR_UNITY_PHYSICS
+                        else if (propName == nameof(Collider.material) && propInfo.DeclaringType == typeof(Collider) && c is Collider collider)
+                        {
+                            value = collider.sharedMaterial;
+                        }
+#endif
                         else if (propName == "mesh" && c is MeshFilter meshFilter)
                         {
                             value = meshFilter.sharedMesh;

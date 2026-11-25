@@ -12,6 +12,11 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
+#if UNITY_6000_0_OR_NEWER
+using PhysicsMaterialType = UnityEngine.PhysicsMaterial;
+#else
+using PhysicsMaterialType = UnityEngine.PhysicMaterial;
+#endif
 
 namespace MCPForUnityTests.Editor.Resources
 {
@@ -157,6 +162,38 @@ namespace MCPForUnityTests.Editor.Resources
                     Object.DestroyImmediate(second);
                 if (mesh != null)
                     Object.DestroyImmediate(mesh);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ColliderInspectionPreservesEmptyAndAssignedMaterial(bool evaluateGetters)
+        {
+            var go = new GameObject("ColliderInspection");
+            var collider = go.AddComponent<BoxCollider>();
+            var assigned = new PhysicsMaterialType("Shared collider material");
+            try
+            {
+                foreach (var expected in new[] { null, assigned })
+                {
+                    collider.sharedMaterial = expected;
+                    var snapshot = JObject.FromObject(GameObjectSerializer.GetComponentData(collider, true, evaluateGetters));
+                    Assert.AreSame(expected, collider.sharedMaterial);
+                    var properties = snapshot["properties"];
+                    Assert.IsNotNull(properties["material"]);
+                    Assert.IsTrue(JToken.DeepEquals(properties["material"], properties["sharedMaterial"]));
+                    if (expected == null)
+                        Assert.AreEqual(JTokenType.Null, properties["material"].Type);
+                    else
+                        Assert.AreEqual(expected.GetInstanceIDCompat(), properties["material"]["instanceID"].Value<int>());
+                }
+            }
+            finally
+            {
+                if (collider.sharedMaterial != null && collider.sharedMaterial != assigned)
+                    Object.DestroyImmediate(collider.sharedMaterial);
+                Object.DestroyImmediate(go);
+                Object.DestroyImmediate(assigned);
             }
         }
 
