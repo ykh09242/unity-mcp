@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 from typing import Literal
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 import asyncio
 
 import pytest
@@ -202,12 +202,12 @@ async def test_resource_catalog_keeps_per_call_project_selection(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_activation_can_return_schema_and_declared_readiness(monkeypatch):
-    def feature(action: Literal["capabilities", "edit"]):
-        return action
+    from fastmcp.tools import Tool
 
-    descriptor = {"name": "feature", "inputSchema": {"type": "object"}}
-    definition = Mock()
-    definition.to_mcp_tool.return_value.model_dump.return_value = descriptor
+    def feature(action: Literal["capabilities", "edit"]):
+        pytest.fail(f"Inspecting the schema invoked {action}")
+
+    definition = Tool.from_function(feature)
     discovery = SimpleNamespace(
         definitions={"feature": definition}, update=AsyncMock(return_value=True)
     )
@@ -222,7 +222,9 @@ async def test_activation_can_return_schema_and_declared_readiness(monkeypatch):
         lambda: [{"name": "feature", "group": "test", "func": feature}],
     )
     result = await module.manage_tools(ctx, "activate", tool="feature", include_schema=True)
-    assert result["description"]["tool"] == descriptor
+    descriptor = result["description"]["tool"]
+    assert descriptor == definition.to_mcp_tool().model_dump(mode="json", exclude_none=True)
+    assert descriptor["input_schema"]["properties"]["action"]["enum"] == ["capabilities", "edit"]
     assert result["client_inventory_status"] == "unconfirmed"
     assert result["readiness"] == {
         "status": "unobserved",
