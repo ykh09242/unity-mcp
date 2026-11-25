@@ -359,7 +359,11 @@ async def test_cli_doctor_checks_last_name_in_an_actual_sdk_listing(
             )
             assert result.exit_code == 0, (result.stdout, result.exception)
             receipt = json.loads(result.stdout)
-            assert receipt["tool_inventory"]["received"] is expected
+            assert receipt["tool_inventory"]["received"] is expected, (
+                receipt["tool_inventory"],
+                [cursor for cursor, _ in page_requests],
+                trace,
+            )
             assert receipt["connection_verified"] is True
     assert trace.count("tools/list") == (2 * len(pages) if paged else 2)
     assert "tools/call" not in trace

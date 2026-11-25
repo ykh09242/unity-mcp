@@ -315,7 +315,7 @@ async def live_mcp(
                 lifespan="on",
                 log_config=None,
                 access_log=False,
-                timeout_keep_alive=0.1,
+                # Keep the normal HTTP keep-alive while the SDK reuses its connection.
                 timeout_graceful_shutdown=0.2,
             )
         )
