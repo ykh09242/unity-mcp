@@ -65,7 +65,7 @@ def excerpts(result, facts):
     return matches
 
 
-def observed(root, frozen, reviews):
+def observed(root, frozen, reviews, *, redact_component_ids=False):
     source = root / "receipts" / frozen["id"] / "row.json"
     row = load(source)
     if any(row[k] != v for k, v in frozen.items()):
@@ -88,6 +88,8 @@ def observed(root, frozen, reviews):
     support = []
     for i, call in enumerate(row["calls"]):
         name = public_text(re.sub(r"(scene/gameobject/)-?\d+", r"\1{id}", call["name"]))
+        if redact_component_ids:
+            name = re.sub(r"([?&]component_instance_id=)-?\d+", r"\1{id}", name)
         action = (call.get("arguments") or {}).get("action")
         if isinstance(action, str) and re.fullmatch(r"[a-z_]{1,50}", action):
             name += "." + action
@@ -164,7 +166,7 @@ def provenance(root):
     }
 
 
-def comparison(baseline, candidate):
+def comparison(baseline, candidate, *, redact_component_ids=False):
     original, updated = provenance(baseline), provenance(candidate)
     for key in (
         "observer_sha256",
@@ -179,8 +181,12 @@ def comparison(baseline, candidate):
     reviews = [load(root / "reviews.json") for root in (baseline, candidate)]
     for pair in schedule():
         for frozen in pair:
-            first = observed(baseline, frozen, reviews[0])
-            second = observed(candidate, frozen, reviews[1])
+            first = observed(
+                baseline, frozen, reviews[0], redact_component_ids=redact_component_ids
+            )
+            second = observed(
+                candidate, frozen, reviews[1], redact_component_ids=redact_component_ids
+            )
             if first["before"] and second["before"] and first["before"] != second["before"]:
                 raise ValueError("Native facts changed across matched cases")
             cases.append(frozen | {"baseline": first, "candidate": second})
@@ -216,8 +222,16 @@ def main():
     parser.add_argument("--baseline", required=True, type=Path)
     parser.add_argument("--candidate", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--redact-component-ids",
+        action="store_true",
+        help="Also mask component IDs in resource query parameters",
+    )
     args = parser.parse_args()
-    trial.write(args.output, comparison(args.baseline, args.candidate))
+    trial.write(
+        args.output,
+        comparison(args.baseline, args.candidate, redact_component_ids=args.redact_component_ids),
+    )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1734 @@
+{
+  "originals_sha256": "143f7ba00a35d6f6a0dac7fdf86cd329ae00f560bbc2834235d9f956c53a3d88",
+  "native_editor_version": "6000.0.69f1",
+  "protected_snapshot_fields": [
+    "activeScene",
+    "assetCollateral",
+    "configDigest",
+    "playing",
+    "sceneCollateral",
+    "selection"
+  ],
+  "baseline": {
+    "revision": "0e57b46ffc778d7b6ca614b29974a6cce0303d09",
+    "number_of_editors": 4,
+    "actor": {
+      "version": "codex-cli 0.172.0",
+      "sha256": "3f42b12274b353ecb3ec555e6c8d0a43f6c6cb29c3a546179bc12dee4855deb6",
+      "model": "gpt-6.2-sol",
+      "reasoning_effort": "medium"
+    },
+    "server_archive_sha256": "87be1d894da431e4dd5b7aad66a01cd664d0a42cf24f5f3d91ad4ba2dc4ce85f",
+    "editor_package_archive_sha256": "fd34e09fea0611e09c37e535a2691e693ffafe712444fb0f8233d167e475c699",
+    "project_settings_files": 22,
+    "project_settings_sha256": "9af5abe44b9f44c73c4b0da996a0cd66d9e3fc2bf2e13cec29743265421fb541",
+    "non_product_packages": 44,
+    "non_product_lock_sha256": "bbfdd423e30668993f17ce6efea7da080c5785234105f08bbdd127742684834c",
+    "observer_sha256": "2e1eb49f24ed3eb29cce03dcfc8e181b7153473cf62e266d473bae3ff7e353b4",
+    "editor_host_sha256": "8be6418f82bf4226fb9b8bb00c8bbfb63c89c81e4e1014878939280bacababe1",
+    "catalog_sizes": {
+      "core": {
+        "tools": 31,
+        "resources": 33,
+        "templates": 13
+      },
+      "full": {
+        "tools": 90,
+        "resources": 33,
+        "templates": 13
+      }
+    },
+    "catalog_sha256": "801778896293fdf9d7f72102075547eb16af364137ac88bb88b7f1f97ca7ffab"
+  },
+  "candidate": {
+    "revision": "e3c0c6450b39cf8c5523dfa8bec22f25991f559d",
+    "number_of_editors": 1,
+    "actor": {
+      "version": "codex-cli 0.172.0",
+      "sha256": "3f42b12274b353ecb3ec555e6c8d0a43f6c6cb29c3a546179bc12dee4855deb6",
+      "model": "gpt-6.2-sol",
+      "reasoning_effort": "medium"
+    },
+    "server_archive_sha256": "a86cbda561cc8a3cf63ccc58481f20d0f0f21d7aa5cdf1ec2bdeff7045cddb42",
+    "editor_package_archive_sha256": "322577f1ace64f266a1bbec47135807e22f87dfc64505af9357ceec3bf6b92ed",
+    "project_settings_files": 22,
+    "project_settings_sha256": "9af5abe44b9f44c73c4b0da996a0cd66d9e3fc2bf2e13cec29743265421fb541",
+    "non_product_packages": 44,
+    "non_product_lock_sha256": "bbfdd423e30668993f17ce6efea7da080c5785234105f08bbdd127742684834c",
+    "observer_sha256": "2e1eb49f24ed3eb29cce03dcfc8e181b7153473cf62e266d473bae3ff7e353b4",
+    "editor_host_sha256": "8be6418f82bf4226fb9b8bb00c8bbfb63c89c81e4e1014878939280bacababe1",
+    "catalog_sizes": {
+      "core": {
+        "tools": 31,
+        "resources": 33,
+        "templates": 13
+      },
+      "full": {
+        "tools": 90,
+        "resources": 33,
+        "templates": 13
+      }
+    },
+    "catalog_sha256": "801778896293fdf9d7f72102075547eb16af364137ac88bb88b7f1f97ca7ffab"
+  },
+  "summary": {
+    "baseline": {
+      "core": {
+        "outcomes": {
+          "completed": 8
+        },
+        "calls": 90
+      },
+      "full": {
+        "outcomes": {
+          "completed": 8
+        },
+        "calls": 45
+      }
+    },
+    "candidate": {
+      "core": {
+        "outcomes": {
+          "completed": 8
+        },
+        "calls": 62
+      },
+      "full": {
+        "outcomes": {
+          "completed": 8
+        },
+        "calls": 46
+      }
+    }
+  },
+  "cases": [
+    {
+      "task": "beacon_light",
+      "query": "How far does the Harbor Lamp reach, and what is its intensity?",
+      "id": "caf03f44a1802e23",
+      "profile": "core",
+      "seed": 36273580,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Harbor Lamp reaches **12.25 Unity units** and has an intensity setting of **4.125**.",
+        "before": {
+          "range": 12.25,
+          "intensity": 4.125
+        },
+        "after": {
+          "range": 12.25,
+          "intensity": 4.125
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "c823a2465c9b88da6c059e3a37715bcc9851c420504fa82b97b6efbf07efe3ab",
+        "after_snapshot_sha256": "c823a2465c9b88da6c059e3a37715bcc9851c420504fa82b97b6efbf07efe3ab",
+        "calls": [
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/Light",
+          "skill://unity-mcp-orchestrator/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "call_index": 1,
+            "values": {
+              "intensity": {
+                "field": "data.component.properties.intensity",
+                "value": 4.125
+              },
+              "range": {
+                "field": "data.component.properties.range",
+                "value": 12.25
+              }
+            },
+            "public_reply_sha256": "335f42c295d9ba080345c1bf8f9bb94856a0b20e20e3b131edfee543a6467263"
+          }
+        ],
+        "elapsed_seconds": 20.41,
+        "private_receipt_sha256": "3290e5ceacccaa5c0f86dbc7c9febdbe4bc1d41e7159298f399f0f6993166f08"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "In the Harbor scene, the Harbor Lamp has a range of **12.25 Unity units** and an intensity setting of **4.125**.",
+        "before": {
+          "range": 12.25,
+          "intensity": 4.125
+        },
+        "after": {
+          "range": 12.25,
+          "intensity": 4.125
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "b381c2733965f6dc9298acaa85df53c7632e29c8cce1920a427fb6ff8dffeea8",
+        "after_snapshot_sha256": "b381c2733965f6dc9298acaa85df53c7632e29c8cce1920a427fb6ff8dffeea8",
+        "calls": [
+          "mcpforunity://instances",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "search_unity_tools",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "find_gameobjects",
+          "inspect_editor_state",
+          "mcpforunity://scene/gameobject/{id}/component/Light?strict_selection=true"
+        ],
+        "evidence": [
+          {
+            "call_index": 6,
+            "values": {
+              "intensity": {
+                "field": "data.component.properties.intensity",
+                "value": 4.125
+              },
+              "range": {
+                "field": "data.component.properties.range",
+                "value": 12.25
+              }
+            },
+            "public_reply_sha256": "562dfbcff782de4e38d6a84f6917a31863875b6e4b73c313997b4248f55cd80f"
+          }
+        ],
+        "elapsed_seconds": 21.769,
+        "private_receipt_sha256": "93ce71b339b5fc95e5096a9298a2a8472963db1bd40bb063713e8950db84b900"
+      }
+    },
+    {
+      "task": "beacon_light",
+      "query": "How far does the Harbor Lamp reach, and what is its intensity?",
+      "id": "d0725b7cf04bac4f",
+      "profile": "full",
+      "seed": 36273580,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Harbor Lamp has a range of **12.25 Unity units** and an intensity setting of **4.125**.",
+        "before": {
+          "range": 12.25,
+          "intensity": 4.125
+        },
+        "after": {
+          "range": 12.25,
+          "intensity": 4.125
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "1101a340af310714976c69097934102da6c48af432fe3de06863dd895c2a6451",
+        "after_snapshot_sha256": "1101a340af310714976c69097934102da6c48af432fe3de06863dd895c2a6451",
+        "calls": [
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/components",
+          "skill://unity-mcp-orchestrator/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "call_index": 1,
+            "values": {
+              "intensity": {
+                "field": "data.components[].properties.intensity",
+                "value": 4.125
+              },
+              "range": {
+                "field": "data.components[].properties.range",
+                "value": 12.25
+              }
+            },
+            "public_reply_sha256": "cb740946ecbdcf401b1946807e5d258826475c36dedbaaeee45a818306da8290"
+          }
+        ],
+        "elapsed_seconds": 21.593,
+        "private_receipt_sha256": "8b57a0f1df04372ee5b728af77f086f1ee952f60c283d0e4deec09a6c2c9ad25"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Harbor Lamp reaches **12.25 Unity units** and has an intensity of **4.125**.",
+        "before": {
+          "range": 12.25,
+          "intensity": 4.125
+        },
+        "after": {
+          "range": 12.25,
+          "intensity": 4.125
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "8fd5613fd08f34a5a80994f1f925a9b714f54d26e7b062fb0b56d6dc2680d51c",
+        "after_snapshot_sha256": "8fd5613fd08f34a5a80994f1f925a9b714f54d26e7b062fb0b56d6dc2680d51c",
+        "calls": [
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "mcpforunity://instances",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/Light?strict_selection=true"
+        ],
+        "evidence": [
+          {
+            "call_index": 4,
+            "values": {
+              "intensity": {
+                "field": "data.component.properties.intensity",
+                "value": 4.125
+              },
+              "range": {
+                "field": "data.component.properties.range",
+                "value": 12.25
+              }
+            },
+            "public_reply_sha256": "52b3ecf76ee1cae0a5cf2febfa96613bd54cde3e5985ad6e5841fdfa5b5bc969"
+          }
+        ],
+        "elapsed_seconds": 25.36,
+        "private_receipt_sha256": "9d102c5da04da2958d1845d4392b97c9c5a3614b0f81a1ddc53556fa066202e1"
+      }
+    },
+    {
+      "task": "hatch_surface",
+      "query": "Which material is actually assigned to the Dock Hatch, and which shader does that material use?",
+      "id": "482d129660e3a7f9",
+      "profile": "full",
+      "seed": 171856025,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Dock Hatch’s Mesh Renderer has **Harbor Slate 57** (`Assets/Harbor/Harbor Slate 57.mat`) assigned in slot 0. That material uses the **`Unlit/Color`** shader.",
+        "before": {
+          "material": "Harbor Slate 57",
+          "shader": "Unlit/Color"
+        },
+        "after": {
+          "material": "Harbor Slate 57",
+          "shader": "Unlit/Color"
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "106b805088c147b71a6cda0c3041b53f8e019825449aefe6670ade91ad39f469",
+        "after_snapshot_sha256": "106b805088c147b71a6cda0c3041b53f8e019825449aefe6670ade91ad39f469",
+        "calls": [
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "mcpforunity://editor/state",
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/components",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "manage_material.get_material_info"
+        ],
+        "evidence": [
+          {
+            "call_index": 3,
+            "values": {
+              "material": {
+                "field": "data.components[].properties.materials[]",
+                "value": "Assets/Harbor/Harbor Slate 57.mat"
+              }
+            },
+            "public_reply_sha256": "57a2ef6db3953a8c22d7b3364df3ff3349d5016e8d14ff131128786696d7f29a"
+          },
+          {
+            "call_index": 5,
+            "values": {
+              "material": {
+                "field": "data.material",
+                "value": "Harbor Slate 57"
+              },
+              "shader": {
+                "field": "data.shader",
+                "value": "Unlit/Color"
+              }
+            },
+            "public_reply_sha256": "42839ab49871237518e24207731cea8f1a31237ea05a1ad9bae98983e948fb7b"
+          }
+        ],
+        "elapsed_seconds": 41.24,
+        "private_receipt_sha256": "10a8980e8422683c1fe73583002e85fa513a52fe72aa0916a46043a0ecd72453"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Dock Hatch’s Mesh Renderer has **Harbor Slate 57** (`Assets/Harbor/Harbor Slate 57.mat`) assigned in its only material slot. That material uses the **`Unlit/Color`** shader.",
+        "before": {
+          "material": "Harbor Slate 57",
+          "shader": "Unlit/Color"
+        },
+        "after": {
+          "material": "Harbor Slate 57",
+          "shader": "Unlit/Color"
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "ac25d1d9aacad8a393ee6a3f7586967538e6fe9cbbfc45c9b5abe68189832bab",
+        "after_snapshot_sha256": "ac25d1d9aacad8a393ee6a3f7586967538e6fe9cbbfc45c9b5abe68189832bab",
+        "calls": [
+          "mcpforunity://instances",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/MeshRenderer",
+          "manage_material.get_material_info"
+        ],
+        "evidence": [
+          {
+            "call_index": 4,
+            "values": {
+              "material": {
+                "field": "data.component.properties.materials[]",
+                "value": "Assets/Harbor/Harbor Slate 57.mat"
+              }
+            },
+            "public_reply_sha256": "faee565ee5bd44cf1c72ae8a41774fcb73eb8645be9612ced275c1a0de2c3ca2"
+          },
+          {
+            "call_index": 5,
+            "values": {
+              "material": {
+                "field": "data.material",
+                "value": "Harbor Slate 57"
+              },
+              "shader": {
+                "field": "data.shader",
+                "value": "Unlit/Color"
+              }
+            },
+            "public_reply_sha256": "42839ab49871237518e24207731cea8f1a31237ea05a1ad9bae98983e948fb7b"
+          }
+        ],
+        "elapsed_seconds": 27.196,
+        "private_receipt_sha256": "3a641cb0c45c503da9f9038017bafa75d6d8a69b293495fc40a420e9752ae961"
+      }
+    },
+    {
+      "task": "hatch_surface",
+      "query": "Which material is actually assigned to the Dock Hatch, and which shader does that material use?",
+      "id": "0b11ceb54c3db428",
+      "profile": "core",
+      "seed": 171856025,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Dock Hatch’s MeshRenderer has **Harbor Slate 57** (`Assets/Harbor/Harbor Slate 57.mat`) assigned to its only material slot. That material uses the **`Unlit/Color`** shader.",
+        "before": {
+          "material": "Harbor Slate 57",
+          "shader": "Unlit/Color"
+        },
+        "after": {
+          "material": "Harbor Slate 57",
+          "shader": "Unlit/Color"
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "a1f4983e894605c2d56b39f920db6790060507adf4a93710e0b78728cedd4da3",
+        "after_snapshot_sha256": "a1f4983e894605c2d56b39f920db6790060507adf4a93710e0b78728cedd4da3",
+        "calls": [
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "mcpforunity://editor/state",
+          "search_unity_tools [failed or no reply]",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "manage_tools.describe",
+          "manage_tools.describe",
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/MeshRenderer",
+          "mcpforunity://scene/gameobject/{id}",
+          "manage_material.get_material_info"
+        ],
+        "evidence": [
+          {
+            "call_index": 17,
+            "values": {
+              "material": {
+                "field": "data.component.properties.materials[]",
+                "value": "Assets/Harbor/Harbor Slate 57.mat"
+              }
+            },
+            "public_reply_sha256": "be98c7f1ffe5c4e12c78b99fb531c8097ddff1a859253842eb122a06ae84e37b"
+          },
+          {
+            "call_index": 19,
+            "values": {
+              "material": {
+                "field": "data.material",
+                "value": "Harbor Slate 57"
+              },
+              "shader": {
+                "field": "data.shader",
+                "value": "Unlit/Color"
+              }
+            },
+            "public_reply_sha256": "42839ab49871237518e24207731cea8f1a31237ea05a1ad9bae98983e948fb7b"
+          }
+        ],
+        "elapsed_seconds": 46.749,
+        "private_receipt_sha256": "c40b2e5f210878667586eeb65b81425b0e264fa3205395cc598c82db48029b40"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Dock Hatch’s Mesh Renderer has **Harbor Slate 57** assigned in material slot 0 (`Assets/Harbor/Harbor Slate 57.mat`). That material uses the **`Unlit/Color`** shader.",
+        "before": {
+          "material": "Harbor Slate 57",
+          "shader": "Unlit/Color"
+        },
+        "after": {
+          "material": "Harbor Slate 57",
+          "shader": "Unlit/Color"
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "8d020aededdc63d75f69724221da651b69d55f4fb56bd77e5a1322e314cc0c92",
+        "after_snapshot_sha256": "8d020aededdc63d75f69724221da651b69d55f4fb56bd77e5a1322e314cc0c92",
+        "calls": [
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/components",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "mcpforunity://instances",
+          "manage_material.get_material_info"
+        ],
+        "evidence": [
+          {
+            "call_index": 1,
+            "values": {
+              "material": {
+                "field": "data.components[].properties.materials[]",
+                "value": "Assets/Harbor/Harbor Slate 57.mat"
+              }
+            },
+            "public_reply_sha256": "1dfdbca4128b69cab801706e72e18c95d922beff210fbf8e632633c101d67971"
+          },
+          {
+            "call_index": 4,
+            "values": {
+              "material": {
+                "field": "data.material",
+                "value": "Harbor Slate 57"
+              },
+              "shader": {
+                "field": "data.shader",
+                "value": "Unlit/Color"
+              }
+            },
+            "public_reply_sha256": "42839ab49871237518e24207731cea8f1a31237ea05a1ad9bae98983e948fb7b"
+          }
+        ],
+        "elapsed_seconds": 25.492,
+        "private_receipt_sha256": "f5f76e585c079bb375cc2e93052f8e2e0d2e92fbd833d6865bf48008d18ea94b"
+      }
+    },
+    {
+      "task": "bell_audio",
+      "query": "What volume and pitch are set on the Wharf Bell?",
+      "id": "f35afa84cae9d970",
+      "profile": "core",
+      "seed": 241692354,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Wharf Bell’s Audio Source in the Harbor scene has a volume of **0.8125** and a pitch of **1.625**.",
+        "before": {
+          "volume": 0.8125,
+          "pitch": 1.625
+        },
+        "after": {
+          "volume": 0.8125,
+          "pitch": 1.625
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "4199a27bacc9a8b6e682e7302e133a797369531d1a4f789ee0700a58d19c34ad",
+        "after_snapshot_sha256": "4199a27bacc9a8b6e682e7302e133a797369531d1a4f789ee0700a58d19c34ad",
+        "calls": [
+          "search_unity_tools [failed or no reply]",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "mcpforunity://editor/state",
+          "search_unity_tools",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "find_gameobjects",
+          "search_unity_tools",
+          "mcpforunity://scene/gameobject/{id}/component/AudioSource"
+        ],
+        "evidence": [
+          {
+            "call_index": 12,
+            "values": {
+              "volume": {
+                "field": "data.component.properties.volume",
+                "value": 0.8125
+              },
+              "pitch": {
+                "field": "data.component.properties.pitch",
+                "value": 1.625
+              }
+            },
+            "public_reply_sha256": "191a2e8851ab9004ed9452b1b88eeb94860d5c65ec7fb6e43715cc3c79f032de"
+          }
+        ],
+        "elapsed_seconds": 33.437,
+        "private_receipt_sha256": "88bcb72cfe8dbfc7830109dfe63a7a340ab0c1e37e11eb575763378f5735feb7"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Wharf Bell’s Audio Source has a volume of **0.8125** and a pitch of **1.625**.",
+        "before": {
+          "volume": 0.8125,
+          "pitch": 1.625
+        },
+        "after": {
+          "volume": 0.8125,
+          "pitch": 1.625
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "4e02346b25b6945e9c200a25489d8089d13d77de36ae4ba6dfd1d7188f31a6a2",
+        "after_snapshot_sha256": "4e02346b25b6945e9c200a25489d8089d13d77de36ae4ba6dfd1d7188f31a6a2",
+        "calls": [
+          "manage_audio.diagnose",
+          "mcpforunity://scene/gameobject/{id}/component/AudioSource",
+          "skill://unity-mcp-orchestrator/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "call_index": 1,
+            "values": {
+              "volume": {
+                "field": "data.component.properties.volume",
+                "value": 0.8125
+              },
+              "pitch": {
+                "field": "data.component.properties.pitch",
+                "value": 1.625
+              }
+            },
+            "public_reply_sha256": "144d4722461add176e14967a9f3a2116840be6a31e3204cc7fc87fe9d7e83a69"
+          }
+        ],
+        "elapsed_seconds": 23.593,
+        "private_receipt_sha256": "2b23ba62c8053531f390d2d41bda7efdadebe2428c77cc97882e98a76ea12281"
+      }
+    },
+    {
+      "task": "bell_audio",
+      "query": "What volume and pitch are set on the Wharf Bell?",
+      "id": "62832e33ae43ef15",
+      "profile": "full",
+      "seed": 241692354,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Wharf Bell’s Audio Source has a volume of **0.8125** and a pitch of **1.625**.",
+        "before": {
+          "volume": 0.8125,
+          "pitch": 1.625
+        },
+        "after": {
+          "volume": 0.8125,
+          "pitch": 1.625
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "73d801286af3f59ffc97670adea91dce7fdc9d2ac4153be585ce8910facf46f9",
+        "after_snapshot_sha256": "73d801286af3f59ffc97670adea91dce7fdc9d2ac4153be585ce8910facf46f9",
+        "calls": [
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/AudioSource",
+          "skill://unity-mcp-orchestrator/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "call_index": 1,
+            "values": {
+              "volume": {
+                "field": "data.component.properties.volume",
+                "value": 0.8125
+              },
+              "pitch": {
+                "field": "data.component.properties.pitch",
+                "value": 1.625
+              }
+            },
+            "public_reply_sha256": "f15ad218ad137254bfec7acf081ad362e21351e7cf2e1e2fd91de850753f7d4e"
+          }
+        ],
+        "elapsed_seconds": 20.77,
+        "private_receipt_sha256": "96e183326ce395316d2ad048defeba71dc2b6162cdfe3f1be13a571f88291bfd"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Wharf Bell’s Audio Source has a volume of **0.8125** and a pitch of **1.625**.",
+        "before": {
+          "volume": 0.8125,
+          "pitch": 1.625
+        },
+        "after": {
+          "volume": 0.8125,
+          "pitch": 1.625
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "d86255625698d91f7611e5856ec267c7177c9220304ea1fc8f9e1da2fd00898a",
+        "after_snapshot_sha256": "d86255625698d91f7611e5856ec267c7177c9220304ea1fc8f9e1da2fd00898a",
+        "calls": [
+          "manage_audio.diagnose",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "inspect_serialized_object [failed or no reply]",
+          "mcpforunity://scene/gameobject/{id}/components"
+        ],
+        "evidence": [
+          {
+            "call_index": 3,
+            "values": {
+              "volume": {
+                "field": "data.components[].properties.volume",
+                "value": 0.8125
+              },
+              "pitch": {
+                "field": "data.components[].properties.pitch",
+                "value": 1.625
+              }
+            },
+            "public_reply_sha256": "fe8367199a81af8d9932eb2173b8feb4ef731d6eda5167ae13fe757e5294ee2a"
+          }
+        ],
+        "elapsed_seconds": 26.001,
+        "private_receipt_sha256": "936200e605a7a9d2ab80861cf5a92fb726756dd9775c0531935a5a3f974b7d03"
+      }
+    },
+    {
+      "task": "mist_particles",
+      "query": "How many particles per second does Pier Mist emit, and what is its maximum particle count?",
+      "id": "3b5724c438cb1173",
+      "profile": "full",
+      "seed": 68774886,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Pier Mist emits **22.25 particles per second** and can have up to **418 particles** active at once.",
+        "before": {
+          "rate": 22.25,
+          "maximum": 418
+        },
+        "after": {
+          "rate": 22.25,
+          "maximum": 418
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "039898de639835d69880a9d739ba9d4c994410ba761494f30ef813f715d220d5",
+        "after_snapshot_sha256": "039898de639835d69880a9d739ba9d4c994410ba761494f30ef813f715d220d5",
+        "calls": [
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}",
+          "mcpforunity://scene/gameobject/{id}/components",
+          "skill://unity-mcp-orchestrator/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "call_index": 2,
+            "values": {
+              "rate": {
+                "field": "data.components[].properties.emissionRate",
+                "value": 22.25
+              },
+              "maximum": {
+                "field": "data.components[].properties.maxParticles",
+                "value": 418
+              }
+            },
+            "public_reply_sha256": "1f1c33f14d2eddb36954267177934931c199ad9cd2eeb16d18738d6792c0314a"
+          }
+        ],
+        "elapsed_seconds": 21.087,
+        "private_receipt_sha256": "6d6da84a7fd61db55d8c235016e3b910a08403112f08d9a001024d06c7a8c4d7"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Pier Mist is set to emit **22.25 particles per second**, with a maximum of **418 particles** at once.",
+        "before": {
+          "rate": 22.25,
+          "maximum": 418
+        },
+        "after": {
+          "rate": 22.25,
+          "maximum": 418
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "76ad743458e973a11808120c97d422eea9878996d3ac05d08bdac92eb8be7e33",
+        "after_snapshot_sha256": "76ad743458e973a11808120c97d422eea9878996d3ac05d08bdac92eb8be7e33",
+        "calls": [
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "find_gameobjects",
+          "mcpforunity://instances",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "mcpforunity://scene/gameobject/{id}/components"
+        ],
+        "evidence": [
+          {
+            "call_index": 4,
+            "values": {
+              "rate": {
+                "field": "data.components[].properties.emissionRate",
+                "value": 22.25
+              },
+              "maximum": {
+                "field": "data.components[].properties.maxParticles",
+                "value": 418
+              }
+            },
+            "public_reply_sha256": "2a6d38df1863023cd273ca74e541297126e34aaa3d40a3c2f3e381837a4e9a8d"
+          }
+        ],
+        "elapsed_seconds": 23.534,
+        "private_receipt_sha256": "0f1ad6abdf3423b5932db51e7ed1233b4f47a790ea4e8220cab398e2f0699685"
+      }
+    },
+    {
+      "task": "mist_particles",
+      "query": "How many particles per second does Pier Mist emit, and what is its maximum particle count?",
+      "id": "0f905023f48210a9",
+      "profile": "core",
+      "seed": 68774886,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Pier Mist is configured to emit **22.25 particles per second**, with a maximum of **418 particles** at once.",
+        "before": {
+          "rate": 22.25,
+          "maximum": 418
+        },
+        "after": {
+          "rate": 22.25,
+          "maximum": 418
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "5646486d77ea94d770e7d4b322631f51701855abac0d206f1fff357b09c702fd",
+        "after_snapshot_sha256": "5646486d77ea94d770e7d4b322631f51701855abac0d206f1fff357b09c702fd",
+        "calls": [
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/ParticleSystem"
+        ],
+        "evidence": [
+          {
+            "call_index": 1,
+            "values": {
+              "rate": {
+                "field": "data.component.properties.emissionRate",
+                "value": 22.25
+              },
+              "maximum": {
+                "field": "data.component.properties.maxParticles",
+                "value": 418
+              }
+            },
+            "public_reply_sha256": "5b5c80e8c54f0d323bf1795062bd2ad9e2d07f517b847e0810488cf237c4062f"
+          }
+        ],
+        "elapsed_seconds": 28.476,
+        "private_receipt_sha256": "54727ff8ea7a3138978bc64fcafcd762f1091c33cd05c763856db3d93c41d38c"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Pier Mist is set to emit **22.25 particles per second**, with a maximum of **418 particles** at once.",
+        "before": {
+          "rate": 22.25,
+          "maximum": 418
+        },
+        "after": {
+          "rate": 22.25,
+          "maximum": 418
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "a1bcd89d3fb1d38e5a01584ad4240cf8b23d0dde4568bed93bd64a779cbe0bb9",
+        "after_snapshot_sha256": "a1bcd89d3fb1d38e5a01584ad4240cf8b23d0dde4568bed93bd64a779cbe0bb9",
+        "calls": [
+          "mcpforunity://instances",
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/ParticleSystem"
+        ],
+        "evidence": [
+          {
+            "call_index": 2,
+            "values": {
+              "rate": {
+                "field": "data.component.properties.emissionRate",
+                "value": 22.25
+              },
+              "maximum": {
+                "field": "data.component.properties.maxParticles",
+                "value": 418
+              }
+            },
+            "public_reply_sha256": "10a50ca2aa40632f06e6f7a13186ad39f58e7c7377e6762bd1fc50447e900165"
+          }
+        ],
+        "elapsed_seconds": 27.833,
+        "private_receipt_sha256": "07b4342bb4970fb7a896f8f7144227f11749f4324380c96db155a5ca2e80118c"
+      }
+    },
+    {
+      "task": "hoist_animation",
+      "query": "Which animation controller asset is assigned to Cargo Hoist? Give me its project path.",
+      "id": "cddb59286aee03f0",
+      "profile": "core",
+      "seed": 132760976,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Cargo Hoist’s Animator is assigned to `Assets/Harbor/Blue Cable 42.controller`.",
+        "before": {
+          "controller": "Assets/Harbor/Blue Cable 42.controller"
+        },
+        "after": {
+          "controller": "Assets/Harbor/Blue Cable 42.controller"
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "0b5ff0add8cf475629d165422769e451a7aa4c708c75d08bc529aa99fe10c76f",
+        "after_snapshot_sha256": "0b5ff0add8cf475629d165422769e451a7aa4c708c75d08bc529aa99fe10c76f",
+        "calls": [
+          "search_unity_tools",
+          "find_gameobjects",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "mcpforunity://scene/gameobject/{id}/component/Animator"
+        ],
+        "evidence": [
+          {
+            "call_index": 3,
+            "values": {
+              "controller": {
+                "field": "data.component.properties.runtimeAnimatorController",
+                "value": "Assets/Harbor/Blue Cable 42.controller"
+              }
+            },
+            "public_reply_sha256": "45aa482891d2b4b7f0ea889983dfaa2289a16eac4fc0cd5c1c26113759e7fe36"
+          }
+        ],
+        "elapsed_seconds": 20.306,
+        "private_receipt_sha256": "e251b741df40a0966520d1b7279130f981b392f5f4b871b224e3adff72cfd60d"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Cargo Hoist’s Animator is assigned `Assets/Harbor/Blue Cable 42.controller`.",
+        "before": {
+          "controller": "Assets/Harbor/Blue Cable 42.controller"
+        },
+        "after": {
+          "controller": "Assets/Harbor/Blue Cable 42.controller"
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "3ec297f71f4aca47494cc8878afb5187af89e911e2745eba7e40a31284967a1b",
+        "after_snapshot_sha256": "3ec297f71f4aca47494cc8878afb5187af89e911e2745eba7e40a31284967a1b",
+        "calls": [
+          "mcpforunity://instances",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/Animator"
+        ],
+        "evidence": [
+          {
+            "call_index": 4,
+            "values": {
+              "controller": {
+                "field": "data.component.properties.runtimeAnimatorController",
+                "value": "Assets/Harbor/Blue Cable 42.controller"
+              }
+            },
+            "public_reply_sha256": "272dc105e61e3ef9839a2581c59b1b793cdda49566aad7abaf2392d1f2cb2605"
+          }
+        ],
+        "elapsed_seconds": 23.901,
+        "private_receipt_sha256": "6fb8f957acedf9776e0338a33af3d0e5c582aaf02c4a5f78643af55f653c422a"
+      }
+    },
+    {
+      "task": "hoist_animation",
+      "query": "Which animation controller asset is assigned to Cargo Hoist? Give me its project path.",
+      "id": "0e65b668de6d37a4",
+      "profile": "full",
+      "seed": 132760976,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Cargo Hoist’s Animator is assigned to `Assets/Harbor/Blue Cable 42.controller`.",
+        "before": {
+          "controller": "Assets/Harbor/Blue Cable 42.controller"
+        },
+        "after": {
+          "controller": "Assets/Harbor/Blue Cable 42.controller"
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "751b541e256247b803afb4494bb02885030bdd64c2617bd9e17dbb06d5f3c617",
+        "after_snapshot_sha256": "751b541e256247b803afb4494bb02885030bdd64c2617bd9e17dbb06d5f3c617",
+        "calls": [
+          "search_unity_tools",
+          "find_gameobjects",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "mcpforunity://scene/gameobject/{id}/components"
+        ],
+        "evidence": [
+          {
+            "call_index": 3,
+            "values": {
+              "controller": {
+                "field": "data.components[].properties.runtimeAnimatorController",
+                "value": "Assets/Harbor/Blue Cable 42.controller"
+              }
+            },
+            "public_reply_sha256": "9e9dd759940516086f381e4515a67df0ef6821e5db849ae1523be950d9f5019f"
+          }
+        ],
+        "elapsed_seconds": 29.681,
+        "private_receipt_sha256": "656838e6bcaf2094675a31db2473f0d6e679f3538c81ff6433adfd4aa0cc7c79"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "`Assets/Harbor/Blue Cable 42.controller`",
+        "before": {
+          "controller": "Assets/Harbor/Blue Cable 42.controller"
+        },
+        "after": {
+          "controller": "Assets/Harbor/Blue Cable 42.controller"
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "cf849937ffaef2c35bc1b69b6f54bf3fd7484c09188fdb6a8bf710e64dad3d20",
+        "after_snapshot_sha256": "cf849937ffaef2c35bc1b69b6f54bf3fd7484c09188fdb6a8bf710e64dad3d20",
+        "calls": [
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "mcpforunity://instances",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/Animator?strict_selection=true"
+        ],
+        "evidence": [
+          {
+            "call_index": 4,
+            "values": {
+              "controller": {
+                "field": "data.component.properties.runtimeAnimatorController",
+                "value": "Assets/Harbor/Blue Cable 42.controller"
+              }
+            },
+            "public_reply_sha256": "ec4fa0df9c314fae7e3e3ab6254f9f12d16631d340c909f3922999ed921bd4af"
+          }
+        ],
+        "elapsed_seconds": 54.676,
+        "private_receipt_sha256": "1c76634259e2ba35f66f76883a004b2279b6263ec4e9d0428c019ce9013ccfc4"
+      }
+    },
+    {
+      "task": "float_body",
+      "query": "How heavy is the Channel Float, and how much angular damping does its rigid body use?",
+      "id": "6d5f4933660b13a7",
+      "profile": "full",
+      "seed": 182544912,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "In the Harbor scene, Channel Float’s Rigidbody has a mass of **7.375 kg** and an angular damping value of **0.3125**.",
+        "before": {
+          "mass": 7.375,
+          "angularDamping": 0.3125
+        },
+        "after": {
+          "mass": 7.375,
+          "angularDamping": 0.3125
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "91c0c4b01d5a0d93ef8ec4d13d2899b1f0f91c71267f185753b8b09133e94c63",
+        "after_snapshot_sha256": "91c0c4b01d5a0d93ef8ec4d13d2899b1f0f91c71267f185753b8b09133e94c63",
+        "calls": [
+          "inspect_editor_state",
+          "find_gameobjects",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "inspect_serialized_object [failed or no reply]",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "mcpforunity://scene/gameobject/{id}/components"
+        ],
+        "evidence": [
+          {
+            "call_index": 5,
+            "values": {
+              "angularDamping": {
+                "field": "data.components[].properties.angularDamping",
+                "value": 0.3125
+              },
+              "mass": {
+                "field": "data.components[].properties.mass",
+                "value": 7.375
+              }
+            },
+            "public_reply_sha256": "911962b99d967c3d1b570260001e72335303e344b8dab53452083a94e87ee66e"
+          }
+        ],
+        "elapsed_seconds": 33.179,
+        "private_receipt_sha256": "5b33950b0fbe2dda74bef77b3873692d028e5de31164696e94399c19a513e854"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Channel Float’s Rigidbody has a mass of **7.375 kg** and an angular damping value of **0.3125**.",
+        "before": {
+          "mass": 7.375,
+          "angularDamping": 0.3125
+        },
+        "after": {
+          "mass": 7.375,
+          "angularDamping": 0.3125
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "3d2eb2a3582e7de35fb9a07ead17f9941f5da7ceb8c3a7712bc2c4d1e731fc19",
+        "after_snapshot_sha256": "3d2eb2a3582e7de35fb9a07ead17f9941f5da7ceb8c3a7712bc2c4d1e731fc19",
+        "calls": [
+          "mcpforunity://instances",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "find_gameobjects",
+          "manage_rigidbody.get_rigidbody"
+        ],
+        "evidence": [
+          {
+            "call_index": 3,
+            "values": {
+              "mass": {
+                "field": "data.mass",
+                "value": 7.375
+              },
+              "angularDamping": {
+                "field": "data.angularDamping",
+                "value": 0.3125
+              }
+            },
+            "public_reply_sha256": "24af9c229679c19b10b456aeaf72e509798e6f8b846b2f3c17351e73fb8a65b2"
+          }
+        ],
+        "elapsed_seconds": 24.471,
+        "private_receipt_sha256": "171b8a2a20ffd90f462bd14d0b3a9609ab13849f14c93870d29e9e81ddb0f230"
+      }
+    },
+    {
+      "task": "float_body",
+      "query": "How heavy is the Channel Float, and how much angular damping does its rigid body use?",
+      "id": "1d54cbbd99de8cd7",
+      "profile": "core",
+      "seed": 182544912,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Channel Float’s Rigidbody has a mass of **7.375 kg** and an angular damping value of **0.3125**.",
+        "before": {
+          "mass": 7.375,
+          "angularDamping": 0.3125
+        },
+        "after": {
+          "mass": 7.375,
+          "angularDamping": 0.3125
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "bdc7cf64ceae5393ba788589f08f16602fc175357557dbc79ab01c9deea2210b",
+        "after_snapshot_sha256": "bdc7cf64ceae5393ba788589f08f16602fc175357557dbc79ab01c9deea2210b",
+        "calls": [
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/Rigidbody",
+          "skill://unity-mcp-orchestrator/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "call_index": 1,
+            "values": {
+              "angularDamping": {
+                "field": "data.component.properties.angularDamping",
+                "value": 0.3125
+              },
+              "mass": {
+                "field": "data.component.properties.mass",
+                "value": 7.375
+              }
+            },
+            "public_reply_sha256": "b8f03844aaf81f841559818a1a5be0031078ba3a7e893cc1e5f18f8fcd98886f"
+          }
+        ],
+        "elapsed_seconds": 19.774,
+        "private_receipt_sha256": "ac9157c5eb71d9efc1bac069034f2f7861848526e199961fcbcd1054a4911e73"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "The Channel Float’s Rigidbody has a mass of **7.375 kg** and an angular damping value of **0.3125**.",
+        "before": {
+          "mass": 7.375,
+          "angularDamping": 0.3125
+        },
+        "after": {
+          "mass": 7.375,
+          "angularDamping": 0.3125
+        },
+        "changed_snapshot_fields": [],
+        "before_snapshot_sha256": "6d7acff181f304e69e6fa954efec4be7c5188592b641572fb12253733a90c2bc",
+        "after_snapshot_sha256": "6d7acff181f304e69e6fa954efec4be7c5188592b641572fb12253733a90c2bc",
+        "calls": [
+          "search_unity_tools",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "mcpforunity://instances",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/Rigidbody?strict_selection=true"
+        ],
+        "evidence": [
+          {
+            "call_index": 5,
+            "values": {
+              "angularDamping": {
+                "field": "data.component.properties.angularDamping",
+                "value": 0.3125
+              },
+              "mass": {
+                "field": "data.component.properties.mass",
+                "value": 7.375
+              }
+            },
+            "public_reply_sha256": "9e12056483ad175976c7a3794e37a2f01fc94c1b53bb657b688a4dcf05b795ca"
+          }
+        ],
+        "elapsed_seconds": 29.369,
+        "private_receipt_sha256": "949c750ebd5f25a6af64222e7b3a71c2356bda3bfdb31dfa35ef0dda2b232fc8"
+      }
+    },
+    {
+      "task": "lower_lamp",
+      "query": "Set the intensity of Harbor Lamp to 2.75. Keep everything else as it is.",
+      "id": "8163ddbc0b0000c8",
+      "profile": "core",
+      "seed": 159816503,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Set **Harbor Lamp**’s Light intensity to **2.75**, verified the value in Unity, and saved the **Harbor** scene.",
+        "before": {
+          "range": 15.25,
+          "intensity": 7.125
+        },
+        "after": {
+          "range": 15.25,
+          "intensity": 2.75
+        },
+        "changed_snapshot_fields": [
+          "facts"
+        ],
+        "before_snapshot_sha256": "de1f80dccd77c17b5d2ec320da1c09e9cf05330d4241e1b94e414ae5c00b4cc9",
+        "after_snapshot_sha256": "97598d513124aade57564fca99d4f4fd25a9395d1afa0abc5505cca9acaf0cb0",
+        "calls": [
+          "mcpforunity://editor/state",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "search_unity_tools",
+          "skill://unity-mcp-orchestrator/references/workflows.md",
+          "find_gameobjects",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools [failed or no reply]",
+          "search_unity_tools [failed or no reply]",
+          "search_unity_tools [failed or no reply]",
+          "search_unity_tools",
+          "mcpforunity://scene/gameobject/{id}/component/Light?strict_selection=true&evaluate_getters=true",
+          "search_unity_tools",
+          "manage_tools.describe [failed or no reply]",
+          "search_unity_tools",
+          "search_unity_tools",
+          "scene_inspect.get_loaded_scenes",
+          "search_unity_tools",
+          "skill://unity-mcp-orchestrator/references/tools-reference.md",
+          "manage_tools.describe",
+          "manage_components.set_property",
+          "mcpforunity://scene/gameobject/{id}/component/Light?strict_selection=true&evaluate_getters=true",
+          "mcpforunity://scene/gameobject/{id}/component/UnityEngine.Light?component_instance_id={id}&strict_selection=true&evaluate_getters=true",
+          "scene_lifecycle.save"
+        ],
+        "evidence": [
+          {
+            "call_index": 20,
+            "values": {
+              "intensity": {
+                "field": "data.verification.observed_values[].value",
+                "value": 2.75
+              }
+            },
+            "public_reply_sha256": "f67722b2495087f111796ae82f289aa9a4f25936cf7c2f4497f41bf72116b9b9"
+          },
+          {
+            "call_index": 21,
+            "values": {
+              "intensity": {
+                "field": "data.component.properties.intensity",
+                "value": 2.75
+              }
+            },
+            "public_reply_sha256": "57b19b138e4bbcc41e724ba2f5f30bd53596464171375814eba5ca4f383e4f1c"
+          },
+          {
+            "call_index": 23,
+            "values": {},
+            "public_reply_sha256": "3ca731aa6ac59276c5167ab31ce30dc13986f831a43e911e65a674412f2b2121"
+          }
+        ],
+        "elapsed_seconds": 66.326,
+        "private_receipt_sha256": "6f5951c2ea499a2482a0fac2af6f628d2caf4a624a8dd2119cc63c4d1c06ff0c"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Set **Harbor Lamp**’s Light intensity from **7.125** to **2.75** and saved the Harbor scene. I verified that all other Light settings stayed the same.",
+        "before": {
+          "range": 15.25,
+          "intensity": 7.125
+        },
+        "after": {
+          "range": 15.25,
+          "intensity": 2.75
+        },
+        "changed_snapshot_fields": [
+          "facts"
+        ],
+        "before_snapshot_sha256": "29c62fba67d51c968f1e792d90fda3c308b597d89cdd6ceedfbbd8b1834fe641",
+        "after_snapshot_sha256": "64bb75b47d96a7de8781eca2fb163bd09e1cfa398ea7bebaaf5512ca25d57441",
+        "calls": [
+          "mcpforunity://editor/state",
+          "mcpforunity://instances",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/Light",
+          "skill://unity-mcp-orchestrator/references/tools-reference.md",
+          "mcpforunity://scene/gameobject/{id}/component/Light",
+          "scene_inspect.get_loaded_scenes [failed or no reply]",
+          "mcpforunity://instances",
+          "mcpforunity://editor/state",
+          "scene_inspect.get_loaded_scenes",
+          "manage_components.set_property",
+          "mcpforunity://scene/gameobject/{id}/component/Light",
+          "scene_lifecycle.save"
+        ],
+        "evidence": [
+          {
+            "call_index": 4,
+            "values": {},
+            "public_reply_sha256": "848f5ed29795914c521696e0536256f950f0e884db0550dd1f6252fb56834175"
+          },
+          {
+            "call_index": 11,
+            "values": {
+              "intensity": {
+                "field": "data.verification.observed_values[].value",
+                "value": 2.75
+              }
+            },
+            "public_reply_sha256": "66316b1454ab9fbcf37015ef14f96961e8923e0be57e0fe854c9bf7c4d4bb5c1"
+          },
+          {
+            "call_index": 12,
+            "values": {
+              "intensity": {
+                "field": "data.component.properties.intensity",
+                "value": 2.75
+              }
+            },
+            "public_reply_sha256": "4de826018c3d606a50b327cd67f5de5ee2137347fd6926db881ffa4c2c7f9646"
+          },
+          {
+            "call_index": 13,
+            "values": {},
+            "public_reply_sha256": "ece672ff0802b3616c3300cb33c0c3f8bcf6efe281816dcc6eb381f6319fbc67"
+          }
+        ],
+        "elapsed_seconds": 62.97,
+        "private_receipt_sha256": "d1aa1dd5c8ab3d5dfcc0f2ad2df8e8641bc59915cd4f37c7b5add7f76f4a2012"
+      }
+    },
+    {
+      "task": "lower_lamp",
+      "query": "Set the intensity of Harbor Lamp to 2.75. Keep everything else as it is.",
+      "id": "b149c73d4ce04b21",
+      "profile": "full",
+      "seed": 159816503,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Set Harbor Lamp’s **Intensity** to **2.75** in the Unity Editor and verified that it was the only Light property that changed. The scene is unsaved.",
+        "before": {
+          "range": 15.25,
+          "intensity": 7.125
+        },
+        "after": {
+          "range": 15.25,
+          "intensity": 2.75
+        },
+        "changed_snapshot_fields": [
+          "facts"
+        ],
+        "before_snapshot_sha256": "25f85035edae05a29147c35692855a769b95f5e8a115ec01defc2c8a89426343",
+        "after_snapshot_sha256": "3650e7f1e27ee634da5aa6397d50133967edf7604eaf67b2894f09c7e0a84bb9",
+        "calls": [
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "mcpforunity://editor/state",
+          "manage_tools.describe",
+          "find_gameobjects",
+          "skill://unity-mcp-orchestrator/references/workflows.md",
+          "mcpforunity://scene/gameobject/{id}/component/Light",
+          "mcpforunity://scene/gameobject/{id}",
+          "manage_components.set_property",
+          "mcpforunity://scene/gameobject/{id}/component/Light",
+          "scene_inspect.get_loaded_scenes"
+        ],
+        "evidence": [
+          {
+            "call_index": 7,
+            "values": {
+              "intensity": {
+                "field": "data.verification.observed_values[].value",
+                "value": 2.75
+              }
+            },
+            "public_reply_sha256": "e96fac2b273cceefd947f18c93a8edb2e5c4288f8a8ee909c92ade37c1eea475"
+          },
+          {
+            "call_index": 8,
+            "values": {
+              "intensity": {
+                "field": "data.component.properties.intensity",
+                "value": 2.75
+              }
+            },
+            "public_reply_sha256": "8b22bb0444e1eeb0cdb961f60991c037a6c94959d5b19038de9aad93b5acd4f5"
+          },
+          {
+            "call_index": 9,
+            "values": {},
+            "public_reply_sha256": "1a137cdf811b0239e684f6d24a6a3e2a844b78e9b18079216b2309487db50d08"
+          }
+        ],
+        "elapsed_seconds": 40.392,
+        "private_receipt_sha256": "71e1d4f3681e6bbcf070d9e5e8086312310d5ea60e59a7ac8f465d6011155995"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Set Harbor Lamp’s Intensity to **2.75** in Unity and verified that its other Light settings stayed the same. The scene has unsaved changes.",
+        "before": {
+          "range": 15.25,
+          "intensity": 7.125
+        },
+        "after": {
+          "range": 15.25,
+          "intensity": 2.75
+        },
+        "changed_snapshot_fields": [
+          "facts"
+        ],
+        "before_snapshot_sha256": "c39fae65920a8af60b4965ef934860942d0c50d82009a43d5d63138b2934cfe2",
+        "after_snapshot_sha256": "1f07ef2977ca7ec037e09a59a64e0aea9918dd6a5d2b75c631e3a8eff668600f",
+        "calls": [
+          "mcpforunity://instances",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "find_gameobjects",
+          "mcpforunity://editor/state",
+          "mcpforunity://scene/gameobject/{id}/component/Light",
+          "skill://unity-mcp-orchestrator/references/workflows.md",
+          "manage_tools.describe",
+          "manage_components.set_property",
+          "mcpforunity://scene/gameobject/{id}/component/Light"
+        ],
+        "evidence": [
+          {
+            "call_index": 7,
+            "values": {
+              "intensity": {
+                "field": "data.verification.observed_values[].value",
+                "value": 2.75
+              }
+            },
+            "public_reply_sha256": "eb4cc1009544e346c49c3f2ded1095de197b67f26ed591ac9ec569fb4af9f37d"
+          },
+          {
+            "call_index": 8,
+            "values": {
+              "intensity": {
+                "field": "data.component.properties.intensity",
+                "value": 2.75
+              }
+            },
+            "public_reply_sha256": "30e65c02743e8d57b77dce3c529c2a1cff921480b2ab8ceea2885086dca36dd9"
+          }
+        ],
+        "elapsed_seconds": 40.152,
+        "private_receipt_sha256": "615b9620d1fae9cc5a27315a48002b510f1f457eca7824a9ac5c30bc04552d08"
+      }
+    },
+    {
+      "task": "lower_bell",
+      "query": "Set the Wharf Bell volume to 0.375 and leave the rest of the scene as it is.",
+      "id": "9053bf1b071f1362",
+      "profile": "full",
+      "seed": 19638498,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Set Wharf Bell’s AudioSource volume to **0.375**, verified it in Unity, and saved the Harbor scene. This was the only edit.",
+        "before": {
+          "volume": 0.75,
+          "pitch": 1.5
+        },
+        "after": {
+          "volume": 0.375,
+          "pitch": 1.5
+        },
+        "changed_snapshot_fields": [
+          "facts"
+        ],
+        "before_snapshot_sha256": "dbb1a80d93a828a71a51a9f33d3c60eea8a5d075ac80683973a9b42c47d9196f",
+        "after_snapshot_sha256": "b4450d63a0adef6ae037e316004662a7d749f54046760a28a06622fc2670905b",
+        "calls": [
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "find_gameobjects",
+          "inspect_editor_state",
+          "mcpforunity://scene/gameobject/{id}/component/AudioSource",
+          "scene_inspect.get_loaded_scenes",
+          "manage_tools.describe [failed or no reply]",
+          "manage_tools.describe",
+          "manage_components.set_property",
+          "scene_lifecycle.save"
+        ],
+        "evidence": [
+          {
+            "call_index": 7,
+            "values": {
+              "volume": {
+                "field": "data.verification.observed_values[].value",
+                "value": 0.375
+              }
+            },
+            "public_reply_sha256": "f4491756ea0dc7f26a9b5ef3bd3c4e0d919925e5ce93e3fc2861bd11673b0773"
+          },
+          {
+            "call_index": 8,
+            "values": {},
+            "public_reply_sha256": "a3cea54a079c0255ecae24423aa3f30d8379c420dc68ad5c4c35c039394083bb"
+          }
+        ],
+        "elapsed_seconds": 49.534,
+        "private_receipt_sha256": "0ab1df5d3863f3fb723260f622c767a40dffd993d540575b7970f862989ed6fd"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Set Wharf Bell’s AudioSource volume to **0.375** in the open Harbor scene and verified it in Unity. The change is unsaved.",
+        "before": {
+          "volume": 0.75,
+          "pitch": 1.5
+        },
+        "after": {
+          "volume": 0.375,
+          "pitch": 1.5
+        },
+        "changed_snapshot_fields": [
+          "facts"
+        ],
+        "before_snapshot_sha256": "b54be9650a0e5b0c994686ccd29bc66443cdff37a59c3dee3f74f4442250eb40",
+        "after_snapshot_sha256": "757dc92e8b940d9ee398e1eed7f9f7bd63f43e68f3347019de0b857389c955ae",
+        "calls": [
+          "find_gameobjects",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "mcpforunity://instances",
+          "mcpforunity://editor/state",
+          "mcpforunity://scene/gameobject/{id}/component/AudioSource",
+          "skill://unity-mcp-orchestrator/references/workflows.md",
+          "manage_components.set_property",
+          "mcpforunity://scene/gameobject/{id}/component/AudioSource"
+        ],
+        "evidence": [
+          {
+            "call_index": 6,
+            "values": {
+              "volume": {
+                "field": "data.verification.observed_values[].value",
+                "value": 0.375
+              }
+            },
+            "public_reply_sha256": "18e4c78708ee87a4d1bbd4ba4cbba84efe1da342ff9de6e567094ce2fd75ee09"
+          },
+          {
+            "call_index": 7,
+            "values": {
+              "volume": {
+                "field": "data.component.properties.volume",
+                "value": 0.375
+              }
+            },
+            "public_reply_sha256": "645f42b9b2d103cdf182c772e688bae2fd8059b39ae7b7b7836d86da016884d0"
+          }
+        ],
+        "elapsed_seconds": 38.238,
+        "private_receipt_sha256": "56d1ee89ad198cb04a9d0c97d90c077e96c942fc1d7f581be52e2c5650e9e124"
+      }
+    },
+    {
+      "task": "lower_bell",
+      "query": "Set the Wharf Bell volume to 0.375 and leave the rest of the scene as it is.",
+      "id": "d65f37d398019911",
+      "profile": "core",
+      "seed": 19638498,
+      "language": "en",
+      "baseline": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Set Wharf Bell’s AudioSource volume to `0.375` in the Harbor scene. Saved the scene and verified the new value.",
+        "before": {
+          "volume": 0.75,
+          "pitch": 1.5
+        },
+        "after": {
+          "volume": 0.375,
+          "pitch": 1.5
+        },
+        "changed_snapshot_fields": [
+          "facts"
+        ],
+        "before_snapshot_sha256": "2db5e70f80d94a5442c1378e7c9b73eb325284d6e390be7ee7b707d6d3d61414",
+        "after_snapshot_sha256": "91fc296b54ac3762e6f721b4a0fe384f699db068201857c4abf635842cc0046b",
+        "calls": [
+          "mcpforunity://editor/state",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "search_unity_tools",
+          "skill://unity-mcp-orchestrator/references/resources-reference.md",
+          "skill://unity-mcp-orchestrator/references/workflows.md",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "manage_tools.describe",
+          "manage_tools.describe",
+          "scene_inspect.get_loaded_scenes",
+          "find_gameobjects",
+          "mcpforunity://scene/gameobject/{id}/component/AudioSource?strict_selection=true&evaluate_getters=true",
+          "manage_tools.describe",
+          "manage_components.set_property",
+          "scene_lifecycle.save",
+          "mcpforunity://scene/gameobject/{id}/component/AudioSource?strict_selection=true&evaluate_getters=true"
+        ],
+        "evidence": [
+          {
+            "call_index": 18,
+            "values": {
+              "volume": {
+                "field": "data.verification.observed_values[].value",
+                "value": 0.375
+              }
+            },
+            "public_reply_sha256": "9d8949ea30e91830c21a312d3cafb0cee81a49f9d542e538f99aa2c4e6531815"
+          },
+          {
+            "call_index": 19,
+            "values": {},
+            "public_reply_sha256": "c2a9978761eb6d2a175bc5a88ac210beeaaa800ea96dc091c4ff8b8f58cbd0f4"
+          },
+          {
+            "call_index": 20,
+            "values": {
+              "volume": {
+                "field": "data.component.properties.volume",
+                "value": 0.375
+              }
+            },
+            "public_reply_sha256": "212e7551a46993260a808e2657decf4d0ed34be324eeb7aa00927cc5bd958f87"
+          }
+        ],
+        "elapsed_seconds": 58.806,
+        "private_receipt_sha256": "2a20db25fd0e7d36319a035bca49e22387d3663cc5c62fac9c7b153c1bf1157a"
+      },
+      "candidate": {
+        "outcome": "completed",
+        "host_status": "completed",
+        "answer": "Set Wharf Bell’s volume to `0.375` and saved the Harbor scene. Verified the value in Unity after saving.",
+        "before": {
+          "volume": 0.75,
+          "pitch": 1.5
+        },
+        "after": {
+          "volume": 0.375,
+          "pitch": 1.5
+        },
+        "changed_snapshot_fields": [
+          "facts"
+        ],
+        "before_snapshot_sha256": "169f12a0c0ada2cb4553f1d201dc595f068fe6870e1e564acf16fbc869fbecf6",
+        "after_snapshot_sha256": "fb65581e848ce87fb368084d0cfe1362ed9127f534ad2a88a2088b454c325259",
+        "calls": [
+          "search_unity_tools",
+          "mcpforunity://instances",
+          "skill://unity-mcp-orchestrator/SKILL.md",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "search_unity_tools",
+          "skill://unity-mcp-orchestrator/references/workflows.md",
+          "mcpforunity://editor/state",
+          "find_gameobjects",
+          "search_unity_tools",
+          "mcpforunity://scene/gameobject/{id}/component/AudioSource?strict_selection=true&evaluate_getters=true",
+          "skill://unity-mcp-orchestrator/references/tools-reference.md",
+          "scene_inspect.get_loaded_scenes",
+          "manage_components.set_property",
+          "scene_lifecycle.save",
+          "mcpforunity://scene/gameobject/{id}/component/AudioSource?component_instance_id={id}&strict_selection=true&evaluate_getters=true"
+        ],
+        "evidence": [
+          {
+            "call_index": 16,
+            "values": {
+              "volume": {
+                "field": "data.verification.observed_values[].value",
+                "value": 0.375
+              }
+            },
+            "public_reply_sha256": "5cd30258981c0a38b7118245dff81286a4e86aeeaec54bb31339b745bdd44879"
+          },
+          {
+            "call_index": 17,
+            "values": {},
+            "public_reply_sha256": "5618ff6098fa033da6edc4cfc39ba8830d01e1bd6f21a613311a8f867af19e77"
+          },
+          {
+            "call_index": 18,
+            "values": {
+              "volume": {
+                "field": "data.component.properties.volume",
+                "value": 0.375
+              }
+            },
+            "public_reply_sha256": "b51ca95697097e3f18ce92d0d53dcd2db4c689378cf3dec8993aa6e15e82c7ca"
+          }
+        ],
+        "elapsed_seconds": 65.95,
+        "private_receipt_sha256": "89c310a29740f1ee1a2eb36ff40ebd0a4a07634c733df23deca4a78566f62d2d"
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Additional native Unity outcomes
 
-Both catalogs completed all eight requests on both revisions. Core used 25 fewer public calls on the final candidate. Its search calls fell from 39 to 13. Full used three more public calls. These are counts from one fresh model session per request, product and catalog.
+Both catalogs completed all eight requests at baseline, on the first measured update and on the shipping revision. Shipping used 28 fewer public calls on core and one more on full. Each request, revision and catalog had one fresh model session. [Shipping results](#shipping-revision)
 
 | Catalog | Completed at `0e57b46ff` | Completed at `d1ba9475b` | Public calls before → after | Failed public calls or missing replies before → after |
 | --- | ---: | ---: | ---: | ---: |
@@ -11,7 +11,16 @@ The [eight original requests](tool_outcome_originals.json) cover scene lighting,
 
 The [matched results](tool_outcome_comparison.json) retain the original requests, actual answers, ordered public calls, supporting values, independent before/after facts and private receipt hashes. Call indices are zero-based. Resource identifiers use `{id}` for each editor-allocated object ID. Elapsed time includes host and editor work. The two runs use different numbers of concurrent editors.
 
-An intermediate candidate at `55b25a74a` received three prompts before a further permission-path change required a new revision. Two sessions finished and the third reached its six-minute limit after 27 public calls. Their receipts remain in the private preliminary run. The matched comparison starts again from the first prompt on the final product revision.
+An intermediate candidate at `55b25a74a` received three prompts before a further permission-path change required a new revision. Two sessions finished and the third reached its six-minute limit after 27 public calls. Their receipts remain in the private preliminary run. The matched comparison restarted from the first prompt at `d1ba9475b`.
+
+## Shipping revision
+
+The installed shipping revision `e3c0c6450b39cf8c5523dfa8bec22f25991f559d` includes the startup instructions from `5f0466871529c7d209133cb342f357c505c6b87b`. Sixteen fresh sessions received the same originals in one separately prepared editor. The [shipping comparison](tool_outcome_shipping.json) pairs these observations with the archived `0e57b46ff` baseline. Both shipping catalogs answered all six read requests correctly and changed only the requested property in both edit requests.
+
+| Catalog | Baseline completed | Shipping completed | Public calls before → after | Search calls before → after | Failed public calls or missing replies before → after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Core | 8/8 | 8/8 | 90 → 62 | 39 → 10 | 6 → 1 |
+| Full | 8/8 | 8/8 | 45 → 46 | 1 → 0 | 2 → 1 |
 
 ## Measurement
 
@@ -35,3 +44,5 @@ To replay the candidate, point the two environment variables at its separate dir
 ```console
 python tools/experiments/tool_outcome_comparison.py --baseline BASELINE --candidate CANDIDATE --output matched.json
 ```
+
+For the shipping artifact, use the same archived baseline, supply the shipping run as the candidate, and add `--redact-component-ids` to mask numeric component IDs in resource query parameters.
