@@ -1,6 +1,5 @@
 """Execute the opt-in hook against isolated Git indexes and working trees."""
 
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,21 +8,18 @@ from typing import Final
 
 import pytest
 
+from tools.tests.git_hook_environment import hook_environment
+
 ROOT: Final = Path(__file__).resolve().parents[2]
 SOURCE: Final = "Server/src/services/tools/example.py"
 REFERENCE: Final = "website/docs/reference/tools/core/example.md"
 
 
 @pytest.fixture
-def hook_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def hook_repo(tmp_path: Path) -> Path:
     # A local generator fixture isolates the hook's Git contract from registry dependencies.
     repo = tmp_path / "repository with spaces"
     repo.mkdir()
-    for key in tuple(os.environ):
-        if key.startswith("GIT_"):
-            monkeypatch.delenv(key)
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     files = {
         SOURCE: "initial\n",
         REFERENCE: "generated:initial\n",
@@ -55,7 +51,6 @@ def hook_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8", newline="\n")
     (repo / "test-bin/python3").chmod(0o755)
-    monkeypatch.setenv("HOOK_TEST_PYTHON", sys.executable)
     git(repo, "init", "-q")
     git(repo, "config", "core.autocrlf", "false")
     git(repo, "config", "core.hooksPath", ".unused-hooks")
@@ -75,7 +70,12 @@ def hook_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def git(repo: Path, *arguments: str) -> bytes:
     return subprocess.run(
-        ["git", *arguments], cwd=repo, check=True, capture_output=True, timeout=20
+        ["git", *arguments],
+        cwd=repo,
+        env=hook_environment(),
+        check=True,
+        capture_output=True,
+        timeout=20,
     ).stdout
 
 
@@ -84,6 +84,7 @@ def run_hook(repo: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [bash, "-c", 'export PATH="$PWD/test-bin:$PATH"; exec bash tools/hooks/pre-commit'],
         cwd=repo,
+        env={**hook_environment(), "HOOK_TEST_PYTHON": sys.executable},
         check=False,
         capture_output=True,
         text=True,

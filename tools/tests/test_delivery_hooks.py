@@ -1,11 +1,12 @@
 """Execute delivery hooks only in synthetic repositories; never launch Unity."""
 
-import os
 from pathlib import Path
 import shutil
 import subprocess
 
 import pytest
+
+from tools.tests.git_hook_environment import hook_environment
 
 ROOT = Path(__file__).resolve().parents[2]
 BASH = shutil.which("bash") or "C:/Program Files/Git/bin/bash.exe"
@@ -15,7 +16,14 @@ SOURCE = "MCPForUnity/Editor/Example.cs"
 
 def git(repo, *args):
     return (
-        subprocess.run(["git", *args], cwd=repo, capture_output=True, check=True, timeout=20)
+        subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            env=hook_environment(),
+            capture_output=True,
+            check=True,
+            timeout=20,
+        )
         .stdout.decode()
         .strip()
     )
@@ -25,6 +33,7 @@ def shell(repo, script, *args, stdin=""):
     result = subprocess.run(
         [BASH, script, *args],
         cwd=repo,
+        env=hook_environment(),
         input=stdin.encode("utf-8"),
         capture_output=True,
         check=False,
@@ -36,12 +45,7 @@ def shell(repo, script, *args, stdin=""):
 
 
 @pytest.fixture
-def repo(tmp_path, monkeypatch):
-    for key in tuple(os.environ):
-        if key.startswith("GIT_"):
-            monkeypatch.delenv(key)
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+def repo(tmp_path):
     root = tmp_path / "repository with spaces"
     root.mkdir()
     git(root, "init", "-q")
