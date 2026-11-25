@@ -1,0 +1,2085 @@
+{
+  "schema": 1,
+  "server_revision": "3291afe6b5d069c7806cc7f935d6ea1c28ac66c7",
+  "holdout_sha256": "8526a396abfeb0b4b1e32a2e17b8d1726604ecbd8aa9aeb7763c5474e4d806c8",
+  "model": "gpt-6.2-sol",
+  "reasoning_effort": "medium",
+  "packets": [
+    {
+      "actor": 0,
+      "directory_sha256": "1e210de418d487567ba21e93069235e33e8e405612b1a76b19dd14077da8dd0b",
+      "families_sha256": "f1805358b14e455648b37f32bb22632a861301e1f26b69fff47e49c7e4994fb0",
+      "operations_sha256": "490de42e8d9a9236ca56e52cc7de2b8036062f02898cdbb20fc5a74ceeee47cd",
+      "choices_sha256": "3a90f1f0bc514f22828ab6ee9a107d3bfa3142bb386f544776783ca3752e1c74"
+    },
+    {
+      "actor": 1,
+      "directory_sha256": "be75625a5ece7ffa45c130bc87f8a6f6aca3ebf932e48cb40c239044bd9d0d7e",
+      "families_sha256": "2587a41ba686fe6953a4b1a25b9b0ed912b0cded9d53fe8dcb91374607e500f9",
+      "operations_sha256": "c8bbce21eccec6f743e07111a3bc8c190e9538a9eab71a59643f68fb97c23e84",
+      "choices_sha256": "49ed28b5076bf0968318e2f165ca769d508cecc48ca47f6ac6346f5048e59c43"
+    },
+    {
+      "actor": 2,
+      "directory_sha256": "f61a6d7d565f7c458033f9c917db6732709ff82aa560713aae9a2c6443eef1b5",
+      "families_sha256": "bf07f73dc266183bfad15594ea5e1b97adc465af1569d18c92d383bbdbe5b2e2",
+      "operations_sha256": "c9026da15957f7f11945e4228397ef7ec81220608344d67358a2d40b64edd775",
+      "choices_sha256": "66fbb408128054f05646cffe2e5cbd939c0c72fd8610498749fa48273ef914e5"
+    },
+    {
+      "actor": 3,
+      "directory_sha256": "642451b4fbf6feb72a13120d720b6570c9c11aad20563c00fc49c4039ac81abe",
+      "families_sha256": "474bdfa7b05e0eae15769de72e3e60815a92470e41cbcc99b7617d82d2975839",
+      "operations_sha256": "3bc45d3fc66901d55bc35f3c3ccd9422791f059cf841aa17710fa2ac88763c47",
+      "choices_sha256": "75f5196e9d5ff2a3b3a9e6dbe17f62ffc3585949db7edfcedb1cc5a0497ccdcb"
+    }
+  ],
+  "summary": {
+    "core": {
+      "existing": {
+        "count": 23,
+        "covered": 22,
+        "correct_first": 20,
+        "opposite_first": 0,
+        "abstained": 0
+      },
+      "held_out": {
+        "count": 36,
+        "covered": 36,
+        "correct_first": 36,
+        "opposite_first": 0,
+        "abstained": 0
+      }
+    },
+    "full": {
+      "existing": {
+        "count": 23,
+        "covered": 20,
+        "correct_first": 18,
+        "opposite_first": 0,
+        "abstained": 0
+      },
+      "held_out": {
+        "count": 36,
+        "covered": 36,
+        "correct_first": 36,
+        "opposite_first": 0,
+        "abstained": 0
+      }
+    }
+  },
+  "choices": [
+    {
+      "id": "55ff312cf1ead4ec",
+      "actor": 0,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ko",
+      "task": "agent_list",
+      "families": [
+        "find_gameobjects"
+      ],
+      "offered": 1,
+      "first": "find_gameobjects",
+      "covered": false,
+      "correct_first": false,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "152de51921848618",
+      "actor": 0,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ja",
+      "task": "activate_named_scene",
+      "families": [
+        "manage_scene"
+      ],
+      "offered": 26,
+      "first": "manage_scene.set_active_scene",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "a7bd30a1d53e25dd",
+      "actor": 0,
+      "profile": "core",
+      "panel": "existing",
+      "language": "es",
+      "task": "menu-path",
+      "families": [
+        "list_menu_declarations"
+      ],
+      "offered": 1,
+      "first": "list_menu_declarations",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "3afce3266f31ca9f",
+      "actor": 0,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "40bbc334567c2339",
+      "actor": 0,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ja",
+      "task": "menu-path",
+      "families": [
+        "list_menu_declarations"
+      ],
+      "offered": 1,
+      "first": "list_menu_declarations",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "7f2c88d3f80ee26a",
+      "actor": 0,
+      "profile": "full",
+      "panel": "existing",
+      "language": "es",
+      "task": "activate_named_scene",
+      "families": [
+        "manage_scene"
+      ],
+      "offered": 26,
+      "first": "manage_scene.set_active_scene",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "1d591f1acaa011cb",
+      "actor": 0,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "te",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "6b98dd318b506610",
+      "actor": 0,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ko",
+      "task": "short_active_scene",
+      "families": [
+        "inspect_editor_state"
+      ],
+      "offered": 1,
+      "first": "inspect_editor_state",
+      "covered": false,
+      "correct_first": false,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "0493483285322045",
+      "actor": 0,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "58cbd750f39bbb5e",
+      "actor": 0,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "04791858b807bc96",
+      "actor": 0,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "te",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "52746ed1dadd3f83",
+      "actor": 0,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "43ebb81c69099149",
+      "actor": 0,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "f91e6ef6f342bcfa",
+      "actor": 0,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "fe96ee1a8d983361",
+      "actor": 0,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ko",
+      "task": "scene_list",
+      "families": [
+        "action:scene_inspect/get_active"
+      ],
+      "offered": 11,
+      "first": "scene_inspect.get_loaded_scenes",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "b6def825ff892de6",
+      "actor": 0,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ja",
+      "task": "agent_list",
+      "families": [
+        "find_gameobjects"
+      ],
+      "offered": 1,
+      "first": "find_gameobjects",
+      "covered": false,
+      "correct_first": false,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "c6299fc7d25ace02",
+      "actor": 0,
+      "profile": "core",
+      "panel": "existing",
+      "language": "tr",
+      "task": "menu-path",
+      "families": [
+        "list_menu_declarations"
+      ],
+      "offered": 1,
+      "first": "list_menu_declarations",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "d3957cee526b684f",
+      "actor": 0,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ko",
+      "task": "package_list",
+      "families": [
+        "manage_packages"
+      ],
+      "offered": 12,
+      "first": "manage_packages.list_packages",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "eff7b28e33e1f52c",
+      "actor": 0,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ja",
+      "task": "current_scene",
+      "families": [
+        "action:scene_inspect/get_active"
+      ],
+      "offered": 11,
+      "first": "scene_inspect.get_active",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "50413adba3ee8c9a",
+      "actor": 0,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "e81572b872afe824",
+      "actor": 0,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "8b27f9e94b308e1e",
+      "actor": 0,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "1cab0e5710d22bf1",
+      "actor": 0,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "178325a227c86855",
+      "actor": 0,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "f0a342d3d272a16b",
+      "actor": 0,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "340c7a59c25bbc2a",
+      "actor": 0,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "te",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "7cb83010725e6a7c",
+      "actor": 0,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "385f32d4f546acf9",
+      "actor": 0,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "42ecc7ac4a31f694",
+      "actor": 0,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ja",
+      "task": "selected_agent",
+      "families": [
+        "manage_navigation",
+        "mcpforunity://editor/selection"
+      ],
+      "offered": 11,
+      "first": "manage_navigation.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "46eba93088ba1745",
+      "actor": 0,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ar",
+      "task": "menu-path",
+      "families": [
+        "list_menu_declarations"
+      ],
+      "offered": 1,
+      "first": "list_menu_declarations",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "d465dbee932f5b04",
+      "actor": 1,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "8e7d6d433429643d",
+      "actor": 1,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "te",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "c222e47d80e88c1f",
+      "actor": 1,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "te",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "c9e96f186b487d9f",
+      "actor": 1,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "d6c163074b71d7e5",
+      "actor": 1,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ja",
+      "task": "installed_package",
+      "families": [
+        "manage_packages"
+      ],
+      "offered": 12,
+      "first": "manage_packages.get_package_info",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "51fdbf1b661891ec",
+      "actor": 1,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ko",
+      "task": "selected_agent",
+      "families": [
+        "mcpforunity://editor/selection",
+        "manage_navigation"
+      ],
+      "offered": 11,
+      "first": "mcpforunity://editor/selection",
+      "covered": true,
+      "correct_first": false,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "befa237a6c9dc405",
+      "actor": 1,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "te",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "b917ab72bf6a67a0",
+      "actor": 1,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "5d32f58cd33fd395",
+      "actor": 1,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "b34e0d2845159fd9",
+      "actor": 1,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "fd0ce76c2f359a4c",
+      "actor": 1,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "57c3c3ff5ce4cf67",
+      "actor": 1,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ko",
+      "task": "menu-path",
+      "families": [
+        "list_menu_declarations"
+      ],
+      "offered": 1,
+      "first": "list_menu_declarations",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "e1b728c4faa07696",
+      "actor": 1,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "839f05e37f56e7b6",
+      "actor": 1,
+      "profile": "full",
+      "panel": "existing",
+      "language": "es",
+      "task": "activate_scene",
+      "families": [
+        "manage_scene"
+      ],
+      "offered": 26,
+      "first": "scene_lifecycle.set_active_scene",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "0caf192093dccd5d",
+      "actor": 1,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "f9b2ded32ce818aa",
+      "actor": 1,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ja",
+      "task": "scene_list",
+      "families": [
+        "manage_scene"
+      ],
+      "offered": 26,
+      "first": "scene_inspect.get_loaded_scenes",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "e6343ed0c53ae5fd",
+      "actor": 1,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ko",
+      "task": "short_current_scene",
+      "families": [
+        "action:scene_inspect/get_active"
+      ],
+      "offered": 11,
+      "first": "scene_inspect.get_active",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "e0ab45bcdaabf202",
+      "actor": 1,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ko",
+      "task": "current_scene",
+      "families": [
+        "manage_scene"
+      ],
+      "offered": 26,
+      "first": "scene_inspect.get_active",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "d42b6e361f5aa650",
+      "actor": 1,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ja",
+      "task": "activate_scene",
+      "families": [
+        "action:scene_inspect/get_active"
+      ],
+      "offered": 11,
+      "first": "scene_lifecycle.set_active_scene",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "4a50dea1ba1bae66",
+      "actor": 1,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ko",
+      "task": "installed_package",
+      "families": [
+        "manage_packages"
+      ],
+      "offered": 12,
+      "first": "manage_packages.get_package_info",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "691cfc8c3e2ab553",
+      "actor": 1,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "818eb26490b9e323",
+      "actor": 1,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "5b34298d31495490",
+      "actor": 1,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ja",
+      "task": "package_list",
+      "families": [
+        "manage_packages"
+      ],
+      "offered": 12,
+      "first": "manage_packages.list_packages",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "f76e0538de3294ad",
+      "actor": 1,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "0ae74bae04eed6dc",
+      "actor": 1,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "d3466bb69d1d248b",
+      "actor": 1,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "979c70ad465032c1",
+      "actor": 1,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "a509cfb9be282d56",
+      "actor": 1,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "2f92afc1663061fd",
+      "actor": 1,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "3b4870f631cc282a",
+      "actor": 2,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ko",
+      "task": "agent_list",
+      "families": [
+        "find_gameobjects",
+        "manage_navigation"
+      ],
+      "offered": 11,
+      "first": "find_gameobjects",
+      "covered": true,
+      "correct_first": false,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "55e754cda267596e",
+      "actor": 2,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ja",
+      "task": "activate_named_scene",
+      "families": [
+        "action:scene_inspect/get_active"
+      ],
+      "offered": 11,
+      "first": "scene_lifecycle.set_active_scene",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "968a3e20a4772eeb",
+      "actor": 2,
+      "profile": "full",
+      "panel": "existing",
+      "language": "es",
+      "task": "menu-path",
+      "families": [
+        "list_menu_declarations"
+      ],
+      "offered": 1,
+      "first": "list_menu_declarations",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "d1db45a426d182da",
+      "actor": 2,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "614b5818a73b8971",
+      "actor": 2,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ja",
+      "task": "menu-path",
+      "families": [
+        "list_menu_declarations"
+      ],
+      "offered": 1,
+      "first": "list_menu_declarations",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "95f408f519aeca75",
+      "actor": 2,
+      "profile": "core",
+      "panel": "existing",
+      "language": "es",
+      "task": "activate_named_scene",
+      "families": [
+        "action:scene_inspect/get_active"
+      ],
+      "offered": 11,
+      "first": "scene_lifecycle.set_active_scene",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "cea742d1e0d7dd69",
+      "actor": 2,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "te",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "3c2eb2a4cf71e325",
+      "actor": 2,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ko",
+      "task": "short_active_scene",
+      "families": [
+        "action:scene_inspect/get_active"
+      ],
+      "offered": 11,
+      "first": "scene_inspect.get_active",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "375ca81936700ccc",
+      "actor": 2,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "8cf80975fe1a17b9",
+      "actor": 2,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "703b0dc993fc6889",
+      "actor": 2,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "te",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "0387e9c55f155c48",
+      "actor": 2,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "37283f1d042ee404",
+      "actor": 2,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "625b7772334daca4",
+      "actor": 2,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "f85e598bbae6a219",
+      "actor": 2,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ko",
+      "task": "scene_list",
+      "families": [
+        "manage_scene"
+      ],
+      "offered": 26,
+      "first": "scene_inspect.get_loaded_scenes",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "2ab1223bd4a7ca4d",
+      "actor": 2,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ja",
+      "task": "agent_list",
+      "families": [
+        "find_gameobjects",
+        "manage_navigation"
+      ],
+      "offered": 11,
+      "first": "find_gameobjects",
+      "covered": true,
+      "correct_first": false,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "be29724a0614cf42",
+      "actor": 2,
+      "profile": "full",
+      "panel": "existing",
+      "language": "tr",
+      "task": "menu-path",
+      "families": [
+        "list_menu_declarations"
+      ],
+      "offered": 1,
+      "first": "list_menu_declarations",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "92d6a8883546c367",
+      "actor": 2,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ko",
+      "task": "package_list",
+      "families": [
+        "manage_packages"
+      ],
+      "offered": 12,
+      "first": "manage_packages.list_packages",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "46e8ecee0e51c1c2",
+      "actor": 2,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ja",
+      "task": "current_scene",
+      "families": [
+        "manage_scene"
+      ],
+      "offered": 26,
+      "first": "scene_inspect.get_active",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "140dfab2ebc527c8",
+      "actor": 2,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "598ff8edbf147386",
+      "actor": 2,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "a251e1fd8056425f",
+      "actor": 2,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "42e00753de980644",
+      "actor": 2,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "6250ce655cd0ac78",
+      "actor": 2,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "f109c6aac52bc86d",
+      "actor": 2,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "ca6b5813dda0063a",
+      "actor": 2,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "te",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "5124f8ea3d83b237",
+      "actor": 2,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "22931bf11278d040",
+      "actor": 2,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "06955c86cc3782fa",
+      "actor": 2,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ja",
+      "task": "selected_agent",
+      "families": [
+        "manage_navigation",
+        "mcpforunity://editor/selection"
+      ],
+      "offered": 11,
+      "first": "manage_navigation.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "ec5e63ab7e25102d",
+      "actor": 2,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ar",
+      "task": "menu-path",
+      "families": [
+        "list_menu_declarations"
+      ],
+      "offered": 1,
+      "first": "list_menu_declarations",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "9962ffbe9dec9724",
+      "actor": 3,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "05dffefe96d3d861",
+      "actor": 3,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "te",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "386039fa4f7adcab",
+      "actor": 3,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "te",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "714eacc26af1ca80",
+      "actor": 3,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "8b0bd282b35f5310",
+      "actor": 3,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ja",
+      "task": "installed_package",
+      "families": [
+        "manage_packages"
+      ],
+      "offered": 12,
+      "first": "manage_packages.get_package_info",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "c4478e704f217151",
+      "actor": 3,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ko",
+      "task": "selected_agent",
+      "families": [
+        "manage_navigation",
+        "mcpforunity://editor/selection"
+      ],
+      "offered": 11,
+      "first": "mcpforunity://editor/selection",
+      "covered": true,
+      "correct_first": false,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "3b41634fec166c07",
+      "actor": 3,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "te",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "aa2a0a52089f10c0",
+      "actor": 3,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "6ffb6aaa2b5a2062",
+      "actor": 3,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "940ba9530f7364d4",
+      "actor": 3,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "074c204e8c8541bf",
+      "actor": 3,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "d41dc68e6cb4c429",
+      "actor": 3,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ko",
+      "task": "menu-path",
+      "families": [
+        "list_menu_declarations"
+      ],
+      "offered": 1,
+      "first": "list_menu_declarations",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "5de8fc0691c44d3b",
+      "actor": 3,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "sample_surface_mask",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.get_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "bef387224bb4a476",
+      "actor": 3,
+      "profile": "core",
+      "panel": "existing",
+      "language": "es",
+      "task": "activate_scene",
+      "families": [
+        "action:scene_inspect/get_active"
+      ],
+      "offered": 11,
+      "first": "scene_lifecycle.set_active_scene",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "223ffa9a9a44ab83",
+      "actor": 3,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "saved_controls_identity",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.read",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "973d40701689583a",
+      "actor": 3,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ja",
+      "task": "scene_list",
+      "families": [
+        "action:scene_inspect/get_active"
+      ],
+      "offered": 11,
+      "first": "scene_inspect.get_loaded_scenes",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "cc4bf4cec31d35ff",
+      "actor": 3,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ko",
+      "task": "short_current_scene",
+      "families": [
+        "inspect_editor_state"
+      ],
+      "offered": 1,
+      "first": "inspect_editor_state",
+      "covered": false,
+      "correct_first": false,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "5c3045f3683e84ff",
+      "actor": 3,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ko",
+      "task": "current_scene",
+      "families": [
+        "action:scene_inspect/get_active"
+      ],
+      "offered": 11,
+      "first": "scene_inspect.get_active",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "0c111f8723aecfd7",
+      "actor": 3,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ja",
+      "task": "activate_scene",
+      "families": [
+        "manage_scene"
+      ],
+      "offered": 26,
+      "first": "scene_lifecycle.set_active_scene",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "b1d00f2bf868f184",
+      "actor": 3,
+      "profile": "core",
+      "panel": "existing",
+      "language": "ko",
+      "task": "installed_package",
+      "families": [
+        "manage_packages"
+      ],
+      "offered": 12,
+      "first": "manage_packages.get_package_info",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "4e908cd61af77148",
+      "actor": 3,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "f9e713993f1b4d7f",
+      "actor": 3,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "494c815c1df8bb7c",
+      "actor": 3,
+      "profile": "full",
+      "panel": "existing",
+      "language": "ja",
+      "task": "package_list",
+      "families": [
+        "manage_packages"
+      ],
+      "offered": 12,
+      "first": "manage_packages.list_packages",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "98e054b1153a36b4",
+      "actor": 3,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "db1f8b3fbd12c9af",
+      "actor": 3,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ca",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "1968ac7f1e73806d",
+      "actor": 3,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "sk",
+      "task": "restore_clip_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.apply_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "eeefad5a229ab63c",
+      "actor": 3,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "nb",
+      "task": "clip_platform_inheritance",
+      "families": [
+        "manage_audio"
+      ],
+      "offered": 7,
+      "first": "manage_audio.read_import_settings",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "ef10c8793c9258c3",
+      "actor": 3,
+      "profile": "core",
+      "panel": "held_out",
+      "language": "lv",
+      "task": "author_two_control_maps",
+      "families": [
+        "manage_input_actions"
+      ],
+      "offered": 9,
+      "first": "manage_input_actions.edit",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    },
+    {
+      "id": "98466eecbc7c542f",
+      "actor": 3,
+      "profile": "full",
+      "panel": "held_out",
+      "language": "ur",
+      "task": "fill_surface_gap",
+      "families": [
+        "manage_terrain"
+      ],
+      "offered": 7,
+      "first": "manage_terrain.set_region",
+      "covered": true,
+      "correct_first": true,
+      "opposite_first": false,
+      "abstained": false
+    }
+  ]
+}
