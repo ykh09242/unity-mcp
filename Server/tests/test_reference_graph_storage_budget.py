@@ -36,7 +36,6 @@ import weakref
 from services.reference_graph import storage_budget
 from services.reference_graph.store import GraphScope, GraphStore
 
-faulthandler.dump_traceback_later(float(sys.argv[3]), exit=True)
 gc.disable()
 root, phase = Path(sys.argv[1]), sys.argv[2]
 scope = GraphScope('user', 'editor', 'project')
@@ -48,7 +47,12 @@ original = storage_budget.file_lock
 collected = []
 
 def collect_previous():
-    gc.collect()
+    # Only reentrant collection can deadlock the ownership guard.
+    faulthandler.dump_traceback_later(float(sys.argv[3]), exit=True)
+    try:
+        gc.collect()
+    finally:
+        faulthandler.cancel_dump_traceback_later()
     assert reference() is None and not finalized.alive
     collected.append(True)
 
@@ -90,7 +94,6 @@ del second
 gc.collect()
 with original(live_path, wait=False):
     pass
-faulthandler.cancel_dump_traceback_later()
 print('finalization and shared directory lifetime verified')
 """
     result = subprocess.run(
