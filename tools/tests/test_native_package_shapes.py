@@ -40,7 +40,7 @@ def test_profiles_cover_exact_native_shapes():
         assert "com.unity.2d.sprite" in profile.packages
     for name, version, method in [
         ("cinemachine-2", "2.10.7", "LegacyProvider"),
-        ("cinemachine-3", "3.1.7", "ModernProvider"),
+        ("cinemachine-3", "3.1.8", "ModernProvider"),
         ("cinemachine-absent", None, "AbsentProvider"),
     ]:
         profile = shapes.PROFILES[name]
@@ -97,7 +97,7 @@ def test_modern_camera_prepares_math_provider_for_its_editor(
     with pytest.raises(shapes.PreparationError, match="captured package request"):
         shapes.run(suite, editor, shapes.VERSIONS[suite], tmp_path / "run", "cinemachine-3")
     assert captured["com.unity.mathematics"] == {"source": source, "version": version}
-    assert captured["com.unity.cinemachine"] == {"source": "registry", "version": "3.1.7"}
+    assert captured["com.unity.cinemachine"] == {"source": "registry", "version": "3.1.8"}
 
 
 def test_requires_expected_manifest_and_actual_package_lock(tmp_path):

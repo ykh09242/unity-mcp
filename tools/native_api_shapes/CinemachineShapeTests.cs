@@ -36,7 +36,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         [Test]
         public void ModernProvider() =>
-            Installed("3.1.7", "Unity.Cinemachine.CinemachineCamera, Unity.Cinemachine", "CinemachineFollow", "CinemachineRotationComposer", true);
+            Installed("3.1.8", "Unity.Cinemachine.CinemachineCamera, Unity.Cinemachine", "CinemachineFollow", "CinemachineRotationComposer", true);
 
         [Test]
         public void AbsentProvider()

@@ -11,7 +11,7 @@ The native runner exercises the current checkout in small, disposable EditMode p
 | Profile | Native assertion |
 | --- | --- |
 | `cinemachine-2` | Create a 2.10.7 virtual camera with its child pipeline, operate the Brain, and reject the unavailable Decollider extension. |
-| `cinemachine-3` | Create a 3.1.7 camera with its component pipeline, operate the Brain, and attach the native Decollider extension. |
+| `cinemachine-3` | Create a 3.1.8 camera with its component pipeline, operate the Brain, and attach the native Decollider extension. |
 | `cinemachine-absent` | Verify the basic Unity camera and lens fallback, missing-package readiness, and refusal of Cinemachine actions. |
 | `atlas-v1`, `atlas-v2` | Create an atlas with the Editor's 2D Sprite package, then reopen the same project in a second Editor process and verify persisted assets. |
 | `addressables-legacy` | With Addressables 1.1.5 and Scriptable Build Pipeline 1.23.4, check unavailable layout data, guarded edits with Undo, prefab registration after a lost response, and competing edits from two connected clients. Separate phases reload the domain, reopen the same project, reconcile a confirmed copy, approve a fresh plan, and keep an unconfirmed import fenced. |
