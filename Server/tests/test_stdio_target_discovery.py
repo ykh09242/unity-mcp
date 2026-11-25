@@ -84,6 +84,23 @@ def test_target_only_cache_does_not_hide_unbound_ambiguity_or_forced_listing(tar
     assert len(probes) == before + 2
 
 
+@pytest.mark.parametrize("selector", ["Main@", " ", ""])
+def test_incomplete_explicit_selector_never_chooses_a_sole_editor(target_environment, selector):
+    pool, _, _, _, _ = target_environment
+    with pytest.raises(ConnectionError):
+        pool.get_connection(selector)
+    assert not pool._connections
+
+
+def test_bare_exact_hash_precedes_longer_matching_project_hash(target_environment):
+    pool, write, _, _, available = target_environment
+    write("Other", "deadbeef00112233", 6402)
+    available.add(6402)
+    assert pool.get_connection("deadbeef").instance_id == "Main@deadbeef"
+    with pytest.raises(ConnectionError, match="multiple"):
+        pool.get_connection("dead")
+
+
 def test_target_cache_expires_for_changed_port_and_never_caches_failed_probes(target_environment):
     pool, write, probes, clock, _ = target_environment
     conn = pool.get_connection("Main@deadbeef")
@@ -205,13 +222,14 @@ def test_forced_target_validation_invalidates_full_inventory_cache(target_enviro
     assert len(probes) == before + 3
 
 
-def test_target_refresh_preserves_global_selection_if_only_longer_hash_exists(target_environment):
+def test_missing_legacy_full_id_cannot_retarget_a_longer_hash(target_environment):
     pool, write, probes, _, _ = target_environment
     path = write("Main", "deadbeef", 6400)
     path.unlink()
     write("Main", "deadbeef00112233", 6400)
-    # Existing pool selectors accept a composite prefix when no exact ID exists.
-    assert pool.get_connection("Main@deadbeef").instance_id == "Main@deadbeef00112233"
+    with pytest.raises(ConnectionError, match="not found"):
+        pool.get_connection("Main@deadbeef")
+    assert not pool._connections
     assert sorted(probes) == [6400, 6401]
 
 

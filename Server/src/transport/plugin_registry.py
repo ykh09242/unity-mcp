@@ -20,6 +20,10 @@ class HostedEditorConflict(Exception):
     """A hosted selector already has a live owner that cannot be matched to this Editor."""
 
 
+class NoUnitySessionError(RuntimeError):
+    """No registered Unity plugin matches the requested target."""
+
+
 @dataclass(slots=True)
 class PluginSession:
     """Represents a single Unity plugin connection."""
@@ -331,16 +335,21 @@ class PluginRegistry:
             return any(name in session.tools for name in names)
 
     async def get_session_id_by_hash(
-        self, project_hash: str, user_id: str | None = None
+        self, project_hash: str, user_id: str | None = None, *, project_name: str | None = None
     ) -> str | None:
-        """Resolve a ``project_hash`` (Unity instance id) to a session id."""
-
-        if user_id:
-            async with self._lock:
-                return self._user_hash_to_session.get((user_id, project_hash))
-        else:
-            async with self._lock:
-                return self._hash_to_session.get(project_hash)
+        """Resolve the hash and any explicit project name in one registry observation."""
+        async with self._lock:
+            session_id = (
+                self._user_hash_to_session.get((user_id, project_hash))
+                if user_id
+                else self._hash_to_session.get(project_hash)
+            )
+            if session_id is not None and project_name is not None:
+                if self._sessions[session_id].project_name != project_name:
+                    raise NoUnitySessionError(
+                        "Unity instance selector does not match the registered project"
+                    )
+            return session_id
 
     async def list_sessions(self, user_id: str | None = None) -> dict[str, PluginSession]:
         """Return a shallow copy of sessions.

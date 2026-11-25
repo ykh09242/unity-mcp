@@ -48,9 +48,9 @@ async def command_hub(monkeypatch):
         counts["session"] += 1
         return await original_session(session_id)
 
-    async def by_hash(project_hash, user_id=None):
+    async def by_hash(project_hash, user_id=None, **selection):
         counts["hash"] += 1
-        return await original_hash(project_hash, user_id)
+        return await original_hash(project_hash, user_id, **selection)
 
     async def listing(user_id=None):
         counts["list"] += 1

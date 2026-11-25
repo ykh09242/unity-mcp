@@ -17,7 +17,12 @@ import json
 import logging
 import os
 from pathlib import Path
-from transport.legacy.port_discovery import PortDiscovery, checked_lock, discovery_checks
+from transport.legacy.port_discovery import (
+    PortDiscovery,
+    checked_lock,
+    discovery_checks,
+    match_bare_selector,
+)
 import random
 import re
 import socket
@@ -1652,71 +1657,43 @@ class UnityConnectionPool:
                 )
 
         identifier = instance_identifier.strip()
+        if not identifier:
+            raise _StdioTargetUnavailable("Unity instance selector is empty")
 
         # Try exact ID match first
         for inst in instances:
             if inst.id == identifier:
                 return inst
 
-        # Try project name match
-        name_matches = [inst for inst in instances if inst.name == identifier]
-        if len(name_matches) == 1:
-            return name_matches[0]
-        elif len(name_matches) > 1:
-            # Multiple projects with same name - return helpful error
-            suggestions = [
-                {
-                    "id": inst.id,
-                    "path": inst.path,
-                    "port": inst.port,
-                    "suggest": f"Use unity_instance='{inst.id}'",
-                }
-                for inst in name_matches
-            ]
-            raise ConnectionError(
-                f"Project name '{identifier}' matches {len(name_matches)} instances. "
-                f"Please use the full format (e.g., '{name_matches[0].id}'). "
-                f"Available instances: {suggestions}"
-            )
+        # Only an exact match above can satisfy a full ID. A stale ID must not
+        # become a different project's name, hash prefix, port or path.
+        if not self.is_exact_instance_id(identifier):
+            try:
+                selected = match_bare_selector(identifier, instances, stdio=True)
+            except ValueError as error:
+                raise ConnectionError(str(error)) from error
+            if selected is not None:
+                return selected
 
-        # Try hash match
-        hash_matches = [
-            inst
-            for inst in instances
-            if inst.hash == identifier or inst.hash.startswith(identifier)
-        ]
-        if len(hash_matches) == 1:
-            return hash_matches[0]
-        elif len(hash_matches) > 1:
-            raise ConnectionError(
-                f"Hash '{identifier}' matches multiple instances: {[inst.id for inst in hash_matches]}"
-            )
+            if "@" in identifier:
+                name, _, hint = identifier.rpartition("@")
+                matches = [
+                    inst
+                    for inst in instances
+                    if hint
+                    and inst.name == name
+                    and (str(inst.port) == hint or inst.hash.startswith(hint))
+                ]
+                if len(matches) > 1:
+                    raise ConnectionError(
+                        f"Selector '{identifier}' is ambiguous. Use the full Name@hash from mcpforunity://instances."
+                    )
+                if len(matches) == 1:
+                    return matches[0]
 
-        # Try composite format: Name@Hash or Name@Port
-        if "@" in identifier:
-            name_part, hint_part = identifier.split("@", 1)
-            composite_matches = [
-                inst
-                for inst in instances
-                if inst.name == name_part
-                and (inst.hash.startswith(hint_part) or str(inst.port) == hint_part)
-            ]
-            if len(composite_matches) == 1:
-                return composite_matches[0]
-
-        # Try port match (as string)
-        try:
-            port_num = int(identifier)
-            port_matches = [inst for inst in instances if inst.port == port_num]
-            if len(port_matches) == 1:
-                return port_matches[0]
-        except ValueError:
-            pass
-
-        # Try path match
-        path_matches = [inst for inst in instances if inst.path == identifier]
-        if len(path_matches) == 1:
-            return path_matches[0]
+            path_matches = [inst for inst in instances if inst.path == identifier]
+            if len(path_matches) == 1:
+                return path_matches[0]
 
         # Nothing matched
         available_ids = [inst.id for inst in instances]

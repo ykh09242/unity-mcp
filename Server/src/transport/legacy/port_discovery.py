@@ -32,6 +32,42 @@ _discovery_check: ContextVar[Callable[[], float | None] | None] = ContextVar(
 )
 
 
+def selector_port(value: str, instances: list) -> int | None:
+    """Keep full 16-digit identities and observed legacy 8-digit hashes out of port lookup."""
+    if not value.isascii() or not value.isdigit() or len(value) == 16:
+        return None
+    if len(value) == 8 and any(getattr(instance, "hash", None) == value for instance in instances):
+        return None
+    digits = value.lstrip("0") or "0"
+    return int(digits) if len(digits) <= 5 else None
+
+
+def match_bare_selector(value: str, instances: list, *, stdio: bool):
+    """Resolve against one inventory; ambiguity at a higher priority cannot select a name."""
+    if not value:
+        return None
+    matches = []
+    if stdio and (port := selector_port(value, instances)) is not None:
+        matches = [row for row in instances if getattr(row, "port", None) == port]
+    if not matches:
+        lookup = value.lower()
+        matches = [
+            row
+            for row in instances
+            if (getattr(row, "hash", None) or "").lower().startswith(lookup)
+        ]
+        if stdio or len(value) == 8 or re.fullmatch(r"[0-9a-f]{16}", lookup):
+            matches = [row for row in matches if row.hash.lower() == lookup] or matches
+    if not matches and stdio:
+        matches = [row for row in instances if getattr(row, "name", None) == value]
+    if len(matches) > 1:
+        raise ValueError(
+            f"Selector '{value}' is ambiguous and matches multiple instances: "
+            f"{', '.join(row.id for row in matches)}. Provide the full Name@hash from mcpforunity://instances."
+        )
+    return matches[0] if matches else None
+
+
 @contextmanager
 def discovery_checks(check: Callable[[], float | None]):
     """Carry the owning selection's live deadline and cancellation into each probe."""

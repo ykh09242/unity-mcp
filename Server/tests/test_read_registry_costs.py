@@ -172,8 +172,8 @@ async def test_local_lookup_finishing_after_hosted_switch_cannot_admit_local_map
     monkeypatch.setattr(PluginHub, "_registry", registry)
     original = registry.get_session_id_by_hash
 
-    async def lookup(project_hash):
-        result = await original(project_hash)
+    async def lookup(project_hash, user_id=None, **selection):
+        result = await original(project_hash, user_id, **selection)
         monkeypatch.setattr(config, "http_remote_hosted", True)
         return result
 

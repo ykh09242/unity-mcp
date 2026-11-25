@@ -39,6 +39,7 @@ from services.execution_receipt_identity import (
 )
 from transport.local_project_context import full_hash
 from transport.local_http_target import configured_default, select_local_session
+from transport.legacy.port_discovery import match_bare_selector, selector_port
 from services.registry import get_registered_tools
 from services.registry.capability_catalog import RESOURCE_INVENTORIES
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
@@ -169,17 +170,6 @@ def resolve_discovered_instance(value: str | int, instances: list, transport: st
             if getattr(inst, "port", None) == value:
                 return inst.id
         raise ValueError(f"No Unity instance found on port {value}.")
-    complete_hash = full_hash(value)
-    digits = value.lstrip("0") or "0"
-    port = (
-        int(digits)
-        if not complete_hash and value.isascii() and value.isdigit() and len(digits) <= 5
-        else None
-    )
-    if port is not None and transport != "http":
-        for inst in instances:
-            if getattr(inst, "port", None) == port:
-                return inst.id
     ids = {getattr(inst, "id", None): inst for inst in instances if getattr(inst, "id", None)}
 
     # Exact Name@hash match
@@ -192,24 +182,10 @@ def resolve_discovered_instance(value: str | int, instances: list, transport: st
             "Read mcpforunity://instances for current sessions."
         )
 
-    # Hash prefix match
-    lookup = value.lower()
-    matches = [
-        inst
-        for inst in instances
-        if getattr(inst, "hash", "") and getattr(inst, "hash", "").lower().startswith(lookup)
-    ]
-    if complete_hash:
-        matches = [inst for inst in matches if inst.hash.lower() == lookup] or matches
-    if len(matches) == 1:
-        return matches[0].id
-    if len(matches) > 1:
-        ambiguous = ", ".join(getattr(m, "id", "?") for m in matches)
-        raise ValueError(
-            f"Hash prefix '{value}' is ambiguous ({ambiguous}). "
-            "Provide the full Name@hash from mcpforunity://instances."
-        )
-    if port is not None:
+    selected = match_bare_selector(value, instances, stdio=transport != "http")
+    if selected is not None:
+        return selected.id
+    if selector_port(value, instances) is not None:
         if transport == "http":
             raise ValueError(
                 f"Port-based targeting ('{value}') is not supported in HTTP transport mode. "
@@ -371,6 +347,7 @@ class UnityInstanceMiddleware(Middleware):
           - Bare string port like "6401" (legacy stdio shorthand)
           - "Name@hash" exact match
           - Hash prefix (unique prefix match against running instances)
+          - Unique project name in stdio after port and hash lookup
 
         Raises ValueError with a user-friendly message on failure.
         """

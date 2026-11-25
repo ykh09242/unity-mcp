@@ -52,6 +52,7 @@ from models.response_limits import (
 )
 from transport.plugin_registry import (
     HostedEditorConflict,
+    NoUnitySessionError as NoUnitySessionError,
     PluginRegistry,
     PluginSession,
     ToolSettingsConflict,
@@ -244,16 +245,13 @@ class PluginDisconnectedError(RuntimeError):
     """Raised when a plugin WebSocket disconnects while commands are in flight."""
 
 
-class NoUnitySessionError(RuntimeError):
-    """Raised when no Unity plugins are available."""
-
-
 @dataclass(frozen=True, slots=True)
 class _SessionRoute:
     registry: PluginRegistry
     session_id: str
     project_hash: str
     user_id: str | None
+    project_name: str | None = None
 
 
 class _SyncWaitInterrupted(RuntimeError):
@@ -4552,6 +4550,8 @@ class PluginHub(WebSocketEndpoint):
         if registry is None:
             raise RuntimeError("Plugin registry not configured")
 
+        project_name = pinned.project_name if pinned is not None else None
+        target_hash: str | None = None
         if pinned is None and unity_instance is None and (default := configured_default()):
             catalog = await cls.get_sessions(user_id=user_id)
             if cls._registry is not registry or config.http_remote_hosted:
@@ -4565,27 +4565,28 @@ class PluginHub(WebSocketEndpoint):
                         f"{row.project}@{row.hash}" for row in catalog.sessions.values()
                     ),
                 )
-            unity_instance = selected.hash
+            target_hash, project_name = selected.hash, selected.project
 
         # Explicitly selected projects may be compiling/importing large workloads.
         # Unselected discovery retains its short window and ambiguity checks.
         max_wait_s = _read_bounded_wait_env(
             "UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S",
-            default_s=300.0 if unity_instance else 20.0,
+            default_s=300.0 if unity_instance or target_hash else 20.0,
             max_s=MAX_COMMAND_TIMEOUT,
         )
         if not retry_on_reload:
             max_wait_s = 0.0
 
         # Allow callers to provide either just the hash or Name@hash
-        target_hash: str | None = None
         if pinned is not None:
             target_hash, user_id = pinned.project_hash, pinned.user_id
         elif unity_instance:
             if "@" in unity_instance:
-                _, _, suffix = unity_instance.rpartition("@")
-                if not suffix.strip():
-                    raise NoUnitySessionError("Unity instance selector is missing its project hash")
+                project_name, _, suffix = unity_instance.rpartition("@")
+                if not project_name.strip() or not suffix.strip():
+                    raise NoUnitySessionError(
+                        "Unity instance selector requires a project name and hash"
+                    )
                 target_hash = suffix
             else:
                 target_hash = unity_instance
@@ -4606,17 +4607,15 @@ class PluginHub(WebSocketEndpoint):
             if target_hash:
                 if hosted and not user_id:
                     raise ValueError("Project resolution requires user_id in remote-hosted mode")
-                if owner:
-                    session_id = await registry.get_session_id_by_hash(target_hash, owner)
-                else:
-                    session_id = await registry.get_session_id_by_hash(target_hash)
+                selection = {"project_name": project_name} if project_name is not None else {}
+                session_id = await registry.get_session_id_by_hash(target_hash, owner, **selection)
                 if cls._registry is not registry:
                     raise NoUnitySessionError("Unity plugin server stopped or replaced")
                 if config.http_remote_hosted != hosted:
                     raise NoUnitySessionError("Unity plugin server routing mode changed")
                 if session_id is not None:
                     return (
-                        _SessionRoute(registry, session_id, target_hash, owner),
+                        _SessionRoute(registry, session_id, target_hash, owner, project_name),
                         0,
                         explicit_required,
                     )

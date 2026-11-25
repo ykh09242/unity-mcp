@@ -77,7 +77,9 @@ async def _register(hub, block_close=False, project_hash="bbbbbbbb"):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("selector", ["Missing@", "@", "Missing@ \t"])
+@pytest.mark.parametrize(
+    "selector", ["Missing@", "@", "Missing@ \t", "Missing@bbbbbbbb", "@bbbbbbbb"]
+)
 async def test_malformed_explicit_selector_does_not_auto_route(hub_environment, selector):
     hub, registry = hub_environment
     hub.configure(registry)

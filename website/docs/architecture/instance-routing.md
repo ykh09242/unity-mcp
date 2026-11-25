@@ -24,7 +24,9 @@ Stdio discovers Unity status/port registry files and probes candidates through t
 
 Explicit targets and authenticated identities are request-scoped and not serialized into shared session state. Persistent defaults are keyed by the legacy session, never a caller-supplied `client_id`, a user-global selection or a process-global fallback. A per-call override must not change the session default.
 
-Exact hashes are preferred before prefix matching. Ambiguous selectors fail; stdio's port shorthand is not an HTTP project selector. On reconnect, preserve the requested target rather than silently using another connected Editor.
+Use the complete `Name@hash` from discovery for a pinned target. A missing qualified ID fails even when another Editor has the same name or a longer hash with that prefix. A bare hash can match a unique prefix. For stdio, a bound port takes precedence over a bare prefix, and an exact registered hash keeps its identity.
+
+For selectors outside the full ID format, the legacy stdio pool accepts a unique literal project name, including names containing `@`. It then supports `Name@port` or a unique named hash prefix. A named hint that matches one Editor's port and another same-named Editor's hash is ambiguous. Both 8- and 16-character hexadecimal suffixes identify full hashes. A reconnect preserves the requested identity.
 
 ## Hosted ownership
 
