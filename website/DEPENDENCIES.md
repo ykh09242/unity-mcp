@@ -20,6 +20,16 @@ GitHub withdrew the advisory for `braces` 3.0.3 on 2026-10-23. The November 5 np
 
 Treat configured glob patterns and build plugins as trusted build inputs. The library's optional `maxLength` check is covered as an API contract. Docusaurus's glob-based watchers use their ordinary defaults.
 
+## November 25, 2026
+
+The lock updates 26 transitive entries. Babel 7.29.15 fixes spread evaluation
+order and minified output. Terser moves to 5.51.4, React Fast Compare to
+3.2.4 and webpack-dev-middleware to 8.6.3. The middleware now honors
+`output.clean` for files it writes to disk. npm 12.2.3 reproduced the
+cross-platform lock offline. The clean install, dependency contracts, production
+build and published-route checks passed. npm audit reported zero findings.
+[Babel](https://github.com/babel/babel/releases/tag/v7.29.15) · [Terser](https://github.com/terser/terser/blob/v5.51.4/CHANGELOG.md) · [React Fast Compare](https://github.com/FormidableLabs/react-fast-compare/releases/tag/v3.2.4) · [webpack-dev-middleware](https://github.com/webpack/webpack-dev-middleware/releases/tag/v8.6.3)
+
 ## November 21, 2026
 
 The npm 12.2.3 lock refresh advances `minimizer-webpack-plugin` from 5.14.0 to 5.14.1. The published archive checks options before loading `schema-utils` and the full schema. Its new `schema-utils` minimum is 4.8.5, which the site already resolves. All 13 direct dependencies and existing overrides retain their selected versions. The tarball matches the registry SHA-512 integrity, the offline lock-only repeat produced the same graph and npm audit reported zero findings. [Published package metadata](https://registry.npmjs.org/minimizer-webpack-plugin/5.14.1) · [Published archive](https://registry.npmjs.org/minimizer-webpack-plugin/-/minimizer-webpack-plugin-5.14.1.tgz)
