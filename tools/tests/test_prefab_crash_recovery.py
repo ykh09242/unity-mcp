@@ -22,6 +22,7 @@ from prefab_crash_recovery import (
 )
 
 
+# The Windows venv redirector has a different PID from the interpreter running this marker.
 CHILD = """
 import json, os, pathlib, sys, time
 directory, boundary, fault = sys.argv[1:]
@@ -41,7 +42,7 @@ time.sleep(30)
 
 @pytest.mark.parametrize("cut", CUTS, ids=lambda cut: cut.boundary)
 def test_parent_kills_only_its_own_barrier_child(tmp_path, cut):
-    command = [sys.executable, "-c", CHILD, str(tmp_path), cut.boundary, "none"]
+    command = [sys._base_executable, "-c", CHILD, str(tmp_path), cut.boundary, "none"]
     launch = terminate_at_cut(command, tmp_path, cut, timeout=10)
     assert launch["forced_termination"] and launch["process_ended"]
     assert launch["actual_exit_code"] != 0
@@ -55,7 +56,7 @@ def test_early_exit_and_foreign_markers_cannot_certify_a_cut(tmp_path, fault):
     cut = CUTS[0]
     with pytest.raises(ValueError, match="owned PID|Expected a process death"):
         terminate_at_cut(
-            [sys.executable, "-c", CHILD, str(tmp_path), cut.boundary, fault],
+            [sys._base_executable, "-c", CHILD, str(tmp_path), cut.boundary, fault],
             tmp_path,
             cut,
             timeout=10,
