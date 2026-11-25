@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "server_revision": "90c9f7c37c33679f2350aefca7cbb54fbe711bc5",
+  "server_revision": "eacaf93db6bbf21bc294cf458ed814589592b647",
   "holdout_sha256": "8526a396abfeb0b4b1e32a2e17b8d1726604ecbd8aa9aeb7763c5474e4d806c8",
   "model": "gpt-6.2-sol",
   "reasoning_effort": "medium",

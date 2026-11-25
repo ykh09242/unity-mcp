@@ -12,7 +12,7 @@ Fresh agents of the same model see opaque case IDs, original requests and the ac
 
 ## Observed selections
 
-Four fresh `gpt-6.2-sol` callers used medium reasoning. Family coverage counts an original when at least one family the caller actually opened contained an accepted binding. First choice counts the one exact binding the caller picked from the offered pages. The catalog was frozen at `8573ff875`. All public packets delivered to the callers replayed with identical digests after removal of both original encoders and all project-fitted weights at `3291afe6b` and after the public schema and purpose corrections at `90c9f7c37`. The replay checked inventory before and after and blocked business dispatch and ranking. [Per-case choices and packet digests](agent_family_results.json)
+Four fresh `gpt-6.2-sol` callers used medium reasoning. Family coverage counts an original when at least one family the caller actually opened contained an accepted binding. First choice counts the one exact binding the caller picked from the offered pages. The catalog was frozen at `8573ff875`. All public packets delivered to the callers replayed with identical digests after removal of both original encoders and all project-fitted weights at `3291afe6b` and on the final public schema and purpose corrections at `eacaf93db`. The replay checked inventory before and after and blocked business dispatch and ranking. [Per-case choices and packet digests](agent_family_results.json)
 
 | Originals | Profile | Cases | Family covered | Correct first | Opposite first | Abstained |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
