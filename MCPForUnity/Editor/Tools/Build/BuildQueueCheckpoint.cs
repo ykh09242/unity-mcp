@@ -18,6 +18,7 @@ namespace MCPForUnity.Editor.Tools.Build
     {
         private const int MaxBytes = 1048576;
         internal const int MaxActiveEntries = 32;
+        internal const int MaxChildren = 128;
         internal const int MaxRecentTerminalEntries = 64;
         internal const int MaxHistoryEntries = 4096;
         private readonly Func<string> read;
@@ -152,7 +153,7 @@ namespace MCPForUnity.Editor.Tools.Build
                     || item.DeadlineUnixMs <= 0
                     || item.ChildIds == null
                     || item.ChildIds.Length == 0
-                    || item.ChildIds.Length > 128
+                    || item.ChildIds.Length > MaxChildren
                 )
                     throw new InvalidDataException("Build continuation history is invalid.");
                 foreach (string id in new[] { item.Id }.Concat(item.ChildIds).Distinct(StringComparer.Ordinal))
@@ -185,7 +186,7 @@ namespace MCPForUnity.Editor.Tools.Build
                     || entry.DeadlineUnixMs <= 0
                     || entry.Children == null
                     || entry.Children.Count == 0
-                    || entry.Children.Count > 128
+                    || entry.Children.Count > MaxChildren
                     || (!entry.Batch && entry.Children.Count != 1)
                     || entry.CurrentIndex < 0
                     || entry.CurrentIndex > entry.Children.Count
@@ -366,7 +367,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 {
                     if (Scheduled.Contains(entry.Id))
                         continue;
-                    RestoreJobs(entry);
+                    RestoreJobs(entry, BuildRunner.NativeRecoveryRequired);
                     if (entry.Children.All(child => child.Phase == "terminal"))
                     {
                         if (!entry.Settled)
@@ -389,7 +390,7 @@ namespace MCPForUnity.Editor.Tools.Build
             }
         }
 
-        private static void RestoreJobs(BuildQueueEntry entry)
+        private static void RestoreJobs(BuildQueueEntry entry, bool recoveryRequired = false)
         {
             BatchJob batch = entry.Batch ? BuildJobStore.GetBatchJob(entry.Id) : null;
             if (entry.Batch && batch == null)
@@ -403,6 +404,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 };
                 BuildJobStore.AddBatchJob(batch);
             }
+            bool lostChild = false;
             foreach (BuildQueueChild child in entry.Children)
             {
                 BuildJob job = BuildJobStore.GetBuildJob(child.JobId);
@@ -414,18 +416,27 @@ namespace MCPForUnity.Editor.Tools.Build
                     if (child.Phase == "native_started")
                     {
                         job.State = BuildJobState.Failed;
+                        job.NativeCompletionUnknown = true;
                         job.ErrorMessage = "Native build invocation was interrupted by reload. It will not be executed again; recovery is required.";
+                        job.CompletedAt = DateTime.UtcNow;
+                    }
+                    else if ((recoveryRequired || lostChild) && child.Phase != "terminal")
+                    {
+                        job.State = entry.Cancelled && !entry.Batch ? BuildJobState.Cancelled : BuildJobState.Skipped;
+                        job.ErrorMessage = "A native build completion is unknown; this queued build was not resumed.";
                         job.CompletedAt = DateTime.UtcNow;
                     }
                     BuildJobStore.AddBuildJob(job);
                 }
+                lostChild |= job.NativeCompletionUnknown;
                 if (batch != null && !batch.Children.Any(existing => existing.JobId == child.JobId))
                     batch.Children.Add(job);
             }
-            if (batch != null && entry.Children.All(child => child.Phase == "terminal"))
+            bool blocked = recoveryRequired && entry.Children.Any(child => child.Phase != "terminal");
+            if (batch != null && (blocked || lostChild || entry.Children.All(child => child.Phase == "terminal")))
                 batch.State =
                     entry.Cancelled ? BuildJobState.Cancelled
-                    : entry.Children.Any(child => child.State == BuildJobState.Failed) ? BuildJobState.Failed
+                    : blocked || lostChild || entry.Children.Any(child => child.State == BuildJobState.Failed) ? BuildJobState.Failed
                     : BuildJobState.Succeeded;
         }
 
@@ -639,7 +650,12 @@ namespace MCPForUnity.Editor.Tools.Build
         internal static bool Cancel(string id)
         {
             BuildQueueEntry entry = Entries.FirstOrDefault(item => item.Id == id);
-            if (entry == null || entry.Settled || (!entry.Batch && (entry.Children[0].Phase == "native_started" || entry.Children[0].Phase == "terminal")))
+            if (
+                entry == null
+                || entry.Settled
+                || (BuildRunner.NativeRecoveryRequired && entry.Children.Any(child => child.Phase == "native_started"))
+                || (!entry.Batch && (entry.Children[0].Phase == "native_started" || entry.Children[0].Phase == "terminal"))
+            )
                 return false;
             entry.Cancelled = true;
             entries = Journal.Save(Entries); // Tombstone is durable before reporting cancellation.

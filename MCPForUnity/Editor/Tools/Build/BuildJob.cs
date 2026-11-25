@@ -37,6 +37,7 @@ namespace MCPForUnity.Editor.Tools.Build
         public DateTime StartedAt { get; set; }
         public DateTime? CompletedAt { get; set; }
         public string ErrorMessage { get; set; }
+        internal bool NativeCompletionUnknown { get; set; }
 
         // Extracted from BuildReport at completion to avoid retaining the heavy native object
         public double TotalSizeMb { get; set; }
@@ -86,6 +87,11 @@ namespace MCPForUnity.Editor.Tools.Build
 
             if (!string.IsNullOrEmpty(ErrorMessage))
                 data["error"] = ErrorMessage;
+            if (NativeCompletionUnknown)
+            {
+                data["native_completion"] = "unknown";
+                data["recovery_required"] = true;
+            }
 
             return data;
         }
@@ -150,6 +156,8 @@ namespace MCPForUnity.Editor.Tools.Build
                 data["report_id"] = ReportId;
             if (ReportPersistenceError != null)
                 data["report_persistence_error"] = ReportPersistenceError;
+            if (Children.Exists(child => child.NativeCompletionUnknown))
+                data["recovery_required"] = true;
             return data;
         }
     }

@@ -139,6 +139,28 @@ internal static class BuildPreflightHarness
         update?.Invoke();
     }
 
+    private static void LostBatchStatus()
+    {
+        Reset();
+        JObject started = Call(new JObject { ["action"] = "batch", ["targets"] = new JArray("windows64", "linux64") });
+        string id = (string)started["data"]["job_id"];
+        var flags = BindingFlags.Static | BindingFlags.NonPublic;
+        var entries = (List<BuildQueueEntry>)typeof(BuildQueueCheckpoint).GetField("entries", flags).GetValue(null);
+        var child = entries[0].Children[0];
+        RunUpdate();
+        BuildQueueCheckpoint.MarkNativeStarted(child);
+        string journal = SessionState.GetString(BuildQueueCheckpoint.StorageKey, "");
+        Reset();
+        SessionState.SetString(BuildQueueCheckpoint.StorageKey, journal);
+        SessionState.SetBool("MCPForUnity.Build.NativeOwnerV1", true);
+        typeof(BuildQueueCheckpoint).GetMethod("Restore", flags).Invoke(null, null);
+        JObject status = Call(new JObject { ["action"] = "status", ["job_id"] = id });
+        Check((string)status["data"]["result"] == "failed", "lost batch status stops polling; observed " + status["data"]["result"]);
+        Check((bool?)status["data"]["recovery_required"] == true, "lost batch status keeps the native recovery requirement");
+        Check((string)status["data"]["builds"][1]["result"] == "skipped", "uninvoked sibling is skipped; observed " + status["data"]["builds"][1]["result"]);
+        Check(BuildRunner.NativeRecoveryRequired && BuildPipeline.Builds == 0, "lost batch retains the fence without replay");
+    }
+
     private static void PlanContracts()
     {
         Reset();
@@ -384,6 +406,15 @@ internal static class BuildPreflightHarness
     private static int RunFixture(string[] args)
     {
         outputRoot = Path.Combine(Path.GetFullPath(args[0]), "never-created-output");
+        LostBatchStatus();
+        Reject(JObject.Parse("{action:'batch',targets:{invalid:true},profiles:['Assets/Valid.asset']}"), "targets");
+        Reset();
+        var originalScenes = EditorBuildSettings.scenes;
+        var invalidScenes = Call(JObject.Parse("{action:'scenes',scenes:[{path:123}]}"));
+        Check(
+            !invalidScenes.Value<bool>("success") && ReferenceEquals(originalScenes, EditorBuildSettings.scenes),
+            "non-string scene path must not replace build settings"
+        );
         disablePlanGuardControl = args.Length == 2 && args[1] == "--disable-plan-guard-control";
         foreach (
             string json in new[]
@@ -1140,6 +1171,15 @@ namespace MCPForUnity.Editor.Tools
 
 namespace MCPForUnity.Editor.Tools.Build
 {
+    internal static class BuildConditionCapture
+    {
+        internal static UnityEditor.Build.Reporting.BuildReport Invoke(BuildJob job, Func<UnityEditor.Build.Reporting.BuildReport> build, out JObject result)
+        {
+            result = null;
+            return build();
+        }
+    }
+
     internal static class BuildReportStore
     {
         internal static bool IsAction(string action) => false;
@@ -1158,6 +1198,8 @@ namespace MCPForUnity.Editor.Tools.Build
         internal static void Observe(BatchJob job) { }
 
         internal static void Complete(BuildJob job, UnityEditor.Build.Reporting.BuildReport report = null) { }
+
+        internal static void CompleteWithConditions(BuildJob job, UnityEditor.Build.Reporting.BuildReport report, JObject conditions) { }
 
         internal static void Complete(BatchJob job) { }
     }

@@ -31,7 +31,11 @@ namespace MCPForUnity.Editor.Tools.Build
 
         internal static void MarkNativeInvocation(string id)
         {
+            if (NativeRecoveryRequired)
+                throw new InvalidOperationException("Queued build native admission blocked: recovery_required");
             SessionState.SetBool(NativeOwnerKey, true);
+            if (!SessionState.GetBool(NativeOwnerKey, false))
+                throw new IOException("Build invocation ownership could not be persisted.");
             InvokedOwners.Add(id);
         }
 
@@ -370,6 +374,11 @@ namespace MCPForUnity.Editor.Tools.Build
             }
             catch (Exception ex)
             {
+                if (job.State == BuildJobState.Skipped || job.State == BuildJobState.Cancelled)
+                {
+                    BuildQueueCheckpoint.Complete(job);
+                    return;
+                }
                 job.State = BuildJobState.Failed;
                 job.CompletedAt = DateTime.UtcNow;
                 job.ErrorMessage = ex.Message;

@@ -530,8 +530,10 @@ namespace MCPForUnity.Editor.Tools
                 {
                     scenesRaw = JArray.Parse(scenesStr);
                 }
-                catch
+                catch (Newtonsoft.Json.JsonException)
                 {
+                    if (scenesStr.TrimStart().StartsWith("[", StringComparison.Ordinal))
+                        return new ErrorResponse("'scenes' must contain a valid JSON array.");
                     // Treat as comma-separated paths
                     var paths = scenesStr.Split(',').Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s)).ToArray();
                     if (paths.Length == 0)
@@ -553,15 +555,12 @@ namespace MCPForUnity.Editor.Tools
             var newScenes = new List<EditorBuildSettingsScene>();
             foreach (var item in sceneArray)
             {
-                if (item.Type == JTokenType.String)
-                {
-                    newScenes.Add(new EditorBuildSettingsScene(item.ToString(), true));
-                    continue;
-                }
-                string path = item["path"]?.ToString();
-                if (string.IsNullOrEmpty(path))
-                    return new ErrorResponse("Each scene must have a 'path' field.");
-                bool enabled = item["enabled"]?.ReadScalar<bool?>() ?? true;
+                var row = item as JObject;
+                var pathToken = row == null ? item : row["path"];
+                if (pathToken?.Type != JTokenType.String || string.IsNullOrWhiteSpace((string)pathToken))
+                    return new ErrorResponse("Each scene must have a nonempty string path.");
+                string path = (string)pathToken;
+                bool enabled = row?["enabled"]?.ReadScalar<bool?>() ?? true;
                 newScenes.Add(new EditorBuildSettingsScene(path, enabled));
             }
 
@@ -618,8 +617,10 @@ namespace MCPForUnity.Editor.Tools
             if (BuildPipeline.isBuildingPlayer)
                 return new ErrorResponse("A build is already in progress.");
 
-            string[] targets = p.GetStringArray("targets");
+            string[] targets = p.GetStringArray("targets", strict: true);
             string[] profiles = p.GetStringArray("profiles", strict: true);
+            if (targets?.Length > BuildQueueJournal.MaxChildren || profiles?.Length > BuildQueueJournal.MaxChildren)
+                return new ErrorResponse($"A batch accepts at most {BuildQueueJournal.MaxChildren} targets or profiles.");
             if (!string.IsNullOrEmpty(p.Get("profile")))
                 return new ErrorResponse("Use 'profiles' for a batch or 'build' with 'profile'.");
             string outputDir = p.Get("output_dir") ?? "Builds";
