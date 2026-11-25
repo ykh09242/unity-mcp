@@ -11440,6 +11440,308 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "read"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "create_asset"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "edit"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "commands": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "commands"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "add_map"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "name": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "expected_revision",
+                    "name"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "add_action"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action_type": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "map_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "name": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "expected_revision",
+                    "map_id",
+                    "name",
+                    "action_type"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "add_binding"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "binding_path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "map_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "expected_revision",
+                    "map_id",
+                    "action_id",
+                    "binding_path"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "set_binding"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "binding_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "binding_path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "map_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "expected_revision",
+                    "map_id",
+                    "binding_id",
+                    "binding_path"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "remove_binding"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "binding_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "map_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "expected_revision",
+                    "map_id",
+                    "binding_id"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "enum": [
@@ -21478,6 +21780,224 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[gG][eE][tT]_[rR][eE][gG][iI][oO][nN](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "channel": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "region": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "channel",
+                    "region"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[sS][eE][tT]_[rR][eE][gG][iI][oO][nN](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "channel": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_data_guid": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "region": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "values": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "expected_revision",
+                    "expected_data_guid",
+                    "channel",
+                    "region",
+                    "values"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[gG][eE][tT]_[tT][rR][eE][eE][sS](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "indices": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "indices"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[sS][eE][tT]_[tT][rR][eE][eE][sS](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "expected_data_guid": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "indices": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "values": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "expected_revision",
+                    "expected_data_guid",
+                    "indices",
+                    "values"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[gG][eE][tT]_[lL][aA][yY][eE][rR](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "index": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "index"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[sS][eE][tT]_[lL][aA][yY][eE][rR](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "expected_data_guid": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "index": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "layer_guid": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "layer_path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "expected_revision",
+                    "expected_data_guid",
+                    "index",
+                    "layer_path",
+                    "layer_guid"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "type": "string"
@@ -27648,6 +28168,86 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[gG][eE][tT]_[tT][yY][pP][eE](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "class_name": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "class_name"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[gG][eE][tT]_[mM][eE][mM][bB][eE][rR](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "class_name": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "member_name": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "class_name",
+                    "member_name"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[sS][eE][aA][rR][cC][hH](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "query": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "type": "string"
@@ -39350,6 +39950,308 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "read"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "create_asset"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "edit"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "commands": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "commands"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "add_map"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "name": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "expected_revision",
+                    "name"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "add_action"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action_type": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "map_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "name": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "expected_revision",
+                    "map_id",
+                    "name",
+                    "action_type"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "add_binding"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "binding_path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "map_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "expected_revision",
+                    "map_id",
+                    "action_id",
+                    "binding_path"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "set_binding"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "binding_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "binding_path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "map_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "expected_revision",
+                    "map_id",
+                    "binding_id",
+                    "binding_path"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "remove_binding"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "binding_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "map_id": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "expected_revision",
+                    "map_id",
+                    "binding_id"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "enum": [
@@ -49388,6 +50290,224 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[gG][eE][tT]_[rR][eE][gG][iI][oO][nN](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "channel": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "region": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "channel",
+                    "region"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[sS][eE][tT]_[rR][eE][gG][iI][oO][nN](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "channel": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_data_guid": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "region": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "values": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "expected_revision",
+                    "expected_data_guid",
+                    "channel",
+                    "region",
+                    "values"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[gG][eE][tT]_[tT][rR][eE][eE][sS](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "indices": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "indices"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[sS][eE][tT]_[tT][rR][eE][eE][sS](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "expected_data_guid": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "indices": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "values": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "expected_revision",
+                    "expected_data_guid",
+                    "indices",
+                    "values"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[gG][eE][tT]_[lL][aA][yY][eE][rR](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "index": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "index"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[sS][eE][tT]_[lL][aA][yY][eE][rR](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "expected_data_guid": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "expected_revision": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "index": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "layer_guid": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "layer_path": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "expected_revision",
+                    "expected_data_guid",
+                    "index",
+                    "layer_path",
+                    "layer_guid"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "type": "string"
@@ -55558,6 +56678,86 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[gG][eE][tT]_[tT][yY][pP][eE](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "class_name": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "class_name"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[gG][eE][tT]_[mM][eE][mM][bB][eE][rR](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "class_name": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "member_name": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "class_name",
+                    "member_name"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "pattern": "^[sS][eE][aA][rR][cC][hH](?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "query": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "type": "string"

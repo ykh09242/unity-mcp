@@ -4444,19 +4444,19 @@ Print NAME's complete schema receipt as JSON, regardless of --format. Project-de
 
 ## `unity-mcp tool search`
 
-Search the offline local catalog by task purpose, without a Unity connection. Advertisement and project readiness remain unobserved in this offline scope.
+Search the offline local catalog by task purpose, without a Unity connection. For the agent directory, supply QUERY verbatim. Use --family for an exact family page. Advertisement and project readiness remain unobserved in this offline scope.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | query | text | optional | nargs=1 | — | — |  |
 | --limit | integer range: [1..20] | optional | nargs=1 | 5 | — |  |
-| --selection | choice: ranked, agent | optional | nargs=1 | "ranked" | — | Use agent to browse all public family and operation pages. |
-| --family | text | optional | nargs=1 | — | — | An exact family ID from the directory for agent selection. |
+| --selection | choice: ranked, agent | optional | nargs=1 | "ranked" | — | Use agent for exhaustive browsing or ranked for lexical and required evidence search. |
+| --family | text | optional | nargs=1 | — | — | Agent browse only. An exact family ID. QUERY is optional. |
 | --offset | integer range: [0..None] | optional | nargs=1 | 0 | — | Agent selection page offset. |
-| --catalog-query | text | optional | nargs=1 | — | — | Optional alternate terms for literal search, such as a known API identifier. |
-| --intent | choice: observe, interact, edit | optional | nargs=1 | — | — | Filter routes by the requested outcome. |
-| --observation-source | choice: editor_live, asset_file, imported_asset, compile_job, scenario_job | optional | nargs=1 | — | — | Select the origin of the requested evidence. A text query is optional. |
-| --required-value | choice: unityCameras, cinemachineCameras, cinemachineInstalled, render_size.width, render_size.height, current_size, view_instance_id, presets, rendered_image, pointer_hit_order, console.entries, menu.declared_paths, active_scene.name, active_scene.path, compilation.is_compiling, compile_job.outcome, scenario_job.outcome, nodeCount, edgeCount, nodes, edges, properties, keywords, unsaved_graph_structure, property_values, shader_source, contents, encodedContents, nextOffset, shader_graph_structure, unsaved_source, compilation, passes, subshader_count, navigation.module_available, navigation.package_available, project_auditor.api_supported, project_auditor.rules_available | optional | nargs=1, repeatable | — | — | Require a declared result field. Repeat to require every field. |
+| --catalog-query | text | optional | nargs=1 | — | — | Ranked search only. Alternate terms such as a known API identifier. |
+| --intent | choice: observe, interact, edit | optional | nargs=1 | — | — | Ranked search only. Filter routes by the requested outcome. |
+| --observation-source | choice: editor_live, asset_file, imported_asset, compile_job, scenario_job | optional | nargs=1 | — | — | Ranked search only. Require this evidence source. QUERY is optional. |
+| --required-value | choice: unityCameras, cinemachineCameras, cinemachineInstalled, render_size.width, render_size.height, current_size, view_instance_id, presets, rendered_image, pointer_hit_order, console.entries, menu.declared_paths, active_scene.name, active_scene.path, compilation.is_compiling, compile_job.outcome, scenario_job.outcome, nodeCount, edgeCount, nodes, edges, properties, keywords, unsaved_graph_structure, property_values, shader_source, contents, encodedContents, nextOffset, shader_graph_structure, unsaved_source, compilation, passes, subshader_count, navigation.module_available, navigation.package_available, project_auditor.api_supported, project_auditor.rules_available | optional | nargs=1, repeatable | — | — | Ranked search only. Repeat to require every listed result field. |
 | --route-surfaces | choice: both, tools, resources | optional | nargs=1 | "both" | — | Select which invocation surfaces can appear in grouped routes. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
