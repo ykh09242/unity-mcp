@@ -239,6 +239,49 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(other, importer.GetOverrideSampleSettings(otherPlatform));
         }
 
+        [TestCase("WSA", "Windows Store Apps")]
+        [TestCase("Switch", "Nintendo Switch")]
+        public void ImportPolicy_ReportedPlatformCanBeReusedForReadApplyAndClear(string selector, string nativePlatform)
+        {
+            string path = Wav();
+            var request = new JObject
+            {
+                ["action"] = "read_import_settings",
+                ["target"] = path,
+                ["platform"] = selector,
+            };
+            var initial = Send(request);
+            Assert.IsTrue(initial.Value<bool>("success"), initial.ToString());
+            Assert.IsFalse(initial["data"].Value<bool>("overridden"));
+
+            string reported = initial["data"].Value<string>("platform");
+            Assert.IsNotEmpty(reported);
+            request["platform"] = reported;
+            var read = Send(request);
+            Assert.IsTrue(read.Value<bool>("success"), read.ToString());
+            Assert.AreEqual(reported, read["data"].Value<string>("platform"));
+
+            request["action"] = "apply_import_settings";
+            request["settings"] = new JObject { ["quality"] = 0.37 };
+            var applied = Send(request);
+            Assert.IsTrue(applied.Value<bool>("success"), applied.ToString());
+            Assert.AreEqual(reported, applied["data"]["before"].Value<string>("platform"));
+            Assert.IsTrue(applied["data"]["after"].Value<bool>("overridden"));
+            var importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            Assert.IsTrue(importer.ContainsSampleSettingsOverride(nativePlatform));
+            Assert.AreEqual(0.37f, importer.GetOverrideSampleSettings(nativePlatform).quality, 0.001f);
+
+            request["platform"] = applied["data"]["after"].Value<string>("platform");
+            Assert.AreEqual(reported, request.Value<string>("platform"));
+            request.Remove("settings");
+            request["clear_override"] = true;
+            var cleared = Send(request);
+            Assert.IsTrue(cleared.Value<bool>("success"), cleared.ToString());
+            Assert.IsFalse(cleared["data"]["after"].Value<bool>("overridden"));
+            importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            Assert.IsFalse(importer.ContainsSampleSettingsOverride(nativePlatform));
+        }
+
         [TestCase("\"Unknown\"")]
         [TestCase("\"4\"")]
         [TestCase("4")]

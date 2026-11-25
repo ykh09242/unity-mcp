@@ -313,7 +313,7 @@ namespace MCPForUnity.Editor.Tools
             return token.Value<bool>();
         }
 
-        private static object Snapshot(AudioImporter importer, string platform)
+        private static object Snapshot(AudioImporter importer, string platform, string selector)
         {
             bool defaults = platform == "Default";
             var sample = defaults ? importer.defaultSampleSettings : importer.GetOverrideSampleSettings(platform);
@@ -321,7 +321,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 path = importer.assetPath,
                 guid = AssetDatabase.AssetPathToGUID(importer.assetPath),
-                platform,
+                platform = selector,
                 overridden = !defaults && importer.ContainsSampleSettingsOverride(platform),
                 force_to_mono = importer.forceToMono,
                 load_in_background = importer.loadInBackground,
@@ -336,15 +336,15 @@ namespace MCPForUnity.Editor.Tools
             };
         }
 
-        private static string ImporterPlatform(JToken token)
+        private static BuildTargetGroup? ImporterGroup(JToken token)
         {
             if (token == null)
-                return "Default";
+                return null;
             if (token.Type == JTokenType.String)
             {
                 string name = token.Value<string>();
                 if (string.Equals(name, "Default", StringComparison.OrdinalIgnoreCase))
-                    return "Default";
+                    return null;
                 // TryParse also accepts numbers and comma-separated combinations.
                 // Only a declared name identifies one platform's settings.
                 if (
@@ -352,7 +352,7 @@ namespace MCPForUnity.Editor.Tools
                     && Enum.TryParse(name, true, out BuildTargetGroup group)
                     && group != BuildTargetGroup.Unknown
                 )
-                    return UnityEditor.Build.NamedBuildTarget.FromBuildTargetGroup(group).TargetName;
+                    return group;
             }
             throw new ArgumentException("platform must be Default or a supported BuildTargetGroup name.");
         }
@@ -363,11 +363,13 @@ namespace MCPForUnity.Editor.Tools
             var importer = AssetImporter.GetAtPath(path) as AudioImporter;
             if (importer == null)
                 throw new ArgumentException("target must identify an AudioImporter asset under Assets/.");
-            string platform = ImporterPlatform(request["platform"]);
+            var group = ImporterGroup(request["platform"]);
+            string selector = group?.ToString() ?? "Default";
+            string platform = group.HasValue ? UnityEditor.Build.NamedBuildTarget.FromBuildTargetGroup(group.Value).TargetName : "Default";
             if (!apply)
                 return new SuccessResponse(
                     "Audio import settings observed; platform values may be Unity-translated defaults when no override exists.",
-                    Snapshot(importer, platform)
+                    Snapshot(importer, platform, selector)
                 );
             if (EditorApplication.isPlaying)
                 throw new ArgumentException("Audio importer edits require Edit mode.");
@@ -422,7 +424,7 @@ namespace MCPForUnity.Editor.Tools
                             throw new ArgumentException("Unsupported audio import setting: " + property.Name);
                     }
                 }
-            object before = Snapshot(importer, platform);
+            object before = Snapshot(importer, platform, selector);
             Undo.RegisterCompleteObjectUndo(importer, "Apply audio import settings");
             if (clear)
             {
@@ -460,7 +462,7 @@ namespace MCPForUnity.Editor.Tools
                 new
                 {
                     before,
-                    after = Snapshot(readback, platform),
+                    after = Snapshot(readback, platform, selector),
                     reimported = true,
                     undo_recorded = true,
                     undo_limitation = "Importer Undo is recorded; native reimport can limit restoration. No transactional rollback is promised.",

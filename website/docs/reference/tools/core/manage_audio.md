@@ -27,7 +27,7 @@ Diagnose observed scene audio state without proving output-device audibility; in
 | `mixer_path` | `str \| None` | — | get_routing inventory or set_routing existing AudioMixer asset path. |
 | `group_id` | `str \| None` | — | set_routing exact persistent group local file ID from get_routing inventory; never a first-name match. |
 | `clear_routing` | `bool` | — | set_routing explicit reset to the default output; excludes mixer_path/group_id. |
-| `platform` | `str \| None` | — | Importer platform: Default (omitted) or a Unity BuildTargetGroup name, e.g. Standalone, Android, iOS. Names are case-insensitive. Readback identifies the Unity importer platform; values without an override are Unity-translated defaults. |
+| `platform` | `str \| None` | — | Importer platform: Default (omitted) or a Unity BuildTargetGroup name, e.g. Standalone, Android, iOS. Names are case-insensitive. Reuse the returned platform on later calls. Values without an override are Unity-translated defaults. |
 | `settings` | `AudioImportPolicy \| None` | — |  |
 | `clear_override` | `bool` | — | apply_import_settings removes the selected platform override; excludes settings and Default platform. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
