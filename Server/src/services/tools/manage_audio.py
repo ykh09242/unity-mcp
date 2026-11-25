@@ -122,7 +122,7 @@ async def manage_audio(
     ] = False,
     platform: Annotated[
         StrictStr | None,
-        "Importer platform: Default (omitted) or exact BuildTargetGroup name, e.g. Standalone, Android, iOS. Read values without override are Unity-translated defaults.",
+        "Importer platform: Default (omitted) or a Unity BuildTargetGroup name, e.g. Standalone, Android, iOS. Names are case-insensitive. Readback identifies the Unity importer platform; values without an override are Unity-translated defaults.",
     ] = None,
     settings: Annotated[
         AudioImportPolicy | None,

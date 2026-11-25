@@ -336,25 +336,34 @@ namespace MCPForUnity.Editor.Tools
             };
         }
 
+        private static string ImporterPlatform(JToken token)
+        {
+            if (token == null)
+                return "Default";
+            if (token.Type == JTokenType.String)
+            {
+                string name = token.Value<string>();
+                if (string.Equals(name, "Default", StringComparison.OrdinalIgnoreCase))
+                    return "Default";
+                // TryParse also accepts numbers and comma-separated combinations.
+                // Only a declared name identifies one platform's settings.
+                if (
+                    Enum.GetNames(typeof(BuildTargetGroup)).Contains(name, StringComparer.OrdinalIgnoreCase)
+                    && Enum.TryParse(name, true, out BuildTargetGroup group)
+                    && group != BuildTargetGroup.Unknown
+                )
+                    return UnityEditor.Build.NamedBuildTarget.FromBuildTargetGroup(group).TargetName;
+            }
+            throw new ArgumentException("platform must be Default or a supported BuildTargetGroup name.");
+        }
+
         private static object ImportSettings(JObject request, bool apply)
         {
             string path = AssetPath(request["target"], packages: false);
             var importer = AssetImporter.GetAtPath(path) as AudioImporter;
             if (importer == null)
                 throw new ArgumentException("target must identify an AudioImporter asset under Assets/.");
-            if (request["platform"] != null && request["platform"].Type != JTokenType.String)
-                throw new ArgumentException("platform must be Default or a BuildTargetGroup name.");
-            string platform = request.Value<string>("platform") ?? "Default";
-            if (
-                platform != "Default"
-                && (
-                    !Enum.TryParse<BuildTargetGroup>(platform, false, out var group)
-                    || group == BuildTargetGroup.Unknown
-                    || !Enum.IsDefined(typeof(BuildTargetGroup), group)
-                    || group.ToString() != platform
-                )
-            )
-                throw new ArgumentException("platform must be Default or a supported BuildTargetGroup name.");
+            string platform = ImporterPlatform(request["platform"]);
             if (!apply)
                 return new SuccessResponse(
                     "Audio import settings observed; platform values may be Unity-translated defaults when no override exists.",

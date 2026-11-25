@@ -177,6 +177,101 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void ImportPolicy_IosAliasesShareOneNativeOverride()
+        {
+            const string nativePlatform = "iOS";
+            const string otherPlatform = "Standalone";
+            string path = Wav();
+            var importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            var other = importer.defaultSampleSettings;
+            other.quality = 0.61f;
+            Assert.IsTrue(importer.SetOverrideSampleSettings(otherPlatform, other));
+            importer.SaveAndReimport();
+            importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            var defaults = importer.defaultSampleSettings;
+            other = importer.GetOverrideSampleSettings(otherPlatform);
+
+            var request = new JObject
+            {
+                ["action"] = "read_import_settings",
+                ["target"] = path,
+                ["platform"] = nativePlatform,
+            };
+            var initial = Send(request);
+            Assert.IsTrue(initial.Value<bool>("success"), initial.ToString());
+            Assert.IsFalse(initial["data"].Value<bool>("overridden"));
+
+            request["action"] = "apply_import_settings";
+            request["platform"] = "IOS";
+            request["settings"] = new JObject { ["load_type"] = "CompressedInMemory", ["quality"] = 0.42 };
+            var applied = Send(request);
+            Assert.IsTrue(applied.Value<bool>("success"), applied.ToString());
+            importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            Assert.IsTrue(importer.ContainsSampleSettingsOverride(nativePlatform));
+            var sample = importer.GetOverrideSampleSettings(nativePlatform);
+            Assert.AreEqual(AudioClipLoadType.CompressedInMemory, sample.loadType);
+            Assert.AreEqual(0.42f, sample.quality, 0.001f);
+            Assert.AreEqual(defaults, importer.defaultSampleSettings);
+            Assert.AreEqual(other, importer.GetOverrideSampleSettings(otherPlatform));
+
+            request["action"] = "read_import_settings";
+            request.Remove("settings");
+            foreach (string alias in new[] { nativePlatform, "IOS", "iPhone" })
+            {
+                request["platform"] = alias;
+                var read = Send(request);
+                Assert.IsTrue(read.Value<bool>("success"), read.ToString());
+                Assert.IsTrue(read["data"].Value<bool>("overridden"));
+                Assert.AreEqual(sample.loadType.ToString(), read["data"]["sample_settings"].Value<string>("load_type"));
+                Assert.AreEqual(sample.quality, read["data"]["sample_settings"].Value<float>("quality"));
+            }
+
+            request["action"] = "apply_import_settings";
+            request["platform"] = "iPhone";
+            request["clear_override"] = true;
+            var cleared = Send(request);
+            Assert.IsTrue(cleared.Value<bool>("success"), cleared.ToString());
+            Assert.IsFalse(cleared["data"]["after"].Value<bool>("overridden"));
+            importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            Assert.IsFalse(importer.ContainsSampleSettingsOverride(nativePlatform));
+            Assert.AreEqual(defaults, importer.defaultSampleSettings);
+            Assert.IsTrue(importer.ContainsSampleSettingsOverride(otherPlatform));
+            Assert.AreEqual(other, importer.GetOverrideSampleSettings(otherPlatform));
+        }
+
+        [TestCase("\"Unknown\"")]
+        [TestCase("\"4\"")]
+        [TestCase("4")]
+        [TestCase("\"iOS, iPhone\"")]
+        public void ImportPolicy_InvalidPlatformCannotReadOrClearNativeOverride(string platformJson)
+        {
+            const string nativePlatform = "iOS";
+            string path = Wav();
+            var importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            Assert.IsTrue(importer.SetOverrideSampleSettings(nativePlatform, importer.defaultSampleSettings));
+            importer.SaveAndReimport();
+            importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            Assert.IsTrue(importer.ContainsSampleSettingsOverride(nativePlatform));
+            var sample = importer.GetOverrideSampleSettings(nativePlatform);
+
+            var request = new JObject
+            {
+                ["action"] = "read_import_settings",
+                ["target"] = path,
+                ["platform"] = JToken.Parse(platformJson),
+            };
+            var read = Send(request);
+            Assert.IsFalse(read.Value<bool>("success"), read.ToString());
+            request["action"] = "apply_import_settings";
+            request["clear_override"] = true;
+            var cleared = Send(request);
+            Assert.IsFalse(cleared.Value<bool>("success"), cleared.ToString());
+            importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            Assert.IsTrue(importer.ContainsSampleSettingsOverride(nativePlatform));
+            Assert.AreEqual(sample, importer.GetOverrideSampleSettings(nativePlatform));
+        }
+
+        [Test]
         public void Routing_ExactGroupReadbackPreservesClipAndSupportsUndo()
         {
             // Given: the editor creates/imports a real owned mixer through its own test-only factory.
