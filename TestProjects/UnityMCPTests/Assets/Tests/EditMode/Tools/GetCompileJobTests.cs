@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -11,19 +12,19 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(null)]
         [TestCase("not-an-id")]
         [TestCase("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
-        public void InvalidIdentityIsRejectedWithoutMutation(string id)
+        public async Task InvalidIdentityIsRejectedWithoutMutation(string id)
         {
             int before = EditorStateCache.CompileCount;
-            var result = ToJObject(GetCompileJob.HandleCommand(new JObject { ["compile_id"] = id }));
+            var result = ToJObject(await GetCompileJob.HandleCommand(new JObject { ["compile_id"] = id }));
             Assert.IsFalse((bool)result["success"]);
             Assert.AreEqual(before, EditorStateCache.CompileCount);
         }
 
         [Test]
-        public void UnknownIdentityIsReadOnlyAndNeverReturnsLatestJob()
+        public async Task UnknownIdentityIsReadOnlyAndNeverReturnsLatestJob()
         {
             int before = EditorStateCache.CompileCount;
-            var result = ToJObject(GetCompileJob.HandleCommand(new JObject { ["compile_id"] = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }));
+            var result = ToJObject(await GetCompileJob.HandleCommand(new JObject { ["compile_id"] = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }));
             Assert.IsTrue((bool)result["success"]);
             Assert.AreEqual("unknown", (string)result["data"]["outcome"]);
             Assert.AreEqual("result_unavailable", (string)result["data"]["reason"]);

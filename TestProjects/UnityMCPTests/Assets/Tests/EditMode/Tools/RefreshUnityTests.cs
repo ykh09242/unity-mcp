@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Reflection;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Resources.Editor;
 using MCPForUnity.Editor.Services;
@@ -15,6 +16,189 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class RefreshUnityTests
     {
+        [TestCase(false, TestName = "FailedHandoffAndFailedCleanupReturnANonDispatchedJob")]
+        [TestCase(true, TestName = "PlayTransitionDuringSourcePreparationRefusesNativeDispatch")]
+        public void PreparationFailureReturnsTerminalJobEvidence(bool playTransition)
+        {
+            const string first = "11111111111111111111111111111111";
+            const string second = "22222222222222222222222222222222";
+            const string session = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            const string playKey = "MCPForUnity.EditorState.PlayTransition";
+            var running = typeof(TestRunStatus).GetField("_isRunning", BindingFlags.NonPublic | BindingFlags.Static);
+            var originalRunning = running.GetValue(null);
+            var originalTransition = SessionState.GetBool(playKey, false);
+            var originalPrepare = RefreshUnity.PrepareSourceOverride;
+            var originalLedger = RefreshUnity.LedgerOverride;
+            var originalReservation = RefreshUnity.ReservationOverride;
+            var originalRequest = RefreshUnity.RequestCompilation;
+            var originalCompiling = RefreshUnity.IsCompiling;
+            var writes = new System.Collections.Generic.List<string>();
+            string checkpoint = "";
+            string savedLedger = null;
+            bool writable = false;
+            int requests = 0;
+            var ledger = new CompilationLedger(session, "C:/fixture", value => savedLedger = value);
+            var owner = CompilationJobTracker.RestoreReservation(
+                () => checkpoint,
+                value =>
+                {
+                    string phase = value == "" ? "cleared" : (string)JObject.Parse(value)["Phase"];
+                    writes.Add(phase);
+                    if (phase == "preparing" || writable || playTransition)
+                        checkpoint = value;
+                },
+                ledger.InterruptedBeforeDispatch
+            );
+            JObject Command(string id) =>
+                new JObject
+                {
+                    ["compile_id"] = id,
+                    ["scope"] = "scripts",
+                    ["compile"] = "request",
+                };
+            try
+            {
+                running.SetValue(null, false);
+                SessionState.SetBool(playKey, false);
+                RefreshUnity.LedgerOverride = ledger;
+                RefreshUnity.ReservationOverride = owner;
+                RefreshUnity.RequestCompilation = () => requests++;
+                RefreshUnity.IsCompiling = () => false;
+                RefreshUnity.PrepareSourceOverride = (_, _) =>
+                {
+                    if (playTransition)
+                        SessionState.SetBool(playKey, true);
+                    return Task.CompletedTask;
+                };
+                var response = ToJObject(RefreshUnity.HandleCommand(Command(first)).GetAwaiter().GetResult());
+                Assert.IsFalse((bool)response["success"]);
+                Assert.AreEqual(0, requests);
+                Assert.IsNull(owner.State);
+                Assert.AreEqual("finished", (string)response["data"]["compilation"]["state"]);
+                Assert.AreEqual("not_dispatched", (string)response["data"]["compilation"]["reason"]);
+                Assert.AreEqual("not_dispatched", (string)new CompilationLedger(session, "C:/fixture", _ => { }, savedLedger).Query(first)["reason"]);
+                CollectionAssert.AreEqual(playTransition ? new[] { "preparing", "cleared" } : new[] { "preparing", "pending", "cleared" }, writes);
+
+                SessionState.SetBool(playKey, false);
+                writable = true;
+                RefreshUnity.PrepareSourceOverride = null;
+                var duplicate = ToJObject(RefreshUnity.HandleCommand(Command(first)).GetAwaiter().GetResult());
+                Assert.AreEqual("not_dispatched", (string)duplicate["data"]["compilation"]["reason"]);
+                var retry = ToJObject(RefreshUnity.HandleCommand(Command(second)).GetAwaiter().GetResult());
+                Assert.IsTrue((bool)retry["success"]);
+                Assert.AreEqual(second, owner.State.JobId);
+                Assert.AreEqual(1, requests);
+            }
+            finally
+            {
+                SessionState.SetBool(playKey, originalTransition);
+                running.SetValue(null, originalRunning);
+                RefreshUnity.PrepareSourceOverride = originalPrepare;
+                RefreshUnity.LedgerOverride = originalLedger;
+                RefreshUnity.ReservationOverride = originalReservation;
+                RefreshUnity.RequestCompilation = originalRequest;
+                RefreshUnity.IsCompiling = originalCompiling;
+            }
+        }
+
+        [TestCase("scripts")]
+        [TestCase("all")]
+        public async Task ReloadDuringSourcePreparationAdmitsAnotherCallerWithoutRepeatingTheInterruptedJob(string scope)
+        {
+            const string first = "11111111111111111111111111111111";
+            const string second = "22222222222222222222222222222222";
+            const string session = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            JObject Command(string id) =>
+                new JObject
+                {
+                    ["compile_id"] = id,
+                    ["scope"] = scope,
+                    ["compile"] = "request",
+                    ["wait_for_ready"] = false,
+                };
+            var running = typeof(TestRunStatus).GetField("_isRunning", BindingFlags.NonPublic | BindingFlags.Static);
+            var originalRunning = running.GetValue(null);
+            var originalPrepare = RefreshUnity.PrepareSourceOverride;
+            var originalLedger = RefreshUnity.LedgerOverride;
+            var originalReservation = RefreshUnity.ReservationOverride;
+            var originalRequest = RefreshUnity.RequestCompilation;
+            var originalRefresh = RefreshUnity.RefreshAssets;
+            var originalCompiling = RefreshUnity.IsCompiling;
+            var prepare = new TaskCompletionSource<bool>();
+            string saved = null;
+            var ledger = new CompilationLedger(session, "C:/fixture", encoded => saved = encoded);
+            var owner = new OwnedCompilationReservation();
+            int nativeRequests = 0;
+            int nativeImports = 0;
+            try
+            {
+                running.SetValue(null, false);
+                RefreshUnity.PrepareSourceOverride = (_, _) => prepare.Task;
+                RefreshUnity.LedgerOverride = ledger;
+                RefreshUnity.ReservationOverride = owner;
+                RefreshUnity.IsCompiling = () => false;
+                RefreshUnity.RequestCompilation = () => nativeRequests++;
+                RefreshUnity.RefreshAssets = _ => nativeImports++;
+                var firstCommand = RefreshUnity.HandleCommand(Command(first));
+                Assert.IsFalse(firstCommand.IsCompleted);
+                Assert.AreEqual("preparing", owner.State.Phase);
+
+                var blocked = ToJObject(await RefreshUnity.HandleCommand(Command(second)));
+                Assert.AreEqual("native_job_active", (string)blocked["data"]["reason"]);
+                Assert.AreEqual(first, (string)blocked["data"]["native_coordination"]["recovery"]["job_id"]);
+                Assert.IsFalse(ledger.Contains(second));
+                var duplicate = ToJObject(await RefreshUnity.HandleCommand(Command(first)));
+                Assert.IsTrue((bool)duplicate["success"]);
+                Assert.AreEqual("requested", (string)duplicate["data"]["compilation"]["state"]);
+
+                // An independently started cycle belongs to the Editor even when
+                // its full lifetime fits inside the source capture.
+                var unrelated = new object();
+                owner.Started(unrelated);
+                ledger.Started(unrelated);
+                owner.Finished(unrelated);
+                ledger.Finished(unrelated);
+                Assert.IsEmpty((JArray)ledger.Query(first)["candidate_generations"]);
+                var interrupted = owner.State;
+                var restoredLedger = new CompilationLedger(session, "C:/fixture", encoded => saved = encoded, saved);
+                var restoredOwner = new OwnedCompilationReservation(interrupted, interruptedBeforeDispatch: restoredLedger.InterruptedBeforeDispatch);
+
+                // Let the original domain continuation finish independently of the
+                // restored state. It must refuse dispatch after the foreign cycle.
+                prepare.SetResult(true);
+                var originalFailure = ToJObject(await firstCommand);
+                Assert.IsFalse((bool)originalFailure["success"]);
+                Assert.AreEqual("not_dispatched", (string)originalFailure["data"]["compilation"]["reason"]);
+                Assert.IsNull(owner.State);
+
+                RefreshUnity.PrepareSourceOverride = null;
+                RefreshUnity.ReservationOverride = restoredOwner;
+                RefreshUnity.LedgerOverride = restoredLedger;
+                var prior = ToJObject(await RefreshUnity.HandleCommand(Command(first)));
+                Assert.AreEqual("finished", (string)prior["data"]["compilation"]["state"]);
+                Assert.AreEqual("interrupted_before_native_dispatch", (string)prior["data"]["compilation"]["reason"]);
+                Assert.AreEqual("unconfirmed", (string)prior["data"]["compilation"]["attribution"]);
+                Assert.AreEqual(0, nativeRequests);
+                Assert.AreEqual(0, nativeImports);
+                var admitted = ToJObject(await RefreshUnity.HandleCommand(Command(second)));
+                Assert.IsTrue((bool)admitted["success"]);
+                Assert.AreEqual(1, nativeRequests);
+                Assert.AreEqual(scope == "all" ? 1 : 0, nativeImports);
+                Assert.AreEqual(second, restoredOwner.State.JobId);
+            }
+            finally
+            {
+                prepare.TrySetCanceled();
+                RefreshUnity.PrepareSourceOverride = originalPrepare;
+                RefreshUnity.LedgerOverride = originalLedger;
+                RefreshUnity.ReservationOverride = originalReservation;
+                RefreshUnity.RequestCompilation = originalRequest;
+                RefreshUnity.RefreshAssets = originalRefresh;
+                RefreshUnity.IsCompiling = originalCompiling;
+                running.SetValue(null, originalRunning);
+            }
+        }
+
         [TestCase("all", false, false)]
         [TestCase("all", true, false)]
         [TestCase("assets", false, false)]
@@ -30,8 +214,18 @@ namespace MCPForUnityTests.Editor.Tools
             var compiling = RefreshUnity.IsCompiling;
             var ledger = RefreshUnity.LedgerOverride;
             var reservation = RefreshUnity.ReservationOverride;
-            var owner = new OwnedCompilationReservation();
             var tracked = new CompilationLedger("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "C:/fixture", _ => { });
+            string savedOwner = "";
+            bool rejectWrites = false;
+            var owner = CompilationJobTracker.RestoreReservation(
+                () => savedOwner,
+                encoded =>
+                {
+                    if (!rejectWrites)
+                        savedOwner = encoded;
+                },
+                tracked.InterruptedBeforeDispatch
+            );
             const string id = "11111111111111111111111111111111";
             object context = new object();
             try
@@ -56,7 +250,10 @@ namespace MCPForUnityTests.Editor.Tools
                         Assert.IsNotNull(owner.State, "Early finish must not retire before the explicit-trigger decision.");
                     }
                     if (refreshThrows)
+                    {
+                        rejectWrites = finishesInsideRefresh;
                         throw new InvalidOperationException("controlled refresh failure after native start");
+                    }
                 };
                 var acknowledgement = RefreshUnity.HandleCommand(
                     new JObject
@@ -95,7 +292,28 @@ namespace MCPForUnityTests.Editor.Tools
                 owner.ObserveQuiescence(true);
                 Assert.IsNotNull(owner.State);
                 owner.ObserveQuiescence(true);
-                Assert.IsNull(owner.State);
+                if (refreshThrows)
+                {
+                    Assert.AreEqual("compilation_trigger_outcome_unknown", owner.Recovery(0).Reason);
+                    Assert.AreEqual("compilation_trigger_outcome_unknown", (string)response["data"]["compilation"]["reason"]);
+                    if (rejectWrites)
+                    {
+                        var saved = JObject.Parse(savedOwner);
+                        Assert.IsTrue((bool)saved["PipelineFinished"]);
+                        Assert.IsTrue((bool)saved["RefreshDecisionPending"]);
+                        Assert.IsTrue((bool)saved["NativeInvocationPending"]);
+                        var restored = CompilationJobTracker.RestoreReservation(
+                            () => savedOwner,
+                            _ => Assert.Fail("Unexpected restore write"),
+                            tracked.InterruptedBeforeDispatch
+                        );
+                        restored.ObserveQuiescence(true);
+                        restored.ObserveQuiescence(true);
+                        Assert.AreEqual("recovery_required", restored.Blocker(0), "A finish inside a throwing import cannot settle its unreturned call.");
+                    }
+                }
+                else
+                    Assert.IsNull(owner.State);
             }
             finally
             {
@@ -110,7 +328,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase(false)]
         [TestCase(true)]
-        public void ExplicitCompileReservesBeforeTriggerAndPreStartThrowReleases(bool fail)
+        public void ExplicitCompilePersistsHandoffBeforeTriggerAndRetainsUncertainThrow(bool fail)
         {
             var running = typeof(TestRunStatus).GetField("_isRunning", BindingFlags.NonPublic | BindingFlags.Static);
             object previousRun = running.GetValue(null);
@@ -128,12 +346,16 @@ namespace MCPForUnityTests.Editor.Tools
                 RefreshUnity.RequestCompilation = () =>
                 {
                     Assert.AreEqual("native_job_active", owner.Blocker(EditorApplication.timeSinceStartup));
+                    Assert.AreEqual("pending", owner.State.Phase);
+                    Assert.AreEqual("recovery_required", new OwnedCompilationReservation(owner.State).Blocker(0));
                     if (fail)
-                        throw new InvalidOperationException("controlled pre-start failure");
+                        throw new InvalidOperationException("controlled exception from native trigger");
                 };
                 var response = ToJObject(RefreshUnity.HandleCommand(new JObject { ["scope"] = "scripts", ["compile"] = "request" }).GetAwaiter().GetResult());
                 Assert.AreEqual(!fail, (bool)response["success"]);
-                Assert.AreEqual(fail ? null : "native_job_active", owner.Blocker(EditorApplication.timeSinceStartup));
+                Assert.AreEqual(fail ? "recovery_required" : "native_job_active", owner.Blocker(EditorApplication.timeSinceStartup));
+                if (fail)
+                    Assert.AreEqual("compilation_trigger_outcome_unknown", (string)response["data"]["compilation"]["reason"]);
             }
             finally
             {

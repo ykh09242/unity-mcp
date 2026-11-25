@@ -101,7 +101,7 @@ async def test_sdk_preserves_native_compiler_evidence_with_coordination(
 
 @pytest.mark.parametrize(
     "phase",
-    ["pending", "started", "finished", "recovery_required", "other_owned_reservation"],
+    ["preparing", "pending", "started", "finished", "recovery_required", "other_owned_reservation"],
 )
 def test_coordination_is_diagnostic_and_cannot_certify_compiler_success(phase):
     job = native_evidence("success")

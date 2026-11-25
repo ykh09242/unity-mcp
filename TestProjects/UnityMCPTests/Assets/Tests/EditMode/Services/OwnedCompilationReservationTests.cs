@@ -8,13 +8,113 @@ namespace MCPForUnityTests.Editor.Services
     public class OwnedCompilationReservationTests
     {
         [Test]
+        public void OnlyTheUnsubmittedPreparationCanReleaseOnReload()
+        {
+            var owner = new OwnedCompilationReservation();
+            var generation = owner.Reserve("compile-one", 10);
+            Assert.AreEqual("wait_for_source_preparation", owner.Recovery(100).Action);
+            Assert.Throws<InvalidOperationException>(() => owner.Reserve("compile-two", 100));
+            Assert.Throws<InvalidOperationException>(() => owner.BeginNative(Guid.NewGuid().ToString("N")));
+            string interrupted = null;
+            var restored = new OwnedCompilationReservation(owner.State, interruptedBeforeDispatch: id => interrupted = id);
+            Assert.AreEqual("compile-one", interrupted);
+            Assert.IsNull(restored.Blocker(100));
+            restored.Reserve("compile-two", 100);
+
+            owner.BeginNative(generation);
+            Assert.IsFalse(owner.AbortBeforeStart(generation));
+            Assert.AreEqual(
+                "recovery_required",
+                new OwnedCompilationReservation(owner.State, interruptedBeforeDispatch: _ =>
+                    Assert.Fail("A native handoff cannot be marked unsubmitted.")
+                ).Blocker(1)
+            );
+        }
+
+        [Test]
+        public void EveryImportMustReturnBeforeAnEarlierFinishCanSurviveReload()
+        {
+            var owner = new OwnedCompilationReservation();
+            string generation = owner.Reserve("compile-one", 100, refreshing: true);
+            owner.BeginNative(generation);
+            var context = new object();
+            owner.Started(context);
+            owner.Finished(context);
+            var legacy = owner.State;
+            legacy.NativeInvocationPending = null;
+            Assert.AreEqual("recovery_required", new OwnedCompilationReservation(legacy).Blocker(1));
+            owner.NativeReturned(generation);
+            owner.Started(new object());
+            Assert.AreEqual("finished", owner.State.Phase, "A completed import cannot acquire an independent start between native calls.");
+            var returned = new OwnedCompilationReservation(owner.State);
+            Quiesce(returned);
+            Assert.IsNull(returned.Blocker(1), "The returned call's matching finish remains valid when the old domain can no longer issue more imports.");
+
+            owner.BeginNative(generation);
+            var nextImport = new OwnedCompilationReservation(owner.State);
+            Quiesce(nextImport);
+            Assert.AreEqual("recovery_required", nextImport.Blocker(1), "Earlier completion cannot clear a later import that has not returned.");
+        }
+
+        [Test]
+        public void NativeTaskTerminationRemainsObservableWhenItsCheckpointCannotBeWritten()
+        {
+            var native = new TaskCompletionSource<bool>();
+            var owner = new OwnedCompilationReservation(readTask: _ => native.Task);
+            OwnedCompilationReservation.Checkpoint saved = null;
+            bool writable = true;
+            owner.Changed = () =>
+            {
+                if (!writable)
+                    throw new InvalidOperationException("controlled checkpoint failure");
+                saved = owner.State;
+            };
+            ReserveNative(owner, "compile-one", 100);
+            owner.Started(new object());
+            writable = false;
+            native.SetCanceled();
+            owner.ObserveNativeCompletion();
+            owner.RetryCheckpointBeforeReload();
+            Assert.AreEqual("canceled", owner.State.NativeTaskTermination);
+            Assert.AreEqual("recovery_required", new OwnedCompilationReservation(saved).Blocker(1));
+            writable = true;
+            owner.RetryCheckpointBeforeReload();
+            var restored = new OwnedCompilationReservation(saved);
+            Quiesce(restored);
+            Assert.IsNull(restored.Blocker(1));
+        }
+
+        [Test]
+        public void ContradictoryPreparationCheckpointCannotReleaseOwnership()
+        {
+            var owner = new OwnedCompilationReservation();
+            owner.Reserve("compile-one", 100);
+            var checkpoint = owner.State;
+            checkpoint.RefreshCycleObserved = true;
+            var restored = new OwnedCompilationReservation(checkpoint);
+            Assert.AreEqual("invalid_compilation_checkpoint", restored.Recovery(1).Reason);
+        }
+
+        [Test]
+        public void FailedHandoffPersistencePreventsNativeEntry()
+        {
+            var owner = new OwnedCompilationReservation();
+            var generation = owner.Reserve("compile-one", 100);
+            owner.Changed = () => throw new InvalidOperationException("controlled");
+            Assert.Throws<InvalidOperationException>(() => owner.BeginNative(generation));
+            Assert.AreEqual("preparing", owner.State.Phase);
+            owner.Changed = null;
+            Assert.IsTrue(owner.AbortBeforeStart(generation));
+        }
+
+        [Test]
         public void CanceledOrFaultedNativeTaskReleasesAfterReloadWithoutClaimingPipelineFinish()
         {
             foreach (bool faulted in new[] { false, true })
             {
                 var task = new TaskCompletionSource<bool>();
                 var owner = new OwnedCompilationReservation(readTask: _ => task.Task);
-                owner.Reserve("compile-one", 100);
+                ReserveNative(owner, "compile-one", 100);
                 owner.Started(new object());
                 owner.ObserveNativeCompletion();
                 Quiesce(owner);
@@ -40,7 +140,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             var first = new TaskCompletionSource<bool>();
             var owner = new OwnedCompilationReservation(readTask: _ => first.Task);
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             owner.Started(new object());
             first.SetCanceled();
             owner.Started(new object());
@@ -55,7 +155,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             var task = new TaskCompletionSource<bool>();
             var owner = new OwnedCompilationReservation(readTask: _ => task.Task);
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             var context = new object();
             owner.Started(context);
             task.SetResult(true);
@@ -74,7 +174,7 @@ namespace MCPForUnityTests.Editor.Services
             var task = new TaskCompletionSource<bool>();
             task.SetCanceled();
             var owner = new OwnedCompilationReservation();
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             var context = new { TaskObject = task.Task };
             Assert.IsNull(CompilationTaskObservation.Read(context));
             owner.Started(context);
@@ -92,10 +192,12 @@ namespace MCPForUnityTests.Editor.Services
             var secondContext = new object();
             var owner = new OwnedCompilationReservation(readTask: value => ReferenceEquals(value, firstContext) ? first.Task : second.Task);
             string generation = owner.Reserve("compile-one", 100, refreshing: true);
+            owner.BeginNative(generation);
             owner.Started(firstContext);
             first.SetCanceled();
             owner.Started(secondContext);
             Assert.IsNull(owner.State.NativeTaskTermination, "The first task cannot certify the replacement.");
+            owner.NativeReturned(generation);
             Assert.IsTrue(owner.CompleteRefreshDecision(generation));
             owner.Finished(firstContext);
             owner.ObserveNativeCompletion();
@@ -110,7 +212,7 @@ namespace MCPForUnityTests.Editor.Services
         public void InvalidTerminationCheckpointCannotReleaseOwnership()
         {
             var owner = new OwnedCompilationReservation();
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             var state = owner.State;
             state.Phase = "finished";
             state.NativeTaskTermination = "success";
@@ -123,7 +225,7 @@ namespace MCPForUnityTests.Editor.Services
         public void DelayedStartIsOwnedUntilMatchingFinishEvenWithNoAssemblies()
         {
             var owner = new OwnedCompilationReservation();
-            string generation = owner.Reserve("compile-one", 100);
+            string generation = ReserveNative(owner, "compile-one", 100);
             Assert.AreEqual("native_job_active", owner.Blocker(10));
             object context = new object();
             owner.Started(context);
@@ -140,7 +242,7 @@ namespace MCPForUnityTests.Editor.Services
         public void StartAfterCallerDeadlineStillPairsWithItsMatchingFinish()
         {
             var owner = new OwnedCompilationReservation();
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             owner.Blocker(100);
             object context = new object();
             owner.Started(context);
@@ -170,7 +272,7 @@ namespace MCPForUnityTests.Editor.Services
         public void MissingStartRetainsOwnershipAfterCallerDeadlineWithoutRequiringRestart()
         {
             var owner = new OwnedCompilationReservation();
-            string generation = owner.Reserve("compile-one", 100);
+            string generation = ReserveNative(owner, "compile-one", 100);
             Assert.AreEqual("native_job_active", owner.Blocker(100));
             Quiesce(owner);
             Assert.AreEqual("native_job_active", owner.Blocker(100000));
@@ -191,7 +293,7 @@ namespace MCPForUnityTests.Editor.Services
             var owner = new OwnedCompilationReservation();
             string first = owner.Reserve("compile-one", 100);
             Assert.IsTrue(owner.AbortBeforeStart(first));
-            string second = owner.Reserve("compile-two", 100);
+            string second = ReserveNative(owner, "compile-two", 100);
             Assert.IsFalse(owner.AbortBeforeStart(first));
             object context = new object();
             owner.Started(context);
@@ -206,12 +308,12 @@ namespace MCPForUnityTests.Editor.Services
         public void StalePipelineFinishCannotReleaseTheNextGeneration()
         {
             var owner = new OwnedCompilationReservation();
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             object oldContext = new object();
             owner.Started(oldContext);
             owner.Finished(oldContext);
             Quiesce(owner);
-            owner.Reserve("compile-two", 100);
+            ReserveNative(owner, "compile-two", 100);
             object currentContext = new object();
             owner.Started(currentContext);
             owner.Finished(oldContext);
@@ -233,7 +335,7 @@ namespace MCPForUnityTests.Editor.Services
         public void ReloadCannotRestoreLostContextAsACompletedOperation()
         {
             var owner = new OwnedCompilationReservation();
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             var restored = new OwnedCompilationReservation(owner.State);
             Assert.AreEqual("recovery_required", restored.Blocker(1));
             var recovery = restored.Recovery(1);
@@ -251,7 +353,7 @@ namespace MCPForUnityTests.Editor.Services
         public void RunningCompilationRemainsRecoverableUntilItsLateMatchingFinishArrives()
         {
             var owner = new OwnedCompilationReservation();
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             object context = new object();
             owner.Started(context);
             Assert.AreEqual("native_job_active", owner.Blocker(100));
@@ -269,7 +371,7 @@ namespace MCPForUnityTests.Editor.Services
         public void SuccessfulFinishBeforeReloadRetainsWitnessUntilNativeQuiescence()
         {
             var owner = new OwnedCompilationReservation();
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             object context = new object();
             owner.Started(context);
             owner.Finished(context);
@@ -331,7 +433,7 @@ namespace MCPForUnityTests.Editor.Services
         public void MissingPipelineContextExplainsWhyAnUnpairedFinishCannotRecover()
         {
             var owner = new OwnedCompilationReservation();
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             owner.Started(null);
             var recovery = owner.Recovery(1);
             Assert.AreEqual("compilation_context_unavailable", recovery.Reason);
@@ -353,7 +455,7 @@ namespace MCPForUnityTests.Editor.Services
         public void ReloadedRunningCompilationCannotAdoptAnUnrelatedNewPipelineContext()
         {
             var owner = new OwnedCompilationReservation();
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             owner.Started(new object());
             var restored = new OwnedCompilationReservation(owner.State);
             object unrelatedContext = new object();
@@ -369,19 +471,19 @@ namespace MCPForUnityTests.Editor.Services
         {
             int saves = 0;
             var owner = new OwnedCompilationReservation { Changed = () => saves++ };
-            owner.Reserve("compile-one", 100);
+            ReserveNative(owner, "compile-one", 100);
             Assert.AreEqual("compilation_start_pending", owner.Recovery(99).Reason);
             Assert.AreEqual("native_job_active", owner.Blocker(100));
             Assert.AreEqual("compilation_start_wait_expired", owner.Recovery(100).Reason);
             Assert.AreEqual("pending", owner.State.Phase);
-            Assert.AreEqual(1, saves, "A status read must not rewrite native ownership because the caller budget expired.");
+            Assert.AreEqual(3, saves, "A status read must not rewrite native ownership because the caller budget expired.");
         }
 
         [Test]
         public void RefreshFinishCannotReleaseBeforeTheOwnedTriggerDecision()
         {
             var owner = new OwnedCompilationReservation();
-            string generation = owner.Reserve("compile-one", 100, refreshing: true);
+            string generation = ReserveNative(owner, "compile-one", 100, refreshing: true);
             object context = new object();
             owner.Started(context);
             owner.Finished(context);
@@ -400,18 +502,18 @@ namespace MCPForUnityTests.Editor.Services
         public void ZeroEventRefreshFallsThroughToPendingExplicitRequest()
         {
             var owner = new OwnedCompilationReservation();
-            string generation = owner.Reserve("compile-one", 100, refreshing: true);
+            string generation = ReserveNative(owner, "compile-one", 100, refreshing: true);
             Assert.IsFalse(owner.CompleteRefreshDecision(generation));
             Quiesce(owner);
             Assert.AreEqual("native_job_active", owner.Blocker(1));
-            Assert.IsTrue(owner.AbortBeforeStart(generation));
+            Assert.IsFalse(owner.AbortBeforeStart(generation), "A queued native request cannot be aborted from lack of start events.");
         }
 
         [Test]
         public void FailedNativeInvocationPublishesRecoveryAndLateStartCanSettle()
         {
             var owner = new OwnedCompilationReservation();
-            string generation = owner.Reserve("deferred-script", 100, refreshing: true);
+            string generation = ReserveNative(owner, "deferred-script", 100, refreshing: true);
             owner.InvocationFailed(generation);
             owner.CompleteRefreshDecision(generation);
             Assert.AreEqual("recovery_required", owner.Blocker(1));
@@ -432,7 +534,7 @@ namespace MCPForUnityTests.Editor.Services
         public void FailedInvocationCannotAdoptAnUnrelatedCycleAfterReload()
         {
             var owner = new OwnedCompilationReservation();
-            string generation = owner.Reserve("deferred-script", 100, refreshing: true);
+            string generation = ReserveNative(owner, "deferred-script", 100, refreshing: true);
             owner.InvocationFailed(generation);
             owner.CompleteRefreshDecision(generation);
             var restored = new OwnedCompilationReservation(owner.State);
@@ -450,7 +552,7 @@ namespace MCPForUnityTests.Editor.Services
         public void LaterFailedInvocationCannotUseAnEarlierCycleCompletion()
         {
             var owner = new OwnedCompilationReservation();
-            string generation = owner.Reserve("deferred-script", 100, refreshing: true);
+            string generation = ReserveNative(owner, "deferred-script", 100, refreshing: true);
             var earlier = new object();
             owner.Started(earlier);
             owner.Finished(earlier);
@@ -470,6 +572,14 @@ namespace MCPForUnityTests.Editor.Services
             owner.Finished(later);
             Quiesce(owner);
             Assert.IsNull(owner.Blocker(1));
+        }
+
+        private static string ReserveNative(OwnedCompilationReservation owner, string id, double deadline, bool refreshing = false)
+        {
+            string generation = owner.Reserve(id, deadline, refreshing);
+            owner.BeginNative(generation);
+            owner.NativeReturned(generation);
+            return generation;
         }
 
         private static void Quiesce(OwnedCompilationReservation owner)

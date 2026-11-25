@@ -379,24 +379,35 @@ namespace MCPForUnity.Editor.Services
         {
             // The running flag is per-domain; its timestamps survive reload in SessionState.
             _pipelineCompilationRunning = true;
-            CompilationJobTracker.ObserveNativeCompletion();
-            CompilationJobTracker.Reservation.Started(context);
-            CompilationJobTracker.Ledger.Started(context);
-            SourceFreshnessService.CompilationStarted();
+            RecordCompilationStart(context, CompilationJobTracker.Reservation, CompilationJobTracker.Ledger, SourceFreshnessService.CompilationStarted);
             SetSessionUnixMs(CompileStartedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             SessionState.SetInt(CompileCountKey, SessionState.GetInt(CompileCountKey, 0) + 1);
             ForceUpdate("compilation_started", _pipelineCompilationRunning);
         }
 
+        internal static void RecordCompilationStart(object context, OwnedCompilationReservation owner, CompilationLedger ledger, Action invalidateSources)
+        {
+            // Both trackers collect termination of their previous native task in Started.
+            owner.Started(context);
+            ledger.Started(context);
+            invalidateSources();
+        }
+
         private static void OnCompilationFinished(object context)
         {
             _pipelineCompilationRunning = false;
-            CompilationJobTracker.ObserveNativeCompletion();
-            CompilationJobTracker.Reservation.Finished(context);
-            CompilationJobTracker.Ledger.Finished(context);
+            RecordCompilationFinish(context, CompilationJobTracker.Reservation, CompilationJobTracker.Ledger);
             // This edge precedes reload, so the next domain can observe the finish time.
             SetSessionUnixMs(CompileFinishedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             ForceUpdate("compilation_finished", _pipelineCompilationRunning);
+        }
+
+        internal static void RecordCompilationFinish(object context, OwnedCompilationReservation owner, CompilationLedger ledger)
+        {
+            owner.ObserveNativeCompletion();
+            ledger.ObserveNativeCompletion();
+            owner.Finished(context);
+            ledger.Finished(context);
         }
 
         private static void OnAssemblyCompilationFinished(string assembly, UnityEditor.Compilation.CompilerMessage[] messages)
@@ -409,6 +420,7 @@ namespace MCPForUnity.Editor.Services
         {
             // Save cancellation/failure evidence while its native task survives.
             CompilationJobTracker.ObserveNativeCompletion();
+            CompilationJobTracker.Reservation.RetryCheckpointBeforeReload();
             _domainReloadPending = true;
             _domainReloadBeforeUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             ForceUpdate("before_domain_reload");

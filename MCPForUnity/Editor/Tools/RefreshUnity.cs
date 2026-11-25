@@ -23,6 +23,7 @@ namespace MCPForUnity.Editor.Tools
         internal static Action RequestCompilation = CompilationPipeline.RequestScriptCompilation;
         internal static Action RequestCleanCompilation = () => CompilationPipeline.RequestScriptCompilation(RequestScriptCompilationOptions.CleanBuildCache);
         internal static Func<bool> IsCompiling = EditorStateCache.GetActualIsCompiling;
+        internal static Func<string, CancellationToken, Task> PrepareSourceOverride;
         internal static CompilationLedger LedgerOverride;
         internal static OwnedCompilationReservation ReservationOverride;
         private static CompilationLedger Ledger => LedgerOverride ?? CompilationJobTracker.Ledger;
@@ -117,10 +118,12 @@ namespace MCPForUnity.Editor.Tools
             bool refreshCycleObserved = false;
             string compilationTrigger = null;
             string reservationGeneration = null;
+            bool nativeInvoked = false;
+            bool nativeInvocationFailed = false;
             int compileCountBefore = EditorStateCache.CompileCount;
 
-            if (compileId != null && !Ledger.Begin(compileId))
-                return new SuccessResponse(
+            object AlreadyTracked() =>
+                new SuccessResponse(
                     "Compilation request already tracked or tracking capacity reached; no work repeated.",
                     new
                     {
@@ -131,21 +134,65 @@ namespace MCPForUnity.Editor.Tools
                     }
                 );
 
+            void InvokeNative(Action invocation)
+            {
+                if (reservationGeneration != null)
+                    Reservation.BeginNative(reservationGeneration);
+                nativeInvoked = true;
+                try
+                {
+                    invocation();
+                }
+                catch
+                {
+                    nativeInvocationFailed = true;
+                    throw;
+                }
+                if (reservationGeneration != null)
+                    Reservation.NativeReturned(reservationGeneration);
+            }
+
             try
             {
                 if (compileId != null)
                 {
+                    if (Ledger.Contains(compileId))
+                        return AlreadyTracked();
+                    if (Reservation.Blocker(EditorApplication.timeSinceStartup) is string blocker)
+                        return new ErrorResponse(
+                            blocker,
+                            new
+                            {
+                                reason = blocker,
+                                retryable = blocker == "native_job_active",
+                                compile_requested = false,
+                                refresh_triggered = false,
+                                native_coordination = CompilationJobTracker.CoordinationStatus(compileId, Reservation),
+                            }
+                        );
                     reservationGeneration = Reservation.Reserve(
                         compileId,
                         EditorApplication.timeSinceStartup + Remaining().TotalSeconds,
                         refreshing: !string.Equals(scope, "scripts", StringComparison.OrdinalIgnoreCase)
                     );
-                    // Reserve before yielding. The next compilation must be bound to this input observation.
-                    if (LedgerOverride == null)
+                    if (!Ledger.Begin(compileId, preparing: true))
+                    {
+                        Reservation.AbortBeforeStart(reservationGeneration);
+                        return AlreadyTracked();
+                    }
+                    if (LedgerOverride == null || PrepareSourceOverride != null)
                     {
                         using var captureDeadline = new CancellationTokenSource(Remaining());
-                        await SourceFreshnessService.PrepareAsync(compileId, captureDeadline.Token);
-                        if (IsCompiling() || TestRunStatus.IsRunning || EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode)
+                        await (PrepareSourceOverride ?? SourceFreshnessService.PrepareAsync)(compileId, captureDeadline.Token);
+                        captureDeadline.Token.ThrowIfCancellationRequested();
+                        if (
+                            IsCompiling()
+                            || EditorApplication.isUpdating
+                            || EditorStateCache.IsDomainReloadPending
+                            || TestRunStatus.IsRunning
+                            || EditorApplication.isPlaying
+                            || EditorStateCache.IsPlayModeTransition
+                        )
                             throw new InvalidOperationException("Editor changed state during source observation.");
                     }
                 }
@@ -162,7 +209,9 @@ namespace MCPForUnity.Editor.Tools
                     }
                     else
                     {
-                        RefreshAssets(ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                        if (compileId != null)
+                            Ledger.BeginRefresh(compileId);
+                        InvokeNative(() => RefreshAssets(ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport));
                         refreshTriggered = true;
                     }
                 }
@@ -178,10 +227,7 @@ namespace MCPForUnity.Editor.Tools
                     else
                     {
                         Ledger.ExplicitRequest(compileId);
-                        if (forceRecompile)
-                            RequestCleanCompilation();
-                        else
-                            RequestCompilation();
+                        InvokeNative(forceRecompile ? RequestCleanCompilation : RequestCompilation);
                         compileRequested = true;
                         compilationTrigger = "request";
                         Ledger.Dispatched(compileId);
@@ -193,20 +239,43 @@ namespace MCPForUnity.Editor.Tools
                     // If the caller asked for "all" and we skipped refresh above (e.g., scripts-only path),
                     // do a lightweight refresh now. Use ForceSynchronousImport to ensure the refresh
                     // completes before returning, preventing stalls when Unity is backgrounded.
-                    RefreshAssets(ImportAssetOptions.ForceSynchronousImport);
+                    InvokeNative(() => RefreshAssets(ImportAssetOptions.ForceSynchronousImport));
                     refreshTriggered = true;
                 }
             }
             catch (Exception ex)
             {
-                if (reservationGeneration != null && !compileRequested)
+                string message = ex.Message;
+                if (reservationGeneration != null)
                 {
-                    Reservation.AbortBeforeStart(reservationGeneration);
-                    Reservation.CompleteRefreshDecision(reservationGeneration);
+                    Ledger.Reject(
+                        compileId,
+                        nativeInvocationFailed ? "compilation_trigger_outcome_unknown"
+                            : !nativeInvoked ? "not_dispatched"
+                            : "dispatch_failed"
+                    );
+                    try
+                    {
+                        if (nativeInvocationFailed)
+                            Reservation.InvocationFailed(reservationGeneration);
+                        else if (!nativeInvoked)
+                            Reservation.AbortBeforeStart(reservationGeneration);
+                        else
+                            Reservation.CompleteRefreshDecision(reservationGeneration);
+                    }
+                    catch (Exception checkpointError)
+                    {
+                        message += " Reservation checkpoint update failed: " + checkpointError.Message;
+                    }
                 }
-                if (compileId != null)
-                    Ledger.Reject(compileId);
-                return new ErrorResponse($"refresh_failed: {ex.Message}", new { compilation = compileId == null ? null : Ledger.Query(compileId) });
+                return new ErrorResponse(
+                    $"refresh_failed: {message}",
+                    new
+                    {
+                        compilation = compileId == null ? null : Ledger.Query(compileId),
+                        native_coordination = compileId == null ? null : CompilationJobTracker.CoordinationStatus(compileId, Reservation),
+                    }
+                );
             }
 
             // RequestScriptCompilation only queues; the pipeline starts on a later
@@ -283,7 +352,7 @@ namespace MCPForUnity.Editor.Tools
                     last_successful_compilation = Ledger.LastSuccessfulCompilation(),
                     source_freshness = SourceFreshnessService.Cached(),
                     compile_started = compileStarted,
-                    native_coordination = compileId == null ? null : CompilationJobTracker.CoordinationStatus(compileId),
+                    native_coordination = compileId == null ? null : CompilationJobTracker.CoordinationStatus(compileId, Reservation),
                     resulting_state = resultingState,
                     hint = shouldWaitForReady
                         ? "Unity refresh completed; editor should be ready."

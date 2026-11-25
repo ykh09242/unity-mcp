@@ -99,6 +99,34 @@ internal static class Program
             EditorApplication.Tick();
             Require(AssetDatabase.Imports == 1, "Uncertain import was automatically replayed.");
         });
+        Check("checkpoint failure after an in-call finish cannot release or strand the scheduler", () =>
+        {
+            var owner = CompilationJobTracker.Reservation;
+            OwnedCompilationReservation.Checkpoint saved = null;
+            bool fail = false;
+            owner.Changed = () =>
+            {
+                if (fail)
+                    throw new InvalidOperationException("checkpoint unavailable");
+                saved = owner.State;
+            };
+            AssetDatabase.OnImport = () =>
+            {
+                var context = new object();
+                owner.Started(context);
+                owner.Finished(context);
+                fail = true;
+                throw new InvalidOperationException("import threw after finish");
+            };
+            RefreshDebounce.Schedule("Assets/One.cs", TimeSpan.Zero);
+            EditorApplication.Tick();
+            Require(saved.PipelineFinished && saved.NativeInvocationPending == true, "Test did not persist the incomplete call.");
+            var restored = new OwnedCompilationReservation(saved);
+            restored.ObserveQuiescence(true);
+            restored.ObserveQuiescence(true);
+            Require(restored.Blocker(0) == "recovery_required", "An in-call finish discharged the failed import.");
+            Require(!(bool)Field("_processing").GetValue(null), "Checkpoint failure stranded the scheduler.");
+        });
         Check("partial import failure retains uncertainty beyond an earlier running cycle", () =>
         {
             var context = new object();
@@ -296,7 +324,7 @@ internal static class Program
         {
             CompilationJobTracker.Reservation.Changed = () =>
             {
-                if (CompilationJobTracker.Reservation.State?.Phase == "pending")
+                if (CompilationJobTracker.Reservation.State?.Phase == "preparing")
                     ManageScript.Consent = false;
             };
             RefreshDebounce.Schedule("Assets/One.cs", TimeSpan.Zero);

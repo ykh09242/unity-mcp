@@ -5166,20 +5166,12 @@ namespace MCPForUnity.Editor.Tools
                 _activePaths = _scheduledPaths.ToArray();
                 _scheduledPaths.Clear();
             }
-            void SettleFailure()
-            {
-                if (generation == null)
-                    return;
-                if (nativeInvocationFailed)
-                    CompilationJobTracker.Reservation.InvocationFailed(generation);
-                else if (!nativeInvoked)
-                    CompilationJobTracker.Reservation.AbortBeforeStart(generation);
-            }
             void InvokeNative(Action invocation)
             {
                 // A refusal before the next call does not invalidate completion
                 // evidence for earlier successful imports in this batch.
                 Revalidate(generation);
+                CompilationJobTracker.Reservation.BeginNative(generation);
                 nativeInvoked = true;
                 try
                 {
@@ -5190,6 +5182,7 @@ namespace MCPForUnity.Editor.Tools
                     nativeInvocationFailed = true;
                     throw;
                 }
+                CompilationJobTracker.Reservation.NativeReturned(generation);
             }
             try
             {
@@ -5206,22 +5199,31 @@ namespace MCPForUnity.Editor.Tools
                             InvokeNative(() => UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation());
                         }
                     },
-                    message =>
-                    {
-                        SettleFailure();
-                        McpLog.Error(message);
-                    }
+                    message => McpLog.Error(message)
                 );
             }
             catch (Exception error)
             {
-                SettleFailure();
                 McpLog.Error("[ManageScript] Deferred refresh could not acquire native ownership: " + error.Message);
             }
             finally
             {
-                if (generation != null)
-                    CompilationJobTracker.Reservation.CompleteRefreshDecision(generation);
+                try
+                {
+                    if (generation != null)
+                    {
+                        if (nativeInvocationFailed)
+                            CompilationJobTracker.Reservation.InvocationFailed(generation);
+                        else if (!nativeInvoked)
+                            CompilationJobTracker.Reservation.AbortBeforeStart(generation);
+                        else
+                            CompilationJobTracker.Reservation.CompleteRefreshDecision(generation);
+                    }
+                }
+                catch (Exception error)
+                {
+                    McpLog.Error("[ManageScript] Deferred refresh checkpoint update failed: " + error.Message);
+                }
                 DetachCallback();
                 lock (_lock)
                 {

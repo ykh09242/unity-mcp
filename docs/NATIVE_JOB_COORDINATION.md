@@ -90,7 +90,12 @@ ordinary admission status does not promise that control headroom is unused.
   native quiescence. A successful task alone is not a witness because diagnostics
   and the public finish callback can still be pending. Unknown context types retain
   event-only tracking. This compatibility path was exercised on Unity 6000.0.69f1.
-  Both kinds of completion witness survive reload. A missing event at the caller's
+  Both kinds of completion witness survive reload once the native call's return
+  has been recorded. If reload interrupts source preparation before the native
+  handoff, the original job closes with `interrupted_before_native_dispatch`
+  and releases the reservation. A finish observed inside a native call whose
+  return is still unconfirmed cannot release ownership after reload.
+  A missing event at the caller's
   observation deadline retains ownership and can still recover from late evidence;
   elapsed time does not require a restart. An unfinished context lost across reload
   still requires recovery. Synchronous refresh without

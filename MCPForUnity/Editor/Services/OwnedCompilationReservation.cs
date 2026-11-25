@@ -22,6 +22,7 @@ namespace MCPForUnity.Editor.Services
             public string NativeTaskTermination;
             public string RecoveryReason;
             public bool InvocationUncertain;
+            public bool? NativeInvocationPending;
         }
 
         private Checkpoint state;
@@ -30,9 +31,11 @@ namespace MCPForUnity.Editor.Services
         private readonly Func<object, Task> readTask;
         private bool finishTurnObserved;
         private bool failedTriggerCanStart;
+        private bool compilationDuringPreparation;
+        private bool checkpointNeedsRetry;
         internal Action Changed;
         private bool HasCompletion => state != null && !state.InvocationUncertain && (state.PipelineFinished || state.NativeTaskTermination != null);
-        internal bool AwaitingQuiescence => HasCompletion && !state.RefreshDecisionPending;
+        internal bool AwaitingQuiescence => HasCompletion && !state.RefreshDecisionPending && state.NativeInvocationPending != true;
         internal Checkpoint State =>
             state == null
                 ? null
@@ -48,19 +51,38 @@ namespace MCPForUnity.Editor.Services
                     NativeTaskTermination = state.NativeTaskTermination,
                     RecoveryReason = state.RecoveryReason,
                     InvocationUncertain = state.InvocationUncertain,
+                    NativeInvocationPending = state.NativeInvocationPending,
                 };
 
-        internal OwnedCompilationReservation(Checkpoint restored = null, Func<object, Task> readTask = null)
+        internal OwnedCompilationReservation(Checkpoint restored = null, Func<object, Task> readTask = null, Action<string> interruptedBeforeDispatch = null)
         {
             this.readTask = readTask ?? CompilationTaskObservation.Read;
             if (restored != null)
             {
                 bool terminated = restored.NativeTaskTermination == "canceled" || restored.NativeTaskTermination == "faulted";
-                bool valid =
+                bool identified =
                     Guid.TryParseExact(restored.Generation, "N", out _)
                     && !string.IsNullOrEmpty(restored.JobId)
                     && !double.IsNaN(restored.Deadline)
-                    && !double.IsInfinity(restored.Deadline)
+                    && !double.IsInfinity(restored.Deadline);
+                if (
+                    identified
+                    && restored.Phase == "preparing"
+                    && !restored.RefreshCycleObserved
+                    && !restored.PipelineFinished
+                    && restored.NativeTaskTermination == null
+                    && restored.RecoveryReason == null
+                    && !restored.InvocationUncertain
+                    && restored.NativeInvocationPending != true
+                )
+                {
+                    // The old domain's continuation cannot run. Every native entry
+                    // point persists "pending" before it can import or request a compile.
+                    interruptedBeforeDispatch?.Invoke(restored.JobId);
+                    return;
+                }
+                bool valid =
+                    identified
                     && (restored.NativeTaskTermination == null || terminated && !restored.PipelineFinished)
                     && (
                         ((restored.Phase == "pending" || restored.Phase == "started") && !restored.PipelineFinished && !terminated)
@@ -70,6 +92,9 @@ namespace MCPForUnity.Editor.Services
                 bool finished =
                     valid
                     && !restored.InvocationUncertain
+                    // In older checkpoints a pending refresh decision could still
+                    // be inside the native import that reported the pipeline finish.
+                    && !(restored.NativeInvocationPending ?? restored.RefreshDecisionPending)
                     && (restored.PipelineFinished || terminated)
                     && (restored.Phase == "finished" || restored.Phase == "recovery_required");
                 string recoveryReason =
@@ -96,17 +121,19 @@ namespace MCPForUnity.Editor.Services
         {
             if (state != null)
                 throw new InvalidOperationException("An owned compilation is pending or requires recovery.");
+            compilationDuringPreparation = false;
             state = new Checkpoint
             {
                 JobId = jobId,
                 Generation = Guid.NewGuid().ToString("N"),
-                Phase = "pending",
+                Phase = "preparing",
+                NativeInvocationPending = false,
                 Deadline = deadline,
                 RefreshDecisionPending = refreshing,
             };
             try
             {
-                Changed?.Invoke();
+                Persist();
             }
             catch
             {
@@ -117,12 +144,45 @@ namespace MCPForUnity.Editor.Services
             return state.Generation;
         }
 
+        internal void BeginNative(string generation)
+        {
+            if (state == null || state.Generation != generation || state.NativeInvocationPending == true || state.Phase == "recovery_required")
+                throw new InvalidOperationException("Compilation preparation no longer owns this reservation.");
+            if (compilationDuringPreparation)
+                throw new InvalidOperationException("An independent compilation started during preparation.");
+            string previousPhase = state.Phase;
+            if (state.Phase == "preparing")
+                state.Phase = "pending";
+            // Every import in a batch can queue more work. Its call must return
+            // before even a matching in-call finish can certify this handoff on reload.
+            state.NativeInvocationPending = true;
+            try
+            {
+                Persist();
+            }
+            catch
+            {
+                // No caller may invoke Unity when the handoff checkpoint fails.
+                state.Phase = previousPhase;
+                state.NativeInvocationPending = false;
+                throw;
+            }
+        }
+
+        internal void NativeReturned(string generation)
+        {
+            if (state == null || state.Generation != generation || state.NativeInvocationPending != true)
+                throw new InvalidOperationException("The native compilation call no longer owns this reservation.");
+            state.NativeInvocationPending = false;
+            PersistObservation();
+        }
+
         internal bool AbortBeforeStart(string generation)
         {
-            if (state?.Generation != generation || state.Phase != "pending" || state.RefreshCycleObserved)
+            if (state == null || state.Generation != generation || state.Phase != "preparing")
                 return false;
             state = null;
-            Changed?.Invoke();
+            Persist();
             return true;
         }
 
@@ -135,16 +195,30 @@ namespace MCPForUnity.Editor.Services
             // prove the later invocation settled. Only a subsequent start in this
             // domain can restore pairing; a reload cannot adopt a replacement cycle.
             state.InvocationUncertain = true;
+            state.NativeInvocationPending = false;
+            state.RefreshDecisionPending = false;
             state.Phase = "recovery_required";
             state.RecoveryReason = "compilation_trigger_outcome_unknown";
             failedTriggerCanStart = true;
-            Changed?.Invoke();
+            Persist();
         }
 
         internal void Started(object value)
         {
+            if (state?.Phase == "preparing")
+            {
+                compilationDuringPreparation = true;
+                return;
+            }
             ObserveNativeCompletion();
-            if (state == null || (state.Phase != "pending" && !failedTriggerCanStart && !(state.RefreshDecisionPending && HasCompletion)))
+            if (
+                state == null
+                || (
+                    state.Phase != "pending"
+                    && !failedTriggerCanStart
+                    && !(state.RefreshDecisionPending && state.NativeInvocationPending == true && HasCompletion)
+                )
+            )
                 return;
             failedTriggerCanStart = false;
             state.InvocationUncertain = false;
@@ -156,7 +230,7 @@ namespace MCPForUnity.Editor.Services
             finishTurnObserved = false;
             state.Phase = value == null ? "recovery_required" : "started";
             state.RecoveryReason = value == null ? "compilation_context_unavailable" : null;
-            Changed?.Invoke();
+            PersistObservation();
         }
 
         internal void Finished(object value)
@@ -168,7 +242,7 @@ namespace MCPForUnity.Editor.Services
             state.PipelineFinished = true;
             state.Phase = state.InvocationUncertain ? "recovery_required" : "finished";
             finishTurnObserved = false;
-            Changed?.Invoke();
+            PersistObservation();
         }
 
         internal void ObserveNativeCompletion()
@@ -185,7 +259,7 @@ namespace MCPForUnity.Editor.Services
             if (!state.InvocationUncertain)
                 state.RecoveryReason = null;
             finishTurnObserved = false;
-            Changed?.Invoke();
+            PersistObservation();
         }
 
         internal bool CompleteRefreshDecision(string generation)
@@ -195,13 +269,13 @@ namespace MCPForUnity.Editor.Services
             bool changed = state.RefreshDecisionPending;
             state.RefreshDecisionPending = false;
             if (changed)
-                Changed?.Invoke();
+                PersistObservation();
             return state.RefreshCycleObserved;
         }
 
         internal void ObserveQuiescence(bool quiescent)
         {
-            if (!HasCompletion || state.RefreshDecisionPending)
+            if (!AwaitingQuiescence)
                 return;
             // Observe a later Editor update before considering raw native idle. This
             // cannot run from the pipeline Finished callback itself.
@@ -213,7 +287,33 @@ namespace MCPForUnity.Editor.Services
             if (!quiescent)
                 return;
             state = null;
+            PersistObservation();
+        }
+
+        private void Persist()
+        {
+            checkpointNeedsRetry = true;
             Changed?.Invoke();
+            checkpointNeedsRetry = false;
+        }
+
+        private void PersistObservation()
+        {
+            try
+            {
+                Persist();
+            }
+            catch (Exception)
+            {
+                // An observed native event still belongs to the ledger and Editor
+                // snapshot. The verified handoff remains the conservative fallback.
+            }
+        }
+
+        internal void RetryCheckpointBeforeReload()
+        {
+            if (checkpointNeedsRetry)
+                PersistObservation();
         }
 
         internal string Blocker(double now)
@@ -258,7 +358,19 @@ namespace MCPForUnity.Editor.Services
             string reason;
             string action;
             string detail;
-            if (HasCompletion)
+            if (state.Phase == "preparing")
+            {
+                reason = "preparing_compilation";
+                action = "wait_for_source_preparation";
+                detail = "The caller holds the reservation while preparing source inputs. It has not invoked a native import or compilation request.";
+            }
+            else if (HasCompletion && state.NativeInvocationPending == true)
+            {
+                reason = "compilation_trigger_return_pending";
+                action = "wait_for_native_work";
+                detail = "The matching compilation finished inside a native call. Wait for the call to return before treating that finish as completion.";
+            }
+            else if (HasCompletion)
             {
                 reason =
                     state.RefreshDecisionPending ? "refresh_trigger_decision_pending"

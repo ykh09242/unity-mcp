@@ -248,7 +248,9 @@ namespace MCPForUnityTests.Editor.Services
             var owner = CompilationJobTracker.Reservation;
             Assert.IsNull(owner.State, "This isolated test requires no existing compile owner.");
             EditorStateCache.GetSnapshot();
-            owner.Reserve("state-observation-test", expired ? 0 : EditorApplication.timeSinceStartup + 600);
+            var generation = owner.Reserve("state-observation-test", expired ? 0 : EditorApplication.timeSinceStartup + 600);
+            owner.BeginNative(generation);
+            owner.NativeReturned(generation);
             var pending = EditorStateCache.GetSnapshot();
             var context = new object();
             owner.Started(context);

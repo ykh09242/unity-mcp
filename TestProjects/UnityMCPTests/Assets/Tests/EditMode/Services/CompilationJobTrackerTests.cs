@@ -12,6 +12,49 @@ namespace MCPForUnityTests.Editor.Services
     {
         [TestCase(false)]
         [TestCase(true)]
+        public void RestoreRemainsObservableWhenCheckpointWritesWouldFail(bool unreadable)
+        {
+            var active = new OwnedCompilationReservation();
+            active.BeginNative(active.Reserve(Id, 100));
+            string saved = JObject.FromObject(active.State).ToString();
+            int writes = 0;
+            var restored = CompilationJobTracker.RestoreReservation(
+                () => unreadable ? throw new InvalidOperationException("controlled read failure") : saved,
+                _ => writes++,
+                _ => Assert.Fail("The missing native finish cannot establish non-dispatch.")
+            );
+            Assert.AreEqual(0, writes, "Restoring ownership does not require a writable checkpoint store.");
+            Assert.AreEqual("recovery_required", restored.Blocker(1));
+            Assert.AreEqual(unreadable ? "invalid_compilation_checkpoint" : "compilation_context_lost_on_reload", restored.Recovery(1).Reason);
+        }
+
+        [Test]
+        public void RestoredJobNeedsItsOwnPreparingCheckpointToProveNonDispatch()
+        {
+            var ledger = Ledger();
+            ledger.Begin(Id, preparing: true);
+            var restored = Ledger(_saved);
+            restored.InterruptedBeforeDispatch(Other);
+            Assert.AreEqual("interrupted", (string)restored.Query(Id)["reason"]);
+            restored.InterruptedBeforeDispatch(Id);
+            var again = Ledger(_saved);
+            Assert.AreEqual("interrupted_before_native_dispatch", (string)again.Query(Id)["reason"]);
+            Assert.IsFalse(again.Begin(Id), "A known non-dispatch still retains this request's identity.");
+        }
+
+        [Test]
+        public void IndependentPipelineDuringPreparationCannotBecomeARefreshCandidate()
+        {
+            var ledger = Ledger();
+            ledger.Begin(Id, preparing: true);
+            Cycle(ledger, new object(), false);
+            ledger.BeginRefresh(Id);
+            Assert.Throws<InvalidOperationException>(() => ledger.AdoptOwnedRefreshCycle(Id));
+            Assert.IsEmpty((JArray)ledger.Query(Id)["candidate_generations"]);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void OwnedRefreshCyclePreservesCompileDiagnosticsAndReloadableIdentity(bool finishesInsideRefresh)
         {
             var ledger = Ledger();

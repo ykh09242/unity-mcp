@@ -228,6 +228,7 @@ async def test_live_owner_recovery_can_finish_by_observation_without_restart(mon
 @pytest.mark.parametrize(
     "action",
     [
+        "wait_for_source_preparation",
         "wait_for_compilation_start",
         "wait_for_pipeline_finish",
         "wait_for_editor_quiescence",

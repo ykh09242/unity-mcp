@@ -48,6 +48,7 @@ class CompileCoordination(BaseModel):
     scope: Literal["owned_request_pipeline_events"]
     phase: Literal[
         "no_owned_reservation",
+        "preparing",
         "pending",
         "started",
         "finished",

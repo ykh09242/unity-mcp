@@ -83,7 +83,9 @@ namespace MCPForUnity.Editor.Services
 
         internal static bool ValidId(string value) => value != null && Regex.IsMatch(value, "\\A[a-f0-9]{32}\\z");
 
-        internal bool Begin(string id)
+        internal bool Contains(string id) => Find(id) != null;
+
+        internal bool Begin(string id, bool preparing = false)
         {
             if (!ValidId(id) || _requests.Any(r => r.Id == id))
                 return false;
@@ -102,7 +104,7 @@ namespace MCPForUnity.Editor.Services
                 {
                     Id = id,
                     Requested = _now(),
-                    Phase = "refreshing",
+                    Phase = preparing ? "preparing" : "refreshing",
                     Reason =
                         pending ? "multiple_pending_requests"
                         : _runs.Any(r => r.Finished == null) ? "preexisting_compile"
@@ -111,6 +113,15 @@ namespace MCPForUnity.Editor.Services
             );
             Save();
             return true;
+        }
+
+        internal void BeginRefresh(string id)
+        {
+            var request = Find(id);
+            if (request?.Phase != "preparing")
+                throw new InvalidOperationException("Compilation preparation no longer owns this request.");
+            request.Phase = "refreshing";
+            Save();
         }
 
         internal void ExplicitRequest(string id)
@@ -149,14 +160,23 @@ namespace MCPForUnity.Editor.Services
             Save();
         }
 
-        internal void Reject(string id)
+        internal void Reject(string id, string reason = "dispatch_failed")
         {
             var request = Find(id);
             if (request == null)
                 return;
             request.Phase = "closed";
-            request.Reason = "dispatch_failed";
+            request.Reason = reason;
             Save();
+        }
+
+        internal void InterruptedBeforeDispatch(string id)
+        {
+            // Restore() retires open requests conservatively. Only the matching
+            // pre-native reservation checkpoint supplies affirmative non-dispatch.
+            var request = Find(id);
+            if (request?.Reason == "interrupted" && request.Candidates.Count == 0)
+                Reject(id, "interrupted_before_native_dispatch");
         }
 
         internal void Started(object context)
@@ -187,7 +207,7 @@ namespace MCPForUnity.Editor.Services
                 run.Complete = false;
             }
             _runs.Add(run);
-            foreach (var request in _requests.Where(r => r.Phase != "closed"))
+            foreach (var request in _requests.Where(r => r.Phase != "closed" && r.Phase != "preparing"))
             {
                 if (request.Candidates.Count < MaxActive)
                     request.Candidates.Add(run.Generation);
@@ -360,7 +380,7 @@ namespace MCPForUnity.Editor.Services
             if (reason.Length > 0)
             {
                 result["reason"] = reason;
-                result["attribution"] = "ambiguous";
+                result["attribution"] = reason == "interrupted_before_native_dispatch" || reason == "not_dispatched" ? "unconfirmed" : "ambiguous";
                 return result;
             }
             if (run == null || run.Finished == null || request.Phase != "closed" || request.ExplicitGeneration != run.Generation)
@@ -449,7 +469,7 @@ namespace MCPForUnity.Editor.Services
         {
             foreach (var run in _runs.Where(r => r.Finished == null))
                 run.Complete = false;
-            foreach (var request in _requests.Where(r => r.Phase != "closed"))
+            foreach (var request in _requests.Where(r => r.Phase != "closed" && r.Phase != "preparing"))
                 request.Reason = "incomplete_events";
         }
 
@@ -589,7 +609,7 @@ namespace MCPForUnity.Editor.Services
                     if (
                         !ValidId(id)
                         || _requests.Any(r => r.Id == id)
-                        || !new[] { "refreshing", "explicit_request", "awaiting_explicit_start", "closed" }.Contains(phase)
+                        || !new[] { "preparing", "refreshing", "explicit_request", "awaiting_explicit_start", "closed" }.Contains(phase)
                         || !Regex.IsMatch(reason, "\\A[a-z_]*\\z")
                     )
                         throw new FormatException();
@@ -609,6 +629,8 @@ namespace MCPForUnity.Editor.Services
                         request.Candidates.Add(g);
                     }
                     if (request.ExplicitGeneration != null && !request.Candidates.Contains(request.ExplicitGeneration.Value))
+                        throw new FormatException();
+                    if (request.Phase == "preparing" && request.Candidates.Count != 0)
                         throw new FormatException();
                     if (
                         request.Phase == "closed"
@@ -704,7 +726,11 @@ namespace MCPForUnity.Editor.Services
         private const string LedgerKey = "MCPForUnity.CompileJobs.Ledger";
         private const string ReservationKey = "MCPForUnity.CompileJobs.NativeReservationV1";
         internal static readonly CompilationLedger Ledger = Create();
-        internal static readonly OwnedCompilationReservation Reservation = CreateReservation();
+        internal static readonly OwnedCompilationReservation Reservation = RestoreReservation(
+            () => SessionState.GetString(ReservationKey, ""),
+            encoded => SessionState.SetString(ReservationKey, encoded),
+            Ledger.InterruptedBeforeDispatch
+        );
 
         static CompilationJobTracker()
         {
@@ -724,39 +750,40 @@ namespace MCPForUnity.Editor.Services
             Ledger.ObserveNativeCompletion();
         }
 
-        private static OwnedCompilationReservation CreateReservation()
+        internal static OwnedCompilationReservation RestoreReservation(Func<string> read, Action<string> write, Action<string> interruptedBeforeDispatch)
         {
             OwnedCompilationReservation.Checkpoint checkpoint = null;
-            string saved = SessionState.GetString(ReservationKey, "");
-            if (!string.IsNullOrEmpty(saved))
+            try
             {
-                try
-                {
-                    checkpoint = JsonConvert.DeserializeObject<OwnedCompilationReservation.Checkpoint>(saved);
-                }
-                catch (JsonException)
-                {
-                    checkpoint = new OwnedCompilationReservation.Checkpoint();
-                }
-                // An invalid checkpoint still means that completion could not be observed.
-                checkpoint ??= new OwnedCompilationReservation.Checkpoint();
+                string saved = read();
+                if (!string.IsNullOrEmpty(saved))
+                    checkpoint = JsonConvert.DeserializeObject<OwnedCompilationReservation.Checkpoint>(saved) ?? new OwnedCompilationReservation.Checkpoint();
             }
-            var owner = new OwnedCompilationReservation(checkpoint);
+            catch (Exception)
+            {
+                // An unreadable checkpoint cannot establish that the previous owner settled.
+                checkpoint = new OwnedCompilationReservation.Checkpoint();
+            }
+            var owner = new OwnedCompilationReservation(checkpoint, interruptedBeforeDispatch: interruptedBeforeDispatch);
             owner.Changed = () =>
             {
                 string encoded = owner.State == null ? "" : JsonConvert.SerializeObject(owner.State);
-                SessionState.SetString(ReservationKey, encoded);
+                write(encoded);
+                if (read() != encoded)
+                    throw new InvalidDataException("Unity did not retain the compilation reservation checkpoint.");
             };
-            owner.Changed();
+            // Restoration is repeatable. Persist only subsequent transitions, so a
+            // write failure cannot disable the tracker for this entire domain.
             return owner;
         }
 
-        internal static object CoordinationStatus(string compileId)
+        internal static object CoordinationStatus(string compileId, OwnedCompilationReservation owner = null)
         {
+            owner ??= Reservation;
             double now = EditorApplication.timeSinceStartup;
-            string reason = Reservation.Blocker(now);
-            NativeRecoveryDetails recovery = Reservation.Recovery(now);
-            var state = Reservation.State;
+            string reason = owner.Blocker(now);
+            NativeRecoveryDetails recovery = owner.Recovery(now);
+            var state = owner.State;
             return new
             {
                 scope = "owned_request_pipeline_events",

@@ -21,6 +21,20 @@ The existing `outcome` and native `compile_job@1` contract remain compatible.
 Neither that history nor readiness proves that a specific source revision is
 loaded. A timed-out observation does not cancel compilation or replay refresh.
 
+All clients connected to an Editor share its compilation reservation. While
+`native_coordination.phase` is `preparing`, a refresh is gathering source
+inputs. A second caller can observe the existing job. A reload during this
+phase releases the reservation and closes the original job with
+`interrupted_before_native_dispatch`. Check the selected Editor's current
+state before issuing a fresh request.
+
+Before each Unity import or compilation call, the Editor records the native
+handoff. Across a reload, it can reuse a matching pipeline finish or native
+task termination once the call's return has been recorded. It then releases
+the reservation after the Editor is idle. A reload with insufficient completion
+evidence still reports `restart_required`.
+Older pending reservations follow the same recovery rule.
+
 The additive [source freshness](source-freshness.md) envelope binds sampled source,
 compilation and loaded assembly evidence. New native test starts require its source
 token at the final execution boundary. [Verification profiles](verification-profiles.md)
