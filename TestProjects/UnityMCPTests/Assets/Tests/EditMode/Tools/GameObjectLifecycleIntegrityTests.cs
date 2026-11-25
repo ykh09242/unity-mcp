@@ -1894,6 +1894,8 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 EditorGUIUtility.systemCopyBuffer = sentinel;
+                if (EditorGUIUtility.systemCopyBuffer != sentinel)
+                    Assert.Ignore("The Editor clipboard must support reading back the fixture text.");
                 var response = Call(Duplicate(source));
                 Succeeded(response);
                 var clone = ResponseObject(response, true);
