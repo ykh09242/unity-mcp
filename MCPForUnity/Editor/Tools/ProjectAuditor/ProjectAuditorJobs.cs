@@ -44,16 +44,24 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
             }
         }
         internal static NativeRecoveryDetails RecoveryDetails =>
-            RecoveryRequired
+            !RecoveryRequired ? null
+            : HasNativeOwner
                 ? new NativeRecoveryDetails(
                     "project_auditor",
-                    "observer_lost",
-                    "audit_completion_observer_lost",
-                    "restart_required",
-                    "inspect_native_work_then_restart_editor",
-                    "Project Auditor analysis crossed a domain reload without its completion observer. Inspect native analysis, then restart the Editor; idle state cannot prove completion."
+                    "invocation_unknown",
+                    "audit_invocation_unconfirmed",
+                    "unknown",
+                    "inspect_native_work",
+                    "The analysis invocation did not return normally. Its completion callback is still installed. Inspect native analysis and poll the audit ID."
                 )
-                : null;
+            : new NativeRecoveryDetails(
+                "project_auditor",
+                "observer_lost",
+                "audit_completion_observer_lost",
+                "restart_required",
+                "inspect_native_work_then_restart_editor",
+                "Project Auditor analysis crossed a domain reload without its completion observer. Inspect native analysis, then restart the Editor; idle state cannot prove completion."
+            );
 
         private sealed class Audit
         {
@@ -177,11 +185,17 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                 if ((string)capability["state"] != "available")
                 {
                     Finish(audit, "unavailable", (string)capability["reason"]);
-                    Persist();
+                    TryPersist();
                     return new ErrorResponse("project_auditor_unavailable", Describe(audit));
                 }
                 active = audit;
-                Persist(); // Record reservation before scheduling any native work.
+                if (!TryPersist())
+                {
+                    active = null;
+                    Jobs.Remove(id);
+                    dirty = true;
+                    return new ErrorResponse("project_auditor_persistence_failed", new { audit_id = id, started = false });
+                }
                 EditorApplication.delayCall += () => Launch(audit);
                 return new SuccessResponse("Requested one owned Project Auditor analysis.", Describe(audit));
             }
@@ -220,7 +234,7 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                     {
                         Finish(audit, "unavailable", "no_registered_rules");
                         active = null;
-                        Persist();
+                        TryPersist();
                         return;
                     }
                     audit.State = "running";
@@ -232,19 +246,25 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                         () =>
                         {
                             audit.NativeInvoked = true;
-                            Persist(); // Persist before native invocation; idle state cannot prove completion.
+                            if (!TryPersist())
+                            {
+                                audit.NativeInvoked = false;
+                                throw new IOException("Could not retain Project Auditor invocation intent.");
+                            }
                         }
                     );
                 }
                 catch (Exception error)
                 {
+                    if (!ReferenceEquals(active, audit))
+                        return; // A synchronous completion already settled this invocation.
                     // Native invocation boundaries can fail after asynchronous work has been scheduled.
                     Finish(audit, "failed", "audit_invocation_failed_" + error.GetType().Name);
                     if (audit.NativeInvoked)
                         RecoveryRequired = true;
                     else
                         active = null;
-                    Persist();
+                    TryPersist();
                 }
             }
         }
@@ -452,13 +472,30 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
         {
             lock (Gate)
                 if (dirty)
-                    Persist();
+                    TryPersist();
+        }
+
+        private static bool TryPersist()
+        {
+            try
+            {
+                Persist();
+                return true;
+            }
+            catch
+            {
+                dirty = true;
+                return false;
+            }
         }
 
         private static void Persist()
         {
             Prune();
-            SessionWriter(Key, new JArray(Jobs.Values.Select(Receipt)).ToString(Formatting.None));
+            string summary = new JArray(Jobs.Values.Select(Receipt)).ToString(Formatting.None);
+            SessionWriter(Key, summary);
+            if (SessionReader(Key) != summary)
+                throw new IOException("Project Auditor receipt could not be verified.");
             SessionState.SetBool(Key + ".recovery", RecoveryRequired);
             dirty = false;
         }
@@ -629,9 +666,10 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                 if (active != null)
                 {
                     RecoveryRequired |= active.NativeInvoked;
-                    Finish(active, "interrupted", active.NativeInvoked ? "domain_reload_observer_lost" : "domain_reload_before_start");
+                    if (!active.Terminal)
+                        Finish(active, "interrupted", active.NativeInvoked ? "domain_reload_observer_lost" : "domain_reload_before_start");
                 }
-                Persist();
+                TryPersist();
             }
         }
 
@@ -641,10 +679,11 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
             {
                 if (active == null)
                     return;
-                Finish(active, "interrupted", "play_mode_transition");
+                if (!active.Terminal)
+                    Finish(active, "interrupted", "play_mode_transition");
                 if (!active.NativeInvoked)
                     active = null;
-                Persist();
+                TryPersist();
             }
         }
 
@@ -710,6 +749,7 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                         )
                             throw new InvalidDataException("Invalid audit observation bounds.");
                         RestoreSnapshot(audit, row, retained);
+                        RecoveryRequired |= audit.NativeInvoked && (bool?)row["native_owner_retained"] == true;
                         if (!audit.Terminal)
                         {
                             RecoveryRequired |= audit.NativeInvoked;

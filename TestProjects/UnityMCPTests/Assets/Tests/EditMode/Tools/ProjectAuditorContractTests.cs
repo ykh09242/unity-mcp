@@ -23,6 +23,7 @@ namespace MCPForUnityTests.Editor.Tools
         private Func<long> previousClock;
         private Dictionary<string, string> storage;
         private long now;
+        private bool previousRecovery;
         private Backend backend;
 
         private enum ModuleResult
@@ -61,6 +62,7 @@ namespace MCPForUnityTests.Editor.Tools
             internal int Initializes;
             internal bool ThrowBeforeInvoke;
             internal bool ThrowAfterInvoke;
+            internal bool CompleteBeforeThrow;
             internal int Rules = 4;
             internal string Ready = "available";
             internal Action<JObject> Incoming;
@@ -86,6 +88,11 @@ namespace MCPForUnityTests.Editor.Tools
                 Incoming = issue;
                 Module = moduleCompleted;
                 Completed = completed;
+                if (CompleteBeforeThrow)
+                {
+                    Module("Success");
+                    Completed();
+                }
                 if (ThrowAfterInvoke)
                     throw new InvalidOperationException("invocation outcome unknown");
             }
@@ -99,6 +106,7 @@ namespace MCPForUnityTests.Editor.Tools
             previousWriter = ProjectAuditorJobs.SessionWriter;
             previousEraser = ProjectAuditorJobs.SessionEraser;
             previousClock = ProjectAuditorJobs.Clock;
+            previousRecovery = UnityEditor.SessionState.GetBool(StateKey + ".recovery", false);
             storage = new Dictionary<string, string>(StringComparer.Ordinal);
             now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             ProjectAuditorJobs.SessionReader = key => storage.TryGetValue(key, out string value) ? value : string.Empty;
@@ -119,6 +127,7 @@ namespace MCPForUnityTests.Editor.Tools
             ProjectAuditorJobs.SessionWriter = previousWriter;
             ProjectAuditorJobs.SessionEraser = previousEraser;
             ProjectAuditorJobs.Clock = previousClock;
+            UnityEditor.SessionState.SetBool(StateKey + ".recovery", previousRecovery);
         }
 
         private string Persisted()
@@ -157,6 +166,68 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase(false)]
         [TestCase(true)]
+        public void FailedReservationDoesNotStrandAnUnscheduledAudit(bool discardWrite)
+        {
+            var writer = ProjectAuditorJobs.SessionWriter;
+            ProjectAuditorJobs.SessionWriter = (_, _) =>
+            {
+                if (!discardWrite)
+                    throw new System.IO.IOException("fixture");
+            };
+            var response = Request("start");
+            Assert.IsFalse((bool)response["success"]);
+            Assert.IsFalse((bool)response["data"]["started"]);
+            Assert.IsFalse(ProjectAuditorJobs.HasNativeOwner || ProjectAuditorJobs.RecoveryRequired);
+            ProjectAuditorJobs.LaunchForTests();
+            Assert.Zero(backend.Starts);
+            ProjectAuditorJobs.SessionWriter = writer;
+            Start();
+            Assert.AreEqual(1, backend.Starts);
+        }
+
+        [Test]
+        public void FailedInvocationCheckpointReleasesAuditBeforeNativeHandoff()
+        {
+            Assert.IsTrue((bool)Request("start")["success"]);
+            var writer = ProjectAuditorJobs.SessionWriter;
+            ProjectAuditorJobs.SessionWriter = (key, value) =>
+            {
+                if (key == StateKey && (bool)JArray.Parse(value)[0]["native_invoked"])
+                    throw new System.IO.IOException("fixture");
+                writer(key, value);
+            };
+            ProjectAuditorJobs.LaunchForTests();
+            var status = Request("status")["data"];
+            Assert.AreEqual("failed", (string)status["state"]);
+            Assert.Zero(backend.Starts);
+            Assert.IsFalse((bool)status["native_invoked"]);
+            Assert.IsFalse(ProjectAuditorJobs.HasNativeOwner || ProjectAuditorJobs.RecoveryRequired);
+        }
+
+        [Test]
+        public void ReloadRetainsFenceForTerminalReceiptWithOutstandingNativeOwner()
+        {
+            backend.ThrowAfterInvoke = true;
+            Start();
+            typeof(ProjectAuditorJobs).GetMethod("BeforeReload", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+            ProjectAuditorJobs.Restore(storage[StateKey], false);
+            Assert.AreEqual("failed", (string)Request("status")["data"]["state"]);
+            Assert.AreEqual("restart_required", ProjectAuditorJobs.RecoveryDetails.Mode);
+            Assert.IsFalse(ProjectAuditorJobs.HasNativeOwner);
+            Assert.AreEqual(1, backend.Starts);
+        }
+
+        [Test]
+        public void SynchronousCompletionPrecedesALateInvocationException()
+        {
+            backend.CompleteBeforeThrow = backend.ThrowAfterInvoke = true;
+            Start();
+            Assert.AreEqual("completed", (string)Request("status")["data"]["state"]);
+            Assert.IsFalse(ProjectAuditorJobs.HasNativeOwner || ProjectAuditorJobs.RecoveryRequired);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void InvocationUncertaintyRetainsOwnerUntilRealCompletionProof(bool invoked)
         {
             backend.ThrowBeforeInvoke = !invoked;
@@ -167,6 +238,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(invoked, ProjectAuditorJobs.RecoveryRequired);
             if (invoked)
             {
+                Assert.AreEqual("unknown", ProjectAuditorJobs.RecoveryDetails.Mode);
                 backend.Module("Success");
                 backend.Completed();
                 Assert.IsFalse(ProjectAuditorJobs.HasNativeOwner);
@@ -331,6 +403,8 @@ namespace MCPForUnityTests.Editor.Tools
             var after = Request("status")["data"];
             Assert.AreEqual("interrupted", (string)after["state"]);
             Assert.AreEqual(invoked, ProjectAuditorJobs.RecoveryRequired);
+            if (invoked)
+                Assert.AreEqual("restart_required", ProjectAuditorJobs.RecoveryDetails.Mode);
             Assert.IsFalse(ProjectAuditorJobs.HasNativeOwner);
             Request("start");
             Assert.AreEqual(invoked ? 1 : 0, backend.Starts);
