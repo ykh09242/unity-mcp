@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools.Recording;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
@@ -31,6 +32,7 @@ namespace MCPForUnity.Editor.Tools
         private static Texture2D _scaledTexture;
         private static Material _aspectMaterial;
         private static bool _sceneCaptureQueued;
+        private static EditorApplication.CallbackFunction _sceneCapture;
         private static double _lastFrameAt;
 
         static ManageRecording()
@@ -127,7 +129,7 @@ namespace MCPForUnity.Editor.Tools
             var capabilities = Capabilities();
             if (!capabilities.Value<bool>("supported"))
                 return new ErrorResponse(capabilities.Value<string>("reason"), capabilities);
-            if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlayingOrWillChangePlaymode != EditorApplication.isPlaying)
+            if (!PlayModeReadiness.IsEditorStable)
                 return new ErrorResponse("Wait until the Editor finishes compiling, importing or changing Play Mode before recording.");
             if (options.Source == "game_view" && !OptionalUnityModules.ScreenCapture)
                 return new ErrorResponse(OptionalUnityModules.ScreenCaptureUnavailableReason, capabilities);
@@ -160,6 +162,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 else
                 {
+                    _sceneCapture = SceneCaptureFor(job);
                     SceneView.duringSceneGui += OnSceneGui;
                     sceneView.Repaint();
                 }
@@ -225,11 +228,15 @@ namespace MCPForUnity.Editor.Tools
 
         private static void CaptureGameFrame() => CaptureFrame(false);
 
-        private static void CaptureSceneFrame()
-        {
-            _sceneCaptureQueued = false;
-            CaptureFrame(true);
-        }
+        internal static EditorApplication.CallbackFunction SceneCaptureFor(RecordingJob job) =>
+            () =>
+            {
+                // Unity can already have copied a delayCall before cleanup unregisters it.
+                if (!ReferenceEquals(job, _active) || !job.IsActive)
+                    return;
+                _sceneCaptureQueued = false;
+                CaptureFrame(true);
+            };
 
         private static void OnSceneGui(SceneView sceneView)
         {
@@ -244,7 +251,7 @@ namespace MCPForUnity.Editor.Tools
                 return;
             // GrabPixels after the whole Scene View repaint has completed, including overlays.
             _sceneCaptureQueued = true;
-            EditorApplication.delayCall += CaptureSceneFrame;
+            EditorApplication.delayCall += _sceneCapture;
         }
 
         private static void CaptureFrame(bool scene)
@@ -343,7 +350,8 @@ namespace MCPForUnity.Editor.Tools
         private static void Cleanup()
         {
             EditorApplication.update -= Tick;
-            EditorApplication.delayCall -= CaptureSceneFrame;
+            EditorApplication.delayCall -= _sceneCapture;
+            _sceneCapture = null;
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
             AssemblyReloadEvents.beforeAssemblyReload -= BeforeReload;
             EditorApplication.quitting -= BeforeQuit;

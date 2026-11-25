@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
@@ -167,6 +168,35 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(capabilities.Value<bool>("game_view_requires_rendered_frames"), Is.True);
             Assert.That(capabilities.Value<double>("frame_timeout_seconds"), Is.EqualTo(5));
             Assert.That(UnityEditor.EditorWindow.focusedWindow, Is.SameAs(focused));
+        }
+
+        [Test]
+        public void LateSceneFrameLeavesTheReplacementRecordingAndItsQueuedFrameUntouched()
+        {
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+            var active = typeof(ManageRecording).GetField("_active", flags);
+            var queued = typeof(ManageRecording).GetField("_sceneCaptureQueued", flags);
+            var previous = (RecordingJob)active.GetValue(null);
+            if (previous?.IsActive == true)
+                Assert.Ignore("An active recording owns the Scene View callback.");
+            bool wasQueued = (bool)queued.GetValue(null);
+            Start();
+            var oldCallback = ManageRecording.SceneCaptureFor(_job);
+            _job.Finish("interrupted", "replaced", 100);
+            try
+            {
+                Start();
+                active.SetValue(null, _job);
+                queued.SetValue(null, true);
+                oldCallback();
+                Assert.That(_job.IsActive, Is.True);
+                Assert.That(queued.GetValue(null), Is.EqualTo(true), "A replaced callback consumed the new recording's queued frame.");
+            }
+            finally
+            {
+                active.SetValue(null, previous);
+                queued.SetValue(null, wasQueued);
+            }
         }
 
         [Test]
