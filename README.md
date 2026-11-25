@@ -46,7 +46,7 @@ Full upstream history: [Release Notes](website/docs/releases.md).
 
 ## What it does
 
-Connect an MCP assistant to the Unity Editor to inspect scenes, create objects, manage assets, edit scripts, run tests, profile, and build. Tool availability depends on Editor toggles, installed dependencies, protocol mode, and explicit consent. The fork improves the inherited tool surface; see the [stable 2.5.0 release notes](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v2.5.0) for additions, fixes, and verification limits.
+Connect an MCP assistant to the Unity Editor to inspect scenes, create objects, manage assets, edit scripts, run tests, profile, and build. Tool availability depends on Editor toggles, installed dependencies, protocol mode, and explicit consent. The [2.6.0 release notes](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v2.6.0) show how to share an Editor across chats, check save upgrades in a built game, and trace a property through prefab variants.
 
 **[Browse the full tool catalog →](website/docs/reference/tools/index.md)**
 
@@ -59,7 +59,7 @@ Connect an MCP assistant to the Unity Editor to inspect scenes, create objects, 
 **Requirements:** Unity **2021.3 LTS → 6.x** · Python **3.11+** (via [`uv`](https://docs.astral.sh/uv/)). Works with **any MCP client** — Claude Desktop & Code, Cursor, VS Code, Windsurf, Cline, Gemini CLI, and more.
 
 1. **Install** — Unity → Package Manager → Add from git URL:
-   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v2.5.0`
+   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v2.6.0`
 2. **Connect** — Open **Window > Unity MCP (ykh09242) > Toggle MCP Window**. For local HTTP, click **Start Server**, wait for it to become reachable, then click **Connect** if the Editor has not connected automatically. For stdio, select **Stdio** under **Transport** and click **Start Session**. If the panel offers **Switch to stdio and connect**, that button starts the bridge for you. Under **AI client setup**, select your client and click **Configure**, then reconnect it. A stdio client launches its own Python server when it connects.
 3. **Verify** — Read `mcpforunity://instances`, choose the Editor, and inspect its project/scene before making [a small first change](website/docs/getting-started/first-prompt.md).
 
@@ -67,7 +67,7 @@ Connect an MCP assistant to the Unity Editor to inspect scenes, create objects, 
 
 Local HTTP creates a fresh token each launch. Since 1.2.1, verified Codex and Claude Code clients use automatic token-file lookup; configure once after upgrading and reconnect if necessary. Static-header clients still need reconfiguration after server restarts. See [client configuration](website/docs/getting-started/clients.md). Modern sessionless requests use `unity_instance` for tools and `_meta.unity_instance` for resources when selection is ambiguous; hosted requests always need a target. [Security And Consent](website/docs/guides/security.md) explains high-impact tool permissions, credential handling, and safe retries.
 
-`ykh09242-v2.5.0` is the fork's stable release tag. The prefix distinguishes fork releases from inherited upstream tags. Use a full commit SHA from the verified release for immutable installation, or `#beta` only to follow the moving development branch. The branch name does not make a tagged release a beta. The package name is `com.ykh09242.unity-mcp`; its `MCPForUnity/package.json` records the commit-addressed server archive in `mcpServerSource`. Unity package 2.5.0 selects Python server 2.5.0 through that pin. The Python distribution is `ykh09242-unity-mcp-server`, installed from that GitHub archive without a Git checkout, while the executable names remain `mcp-for-unity` and `unity-mcp`. See [server setup](Server/README.md). No fork Asset Store, OpenUPM, PyPI, or hosted MCP service distribution is advertised.
+`ykh09242-v2.6.0` is the fork's stable release tag. The prefix distinguishes fork releases from inherited upstream tags. Use a full commit SHA from the verified release for immutable installation, or `#beta` only to follow the moving development branch. The branch name does not make a tagged release a beta. The package name is `com.ykh09242.unity-mcp`; its `MCPForUnity/package.json` records the commit-addressed server archive in `mcpServerSource`. Unity package 2.6.0 selects Python server 2.6.0 through that pin. The Python distribution is `ykh09242-unity-mcp-server`, installed from that GitHub archive without a Git checkout, while the executable names remain `mcp-for-unity` and `unity-mcp`. See [server setup](Server/README.md). No fork Asset Store, OpenUPM, PyPI, or hosted MCP service distribution is advertised.
 
 ---
 
