@@ -85,15 +85,16 @@ async def test_evidence_constrained_action_miss_offers_an_explicit_action_only_r
 
         retry = miss["retry_search"]
         assert retry["arguments"] == {
+            **entry_arguments,
+            "selection": "ranked",
             "query": query,
             "catalog_query": catalog_query,
             "intent": intent,
+            "route_surfaces": "tools",
+            "limit": 1,
         }
         assert set(retry["omit"]) == {"observation_source", "required_values"}
-        action_arguments = {**arguments, **retry["arguments"]}
-        for field in retry["omit"]:
-            action_arguments.pop(field)
-        result = (await client.call_tool(name, action_arguments)).structured_content
+        result = (await client.call_tool(name, retry["arguments"])).structured_content
 
     assert result["query"] == query
     assert (result["matching"], result["matched_query"]) == ("lexical", catalog_query)
