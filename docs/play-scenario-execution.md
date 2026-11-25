@@ -123,6 +123,9 @@ unsaved drafts and active jobs must finish first. Save loaded untitled scenes be
 build. An unmodified batch startup may be replaced by the owned empty bootstrap without saving its
 contents. Dirty or mixed untitled scene states are rejected before output writes. The default build
 requires Windows x64 standalone support and temporarily selects the Mono backend.
+For a batch build, `--mcp-scenario-target` accepts `windows64`, `linux64` or `macos`, and
+`--mcp-scenario-backend` accepts `mono` or `il2cpp`. The selected target needs its installed
+Standalone build module. IL2CPP also requires the matching native Editor host, module and toolchain.
 
 For batch builds, use a closed dedicated test project and these arguments to the installed Editor:
 
@@ -135,7 +138,7 @@ For batch builds, use a closed dedicated test project and these arguments to the
 ```
 
 The explicit build freezes the normalized definition, included scene paths and SHA-256 in
-`scenario-bundle.json` beside `MCPScenarioPlayer.exe`. It embeds the same bundle and a dedicated empty
+`scenario-bundle.json` in the build output directory. It embeds the same bundle and a dedicated empty
 bootstrap scene. Before changing the backend or creating temporary assets, the builder records its
 project, backend selection and unique folder identity under `Library/MCPForUnity/ScenarioPlayerBuild`.
 It records file and Unity metadata hashes as each temporary asset is prepared. Completion and the
@@ -186,11 +189,13 @@ the Player and update the launcher together; do not reuse old cancellation evide
 
 The Player host supports exact included scenes, hierarchy paths/stable IDs, object count and
 activity, exact component presence, explicit read-only state providers, reset steps, query counts/timeline, and optional direct/raycast
-uGUI EventSystem input. Explicit scenario builds also support registered resource assertions and
-optional boundary memory metrics. Ordinary builds keep resource tracking disabled. Screenshots and
-serialized-property conditions are rejected before Player execution; these capabilities belong to
-the Editor host. No reflected property getter is substituted. Windows Mono is the supported build target here; OS
-input, UI Toolkit, IL2CPP and visual pixel comparison are not claimed.
+uGUI EventSystem input. A UI Toolkit click uses direct mode and an inspected element selector.
+Explicit scenario builds also support registered resource assertions and optional boundary memory
+metrics. Ordinary builds keep resource tracking disabled. Player preflight rejects
+`diagnostics.screenshot_on_failure` and serialized-property conditions. Named step screenshot
+checkpoints have their own capture limits. The maintained licensed Player workflow runs on Windows
+x64 and defaults to Mono, with an explicit IL2CPP backend option. Report coverage for the selected
+target and backend from the matching built Player's actual run and process exit.
 
 Player resource registration must receive runtime SO clones, never source assets. The Editor rejects
 persistent assets using Editor APIs; the Player cannot provide that asset-persistence check. Native

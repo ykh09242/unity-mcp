@@ -436,7 +436,8 @@ or issue the CLI's budget verdict.
 ## Require actual Player CI
 
 Use `require_player_e2e: true` on **Unity Tests** when built Player execution is mandatory. The reusable
-Player workflow provisions a pinned Windows Editor with Mono support, prepares an isolated maintained
+Player workflow provisions a pinned Windows Editor for the selected backend (Mono by default, or
+IL2CPP when explicitly selected), prepares an isolated maintained
 fixture project, builds the scenario and ordinary Players, and executes the real CLI/native cases.
 It uses the existing licensed-test policy and explicit Windows serial activation credentials; it does
 not change repository settings or treat unrelated license formats as verified Windows activation.
@@ -463,9 +464,9 @@ The maintained configuration is `tools/unity-player-e2e-profiles.json`:
 
 | Profile | Native cases | Execution bound after builds | CI artifact retention |
 | --- | --- | --- | --- |
-| `quick` | 11 core, failure, ordinary-build, budget and concurrent-import cases | 600 seconds | 7 days |
-| `standard` | All 43 regular cases, including 100 same-PID iterations | 1,800 seconds | 14 days |
-| `long` | All 44 cases, adding 1,000 same-PID iterations | 3,600 seconds | 30 days |
+| `quick` | 12 core, failure, ordinary-build, budget and concurrent-import cases | 600 seconds | 7 days |
+| `standard` | All 44 regular cases, including 100 same-PID iterations | 1,800 seconds | 14 days |
+| `long` | All 45 cases, adding 1,000 same-PID iterations | 3,600 seconds | 30 days |
 
 Every profile also runs three real `check-soak-budget` commands against fresh 30-iteration
 baseline and controlled-growth Players. The bounded fixture retains at most 30 MiB and
