@@ -388,8 +388,9 @@ namespace MCPForUnity.Editor.Tools.Terrain
             }
         }
 
-        internal JObject Observation(bool changed = false, bool undo = false) =>
-            new JObject
+        internal JObject Observation(bool changed = false, bool undo = false)
+        {
+            var result = new JObject
             {
                 ["data_guid"] = Guid,
                 ["revision"] = Revision,
@@ -416,9 +417,13 @@ namespace MCPForUnity.Editor.Tools.Terrain
                 ["limitations"] = new JArray(
                     "Loaded Terrain users only; unloaded assets may also share TerrainData. No neighboring TerrainData is changed or seam synchronized.",
                     "Native getters/setters and Undo snapshots are indivisible; size limits do not impose a hard timeout or atomic transaction.",
-                    "Height and splat storage may quantize values. Holes true means surface exists. Existing tree indices/prototypes only; tree rotation is radians."
+                    "Height and splat storage may quantize values. Existing tree indices/prototypes only; tree rotation is radians."
                 ),
             };
+            if (Channel == "holes")
+                result["value_semantics"] = new JObject { ["true"] = "surface", ["false"] = "hole" };
+            return result;
+        }
     }
 }
 #endif

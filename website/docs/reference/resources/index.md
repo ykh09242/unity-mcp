@@ -213,7 +213,7 @@ URI: mcpforunity://menu-items
 
 **URI:** `mcpforunity://tool-diagnostics/{tool_name}`
 
-Read bounded diagnostics for one tool; schemas remain authoritative in tools/list.
+Read bounded diagnostics for one tool. A native_disabled result identifies an Editor Tools toggle. The operator can review it in the MCP for Unity window. Refresh tools/list after a settings change.
 
 **Parameters:**
 

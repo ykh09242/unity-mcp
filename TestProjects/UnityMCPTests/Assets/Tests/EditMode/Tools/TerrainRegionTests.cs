@@ -367,6 +367,38 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void SingleHoleFillRequiresTheMatchingCellReadAndPreservesEveryOtherCell()
+        {
+            data.SetHoles(
+                5,
+                7,
+                new bool[,]
+                {
+                    { false, false },
+                }
+            );
+            int size = data.holesResolution;
+            var expected = data.GetHoles(0, 0, size, size);
+            JObject wide = Read("get_region", Region("holes", 5, 7, 2, 1));
+            Assert.AreEqual("surface", (string)wide["value_semantics"]["true"]);
+            Assert.AreEqual("hole", (string)wide["value_semantics"]["false"]);
+            Assert.IsFalse((bool)wide["values"][0][1]);
+
+            JObject cell = Region("holes", 5, 7, 1, 1);
+            JObject observed = Read("get_region", cell);
+            cell["expected_data_guid"] = observed["data_guid"];
+            cell["expected_revision"] = wide["revision"];
+            cell["values"] = new JArray { new JArray(true) };
+            Assert.AreEqual("stale_terrain_revision", (string)Call("set_region", cell)["code"]);
+            CollectionAssert.AreEqual(expected, data.GetHoles(0, 0, size, size));
+
+            cell["expected_revision"] = observed["revision"];
+            Assert.IsTrue((bool)Read("set_region", cell)["values"][0][0]);
+            expected[7, 5] = true;
+            CollectionAssert.AreEqual(expected, data.GetHoles(0, 0, size, size));
+        }
+
+        [Test]
         public void SplatHolesAndDetailPatchesPreserveOutsideData()
         {
             var splat = Guard("get_region", Region("alphamaps"));

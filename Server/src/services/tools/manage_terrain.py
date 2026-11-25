@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal, get_args
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import StrictBool, StrictInt
+from pydantic import Field, StrictBool, StrictInt, WithJsonSchema
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -24,6 +24,21 @@ TerrainAction = Literal[
     "set_layer",
 ]
 ALL_ACTIONS = get_args(TerrainAction)
+MAX_ORIGIN = 65535
+MAX_EXTENT = 32
+_ORIGIN = {"type": "integer", "minimum": 0, "maximum": MAX_ORIGIN}
+_EXTENT = {"type": "integer", "minimum": 1, "maximum": MAX_EXTENT}
+TerrainRegion = Annotated[
+    dict[str, Any],
+    WithJsonSchema(
+        {
+            "type": "object",
+            "properties": {"x": _ORIGIN, "y": _ORIGIN, "width": _EXTENT, "height": _EXTENT},
+            "required": ["x", "y", "width", "height"],
+            "additionalProperties": False,
+        }
+    ),
+]
 _REVISION = re.compile(r"terrain1:[0-9a-f]{64}\Z")
 _GUID = re.compile(r"[0-9a-f]{32}\Z")
 
@@ -66,10 +81,10 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
         if any(type(v) is not int for v in region.values()):
             return "region values must be strict integers."
         if not (
-            0 <= region["x"] <= 65535
-            and 0 <= region["y"] <= 65535
-            and 1 <= region["width"] <= 32
-            and 1 <= region["height"] <= 32
+            0 <= region["x"] <= MAX_ORIGIN
+            and 0 <= region["y"] <= MAX_ORIGIN
+            and 1 <= region["width"] <= MAX_EXTENT
+            and 1 <= region["height"] <= MAX_EXTENT
         ):
             return "Region exceeds the coordinate/32x32 bounds."
         if channel == "details":
@@ -189,12 +204,12 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
         "Inspect and edit existing TerrainData with bounded region/index requests. "
         "get_info lists identities/resolutions/layers/prototypes; get_region/set_region use "
         "heights, alphamaps, holes (true=surface) or details with exact [y][x] arrays. "
-        "Regions are at most32x32 and4096 scalars. get_trees/set_trees use1..64 exact existing indices; "
+        "Regions are at most 32x32 and 4096 scalars. get_trees/set_trees use 1..64 exact existing indices; "
         "get_layer/set_layer replace one existing layer slot, preserving count and weights within "
-        "a65536-scalar full-alphamap verification budget. Writes require expected_data_guid and "
+        "a 65536-scalar full-alphamap verification budget. Writes require expected_data_guid and "
         "the exact scoped expected_revision from the corresponding read. Shared loaded users and "
         "boundary patches require explicit acknowledgements; neighboring terrains are never changed. "
-        "Authoring refuses native Undo snapshot estimates above16777216 scalar units. "
+        "Authoring refuses native Undo snapshot estimates above 16777216 scalar units. "
         "Native Undo is registered; failures use conditional compensation and preserve external writers. "
         "Edits mark TerrainData dirty; no global asset save is performed. "
         "No terrain creation/resolution change, tree/prototype insertion or whole-terrain dump."
@@ -204,19 +219,48 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
 async def manage_terrain(
     ctx: Context,
     # Literal metadata advertises actions while retaining legacy str admission.
-    action: Annotated[str, TerrainAction, "Terrain action."],
+    action: Annotated[
+        str,
+        TerrainAction,
+        Field(
+            description="Terrain operation. Use get_region and set_region for grid cells.",
+            examples=list(ALL_ACTIONS),
+        ),
+    ],
     target: Annotated[str, "Existing Terrain GameObject id/name/path."],
     search_method: Literal["by_id", "by_name", "by_path"] | None = None,
-    channel: str | None = None,
-    region: dict[str, Any] | None = None,
-    values: list[Any] | None = None,
+    channel: Annotated[
+        str | None, Field(description="Region channel: heights, alphamaps, holes or details.")
+    ] = None,
+    region: Annotated[
+        TerrainRegion | None,
+        Field(
+            description="Zero-based cell rectangle for get_region and set_region. Read the exact rectangle you intend to change."
+        ),
+    ] = None,
+    values: Annotated[
+        list[Any] | None,
+        Field(
+            description="Replacement values for set_region or set_trees. Region rows are [y][x]. For holes, true means surface and false means a hole."
+        ),
+    ] = None,
     indices: list[StrictInt] | None = None,
     detail_layer: StrictInt | None = None,
     index: StrictInt | None = None,
     layer_path: str | None = None,
     layer_guid: str | None = None,
-    expected_data_guid: str | None = None,
-    expected_revision: str | None = None,
+    expected_data_guid: Annotated[
+        str | None,
+        Field(
+            description="Required for writes. Copy data.data_guid from the corresponding read of the target."
+        ),
+    ] = None,
+    expected_revision: Annotated[
+        str | None,
+        Field(
+            description="Required for writes. Copy data.revision from the read of the same channel and rectangle, tree indices or layer slot."
+        ),
+    ] = None,
     allow_shared_data: StrictBool = False,
     allow_boundary: StrictBool = False,
 ) -> dict[str, Any]:

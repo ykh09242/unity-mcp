@@ -198,6 +198,14 @@ def test_registered_terrain_sdk_strict_schema_and_wire():
         async def main():
             for mode in ("2026-07-28", "legacy"):
                 async with Client(server, mode=mode) as client:
+                    props = (await client.list_tools())[0].inputSchema["properties"]
+                    assert {"get_region", "set_region"} <= set(props["action"]["examples"])
+                    rect = next(item for item in props["region"]["anyOf"] if item["type"] == "object")
+                    assert set(rect["required"]) == {"x", "y", "width", "height"}
+                    assert rect["properties"]["x"]["minimum"] == 0
+                    assert rect["properties"]["width"]["maximum"] == 32
+                    assert "true" in props["values"]["description"] and "surface" in props["values"]["description"]
+                    assert "data.revision" in props["expected_revision"]["description"]
                     args = {"action": "set_region", "target": "123", "search_method": "by_id",
                             "channel": "heights", "region": {"x": 1, "y": 2, "width": 1, "height": 1},
                             "values": [[0.4]], "expected_data_guid": "b" * 32,

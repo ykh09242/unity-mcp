@@ -21584,7 +21584,35 @@
               "region": {
                 "anyOf": [
                   {
-                    "additionalProperties": true,
+                    "additionalProperties": false,
+                    "properties": {
+                      "height": {
+                        "maximum": 32,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "width": {
+                        "maximum": 32,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "x": {
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "y": {
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "width",
+                      "height"
+                    ],
                     "type": "object"
                   },
                   {
@@ -49466,7 +49494,35 @@
               "region": {
                 "anyOf": [
                   {
-                    "additionalProperties": true,
+                    "additionalProperties": false,
+                    "properties": {
+                      "height": {
+                        "maximum": 32,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "width": {
+                        "maximum": 32,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "x": {
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "y": {
+                        "maximum": 65535,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "width",
+                      "height"
+                    ],
                     "type": "object"
                   },
                   {

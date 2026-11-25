@@ -19,7 +19,11 @@ async def get_tool_diagnostics(ctx: Context) -> ToolDiagnosticsResponse:
 @mcp_for_unity_resource(
     uri="mcpforunity://tool-diagnostics/{tool_name}",
     name="named_tool_diagnostics",
-    description="Read bounded diagnostics for one tool; schemas remain authoritative in tools/list.",
+    description=(
+        "Read bounded diagnostics for one tool. A native_disabled result identifies an Editor "
+        "Tools toggle. The operator can review it in the MCP for Unity window. Refresh tools/list "
+        "after a settings change."
+    ),
 )
 async def get_named_tool_diagnostics(ctx: Context, tool_name: str) -> ToolDiagnosticsResponse:
     return await query_tool_diagnostics(ctx, tool_name)

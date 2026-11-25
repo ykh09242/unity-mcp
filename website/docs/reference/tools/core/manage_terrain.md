@@ -14,25 +14,25 @@ description: "Inspect and edit existing TerrainData with bounded region/index re
 
 ## Description
 
-Inspect and edit existing TerrainData with bounded region/index requests. get_info lists identities/resolutions/layers/prototypes; get_region/set_region use heights, alphamaps, holes (true=surface) or details with exact [y][x] arrays. Regions are at most32x32 and4096 scalars. get_trees/set_trees use1..64 exact existing indices; get_layer/set_layer replace one existing layer slot, preserving count and weights within a65536-scalar full-alphamap verification budget. Writes require expected_data_guid and the exact scoped expected_revision from the corresponding read. Shared loaded users and boundary patches require explicit acknowledgements; neighboring terrains are never changed. Authoring refuses native Undo snapshot estimates above16777216 scalar units. Native Undo is registered; failures use conditional compensation and preserve external writers. Edits mark TerrainData dirty; no global asset save is performed. No terrain creation/resolution change, tree/prototype insertion or whole-terrain dump.
+Inspect and edit existing TerrainData with bounded region/index requests. get_info lists identities/resolutions/layers/prototypes; get_region/set_region use heights, alphamaps, holes (true=surface) or details with exact [y][x] arrays. Regions are at most 32x32 and 4096 scalars. get_trees/set_trees use 1..64 exact existing indices; get_layer/set_layer replace one existing layer slot, preserving count and weights within a 65536-scalar full-alphamap verification budget. Writes require expected_data_guid and the exact scoped expected_revision from the corresponding read. Shared loaded users and boundary patches require explicit acknowledgements; neighboring terrains are never changed. Authoring refuses native Undo snapshot estimates above 16777216 scalar units. Native Undo is registered; failures use conditional compensation and preserve external writers. Edits mark TerrainData dirty; no global asset save is performed. No terrain creation/resolution change, tree/prototype insertion or whole-terrain dump.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `str` | yes | Terrain action. |
+| `action` | `str` | yes | Terrain operation. Use get_region and set_region for grid cells. |
 | `target` | `str` | yes | Existing Terrain GameObject id/name/path. |
 | `search_method` | `Literal['by_id', 'by_name', 'by_path'] \| None` | — |  |
-| `channel` | `str \| None` | — |  |
-| `region` | `dict[str, Any] \| None` | — |  |
-| `values` | `list[Any] \| None` | — |  |
+| `channel` | `str \| None` | — | Region channel: heights, alphamaps, holes or details. |
+| `region` | `dict[str, Any] \| None` | — | Zero-based cell rectangle for get_region and set_region. Read the exact rectangle you intend to change. |
+| `values` | `list[Any] \| None` | — | Replacement values for set_region or set_trees. Region rows are [y][x]. For holes, true means surface and false means a hole. |
 | `indices` | `list[int] \| None` | — |  |
 | `detail_layer` | `int \| None` | — |  |
 | `index` | `int \| None` | — |  |
 | `layer_path` | `str \| None` | — |  |
 | `layer_guid` | `str \| None` | — |  |
-| `expected_data_guid` | `str \| None` | — |  |
-| `expected_revision` | `str \| None` | — |  |
+| `expected_data_guid` | `str \| None` | — | Required for writes. Copy data.data_guid from the corresponding read of the target. |
+| `expected_revision` | `str \| None` | — | Required for writes. Copy data.revision from the read of the same channel and rectangle, tree indices or layer slot. |
 | `allow_shared_data` | `bool` | — |  |
 | `allow_boundary` | `bool` | — |  |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
@@ -44,14 +44,18 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-Inspect an existing Terrain before planning a bounded height or layer operation. Use the returned data identity and a matching scoped revision for a guarded edit.
+To inspect a cell, read a one-cell rectangle. The returned `data.values[0][0]` is `true` for surface and `false` for a hole.
 
 ```json title="MCP arguments"
 {
-  "action": "get_info",
+  "action": "get_region",
   "target": "Terrain",
-  "search_method": "by_name"
+  "search_method": "by_name",
+  "channel": "holes",
+  "region": {"x": 4, "y": 9, "width": 1, "height": 1}
 }
 ```
+
+To restore the surface, send the same target, channel, and region with `action="set_region"` and `values=[[true]]`. Set `expected_data_guid` to the returned `data.data_guid` and `expected_revision` to `data.revision`. Reading a larger rectangle produces a different revision. A fresh read can confirm the surrounding cells afterwards.
 <!-- examples:end -->
 
