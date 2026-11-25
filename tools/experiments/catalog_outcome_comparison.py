@@ -1,5 +1,6 @@
 """Verify the checked-in paired results for the 71 original Unity requests."""
 
+import argparse
 from collections import Counter
 import hashlib
 import json
@@ -16,8 +17,11 @@ from tools.experiments import live_agent_trial as trial
 
 BASELINE = trial.HERE / "live_agent_followup_results.json"
 RESULT = trial.HERE / "catalog_outcome_comparison_results.json"
+SHIPPING_RESULT = trial.HERE / "catalog_outcome_shipping_results.json"
 BASELINE_SHA256 = "2dd7c80483e2fa802f36d92ca56526ef64981d2c42eafaa82bfc21619fc59888"
 CANDIDATE = "d1ba9475b5b29016f3744969a5c149673d3cd21d"
+SHIPPING = "e3c0c6450b39cf8c5523dfa8bec22f25991f559d"
+SHIPPING_SERVER = "5f0466871529c7d209133cb342f357c505c6b87b"
 
 
 def call_counts(rows):
@@ -41,7 +45,7 @@ def call_counts(rows):
     return summary
 
 
-def verify(result, baseline):
+def verify(result, baseline, *, expected_product=CANDIDATE):
     old = {case["id"]: case for case in baseline["cases"]}
     schedule = {case["id"]: case for pair in trial.pairs() for case in pair}
     rows = result["cases"]
@@ -50,7 +54,8 @@ def verify(result, baseline):
     if (
         result["baseline_evidence_sha256"] != BASELINE_SHA256
         or hashlib.sha256(BASELINE.read_bytes()).hexdigest() != BASELINE_SHA256
-        or result["candidate_product"] != CANDIDATE
+        or expected_product not in {CANDIDATE, SHIPPING}
+        or result["candidate_product"] != expected_product
         or result["baseline_product"] != baseline["product_tree"]
         or result["actor"] != baseline["actor"]
         or result["turn_seconds"] != trial.TURN_SECONDS
@@ -66,8 +71,28 @@ def verify(result, baseline):
             or row["fixture"] != ("registry" if spec["task"] == "installed_package" else "regular")
         ):
             raise ValueError(f"Original case identity differs for {row['id']}")
-    diagnostic = result["transport_sensitivity"]
-    replays = diagnostic["cases"]
+    if expected_product == SHIPPING:
+        if (
+            result["version"] != 2
+            or result.get("server_source_pin") != SHIPPING_SERVER
+            or "transport_sensitivity" in result
+        ):
+            raise ValueError("The shipping result must contain the first-attempt cohort only")
+        for row in rows:
+            attempts = row["attempts"]
+            if (
+                len(attempts) != 1
+                or any(
+                    attempts[0].get(key) != row[key] for key in ("status", "seconds", "delivered")
+                )
+                or row["turn_started"] is not True
+                or row["prompt_sha256"] != old[row["id"]]["prompt_sha256"]
+                or row["turn_completed"] != (row["status"] == "completed")
+            ):
+                raise ValueError(f"Expected one recorded shipping attempt for {row['id']}")
+        replays = []
+    else:
+        replays = result["transport_sensitivity"]["cases"]
     for row in [*rows, *replays]:
         if row["outcome"] not in {"pass", "fail", "incomplete", "unobserved"}:
             raise ValueError(f"Unresolved grade for {row['id']}")
@@ -113,6 +138,9 @@ def verify(result, baseline):
             for identity in identities
         ):
             raise ValueError(f"Unexpected {name} fixture identity")
+    if expected_product == SHIPPING:
+        return
+    diagnostic = result["transport_sensitivity"]
     primary = {row["id"]: row for row in rows}
     eligible = sorted(
         row["id"]
@@ -139,6 +167,15 @@ def verify(result, baseline):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--shipping", action="store_true", help="Also verify and report the final package cohort."
+    )
+    args = parser.parse_args()
+    baseline = json.loads(BASELINE.read_bytes())
     candidate = json.loads(RESULT.read_bytes())
-    verify(candidate, json.loads(BASELINE.read_bytes()))
+    verify(candidate, baseline)
+    if args.shipping:
+        candidate = json.loads(SHIPPING_RESULT.read_bytes())
+        verify(candidate, baseline, expected_product=SHIPPING)
     print(json.dumps(candidate["summary"], indent=2))

@@ -4,14 +4,16 @@ The baseline is `0e57b46ffc778d7b6ca614b29974a6cce0303d09`. The catalog census c
 
 ## Unhinted Unity outcomes
 
-| Matched first attempts | Core before | Core after | Full before | Full after |
+| Matched first attempts | Core baseline | Core shipping | Full baseline | Full shipping |
 | --- | ---: | ---: | ---: | ---: |
-| 71 original tasks in 17 languages | 59/71 | 58/71 | 63/71 | 65/71 |
+| 71 original tasks in 17 languages | 59/71 | 57/71 | 63/71 | 64/71 |
 | Additional eight component tasks in English | 8/8 | 8/8 | 8/8 | 8/8 |
 
-On the original tasks, completion rose from 122/142 (85.92%) to 123/142 (86.62%). The full catalog gained two terrain reads. The core collider edit that previously passed ended without an answer after the model stream disconnected. It passed in a separate diagnostic replay. The other disconnected turn requested a terrain edit on full and still failed on replay. Both first attempts remain in the table. The operator's terrain setting stayed disabled throughout. Public calls on the 142 first attempts increased from 1,512 to 1,569, and calls returning failure fell from 128 to 62. The earlier study ran identical server and Unity code to the census baseline. [Matched task outcomes and failure analysis](catalog_outcome_comparison.md)
+The installed shipping revision `e3c0c6450` completed 121/142 original requests (85.21%), compared with 122/142 (85.92%) at baseline. Full gained two terrain reads. Three requests completed at baseline ended without a final answer after model-stream disconnects on shipping. One of them applied the requested collider change before the stream ended. Six shipping sessions ended without an answer in total. All 142 first attempts count toward completion. The operator's terrain setting stayed disabled. [Per-case outcomes and failure analysis](catalog_outcome_comparison.md)
 
-The additional component tasks reached the requested state in both revisions. Core needed 65 public calls compared with 90 at baseline. Full used 48 compared with 45. Each task was delivered once per catalog per product. [Additional panel and reproducible measurements](tool_outcome_panel.md)
+Shipping issued 1,572 public calls compared with 1,512 at baseline. Unsuccessful replies fell from 128 to 59, including a drop from 36 to 16 for `search_unity_tools`, from 17 to zero for `manage_tools.describe`, and from 16 to zero for `manage_audio.read_import_settings`. An earlier measurement of `d1ba9475b`, before the startup guidance fix, recorded 123/142 completed requests and 62 unsuccessful replies. [Shipping wire evidence](catalog_outcome_shipping_results.json) · [Earlier measurement](catalog_outcome_comparison_results.json)
+
+All eight additional component tasks reached the requested state in each catalog at baseline and on shipping. Core used 62 public calls compared with 90 at baseline. Full used 46 compared with 45. [Additional panel and reproducible measurements](tool_outcome_panel.md)
 
 ## Public contracts
 

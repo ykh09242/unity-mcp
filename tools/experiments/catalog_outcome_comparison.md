@@ -1,5 +1,31 @@
 # Repeating the 71 original requests after the catalog changes
 
+## Final shipping package
+
+The shipping package `e3c0c6450b39cf8c5523dfa8bec22f25991f559d` completed **121/142** original requests, compared with **122/142** at baseline and **123/142** on the intermediate package. The shipping package pins server `5f0466871529c7d209133cb342f357c505c6b87b`, which updates the startup instructions for clients with fixed tool inventories. Each of the 142 fresh actor sessions started once with the original prompt, seed, model, six-minute limit and catalog. All produced independent native snapshots before and after the turn. The run retained every first attempt and 136 final answers.
+
+| Catalog | Baseline passes | Intermediate passes | Shipping passes | Shipping reads | Shipping edits | Graded failures | Incomplete | Unobserved |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Core | 59/71 | 58/71 | 57/71 | 36/43 | 21/28 | 9 | 4 | 1 |
+| Full | 63/71 | 65/71 | 64/71 | 43/43 | 21/28 | 6 | 1 | 0 |
+
+Two baseline failures became shipping passes. Full correctly classified the Slovak and Telugu 2-by-2 terrain regions using collider probes, retaining both intermediate gains. Three baseline passes became incomplete. Core returned no final answer for the Finnish camera field of view or Latvian audio edit, and the audio override remained enabled. Full applied the Greek collider edit with protected state preserved but returned no final answer. Every baseline pass that returned a shipping final answer passed again.
+
+Three other baseline failures changed classification. Core timed out on the Latvian and Telugu terrain reads. The core Urdu terrain edit timed out before any public call, so its action was unobserved and its target remained a hole. All six timeouts logged a model-stream disconnect between 3.174 and 108.045 seconds after actor startup. All 15 graded failures were terrain requests. Full completed six of six terrain reads and core completed zero. Every terrain edit target remained a hole. All 129 native tool preferences matched after the run, with `manage_terrain` disabled throughout the fixture checks.
+
+| Public calls / unsuccessful replies | Baseline | Intermediate | Shipping |
+| --- | ---: | ---: | ---: |
+| Core | 718 / 57 | 731 / 21 | 725 / 19 |
+| Full | 794 / 71 | 838 / 41 | 847 / 40 |
+
+Every public call received a recorded reply in all three cohorts. On the shipping package, all 35 `manage_tools.describe` and 53 `manage_audio.read_import_settings` calls succeeded. See the [shipping per-case evidence](catalog_outcome_shipping_results.json).
+
+```console
+python tools/experiments/catalog_outcome_comparison.py --shipping
+```
+
+## Intermediate package
+
 Across the two catalogs, verified completion moved from **122/142 to 123/142**. Full gained two terrain reads. Core lost one collider edit when the model stream disconnected before the edit. Every first attempt produced native before-and-after snapshots. Of the 142 turns, 140 returned final answers and two reached the six-minute limit.
 
 | Primary outcome | Core before | Core after | Full before | Full after |
