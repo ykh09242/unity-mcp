@@ -6,7 +6,7 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 
 | Request | Relevant logical tools | Important distinction |
 |---|---|---|
-| Discover a task's tools | `manage_tools` with `action="catalog"` | Interpret the original request, browse relevant groups/tools and compare action purposes and effects. Describe the selected tool and operation before execution |
+| Discover a task's tools | `search_unity_tools`, `manage_tools` | Browse relevant families, or search by the required observation and result. The catalog and operation-specific description show input contracts. Check actual host bindings separately |
 | Scene state/save/load | `scene_inspect`, `scene_lifecycle` | Core; preserve unsaved/additive scenes; replacement is not a neutral setup action |
 | Find/create/edit objects | `find_gameobjects`, `gameobject_create`, `gameobject_edit` | Core; search returns IDs; reuse an ID with `search_method="by_id"` |
 | Duplicate/position/place objects | `gameobject_duplicate`, `gameobject_positioning`, `gameobject_placement` | Optional scene group; inspect action-specific references and preview contracts |
@@ -15,7 +15,7 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | Inspect assets | `asset_inspect` | Core; find paths and metadata before changes |
 | Asset changes/bundles | `asset_edit`, `asset_labels`, `asset_bundles`, `asset_reference_diagnostics` | Optional assets group; bounded AssetDatabase assignments and reference pages |
 | Prefabs | `prefab_inspect`, `prefab_create`, `prefab_contents`, `prefab_stage`, `prefab_overrides` | Core inspection and optional prefabs group; inspect asset contents and select explicit scene-instance override IDs |
-| Materials/shaders/textures | `manage_material`, `manage_shader`, `manage_texture` | `inspect_graph` reads supported `.shadergraph` structure; match the installed render pipeline and shader-declared property types for edits |
+| Materials/shaders/textures | `manage_material`, `manage_shader`, `manage_texture` | `inspect_graph` reads the saved file. `inspect_open_graph` observes a matching open graph window; match the installed render pipeline and shader-declared property types for edits |
 | Cameras/capture | `manage_cameras`, `manage_cinemachine`, `capture_camera` | Optional camera group; inspect Cinemachine and capture support |
 | Prefab image | `capture_prefab` | Use the inspected prefab asset path and review the returned image |
 | Prefab edit preview | `prefab_contents` | Use `modify_contents` with `preview_only=true`. `preview_scope="components"` observes components named by `component_properties` on one target. Inspect scope, completeness and limits |
@@ -30,14 +30,14 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | Video capture | `manage_recording` | Query capabilities; start returns a job ID, status/stop require that ID; silent MP4 on supported interactive Windows/macOS Editors |
 | Build/package jobs | `manage_build`, `manage_packages` | Poll returned identity; consent and optional installation scope still apply |
 | ProBuilder | `manage_probuilder` | Installed package required; [topology guide](probuilder-guide.md) |
-| Audio | `manage_audio` | Play/stop an existing AudioSource in Play mode; no audible-success guarantee |
+| Audio | `manage_audio` | Diagnose scene audio, inspect or set mixer routing, read or apply platform import settings, or play/stop an existing source in Play Mode. Verify the requested effect within the evidence available |
 | Editor/code | `manage_editor`, `execute_menu_item`, `execute_code` | Game View sizing and bounded Play readiness are explicit actions; retain returned job IDs/restore tokens |
 | API inspection/docs | `unity_reflect`, `unity_docs` | Live APIs and installed assets are contextual; docs may describe another version |
 | Bulk commands | `batch_execute` | Nontransactional native handler dispatch, not a tool visibility bypass |
 | Asset generation/import | `generate_image`, `generate_model`, `generate_audio`, `import_model`, `import_model_file`, `blender_bridge` | Confirm provider/model capabilities and consent; poll returned jobs and preserve source/destination assets |
 | Profiling/data assets | `manage_profiler`, `manage_scriptable_object` | Inspect optional dependencies and serialized fields; collect only requested data |
 
-Only `core` is enabled by default. Optional rows require their advertised group/tool selection when absent: `testing` for tests/input, `animation` for sprites, `docs` for API inspection, `scripting_ext` for data assets, `probuilder`, `profiling`, `asset_gen` or the selected tool's listed group. See [connection.md](connection.md) for selection support, Editor availability and the optional `legacy` combined schemas. A table entry does not establish that a tool is already callable.
+The default startup profile selects the `core` group and always-visible controls. A different profile, Editor availability and client bindings can change what you can call. Optional groups include `testing` for tests/input, `animation` for sprites, `docs` for API inspection, `scripting_ext` for data assets, `probuilder`, `profiling`, `asset_gen` or the selected tool's listed group. See [connection.md](connection.md) for selection support, Editor availability and the optional `legacy` combined schemas. A table entry does not establish that a tool is already callable.
 
 ## Sprite Sheets
 
@@ -68,7 +68,7 @@ Component references can use an asset path, asset GUID object or instance-ID obj
 {"tool":"manage_components","params":{"action":"set_property","target":12345,"search_method":"by_id","component_type":"Rigidbody","properties":{"mass":5.0,"useGravity":false}}}
 ```
 
-For multiple components of one type, use the discovered zero-based `component_index`. Boolean indices are invalid. Multiple property updates can be best-effort; an error does not imply earlier properties were rolled back.
+For repeated components, pass the returned `component_instance_id` or the zero-based `component_index` within the requested type. Supply one selector and retain the matching GameObject and component type. Multiple property updates can be best-effort; an error does not imply earlier properties were rolled back.
 
 ## Batches
 

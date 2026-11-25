@@ -21,15 +21,15 @@ Load only the reference needed for the request. The live tool schema wins over a
 
 ## Keep Context Bounded
 
-- Use already-advertised capabilities; discover a missing tool/group when needed instead of repeatedly loading the full catalog or all schemas. Read `mcpforunity://custom-tools` for project-specific functionality, not as mandatory setup for every operation.
+- Use advertised capabilities first. For project-defined tools, check this connection's resource list. Read `mcpforunity://custom-tools` only when listed. Discover other capabilities through the advertised tools and resources.
 - Start with small pages and metadata-only component queries. Fetch values, full stacks or individual test failures only when needed; stop paging once the target is resolved.
 - Keep job IDs/cursors and concise observations for follow-up. Do not repeatedly fetch unchanged full results, execution history or base64 previews. Request images when visual evidence is needed and inspect the image itself.
 
 ## Target And Act
 
-Choose the route from the task before writing custom code. For an unclear route, interpret the original request and pass it verbatim to `search_unity_tools` with `selection="agent"` and `limit=20`. Read the directory through its last page. Open each relevant `family`, follow every `next_offset`, then compare all offered operations by purpose, result, required inputs and effects. Use `manage_tools(action="describe", tool="chosen_tool", operation="chosen_action")` for the selected schema. Actionless tools use `describe` with the tool alone. Verify live availability and project readiness. [Capability discovery](references/connection.md#capability-discovery)
+Use a known callable binding when its contract fits. For an unclear route, browse `search_unity_tools(selection="agent", query=original, limit=20)` with the user's original wording. Follow directory pages and the operation pages of relevant families using their exact IDs and returned offsets. Use ranked search separately when filtering by evidence or intent. Compare each route's target, result and effects, then describe the selected tool and operation. For actionless tools, describe the tool alone. Check the host binding, permissions and selected project's readiness before acting. [Capability discovery](references/connection.md#capability-discovery)
 
-- Shader Graph structure and shader diagnostics use `manage_shader`. Compile one explicitly selected variant when compiler evidence is required.
+- Match shader evidence to its source. A saved Shader Graph file and the currently open graph can have different contents. Choose the advertised inspection route for the requested state. For compiler evidence, inspect diagnostics or compile the explicitly selected variant.
 - Prefab images use `capture_prefab`. Serialized edit previews use `prefab_contents(action="modify_contents", preview_only=true)` with an explicit observation scope when needed. UI/button interactions use `manage_input` and the existing UI framework's inspection tools.
 - Before unfamiliar C# calls, inspect project source or `unity_reflect` for fully qualified types, member signatures, static/instance access and parameter types. Recheck the contract after symbol/member errors.
 - A pending compilation keeps its original `compile_id` and follows `get_compile_job`.

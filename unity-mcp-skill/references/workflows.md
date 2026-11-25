@@ -96,7 +96,7 @@ Use the discovered renderer target and intended slot:
 
 A shared-material change affects other users of that asset. Choose instance/property-block behavior only when appropriate to the requested scope. Preserve occupied destination assets and GUIDs; do not overwrite an unrelated asset as error recovery. Inspect shader properties before assigning textures/integer values.
 
-Headless prefab editing and scene-instance editing are different. Discover the optional `prefabs` group's `prefab_inspect`, `prefab_contents` or `prefab_stage` for asset work; instantiate via core `gameobject_create`. For texture/VFX/lighting edits, validate action-specific payloads and bounded sizes before applying them rather than copying another pipeline's settings.
+Headless prefab editing and scene-instance editing are different. Inspect prefab assets with core `prefab_inspect`. Asset edits can use the optional `prefabs` group's `prefab_contents` or `prefab_stage`. Instantiate via core `gameobject_create`. For texture/VFX/lighting edits, validate action-specific payloads and bounded sizes before applying them rather than copying another pipeline's settings.
 
 For scene-instance overrides, call `list_overrides` with the resolved instance target. Select the returned `overrideId` values for `revert_overrides` or `apply_overrides`; apply also requires the listed `prefab_path`. Scope follows the nearest nested instance root. Re-list after structural edits because IDs are editor-session identifiers. Do not infer apply-all from an empty selection; inspect rejected compound properties and structural dependencies before retrying.
 

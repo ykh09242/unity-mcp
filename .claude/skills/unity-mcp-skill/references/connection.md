@@ -8,7 +8,9 @@ families by the requested outcome, and repeat the call with each exact `family`
 ID. Read every operation page before choosing. A focused tool can expose actions
 from a shared family. Compare the inputs and effects of each callable binding.
 Resources and templates have their own family IDs. Keep the original, target
-and host scope across pages. Raw-only search returns approximate matches.
+and host scope across pages. An exact family may be reopened without the query.
+
+Use `selection="ranked"` for lexical or evidence searches. `catalog_query`, `intent`, `observation_source` and `required_values` belong to ranked search. Family IDs and pagination belong to agent browsing. On a mode conflict, use the returned `search_retries` entry that preserves the requested evidence, target and host scope. If the action and its verification need different evidence, find each route separately.
 
 Interpret the user's goal in its original language and use the complete built-in catalog to select an operation by meaning. Compare the requested outcome, target type, observation versus mutation, input requirements and effects. Preserve exact tool, API and package identifiers.
 
@@ -34,11 +36,11 @@ Each action card contains an exact invocation selector, purpose, known required/
 {"tool":"manage_tools","params":{"action":"describe","tool":"manage_shader","operation":"inspect_graph"}}
 ```
 
-`describe` binds the selected action in a copy of the full live schema and retains its other constraints. For actionless tools such as `capture_prefab`, omit `operation`. Unknown tool/action names fail explicitly. `advertised` reports this MCP context's visibility, and `readiness="unobserved"` requires a project-specific check when relevant. Resolve selection and permissions through the existing workflow below.
+`describe` includes the full schema by default and accepts `include_schema=true` for a single tool. It binds the selected action in a copy of the full live schema and retains its other constraints. For actionless tools such as `capture_prefab`, omit `operation`. Unknown tool/action names fail explicitly. `advertised` reports this MCP context's visibility, and `readiness="unobserved"` requires a project-specific check when relevant. Resolve selection and permissions through the existing workflow below.
 
 The offline CLI provides the same catalog through `tool catalog`, `tool catalog --group GROUP` and `tool catalog --tool NAME --limit 20 --offset 0`. It emits complete JSON in every output mode, with offline advertisement and readiness left unobserved. Use `tool describe NAME` for the actual connection's schema.
 
-For a known identifier or a lexical shortcut, `manage_tools(action="search", query="original task", catalog_query="English task terms")` and `tool search QUERY --catalog-query "English task terms"` remain available. Both query fields accept 1..512 characters and `limit` accepts 1..20. The optional `catalog_query` supplies translated catalog terms while preserving the original request. Search reports `matching="lexical"`. Return to catalog browsing when its candidates fail to match the intended outcome.
+For a known identifier or a lexical shortcut, `manage_tools(action="search", query="original task", catalog_query="English task terms")` and `tool search QUERY --catalog-query "English task terms"` remain available. When supplied, both query fields accept 1..512 characters and `limit` accepts 1..20. The optional `catalog_query` supplies translated catalog terms while preserving the original request. Search reports `matching="lexical"`. Return to catalog browsing when its candidates fail to match the intended outcome.
 
 Use the client's tools/resources/template inventory; do not invent prefixed names such as a particular client's `mcp__...` binding. The names below identify server capabilities, not names to assume are already callable.
 
@@ -58,7 +60,7 @@ Check `list_groups.discovery.selection_supported` before changing selection. Act
 
 Modern selection requires a supported project-bound stdio connection or a verified SDK principal and resolved project. The existing HTTP API-key layer does not supply that principal. Legacy selection follows the connection and is lost on reconnect. Follow the returned discovery reason rather than inferring support from the transport name.
 
-Successful activation changes the server selection; `client_inventory_status: "unconfirmed"` means the host's current-turn call list has not been verified. Do not invent a function binding or repeatedly activate a tool after the server has accepted it. For fixed-inventory clients, choose **Tools > Advanced connection options > Startup tools > Full**, restart the local server (or regenerate stdio configuration), then reconnect after enabling the desired Editor tools. Manual servers support `--tool-profile full` or `UNITY_MCP_TOOL_PROFILE=full`. The setting does not override a remote server, Editor availability, consent or optional-package requirements.
+Successful activation changes the server selection; `client_inventory_status: "unconfirmed"` means the host's current-turn call list has not been verified. Do not invent a function binding or repeatedly activate a tool after the server has accepted it. For a fixed client inventory, check whether an already callable tool or advertised resource can provide the requested result in the same scope. Use `manage_tools(action="inspect_inventory", tool=...)` to compare server advertisement with the host’s observed names when needed. Supply `host_tool_names` only for a complete inventory, or `host_tool_evidence` for bounded exact-name checks. If changing setup is in scope, choose **Tools > Advanced connection options > Startup tools > Full**, restart the local server (or regenerate stdio configuration), then reconnect after enabling the desired Editor tools. Manual servers support `--tool-profile full` or `UNITY_MCP_TOOL_PROFILE=full`. The setting does not override a remote server, Editor availability, consent or optional-package requirements.
 
 An activated group can still be filtered by the selected Unity Editor's per-tool toggle. If
 the user wants that capability, have them enable the specific tool in the Editor's MCP Tools
@@ -74,7 +76,7 @@ pushes its enabled catalog through the authenticated plugin session, and session
 activation cannot grant a tool absent from that catalog. Resolve the Editor toggle/catalog
 or authentication problem instead of repeatedly activating a group.
 
-Project custom tools may be advertised directly or through `execute_custom_tool`. If available, inspect `mcpforunity://custom-tools` and use the declared custom tool's actual name/parameter schema. Hosted mode supports the authenticated user's enabled project custom tools through this scoped catalog and dispatcher; it does not publish them as process-global MCP methods. Supply the selected `unity_instance` and preserve the catalog's schema, availability and permission checks. Do not dispatch hidden built-in handlers through this tool or a batch: doing so does not reproduce the built-in wrapper's argument mapping or client binding. A returned tool description or an example in this skill does not establish a callable client function.
+Project custom tools may appear directly in the host's callable inventory. When the current resource list advertises `mcpforunity://custom-tools`, read it for the scoped names and parameter schemas used by `execute_custom_tool`. Hosted mode exposes the authenticated user's enabled project tools through this scoped catalog and dispatcher. Supply the selected `unity_instance` and preserve its schema, availability and permission checks. Call built-in tools through their advertised bindings. Verify each binding against the host's callable inventory.
 
 ## Check Installed Skill Contents
 

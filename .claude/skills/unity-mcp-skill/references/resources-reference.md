@@ -21,6 +21,8 @@ Discover resource/template availability first. Resource reads inspect state, but
 
 Do not read legacy top-level `is_compiling`/project-root fields from this resource. A fresh timestamp need not increase `sequence`. A failed or stale snapshot is not permission to mutate.
 
+When the task depends on a particular package, toggle or native feature, use the advertised `mcpforunity://capabilities` resource or its scoped template for that feature. Check the returned support, readiness and reason on the selected Editor. Missing observations remain unknown.
+
 ## Project And Target Inspection
 
 | URI/template | Use |
@@ -35,7 +37,7 @@ Do not read legacy top-level `is_compiling`/project-root fields from this resour
 | `mcpforunity://scene/gameobject/{instance_id}/components?include_properties=false&page_size=25&cursor=0` | Component inventory without expensive property details |
 | `mcpforunity://scene/gameobject/{instance_id}/component/{component_name}` | One component's properties |
 
-Use actual returned IDs in templates. For repeated component types, inspect inventory order to choose the zero-based `component_index`; it is not the component's instance ID. Detailed getters may fail independently or return version-dependent property names.
+Use actual returned IDs in templates. For a single component, pass the returned `component_instance_id` or a zero-based `component_index` within the requested type, including derived types. The mixed inventory position is a different index. Use `strict_selection=true` to require uniqueness without a selector. Default reads use fields and safe native properties. Opting into `evaluate_getters=true` can execute user code.
 
 Component list payloads use `components`, `nextCursor`, `hasMore`, `totalCount` and `includeProperties`. Follow that resource's cursor fields; do not assume every tool uses `next_cursor`.
 
@@ -51,7 +53,7 @@ Read these only for the corresponding task:
 - `mcpforunity://prefab-api`: Prefab resource usage.
 - `mcpforunity://prefab/{encoded_path}` and `mcpforunity://prefab/{encoded_path}/hierarchy`: Prefab asset and hierarchy. Encode the complete asset path, for example `mcpforunity://prefab/Assets%2FPrefabs%2FPlayer.prefab`.
 - `mcpforunity://tests` or `mcpforunity://tests/{mode}`: Test discovery, which may require waiting. Select `EditMode` or `PlayMode` as appropriate.
-- `mcpforunity://custom-tools`: Project custom-tool schema where supported.
+- Read `mcpforunity://custom-tools` for project custom-tool schemas only when the current resource list advertises it.
 - `mcpforunity://tool-groups`: Tool-group resource inventory where exposed.
 - `mcpforunity://menu-items`: Discover an exact menu path before invoking it.
 - `mcpforunity://editor/windows`, `mcpforunity://editor/active-tool`: Editor UI state.

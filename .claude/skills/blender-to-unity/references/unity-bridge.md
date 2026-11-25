@@ -68,7 +68,7 @@ initial import instead of running a second export/import:
 The bridge saves under the imported asset's folder in `Prefabs/`, generates a unique
 non-overwriting path, and connects the placed instance. Check `data.placed` and a nonempty
 `data.prefab_path`; an asset-only import is not prefab creation. Verify that actual returned
-path with `manage_prefabs(action="get_info", prefab_path=...)`, then inspect its root,
+path with `prefab_inspect(action="get_info", prefab_path=...)`, then inspect its root,
 materials/children and scene connection. For an already completed placement, use the
 conditional prefab workflow in [SKILL.md](../SKILL.md) without repeating the import.
 

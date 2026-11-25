@@ -42,7 +42,7 @@ Never fabricate run.json or mark missing finalization successful from a heartbea
 ## Longer bounded sessions
 
 Use foreground `play-scenario player-session` for many sequential repetitions. `shared-batches` runs
-2-10 iterations per process and then restarts; `fresh-process` starts one process per iteration;
+batches of 2-100 iterations per process and then restarts; `fresh-process` starts one process per iteration;
 `compare` runs both arms. Keep the batch boundary explicit when describing results: the entire session
 does not share one process. Choose iterations (1-1,000 per arm), a session deadline and retained report
 count (1-64) within the task. The game still needs its explicit setup/reset/cleanup semantics.
@@ -110,8 +110,8 @@ including prebuilt-Player runs. Keep their Editor NUnit/process receipts and liv
 reading only a completed journal does not establish concurrent import coverage.
 
 Select `player_profile` in CI or `--profile quick|standard|long` in the maintained local
-initializer, runner and independent checker. Quick selects 11 core cases; standard has
-43 cases; long adds the 1,000-iteration same-PID case. Each profile also requires the three
+initializer, runner and independent checker. The selected manifest profile lists its required cases. Long includes the
+1,000-iteration same-PID case. Each profile also requires the three
 actual offline budget CLI outcomes against controlled native baseline/growth runs. Limits
 are fixed in `tools/unity-player-e2e-profiles.json`; do not weaken the manifest or relabel
 partial evidence to pass. Keep the same externally selected profile across initialization,

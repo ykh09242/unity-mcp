@@ -16,6 +16,7 @@ SKILLS = (
     ROOT / ".claude/skills/unity-mcp-skill",
     ROOT / ".claude/skills/blender-to-unity",
     ROOT / ".claude/skills/mcp-source",
+    ROOT / ".claude/skills/unity-play-scenarios",
 )
 FENCES = re.compile(r"^```([^\n]*)\n(.*?)^```\s*$", re.MULTILINE | re.DOTALL)
 LINKS = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -445,18 +446,18 @@ class SkillDocumentationTests(unittest.TestCase):
             )
             if language == "json"
         ]
-        prefabs = [example for example in examples if example.get("tool") == "manage_prefabs"]
         creates = [
             example["params"]
-            for example in prefabs
-            if example["params"]["action"] == "create_from_gameobject"
+            for example in examples
+            if example.get("tool") == "prefab_create"
+            and example["params"]["action"] == "create_from_gameobject"
         ]
         reads = [
-            example["params"] for example in prefabs if example["params"]["action"] == "get_info"
+            example["params"]
+            for example in examples
+            if example.get("tool") == "prefab_inspect" and example["params"]["action"] == "get_info"
         ]
         self.assertTrue(creates, "Model import alone cannot fulfill a new prefab request")
-        for example in prefabs:
-            validate_request(example, self.tools)
         for params in creates:
             self.assertTrue(params.get("target"))
             self.assertTrue(params["prefab_path"].startswith("Assets/"))

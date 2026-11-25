@@ -14,7 +14,7 @@ Retain `data.instanceId` from creation and use it as the target instead of a gue
 {"tool":"manage_probuilder","params":{"action":"get_mesh_info","target":"12345","search_method":"by_id","properties":{"include":"faces"}}}
 ```
 
-Faces include `index`, `normal`, `center`, `direction`, smoothing and UV metadata. Direction can be null for non-axis-aligned faces. Choose by geometry, not the sample index. Face output is capped at 100 and edge output at 200; check `truncated`/`edgesTruncated` before assuming the whole mesh is present.
+Faces include `index`, `normal`, `center`, `direction`, smoothing and UV metadata. Direction can be null for non-axis-aligned faces. Choose by geometry, not the sample index. Face output is capped at 100 and edge output at 200; check `truncated`/`edgesTruncated` before assuming the whole mesh is present. For complete face, edge or vertex pages, use `get_topology`. Carry its cursor and `mesh_revision` forward with the same kind and page size. Supply that revision to supported index-based edits so a changed mesh is detected before applying old indices.
 
 ## Edit And Reinspect
 

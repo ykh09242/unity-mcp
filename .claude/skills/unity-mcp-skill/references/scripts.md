@@ -73,7 +73,7 @@ Native file changes require import/refresh through the supported workflow if Uni
 {"tool":"refresh_unity","params":{"mode":"if_dirty","scope":"scripts","compile":"request","wait_for_ready":true}}
 ```
 
-Then validate and inspect the actual compiler diagnostics:
+When the compile request returns a `compile_id`, keep it and follow its `get_compile_job` observation on the same Editor. Inspect the terminal compiler outcome before treating a ready Editor as evidence of a successful compilation. Then validate and inspect diagnostics:
 
 ```json
 {"tool":"validate_script","params":{"uri":"Assets/Scripts/PlayerController.cs","level":"standard","include_diagnostics":true}}

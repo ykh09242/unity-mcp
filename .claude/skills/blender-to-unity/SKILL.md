@@ -22,7 +22,7 @@ Blender writes an interchange file; Unity reads it from its own filesystem. Disc
 - Identify the requested Blender objects/selection and the intended Unity project/scene. Use available scene/object inspection tools and Unity's instance inventory when needed.
 - Read `mcpforunity://project/info` for the selected Unity instance. Use `data.projectRoot`/`assetsPath`, not legacy root fields in Editor state.
 - Establish that Blender can write to that Unity host's filesystem. A remote path is not evidence of a shared disk. If hosts differ, use an explicitly authorized transfer into the target project's `Assets/` folder or report the missing transfer capability.
-- Discover `import_model_file`. If hidden and `manage_tools` is exposed, inspect groups and activate `asset_gen` in a stateful session when appropriate. Never use `batch_execute` to bypass tool visibility or consent.
+- Discover `import_model_file`. If hidden and `manage_tools` is exposed, check `list_groups.discovery.selection_supported` and, where supported, activate the needed tool or its `asset_gen` group. Check the host's actual callable inventory afterward. Never use `batch_execute` to bypass tool visibility or consent.
 
 Choose GLB when glTFast is installed and PBR/animation fidelity matters; choose FBX for the built-in importer or requested humanoid pipeline. Neither is a promise of lossless material/rig transfer. Read [bridge-fidelity.md](references/bridge-fidelity.md) for historical observations and conditional fixes; read [export-examples.md](references/export-examples.md) only when authoring an export.
 
@@ -48,7 +48,7 @@ Inspect `success`, then returned `data.asset_path` and `data.asset_guid`. A fail
 
 ## Place And Verify
 
-Instantiate the returned asset path using `manage_gameobject(action="create", prefab_path=...)` with the user's intended position/name. Retain its returned ID for later edits; do not replace the current scene or add cameras/lights automatically.
+Instantiate the returned asset path using `gameobject_create(action="create", prefab_path=...)` with the user's intended position/name. Retain its returned ID for later edits; do not replace the current scene or add cameras/lights automatically.
 
 Inspect renderer bounds and actual materials/clips. If the user requested a target size, measure the placed model's largest world dimension and multiply its current local scale by `target_size / measured_dimension`, provided the measured dimension is finite and nonzero. Recheck after scaling; do not apply a universal 100x correction.
 
@@ -62,13 +62,12 @@ integrated bridge, request `save_prefab=true` on the original import and verify 
 repeat a completed import just to save a prefab.
 
 For an already placed model, inspect the intended root in the active scene (or open prefab
-stage) and ensure its name is unambiguous: this creation action finds by name, not instance
-ID or hierarchy path. If it is a connected model/prefab instance, the requested new prefab
+stage). Use its returned instance ID, full hierarchy path or a unique name. If it is a connected model/prefab instance, the requested new prefab
 requires unlinking that root. Use `unlink_if_instance=true` only for that inspected,
 authorized root; otherwise omit it or leave it false.
 
 ```json
-{"tool":"manage_prefabs","params":{"action":"create_from_gameobject","target":"Robot","prefab_path":"Assets/Prefabs/Robot.prefab","allow_overwrite":false,"unlink_if_instance":true}}
+{"tool":"prefab_create","params":{"action":"create_from_gameobject","target":12345,"prefab_path":"Assets/Prefabs/Robot.prefab","allow_overwrite":false,"unlink_if_instance":true}}
 ```
 
 Check `success` and `data.prefabPath`: with overwrite disabled, an occupied destination
@@ -77,7 +76,7 @@ path**, substituting it for the example below, and inspect the prefab hierarchy/
 references and the scene instance's connection. Report any different filename.
 
 ```json
-{"tool":"manage_prefabs","params":{"action":"get_info","prefab_path":"Assets/Prefabs/Robot.prefab"}}
+{"tool":"prefab_inspect","params":{"action":"get_info","prefab_path":"Assets/Prefabs/Robot.prefab"}}
 ```
 
 Capture the relevant view with an available camera/UI capture tool, inspect the image, and report asset identity, scene instance and any fidelity/verification limits. [manual-verify.md](manual-verify.md) is an optional acceptance checklist for an authorized live run, not a requirement to launch applications.

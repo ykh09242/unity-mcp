@@ -11,14 +11,14 @@ First distinguish a reproducible scenario from a test that must preserve an alre
 
 ## Discover the actual flow
 
-- Select the intended Unity instance. If the tool is hidden, inspect `manage_tools(action="list_groups")` and activate `testing` in a stateful MCP session. Activation cannot enable a tool disabled in Unity; after Editor tool-setting changes, sync and refresh available tools.
+- Select the intended Unity instance. If `manage_play_scenario` is hidden, check `manage_tools(action="list_groups")` for selection support on this connection. Where supported, activate the tool or its `testing` group, then confirm the binding in the current client. An Editor toggle can still filter it. After an authorized toggle change, local servers can sync and hosted servers receive the plugin catalog. If the host inventory stays fixed, use an existing authorized Editor or CLI route.
 - Discover scene assets and active-scene hierarchy paths through available scene/asset queries. Do not assume the game contains Menu, Canvas/Start or Player. Do not query GameData or credential files. Clarify only paths that cannot be established from available evidence.
 - Use exactly one object selector: an exact root-relative `target` hierarchy path or `target_id` from an existing PlayScenarioTarget marker in the active scene. Test IDs survive rename/reparenting and must be unique, including inactive objects; they are not Unity instance IDs. ID counts are omitted, zero or one. Do not add markers or mutate the game without authoring scope.
-- Confirm the UI system. `click_ui` defaults to direct uGUI events. Opt into `click_mode: "raycast"` to verify center-point EventSystem raycast eligibility before pointer dispatch. Neither mode is OS input or UI Toolkit automation. A disabled/blocked target can become ready within its timeout; never retry a click after dispatch begins.
+- Confirm the UI system. `click_ui` defaults to direct uGUI events. Opt into `click_mode: "raycast"` to verify center-point EventSystem raycast eligibility before pointer dispatch. For a UI Toolkit document, use direct mode with `ui_backend: "uitoolkit"` and the inspected `element_name` or `element_path`. These dispatches exercise Unity UI, without OS input. A disabled/blocked target can become ready within its timeout; never retry a click after dispatch begins.
 
 ## Author a bounded definition
 
-The first executed step must load a scene: use setup's first step when setup exists, otherwise main's first step. This example is illustrative; replace its scene and target with verified values:
+The first executed step must load a scene in single mode: use setup's first step when setup exists, otherwise main's first step. This example is illustrative; replace its scene and target with verified values:
 
 ```json
 {
@@ -41,17 +41,17 @@ The first executed step must load a scene: use setup's first step when setup exi
 }
 ```
 
-Use names matching `[a-z0-9][a-z0-9_-]{0,63}`. Main has 1-32 steps; setup and cleanup each have at most 16, total at most 64. Step names are 1-128 characters, timeouts integer 1-120 seconds (default 30), and polling integer 100-2000 ms (default 250). Scene paths must be canonical `Assets/... .unity` paths outside GameData; hierarchy paths reject traversal, empty segments, backslashes and control characters. Preserve JSON types: unknown fields, explicit null optional fields and string-encoded numbers fail validation. Definition size is at most 64 KiB.
+Use names matching `[a-z0-9][a-z0-9_-]{0,63}`. Use 1-128 main steps and up to 32 steps each in setup and cleanup. Step names are 1-128 characters, timeouts integer 1-3600 seconds (default 30), and polling integer 100-2000 ms (default 250). Scene paths must be canonical `Assets/... .unity` paths outside GameData; hierarchy paths reject traversal, empty segments, backslashes and control characters. Preserve JSON types: unknown fields, explicit null optional fields and string-encoded numbers fail validation. Definition size is at most 1 MiB.
 
 Choose readiness based on what the game actually guarantees:
 
 - `wait_object` without count requires one unique target. Explicit `count` counts all exact matches, including inactive objects; every match must satisfy `active` (default true, explicit false requires inactivity). `count: 0` means absence and excludes active/component/property options.
 - At effective count one, `component` is an exact full type name. Add `property: {"path": "isInitialized", "equals": true}` only after verifying that component and serialized field. Equality accepts bool, signed 64-bit integer, finite number or string, not null/collections. Arbitrary getters and methods are never invoked. Component and property path limits are 256 UTF-16 units; string equality is at most 1024.
 - `wait_state` uses an explicitly registered read-only state provider with `state_id` and typed `state_equals`; use verified IDs, not reflected getters. See [Player assurance](references/player-assurance.md) for registration lifetime and missing/replaced provider behavior.
-- `stable_for_ms` on wait_object/wait_scene/wait_state requires continuous successful sampled observations and resets on false. It is 0-60000 and strictly below the step timeout; it cannot detect changes between polls.
+- `stable_for_ms` on wait_object/wait_scene/wait_state requires continuous successful sampled observations and resets on false. It is 0-600000 ms and strictly below the step timeout; it cannot detect changes between polls.
 - Prefer the strict default error policy. Exact, case-sensitive full-message allowlists can admit known intentional errors (at most 32 unique messages, each 1-1024 UTF-16 units). Use `log_only` only when the requested scenario deliberately tolerates logged errors; thrown exceptions still fail.
 - The completion quiet window is 0-10000 ms, default 250, after main steps and before cleanup. It catches late logs only within that bounded interval. Prefer an initialized-property condition over extending it blindly.
-- Every repetition executes setup/main/cleanup. Scene reloads do not reset arbitrary statics or DontDestroyOnLoad objects. Express the application's intended reset actions explicitly. Cleanup has a separate 1-300 second budget (default 30) and may run after failure/cancel/timeout if execution began.
+- Every repetition executes setup/main/cleanup. Scene reloads do not reset arbitrary statics or DontDestroyOnLoad objects. Express the application's intended reset actions explicitly. Cleanup has a separate 1-1800 second budget (default 30) and may run after failure/cancel/timeout if execution began.
 
 Save through `manage_play_scenario(action="save", scenario=<whole definition>)`, without a separate name. List/get before modifying an existing definition; save variants under new names. Same-name save replaces content.
 
@@ -59,7 +59,7 @@ For visual authoring open **Window -> MCP for Unity -> Play Scenarios**. Fill th
 
 ## Run and interpret evidence
 
-`manage_play_scenario(action="run", name="menu-start", repeat_count=4, timeout_seconds=300)` starts immediately. Repetitions are 1-10; the main wall-clock budget is at most 1800 seconds. One job runs at a time. Choose a budget within the user's task.
+`manage_play_scenario(action="run", name="menu-start", repeat_count=4, timeout_seconds=300)` starts immediately. The tool accepts 1-100 repetitions and a run timeout of 1-86400 seconds. One job runs at a time. Choose a budget within the user's task.
 
 Optionally provide a 32-character lowercase hexadecimal job_id as an idempotency key. After an uncertain response, inspect that ID first; retry the same request with the same ID instead of creating a duplicate job. Keep the returned ID for status/cancel.
 
