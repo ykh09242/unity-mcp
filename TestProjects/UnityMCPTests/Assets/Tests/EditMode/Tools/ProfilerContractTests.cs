@@ -268,6 +268,27 @@ namespace MCPForUnityTests.Editor.Tools
             StringAssert.Contains("metadata key", result.Value<string>("error"));
         }
 
+        [Test]
+        public void OversizedCounterSelectionIsRejectedBeforeStartingNativeRecorders()
+        {
+            var counters = new JArray();
+            for (int i = 0; i <= CounterOps.MaxRecordersPerCapture; i++)
+                counters.Add("MCPTestCounter" + i);
+            var task = ManageProfiler.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "get_counters",
+                    ["category"] = "Render",
+                    ["counters"] = counters,
+                }
+            );
+            Assert.IsTrue(task.IsCompleted, "Excessive counter requests must settle before starting any native recorders or waiting for frames.");
+            var result = JObject.FromObject(task.GetAwaiter().GetResult());
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual("counter_limit", (string)result["data"]["reason"]);
+            Assert.AreEqual(257, (int)result["data"]["requested"]);
+        }
+
         [TestCase("Owned_valid", "Owned_unit")]
         [TestCase("Owned", "owned_valid")]
         [TestCase("Owned ", "Owned_valid")]

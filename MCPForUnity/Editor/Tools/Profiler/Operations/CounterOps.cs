@@ -13,6 +13,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
 {
     internal static class CounterOps
     {
+        internal const int MaxRecordersPerCapture = 256;
+
         // Unity 2021.3 exposes this same built-in category as an internal property.
         private static readonly ProfilerCategory? Physics2DCategory =
             typeof(ProfilerCategory).GetProperty("Physics2D", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(null)
@@ -33,6 +35,16 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
             // Get counter names: explicit list or discover all in category
             var counterNames = GetRequestedCounters(p, category);
+            if (counterNames.Count > MaxRecordersPerCapture)
+                return new ErrorResponse(
+                    $"A capture supports at most {MaxRecordersPerCapture} counters. Request a smaller explicit counter selection.",
+                    new
+                    {
+                        reason = "counter_limit",
+                        requested = counterNames.Count,
+                        maximum = MaxRecordersPerCapture,
+                    }
+                );
             if (counterNames.Count == 0)
                 return new SuccessResponse(
                     $"No counters found in category '{categoryName}'.",

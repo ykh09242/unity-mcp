@@ -66,7 +66,7 @@ ALL_ACTIONS = (
         "- profiler_set_areas: Toggle ProfilerAreas on/off (areas dict)\n\n"
         "COUNTERS:\n"
         "- get_frame_timing: Synchronous FrameTimingManager data with the optional fields available in this Editor\n"
-        "- get_counters: Generic counter read by category + optional counter names (async, 1-frame wait)\n"
+        "- get_counters: Sample up to 256 counters in one category over one frame\n"
         "- get_object_memory: Memory size of a specific object by path\n\n"
         "INDEPENDENT WINDOWS:\n"
         "- window_start: Bounded category/markers sampling with warmup and deadline; returns window_id\n"
@@ -101,7 +101,8 @@ async def manage_profiler(
     ] = None,
     counters: Annotated[
         Optional[list[str]],
-        "Specific counter names for get_counters. Omit to read all in category.",
+        "Optional counter names for get_counters. Omit to sample the category. "
+        "If the selection exceeds 256 counters, request a smaller explicit selection.",
     ] = None,
     object_path: Annotated[
         Optional[str], "Scene hierarchy or asset path for get_object_memory."

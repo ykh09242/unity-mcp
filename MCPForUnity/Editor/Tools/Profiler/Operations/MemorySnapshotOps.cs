@@ -22,6 +22,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
         private static bool HasPackage => MemoryProfilerType != null;
 
+        internal static string DefaultSnapshotName(DateTime now) => $"snapshot_{now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}.snap";
+
         internal static async Task<object> TakeSnapshotAsync(JObject @params)
         {
             double timeoutSeconds;
@@ -43,7 +45,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 string dir = Path.Combine(Application.temporaryCachePath, "MemoryCaptures");
                 try
                 {
-                    snapshotPath = ProfilerPathUtility.Resolve(Path.Combine(dir, $"snapshot_{DateTime.Now:yyyyMMdd_HHmmss}.snap"));
+                    snapshotPath = ProfilerPathUtility.Resolve(Path.Combine(dir, DefaultSnapshotName(DateTime.Now)));
                 }
                 catch (Exception ex)
                 {

@@ -65,6 +65,16 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void CapturesRequestedInTheSameSecondHaveIndependentDefaultOutputs()
+        {
+            var time = new DateTime(2026, 11, 25, 12, 0, 0);
+            string first = MemorySnapshotOps.DefaultSnapshotName(time);
+            string second = MemorySnapshotOps.DefaultSnapshotName(time);
+            Assert.That(first, Does.StartWith("snapshot_20261125_120000_").And.EndWith(".snap"));
+            Assert.AreNotEqual(first, second);
+        }
+
+        [Test]
         public async Task SnapshotObservationExpiryLeavesNativeCompletionOwned()
         {
             var completion = NewCompletion();

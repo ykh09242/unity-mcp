@@ -24,7 +24,7 @@ SESSION:
 
 COUNTERS:
 - get_frame_timing: Synchronous FrameTimingManager data with the optional fields available in this Editor
-- get_counters: Generic counter read by category + optional counter names (async, 1-frame wait)
+- get_counters: Sample up to 256 counters in one category over one frame
 - get_object_memory: Memory size of a specific object by path
 
 INDEPENDENT WINDOWS:
@@ -53,7 +53,7 @@ FRAME DEBUGGER:
 |------|------|----------|-------------|
 | `action` | `str` | yes | The profiler action to perform. |
 | `category` | `str \| None` | — | Profiler category name for get_counters (e.g. Render, Scripts, Memory, Physics). |
-| `counters` | `list[str] \| None` | — | Specific counter names for get_counters. Omit to read all in category. |
+| `counters` | `list[str] \| None` | — | Optional counter names for get_counters. Omit to sample the category. If the selection exceeds 256 counters, request a smaller explicit selection. |
 | `object_path` | `str \| None` | — | Scene hierarchy or asset path for get_object_memory. |
 | `log_file` | `str \| None` | — | Path to .raw file for profiler_start recording. Project-relative or absolute inside the project or Unity temporary cache directory. |
 | `enable_callstacks` | `bool \| None` | — | Enable allocation callstacks for profiler_start. |
