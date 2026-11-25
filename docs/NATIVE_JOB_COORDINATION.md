@@ -5,6 +5,11 @@ transition state, plus jobs owned by this package. A job's public success, failu
 cancellation or timeout does not prove that its native resources have been released.
 Status and cancellation remain available through the reviewed control commands.
 
+Unity console output invokes project log subscribers. The bridge defers its own
+diagnostics from shared reads and control handlers until it can deliver them with
+exclusive Editor access. It retains up to 128 messages of 4,096 characters each
+and reports how many messages were omitted during saturation or an assembly reload.
+
 ## Server control admission headroom
 
 The server scheduler and HTTP plugin transport first try their ordinary admission

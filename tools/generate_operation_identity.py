@@ -116,6 +116,8 @@ def reviewed_native_names() -> frozenset[str]:
         )
         for action in actions or (None,):
             params = {} if action is None else {"action": action}
+            if name == "manage_ugui" and action == "diagnose_raycast":
+                params["strict_read"] = True
             if resolve_operation_policy(name, params, native=True).mode != OperationMode.EXCLUSIVE:
                 names.add(name)
                 break

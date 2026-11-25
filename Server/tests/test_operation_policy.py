@@ -126,7 +126,9 @@ def test_public_refresh_capable_wrapper_does_not_inherit_native_read_mode():
 def test_custom_callback_flag_is_shared_only_for_exact_false_or_omission(flag):
     # Given / When
     policy = resolve_operation_policy(
-        "manage_ugui", {"action": "diagnose_raycast", "allow_custom_filters": flag}, native=True
+        "manage_ugui",
+        {"action": "diagnose_raycast", "allow_custom_filters": flag, "strict_read": True},
+        native=True,
     )
     # Then
     assert policy.mode == OperationMode.EXCLUSIVE
@@ -134,13 +136,35 @@ def test_custom_callback_flag_is_shared_only_for_exact_false_or_omission(flag):
 
 @pytest.mark.parametrize(
     "params",
-    [{"action": "diagnose_raycast"}, {"action": "diagnose_raycast", "allow_custom_filters": False}],
+    [
+        {"action": "diagnose_raycast", "strict_read": True},
+        {"action": "diagnose_raycast", "strict_read": True, "allow_custom_filters": False},
+    ],
 )
 def test_safe_native_raycast_diagnostic_has_no_custom_callback_opt_in(params):
     # Given / When
     policy = resolve_operation_policy("manage_ugui", params, native=True)
     # Then
     assert policy.mode == OperationMode.SHARED_READ
+
+
+@pytest.mark.parametrize(
+    "name,params",
+    [
+        ("manage_ugui", {"action": "diagnose_raycast"}),
+        ("manage_ugui", {"action": "diagnose_raycast", "strict_read": "true"}),
+        ("manage_ugui", {"action": "diagnose_projection", "target": 123}),
+        ("manage_ugui", {"action": "diagnose_device_profiles"}),
+        ("gameobject_placement", {"action": "placement", "preview": True}),
+        ("find_gameobjects", {"search_method": "by_id"}),
+        ("find_gameobjects", {"searchMethod": "by_component"}),
+        ("find_gameobjects", {"projection": ["components"]}),
+        ("scene_inspect", {"action": "get_hierarchy", "parent": "123"}),
+    ],
+)
+@pytest.mark.parametrize("native", [False, True])
+def test_callbacks_and_stateful_previews_require_exclusive_admission(name, params, native):
+    assert resolve_operation_policy(name, params, native=native).mode == OperationMode.EXCLUSIVE
 
 
 @pytest.mark.parametrize(

@@ -152,8 +152,6 @@ namespace MCPForUnity.Editor.Services
             { "manage_asset\n1list_asset_bundles", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "manage_asset\n1get_bundle_assets", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "manage_asset\n1get_bundle_dependencies", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
-            { "manage_ugui\n1diagnose_projection", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
-            { "manage_ugui\n1diagnose_device_profiles", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "manage_packages\n1get_package_info", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "manage_packages\n1list_registries", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "manage_packages\n1list_packages", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.TrackedJob, "reviewed_read") },
@@ -231,10 +229,21 @@ namespace MCPForUnity.Editor.Services
                     && !string.Equals((string)level, "standard", StringComparison.OrdinalIgnoreCase)))
                     return Exclusive("unreviewed_validation_level");
             }
+            if (commandName == "find_gameobjects")
+            {
+                var method = parameters["searchMethod"] ?? parameters["search_method"];
+                var projection = parameters["projection"];
+                if (method != null && (method.Type != JTokenType.String || ((string)method != "by_name" && (string)method != "by_path" && (string)method != "by_layer"))
+                    || projection != null && projection.Type != JTokenType.Null)
+                    return Exclusive("conditional_callbacks");
+            }
+            if (commandName == "manage_scene" && action == "get_hierarchy" && parameters["parent"] is JToken parent && parent.Type != JTokenType.Null)
+                return Exclusive("conditional_callbacks");
             if (commandName == "manage_ugui" && action == "diagnose_raycast")
             {
                 var allow = parameters["allow_custom_filters"];
-                if (allow != null && (allow.Type != JTokenType.Boolean || (bool)allow))
+                var strict = parameters["strict_read"];
+                if (strict?.Type != JTokenType.Boolean || !(bool)strict || allow != null && (allow.Type != JTokenType.Boolean || (bool)allow))
                     return Exclusive("conditional_callbacks");
                 return new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read");
             }
@@ -246,13 +255,7 @@ namespace MCPForUnity.Editor.Services
                 return Exclusive("conditional_mutation", ToolOperationLifetime.TriggerOnly);
             }
             if (commandName == "manage_gameobject" && action == "placement")
-            {
-                var preview = parameters["preview"];
-                if (preview == null || preview.Type == JTokenType.Null || preview.Type == JTokenType.Boolean && (bool)preview
-                    || preview.Type == JTokenType.String && string.Equals((string)preview, "true", StringComparison.OrdinalIgnoreCase))
-                    return new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_preview");
-                return Exclusive("conditional_mutation");
-            }
+                return Exclusive("stateful_placement");
             if (commandName == "manage_editor" && action == "play")
             {
                 var wait = parameters["wait_until"];

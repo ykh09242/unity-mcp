@@ -1,3 +1,4 @@
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -119,6 +120,29 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.IsTrue(NativeOperationBarriers.Evaluate("manage_packages", new JObject { ["action"] = action }, state, out _), action);
             Assert.IsTrue(NativeOperationBarriers.Evaluate("execute_code", null, state, out _));
             Assert.IsTrue(NativeOperationBarriers.Evaluate(null, null, state, out _), "Untrusted/custom handlers may call Client.");
+        }
+
+        [Test]
+        public void CallbackCapableDiagnosticsCannotCrossRetainedPackageQuery()
+        {
+            var state = new NativeBarrierState { PackageQuery = true };
+            var guard = new NativeCommandArbitrator(
+                (command, parameters) => NativeOperationBarriers.Evaluate(command, parameters, state, out var blocker) ? blocker : (NativeAdmissionBlocker?)null
+            );
+            foreach (var action in new[] { "diagnose_raycast", "diagnose_projection", "diagnose_device_profiles" })
+            {
+                var parameters = new JObject { ["action"] = action, ["target"] = 123 };
+                var mode = ToolOperationPolicy.Resolve("manage_ugui", parameters, true).Mode;
+                Assert.IsFalse(
+                    guard.TryAcquire(mode, NativeCommandArbitrator.BarrierCandidate("manage_ugui", mode, true), parameters, null, out _, out var blocker)
+                );
+                Assert.AreEqual("native_job_active", blocker.Reason);
+                Assert.AreEqual("package_manager", blocker.Recovery.Source);
+            }
+            var strict = new JObject { ["action"] = "diagnose_raycast", ["strict_read"] = true };
+            var read = ToolOperationPolicy.Resolve("manage_ugui", strict, true).Mode;
+            Assert.IsTrue(guard.TryAcquire(read, NativeCommandArbitrator.BarrierCandidate("manage_ugui", read, true), strict, null, out var admitted, out _));
+            admitted.Dispose();
         }
 
         [Test]

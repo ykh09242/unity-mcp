@@ -536,6 +536,7 @@ namespace MCPForUnity.Editor.Tools
                 throw new NativeCommandBlockedException(blocker);
             try
             {
+                using var logs = McpLog.EnterHandler(lease);
                 using var composition = NativeCommandArbitrator.EnterComposition(IsTrustedCompositionHandler(commandName) ? parent ?? lease : null);
                 var task = InvokeCommandCoreAsync(commandName, @params, cancellationToken);
                 if (task.IsCompleted)

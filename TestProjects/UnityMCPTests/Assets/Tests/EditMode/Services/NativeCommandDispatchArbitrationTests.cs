@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
@@ -11,6 +13,8 @@ using MCPForUnity.Editor.Services.Transport.Transports;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
+using UnityEngine;
 using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Services
@@ -115,6 +119,107 @@ namespace MCPForUnityTests.Editor.Services
                 ["request_nonce"] = Guid.NewGuid().ToString("N"),
                 ["instance_generation"] = NativeCommandArbitrator.Shared.Generation,
             };
+
+        [UnityTest]
+        public IEnumerator SharedSceneDebugAndAssetWarningReachConsoleOnlyUnderTheirOwnWriter()
+        {
+            using var consent = new ScopedConsentTestState("scene_inspect", "asset_bundles");
+            bool hadPref = EditorPrefs.HasKey(EditorPrefKeys.DebugLogs);
+            bool debug = EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false);
+            bool assetEnabled = MCPServiceLocator.ToolDiscovery.IsToolEnabled("asset_bundles");
+            bool pollEnabled = MCPServiceLocator.ToolDiscovery.IsToolEnabled("get_test_job");
+            var receipts = new List<JObject>();
+            bool activeScene = false,
+                hierarchy = false,
+                warning = false,
+                controlError = false;
+            void Observe(string message, string stack, LogType type)
+            {
+                bool sceneActive = message.Contains("[ManageScene] get_active:");
+                bool sceneHierarchy = message.Contains("[ManageScene] get_hierarchy:");
+                bool badProperties = type == LogType.Warning && message.Contains("[ManageAsset] Could not parse 'properties'");
+                bool badPoll = type == LogType.Error && message.Contains("Error processing command:") && message.Contains("GetTestJob");
+                if (!sceneActive && !sceneHierarchy && !badProperties && !badPoll)
+                    return;
+                activeScene |= sceneActive;
+                hierarchy |= sceneHierarchy;
+                warning |= badProperties;
+                controlError |= badPoll;
+                receipts.Add(JObject.FromObject(NativeCommandArbitrator.Shared.CaptureStatus()));
+            }
+
+            Application.logMessageReceived += Observe;
+            try
+            {
+                MCPServiceLocator.ToolDiscovery.SetToolEnabled("asset_bundles", true);
+                MCPServiceLocator.ToolDiscovery.SetToolEnabled("get_test_job", true);
+                McpLog.SetDebugLoggingEnabled(true);
+                Assert.IsTrue(NativeCommandArbitrator.Shared.TryAcquire(ToolOperationMode.SharedRead, "get_selection", null, null, out var sibling, out _));
+                using (sibling)
+                {
+                    foreach (string action in new[] { "get_active", "get_hierarchy" })
+                    {
+                        var command = new Command
+                        {
+                            type = "scene_inspect",
+                            @params = new JObject { ["action"] = action },
+                            arbitration = Binding(),
+                        };
+                        active = TransportCommandDispatcher.ExecuteCommandAsync(command, CancellationToken.None);
+                        var reply = JObject.Parse(active.Response.GetAwaiter().GetResult().ToJson());
+                        Assert.AreEqual("started", (string)reply.SelectToken("native_arbitration.disposition"), reply.ToString());
+                        Assert.AreEqual(true, (bool?)reply.SelectToken("payload.result.success"), reply.ToString());
+                    }
+                    McpLog.SetDebugLoggingEnabled(false);
+                    var bundle = CommandRegistry.InvokeCommandAsync("asset_bundles", new JObject { ["action"] = "list_asset_bundles", ["properties"] = "{" });
+                    Assert.IsTrue(bundle.IsCompleted);
+                    bundle.GetAwaiter().GetResult();
+                    McpLog.FlushDeferred();
+                    Assert.IsEmpty(receipts, "Neither debug output nor unconditional warnings may execute a project subscriber during shared reads.");
+                }
+                Assert.IsTrue(NativeCommandArbitrator.Shared.TryAcquire(ToolOperationMode.Exclusive, null, null, null, out var siblingWriter, out _));
+                using (siblingWriter)
+                {
+                    // Validation throws inside the real control handler before the job lookup.
+                    // The dispatcher must return the error while the owner's writer remains held.
+                    LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex("Error processing command:"));
+                    active = TransportCommandDispatcher.ExecuteCommandAsync(
+                        new Command
+                        {
+                            type = "get_test_job",
+                            @params = new JObject { ["job_id"] = "missing", ["include_details"] = new JObject() },
+                            arbitration = Binding(),
+                        },
+                        CancellationToken.None
+                    );
+                    var poll = JObject.Parse(active.Response.GetAwaiter().GetResult().ToJson());
+                    Assert.AreEqual("started", (string)poll.SelectToken("native_arbitration.disposition"), poll.ToString());
+                    Assert.AreEqual("error", (string)poll.SelectToken("payload.status"), poll.ToString());
+                    yield return null;
+                    McpLog.FlushDeferred();
+                    Assert.IsEmpty(receipts);
+                }
+                var deadline = System.Diagnostics.Stopwatch.StartNew();
+                while (!(activeScene && hierarchy && warning && controlError) && deadline.Elapsed < TimeSpan.FromSeconds(5))
+                    yield return null;
+                Assert.IsTrue(activeScene && hierarchy && warning && controlError, "Reads and controls must preserve their original console messages.");
+                foreach (var receipt in receipts)
+                {
+                    Assert.AreEqual(0, (int)receipt["active_reads"]);
+                    Assert.AreEqual(1, (int)receipt["active_writers"]);
+                    Assert.AreEqual("mcp_console", (string)receipt.SelectToken("owners[0].tool"));
+                }
+            }
+            finally
+            {
+                Application.logMessageReceived -= Observe;
+                McpLog.SetDebugLoggingEnabled(debug);
+                if (!hadPref)
+                    EditorPrefs.DeleteKey(EditorPrefKeys.DebugLogs);
+                MCPServiceLocator.ToolDiscovery.SetToolEnabled("asset_bundles", assetEnabled);
+                MCPServiceLocator.ToolDiscovery.SetToolEnabled("get_test_job", pollEnabled);
+            }
+        }
 
         [Test]
         public void IndependentDispatchReturnsBoundNotStartedWithoutInvokingHandler()
@@ -286,9 +391,11 @@ namespace MCPForUnityTests.Editor.Services
             const string command = "get_selection";
             object original = handlers[command];
             var source = typeof(GetCompileJob);
-            var method = CommandRegistry.GetCommandMethod(source);
-            var handler = new HandlerInfo(command, (Func<JObject, object>)Delegate.CreateDelegate(typeof(Func<JObject, object>), method), null);
-            handler.BindRegistration(source, method);
+            Func<JObject, CancellationToken, Task<object>> compileJob = GetCompileJob.HandleCommand;
+            Assert.AreEqual(CommandRegistry.GetCommandMethod(source), compileJob.Method);
+            Assert.IsTrue(CommandRegistry.IsTrustedBuiltInHandler("get_compile_job"));
+            var handler = HandlerInfo.Cooperative(command, compileJob);
+            handler.BindRegistration(source, compileJob.Method);
             Assert.AreSame(typeof(CommandRegistry).Assembly, source.Assembly);
             Assert.IsTrue(handler.HasTrustedRegistration, "Assembly membership and a sealed real method alone do not establish canonical ownership.");
             handlers[command] = handler;

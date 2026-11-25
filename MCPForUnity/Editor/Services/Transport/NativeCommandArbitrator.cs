@@ -200,6 +200,7 @@ namespace MCPForUnity.Editor.Services.Transport
         {
             internal NativeCommandArbitrator Owner { get; }
             internal ToolOperationMode Mode { get; }
+            internal bool IsActive => Volatile.Read(ref disposed) == 0;
             internal long Started { get; } = System.Diagnostics.Stopwatch.GetTimestamp();
             private string tool = "custom_or_unknown";
             private string phase = "handler";

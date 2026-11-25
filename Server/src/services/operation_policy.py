@@ -164,9 +164,6 @@ POLICY_RULES: Final = (
         public=True,
     ),
     PolicyRule(
-        "manage_ugui", ("diagnose_projection", "diagnose_device_profiles"), SHARED_READ, public=True
-    ),
-    PolicyRule(
         "manage_packages", ("get_package_info", "list_registries"), SHARED_READ, public=True
     ),
     PolicyRule(
@@ -276,8 +273,33 @@ def resolve_operation_policy(
         level = params.get("level", "standard")
         if not isinstance(level, str) or level.lower() not in {"basic", "standard"}:
             return _exclusive("unreviewed_validation_level")
+    if name == "find_gameobjects" and native:
+        # Legacy ID lookup can load an asset. Unknown component lookup can log
+        # through project callbacks. Projections can resolve object references.
+        if (
+            params.get("searchMethod", params.get("search_method", "by_name"))
+            not in (
+                "by_name",
+                "by_path",
+                "by_layer",
+            )
+            or params.get("projection") is not None
+        ):
+            return _exclusive("conditional_callbacks")
+    if (
+        name == "manage_scene"
+        and action == "get_hierarchy"
+        and native
+        and params.get("parent") is not None
+    ):
+        return _exclusive("conditional_callbacks")
     if name == "manage_ugui" and action == "diagnose_raycast":
-        if params.get("allow_custom_filters", False) is not False:
+        # Only strict preflight excludes asset-loading ID resolution, missing
+        # CanvasRenderers and project log callbacks during alpha sampling.
+        if (
+            params.get("strict_read") is not True
+            or params.get("allow_custom_filters", False) is not False
+        ):
             return _exclusive("conditional_callbacks")
         return OperationPolicy(SHARED_READ, COMMAND, "reviewed_read")
     if name == "manage_ui" and action == "patch_source":
@@ -287,15 +309,9 @@ def resolve_operation_policy(
     if name == "manage_gameobject" and action == "placement":
         if not native:
             return _exclusive("public_preflight", TRIGGER_ONLY)
-        preview = params.get("preview")
-        if (
-            preview is None
-            or preview is True
-            or isinstance(preview, str)
-            and preview.lower() == "true"
-        ):
-            return OperationPolicy(SHARED_READ, COMMAND, "reviewed_preview")
-        return _exclusive("conditional_mutation")
+        # Preview also resolves arbitrary instance IDs and can evict another
+        # command's retained placement plan.
+        return _exclusive("stateful_placement")
     if name == "manage_editor" and action == "play":
         wait_until = params.get("wait_until")
         return _exclusive(

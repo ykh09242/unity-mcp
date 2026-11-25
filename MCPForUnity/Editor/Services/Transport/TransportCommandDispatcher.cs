@@ -694,6 +694,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 pending.Timing?.Start(CommandPhaseTiming.Phase.Handler);
                 object result;
                 using (CommandPhaseTiming.EnterHandler(pending.Timing))
+                using (McpLog.EnterHandler(pending.Lease))
                 using (NativeCommandArbitrator.EnterComposition(CommandRegistry.IsTrustedCompositionHandler(command.type) ? pending.Lease : null))
                 {
                     pending.AdmissionCancellation.ThrowIfCancellationRequested();
@@ -803,7 +804,8 @@ namespace MCPForUnity.Editor.Services.Transport
             catch (Exception ex)
             {
                 pending.Timing?.Stop(CommandPhaseTiming.Phase.Handler);
-                McpLog.Error($"Error processing command: {ex.Message}\n{ex.StackTrace}");
+                using (McpLog.EnterHandler(pending.Lease))
+                    McpLog.Error($"Error processing command: {ex.Message}\n{ex.StackTrace}");
                 pending.TrySetResult(SerializeError(ex.Message, "Unknown (error during processing)", ex.StackTrace));
                 LogThrownOutcome(pending, "ERROR");
                 RemovePending(id, pending);
