@@ -13,7 +13,7 @@
 
 Git-only fork maintained by [ykh09242](https://github.com/ykh09242), based on [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp). Original MIT copyright, authorship, and research citation are retained. This fork is not an upstream release or a Coplay/Aura service.
 
-Fork versions start at `1.0.0` independently of the upstream `10.3.x` baseline. See [fork releases](https://github.com/ykh09242/unity-mcp/releases) for the tested component versions and server source pin.
+Fork versions start at `1.0.0` independently of the upstream `10.3.x` baseline. Browse the [release highlights](CHANGELOG.md) or open [GitHub Releases](https://github.com/ykh09242/unity-mcp/releases) for downloads and tested component versions.
 
 </div>
 

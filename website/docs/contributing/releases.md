@@ -150,6 +150,8 @@ The destination's parent must already exist. Existing destinations, parent trave
 
 ## Publish a fork GitHub release
 
+Lead with a task someone can now complete, the problem they used to encounter, and the change they will see. Give a real command, Editor action, or before-and-after result when it helps readers try the feature. State the conditions behind any measurements and call out upgrade steps that affect existing projects. Keep the highlights in the [fork changelog](https://github.com/ykh09242/unity-mcp/blob/beta/CHANGELOG.md). On GitHub Releases, follow them with the versioned UPM URL and comparison link. Put detailed verification tables inside a collapsible section and keep material compatibility limits visible.
+
 1. Select the fork version and whether it is a prerelease or stable release. Complete [exact beta release qualification](https://github.com/ykh09242/unity-mcp/blob/beta/docs/development/ci-validation.md#exact-beta-release-qualification) for the prepared Git version and validate its prepared release evidence block.
 2. Create a fork release tag on the verified commit, then publish its GitHub release with the selected prerelease state and any explicitly prepared assets. Publication is a manual maintainer operation; it does not use the upstream release workflow.
 3. Explain the fork changes, identify the Unity and Python component versions, immutable server and skill commits, and actual bounded verification evidence, and credit the original MIT authorship. Link the upstream version and commit as the baseline.
