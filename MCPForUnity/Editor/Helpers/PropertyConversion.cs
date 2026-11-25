@@ -36,6 +36,10 @@ namespace MCPForUnity.Editor.Helpers
 
             try
             {
+                // Keep the original field path in scalar diagnostics. The Json.NET
+                // converter reads detached tokens when deserializing a root value.
+                if (JsonScalarConversion.Supports(targetType))
+                    return JsonScalarConversion.Read(token, targetType);
                 // Use the shared Unity serializer with custom converters
                 JToken input = token is JArray && HasNullableUnityArrayTarget(targetType, null) ? NormalizeNullableUnityArrays(token, targetType) : token;
                 return input.ToObject(targetType, UnityJsonSerializer.Instance);

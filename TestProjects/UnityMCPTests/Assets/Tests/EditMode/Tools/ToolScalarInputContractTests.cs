@@ -2,6 +2,7 @@ using System;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine.TestTools;
@@ -17,11 +18,11 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var token = JObject.Parse("{\"properties\":{\"amount\":true}}")["properties"]["amount"];
             var method = FindMethod(typeName, methodName);
-            LogAssert.Expect(UnityEngine.LogType.Error, new Regex("Error converting token to"));
+            LogAssert.Expect(UnityEngine.LogType.Error, new Regex(@"\[PropertyConversion\] Property value conversion failed\."));
 
             var exception = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[] { token, typeof(double) }));
 
-            Assert.That(exception.InnerException, Is.TypeOf<ArgumentException>());
+            Assert.That(exception.InnerException, Is.TypeOf<JsonSerializationException>());
             Assert.That(exception.InnerException.Message, Does.Contain("properties.amount"));
         }
 
@@ -44,11 +45,12 @@ namespace MCPForUnityTests.Editor.Tools
         public void DynamicPropertyConversionRejectsBooleanForEnum(string typeName, string methodName)
         {
             var method = FindMethod(typeName, methodName);
-            LogAssert.Expect(UnityEngine.LogType.Error, new Regex("Error converting token to"));
+            LogAssert.Expect(UnityEngine.LogType.Error, new Regex(@"\[PropertyConversion\] Property value conversion failed\."));
 
             var exception = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[] { new JValue(true), typeof(DayOfWeek) }));
 
-            Assert.That(exception.InnerException, Is.TypeOf<ArgumentException>());
+            Assert.That(exception.InnerException, Is.TypeOf<JsonSerializationException>());
+            Assert.That(exception.InnerException.Message, Does.Contain("DayOfWeek"));
         }
 
         [TestCase("MCPForUnity.Editor.Tools.Graphics.RenderPipelineOps", "ConvertPropertyValue", "\"Monday\"")]
