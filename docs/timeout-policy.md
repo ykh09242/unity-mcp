@@ -53,7 +53,10 @@ Use `get_play_mode_job` (CLI: `editor play-status JOB_ID`) to observe late readi
 do not replay `play`. A later successful observation includes
 `observed_after_deadline=true` and does not claim that startup completed within the
 original budget. `cancel_play_mode_job` retires monitoring, including an expired
-observation, without stopping Play Mode. Scene-loaded and first-frame readiness
+observation, without stopping Play Mode. When a newer readiness job starts, the
+Editor retains the preceding eight terminal jobs across domain reloads. Polling
+or cancelling a retained ID affects only that job. A timed-out job can observe
+late readiness while it is still the current job. Scene-loaded and first-frame readiness
 still do not guarantee application initialization or a rendered image.
 
 `execute_menu_item` supports `timeout_ms` from 1 to 86,400,000 for the allowlisted

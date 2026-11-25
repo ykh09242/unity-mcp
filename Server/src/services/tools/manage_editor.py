@@ -81,7 +81,10 @@ async def manage_editor(
         Field(ge=1, le=86400, strict=True),
         "Play readiness observation budget in seconds; expiry does not stop Play Mode",
     ] = 300,
-    job_id: Annotated[str | None, "Job ID for get_play_mode_job/cancel_play_mode_job"] = None,
+    job_id: Annotated[
+        str | None,
+        "Readiness job ID to poll or cancel. play with wait_until accepts a 32-character UUID to start or reuse a retained job.",
+    ] = None,
     width: Annotated[
         int | None,
         Field(ge=1, le=8192, strict=True),
@@ -135,7 +138,7 @@ async def manage_editor(
                     "error": "timeout_seconds must be an integer between 1 and 86400",
                 }
             # Select the ID before dispatch so even a lost reload acknowledgement is recoverable.
-            readiness_id = uuid4().hex
+            readiness_id = job_id if job_id is not None else uuid4().hex
             params.update(
                 wait_until=wait_until, timeout_seconds=timeout_seconds, job_id=readiness_id
             )

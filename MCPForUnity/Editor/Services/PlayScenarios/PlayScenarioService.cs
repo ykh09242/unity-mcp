@@ -168,7 +168,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             if (PlayScenarioSuiteService.HasForeignNativeOwner(suiteChildId) || IsBusy)
                 return RefusedBeforeStart("play_scenario_busy", new { job_id = _engine?.State.JobId });
-            if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode)
+            if (!PlayModeReadiness.IsEditorStable)
                 return RefusedBeforeStart("Wait for the editor to finish compiling, importing or changing Play Mode.");
             if (NativeOperationBarriers.TryGetScenarioBlocker(null, suiteChildId, out var blocker))
                 return RefusedBeforeStart(blocker.Reason, blocker.Recovery);
@@ -467,10 +467,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 try
                 {
-                    bool ready = EditorApplication.isPlaying && !EditorApplication.isPaused && !EditorApplication.isCompiling && !EditorApplication.isUpdating;
+                    bool ready = EditorApplication.isPlaying && !EditorApplication.isPaused && PlayModeReadiness.IsEditorStable;
                     // A user or another callback may have entered Play after reservation. Sample
                     // ownership on a stable update, after all Play transition observers have run.
-                    if (ready && _engine.State.Phase == "starting" && !EditorStateCache.IsPlayModeTransition && CanContinueStart())
+                    if (ready && _engine.State.Phase == "starting" && CanContinueStart())
                         _engine.EnteredPlayMode();
                     bool measured = _engine.RequiresPlayerFrameEvaluation;
                     if (ready && measured && _framePump == null)

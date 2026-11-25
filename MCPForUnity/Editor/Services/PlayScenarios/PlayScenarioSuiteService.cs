@@ -188,8 +188,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _editorProjection = new PlayScenarioSuiteEditorProjection();
         }
 
-        private static bool EditorReady =>
-            !EditorApplication.isCompiling && !EditorApplication.isUpdating && EditorApplication.isPlaying == EditorApplication.isPlayingOrWillChangePlaymode;
+        private static bool EditorReady => PlayModeReadiness.IsEditorStable;
 
         private static JObject Data(object response)
         {

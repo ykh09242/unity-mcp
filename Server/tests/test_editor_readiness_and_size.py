@@ -25,7 +25,10 @@ def context(monkeypatch):
 
 
 @pytest.mark.parametrize("terminal", ["succeeded", "failed", "cancelled", "timed_out"])
-def test_play_wait_returns_only_after_terminal_native_status(context, monkeypatch, terminal):
+@pytest.mark.parametrize("requested_id", [None, "17" * 16])
+def test_play_wait_returns_only_after_terminal_native_status(
+    context, monkeypatch, terminal, requested_id
+):
     # Given a real readiness protocol at the transport seam, with one reload disconnect.
     requests = []
 
@@ -44,7 +47,9 @@ def test_play_wait_returns_only_after_terminal_native_status(context, monkeypatc
 
     # When waiting for a first simulation frame.
     async def invoke():
-        return await manage_editor(context, action="play", wait_until="first_frame")
+        return await manage_editor(
+            context, action="play", wait_until="first_frame", job_id=requested_id
+        )
 
     result = anyio.run(invoke)
 
@@ -57,6 +62,8 @@ def test_play_wait_returns_only_after_terminal_native_status(context, monkeypatc
         "get_play_mode_job",
     ]
     assert all(item[0] == "selected-editor" for item in requests)
+    expected_id = requested_id or requests[0][1]["job_id"]
+    assert all(item[1]["job_id"] == expected_id for item in requests)
 
 
 def test_wait_deadline_cancels_stalled_transport_and_retains_job_id(context, monkeypatch):

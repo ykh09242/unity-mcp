@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
-using UnityEditor;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.SimulationProfiles
@@ -182,10 +182,8 @@ namespace MCPForUnity.Editor.Tools.SimulationProfiles
 
         internal static void StableMode()
         {
-            if (EditorApplication.isPlayingOrWillChangePlaymode && !EditorApplication.isPlaying)
-                throw new InvalidOperationException("Simulation profile writes are refused during a Play Mode transition.");
-            if (EditorApplication.isCompiling || EditorApplication.isUpdating)
-                throw new InvalidOperationException("Wait for compilation/import before changing simulation profiles.");
+            if (!PlayModeReadiness.IsEditorStable)
+                throw new InvalidOperationException("Wait for compilation, import and Play Mode transitions to finish before changing simulation profiles.");
         }
     }
 }

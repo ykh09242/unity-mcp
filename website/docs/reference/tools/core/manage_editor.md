@@ -26,7 +26,7 @@ Controls Unity editor state and settings. The read-only tool get_game_view_size 
 | `layer_name` | `str \| None` | — | Layer name when adding and removing layers |
 | `wait_until` | `Literal['scene_loaded', 'first_frame'] \| None` | — | Optional bounded readiness wait for play |
 | `timeout_seconds` | `int` | — | Play readiness observation budget in seconds; expiry does not stop Play Mode |
-| `job_id` | `str \| None` | — | Job ID for get_play_mode_job/cancel_play_mode_job |
+| `job_id` | `str \| None` | — | Readiness job ID to poll or cancel. play with wait_until accepts a 32-character UUID to start or reuse a retained job. |
 | `width` | `int \| None` | — | Fixed Game View width; combined limit 16 megapixels |
 | `height` | `int \| None` | — | Fixed Game View height |
 | `aspect_ratio` | `str \| None` | — | Game View aspect ratio W:H, components at most 8192 |

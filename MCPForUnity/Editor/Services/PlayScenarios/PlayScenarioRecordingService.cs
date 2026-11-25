@@ -66,7 +66,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (draft != null && !draft.Saved && draft.Status != "cancelled")
                 throw new InvalidOperationException("A scenario recording has not been saved or cancelled. Stop or cancel it first.");
-            if (!EditorApplication.isPlaying || EditorApplication.isPaused || EditorApplication.isPlayingOrWillChangePlaymode != EditorApplication.isPlaying)
+            if (!EditorApplication.isPlaying || EditorApplication.isPaused || !PlayModeReadiness.IsEditorStable)
                 throw new InvalidOperationException("Scenario recording requires running, unpaused Play Mode.");
             if (durationSeconds < 1 || durationSeconds > 3600)
                 throw new ArgumentException("duration_seconds must be an integer between 1 and 3600.");
