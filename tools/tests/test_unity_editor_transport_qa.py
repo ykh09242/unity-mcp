@@ -263,9 +263,11 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         self.passed_xml()
         self.args.stdio_command_timeout_ms = 1000
         process = OwnedFakeProcess([0])
-        with patch.dict(
-            qa.os.environ,
+        with patch.object(
+            qa.os,
+            "environ",
             {
+                **qa.os.environ,
                 "UNITY_MCP_ALLOW_BATCH": "do-not-forward",
                 "UNITY_MCP_STDIO_COMMAND_TIMEOUT_MS": "9000",
             },
@@ -339,7 +341,9 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
     def test_owned_integration_opt_in_changes_child_environment_only(self):
         self.passed_xml()
         process = OwnedFakeProcess([0])
-        with patch.dict(qa.os.environ, {"UNITY_MCP_OWNED_TRANSPORT_TESTS": "disabled"}):
+        with patch.object(
+            qa.os, "environ", {**qa.os.environ, "UNITY_MCP_OWNED_TRANSPORT_TESTS": "disabled"}
+        ):
             with (
                 patch.object(
                     qa.subprocess, "Popen", side_effect=lambda *a, **k: self.spawn(process)

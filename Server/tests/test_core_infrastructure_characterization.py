@@ -31,6 +31,8 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+from tests.environment import scoped_environment
+
 # Set up sys.path for imports
 SERVER_ROOT = Path(__file__).resolve().parents[1]
 SERVER_SRC = SERVER_ROOT / "src"
@@ -939,7 +941,7 @@ class TestTelemetryConfigPrecedence:
 
         Precedence: DISABLE_TELEMETRY > UNITY_MCP_DISABLE_TELEMETRY > MCP_DISABLE_TELEMETRY
         """
-        with patch.dict(os.environ, {"DISABLE_TELEMETRY": "true"}):
+        with scoped_environment({"DISABLE_TELEMETRY": "true"}):
             with patch("core.telemetry.import_module", side_effect=Exception("No module")):
                 config = TelemetryConfig()
                 assert config.enabled is False
@@ -961,8 +963,8 @@ class TestTelemetryConfigPrecedence:
 
     def test_telemetry_config_endpoint_env_override(self):
         """Verify telemetry endpoint can be overridden via env variable."""
-        with patch.dict(
-            os.environ, {"UNITY_MCP_TELEMETRY_ENDPOINT": "https://env.endpoint.com/telemetry"}
+        with scoped_environment(
+            {"UNITY_MCP_TELEMETRY_ENDPOINT": "https://env.endpoint.com/telemetry"}
         ):
             with patch("core.telemetry.import_module", side_effect=Exception("No module")):
                 with patch("core.telemetry.TelemetryConfig._is_disabled", return_value=False):
@@ -981,7 +983,7 @@ class TestTelemetryConfigPrecedence:
 
     def test_telemetry_config_timeout_env_override(self):
         """Verify telemetry timeout can be overridden via env variable."""
-        with patch.dict(os.environ, {"UNITY_MCP_TELEMETRY_TIMEOUT": "3.0"}):
+        with scoped_environment({"UNITY_MCP_TELEMETRY_TIMEOUT": "3.0"}):
             with patch("core.telemetry.import_module", side_effect=Exception("No module")):
                 with patch("core.telemetry.TelemetryConfig._is_disabled", return_value=False):
                     config = TelemetryConfig()
@@ -993,8 +995,8 @@ class TestTelemetryConfigPrecedence:
         with patch("core.telemetry.import_module", side_effect=Exception("No module")):
             with patch("core.telemetry.TelemetryConfig._is_disabled", return_value=False):
                 # Invalid endpoint should fall back to default
-                with patch.dict(
-                    os.environ, {"UNITY_MCP_TELEMETRY_ENDPOINT": "invalid://localhost/path"}
+                with scoped_environment(
+                    {"UNITY_MCP_TELEMETRY_ENDPOINT": "invalid://localhost/path"}
                 ):
                     config = TelemetryConfig()
 
@@ -1006,8 +1008,8 @@ class TestTelemetryConfigPrecedence:
         """Verify telemetry rejects localhost endpoints for security."""
         with patch("core.telemetry.import_module", side_effect=Exception("No module")):
             with patch("core.telemetry.TelemetryConfig._is_disabled", return_value=False):
-                with patch.dict(
-                    os.environ, {"UNITY_MCP_TELEMETRY_ENDPOINT": "http://localhost:8000/telemetry"}
+                with scoped_environment(
+                    {"UNITY_MCP_TELEMETRY_ENDPOINT": "http://localhost:8000/telemetry"}
                 ):
                     config = TelemetryConfig()
 
@@ -1457,7 +1459,7 @@ class TestConfigurationEnvironmentInteraction:
 
     def test_telemetry_respects_disable_environment_variables(self):
         """Verify telemetry respects disable environment variables."""
-        with patch.dict(os.environ, {"DISABLE_TELEMETRY": "1"}):
+        with scoped_environment({"DISABLE_TELEMETRY": "1"}):
             with patch("core.telemetry.import_module", side_effect=Exception("No module")):
                 config = TelemetryConfig()
 
@@ -1468,8 +1470,7 @@ class TestConfigurationEnvironmentInteraction:
         disable_vars = ["DISABLE_TELEMETRY", "UNITY_MCP_DISABLE_TELEMETRY", "MCP_DISABLE_TELEMETRY"]
 
         for var_name in disable_vars:
-            # Don't use clear=True as it removes HOME/USERPROFILE which breaks Path.home() on Windows
-            with patch.dict(os.environ, {var_name: "true"}):
+            with scoped_environment({var_name: "true"}):
                 with patch("core.telemetry.import_module", side_effect=Exception("No module")):
                     config = TelemetryConfig()
                     assert config.enabled is False, f"{var_name} did not disable telemetry"

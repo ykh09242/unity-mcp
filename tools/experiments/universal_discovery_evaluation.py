@@ -271,7 +271,7 @@ async def evaluate_profile(
 ) -> ProfileResult:
     scope = {"UNITY_MCP_TOOL_PROFILE": profile, "UNITY_MCP_DISABLE_TELEMETRY": "1"}
     with (
-        patch.dict(os.environ, scope),
+        patch.object(os, "environ", {**os.environ, **scope}),
         patch.object(config, "http_remote_hosted", False),
         patch.object(
             PluginHub, "send_command_for_instance", side_effect=AssertionError("native HTTP send")

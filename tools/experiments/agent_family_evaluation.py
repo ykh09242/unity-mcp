@@ -95,7 +95,7 @@ async def catalog_client(profile):
     scope = {"UNITY_MCP_TOOL_PROFILE": profile, "UNITY_MCP_DISABLE_TELEMETRY": "1"}
     denied = AssertionError("Catalog selection crossed the discovery boundary")
     with (
-        patch.dict(os.environ, scope),
+        patch.object(os, "environ", {**os.environ, **scope}),
         patch.object(public.config, "http_remote_hosted", False),
         patch.object(public.PluginHub, "send_command_for_instance", side_effect=denied) as http,
         patch.object(

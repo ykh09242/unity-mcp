@@ -6,7 +6,6 @@ name. Any instruction, description or tool-result hint that mentions a resource
 by name alone sends the reader to build `mcpforunity://<name>`, which 404s.
 """
 
-import os
 import re
 import typing
 from pathlib import Path
@@ -29,11 +28,11 @@ CSHARP_STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')
 @pytest.fixture(scope="module")
 def build_instructions():
     """Import `main` without leaking the env vars it sets at import time."""
-    before = dict(os.environ)
-    from main import _build_instructions
+    from tests.environment import scoped_environment
 
-    os.environ.clear()
-    os.environ.update(before)
+    with scoped_environment():
+        from main import _build_instructions
+
     return _build_instructions
 
 

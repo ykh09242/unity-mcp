@@ -167,7 +167,7 @@ async def agent_catalog(
     scope = {"UNITY_MCP_TOOL_PROFILE": profile, "UNITY_MCP_DISABLE_TELEMETRY": "1"}
     denied = AssertionError("Agent discovery crossed the offline catalog boundary")
     with (
-        patch.dict(os.environ, scope),
+        patch.object(os, "environ", {**os.environ, **scope}),
         patch.object(config, "http_remote_hosted", False),
         patch.object(PluginHub, "send_command_for_instance", side_effect=denied) as http,
         patch.object(unity_connection, "_async_send_command_response", side_effect=denied) as stdio,

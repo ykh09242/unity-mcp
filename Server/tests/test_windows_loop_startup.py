@@ -10,17 +10,15 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from fastmcp import FastMCP
 
+from tests.environment import scoped_environment
+
 
 @pytest.fixture
 def entry():
-    before = dict(os.environ)
-    try:
+    with scoped_environment():
         import main
 
         yield main
-    finally:
-        os.environ.clear()
-        os.environ.update(before)
 
 
 def test_import_does_not_set_global_loop_policy(tmp_path):

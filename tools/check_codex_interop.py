@@ -826,7 +826,7 @@ async def run_case(
             local_server_process = fixture_module.local_server_process
             from core.local_auth import LOCAL_AUTH_HEADER
 
-            owned.enter_context(patch.dict(os.environ, fixture_env))
+            owned.enter_context(patch.object(os, "environ", {**os.environ, **fixture_env}))
             url, _, token = owned.enter_context(
                 local_server_process(directory, module="tests.http.codex_interop_server")
             )

@@ -2,12 +2,49 @@
 
 import json
 from importlib.metadata import version
+import os
+from pathlib import Path
 import subprocess
 import sys
 
 import pytest
 
 from tests.sdk_scenarios import run_sdk_scenario, sdk_scenario_host  # noqa: F401
+
+
+def test_scoped_environment_preserves_inherited_empty_values_in_child_processes():
+    # Windows can launch a process with an empty value, but rewriting it deletes the native entry.
+    program = """
+import os, subprocess, sys
+from tests.environment import scoped_environment
+
+try:
+    with scoped_environment({"SCENARIO_CHANGED": "temporary"}):
+        del os.environ["SCENARIO_REMOVED"]
+        os.environ["SCENARIO_ADDED"] = "temporary"
+        raise ValueError("end scenario")
+except ValueError:
+    pass
+
+subprocess.run([sys.executable, "-c", '''
+import os
+assert os.environ["SCENARIO_EMPTY"] == ""
+assert os.environ["SCENARIO_CHANGED"] == os.environ["SCENARIO_REMOVED"] == "original"
+assert "SCENARIO_ADDED" not in os.environ
+'''], check=True)
+"""
+    env = {**os.environ, "SCENARIO_EMPTY": "", "SCENARIO_CHANGED": "original"}
+    env["SCENARIO_REMOVED"] = "original"
+    env.pop("SCENARIO_ADDED", None)
+    result = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_real_sdk_state_and_callable_graphs_do_not_survive_a_scenario():

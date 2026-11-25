@@ -33,6 +33,7 @@ from fastmcp.tools.function_tool import _wrap_body_errors  # noqa: E402
 from fastmcp.utilities.types import get_cached_typeadapter  # noqa: E402
 from uncalled_for import annotations, introspection, references  # noqa: E402
 from uncalled_for.resolution import without_dependencies  # noqa: E402
+from tests.environment import restore_environment  # noqa: E402
 
 _ABSENT = object()
 _GLOBALS = [
@@ -144,8 +145,7 @@ def _execute(request):
             for key, value in _ENV.items()
             if key.startswith("FASTMCP_") or key in startup_keys
         }, "SDK startup-setting changes require a fresh process"
-        os.environ.clear()
-        os.environ.update(env)
+        restore_environment(env)
         with warnings.catch_warnings(), redirect_stdout(output), redirect_stderr(errors):
             namespace = {"__name__": "__main__"}
             exec(compile(request["source"], "<sdk-scenario>", "exec"), namespace)
@@ -170,8 +170,7 @@ def _execute(request):
             logger.setLevel(level)
             logger.propagate = propagate
         _reset()
-        os.environ.clear()
-        os.environ.update(_ENV)
+        restore_environment(_ENV)
         settled_by = _CLOCK() + 0.5
         for thread in set(threading.enumerate()) - _THREADS:
             thread.join(timeout=max(0, settled_by - _CLOCK()))

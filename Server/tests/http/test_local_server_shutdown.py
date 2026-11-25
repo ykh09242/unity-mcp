@@ -8,7 +8,7 @@ import sys
 from copy import deepcopy
 from contextlib import asynccontextmanager, contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 import httpx
@@ -18,6 +18,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 import uvicorn
 
 from core.config import config
+from tests.environment import scoped_environment
 from transport.charge_ledger import ChargeLedger
 from transport.models import RegisterMessage
 from transport.plugin_hub import PluginHub
@@ -101,7 +102,7 @@ def test_managed_entry_cancellable_until_sockets_bound(tmp_path, monkeypatch, ph
     monkeypatch.setattr(entry, "create_mcp_server", initialize)
     monkeypatch.setattr(entry, "local_http_sockets", owned_sockets)
     monkeypatch.setattr(entry, "config", deepcopy(entry.config))
-    with patch.dict(os.environ):
+    with scoped_environment():
         if phase == "admitted":
             entry.main()
         else:
