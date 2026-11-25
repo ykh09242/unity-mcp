@@ -242,6 +242,8 @@ async def test_batch_limit_cache_has_bounded_capacity(batch_module, monkeypatch)
     "native_reply",
     [
         {"success": False, "error": "Unknown or unsupported command type: batch_validate"},
+        {"success": False, "error": "Other failure", "code": "recovery_required"},
+        {"success": False, "error": "Native operation is busy", "code": "unknown_code"},
         {"success": True, "data": {"executed": 1}},
         {"success": True, "data": {"validation": {"contractVersion": True, "validateOnly": True}}},
         {"success": True, "data": {"validation": {"contractVersion": 1, "validateOnly": "true"}}},
@@ -266,6 +268,41 @@ async def test_preview_old_or_malformed_peer_never_falls_back_to_execution(
     assert result["success"] is False
     assert result["data"]["reason"] == "batch_validation_unavailable"
     assert sends == [("batch_validate", {"commands": commands})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["action_names", "targets"])
+async def test_preview_preserves_native_busy_reason_without_replay(
+    batch_module, monkeypatch, scope
+):
+    from unittest.mock import AsyncMock
+    from models.unity_response import normalize_unity_response
+
+    reply = normalize_unity_response(
+        {
+            "status": "error",
+            "error": "Native operation is busy",
+            "code": "recovery_required",
+            "data": {
+                "native_coordination": {
+                    "blocked": True,
+                    "reason": "recovery_required",
+                    "retryable": False,
+                }
+            },
+        }
+    )
+    send = AsyncMock(return_value=reply)
+    monkeypatch.setattr(
+        batch_module, "_get_max_commands_from_editor_state", AsyncMock(return_value=25)
+    )
+    monkeypatch.setattr(batch_module, "send_with_unity_instance", send)
+    result = await batch_module.batch_execute(
+        Context("A@hash-a"), [{"tool": "ping"}], validate_only=True, preview_scope=scope
+    )
+    assert result == reply
+    assert send.await_count == 1
+    assert send.await_args.args[2] == "batch_validate"
 
 
 @pytest.mark.asyncio

@@ -199,6 +199,10 @@ def _preview_reply_is_exact(
             "synchronous_hash_budget_exceeded",
             "target_changed_during_preparation",
             "editor_not_stable",
+            "editor_compiling",
+            "editor_importing",
+            "native_job_active",
+            "recovery_required",
             "prepare_prefab_plan_first",
             "directory_move_not_modeled",
             "destination_parent_not_present",
@@ -412,6 +416,16 @@ async def batch_execute(
     if validate_only and not _preview_reply_is_exact(reply, normalized_commands, preview_scope):
         if isinstance(reply, dict) and reply.get("success") is False:
             data = reply.get("data")
+            # A busy Editor cannot produce a preview receipt. Report the native
+            # reason without interpreting it as proof or resending the batch.
+            if reply.get("error") == "Native operation is busy" and reply.get("code") in (
+                "operation_busy",
+                "editor_compiling",
+                "editor_importing",
+                "native_job_active",
+                "recovery_required",
+            ):
+                return reply
             if reply.get("error") in ("permission_denied", "auth_required") or (
                 isinstance(data, dict) and data.get("reason") == "outcome_unknown"
             ):

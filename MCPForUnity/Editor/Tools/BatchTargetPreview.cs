@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Editor.Tools.Prefabs;
 using MCPForUnity.Runtime.Helpers;
@@ -164,7 +165,7 @@ namespace MCPForUnity.Editor.Tools
                         if (!observations[index].IsCurrent((JObject)commands[index]))
                         {
                             items[index]["status"] = "incomplete";
-                            items[index]["reason"] = "target_changed_during_preparation";
+                            items[index]["reason"] = BlockerReason() ?? "target_changed_during_preparation";
                             valid = complete = false;
                         }
                 cancellationToken.ThrowIfCancellationRequested();
@@ -441,8 +442,15 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
+        internal static string BlockerReason() => NativeOperationBarriers.TryGetBlocker(null, null, out var blocker) ? blocker.Reason : null;
+
         private static JObject Describe(JObject command, Func<string, string> fileHash = null, PrefabSourceRevision prefabRevision = null)
         {
+            // A child or an Editor callback may have started native work while
+            // a file was hashed. Target resolution can itself load assets.
+            string reason = BlockerReason();
+            if (reason != null)
+                throw new Incomplete(reason);
             if (
                 EditorApplication.isPlayingOrWillChangePlaymode
                 || EditorApplication.isCompiling

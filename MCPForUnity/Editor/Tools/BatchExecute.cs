@@ -107,12 +107,18 @@ namespace MCPForUnity.Editor.Tools
                 ["items"] = items,
             };
 
-        private static object InvalidBatch(string message, JArray commands, object legacyData = null, bool preview = false)
+        private static object InvalidBatch(
+            string message,
+            JArray commands,
+            object legacyData = null,
+            bool preview = false,
+            string notRunReason = "invalid_batch"
+        )
         {
             if (commands == null || commands.Count > AbsoluteMaxCommandsPerBatch)
                 return new ErrorResponse(message, legacyData);
             var data = legacyData == null ? new JObject() : JObject.FromObject(legacyData);
-            data["outcomes"] = NewOutcomes(commands, "not_run", "invalid_batch");
+            data["outcomes"] = NewOutcomes(commands, "not_run", notRunReason);
             data["requestedCount"] = commands.Count;
             data["attemptedCount"] = 0;
             data["notRunCount"] = commands.Count;
@@ -324,11 +330,17 @@ namespace MCPForUnity.Editor.Tools
             using var verification = preview == null ? null : await BatchTargetPreview.VerifyAsync(commandsToken, preview, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (@params["preview"] != null && (verification == null || !verification.IsCurrent(commandsToken)))
+            {
+                string blocker = BatchTargetPreview.BlockerReason();
                 return InvalidBatch(
-                    "The target preview is stale, invalid or unavailable. Preview again before applying.",
+                    blocker == null
+                        ? "The target preview is stale, invalid or unavailable. Preview again before applying."
+                        : "Native work blocked target preview verification.",
                     commandsToken,
-                    new { reason = "stale_or_invalid_preview" }
+                    new { reason = blocker ?? "stale_or_invalid_preview" },
+                    notRunReason: blocker ?? "invalid_batch"
                 );
+            }
             if (parallelRequested)
             {
                 McpLog.Warn("batch_execute parallel mode requested, but commands will run sequentially on the main thread for safety.");
@@ -374,8 +386,9 @@ namespace MCPForUnity.Editor.Tools
                         && (targetObservation == null || !targetObservation.IsCurrent(commandObj) || (index == 0 && !verification.IsCurrent(commandsToken)))
                     )
                     {
+                        string reason = BatchTargetPreview.BlockerReason() ?? "stale_preview";
                         for (int remaining = index; remaining < commandsToken.Count; remaining++)
-                            SetOutcome(outcomes, remaining, "not_run", "stale_preview");
+                            SetOutcome(outcomes, remaining, "not_run", reason);
                         anyCommandFailed = true;
                         break;
                     }

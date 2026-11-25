@@ -94,6 +94,33 @@ namespace MCPForUnityTests.Editor.Tools
         private static async Task<JObject> Apply(JArray commands, JToken preview) =>
             JObject.FromObject(await BatchExecute.HandleCommand(new JObject { ["commands"] = commands, ["preview"] = preview.DeepClone() }));
 
+        [Test]
+        public async Task ForeignCompilationBlocksEachTargetObservationAndGuardedApply()
+        {
+            var commands = new JArray(Edit());
+            var guard = Guard(Preview(commands));
+            var reservation = CompilationJobTracker.Reservation;
+            Assert.IsNull(reservation.State);
+            string generation = reservation.Reserve(Guid.NewGuid().ToString("N"), EditorApplication.timeSinceStartup + 1000);
+            try
+            {
+                for (int request = 0; request < 3; request++)
+                {
+                    var preview = Preview(commands);
+                    Assert.AreEqual("native_job_active", (string)preview.SelectToken("data.validation.items[0].reason"));
+                    var apply = await Apply(commands, guard);
+                    Assert.AreEqual("native_job_active", (string)apply.SelectToken("data.outcomes[0].reason"));
+                    Assert.AreEqual(0, apply["data"].Value<int>("attemptedCount"));
+                    Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+                    Assert.AreEqual(generation, reservation.State.Generation);
+                }
+            }
+            finally
+            {
+                reservation.AbortBeforeStart(generation);
+            }
+        }
+
         private static JToken Guard(JObject response)
         {
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());

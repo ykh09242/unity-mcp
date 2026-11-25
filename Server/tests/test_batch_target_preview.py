@@ -129,6 +129,10 @@ async def test_batch_refuses_ambiguous_runtime_request_before_any_peer_io(
         "unsupported_target_preview",
         "synchronous_hash_budget_exceeded",
         "target_changed_during_preparation",
+        "native_job_active",
+        "recovery_required",
+        "editor_compiling",
+        "editor_importing",
     ],
 )
 async def test_targets_preview_uses_dedicated_read_only_alias(batch, monkeypatch, reason):
