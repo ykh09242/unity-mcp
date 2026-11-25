@@ -65,6 +65,7 @@ public static class LiveWorld
     private static int locale,
         variant,
         initialImports;
+    private static int gateColliderId;
     private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
 
     private static string Hash(byte[] bytes)
@@ -189,6 +190,7 @@ public static class LiveWorld
         else if (task == "gate_sensor_trigger")
         {
             var box = new GameObject("GateSensor").AddComponent<BoxCollider>();
+            gateColliderId = box.GetInstanceID();
             box.transform.position = new Vector3(7, 0, 3);
             box.size = new Vector3(1.5f, 4, .75f);
             box.center = new Vector3(.125f, 1.125f, -.25f);
@@ -377,9 +379,13 @@ public static class LiveWorld
         }
         else if (task == "gate_sensor_trigger")
         {
+            state["gateObserverVersion"] = 2;
             var box = GameObject.Find("GateSensor")?.GetComponent<BoxCollider>();
             if (box != null)
             {
+                var sharedMaterial = box.sharedMaterial;
+                state["boxSharedMaterial"] = sharedMaterial ? sharedMaterial.name : "";
+                state["boxSharedMaterialId"] = sharedMaterial ? sharedMaterial.GetInstanceID() : 0;
                 state["boxTrigger"] = box.isTrigger;
                 state["boxId"] = box.GetInstanceID();
                 state["boxSize"] = Vector(box.size);
@@ -441,8 +447,16 @@ public static class LiveWorld
                     continue;
                 }
                 var obj = JObject.Parse(EditorJsonUtility.ToJson(c));
-                if (task == "gate_sensor_trigger" && c is BoxCollider && c.name == "GateSensor")
-                    obj.Remove("m_IsTrigger");
+                if (task == "gate_sensor_trigger" && c is Collider collider)
+                {
+                    if (c.GetInstanceID() == gateColliderId)
+                    {
+                        if (obj[nameof(BoxCollider)] is not JObject fields || !fields.Remove("m_IsTrigger"))
+                            throw new InvalidDataException("Unity did not expose the target BoxCollider trigger field.");
+                    }
+                    var sharedMaterial = collider.sharedMaterial;
+                    obj["runtimeSharedMaterialId"] = sharedMaterial ? sharedMaterial.GetInstanceID() : 0;
+                }
                 comps.Add(new JArray(c.GetType().FullName, c.GetInstanceID(), obj));
             }
             rows.Add(
