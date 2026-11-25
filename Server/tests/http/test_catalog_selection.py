@@ -92,7 +92,17 @@ async def test_reset_reports_actual_default_visibility_after_catalog_changes(cat
     await registry.register("one", "First", "first", "6000")
     await publish(registry, "one", ["effect_probe"])
     async with Client(server, mode="legacy") as client:
-        await client.call_tool("manage_tools", {"action": "activate", "group": "vfx"})
+        group = (
+            await client.call_tool("manage_tools", {"action": "activate", "group": "vfx"})
+        ).structured_content
+        assert group["server_advertised_tools"] == ["effect_probe"]
+        unavailable = (
+            await client.call_tool("manage_tools", {"action": "activate", "tool": "texture_probe"})
+        ).structured_content
+        assert unavailable["server_advertised"] is False
+        assert unavailable["next_action"] == {
+            "resource": "mcpforunity://tool-diagnostics/texture_probe"
+        }
         assert await names(client) == {"effect_probe", "manage_tools"}
         reset = (await client.call_tool("manage_tools", {"action": "reset"})).structured_content
         assert reset["visible_tools"] == ["manage_tools"]

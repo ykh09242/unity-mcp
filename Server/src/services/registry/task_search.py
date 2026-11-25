@@ -4,7 +4,7 @@ import unicodedata
 from collections import Counter
 from collections.abc import Collection
 from dataclasses import dataclass
-from typing import Annotated, Final, Literal, NotRequired, TypedDict
+from typing import Annotated, Final, Literal, NotRequired, TypedDict, assert_never
 
 from pydantic import (
     BaseModel,
@@ -16,6 +16,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from models.host_tool_inventory import HostToolEvidence, HostToolNames
 from services.registry.action_catalog import (
@@ -58,6 +59,8 @@ from services.registry.integration_action_guidance import MENU_INVENTORY_OBSERVA
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
 RouteSurfaces = Literal["both", "tools", "resources"]
+RANKED_SEARCH_FIELDS: Final = ("catalog_query", "intent", "observation_source", "required_values")
+AGENT_SEARCH_FIELDS: Final = ("family", "offset")
 
 
 class SearchRequest(BaseModel):
@@ -77,26 +80,36 @@ class SearchRequest(BaseModel):
     host_tool_evidence: HostToolEvidence | None = None
 
     @model_validator(mode="after")
-    def has_search_input(self):
-        if self.query is None and self.observation_source is None and self.required_values is None:
-            raise ValueError("Supply query, observation_source or required_values.")
+    def validate_search_mode(self) -> "SearchRequest":
         if self.host_tool_names is not None and self.host_tool_evidence is not None:
             raise ValueError("Supply host_tool_names or host_tool_evidence.")
-        if self.selection == "agent":
-            if self.query is None or any(
-                value is not None
-                for value in (
-                    self.catalog_query,
-                    self.intent,
-                    self.observation_source,
-                    self.required_values,
+        match self.selection:
+            case "agent":
+                fields = [name for name in RANKED_SEARCH_FIELDS if getattr(self, name) is not None]
+                other_mode = "ranked"
+                missing_query = self.query is None and self.family is None
+                required = "the original query for the family directory or an exact family ID"
+            case "ranked":
+                fields = [name for name in AGENT_SEARCH_FIELDS if getattr(self, name)]
+                other_mode = "agent"
+                missing_query = (
+                    self.query is None
+                    and self.observation_source is None
+                    and self.required_values is None
                 )
-            ):
-                raise ValueError(
-                    "Agent selection requires the original query and all operations without ranked-search filters."
-                )
-        elif self.family is not None or self.offset:
-            raise ValueError("family and offset require selection=agent.")
+                required = "query with the original request, observation_source or required_values"
+            case unreachable:
+                assert_never(unreachable)
+        if fields:
+            raise PydanticCustomError(
+                "search_mode_conflict",
+                "Use selection={mode} for {names}.",
+                {"mode": other_mode, "names": ", ".join(fields), "fields": fields},
+            )
+        if missing_query:
+            raise PydanticCustomError(
+                "search_query_required", "Supply {required}.", {"required": required}
+            )
         return self
 
     @field_validator("query", "catalog_query")

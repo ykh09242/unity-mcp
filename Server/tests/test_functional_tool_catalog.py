@@ -28,6 +28,10 @@ def test_distributed_core_examples_validate_against_real_default_catalog(mode):
             register_all_tools(server, project_scoped_tools=False)
             async with Client(server, mode=MODE, cache=False) as client:
                 tools = {tool.name: tool for tool in await client.list_tools()}
+                request = {"action": "describe", "tool": "scene_inspect", "operation": "get_hierarchy"}
+                implicit = (await client.call_tool("manage_tools", request)).structured_content
+                explicit = (await client.call_tool("manage_tools", {**request, "include_schema": True})).structured_content
+                assert explicit == implicit and explicit["tool"]["input_schema"]
                 assert not {"manage_scene", "manage_gameobject", "manage_ui"} & tools.keys()
                 optional = []
                 for skill in ("unity-mcp-skill", ".claude/skills/unity-mcp-skill"):
@@ -83,6 +87,7 @@ def test_capabilities_have_narrow_schemas_and_individual_session_visibility():
                     assert not {"manage_physics", "manage_scene", "query_physics", "manage_physics_joints"} & initial
                     activated = (await first.call_tool("manage_tools", {"action": "activate", "tool": "query_physics"})).structured_content
                     assert activated["activated_tool"] == "query_physics", activated
+                    assert activated["server_advertised"] is True
                     visible = {tool.name: tool for tool in await first.list_tools()}
                     assert "manage_physics_joints" not in visible and "manage_physics" not in visible
                     schema = visible["query_physics"].inputSchema

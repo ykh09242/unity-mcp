@@ -38,8 +38,8 @@ _SearchQuery = Annotated[
     Field(
         max_length=512,
         description=(
-            "The original user request in its own language. Keep names, paths and text verbatim. "
-            "Optional when selecting evidence fields or an evidence source."
+            "Original user request. Keep its language, names, paths and text verbatim. Required "
+            "for the agent directory. Optional for an exact agent family or ranked evidence search."
         ),
     ),
 ]
@@ -48,9 +48,8 @@ _CatalogQuery = Annotated[
     Field(
         max_length=512,
         description=(
-            "Optional English action and target terms or an exact tool/action identifier for "
-            "lexical search. Keep the original request in query. Use with intent for action "
-            "searches without evidence constraints."
+            "Ranked search only. Optional English action and target terms or exact tool/action "
+            "identifier for lexical matching. Keep the original request in query."
         ),
     ),
 ]
@@ -58,9 +57,9 @@ _ObservationSource = Annotated[
     ObservationSource | None,
     Field(
         description=(
-            "Where required evidence must come from: the current Editor (editor_live), a saved "
+            "Ranked search only. Require evidence from the current Editor (editor_live), a saved "
             "file (asset_file), import results (imported_asset), a compilation job (compile_job), "
-            "or a Play Scenario job (scenario_job). Omit for an action-only search."
+            "or a Play Scenario job (scenario_job)."
         ),
     ),
 ]
@@ -68,8 +67,8 @@ _RequiredValues = Annotated[
     RequiredValues | None,
     Field(
         description=(
-            "Choose every declared result field the route must supply as evidence. Use with "
-            "observation_source when provenance matters. Omit for an action-only search."
+            "Ranked search only. Require every listed result field as evidence. Combine with "
+            "observation_source to require its provenance."
         ),
     ),
 ]
@@ -78,16 +77,22 @@ _INTENT_DESCRIPTION = (
     "interact for operating the Editor or running game, edit for changing project content."
 )
 _SEARCH_DESCRIPTION = (
-    "Use selection=agent with the original query to discover public families. Pass a returned "
-    "family and follow next_offset to compare every binding before choosing. Ranked search "
-    "also accepts intent and catalog_query, or observation_source and required_values for evidence."
+    "Choose one search mode. For exhaustive browsing, use selection=agent with the verbatim query, "
+    "then open returned family IDs and follow next_offset. For lexical or required evidence searches, "
+    "use selection=ranked. catalog_query, intent, observation_source and required_values are ranked only."
 )
 _Selection = Annotated[
     Literal["ranked", "agent"],
-    "Use agent for a public family directory and complete operation pages; ranked returns approximate matches.",
+    Field(
+        description="Choose agent for exhaustive browsing or ranked for lexical and required evidence search."
+    ),
 ]
 _Family = Annotated[
-    str | None, Field(min_length=1), "Exact family ID from the agent selection directory."
+    str | None,
+    Field(
+        min_length=1,
+        description="Agent browse only. Provide an exact family ID. query is optional.",
+    ),
 ]
 
 
@@ -114,11 +119,14 @@ async def search_unity_tools(
     query: _SearchQuery = None,
     limit: Annotated[int, Field(strict=True, ge=1, le=20), "Maximum results per page."] = 5,
     catalog_query: _CatalogQuery = None,
-    intent: Annotated[ActionIntent | None, Field(description=_INTENT_DESCRIPTION)] = None,
+    intent: Annotated[
+        ActionIntent | None, Field(description="Ranked search only. " + _INTENT_DESCRIPTION)
+    ] = None,
     observation_source: _ObservationSource = None,
     required_values: _RequiredValues = None,
     route_surfaces: Annotated[
-        RouteSurfaces | None, "Group tools, resources or both (default)."
+        RouteSurfaces | None,
+        Field(description="For either mode, show tools, resources or both (default)."),
     ] = None,
     host_tool_names: Annotated[
         HostToolNames | None,
@@ -132,38 +140,88 @@ async def search_unity_tools(
     selection: _Selection = "ranked",
     family: _Family = None,
     offset: Annotated[
-        int, Field(strict=True, ge=0), "Agent selection page offset. Follow next_offset."
+        int, Field(strict=True, ge=0, description="Agent browse only. Follow next_offset.")
     ] = 0,
 ) -> dict[str, Any]:
-    from services.registry.task_search import SearchRequest, search_catalog
+    from services.registry.task_search import (
+        AGENT_SEARCH_FIELDS,
+        RANKED_SEARCH_FIELDS,
+        SearchRequest,
+        search_catalog,
+    )
 
     if host_tool_names is not None and host_tool_evidence is not None:
         return {"success": False, "error": "Supply host_tool_names or host_tool_evidence."}
+    arguments = {
+        "selection": selection,
+        "family": family,
+        "query": query,
+        "catalog_query": catalog_query,
+        "limit": limit,
+        "intent": intent,
+        "observation_source": observation_source,
+        "required_values": required_values,
+        "route_surfaces": route_surfaces or "both",
+        "host_tool_names": host_tool_names,
+        "host_tool_evidence": host_tool_evidence,
+        **({"offset": offset} if offset else {}),
+    }
     try:
-        request = SearchRequest(
-            selection=selection,
-            family=family,
-            offset=offset,
-            query=query,
-            catalog_query=catalog_query,
-            limit=limit,
-            intent=intent,
-            observation_source=observation_source,
-            required_values=required_values,
-            route_surfaces=route_surfaces or "both",
-            host_tool_names=host_tool_names,
-            host_tool_evidence=host_tool_evidence,
-        )
-    except ValidationError:
-        if selection == "agent" or family is not None or offset:
+        request = SearchRequest.model_validate(arguments)
+    except ValidationError as error:
+        detail = error.errors(include_input=False)[0]
+        if detail["type"] == "search_query_required":
             return {
                 "success": False,
-                "error": "Use selection=agent, a nonblank original query (up to 512 characters), optional family, offset and limit 1..20. Omit ranked-search filters.",
+                "error": detail["msg"],
+                "required_one_of": ["query", "family"]
+                if selection == "agent"
+                else ["query", "observation_source", "required_values"],
             }
-        return {
+        if detail["type"] != "search_mode_conflict":
+            field = ".".join(map(str, detail["loc"]))
+            return {
+                "success": False,
+                "error": f"{field}: {detail['msg']}" if field else detail["msg"],
+            }
+
+        modes: list[tuple[str, tuple[str, ...], str]] = [
+            ("ranked", AGENT_SEARCH_FIELDS, "Search for routes with the supplied filters.")
+        ]
+        if observation_source is None and required_values is None:
+            modes.append(("agent", RANKED_SEARCH_FIELDS, "Browse complete operation pages."))
+        retries = []
+        for mode, fields, purpose in modes:
+            candidate = {
+                name: value
+                for name, value in arguments.items()
+                if name not in fields and value is not None
+            }
+            candidate["selection"] = mode
+            try:
+                retry = SearchRequest.model_validate(candidate)
+            except ValidationError:
+                continue
+            payload = retry.model_dump(mode="json", exclude_unset=True)
+            for name in ("query", "catalog_query"):
+                if name in candidate:
+                    payload[name] = candidate[name]
+            retries.append(
+                {
+                    "arguments": payload,
+                    "omit": [name for name in fields if arguments.get(name) is not None],
+                    "purpose": purpose,
+                }
+            )
+        result = {
             "success": False,
-            "error": "Supply query (1..512 nonblank characters), observation_source or 1..32 required_values. Use a declared source and values, optional catalog_query (1..512 characters), and limit 1..20.",
+            "error": detail["msg"],
+            "incompatible_fields": detail.get("ctx", {}).get("fields", []),
+            "search_retries": retries,
         }
+        if not retries:
+            result["hint"] = "Supply the original query for the corrected search."
+        return result
     entries, visible = await _catalog_inventory(
         ctx, get_registered_tools(), getattr(ctx.fastmcp, "_tool_discovery", None)
     )
@@ -196,9 +254,14 @@ async def search_unity_tools(
         if request.query is not None:
             retry = {
                 "retry_search": {
-                    "arguments": request.model_dump(
-                        include={"query", "catalog_query", "intent"}, exclude_none=True, mode="json"
-                    ),
+                    "arguments": {
+                        **request.model_dump(
+                            exclude={"family", "offset", "observation_source", "required_values"},
+                            exclude_none=True,
+                            mode="json",
+                        ),
+                        "query": query,
+                    },
                     "omit": ["observation_source", "required_values"],
                 }
             }
@@ -265,11 +328,12 @@ async def manage_tools(
     include_schema: Annotated[
         bool,
         Field(strict=True),
-        "On single-tool activation attach schema and readiness. On inspect_inventory include the advertised inputSchema and its SHA-256.",
+        "Describe always includes the schema. On single-tool activation attach schema and readiness. On inspect_inventory include the advertised inputSchema and its SHA-256.",
     ] = False,
     catalog_query: _CatalogQuery = None,
     offset: Annotated[
-        int, Field(strict=True, ge=0), "Catalog page offset for a selected group or tool."
+        int,
+        Field(strict=True, ge=0, description="Page offset for catalog or selection=agent search."),
     ] = 0,
     operation: Annotated[
         str | None,
@@ -280,15 +344,14 @@ async def manage_tools(
         ActionIntent | None,
         Field(
             description=_INTENT_DESCRIPTION
-            + " Use for search or catalog with a tool/group. Applies to classified routes."
+            + " Use with selection=ranked for search or with a tool/group in catalog."
         ),
     ] = None,
     observation_source: _ObservationSource = None,
     required_values: _RequiredValues = None,
     route_surfaces: Annotated[
         RouteSurfaces | None,
-        "For search, choose both (default), tools, or resources for route_groups. Use tools for a "
-        "tools-only client. Each group offers a representative and available alternatives.",
+        Field(description="For either search mode, show tools, resources or both (default)."),
     ] = None,
     host_tool_names: Annotated[
         HostToolNames | None,
@@ -367,12 +430,15 @@ async def manage_tools(
         return {"success": False, "error": "catalog_query is supported only for search."}
     if (selection != "ranked" or family is not None) and action != "search":
         return {"success": False, "error": "selection and family are supported only for search."}
-    if offset and action != "catalog" and not (action == "search" and selection == "agent"):
-        return {"success": False, "error": "offset is supported only for catalog."}
+    if offset and action not in {"catalog", "search"}:
+        return {"success": False, "error": "offset requires catalog or selection=agent search."}
     if operation is not None and action != "describe":
         return {"success": False, "error": "operation is supported only for describe."}
-    if include_schema and (action != "activate" or not tool or group is not None):
-        return {"success": False, "error": "include_schema requires activating one tool."}
+    if include_schema and (action not in {"activate", "describe"} or not tool or group is not None):
+        return {
+            "success": False,
+            "error": "include_schema requires one tool for describe, activate or inspect_inventory.",
+        }
     entries = get_registered_tools()
     if action == "catalog":
         from services.registry.action_catalog import CatalogRequest, browse_catalog
@@ -399,7 +465,7 @@ async def manage_tools(
                 "success": False,
                 "error": "search does not accept a group or tool selector.",
             }
-        return await search_unity_tools(
+        result = await search_unity_tools(
             ctx,
             selection=selection,
             family=family,
@@ -414,6 +480,11 @@ async def manage_tools(
             host_tool_names=host_tool_names,
             host_tool_evidence=host_tool_evidence,
         )
+        for retry in result.get("search_retries", []):
+            retry["arguments"]["action"] = "search"
+        if "retry_search" in result:
+            result["retry_search"]["arguments"]["action"] = "search"
+        return result
     if action in ("activate", "deactivate", "reset") and modern:
         if discovery is None or await discovery.scope_key(ctx) is None:
             return {"success": False, "error": UNSCOPED_GUIDANCE}
@@ -460,14 +531,25 @@ async def manage_tools(
         else:
             await operation(names={tool}, components={"tool"})
             changed = True
+        description = await manage_tools(ctx, "describe", tool=tool) if include_schema else None
+        if description is not None and "catalog" in description:
+            advertised = description["catalog"]["advertised"]
+        else:
+            advertised = any(item.name == tool for item in await _visible_tools(ctx))
+        diagnostic = {"resource": f"mcpforunity://tool-diagnostics/{tool}"}
         result = {
             "activated_tool" if action == "activate" else "deactivated_tool": tool,
             "changed": changed,
+            "server_advertised": advertised,
             "client_inventory_status": "unconfirmed",
             "message": REFRESH_GUIDANCE,
         }
-        if include_schema:
-            description = await manage_tools(ctx, "describe", tool=tool)
+        if action == "activate" and not advertised:
+            result.update(
+                message="Selected for this scope, but absent from its advertised inventory. Check the tool diagnostic for Editor availability and permission.",
+                next_action=diagnostic,
+            )
+        if description is not None:
             result["description"] = description
             from services.registry.action_catalog import declared_actions
 
@@ -475,8 +557,8 @@ async def manage_tools(
             result["readiness"] = {
                 "status": "unobserved",
                 "next_action": {"tool": tool, "action": "capabilities"}
-                if "capabilities" in actions
-                else {"resource": "mcpforunity://tool-diagnostics"},
+                if advertised and "capabilities" in actions
+                else diagnostic,
             }
         return result
 
@@ -490,37 +572,20 @@ async def manage_tools(
                 "error": f"Unknown group '{group}'. Valid: {', '.join(sorted(TOOL_GROUPS))}",
             }
 
-    if action == "activate":
-        tag = f"group:{group}"
-        logger.info("Activating tool group: %s", group)
+        names = get_group_tool_names().get(group, [])
+        enabled = action == "activate"
+        logger.info("%s tool group: %s", action, group)
         if discovery is not None:
-            changed = await discovery.update(
-                ctx, get_group_tool_names().get(group, []), enabled=True
-            )
+            changed = await discovery.update(ctx, names, enabled=enabled)
         else:
-            await ctx.enable_components(tags={tag}, components={"tool"})
+            update = ctx.enable_components if enabled else ctx.disable_components
+            await update(tags={f"group:{group}"}, components={"tool"})
             changed = True
+        visible = {item.name for item in await _visible_tools(ctx)}
         return {
-            "activated": group,
-            "tools": get_group_tool_names().get(group, []),
-            "changed": changed,
-            "client_inventory_status": "unconfirmed",
-            "message": REFRESH_GUIDANCE,
-        }
-
-    if action == "deactivate":
-        tag = f"group:{group}"
-        logger.info("Deactivating tool group: %s", group)
-        if discovery is not None:
-            changed = await discovery.update(
-                ctx, get_group_tool_names().get(group, []), enabled=False
-            )
-        else:
-            await ctx.disable_components(tags={tag}, components={"tool"})
-            changed = True
-        return {
-            "deactivated": group,
-            "tools": get_group_tool_names().get(group, []),
+            "activated" if enabled else "deactivated": group,
+            "tools": names,
+            "server_advertised_tools": sorted(visible.intersection(names)),
             "changed": changed,
             "client_inventory_status": "unconfirmed",
             "message": REFRESH_GUIDANCE,

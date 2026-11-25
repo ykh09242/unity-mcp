@@ -18,7 +18,7 @@ class FamilyCatalogResponse(TypedDict):
     scope: Literal["mcp_context", "local_catalog"]
     selection: Literal["agent"]
     matching: Literal["catalog"]
-    query: str
+    query: str | None
     route_surfaces: str
     readiness: Literal["unobserved"]
     offset: int

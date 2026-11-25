@@ -52,7 +52,7 @@ CLIENT_INVENTORY_GUIDANCE = (
     "are missing; a successful call confirms that tool for that request. "
 )
 REFRESH_GUIDANCE = (
-    "Server selection updated; the client's callable inventory is unconfirmed. "
+    "Selection processed. The client's callable inventory is unconfirmed. "
     + CLIENT_INVENTORY_GUIDANCE
     + "Unity availability and permissions still apply. "
     "Refresh tools/list after tools/list_changed. If the client uses a fixed inventory, "

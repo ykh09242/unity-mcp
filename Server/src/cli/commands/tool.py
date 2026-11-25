@@ -68,32 +68,32 @@ def _validate_query(_ctx, _param, value):
     type=click.Choice(["ranked", "agent"]),
     default="ranked",
     show_default=True,
-    help="Use agent to browse all public family and operation pages.",
+    help="Use agent for exhaustive browsing or ranked for lexical and required evidence search.",
 )
-@click.option("--family", help="An exact family ID from the directory for agent selection.")
+@click.option("--family", help="Agent browse only. An exact family ID. QUERY is optional.")
 @click.option(
     "--offset", type=click.IntRange(min=0), default=0, help="Agent selection page offset."
 )
 @click.option(
     "--catalog-query",
     callback=_validate_query,
-    help="Optional alternate terms for literal search, such as a known API identifier.",
+    help="Ranked search only. Alternate terms such as a known API identifier.",
 )
 @click.option(
     "--intent",
     type=click.Choice(["observe", "interact", "edit"]),
-    help="Filter routes by the requested outcome.",
+    help="Ranked search only. Filter routes by the requested outcome.",
 )
 @click.option(
     "--observation-source",
     type=click.Choice(get_args(ObservationSource)),
-    help="Select the origin of the requested evidence. A text query is optional.",
+    help="Ranked search only. Require this evidence source. QUERY is optional.",
 )
 @click.option(
     "--required-value",
     multiple=True,
     type=click.Choice(get_args(ObservationValue)),
-    help="Require a declared result field. Repeat to require every field.",
+    help="Ranked search only. Repeat to require every listed result field.",
 )
 @click.option(
     "--route-surfaces",
@@ -116,12 +116,14 @@ def search(
 ) -> None:
     """Search the offline local catalog by task purpose, without a Unity connection.
 
+    For the agent directory, supply QUERY verbatim. Use --family for an exact family page.
     Advertisement and project readiness remain unobserved in this offline scope.
     """
     from pathlib import Path
 
     import services.resources as resources_package
     import services.tools as tools_package
+    from pydantic import ValidationError
     from services.registry import get_registered_resources, get_registered_tools
     from services.registry.task_search import SearchRequest, search_catalog
     from utils.module_discovery import discover_modules
@@ -139,8 +141,9 @@ def search(
             required_values=list(required_value) or None,
             route_surfaces=route_surfaces,
         )
-    except ValueError as error:
-        raise click.UsageError(str(error)) from error
+    except ValidationError as error:
+        detail = error.errors(include_input=False)[0]
+        raise click.UsageError(detail["msg"]) from error
     list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
     list(discover_modules(Path(resources_package.__file__).parent, resources_package.__name__))
     result = search_catalog(

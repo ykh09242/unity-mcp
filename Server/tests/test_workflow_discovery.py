@@ -201,7 +201,8 @@ async def test_resource_catalog_keeps_per_call_project_selection(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_activation_can_return_schema_and_declared_readiness(monkeypatch):
+@pytest.mark.parametrize("advertised", [False, True])
+async def test_activation_can_return_schema_and_declared_readiness(monkeypatch, advertised):
     from fastmcp.tools import Tool
 
     def feature(action: Literal["capabilities", "edit"]):
@@ -215,7 +216,9 @@ async def test_activation_can_return_schema_and_declared_readiness(monkeypatch):
         fastmcp=SimpleNamespace(_tool_discovery=discovery), enable_components=AsyncMock()
     )
     monkeypatch.setattr(module, "is_sessionless", lambda _ctx: False)
-    monkeypatch.setattr(module, "_visible_tools", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        module, "_visible_tools", AsyncMock(return_value=[definition] if advertised else [])
+    )
     monkeypatch.setattr(
         module,
         "get_registered_tools",
@@ -225,10 +228,13 @@ async def test_activation_can_return_schema_and_declared_readiness(monkeypatch):
     descriptor = result["description"]["tool"]
     assert descriptor == definition.to_mcp_tool().model_dump(mode="json", exclude_none=True)
     assert descriptor["input_schema"]["properties"]["action"]["enum"] == ["capabilities", "edit"]
+    assert result["server_advertised"] is advertised
     assert result["client_inventory_status"] == "unconfirmed"
     assert result["readiness"] == {
         "status": "unobserved",
-        "next_action": {"tool": "feature", "action": "capabilities"},
+        "next_action": {"tool": "feature", "action": "capabilities"}
+        if advertised
+        else {"resource": "mcpforunity://tool-diagnostics/feature"},
     }
     discovery.update.assert_awaited_once_with(ctx, ["feature"], enabled=True)
 

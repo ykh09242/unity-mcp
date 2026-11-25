@@ -20,9 +20,9 @@ def test_agent_can_compare_every_public_binding_without_a_ranker(monkeypatch):
     monkeypatch.setattr(task_search, "_term_evidence", lambda *_: pytest.fail("invoked ranker"))
     query = "  Which port is selected?  "
 
-    def request(**extra):
+    def request(original=query, **extra):
         return task_search.search_catalog(
-            task_search.SearchRequest(selection="agent", query=query, limit=2, **extra),
+            task_search.SearchRequest(selection="agent", query=original, limit=2, **extra),
             entries,
             visible_names={"ports"},
         )
@@ -31,7 +31,7 @@ def test_agent_can_compare_every_public_binding_without_a_ranker(monkeypatch):
     assert index["query"] == query and index["matching"] == "catalog"
     assert [f["family"] for f in index["families"]] == ["ports"]
     first = request(family="ports")
-    last = request(family="ports", offset=first["next_offset"])
+    last = request(original=None, family="ports", offset=first["next_offset"])
     assert last["next_offset"] is None and first["total"] == 4
     assert {op["action"] for op in first["operations"] + last["operations"]} == {
         "status",
@@ -43,7 +43,7 @@ def test_agent_can_compare_every_public_binding_without_a_ranker(monkeypatch):
         op["tool"] == "ports" and op["advertised"]
         for op in first["operations"] + last["operations"]
     )
-    assert request(family="private_port").get("success") is False
+    assert request(original=None, family="private_port").get("success") is False
     assert request(host_tool_names=[])["families"] == []
 
 
@@ -308,7 +308,9 @@ async def test_agent_search_and_describe_match_live_enum_and_open_selector_contr
         ]
         assert card["action"] is None and card["required_parameters"] == ["action"]
         args["family"] = "rich_meter"
+        del args["query"]
         reply = await client.call_tool("manage_tools", {"action": "search", **args})
+        assert reply.structured_content["query"] is None
         assert {c["action"] for c in reply.structured_content["operations"]} == {
             "inspect",
             "adjust",
@@ -324,6 +326,136 @@ async def test_agent_search_and_describe_match_live_enum_and_open_selector_contr
         assert described.structured_content["operation"]["invoke"]["arguments"] == {
             "action": "inspect"
         }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "ranked_only", "ranked_mode"),
+    [
+        ("search_unity_tools", {"intent": "observe", "catalog_query": "inspect ports"}, "lexical"),
+        (
+            "manage_tools",
+            {
+                "intent": "interact",
+                "observation_source": "editor_live",
+                "required_values": ["render_size.width", "render_size.height"],
+            },
+            "observation",
+        ),
+    ],
+)
+async def test_conflicting_search_modes_offer_valid_scoped_retries(
+    tool_name, ranked_only, ranked_mode
+):
+    from fastmcp import Client, FastMCP
+    from services.tools import register_all_tools
+
+    server = FastMCP("search-mode-recovery")
+    register_all_tools(server)
+
+    @server.tool()
+    def wire_meter() -> str:
+        """Inspect ports and render size."""
+        pytest.fail("Discovery dispatched a tool")
+
+    baseline = {
+        "query": "  포트와 렌더 크기를 확인해 줘.  ",
+        "limit": 2,
+        "route_surfaces": "tools",
+        **(
+            {"host_tool_names": ["wire_meter"]}
+            if ranked_mode == "lexical"
+            else {
+                "host_tool_evidence": {
+                    "candidates": ["wire_meter"],
+                    "present": ["wire_meter"],
+                    "complete": True,
+                }
+            }
+        ),
+    }
+    wrapper = {"action": "search"} if tool_name == "manage_tools" else {}
+    async with Client(server, mode="legacy", cache=False) as client:
+        invalid = (
+            await client.call_tool(
+                tool_name, {**wrapper, **baseline, **ranked_only, "selection": "agent"}
+            )
+        ).structured_content
+        assert invalid["success"] is False
+        assert set(invalid["incompatible_fields"]) == set(ranked_only)
+        retries = {retry["arguments"]["selection"]: retry for retry in invalid["search_retries"]}
+        assert set(retries) == ({"ranked", "agent"} if ranked_mode == "lexical" else {"ranked"})
+        ranked = retries["ranked"]["arguments"]
+        assert ranked == {**wrapper, **baseline, **ranked_only, "selection": "ranked"}
+        ranked_reply = (await client.call_tool(tool_name, ranked)).structured_content
+        assert ranked_reply["matching"] == ranked_mode
+        if ranked_mode == "observation":
+            assert ranked_reply["routes"] == []
+            assert ranked_reply["no_match"]
+            separate_action = ranked_reply["retry_search"]
+            assert set(separate_action["omit"]) == {"observation_source", "required_values"}
+            assert separate_action["arguments"] == {
+                **wrapper,
+                **baseline,
+                "selection": "ranked",
+                "intent": "interact",
+            }
+        else:
+            browse_retry = retries["agent"]["arguments"]
+            assert browse_retry == {**baseline, "selection": "agent"}
+            browse = (
+                await client.call_tool(tool_name, {**wrapper, **browse_retry})
+            ).structured_content
+            assert [family["family"] for family in browse["families"]] == ["wire_meter"]
+
+
+def test_cli_can_browse_an_exact_family_without_repeating_the_original():
+    import json
+
+    from click.testing import CliRunner
+    from cli.main import cli
+
+    result = CliRunner().invoke(
+        cli, ["tool", "search", "--selection", "agent", "--family", "manage_scene", "--limit", "20"]
+    )
+
+    assert result.exit_code == 0, result.output
+    page = json.loads(result.stdout)
+    assert page["query"] is None and page["family"] == "manage_scene"
+    assert any(row["action"] == "set_active_scene" for row in page["operations"])
+
+
+@pytest.mark.asyncio
+async def test_manage_tools_ranked_offset_offers_scoped_agent_page():
+    from typing import Literal
+
+    from fastmcp import Client, FastMCP
+    from services.tools import register_all_tools
+
+    server = FastMCP("search-offset-recovery")
+    register_all_tools(server)
+
+    @server.tool()
+    def wire_ports(action: Literal["inspect", "adjust"]) -> str:
+        """Read or adjust ports."""
+        pytest.fail("Discovery dispatched a tool")
+
+    arguments = {
+        "action": "search",
+        "family": "wire_ports",
+        "offset": 1,
+        "limit": 1,
+        "route_surfaces": "tools",
+        "host_tool_names": ["wire_ports"],
+    }
+    async with Client(server, mode="legacy", cache=False) as client:
+        result = (await client.call_tool("manage_tools", arguments)).structured_content
+        assert result["incompatible_fields"] == ["family", "offset"]
+        (retry,) = result["search_retries"]
+        assert retry["arguments"] == {**arguments, "selection": "agent"}
+        page = (await client.call_tool("manage_tools", retry["arguments"])).structured_content
+    assert page["family"] == "wire_ports" and page["offset"] == 1
+    assert [card["action"] for card in page["operations"]] == ["inspect"]
 
 
 @pytest.mark.parametrize(
