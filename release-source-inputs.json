@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "repository": "https://github.com/ykh09242/unity-mcp",
-  "server_commit": "0dd225434976c87ce96c892b04b177386e154ff7",
-  "skill_commit": "5934b8d6325f2bc14d2eebd10ba5aca1d95d3e60",
-  "server_source": "https://github.com/ykh09242/unity-mcp/archive/0dd225434976c87ce96c892b04b177386e154ff7.zip#subdirectory=Server"
+  "server_commit": "3291afe6b5d069c7806cc7f935d6ea1c28ac66c7",
+  "skill_commit": "70e5ea433bfa088a41f91c1cb548265b8c2e6a95",
+  "server_source": "https://github.com/ykh09242/unity-mcp/archive/3291afe6b5d069c7806cc7f935d6ea1c28ac66c7.zip#subdirectory=Server"
 }
