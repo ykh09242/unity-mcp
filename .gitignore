@@ -1,6 +1,6 @@
 # AI-related files (user-specific)
 /.omo/
-/.work/
+.work/
 .cursorrules
 .cursorignore
 .windsurf
