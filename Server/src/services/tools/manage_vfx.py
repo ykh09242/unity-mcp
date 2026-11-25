@@ -100,6 +100,8 @@ ALL_ACTIONS = ["ping"] + PARTICLE_ACTIONS + VFX_ACTIONS + LINE_ACTIONS + TRAIL_A
         "Curve and gradient key coverage remains incomplete when size cannot be bounded before copying. "
         "Control and event actions report issuance status. "
         "Action-specific parameters go in `properties` (keys match ManageVFX.cs). "
+        "line_get_info returns up to 65536 positions. Set position_limit to request a smaller page "
+        "and use nextPositionOffset as position_offset while the renderer is unchanged. "
         "vfx_get_exposed_properties reads bounded exposed schema/current values with exact parameter filter, page_size/page_number, max_curve_keys/max_gradient_keys/max_characters. "
         "Texture values are identities, curves/gradients are complete or explicitly unavailable under budgets; override state is unavailable. No simulation or writes."
     ),

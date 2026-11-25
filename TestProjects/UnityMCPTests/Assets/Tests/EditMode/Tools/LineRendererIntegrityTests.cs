@@ -234,6 +234,28 @@ namespace MCPForUnityTests.Editor.Tools
             AssertRejectedPointWork("line_add_position", new JObject { ["position"] = new JArray(1, 2, 3) });
         }
 
+        [TestCase(0, PointLimit, 10f)]
+        [TestCase(PointLimit, 1, 20f)]
+        public void ReadLargeAuthoredLineReturnsBoundedPositionsAndContinuation(int offset, int rows, float firstX)
+        {
+            line.positionCount = PointLimit + 1;
+            line.SetPosition(0, new Vector3(10, 0, 0));
+            line.SetPosition(PointLimit - 1, new Vector3(15, 0, 0));
+            line.SetPosition(PointLimit, new Vector3(20, 0, 0));
+
+            var result = Call("line_get_info", offset == 0 ? null : new JObject { ["position_offset"] = offset });
+
+            Assert.IsTrue(result.Value<bool>("success"));
+            var data = (JObject)result["data"];
+            Assert.AreEqual(PointLimit + 1, data.Value<int>("positionCount"));
+            Assert.AreEqual(offset, data.Value<int>("positionOffset"));
+            Assert.AreEqual(offset == 0 ? PointLimit : (int?)null, data.Value<int?>("nextPositionOffset"));
+            var page = (JArray)data["positions"];
+            Assert.AreEqual(rows, page.Count);
+            Assert.AreEqual(firstX, page[0].Value<float>("x"));
+            Assert.AreEqual(offset == 0 ? 15f : 20f, page[rows - 1].Value<float>("x"));
+        }
+
         [Test]
         public void AddAcceptsPointBudgetBoundary()
         {
