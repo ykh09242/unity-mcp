@@ -12,9 +12,9 @@ def test_container_keeps_verified_python_index_digest_and_exact_uv_release():
     lines = (ROOT / "Server/Dockerfile").read_text().splitlines()
     assert (
         lines[0]
-        == "FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f"
+        == "FROM python:3.14-slim@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b"
     )
-    assert "RUN pip install uv==0.13.9" in lines
+    assert "RUN pip install uv==0.13.10" in lines
 
 
 def test_generator_invokes_reviewed_mcpb_release(tmp_path, monkeypatch):
