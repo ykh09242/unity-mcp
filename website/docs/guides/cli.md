@@ -22,23 +22,19 @@ For another installed Unity revision, use its `mcpServerSource`. If `unity-mcp` 
 
 ## Find a tool in the user's language
 
-Pass the original request to `tool search`. The bundled encoders rank individual
-operations and readable resources on the local CPU, including in an offline
-installation. Both model files ship with the server package. Use
-`search-model status --verify` to check them on the machine running the server.
+Pass the original request verbatim and use `--selection agent`. Read the family directory
+through its last `next_offset`, then repeat the original query for each chosen family.
+Compare the purposes, inputs and effects of every operation before choosing a binding.
 
 ```bash
-unity-mcp search-model status --verify
-unity-mcp --format json tool search "Where is the editor window in the menu?" --route-surfaces tools --limit 3
+unity-mcp --format json tool search "Which scene is active?" --selection agent --limit 20
 ```
 
-Read `route_groups` for the ranked candidates and `semantic_model` for the
-model that actually scored the request. In an MCP session, use
-`search_unity_tools` to search the current host's catalog. Agents can supply
-`intent` and English action and target terms in `catalog_query`. For a
-required read, `observation_source` and `required_values` select declarations
-that return those fields. Search suggests routes and leaves the Editor state
-unchanged.
+Use `--family ID` to expand a returned family and `--offset N` for the next page.
+The CLI browses local declarations. In an MCP session, `search_unity_tools` uses the host's
+public catalog. Agents interpret the original language. The server uses no search model.
+A plain `tool search QUERY` matches catalog words and exact identifiers. For a required
+read, `observation_source` and `required_values` select declarations that return those fields.
 
 ## Inspect and select
 

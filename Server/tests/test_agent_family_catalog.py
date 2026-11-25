@@ -17,7 +17,7 @@ def tool(name, actions):
 
 def test_agent_can_compare_every_public_binding_without_a_ranker(monkeypatch):
     entries = [tool("ports", ["status", "list", "set", "reset"]), tool("private_port", ["erase"])]
-    monkeypatch.setattr(task_search, "_semantic_catalog", lambda *_: pytest.fail("invoked ranker"))
+    monkeypatch.setattr(task_search, "_term_evidence", lambda *_: pytest.fail("invoked ranker"))
     query = "  Which port is selected?  "
 
     def request(**extra):

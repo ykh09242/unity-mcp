@@ -4111,23 +4111,6 @@ Validate a C# script for errors. Examples: unity-mcp script validate "Assets/Scr
 | --level / -l | choice: basic, standard | optional | nargs=1 | "basic" | — | Validation level. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
-## `unity-mcp search-model`
-
-Inspect the bundled offline search models.
-
-| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
-| --- | --- | --- | --- | --- | --- | --- |
-| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
-
-## `unity-mcp search-model status`
-
-Check both bundled model files locally and report their status.
-
-| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
-| --- | --- | --- | --- | --- | --- | --- |
-| --verify | boolean | optional | nargs=1, flag | — | — | Exit with an error if either bundled model fails. |
-| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
-
 ## `unity-mcp shader`
 
 Shader operations - create, read, update, delete shaders.

@@ -78,7 +78,6 @@ class ActionGuidance:
     evidence_limit: str = ""
     intent: ActionIntent | None = None
     observation: Observation | None = None
-    search_examples: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

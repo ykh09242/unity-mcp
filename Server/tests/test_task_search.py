@@ -380,3 +380,95 @@ def test_search_can_rank_a_readable_state_resource_before_mutating_actions():
     route = json.loads(result.stdout)["routes"][0]
     assert route["kind"] == "resource" and route["uri"] == "mcpforunity://editor/state"
     assert route["advertised"] is None and route["readiness"] == "unobserved"
+
+
+@pytest.mark.asyncio
+async def test_mcp_resolves_scope_before_running_cpu_search_off_the_event_loop(monkeypatch):
+    from threading import get_ident
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from services.registry import task_search
+    from services.tools import manage_tools
+
+    caller = get_ident()
+    item = {"name": "read_sample", "group": None, "description": "Read a sample.", "kwargs": {}}
+    monkeypatch.setattr(
+        manage_tools,
+        "_catalog_inventory",
+        AsyncMock(return_value=({"read_sample": item}, {"read_sample"})),
+    )
+    monkeypatch.setattr(manage_tools, "_catalog_resources", AsyncMock(return_value=[]))
+    search = task_search.search_catalog
+
+    def rank(request, entries, *, visible_names, resources):
+        assert get_ident() != caller
+        assert entries == [item] and visible_names == {"read_sample"} and resources == []
+        return search(request, entries, visible_names=visible_names, resources=resources)
+
+    monkeypatch.setattr(task_search, "search_catalog", rank)
+    ctx = SimpleNamespace(fastmcp=SimpleNamespace())
+    result = await manage_tools.search_unity_tools(
+        ctx, query="fonction disponible", catalog_query="read_sample"
+    )
+    assert result["query"] == "fonction disponible"
+    assert result["scope"] == "mcp_context" and result["matching"] == "lexical"
+    assert result["route_groups"][0]["representative"]["tool"] == "read_sample"
+
+
+def test_dispatcher_operation_prose_cannot_cross_action_boundaries():
+    from services.registry.action_catalog import documented_actions
+
+    declarations = "Operations:\n- empty:  \r\n- read_sample: Report the sample.\n- clear_sample: Erase the sample."
+    assert documented_actions(declarations) == {
+        "read_sample": "Report the sample.",
+        "clear_sample": "Erase the sample.",
+    }
+
+
+@pytest.mark.parametrize("description", [{}, {"description": " \t "}])
+def test_dynamic_action_uses_its_own_declared_purpose_in_search_and_describe(description):
+    from services.registry import task_search
+    from services.registry.action_catalog import describe_action
+
+    item = {
+        "name": "stock_desk",
+        "group": None,
+        "description": "Inventory operations.\n- alpha: Report remaining stock.\n- beta: Discard damaged stock.",
+        "kwargs": {},
+        "input_schema": {
+            "properties": {
+                "action": {"enum": ["alpha", "beta", "gamma"]},
+                "aisle": {"type": "string"},
+            },
+            "oneOf": [
+                {
+                    "properties": {"action": {"const": "alpha"}},
+                    "required": ["action", "aisle"],
+                    **description,
+                },
+                {
+                    "properties": {"action": {"const": "beta"}},
+                    "description": "Remove damaged stock.",
+                },
+                {"properties": {"action": {"const": "gamma"}}},
+            ],
+        },
+    }
+
+    for action, purpose, source, required in (
+        ("alpha", "Report remaining stock.", "declared", ["aisle"]),
+        ("beta", "Remove damaged stock.", "declared", []),
+        ("gamma", "gamma", "identifier", []),
+    ):
+        result = task_search.search_catalog(task_search.SearchRequest(query=action), [item])
+        route = result["route_groups"][0]["representative"]
+        assert (route["operation"], route["purpose"]) == (action, purpose)
+        bound = describe_action(item, {"inputSchema": item["input_schema"]}, action)
+        card = bound["operation"]
+        assert (card["purpose"], card["purpose_source"], card["required_parameters"]) == (
+            purpose,
+            source,
+            required,
+        )
+        assert bound["tool"]["inputSchema"]["required"] == ["action", *required]

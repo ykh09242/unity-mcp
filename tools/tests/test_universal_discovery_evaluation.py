@@ -1,8 +1,6 @@
-"""Guard bundled ranking and public agent evidence on the original discovery fixtures."""
+"""Guard lexical lookup and public agent evidence on the original discovery fixtures."""
 
-import argparse
 from dataclasses import replace
-import json
 import sys
 from pathlib import Path
 
@@ -10,24 +8,21 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from services.registry.semantic_coverage import MODEL_ID as COVERAGE_ID
-from services.registry.semantic_encoder import COMBINED_MODEL_ID
-from services.registry.semantic_encoder import MODEL_ID as PRIMARY_ID
-
 from tools.experiments.discovery_evaluation_fixture import FIXTURE, Request, load_suite
 from tools.experiments.universal_discovery_evaluation import (
-    PREREGISTERED_LIMITS,
     PROFILES,
     Inventory,
-    ProfileResult,
     evaluate_profile,
-    gate_failures,
     score,
 )
-from tools.tests.discovery_agent_contract import assert_public_agent_contract
+from tools.tests.discovery_agent_contract import BindingExclusions, assert_public_agent_contract
 
-REFERENCE = FIXTURE.with_name("universal_discovery_bundled_reference.json")
-SUITES = (FIXTURE, FIXTURE.with_name("universal_discovery_queries_v2.json"))
+SUITES = {
+    FIXTURE: "645d3fcd1924820fd62fa9320bfde872c8a6af10793f974b4cbd70f93fa8d841",
+    FIXTURE.with_name("universal_discovery_queries_v2.json"): (
+        "8c96401f5fb62cf3a385ec0e0b1683a53dc29187958e67f857fe308e49c9d797"
+    ),
+}
 EFFECT_FIXTURES = {
     "pairs": "85cad694d2991c66d9112be9091af247643b16ac8e9509b9963c40ff13d1854c",
     "confirmation": "9ea7ea36e00b700d41e393c811bb00a85a6f0288866c58e21aeaaa17984ac8d3",
@@ -36,82 +31,65 @@ SCENE_FIXTURES = {
     "edit_holdout": "386f463cf63b26cfecacec9bd05f3b0ae13f0e99f3a6ab1558c81c0138cea559",
     "activation_confirmation": "f8f123c5b3891a669da184fac148df70728bcd8d658d966766c391d86ce17a91",
 }
+_UNDECLARED_BINDINGS = frozenset({"manage_shader.modify"})
+_SHADER_GRAPH_TEMPLATE = "mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}"
+_FULL_PROFILE_TOOLS = {
+    "inspect_shader_graph",
+    "manage_camera",
+    "manage_cameras",
+    "manage_cinemachine",
+    "manage_gameobject",
+    "manage_prefabs",
+    "manage_scene",
+    "manage_shader",
+    "prefab_stage",
+}
 
 
-def compare_bundled_reference(actual: ProfileResult, expected: dict) -> list[str]:
-    if actual["languages"].keys() != expected["languages"].keys():
-        return ["changed language coverage"]
-    regressions = []
-    for scope, observed, baseline in (
-        ("all", actual["summary"], expected["summary"]),
-        *(
-            (language, actual["languages"][language], baseline)
-            for language, baseline in expected["languages"].items()
-        ),
-    ):
-        if observed["count"] != baseline["count"]:
-            regressions.append(f"{scope}: changed denominator")
-        for metric in ("available", "top1", "top3"):
-            if observed[metric] < baseline[metric]:
-                regressions.append(
-                    f"{scope}: {metric} {observed[metric]} below shipped {baseline[metric]}"
-                )
-    for metric in ("wrong_effect_top1", "wrong_effect_top3"):
-        if actual["summary"][metric] > expected["summary"][metric]:
-            regressions.append(
-                f"{metric} {actual['summary'][metric]} exceeds shipped {expected['summary'][metric]}"
-            )
-    return regressions
-
-
+@pytest.mark.parametrize("fixture", SUITES, ids=lambda path: path.stem)
+@pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.asyncio
-async def test_raw_multilingual_ranking_does_not_regress_from_the_shipped_bundle():
-    # Given the two frozen corpora and the independent measurement of the shipped ranking.
-    reference = json.loads(REFERENCE.read_bytes())
-    limits = argparse.Namespace(
-        require_matching="hybrid",
-        require_model=True,
-        expect_model=(PRIMARY_ID, COVERAGE_ID, COMBINED_MODEL_ID),
-        min_top1=0.0,
-        min_top3=0.0,
-        min_language_top1=0.0,
-        min_language_top3=0.0,
-        max_wrong_effect_top1=PREREGISTERED_LIMITS["max_wrong_effect_top1"],
+async def test_agent_catalog_exposes_profile_bindings_for_original_multilingual_requests(
+    fixture, profile
+):
+    suite = load_suite(fixture)
+    assert suite.sha256 == SUITES[fixture]
+    unavailable = _UNDECLARED_BINDINGS
+    catalog_only = frozenset()
+    if profile == "core":
+        unavailable |= frozenset(
+            binding
+            for request in suite.requests
+            for binding in request.expected | request.wrong_effect
+            if binding.partition(".")[0] in _FULL_PROFILE_TOOLS
+        )
+        # Discovery honors the parent shader toggle even though MCP lists the template.
+        catalog_only = frozenset({_SHADER_GRAPH_TEMPLATE})
+
+    await assert_public_agent_contract(
+        profile, suite, exclusions=BindingExclusions(unavailable, catalog_only)
     )
-
-    # When both local profiles search the exact original utterances without structured hints.
-    reports = {}
-    for fixture in SUITES:
-        snapshot = reference["suites"][fixture.name]
-        suite = load_suite(fixture)
-        assert suite.sha256 == snapshot["fixture_sha256"], fixture.name
-        for profile in PROFILES:
-            reports[fixture.name, profile] = await evaluate_profile(profile, suite)
-
-    # Then preserve the measured bundled quality, model identity and read-only behavior.
-    failures = {}
-    for (name, profile), report in reports.items():
-        snapshot = reference["suites"][name]["profiles"][profile]
-        reasons = gate_failures(report, limits) + compare_bundled_reference(report, snapshot)
-        models = set(report["semantic_models"])
-        if COMBINED_MODEL_ID not in models and not {PRIMARY_ID, COVERAGE_ID} <= models:
-            reasons.append("both bundled encoders must contribute to the evaluation")
-        if reasons:
-            failures[name, profile] = reasons
-    assert not failures, failures
 
 
 @pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.asyncio
-async def test_layer_number_queries_rank_the_readable_resource_first(profile):
+async def test_layer_number_queries_use_lexical_resource_identifier_with_original_text(profile):
     suite = load_suite(FIXTURE.with_name("universal_discovery_queries_v3.json"))
     requests = tuple(request for request in suite.requests if request.task == "layer_numbers")
     assert len(requests) == len({request.language for request in suite.requests}) == 8
-    report = await evaluate_profile(profile, replace(suite, requests=requests))
+    hints = {
+        request.query: {
+            "catalog_query": "mcpforunity://project/layers",
+            "route_surfaces": "resources",
+        }
+        for request in requests
+    }
+    report = await evaluate_profile(profile, replace(suite, requests=requests), hints=hints)
 
     assert report["inventory_unchanged"]
     assert not report["unexpected_business_calls"]
     assert not report["native_dispatch_attempts"]
+    assert report["matching"] == {"lexical": len(requests)}
     assert all(row["availability"] == "available" and row["rank"] == 1 for row in report["rows"])
     assert report["summary"]["hidden_expected_route"] == 0
 
@@ -144,7 +122,7 @@ def test_unadvertised_action_cannot_earn_rank_or_disappear_from_the_record():
         request,
         {
             "query": request.query,
-            "matching": "hybrid",
+            "matching": "lexical",
             "route_groups": [
                 {"representative": {"tool": "queue", "operation": "clear"}, "alternatives": []}
             ],

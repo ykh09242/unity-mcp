@@ -1,4 +1,4 @@
-"""Raw multilingual discovery and caller-selected lexical ranking use the same catalog."""
+"""Check multilingual originals across CLI catalog browsing and lexical lookup."""
 
 import json
 import unicodedata
@@ -43,13 +43,22 @@ def cli_search(query, *options):
         "Editörün neresinden Aydınlatma penceresine erişebilirim?",
     ],
 )
-def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
-    result = cli_search(query, "--limit", "3", "--route-surfaces", "tools")
-    assert query == result["query"] == result["matched_query"]
-    representatives = [group["representative"].get("tool") for group in result["route_groups"]]
-    assert "list_menu_declarations" in representatives
-    assert "list_menu_declarations" in [row["name"] for row in result["results"]]
-    assert result["recommended_action"] == "inspect_candidates"
+def test_cli_agent_catalog_offers_menu_declarations_for_original_questions(query):
+    result = cli_search(
+        query,
+        "--selection",
+        "agent",
+        "--family",
+        "list_menu_declarations",
+        "--route-surfaces",
+        "tools",
+    )
+    assert result["query"] == query and result["matching"] == "catalog"
+    assert result["view"] == "operations" and result["next_offset"] is None
+    (binding,) = result["operations"]
+    assert binding["invoke"] == {"tool": "list_menu_declarations", "arguments": {}}
+    assert binding["intent"] == "observe" and binding["readiness"] == "unobserved"
+    assert binding["advertised"] is None
 
 
 @pytest.mark.parametrize(
@@ -104,7 +113,7 @@ def test_cli_finds_unknown_menu_paths_for_other_window_names(query):
 def test_raw_menu_related_requests_suggest_routes_without_binding_a_menu_path(query):
     result = cli_search(query, "--limit", "3", "--route-surfaces", "tools")
     assert result["query"] == result["matched_query"] == query
-    assert result["matching"] in {"hybrid", "lexical"}
+    assert result["matching"] == "lexical"
     assert result["match_basis"] != "declared_observation"
     assert {"required_values", "observation_source"}.isdisjoint(result)
     assert result["recommended_action"] in {"inspect_candidates", "browse_catalog"}

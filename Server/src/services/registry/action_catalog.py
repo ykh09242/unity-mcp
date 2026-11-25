@@ -408,7 +408,6 @@ TOOL_GUIDANCE: Final = {
                 "Set the active scene to one that is already loaded. Select it by scene_path "
                 "or a unique scene_name (name is also accepted).",
                 intent="edit",
-                search_examples=("Switch to the scene I named and make it the active scene.",),
             ),
             "get_loaded_scenes": ActionGuidance(
                 "List all scenes currently open in the Editor with their names, paths and "
@@ -416,7 +415,6 @@ TOOL_GUIDANCE: Final = {
                 "Use a loaded scene's scene_handle to identify it exactly for save or validate.",
                 evidence_limit=_SCENE_OBSERVATION_IMPORT,
                 intent="observe",
-                search_examples=("Which scenes are currently open?",),
             ),
             "move_to_scene": ActionGuidance(
                 "Move a root GameObject to an already loaded scene selected by scene_path "
@@ -582,25 +580,21 @@ TOOL_GUIDANCE: Final = {
                 "Create a new tag in the project with the supplied name.",
                 ("tag_name",),
                 intent="edit",
-                search_examples=("Add a new tag to the project.",),
             ),
             "remove_tag": ActionGuidance(
                 "Delete an existing tag from the project by name.",
                 ("tag_name",),
                 intent="edit",
-                search_examples=("Remove an existing tag from the project.",),
             ),
             "add_layer": ActionGuidance(
                 "Create a new layer with the supplied name in the first available user layer slot.",
                 ("layer_name",),
                 intent="edit",
-                search_examples=("Add a new layer to the project.",),
             ),
             "remove_layer": ActionGuidance(
                 "Delete a named user layer from the project by clearing its slot.",
                 ("layer_name",),
                 intent="edit",
-                search_examples=("Remove an existing layer from the project.",),
             ),
             "deploy_package": ActionGuidance(
                 "Replace the Unity MCP package from its stored source. Requires an enabled "
@@ -882,16 +876,10 @@ for capability in CAPABILITIES:
             },
         )
 
-# Both reads forward to manage_scene. Keep the focused inventory's original
-# identifier searchable on its own alongside the newly shared description.
-_SCENE_INVENTORY: Final = TOOL_GUIDANCE["manage_scene"].actions["get_loaded_scenes"]
 TOOL_GUIDANCE["scene_inspect"] = ToolGuidance(
     actions={
         "get_active": TOOL_GUIDANCE["manage_scene"].actions["get_active"],
-        "get_loaded_scenes": replace(
-            _SCENE_INVENTORY,
-            search_examples=(*_SCENE_INVENTORY.search_examples, "scene inspect get loaded scenes"),
-        ),
+        "get_loaded_scenes": TOOL_GUIDANCE["manage_scene"].actions["get_loaded_scenes"],
     }
 )
 _SCENE_ACTIVATION: Final = TOOL_GUIDANCE["manage_scene"].actions["set_active_scene"]
@@ -1052,9 +1040,7 @@ def action_guidance(
     # meaning so selecting a catalog profile cannot turn a declared edit into an
     # unknown action or drop its description from search.
     if shared:
-        return ActionGuidance(
-            shared.purpose, intent=shared.intent, search_examples=shared.search_examples
-        )
+        return ActionGuidance(shared.purpose, intent=shared.intent)
     return None
 
 

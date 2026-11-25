@@ -32,26 +32,13 @@ envelope, and successful lookup does not imply the recorded operation succeeded.
 See the [CLI receipt guide](../../../website/docs/guides/cli.md#recover-a-command-after-response-loss)
 for enablement, key limits, examples and unknown-outcome rules.
 
-## Bundled search models
+## Discover operations from the original request
 
-`unity-mcp tool search` accepts the original request in the user's language.
-The bundled encoders select candidates by the meanings of individual operations
-and readable resources. JSON output includes the actual `semantic_model` and
-the ranked `route_groups`. For example, `--route-surfaces tools --limit 3`
-returns up to three groups with a callable tool binding. The CLI lists local
-declarations. Use the MCP search tool to rank the current host's visible catalog.
-
-The server package includes both multilingual encoders and their licenses.
-Use the CLI on the server's host to check its local package. The status command
-reports availability for each encoder. The `--verify` flag returns a nonzero
-exit code if either encoder is missing or damaged.
-
-```sh
-unity-mcp search-model status
-unity-mcp search-model status --verify
-```
-
-See the [bundled model sources and licenses](../services/registry/model/README.md).
+Use `unity-mcp tool search QUERY --selection agent --limit 20` for the local family directory.
+Follow `next_offset` through the directory, then pass each chosen `--family ID` and page
+through all its operations. Compare each binding's outcome, inputs and effects. In an MCP
+session, `search_unity_tools` provides the same flow scoped to the connected host.
+A plain `tool search QUERY` matches identifiers and catalog terms. Both paths work offline.
 
 ## JSON files and stdin
 

@@ -1,4 +1,4 @@
-"""Public agent selection uses declarations without loading either bundled encoder."""
+"""Public discovery works from packaged declarations without models or external I/O."""
 
 import json
 import socket
@@ -11,22 +11,14 @@ import pytest
 from cli.main import cli
 from click.testing import CliRunner
 from fastmcp import Client, FastMCP
-from services.registry import semantic_coverage, semantic_encoder
 from services.resources import register_all_resources
 from services.tools import register_all_tools
 
 _QUERY = "  광고 중인 도구 그룹과 등록된 작업을 확인해 주세요.  "
-_MODELS = {"static-multilingual-v1.q8", "potion-256.q2"}
 
 
-def test_only_pretrained_model_assets_are_packaged():
-    model_dir = files("services.registry").joinpath("model")
-    assert {item.name for item in model_dir.iterdir()} == _MODELS | {
-        "LICENSE.txt",
-        "README.md",
-        "POTION-LICENSE.txt",
-        "POTION.md",
-    }
+def test_no_model_assets_are_packaged():
+    assert not files("services.registry").joinpath("model").is_dir()
 
 
 async def _read_pages(request, view, *, limit, family=None):
@@ -67,7 +59,7 @@ def discovery_server(previous_install):
 
 
 @contextmanager
-def _offline(monkeypatch, previous_install, *, deny_models=False):
+def _offline(monkeypatch):
     attempts = []
 
     def deny(channel):
@@ -77,34 +69,22 @@ def _offline(monkeypatch, previous_install, *, deny_models=False):
 
         return denied
 
-    open_path = Path.open
-
-    def open_without_weights(path, *args, **kwargs):
-        if path.is_relative_to(previous_install) or (deny_models and path.name in _MODELS):
-            deny(path.name)()
-        return open_path(path, *args, **kwargs)
-
     with monkeypatch.context() as offline:
         offline.setattr(socket, "getaddrinfo", deny("DNS"))
         offline.setattr(socket.socket, "connect", deny("a network connection"))
         offline.setattr(socket.socket, "connect_ex", deny("a network connection"))
         offline.setattr(subprocess, "Popen", deny("a child process"))
-        offline.setattr(Path, "open", open_without_weights)
-        if deny_models:
-            offline.setattr(semantic_encoder, "_model", deny("the WordPiece encoder"))
-            offline.setattr(semantic_coverage, "_load", deny("the Unigram encoder"))
+        offline.setattr(Path, "open", deny("an extra file"))
         yield
     assert attempts == []
 
 
 @pytest.mark.asyncio
-async def test_public_search_uses_only_packaged_assets(
-    monkeypatch, previous_install, discovery_server
-):
-    query = "Unity Editor에 등록된 MenuItem 선언 목록을 읽어 주세요."
+async def test_public_search_matches_literal_terms_offline(monkeypatch, discovery_server):
+    query = "managed menu item declarations"
     arguments = {"query": query, "route_surfaces": "tools", "limit": 3}
     async with Client(discovery_server, mode="legacy", cache=False) as client:
-        with _offline(monkeypatch, previous_install):
+        with _offline(monkeypatch):
             direct = await client.call_tool("search_unity_tools", arguments)
             managed = await client.call_tool("manage_tools", {"action": "search", **arguments})
             local = CliRunner().invoke(
@@ -123,16 +103,15 @@ async def test_public_search_uses_only_packaged_assets(
             )
     assert local.exit_code == 0, local.output
     for result in (direct.structured_content, managed.structured_content, json.loads(local.stdout)):
-        assert result["query"] == query and result["semantic_model"]
+        assert result["query"] == query and result["matching"] == "lexical"
+        assert not result.get("semantic_model")
         tools = {group["representative"]["tool"] for group in result["route_groups"]}
         assert "list_menu_declarations" in tools
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ("search_unity_tools", "manage_tools", "cli"))
-async def test_public_agent_selection_requires_no_encoder(
-    monkeypatch, previous_install, discovery_server, surface
-):
+async def test_public_agent_selection_works_offline(monkeypatch, discovery_server, surface):
     async with Client(discovery_server, mode="legacy", cache=False) as client:
 
         async def request(options):
@@ -162,7 +141,7 @@ async def test_public_agent_selection_requires_no_encoder(
             assert result.exit_code == 0, result.output
             return json.loads(result.stdout)
 
-        with _offline(monkeypatch, previous_install, deny_models=True):
+        with _offline(monkeypatch):
             families = await _read_pages(request, "families", limit=20)
             (tool_family,) = (row for row in families if row["family"] == "manage_tools")
             operations = await _read_pages(

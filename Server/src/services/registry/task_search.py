@@ -28,20 +28,16 @@ from services.registry.action_catalog import (
     CatalogResource,
     GAME_VIEW_OBSERVATION,
     GRAPH_FILE_OBSERVATION,
-    OBSERVATION_META,
     Observation,
     ObservationSource,
     ObservationValue,
     CatalogTool as SearchResult,
     RESOURCE_TEMPLATE_EXPANSION,
     SEARCH_TERMS_META,
-    TOOL_GUIDANCE,
     action_guidance,
     action_intent,
     catalog_navigation,
     concrete_resources,
-    documented_actions,
-    operation_owner,
     resource_observation,
     resource_templates,
     tool_capability,
@@ -58,12 +54,6 @@ from services.registry.capability_catalog import (
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
 from services.registry.family_catalog import FamilyCatalogResponse, browse_families
 from services.registry.integration_action_guidance import MENU_INVENTORY_OBSERVATION
-from services.registry.semantic_catalog import (
-    SEMANTIC_EVIDENCE_FLOOR,
-    search_texts,
-    semantic_scores,
-)
-from services.registry.semantic_encoder import SemanticModelUnavailable
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
@@ -125,7 +115,6 @@ MatchBasis = Literal[
     "single_term",
     "incidental",
     "declared_observation",
-    "semantic_similarity",
     "none",
 ]
 
@@ -140,9 +129,7 @@ class SearchResponse(TypedDict):
     scope: Literal["local_catalog", "mcp_context"]
     query: str | None
     matched_query: str | None
-    matching: Literal["lexical", "observation", "hybrid"]
-    semantic_model: NotRequired[str]
-    semantic_status: NotRequired[Literal["unavailable"]]
+    matching: Literal["lexical", "observation"]
     observation_source: NotRequired[ObservationSource | None]
     required_values: NotRequired[list[ObservationValue]]
     catalog_language: Literal["en"]
@@ -183,7 +170,6 @@ class SearchRoute(TypedDict):
     readiness: Literal["unobserved"]
     intent: NotRequired[ActionIntent | None]
     matched_terms: NotRequired[list[str]]
-    semantic_similarity: NotRequired[float]
     distinctive_terms: NotRequired[list[str]]
 
 
@@ -381,127 +367,6 @@ def _term_evidence(words: set[str], *fields: tuple[str, int]) -> dict[str, int]:
     return evidence
 
 
-def _lexical_score(evidence: dict[str, int], words: set[str], hybrid: bool) -> int:
-    score = sum(evidence.values())
-    # A product name alone can match several verbs. Corroborate it with the rest of
-    # the request before it outweighs retrieval of the requested operation.
-    return round(score * len(evidence) / len(words)) if hybrid and words else score
-
-
-def semantic_documents(
-    capabilities,
-    resources,
-    unavailable_parents,
-    intent=None,
-    *,
-    exact_query=None,
-    surfaces="both",
-):
-    """Build semantic documents from eligible declarations; an exact identifier bypasses ranking."""
-    documents: dict[RouteKey, tuple[str, ...]] = {}
-    equivalent_keys: dict[str, list[RouteKey]] = {}
-    exact_keys: set[RouteKey] = set()
-    query = _normalized(exact_query) if exact_query is not None else None
-
-    def add(key, name, action, purpose, observation, examples=()):
-        if read := _READ_BY_ROUTE.get(key):
-            if not read.allowed(unavailable_parents):
-                return
-            if observation == read.observation:
-                equivalent_keys.setdefault(read.tool, []).append(key)
-        documents[key] = search_texts(
-            name, action, purpose, values=(observation or {}).get("values", ()), examples=examples
-        )
-
-    for entry, result in capabilities:
-        name = result["name"]
-        if result["advertised"] is False:
-            continue
-        if surfaces != "resources" and query == _normalized(name):
-            return None
-        action_descriptions = documented_actions(tool_description(entry))
-        for action in result["actions"] or [None]:
-            if surfaces != "resources" and action and query == _normalized(action):
-                return None
-            guidance = action_guidance(entry, action)
-            if intent and intent != action_intent(guidance, result):
-                continue
-            key = ("tool", name, action or "")
-            if query == _normalized(name) or (action and query == _normalized(action)):
-                exact_keys.add(key)
-            owner = operation_owner(name, action) if action else name
-            local = action_guidance(entry, action, inherit=False) if owner != name else guidance
-            canonical = (
-                TOOL_GUIDANCE[owner].actions.get(action)
-                if owner in TOOL_GUIDANCE and action
-                else None
-            )
-            purpose = (
-                local.purpose
-                if local
-                else (action_descriptions.get(action, "") if action else result["description"])
-            )
-            examples = local.search_examples if local else ()
-            if canonical and owner != name and local and local.purpose != canonical.purpose:
-                examples = tuple(ex for ex in examples if ex not in canonical.search_examples)
-            add(
-                key,
-                name,
-                action,
-                purpose,
-                guidance.observation if guidance else None,
-                examples,
-            )
-    for resource in resources:
-        identifier = resource.get("uri") or resource["uri_template"]
-        if surfaces != "tools" and query in (
-            _normalized(identifier),
-            _normalized(resource["name"]),
-        ):
-            return None
-        if intent not in (None, "observe"):
-            continue
-        template = "uri_template" in resource
-        key = ("resource_template" if template else "resource", identifier, "")
-        if query in (_normalized(identifier), _normalized(resource["name"])):
-            exact_keys.add(key)
-        meta = resource.get("kwargs", {}).get("meta") or {}
-        alias = meta.get(SEARCH_TERMS_META) or {}
-        add(
-            key,
-            resource["name"],
-            None,
-            resource.get("description") or "",
-            resource.get("observation") if template else meta.get(OBSERVATION_META),
-            alias.get("examples", ()) if isinstance(alias, dict) else (),
-        )
-    for keys in equivalent_keys.values():
-        descriptions = tuple(dict.fromkeys(text for key in keys for text in documents[key]))
-        for key in keys:
-            documents[key] = descriptions
-    if surfaces != "both":
-        eligible = {key for key in documents if (key[0] == "tool") == (surfaces == "tools")}
-        # Keep the tool-level view of a matched resource (and vice versa). These
-        # bindings score the same documents and cannot change the cutoff.
-        for keys in equivalent_keys.values():
-            if eligible.intersection(keys):
-                eligible.update(keys)
-        documents = {key: texts for key, texts in documents.items() if key in eligible}
-    return None if exact_keys.intersection(documents) else documents
-
-
-def _semantic_catalog(original, capabilities, resources, unavailable_parents, intent, surfaces):
-    documents = semantic_documents(
-        capabilities,
-        resources,
-        unavailable_parents,
-        intent,
-        exact_query=original,
-        surfaces=surfaces,
-    )
-    return semantic_scores(original, documents) if documents else None
-
-
 def _route_evidence(
     route: SearchRoute, query: str, words: set[str], distinctive: set[str], unique_terms: set[str]
 ) -> MatchBasis:
@@ -539,8 +404,6 @@ def _route_evidence(
         return "exact_identifier"
     if len(route["distinctive_terms"]) >= 2:
         return "multiple_terms"
-    if route.get("semantic_similarity", 0.0) >= SEMANTIC_EVIDENCE_FLOOR:
-        return "semantic_similarity"
     return "single_term" if route["distinctive_terms"] else "incidental"
 
 
@@ -723,28 +586,6 @@ def search_catalog(
     capabilities = [
         (entry, tool_capability(entry, visible_names=visible_names)) for entry in entries
     ]
-    model = None
-    semantic: dict[RouteKey, float] = {}
-    model_unavailable = False
-    if query and not request.catalog_query:
-        try:
-            encoded = _semantic_catalog(
-                matched_query,
-                capabilities,
-                [*available_resources, *available_templates],
-                unavailable_parents,
-                request.intent,
-                request.route_surfaces,
-            )
-            if encoded is not None:
-                model, semantic = encoded
-        except SemanticModelUnavailable:
-            model_unavailable = True
-    weights = {key: 160 * cosine for key, cosine in semantic.items()}
-
-    def add_semantic_evidence(route: SearchRoute, key: RouteKey) -> None:
-        if key in semantic:
-            route["semantic_similarity"] = round(semantic[key], 4)
 
     occurrences: Counter[str] = Counter()
     for entry, result in capabilities:
@@ -758,7 +599,6 @@ def search_catalog(
                 route = _tool_route(result, action, action_guidance(entry, action))
                 binding = _equivalent_binding(route, read)
                 if binding and read.allowed(unavailable_parents):
-                    add_semantic_evidence(binding, key)
                     available_equivalents[key] = binding
         if structured:
             selected_actions = []
@@ -795,15 +635,11 @@ def search_catalog(
             (" ".join(aliases), 2),
             (description + " " + (entry.get("group") or ""), 1),
         )
-        standalone_key = ("tool", name, "")
-        lexical = _lexical_score(terms, query_words, bool(semantic))
-        score = lexical + weights.get(standalone_key, 0.0)
+        lexical = sum(terms.values())
+        score = lexical
         score += 1000 if query == _normalized(name) else 0
         if query in _normalized(name):
             score += 100
-        elif semantic and len(query_words) > 1 and query_words == _words(name):
-            # Corroborate a hybrid match when the request reorders the complete tool name.
-            score += lexical
         action_matches = []
         entry_terms = set(terms)
         for action in actions:
@@ -811,8 +647,7 @@ def search_catalog(
             action_terms = _term_evidence(
                 query_words, (action, 9), (guidance.purpose if guidance else "", 6)
             )
-            key = ("tool", name, action)
-            if not action_terms and key not in semantic:
+            if not action_terms:
                 continue
             entry_terms.update(action_terms)
             # A repeated domain word in tool/title/action cannot crowd out the words
@@ -820,8 +655,7 @@ def search_catalog(
             operation_terms = terms.copy()
             for word, strength in action_terms.items():
                 operation_terms[word] = max(strength, terms.get(word, 0))
-            weight = _lexical_score(operation_terms, query_words, bool(semantic)) - lexical
-            weight += weights.get(key, 0.0)
+            weight = sum(operation_terms.values()) - lexical
             if query == _normalized(action):
                 weight += 150
             action_matches.append((weight, action, guidance))
@@ -839,11 +673,9 @@ def search_catalog(
         for index, (weight, action, guidance) in enumerate(suggested_actions):
             ranked = routes if index < 3 else additional_routes
             route = _tool_route(result, action, guidance)
-            add_semantic_evidence(route, ("tool", name, action))
             ranked.append((-(weight + score), name, action, route))
         if not action_matches:
             route = _tool_route(result, None, action_guidance(entry, None))
-            add_semantic_evidence(route, standalone_key)
             routes.append((-score, name, "", route))
     for resource in [*available_resources, *available_templates]:
         description = resource.get("description") or ""
@@ -897,7 +729,6 @@ def search_catalog(
         if read := _READ_BY_ROUTE.get(key):
             binding = _equivalent_binding(route, read)
             if binding and read.allowed(unavailable_parents):
-                add_semantic_evidence(binding, key)
                 available_equivalents[key] = binding
         if structured:
             if route.get("observation") and (not request.intent or request.intent == "observe"):
@@ -907,9 +738,7 @@ def search_catalog(
                     routes.append(item)
             continue
         occurrences.update(evidence.keys())
-        weight = _lexical_score(evidence, query_words, bool(semantic))
-        weight += weights.get(key, 0.0)
-        add_semantic_evidence(route, key)
+        weight = sum(evidence.values())
         if exact_name or query == _normalized(identifier):
             weight += 1000
         if weight:
@@ -949,7 +778,6 @@ def search_catalog(
                 for b in (
                     "exact_identifier",
                     "multiple_terms",
-                    "semantic_similarity",
                     "single_term",
                     "incidental",
                 )
@@ -971,9 +799,7 @@ def search_catalog(
         "scope": "mcp_context" if visible_names is not None else "local_catalog",
         "query": request.query,
         "matched_query": matched_query,
-        "matching": "observation" if structured else "hybrid" if model else "lexical",
-        **({"semantic_model": model} if model else {}),
-        **({"semantic_status": "unavailable"} if model_unavailable else {}),
+        "matching": "observation" if structured else "lexical",
         **(
             {
                 "observation_source": request.observation_source,
@@ -1024,7 +850,6 @@ def search_catalog(
             "multiple_terms",
             "exact_identifier",
             "declared_observation",
-            "semantic_similarity",
         }
         else "browse_catalog",
         "match_basis": basis,
@@ -1035,7 +860,8 @@ def search_catalog(
         )
         if structured
         else (
-            "Interpret the original request in its own language. Use navigation to choose by purpose "
+            "For agent selection, resend the original query with selection=agent and compare all "
+            "operations in the chosen families. Use navigation to choose by purpose "
             "even when words do not match or lexical suggestions are incidental. Browse the selected "
             "domain and compare action outcomes or read a listed resource. Supply intent with a tool or tool group in catalog "
             "to browse classified actions without matching any words. catalog_query is optional. "

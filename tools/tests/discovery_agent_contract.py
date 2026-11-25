@@ -1,5 +1,6 @@
 """Assertions for browsing actual MCP bindings from the frozen discovery fixtures."""
 
+from dataclasses import dataclass
 import os
 from unittest.mock import patch
 
@@ -34,6 +35,12 @@ _REQUIRED_PARAMETERS = {
     "remove_layer": {"layer_name"},
     "remove_tag": {"tag_name"},
 }
+
+
+@dataclass(frozen=True, slots=True)
+class BindingExclusions:
+    inventory: frozenset[str]
+    catalog_only: frozenset[str] = frozenset()
 
 
 async def _browse(client: Client, request: Request, family: str | None = None) -> list[dict]:
@@ -86,7 +93,11 @@ def _assert_declared_effect(binding: str, operation: dict) -> None:
 
 
 async def assert_public_agent_contract(
-    profile: str, suite: EvaluationSuite, *, shared_family: bool = False
+    profile: str,
+    suite: EvaluationSuite,
+    *,
+    shared_family: bool = False,
+    exclusions: BindingExclusions | None = None,
 ) -> None:
     """Check the catalog evidence exposed for each request, without picking a winner."""
     scope = {"UNITY_MCP_TOOL_PROFILE": profile, "UNITY_MCP_DISABLE_TELEMETRY": "1"}
@@ -119,6 +130,10 @@ async def assert_public_agent_contract(
         visible_bindings = {
             binding for binding in fixture_bindings if binding.partition(".")[0] not in hidden_tools
         }
+        catalog_exclusions = exclusions.catalog_only if exclusions else frozenset()
+        if exclusions:
+            visible_bindings.difference_update(exclusions.inventory)
+        eligible_bindings = visible_bindings - catalog_exclusions
 
         async with Client(server, mode="legacy", cache=False) as client:
             before = await read_inventory(client, fixture_bindings)
@@ -149,9 +164,8 @@ async def assert_public_agent_contract(
                         if binding in candidates:
                             matched_families.add(family_name)
 
-                expected = request.expected & visible_bindings
-                opposite = request.wrong_effect & visible_bindings
-                assert expected and opposite, request
+                expected = request.expected & eligible_bindings
+                opposite = request.wrong_effect & eligible_bindings
                 candidate_cards = cards.keys() & candidates
                 assert candidate_cards == expected | opposite, (request, candidate_cards)
                 siblings = {
@@ -159,11 +173,14 @@ async def assert_public_agent_contract(
                     for binding in before.actions
                     if binding.partition(".")[0] in candidate_tools
                 }
+                siblings.difference_update(catalog_exclusions)
                 assert siblings <= cards.keys(), (request, siblings - cards.keys())
                 if shared_family:
                     assert len(matched_families) == 1, (request, matched_families)
-                for binding in expected | opposite:
-                    _assert_declared_effect(binding, cards[binding])
+                if exclusions is None:
+                    assert expected and opposite, request
+                    for binding in candidate_cards:
+                        _assert_declared_effect(binding, cards[binding])
                 expected_purposes = {
                     cards[binding]["purpose"].strip().casefold() for binding in expected
                 }

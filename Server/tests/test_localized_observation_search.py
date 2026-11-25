@@ -41,16 +41,53 @@ async def test_real_catalog_finds_error_read_and_scene_camera_inventory(monkeypa
                     ("camera-depth", "both", "tool", "inspect_scene_cameras", None),
                 ):
                     query = prompts[task][locale]
-                    args = {"query": query, "route_surfaces": surface, "limit": 3}
-                    reply = (await client.call_tool("search_unity_tools", args)).structured_content
-                    assert query == reply["query"] == reply["matched_query"]
-                    routes = [group["representative"] for group in reply["route_groups"]]
-                    assert any(
-                        r.get(key) == target and r.get("operation") == action for r in routes
-                    ), (locale, task, surface)
-                    if key == "tool":
-                        assert target in [item["name"] for item in reply["results"]]
-                    assert reply["recommended_action"] == "inspect_candidates"
+                    cards = await _agent_cards(client, query, (surface, key, target))
+                    (read,) = [card for card in cards if card.get("action") == action]
+                    expected = "console.entries" if task == "console-errors" else "unityCameras"
+                    assert read["observation"]["source"] == "editor_live"
+                    assert expected in read["observation"]["values"], (locale, task, surface)
+                    assert read["intent"] == "observe"
+
+
+async def _agent_pages(client, **arguments):
+    view = "operations" if "family" in arguments else "families"
+    rows = []
+    offset = 0
+    while offset is not None:
+        reply = (
+            await client.call_tool(
+                "search_unity_tools",
+                {"selection": "agent", "limit": 20, "offset": offset, **arguments},
+            )
+        ).structured_content
+        assert reply["query"] == arguments["query"]
+        assert reply["matching"] == "catalog" and reply["view"] == view
+        assert reply["scope"] == "mcp_context" and reply["offset"] == len(rows)
+        if arguments["route_surfaces"] == "tools":
+            assert all(row["kind"] == "tool" for row in reply[view])
+        elif arguments["route_surfaces"] == "resources":
+            assert all(row["kind"] in {"resource", "resource_template"} for row in reply[view])
+        rows.extend(reply[view])
+        offset = reply["next_offset"]
+        if offset is not None:
+            assert reply["offset"] < offset == len(rows)
+    assert len(rows) == reply["total"]
+    return rows
+
+
+async def _agent_cards(client, query, binding):
+    surface, key, target = binding
+    arguments = {"query": query, "route_surfaces": surface}
+    families = await _agent_pages(client, **arguments)
+    (family,) = [
+        row for row in families if target == row["family"] or target in row.get("tools", [])
+    ]
+    cards = await _agent_pages(client, family=family["family"], **arguments)
+    assert len(cards) == family["count"]
+    selected = [card for card in cards if card.get(key) == target]
+    assert selected and all(card["advertised"] is True for card in selected)
+    assert all(card["readiness"] == "unobserved" for card in selected)
+    return selected
 
 
 @pytest.mark.asyncio
@@ -88,7 +125,7 @@ async def test_raw_unrelated_and_mutating_queries_do_not_establish_read_evidence
             response = await client.call_tool("search_unity_tools", {"query": query, "limit": 3})
             result = response.structured_content
             assert result["query"] == result["matched_query"] == query
-            assert result["matching"] in {"hybrid", "lexical"}
+            assert result["matching"] == "lexical"
             assert result["match_basis"] != "declared_observation"
             assert {"required_values", "observation_source"}.isdisjoint(result)
             assert result["recommended_action"] in {"inspect_candidates", "browse_catalog"}
@@ -120,31 +157,24 @@ async def test_raw_unrelated_and_mutating_queries_do_not_establish_read_evidence
         "Konsoldaki hata iletilerini aynen aktar. Kayıtları silme.",
     ],
 )
-async def test_raw_requests_to_read_errors_suggest_console_get(observation_server, query):
+async def test_agent_catalog_distinguishes_console_read_and_clear(observation_server, query):
     async with Client(observation_server, mode="legacy", cache=False) as client:
-        response = await client.call_tool(
-            "search_unity_tools", {"query": query, "limit": 3, "route_surfaces": "tools"}
-        )
-    result = response.structured_content
-    assert result["query"] == result["matched_query"] == query
-    assert ("read_console", "get") in [
-        (group["representative"].get("tool"), group["representative"].get("operation"))
-        for group in result["route_groups"]
-    ]
+        cards = await _agent_cards(client, query, ("tools", "tool", "read_console"))
+    by_action = {card["action"]: card for card in cards}
+    assert by_action["get"]["invoke"] == {"tool": "read_console", "arguments": {"action": "get"}}
+    assert by_action["get"]["intent"] == "observe"
+    assert by_action["clear"]["intent"] == "interact"
+    assert by_action["get"]["purpose"] != by_action["clear"]["purpose"]
 
 
 @pytest.mark.asyncio
-async def test_raw_camera_configuration_question_suggests_camera_inventory(observation_server):
+async def test_agent_catalog_offers_live_camera_inventory_for_original_question(observation_server):
     query = "¿Qué cámara tiene la mayor profundidad según la configuración actual?"
     async with Client(observation_server, mode="legacy", cache=False) as client:
-        response = await client.call_tool(
-            "search_unity_tools", {"query": query, "limit": 3, "route_surfaces": "tools"}
-        )
-    result = response.structured_content
-    assert result["query"] == result["matched_query"] == query
-    assert "inspect_scene_cameras" in [
-        group["representative"].get("tool") for group in result["route_groups"]
-    ]
+        (card,) = await _agent_cards(client, query, ("tools", "tool", "inspect_scene_cameras"))
+    assert card["intent"] == "observe" and card["required_parameters"] == []
+    assert card["observation"]["source"] == "editor_live"
+    assert "unityCameras" in card["observation"]["values"]
 
 
 @pytest.mark.asyncio
@@ -177,8 +207,14 @@ async def test_localized_reads_respect_host_and_explicit_search_controls(observa
             ("콘솔의 현재 오류 메시지는?", "read_console"),
             ("どのカメラの深度が最大？", "inspect_scene_cameras"),
         ):
-            args = {"action": "search", "query": query, "route_surfaces": "tools"}
+            args = {
+                "action": "search",
+                "query": query,
+                "catalog_query": tool,
+                "route_surfaces": "tools",
+            }
             raw = (await client.call_tool("manage_tools", args)).structured_content
+            assert raw["query"] == query and raw["matching"] == "lexical"
             assert tool in [group["representative"].get("tool") for group in raw["route_groups"]]
             for override in (
                 {"catalog_query": "find assets by name"},

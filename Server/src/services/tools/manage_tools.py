@@ -172,7 +172,7 @@ async def search_unity_tools(
             name: {**entry, "input_schema": visible[name].parameters} if name in visible else entry
             for name, entry in entries.items()
         }
-    # Resolve the caller's inventory on its MCP context before local CPU inference.
+    # Resolve the caller's inventory on its MCP context before browsing declarations.
     outcome = await asyncio.to_thread(
         search_catalog,
         request,

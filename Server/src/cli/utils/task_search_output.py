@@ -31,13 +31,8 @@ def format_task_search(result: SearchResponse, config: CLIConfig) -> str:
     entries = result["results"]
     groups = result["route_groups"]
     lines = [f"Route groups: {len(groups)} shown of {result['total_route_groups']} matches"]
-    if model := result.get("semantic_model"):
-        lines.append(f"Local search model: {model}")
-    elif result.get("semantic_status") == "unavailable":
-        lines.append("Local search model unavailable. Showing catalog text matches.")
     if groups and result["recommended_action"] == "browse_catalog":
-        kind = "semantic" if result["matching"] == "hybrid" else "lexical"
-        lines.append(f"Weak {kind} evidence. Browse by purpose before choosing an action.")
+        lines.append("Weak lexical evidence. Browse by purpose before choosing an action.")
     for group in groups:
         route = group["representative"]
         lines.append(f"  {route['kind']} {_route_target(route)} — {_summary(route['purpose'])}")

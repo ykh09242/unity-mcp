@@ -133,11 +133,6 @@ CAMERA_INVENTORY_OBSERVATION: Final[Observation] = {
     "conditions": "Count entries in the two camera arrays and read each entry's name. The brain field can be null.",
 }
 
-CAMERA_INVENTORY_SEARCH_EXAMPLES: Final = (
-    "Which camera in the open scene has the highest rendering depth? Show its name and value.",
-    "List cameras in the scene and compare their depths and rendering order.",
-)
-
 _CAMERA: Final = {
     "ping": _read(
         "Check whether the selected Editor can resolve Cinemachine and report its version when available."
@@ -149,7 +144,6 @@ _CAMERA: Final = {
         evidence_limit="With Cinemachine installed, the inventory reads provider methods and component getters. It does not attach a brain.",
         intent="observe",
         observation=CAMERA_INVENTORY_OBSERVATION,
-        search_examples=CAMERA_INVENTORY_SEARCH_EXAMPLES,
     ),
     "get_brain_status": _inspect(
         "Read the existing Cinemachine brain's active virtual camera and current blend state. Reports an error if the package or brain is absent.",
@@ -304,10 +298,6 @@ EDITOR_ACTIONS: Final = {
             'Read Unity Console entries. For errors only, set types=["error"]. '
             "Use filter_text for the requested text and nextCursor to continue a page.",
             effects=READ_ONLY_EFFECTS,
-            search_examples=(
-                "What errors are currently displayed in the Unity console? Show the error messages.",
-                "Read the current editor console log entries and list the messages.",
-            ),
             intent="observe",
             observation={
                 "source": "editor_live",

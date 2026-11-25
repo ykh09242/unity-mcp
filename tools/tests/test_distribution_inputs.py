@@ -142,11 +142,7 @@ def test_precise_container_copy_preserves_install_metadata_and_package_source_lo
     ]
     metadata = tomllib.loads((ROOT / "Server/pyproject.toml").read_text())
     assert metadata["project"]["readme"] == "README.md"
-    assert metadata["project"]["license-files"] == [
-        "LICENSE",
-        "src/services/registry/model/LICENSE.txt",
-        "src/services/registry/model/POTION-LICENSE.txt",
-    ]
+    assert metadata["project"]["license-files"] == ["LICENSE"]
     assert "WORKDIR /app/Server" in lines
     assert "RUN uv sync --locked --no-dev --compile-bytecode" in lines
     assert json.loads(

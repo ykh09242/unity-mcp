@@ -3,8 +3,8 @@ name = "ykh09242-unity-mcp-server"
 version = "2.5.0"
 description = "Unity MCP (ykh09242): Unity Editor integration via the Model Context Protocol (MCP)."
 readme = "README.md"
-license = "MIT AND Apache-2.0"
-license-files = ["LICENSE", "src/services/registry/model/LICENSE.txt", "src/services/registry/model/POTION-LICENSE.txt"]
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     {name = "Marcus Sanatan", email = "msanatan@gmail.com"},
     {name = "David Sarno", email = "david.sarno@gmail.com"},
@@ -85,14 +85,6 @@ where = ["src"]
 [tool.setuptools.package-data]
 core = ["sdk_compatibility.json"]
 services = ["skills_bundle.json", "test_results_view.html"]
-"services.registry" = [
-    "model/static-multilingual-v1.q8",
-    "model/potion-256.q2",
-    "model/POTION-LICENSE.txt",
-    "model/POTION.md",
-    "model/LICENSE.txt",
-    "model/README.md",
-]
 
 [tool.setuptools]
 py-modules = ["main"]
