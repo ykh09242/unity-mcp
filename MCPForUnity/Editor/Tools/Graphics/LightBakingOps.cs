@@ -13,12 +13,23 @@ namespace MCPForUnity.Editor.Tools.Graphics
 {
     internal static class LightBakingOps
     {
+        internal const int MaxProbeCount = 65536;
+
+        internal static bool FitsProbeGrid(int x, int y, int z) => x > 0 && y > 0 && z > 0 && x <= MaxProbeCount / y / z;
+
+        internal static Func<bool> IsBakeRunning = () => Lightmapping.isRunning;
+
+        private static ErrorResponse BakeInProgress() =>
+            new ErrorResponse("A light bake is in progress. Check bake_status before retrying.", new { reason = "light_bake_active" });
+
         // === bake_start ===
         // Params: async (bool, default true)
         internal static object StartBake(JObject @params)
         {
             if (Application.isPlaying)
                 return new ErrorResponse("Light baking requires Edit mode.");
+            if (IsBakeRunning())
+                return BakeInProgress();
 
             var p = new ToolParams(@params);
             bool async_ = p.GetBool("async", true);
@@ -54,7 +65,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
         // === bake_get_status ===
         internal static object GetStatus(JObject @params)
         {
-            bool running = Lightmapping.isRunning;
+            bool running = IsBakeRunning();
 #if UNITY_6000_7_OR_NEWER
             if (!Lightmapping.TryGetLightingSettings(out var settings))
                 settings = Lightmapping.lightingSettingsDefaults;
@@ -82,6 +93,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
         // === bake_clear ===
         internal static object ClearBake(JObject @params)
         {
+            if (IsBakeRunning())
+                return BakeInProgress();
             Lightmapping.Clear();
             Lightmapping.ClearLightingDataAsset();
             return new { success = true, message = "Cleared all baked lighting data and lighting data asset." };
@@ -289,6 +302,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
             int gridX = gridToken != null && gridToken.Count >= 1 ? gridToken[0].ReadScalar<int>() : 3;
             int gridY = gridToken != null && gridToken.Count >= 2 ? gridToken[1].ReadScalar<int>() : 2;
             int gridZ = gridToken != null && gridToken.Count >= 3 ? gridToken[2].ReadScalar<int>() : 3;
+            if (!FitsProbeGrid(gridX, gridY, gridZ))
+                return new ErrorResponse($"grid_size must contain positive dimensions with at most {MaxProbeCount} probes in total.");
 
             var go = new GameObject(name);
             bool completed = false;
@@ -300,7 +315,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 if (probeGroup == null)
                     return new ErrorResponse("Could not add LightProbeGroup component.");
 
-                var positions = new List<Vector3>();
+                var positions = new Vector3[gridX * gridY * gridZ];
+                int index = 0;
                 float halfX = (gridX - 1) * spacing * 0.5f;
                 float halfY = (gridY - 1) * spacing * 0.5f;
                 float halfZ = (gridZ - 1) * spacing * 0.5f;
@@ -311,22 +327,22 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     {
                         for (int z = 0; z < gridZ; z++)
                         {
-                            positions.Add(new Vector3(x * spacing - halfX, y * spacing - halfY, z * spacing - halfZ));
+                            positions[index++] = new Vector3(x * spacing - halfX, y * spacing - halfY, z * spacing - halfZ);
                         }
                     }
                 }
 
-                probeGroup.probePositions = positions.ToArray();
+                probeGroup.probePositions = positions;
                 GraphicsHelpers.MarkDirty(probeGroup);
                 completed = true;
                 return new
                 {
                     success = true,
-                    message = $"Created Light Probe Group '{name}' with {positions.Count} probes ({gridX}x{gridY}x{gridZ} grid, spacing {spacing}).",
+                    message = $"Created Light Probe Group '{name}' with {positions.Length} probes ({gridX}x{gridY}x{gridZ} grid, spacing {spacing}).",
                     data = new
                     {
                         instanceID = go.GetInstanceIDCompat(),
-                        probeCount = positions.Count,
+                        probeCount = positions.Length,
                         gridSize = new[] { gridX, gridY, gridZ },
                         spacing,
                         position = new[] { position.x, position.y, position.z },
@@ -425,6 +441,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var positionsToken = p.GetRaw("positions") as JArray;
             if (positionsToken == null || positionsToken.Count == 0)
                 return new ErrorResponse("'positions' parameter is required (array of [x,y,z] arrays).");
+            if (positionsToken.Count > MaxProbeCount)
+                return new ErrorResponse($"positions may contain at most {MaxProbeCount} probes.");
 
             var positions = new Vector3[positionsToken.Count];
             for (int i = 0; i < positionsToken.Count; i++)

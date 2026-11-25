@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools.Graphics;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -11,7 +10,6 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
-using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -43,7 +41,9 @@ namespace MCPForUnityTests.Editor.Tools
             originalActiveSelection = Selection.activeObject;
             captured = true;
             ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
+            if (SceneManager.GetActiveScene() != ownedScene)
+                Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
+            Assert.AreEqual(ownedScene, SceneManager.GetActiveScene());
             Lightmapping.TryGetLightingSettings(out originalOwnedSceneSettings);
         }
 
@@ -56,7 +56,8 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 if (ownedScene.IsValid() && ownedScene.isLoaded)
                 {
-                    Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
+                    if (SceneManager.GetActiveScene() != ownedScene)
+                        Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
                     foreach (GameObject go in ownedObjects)
                     {
                         if (go == null)
@@ -177,10 +178,48 @@ namespace MCPForUnityTests.Editor.Tools
         public void InvalidGridRejectsWithoutAllocatingObject()
         {
             string name = UniqueName();
-            LogAssert.Expect(LogType.Error, new Regex("\\[ManageGraphics\\] Action 'bake_create_light_probe_group' failed:"));
             var response = Send("bake_create_light_probe_group", new JObject { ["name"] = name, ["grid_size"] = new JArray(2, "bad", 3) });
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("grid_size[1]", response.Value<string>("error"));
             Assert.IsFalse(ownedScene.GetRootGameObjects().Any(go => go.name == name));
+        }
+
+        [TestCase(65537, 1, 1)]
+        [TestCase(257, 256, 1)]
+        [TestCase(2, 0, 1)]
+        [TestCase(1, -1, 1)]
+        public void InvalidGridDimensionsRefuseBeforeSceneMutation(int x, int y, int z)
+        {
+            string name = UniqueName();
+            var response = Send("bake_create_light_probe_group", new JObject { ["name"] = name, ["grid_size"] = new JArray(x, y, z) });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("65536", response.Value<string>("error"));
+            Assert.IsFalse(ownedScene.GetRootGameObjects().Any(go => go.name == name));
+        }
+
+        [TestCase(256, 256, 1, true)]
+        [TestCase(1, 1, 65536, true)]
+        [TestCase(int.MaxValue, int.MaxValue, int.MaxValue, false)]
+        [TestCase(int.MaxValue, 0, 1, false)]
+        public void ProbeGridBudgetHandlesExtremeDimensionsWithoutEnumerating(int x, int y, int z, bool expected) =>
+            Assert.AreEqual(expected, LightBakingOps.FitsProbeGrid(x, y, z));
+
+        [TestCase("bake_start")]
+        [TestCase("bake_clear")]
+        public void ActiveLightBakeRejectsConflictingCommands(string action)
+        {
+            var previous = LightBakingOps.IsBakeRunning;
+            try
+            {
+                LightBakingOps.IsBakeRunning = () => true;
+                var result = Send(action, new JObject());
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual("light_bake_active", (string)result["data"]["reason"]);
+            }
+            finally
+            {
+                LightBakingOps.IsBakeRunning = previous;
+            }
         }
 
         [Test]
@@ -296,13 +335,13 @@ namespace MCPForUnityTests.Editor.Tools
             int beforeDirty = EditorUtility.GetDirtyCount(group);
             JArray positions =
                 kind == "empty" ? new JArray() : new JArray { new JArray(9, 9, 9), kind == "short" ? new JArray(1, 2) : new JArray(1, 2, "bad") };
-            if (kind == "number")
-                LogAssert.Expect(LogType.Error, new Regex("\\[ManageGraphics\\] Action 'bake_set_probe_positions' failed:"));
             var response = Send(
                 "bake_set_probe_positions",
                 new JObject { ["target"] = group.gameObject.GetInstanceIDCompat().ToString(), ["positions"] = positions }
             );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            if (kind == "number")
+                StringAssert.Contains("positions[1][2]", response.Value<string>("error"));
             CollectionAssert.AreEqual(before, group.probePositions);
             Assert.AreEqual(beforeDirty, EditorUtility.GetDirtyCount(group));
         }
