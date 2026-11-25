@@ -2,7 +2,7 @@
 
 ## Matched conditions
 
-The [first trial](live_agent_trial.md) measured product revision `3973b243680eede8639343694edcb075c060b3e5`. Its [published observations](live_agent_results.json) were committed at `b859c1fb79ec1f227eca9dfa2946aeba0b57d2a0`. The repeat uses the product at `f4bb74a7adf186e8a37f56a43988514afe3d8579`.
+The [first trial](live_agent_trial.md) measured product revision `3973b243680eede8639343694edcb075c060b3e5`. Its [published observations](live_agent_results.json) were committed at `b859c1fb79ec1f227eca9dfa2946aeba0b57d2a0`. The repeat uses the product at `fe9fb9a70e15c86351f3f83de11308f6ee6f0d6f`. Initial fixture checks at `f4bb74a7a` found a configured registry being reported for local packages and an empty author field. Both were corrected before any scored actor session.
 
 Run the same 59 existing originals and 12 new multilingual originals from that study on each catalog. Preserve every case ID, query, fixture seed, profile order, six-minute turn limit, scoring rubric and state-preservation requirement. Give a fresh Codex CLI 0.172.0 session using `gpt-6.2-sol` at medium reasoning only the original request. The actor has ordinary access to the selected Unity MCP server with the same client approval policy. It can choose any public route. Read the real editor before and after each turn and independently adjudicate answers against its facts and the actor's recorded calls.
 
