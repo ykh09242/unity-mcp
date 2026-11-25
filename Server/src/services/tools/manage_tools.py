@@ -499,8 +499,6 @@ async def manage_tools(
         if discovery is None or await discovery.scope_key(ctx) is None:
             return {"success": False, "error": UNSCOPED_GUIDANCE}
     if action == "describe":
-        from services.registry.action_catalog import describe_action
-
         if group is not None or not tool:
             return {"success": False, "error": "describe requires a tool name and no group."}
         entries, visible = await _catalog_inventory(ctx, entries, discovery)
@@ -513,15 +511,7 @@ async def manage_tools(
                 "success": False,
                 "error": "Unknown tool in this catalog and the current advertised inventory. Browse catalog or refresh the client tool list.",
             }
-        try:
-            return describe_action(
-                {**entries[name], "input_schema": definition.parameters},
-                definition.to_mcp_tool().model_dump(mode="json", exclude_none=True),
-                operation,
-                visible_names=set(visible),
-            )
-        except ValueError as error:
-            return {"success": False, "error": str(error)}
+        return _describe_binding(entries[name], definition, operation, visible)
     if action == "list_groups":
         return await _list_groups(ctx)
 
@@ -541,12 +531,8 @@ async def manage_tools(
         else:
             await operation(names={tool}, components={"tool"})
             changed = True
-        description = await manage_tools(ctx, "describe", tool=tool) if include_schema else None
-        if description is not None and "catalog" in description:
-            advertised = description["catalog"]["advertised"]
-        else:
-            advertised = any(item.name == tool for item in await _visible_tools(ctx))
-        diagnostic = {"resource": f"mcpforunity://tool-diagnostics/{tool}"}
+        visible = await _selection_inventory(ctx)
+        advertised = tool in visible if visible is not None else None
         result = {
             "activated_tool" if action == "activate" else "deactivated_tool": tool,
             "changed": changed,
@@ -554,19 +540,32 @@ async def manage_tools(
             "client_inventory_status": "unconfirmed",
             "message": REFRESH_GUIDANCE,
         }
+        if visible is None:
+            result["message"] = (
+                "Selection processed. The server inventory was not observed for this caller."
+            )
+            return result
+        binding = await _retry_project_binding(ctx)
+        diagnostic = {"resource": f"mcpforunity://tool-diagnostics/{tool}"}
+        if binding:
+            diagnostic["_meta"] = binding
         if action == "activate" and not advertised:
             result.update(
                 message="Selected for this scope, but absent from its advertised inventory. Check the tool diagnostic for Editor availability and permission.",
                 next_action=diagnostic,
             )
-        if description is not None:
-            result["description"] = description
+        if include_schema:
             from services.registry.action_catalog import declared_actions
 
+            definition = visible.get(tool)
+            if definition is None and discovery is not None:
+                definition = discovery.definitions.get(tool)
+            if definition is not None:
+                result["description"] = _describe_binding(entry, definition, None, visible)
             actions = declared_actions(entry)
             result["readiness"] = {
                 "status": "unobserved",
-                "next_action": {"tool": tool, "action": "capabilities"}
+                "next_action": {"tool": tool, "action": "capabilities", **binding}
                 if advertised and "capabilities" in actions
                 else diagnostic,
             }
@@ -591,11 +590,13 @@ async def manage_tools(
             update = ctx.enable_components if enabled else ctx.disable_components
             await update(tags={f"group:{group}"}, components={"tool"})
             changed = True
-        visible = {item.name for item in await _visible_tools(ctx)}
+        visible = await _selection_inventory(ctx)
         return {
             "activated" if enabled else "deactivated": group,
             "tools": names,
-            "server_advertised_tools": sorted(visible.intersection(names)),
+            "server_advertised_tools": sorted(visible.keys() & set(names))
+            if visible is not None
+            else None,
             "changed": changed,
             "client_inventory_status": "unconfirmed",
             "message": REFRESH_GUIDANCE,
@@ -662,6 +663,36 @@ async def manage_tools(
         }
 
     return {"success": False, "error": f"Unknown action '{action}'"}
+
+
+def _describe_binding(entry, definition, operation, visible):
+    from services.registry.action_catalog import describe_action
+
+    try:
+        return describe_action(
+            {**entry, "input_schema": definition.parameters},
+            definition.to_mcp_tool().model_dump(mode="json", exclude_none=True),
+            operation,
+            visible_names=set(visible),
+        )
+    except ValueError as error:
+        return {"success": False, "error": str(error)}
+
+
+async def _selection_inventory(ctx: Context):
+    """Selection and optional inventory observation have independent admission."""
+    from fastmcp.exceptions import AuthorizationError
+    from fastmcp.utilities.versions import dedupe_with_versions
+    from services.operation_permissions import OperationPermissionError, remote_operation_allowed
+
+    if not await remote_operation_allowed("manage_tools", {"action": "inspect_inventory"}, ctx=ctx):
+        return None
+    try:
+        with internal_catalog(ctx.fastmcp, "tools/list"):
+            tools = await ctx.fastmcp.list_tools()
+    except (OperationPermissionError, AuthorizationError):
+        return None
+    return {item.name: item for item in dedupe_with_versions(tools, lambda item: item.name)}
 
 
 async def _catalog_resources(ctx: Context) -> list[CatalogResource]:

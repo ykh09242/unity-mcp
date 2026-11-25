@@ -213,12 +213,14 @@ async def test_activation_can_return_schema_and_declared_readiness(monkeypatch, 
         definitions={"feature": definition}, update=AsyncMock(return_value=True)
     )
     ctx = SimpleNamespace(
-        fastmcp=SimpleNamespace(_tool_discovery=discovery), enable_components=AsyncMock()
+        fastmcp=SimpleNamespace(
+            _tool_discovery=discovery,
+            list_tools=AsyncMock(return_value=[definition] if advertised else []),
+        ),
+        enable_components=AsyncMock(),
+        get_state=AsyncMock(return_value="Second@second"),
     )
     monkeypatch.setattr(module, "is_sessionless", lambda _ctx: False)
-    monkeypatch.setattr(
-        module, "_visible_tools", AsyncMock(return_value=[definition] if advertised else [])
-    )
     monkeypatch.setattr(
         module,
         "get_registered_tools",
@@ -232,11 +234,70 @@ async def test_activation_can_return_schema_and_declared_readiness(monkeypatch, 
     assert result["client_inventory_status"] == "unconfirmed"
     assert result["readiness"] == {
         "status": "unobserved",
-        "next_action": {"tool": "feature", "action": "capabilities"}
+        "next_action": {
+            "tool": "feature",
+            "action": "capabilities",
+            "unity_instance": "Second@second",
+        }
         if advertised
-        else {"resource": "mcpforunity://tool-diagnostics/feature"},
+        else {
+            "resource": "mcpforunity://tool-diagnostics/feature",
+            "_meta": {"unity_instance": "Second@second"},
+        },
     }
     discovery.update.assert_awaited_once_with(ctx, ["feature"], enabled=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selection", [{"tool": "feature", "include_schema": True}, {"group": "ui"}]
+)
+@pytest.mark.parametrize("can_read", [False, True])
+async def test_hosted_selection_observes_inventory_only_with_read_permission(
+    monkeypatch, selection, can_read
+):
+    from core.config import config
+    from fastmcp.tools import Tool
+    from services.operation_permissions import OperationGrants, Permission, authorize_operation
+
+    def feature():
+        pytest.fail("Selection invoked the tool")
+
+    definition = Tool.from_function(feature)
+    grants = OperationGrants(
+        frozenset({Permission.EDIT, Permission.READ} if can_read else {Permission.EDIT}), True
+    )
+    authorize_operation(grants, "manage_tools", {"action": "activate", **selection})
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    monkeypatch.setattr(
+        "services.credential_lease.require_credential_lease",
+        AsyncMock(return_value=SimpleNamespace(permissions=grants)),
+    )
+    monkeypatch.setattr(module, "is_sessionless", lambda _ctx: False)
+    monkeypatch.setattr(
+        module,
+        "get_registered_tools",
+        lambda: [{"name": "feature", "group": "ui", "func": feature}],
+    )
+    monkeypatch.setattr(module, "get_group_tool_names", lambda: {"ui": ["feature"]})
+    discovery = SimpleNamespace(
+        definitions={"feature": definition}, update=AsyncMock(return_value=True)
+    )
+    listing = AsyncMock(return_value=[definition])
+    ctx = SimpleNamespace(
+        fastmcp=SimpleNamespace(_tool_discovery=discovery, list_tools=listing),
+        enable_components=AsyncMock(),
+        get_state=AsyncMock(return_value=None),
+    )
+    result = await module.manage_tools(ctx, "activate", **selection)
+    assert result["changed"] is True
+    discovery.update.assert_awaited_once()
+    if "tool" in selection:
+        assert result["server_advertised"] is (True if can_read else None)
+        assert ("description" in result) == can_read
+    else:
+        assert result["server_advertised_tools"] == (["feature"] if can_read else None)
+    assert listing.await_count == int(can_read)
 
 
 @pytest.mark.asyncio
