@@ -97,7 +97,7 @@ require their own execution evidence; this suite does not claim those outcomes.
 
 ## Actual Codex client regression
 
-`tools/check_codex_interop.py` drives the installed **Codex CLI 0.171.0**
+`tools/check_codex_interop.py` drives the installed **Codex CLI 0.172.0**
 `app-server` through its experimental direct MCP RPCs. These are the actual Rust
 `codex-rmcp-client` transport and decoder, not the Python client configured with a
 Codex name. The fixture starts the production CLI, registry and all normal
@@ -169,11 +169,11 @@ observed protocol and status pagination. Protocol contracts come from the
 installed experimental schema and the
 [official app-server documentation](https://learn.chatgpt.com/docs/app-server).
 The client implementation is documented by the
-[pinned Rust source](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/codex-mcp/src/rmcp_client.rs),
+[pinned Rust source](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/codex-mcp/src/rmcp_client.rs),
 and the binary comes from the
-[official 0.171.0 release](https://github.com/openai/codex/releases/tag/rust-v0.171.0).
+[official 0.172.0 release](https://github.com/openai/codex/releases/tag/rust-v0.172.0).
 
-The pinned client's [protocol selection policy](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/rmcp-client/src/protocol_mode.rs)
+The pinned client's [protocol selection policy](https://github.com/openai/codex/blob/rust-v0.172.0/codex-rs/rmcp-client/src/protocol_mode.rs)
 requires both the feature and server opt-in for the explicit modern stdio mode
 used by the modern/private control. The fifth case enables `mcp_connection_sharing`
 through the actual feature-enablement RPC, keeps the ordinary modern feature false,

@@ -31,7 +31,7 @@ from anyio.abc import Process
 from pydantic import JsonValue
 
 ROOT: Final = Path(__file__).resolve().parents[1]
-PINNED_CODEX_VERSION: Final = "0.171.0"
+PINNED_CODEX_VERSION: Final = "0.172.0"
 PAGINATED_SERVERS: Final = ("unity", "unity_secondary")
 STATUS_REGISTRATION_HEADER: Final = "x-interop-registration"
 

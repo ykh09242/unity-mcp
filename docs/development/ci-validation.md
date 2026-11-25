@@ -326,7 +326,7 @@ inputs retain full validation. The independent license-free compile workflow ret
 existing path/matrix policy. No branch-protection settings are changed automatically.
 
 For full beta validation, `codex-interop.yml` checks out the caller's commit and
-verifies the event SHA and Git checkout before starting the pinned Codex 0.171.0
+verifies the event SHA and Git checkout before starting the pinned Codex 0.172.0
 binary. The isolated client exercises all five protocol, transport and sharing
 cases and checks discovery and thread inventory reuse across MCP status pages.
 The artifact name, job summary and `receiving_sha` in the execution receipt
