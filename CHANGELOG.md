@@ -2,6 +2,26 @@
 
 Changes in the ykh09242 fork of Unity MCP. Open a version heading for its installation URL, downloads, and verification results. [GitHub Releases](https://github.com/ykh09242/unity-mcp/releases)
 
+## [2.6.0 — Share an Editor across chats and test save upgrades in built games](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v2.6.0)
+
+A script reload could leave one chat holding the Editor while every other chat waited. Unity MCP 2.6.0 releases that slot when the reload interrupted a request before Unity started it. This release also takes verification into the built game. You can now open a previous build's save in a new Player, restart it, and check what survived.
+
+### Keep working when another chat triggers a reload
+
+Two chats reading the same Editor state can share one observation and keep separate timeouts. If one stops waiting, the other can still receive its result. For a refresh, use `get_compile_job` with the original job ID. The status `interrupted_before_native_dispatch` means Unity never received the compile request. If dispatch is uncertain, the original job remains the place to check before starting another refresh. [Editor readiness and recovery](https://github.com/ykh09242/unity-mcp/blob/ykh09242-v2.6.0/docs/editor-readiness-and-previews.md)
+
+### Test a save migration across three launches
+
+With two registered standalone builds and a project-owned scenario that uses a disposable save slot, run `unity-mcp verification-candidate save-upgrade`. The previous Player writes the save, the new Player migrates it, and a fresh process opens it again. Check that the player's coin balance survives and a one-time migration runs exactly once. This check runs on prebuilt Players without launching Unity Editor. [Save-upgrade guide](https://github.com/ykh09242/unity-mcp/blob/ykh09242-v2.6.0/docs/verification-save-upgrade.md)
+
+### Trace a surprising value to its source
+
+- **A lamp is too bright.** Use `prefab_overrides` with `action="trace_property"` on the Light component's `m_Intensity`. The result follows the scene instance through its prefab variants and identifies the layer that supplied the value. [Prefab example](https://github.com/ykh09242/unity-mcp/blob/ykh09242-v2.6.0/docs/development/prefab-property-origins.md)
+- **A loading screen opens the wrong scene.** `verification-candidate scene-index-diff` shows where a literal `LoadScene(1)` points before and after a Build Settings reorder, with the old and new scene GUIDs and paths. [Scene-index example](https://github.com/ykh09242/unity-mcp/blob/ykh09242-v2.6.0/docs/verification-scene-index.md)
+- **You need the cameras in a scene.** The assistant can use your question to compare the operations available to its connection and select the read-only camera inventory. The catalog needs no separate search model or API key. [Tool discovery](https://github.com/ykh09242/unity-mcp/blob/ykh09242-v2.6.0/docs/task-tool-discovery.md)
+
+After updating the package, regenerate existing stdio client configurations to select the pinned 2.6.0 server. [Client setup](https://github.com/ykh09242/unity-mcp/blob/ykh09242-v2.6.0/website/docs/getting-started/clients.md)
+
 ## [2.5.0 — Discover tool actions and verify what Unity changed](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v2.5.0)
 
 Run `unity-mcp tool catalog --tool manage_shader` to see the shader operations in the offline catalog. In a connected MCP client, call `manage_tools` with `action="describe"`, `tool="manage_shader"` and `operation="diagnostics"` for the exact operation schema. The same catalog powers multilingual tool search. [Tool discovery reference](https://github.com/ykh09242/unity-mcp/blob/ykh09242-v2.5.0/website/docs/reference/tools/core/manage_tools.md)
