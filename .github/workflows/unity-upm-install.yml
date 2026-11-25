@@ -207,7 +207,7 @@ jobs:
           customImage: ${{ steps.editor.outputs.image }}
           testMode: editmode
           customParameters: -testFilter UntouchedUpmSmoke.UntouchedPackageInstallTests
-          cliVersion: v0.1.76
+          cliVersion: v0.1.77
           githubToken: ""
           artifactsPath: ${{ steps.native-output.outputs.root }}
 

@@ -16,7 +16,7 @@ import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
 
-# Match the CLI pinned by the Unity test workflows (v0.1.76).
+# Match the CLI pinned by the Unity test workflows (v0.1.77).
 GAME_CI_COMMIT = "39868753b787468332a1f5a85aa151d02c8555c6"
 GAME_CI_SCRIPTS = (
     "activate.sh",

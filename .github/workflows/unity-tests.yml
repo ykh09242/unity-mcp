@@ -493,7 +493,7 @@ jobs:
           customImage: ${{ steps.editor.outputs.image }}
           testMode: editmode
           customParameters: -testFilter ${{ matrix.suite.filter }}
-          cliVersion: v0.1.76
+          cliVersion: v0.1.77
           githubToken: ""
           artifactsPath: ${{ steps.native-output.outputs.root }}
 
@@ -726,7 +726,7 @@ jobs:
           customImage: ${{ steps.editor.outputs.image }}
           testMode: ${{ matrix.testMode }}
           customParameters: -testCategory domain_reload
-          cliVersion: v0.1.76
+          cliVersion: v0.1.77
           # Results are gated locally; this read-only job cannot publish Checks API results.
           githubToken: ""
           artifactsPath: ${{ steps.domain-output.outputs.root }}
@@ -777,7 +777,7 @@ jobs:
           # Run ordinary PlayMode regressions as well as the attributed evidence bodies.
           # The separately coordinated cancellation workload remains manual and Explicit.
           customParameters: ${{ matrix.testMode == 'playmode' && format('-testCategory !manual_cancellation_probe --mcp-playmode-reload {0} --mcp-playmode-session {1}', matrix.domainReload, steps.playmode-session.outputs.session_id) || '' }}
-          cliVersion: v0.1.76
+          cliVersion: v0.1.77
           githubToken: ""
           # Keep the preceding domain-reload XML out of the regular suite's result gate.
           artifactsPath: ${{ steps.native-output.outputs.root }}

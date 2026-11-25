@@ -44,6 +44,6 @@ and license contents. A failed preparation may have only its earlier source rece
 The implementation follows the exact pinned
 [action wrapper](https://github.com/game-ci/unity-test-runner/blob/32e57712352b500e17974b245a6dce9e11a73213/src/index.ts),
 [action inputs](https://github.com/game-ci/unity-test-runner/blob/32e57712352b500e17974b245a6dce9e11a73213/action.yml)
-and CLI `v0.1.76`
-[Docker mount implementation](https://github.com/game-ci/cli/blob/v0.1.76/src/model/docker.ts).
+and CLI `v0.1.77`
+[Docker mount implementation](https://github.com/game-ci/cli/blob/v0.1.77/src/model/docker.ts).
 Keep the action and CLI pins explicit when changing these contracts.
