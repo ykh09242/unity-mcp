@@ -1,0 +1,23 @@
+# Public tool contracts and task completion
+
+The baseline is `0e57b46ffc778d7b6ca614b29974a6cce0303d09`. The catalog census covers the shipped server, including the optional execution-receipt control. It records each tool's public schema and describes every selector on both supported MCP generations. Dynamic project tools depend on the connected project. The prior Unity project advertised 31 tools on core and 90 on full. An absent tool can depend on the Editor preference, consent, installed packages or project binding. The inventory alone does not establish the cause. [Reproducible census](tool_catalog_audit.py) · [Prior native inventories and original outcomes](live_agent_followup_results.json)
+
+| Contract check | Baseline | After |
+| --- | ---: | ---: |
+| Static tools / named groups | 134 / 17 | 134 / 17 |
+| Named actions / tools without an action selector | 816 / 35 | 816 / 35 |
+| Bindings described per protocol | 851 | 851 |
+| Selected incomplete calls admitted by the action schema and refused by the handler | 19/19 | 0/19 |
+| Forwarded operations missing a documented observation limit | 6 | 0 |
+
+The input probes cover eight Input System operations, six Terrain operations, three reflection operations and two scene lifecycle operations. The checks use the actual public descriptions and Python handlers. The observation limits describe the scope of six forwarded scene operations. [Action inputs and schema checks](../../Server/tests/test_action_input_contracts.py) · [Forwarded capabilities](../../Server/tests/test_action_catalog.py)
+
+In the previous 142 agent turns, 31 search calls failed after mixing search modes or omitting the original from an exact family lookup. An SDK replay against the original tool inventories returned the operation pages directly in two cases. For the other 29, the server returned valid retry arguments. All three retries with required evidence kept their constraints and found observation candidates. The replay had seven fewer resources than the original Editor and measured individual requests. A separate set of 15 rejected schema descriptions in the original turns supplied `include_schema=true`. The same bound describe now succeeds with or without that flag on both MCP generations. [SDK tests](../../Server/tests/test_agent_family_catalog.py) · [Public describe checks](../../Server/tests/test_functional_tool_catalog.py)
+
+The AudioImporter fixture ran against Unity 6000.0.69f1. The same 18 Edit Mode checks produced 17 passes at baseline and 18 after the fix. The failing read used the documented `iOS` name. The fixture also verifies that aliases identify the same persisted override on apply, readback and clear, that other settings survive and that invalid selectors are refused. [Native tests](../../TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/ManageAudioDiagnosticsTests.cs)
+
+Run the catalog audit with the repository's existing server development environment. It enumerates through the public SDK on an in-memory transport and performs no native edits.
+
+```sh
+python tools/experiments/tool_catalog_audit.py --output catalog.json
+```
