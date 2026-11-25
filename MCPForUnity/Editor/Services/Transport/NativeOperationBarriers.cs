@@ -185,7 +185,7 @@ namespace MCPForUnity.Editor.Services.Transport
                             "package_request_handle_lost",
                             "restart_required",
                             "inspect_native_work_then_restart_editor",
-                            "A Package Manager request survived a domain reload without its Request handle. "
+                            "The Package Manager Request handle is unavailable after invocation or domain reload. "
                                 + "Installed package metadata cannot prove the request completed. Wait for Package Manager activity to settle, then restart the Editor to reset this session's ownership."
                         )
                     );

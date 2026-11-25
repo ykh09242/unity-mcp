@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -32,6 +33,69 @@ namespace MCPForUnityTests.Editor.Services
                 Jobs.Add(pair.Key, pair.Value);
             SessionState.SetString("MCPForUnity.PackageJobsV1", _originalSession);
             PackageJobManager.RegisteredPackagesReader = _originalRegistrationReader;
+        }
+
+        [TestCase("add_package")]
+        [TestCase("remove_package")]
+        [TestCase("embed_package")]
+        public void MutationRequiresVerifiedIntentAndKeepsAnUnobservedInvocationOwned(string action)
+        {
+            const string key = "MCPForUnity.Packages.NativeMutationV1";
+            Assert.IsFalse(
+                ManagePackages.HasNativeMutation
+                    || ManagePackages.MutationRecoveryRequired
+                    || ManagePackages.HasNativeQuery
+                    || ManagePackages.QueryRecoveryRequired
+            );
+            var lost = typeof(ManagePackages).GetField("LostMutationOwner", BindingFlags.Static | BindingFlags.NonPublic);
+            var oldInvoker = ManagePackages.MutationInvoker;
+            var writer = PackageJobManager.SessionWriter;
+            var parameters = new JObject
+            {
+                ["action"] = action,
+                ["package"] = "com.fixture.tool",
+                ["force"] = true,
+            };
+            int invocations = 0;
+            bool fenced = false;
+            try
+            {
+                ManagePackages.MutationInvoker = (_, _) =>
+                {
+                    invocations++;
+                    fenced = ManagePackages.HasNativeMutation && SessionState.GetBool(key, false);
+                    throw new System.InvalidOperationException("controlled missing native handle");
+                };
+                var malformed = (JObject)parameters.DeepClone();
+                malformed["package"] = new JObject();
+                Assert.AreEqual("'package' must be a string.", (string)JObject.FromObject(ManagePackages.HandleCommand(malformed))["error"]);
+                Assert.Zero(invocations);
+                PackageJobManager.SessionWriter = _ => { };
+                JObject rejected = JObject.FromObject(ManagePackages.HandleCommand(parameters));
+                Assert.AreEqual("persistence_failed", (string)rejected["data"]["reason"]);
+                Assert.Zero(invocations);
+                Assert.IsEmpty(Jobs);
+                Assert.IsFalse(ManagePackages.HasNativeMutation || ManagePackages.MutationRecoveryRequired);
+
+                PackageJobManager.SessionWriter = writer;
+                JObject response = JObject.FromObject(ManagePackages.HandleCommand(parameters));
+                Assert.IsTrue(fenced);
+                Assert.AreEqual("unknown", (string)response["data"]["status"]);
+                Assert.AreEqual("native_request_unobserved", (string)response["data"]["recovery"]["reason"]);
+                var status = JObject.FromObject(ManagePackages.HandleCommand(new JObject { ["action"] = "status", ["job_id"] = response["data"]["job_id"] }));
+                Assert.AreEqual("unknown", (string)status["data"]["status"]);
+                Assert.IsTrue(ManagePackages.MutationRecoveryRequired);
+                JObject blocked = JObject.FromObject(ManagePackages.HandleCommand(parameters));
+                Assert.AreEqual("recovery_required", (string)blocked["data"]["reason"]);
+                Assert.AreEqual(1, invocations);
+            }
+            finally
+            {
+                lost.SetValue(null, false);
+                SessionState.EraseBool(key);
+                ManagePackages.MutationInvoker = oldInvoker;
+                PackageJobManager.SessionWriter = writer;
+            }
         }
 
         [Test]

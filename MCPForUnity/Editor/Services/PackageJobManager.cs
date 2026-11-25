@@ -283,7 +283,7 @@ namespace MCPForUnity.Editor.Services
                     _ => false,
                 };
                 // Registration may predate admission and never proves this Request completed.
-                MarkRecoveryUnknown(job, nowMs, "request_lost_after_reload");
+                MarkRecoveryUnknown(job, nowMs, job.RecoveryReason == "native_request_unobserved" ? job.RecoveryReason : "request_lost_after_reload");
                 job.PackageObservation = new JObject
                 {
                     ["status"] = "observed",
@@ -296,7 +296,7 @@ namespace MCPForUnity.Editor.Services
             }
             catch (Exception ex)
             {
-                MarkRecoveryUnknown(job, nowMs, "request_lost_after_reload");
+                MarkRecoveryUnknown(job, nowMs, job.RecoveryReason == "native_request_unobserved" ? job.RecoveryReason : "request_lost_after_reload");
                 job.PackageObservation = new JObject
                 {
                     ["status"] = "unavailable",
@@ -347,7 +347,7 @@ namespace MCPForUnity.Editor.Services
 
         internal static void PersistToSessionState() => TryPersistToSessionState();
 
-        private static bool TryPersistToSessionState()
+        private static bool TryPersistToSessionState(bool verify = false)
         {
             try
             {
@@ -390,8 +390,9 @@ namespace MCPForUnity.Editor.Services
                     snapshot = new PersistedState { jobs = jobs, resolve_registration = ResolveRegistration };
                 }
 
-                SessionWriter(JsonConvert.SerializeObject(snapshot));
-                return true;
+                string serialized = JsonConvert.SerializeObject(snapshot);
+                SessionWriter(serialized);
+                return !verify || SessionReader() == serialized;
             }
             catch (Exception ex)
             {
@@ -480,21 +481,24 @@ namespace MCPForUnity.Editor.Services
                 LastUpdateUnixMs = now,
                 Resolve = ResolveEvidence("requested", "trigger_state_unknown"),
             };
-            Dictionary<string, PackageJob> previous;
-            lock (LockObj)
-            {
-                previous = new Dictionary<string, PackageJob>(Jobs);
-                Jobs.Add(job.JobId, job);
-            }
-            if (TryPersistToSessionState())
+            if (TryStoreIntent(job))
                 return true;
+            job = null;
+            return false;
+        }
+
+        private static bool TryStoreIntent(PackageJob job)
+        {
             lock (LockObj)
             {
+                var previous = new Dictionary<string, PackageJob>(Jobs);
+                Jobs.Add(job.JobId, job);
+                if (TryPersistToSessionState(verify: true))
+                    return true;
                 Jobs.Clear();
                 foreach (var entry in previous)
                     Jobs.Add(entry.Key, entry.Value);
             }
-            job = null;
             return false;
         }
 
@@ -526,12 +530,15 @@ namespace MCPForUnity.Editor.Services
                 ResultName = null,
             };
 
-            lock (LockObj)
-            {
-                Jobs[jobId] = job;
-            }
+            return TryStoreIntent(job) ? jobId : null;
+        }
+
+        internal static object LoseRequest(string id)
+        {
+            PackageJob job = GetJob(id);
+            MarkRecoveryUnknown(job, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), "native_request_unobserved");
             PersistToSessionState();
-            return jobId;
+            return ToSerializable(job);
         }
 
         public static void CompleteJob(string jobId, bool success, string error = null, string version = null, string name = null)

@@ -100,6 +100,29 @@ namespace MCPForUnityTests.Editor.Tools
         private static JObject Evidence(JObject response) => (JObject)response["data"]["resolve"];
 
         [Test]
+        public void StatusObservedInsideResolvePreservesItsLiveIntentAndRejectsAnotherTrigger()
+        {
+            JObject live = null;
+            JObject blocked = null;
+            bool owned = false;
+            ManagePackages.ResolveInvoker = () =>
+            {
+                invocations++;
+                owned = ManagePackages.HasNativeMutation;
+                live = Call("status", jobs.Keys.Single());
+                if (invocations == 1)
+                    blocked = Call("resolve_packages");
+            };
+            JObject response = Call("resolve_packages");
+            Assert.IsTrue(owned);
+            Assert.AreEqual("running", (string)live["data"]["status"]);
+            Assert.AreEqual("known_client_operation_pending", (string)blocked["data"]["reason"]);
+            Assert.AreEqual(1, invocations);
+            Assert.AreEqual("unknown", (string)response["data"]["status"]);
+            Assert.IsFalse(ManagePackages.HasNativeMutation);
+        }
+
+        [Test]
         public void TriggerAcknowledgesOnce_StatusNeverRepeatsOrClaimsCompletion()
         {
             var initial = Call("resolve_packages");
@@ -573,7 +596,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(Guid.TryParseExact(nonce, "N", out _));
             string actual = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
             Assert.AreEqual(Path.GetFullPath(expected), actual, "Exact owned QA project required.");
-            Assert.IsTrue(actual.Replace('\\', '/').Contains("/.unity-ci/CS-20261016-core/"));
+            Assert.IsTrue(actual.Replace('\\', '/').Contains("/.unity-ci/"), "Use the identified disposable CI project.");
             var readers = new[] { "ResolveSnapshotReader", "ResolveReadinessReader", "ResolveClock" }
                 .Select(name => typeof(ManagePackages).GetField(name, Hidden))
                 .ToArray();

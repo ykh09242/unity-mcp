@@ -32,16 +32,17 @@ namespace MCPForUnity.Editor.Tools
         private const int MaxCompletedQueries = 10;
         private const string MutationOwnerKey = "MCPForUnity.Packages.NativeMutationV1";
         private const string QueryOwnerKey = "MCPForUnity.Packages.NativeQueryV1";
-        private static readonly bool LostMutationOwner = SessionState.GetBool(MutationOwnerKey, false);
-        private static readonly bool LostQueryOwner = SessionState.GetBool(QueryOwnerKey, false);
-        internal static bool HasNativeMutation => PendingRequests.Count != 0;
+        private static bool LostMutationOwner = SessionState.GetBool(MutationOwnerKey, false);
+        private static bool LostQueryOwner = SessionState.GetBool(QueryOwnerKey, false);
+        private static string activeResolveId;
+        internal static bool HasNativeMutation => PendingRequests.Count != 0 || activeResolveId != null;
         internal static bool HasNativeQuery => PendingListRequests.Count != 0 || PendingSearchRequests.Count != 0;
         internal static bool MutationRecoveryRequired => !HasNativeMutation && SessionState.GetBool(MutationOwnerKey, false);
         internal static bool QueryRecoveryRequired => !HasNativeQuery && SessionState.GetBool(QueryOwnerKey, false);
 
         private static void PersistNativeRequests()
         {
-            SessionState.SetBool(MutationOwnerKey, LostMutationOwner || HasNativeMutation);
+            SessionState.SetBool(MutationOwnerKey, LostMutationOwner || PendingRequests.Count != 0);
             SessionState.SetBool(QueryOwnerKey, LostQueryOwner || HasNativeQuery);
         }
 
@@ -79,6 +80,16 @@ namespace MCPForUnity.Editor.Tools
         }
 
         internal static Action ResolveInvoker = () => Client.Resolve();
+        internal static Func<ListRequest> ListInvoker = () => Client.List();
+        internal static Func<string, SearchRequest> SearchInvoker = query => Client.Search(query);
+        internal static Func<string, string, Request> MutationInvoker = (operation, package) =>
+            operation switch
+            {
+                "add" => Client.Add(package),
+                "remove" => Client.Remove(package),
+                "embed" => Client.Embed(package),
+                _ => throw new ArgumentException("Unknown package mutation."),
+            };
         private static Func<string> _registryDataPathForTests = null;
         internal static Func<JArray> ResolveSnapshotReader = ReadRegisteredResolveSnapshot;
         internal static Func<JObject> ResolveReadinessReader = () =>
@@ -128,8 +139,13 @@ namespace MCPForUnity.Editor.Tools
 
             var p = new ToolParams(@params);
             foreach (string key in new[] { "package", "url", "query" })
+            {
+                var value = p.GetRaw(key);
+                if (key != "url" && value != null && value.Type is not (JTokenType.String or JTokenType.Date or JTokenType.Null))
+                    return new ErrorResponse($"'{key}' must be a string.");
                 if (PackageSourceSecurity.HasCredentials(p.Get(key)))
                     return new ErrorResponse("Package sources must not contain credentials or unsupported URL queries. Use external Git/UPM authentication.");
+            }
 
             var actionResult = p.GetRequired("action");
             if (!actionResult.IsSuccess)
@@ -139,6 +155,22 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                if (
+                    action
+                    is "add_package"
+                        or "remove_package"
+                        or "embed_package"
+                        or "list_packages"
+                        or "search_packages"
+                        or "add_registry"
+                        or "remove_registry"
+                )
+                {
+                    if (MutationRecoveryRequired || QueryRecoveryRequired)
+                        return new ErrorResponse("Package request completion is unknown.", new { reason = "recovery_required" });
+                    if (HasNativeMutation || HasNativeQuery)
+                        return new ErrorResponse("Another owned package Client request has not retired.", new { reason = "known_client_operation_pending" });
+                }
                 switch (action)
                 {
                     case "add_package":
@@ -190,12 +222,8 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                var request = Client.Add(package);
-                string jobId = PackageJobManager.StartJob("add", package);
-                PendingRequests[jobId] = request;
-                PersistNativeRequests();
-
-                RegisterCompletionCallback(jobId, request);
+                if (!TryStartMutation("add", package, out string jobId, out object error))
+                    return error;
 
                 string message = $"Package installation started for '{package}'. Use status action to check progress.";
                 if (warning != null)
@@ -248,12 +276,8 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                var request = Client.Remove(package);
-                string jobId = PackageJobManager.StartJob("remove", package);
-                PendingRequests[jobId] = request;
-                PersistNativeRequests();
-
-                RegisterCompletionCallback(jobId, request);
+                if (!TryStartMutation("remove", package, out string jobId, out object error))
+                    return error;
 
                 return new PendingResponse(
                     $"Package removal started for '{package}'. Use status action to check progress.",
@@ -308,11 +332,11 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Unknown mutations may acquire new registration evidence without replaying a request.
-            if (PackageJobManager.CanReconcile(job))
+            if (job.JobId != activeResolveId && PackageJobManager.CanReconcile(job))
             {
                 if (PendingRequests.TryGetValue(job.JobId, out var req))
                 {
-                    if (req.IsCompleted)
+                    if (req != null && req.IsCompleted)
                     {
                         FinalizeRequest(job.JobId, req);
                         // Completed-only history pruning may evict this job immediately.
@@ -363,23 +387,13 @@ namespace MCPForUnity.Editor.Tools
                 string jobId = PackageQueryJobStore.Begin("list_packages");
                 if (jobId == null)
                     return new ErrorResponse("Cannot retain another package query receipt; no native query was started.");
-                ListRequest request;
-                try
-                {
-                    request = Client.List();
-                }
-                catch (Exception ex)
-                {
-                    return CacheQueryResult(jobId, new ErrorResponse($"Failed to start package list: {ex.Message}"));
-                }
-                PendingListRequests[jobId] = request;
-                PersistNativeRequests();
+                if (!TryInvokeRequest(jobId, PendingListRequests, ListInvoker, false, out ListRequest request, out object error))
+                    return error;
+                RegisterCompletionCallback(jobId, request);
 
                 // Try immediate completion for fast responses
                 if (request.IsCompleted)
                     return CheckListRequest(jobId, request);
-
-                RegisterCompletionCallback(jobId, request);
 
                 return new PendingResponse(
                     "Listing installed packages...",
@@ -400,7 +414,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static object CheckListRequest(string jobId, ListRequest request)
         {
-            if (!request.IsCompleted)
+            if (request == null || !request.IsCompleted)
             {
                 return new PendingResponse(
                     "Listing installed packages...",
@@ -452,22 +466,12 @@ namespace MCPForUnity.Editor.Tools
                 string jobId = PackageQueryJobStore.Begin("search_packages");
                 if (jobId == null)
                     return new ErrorResponse("Cannot retain another package query receipt; no native query was started.");
-                SearchRequest request;
-                try
-                {
-                    request = Client.Search(queryResult.Value);
-                }
-                catch (Exception ex)
-                {
-                    return CacheQueryResult(jobId, new ErrorResponse($"Failed to start package search: {ex.Message}"));
-                }
-                PendingSearchRequests[jobId] = request;
-                PersistNativeRequests();
+                if (!TryInvokeRequest(jobId, PendingSearchRequests, () => SearchInvoker(queryResult.Value), false, out SearchRequest request, out object error))
+                    return error;
+                RegisterCompletionCallback(jobId, request);
 
                 if (request.IsCompleted)
                     return CheckSearchRequest(jobId, request);
-
-                RegisterCompletionCallback(jobId, request);
 
                 return new PendingResponse(
                     $"Searching packages for '{queryResult.Value}'...",
@@ -489,7 +493,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static object CheckSearchRequest(string jobId, SearchRequest request)
         {
-            if (!request.IsCompleted)
+            if (request == null || !request.IsCompleted)
             {
                 return new PendingResponse(
                     "Searching packages...",
@@ -765,12 +769,8 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                var request = Client.Embed(packageResult.Value);
-                string jobId = PackageJobManager.StartJob("embed", packageResult.Value);
-                PendingRequests[jobId] = request;
-                PersistNativeRequests();
-
-                RegisterCompletionCallback(jobId, request);
+                if (!TryStartMutation("embed", packageResult.Value, out string jobId, out object error))
+                    return error;
 
                 return new PendingResponse(
                     $"Embedding package '{packageResult.Value}'. Use status action to check progress.",
@@ -792,13 +792,16 @@ namespace MCPForUnity.Editor.Tools
         // === resolve_packages ===
         private static object ResolvePackages()
         {
-            if (ResolveHasPendingRequests())
+            if (MutationRecoveryRequired || QueryRecoveryRequired)
+                return new ErrorResponse("Package request completion is unknown.", new { reason = "recovery_required" });
+            if (activeResolveId != null || ResolveHasPendingRequests())
                 return new ErrorResponse("Another owned package Client request has not retired.", new { reason = "known_client_operation_pending" });
             if (!PackageJobManager.TryStartResolveJob(ResolveClock(), out var job))
                 return new ErrorResponse(
                     "Could not store resolve intent in this Editor session; Resolve was not invoked.",
                     new { reason = "persistence_failed" }
                 );
+            activeResolveId = job.JobId;
             try
             {
                 ResolveInvoker();
@@ -807,6 +810,10 @@ namespace MCPForUnity.Editor.Tools
             {
                 PackageJobManager.FinishResolveInvocation(job, false, ResolveClock());
                 return new ErrorResponse("Resolve invocation did not return normally; native completion remains unknown.", ResolveJobData(job));
+            }
+            finally
+            {
+                activeResolveId = null;
             }
             PackageJobManager.FinishResolveInvocation(job, true, ResolveClock());
             return new SuccessResponse(
@@ -998,9 +1005,72 @@ namespace MCPForUnity.Editor.Tools
             return manifest;
         }
 
+        private static bool TryStartMutation(string operation, string package, out string id, out object error)
+        {
+            id = PackageJobManager.StartJob(operation, package);
+            if (id == null)
+            {
+                error = new ErrorResponse("Cannot retain the package mutation receipt; no native request was started.", new { reason = "persistence_failed" });
+                return false;
+            }
+            if (!TryInvokeRequest(id, PendingRequests, () => MutationInvoker(operation, package), true, out Request request, out error))
+                return false;
+            RegisterCompletionCallback(id, request);
+            return true;
+        }
+
+        private static bool TryInvokeRequest<T>(string id, Dictionary<string, T> pending, Func<T> invoke, bool mutation, out T request, out object error)
+            where T : Request
+        {
+            request = null;
+            error = null;
+            pending.Add(id, null);
+            string key = mutation ? MutationOwnerKey : QueryOwnerKey;
+            try
+            {
+                SessionState.SetBool(key, true);
+                if (!SessionState.GetBool(key, false))
+                    throw new IOException("Package request ownership could not be stored.");
+            }
+            catch
+            {
+                pending.Remove(id);
+                const string message = "Cannot retain package request ownership; no native request was started.";
+                if (mutation)
+                {
+                    PackageJobManager.CompleteJob(id, false, message);
+                    error = new ErrorResponse(message, PackageJobManager.ToSerializable(PackageJobManager.GetJob(id)));
+                }
+                else
+                    error = CacheQueryResult(id, new ErrorResponse(message));
+                return false;
+            }
+            try
+            {
+                request = invoke() ?? throw new InvalidOperationException("Package Client returned no request.");
+                pending[id] = request;
+                return true;
+            }
+            catch
+            {
+                // Entering Client without obtaining a handle gives no completion proof.
+                pending.Remove(id);
+                if (mutation)
+                {
+                    LostMutationOwner = true;
+                    error = new ErrorResponse("Package request completion is unknown. Inspect its receipt before retrying.", PackageJobManager.LoseRequest(id));
+                }
+                else
+                {
+                    LostQueryOwner = true;
+                    error = PackageQueryJobStore.LoseRequest(id);
+                }
+                return false;
+            }
+        }
+
         private static void RegisterCompletionCallback(string jobId, Request request)
         {
-            PersistNativeRequests();
             void CheckCompletion()
             {
                 if (!PendingRequests.ContainsKey(jobId) && !PendingListRequests.ContainsKey(jobId) && !PendingSearchRequests.ContainsKey(jobId))

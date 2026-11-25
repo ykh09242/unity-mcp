@@ -45,13 +45,40 @@ namespace MCPForUnity.Editor.Services
                     ["started_unix_ms"] = Clock(),
                 },
             };
-            if (Persist())
+            if (Persist(verify: true))
                 return id;
             Receipts.Remove(id);
             return null;
         }
 
         internal static JObject Get(string id) => Receipts.TryGetValue(id, out var receipt) ? Project(receipt) : null;
+
+        internal static JObject LoseRequest(string id)
+        {
+            Receipts[id] = Unknown(Receipts[id]["data"], "native_request_unobserved");
+            Persist();
+            return Get(id);
+        }
+
+        private static JObject Unknown(JToken data, string reason) =>
+            new JObject
+            {
+                ["success"] = true,
+                ["message"] = "Package query completion is unknown after losing the native request; it was not replayed.",
+                ["data"] = new JObject
+                {
+                    ["job_id"] = data["job_id"],
+                    ["operation"] = data["operation"],
+                    ["status"] = "unknown",
+                    ["started_unix_ms"] = data["started_unix_ms"],
+                    ["recovery"] = new JObject
+                    {
+                        ["reason"] = reason,
+                        ["native_completion"] = "unobserved",
+                        ["retry_safe"] = false,
+                    },
+                },
+            };
 
         private static JObject Project(JObject receipt)
         {
@@ -115,7 +142,7 @@ namespace MCPForUnity.Editor.Services
                 Receipts.Remove(id);
         }
 
-        internal static bool Persist()
+        internal static bool Persist(bool verify = false)
         {
             try
             {
@@ -123,7 +150,7 @@ namespace MCPForUnity.Editor.Services
                 if (Encoding.UTF8.GetByteCount(text) > MaxStorageBytes)
                     return false;
                 SessionWriter(text);
-                return true;
+                return !verify || SessionReader() == text;
             }
             catch
             {
@@ -184,24 +211,10 @@ namespace MCPForUnity.Editor.Services
                     {
                         if (Encoding.UTF8.GetByteCount(receipt.ToString(Formatting.None)) > 2048)
                             return;
-                        receipt = new JObject
-                        {
-                            ["success"] = true,
-                            ["message"] = "Package query completion is unknown after losing the native request; it was not replayed.",
-                            ["data"] = new JObject
-                            {
-                                ["job_id"] = id,
-                                ["operation"] = operation,
-                                ["status"] = "unknown",
-                                ["started_unix_ms"] = data["started_unix_ms"],
-                                ["recovery"] = new JObject
-                                {
-                                    ["reason"] = "request_lost_after_reload",
-                                    ["native_completion"] = "unobserved",
-                                    ["retry_safe"] = false,
-                                },
-                            },
-                        };
+                        receipt = Unknown(
+                            data,
+                            (string)data["recovery"]?["reason"] == "native_request_unobserved" ? "native_request_unobserved" : "request_lost_after_reload"
+                        );
                     }
                     restored.Add(id, receipt);
                 }

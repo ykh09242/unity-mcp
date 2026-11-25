@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -42,6 +44,70 @@ namespace MCPForUnityTests.Editor.Services
             PackageQueryJobStore.SessionReader = reader;
             PackageQueryJobStore.SessionWriter = writer;
             PackageQueryJobStore.Clock = clock;
+        }
+
+        [TestCase("list_packages")]
+        [TestCase("search_packages")]
+        public void MissingQueryHandleFencesOnlyThePackageClientAndKeepsTheOriginalReceipt(string operation)
+        {
+            const string key = "MCPForUnity.Packages.NativeQueryV1";
+            Assert.IsFalse(
+                ManagePackages.HasNativeMutation
+                    || ManagePackages.MutationRecoveryRequired
+                    || ManagePackages.HasNativeQuery
+                    || ManagePackages.QueryRecoveryRequired
+            );
+            var oldList = ManagePackages.ListInvoker;
+            var oldSearch = ManagePackages.SearchInvoker;
+            int calls = 0;
+            bool reserved = false;
+            void Enter()
+            {
+                calls++;
+                reserved = ManagePackages.HasNativeQuery && SessionState.GetBool(key, false);
+            }
+            try
+            {
+                ManagePackages.ListInvoker = () =>
+                {
+                    Enter();
+                    return null;
+                };
+                ManagePackages.SearchInvoker = _ =>
+                {
+                    Enter();
+                    throw new InvalidOperationException("fixture");
+                };
+                var request = new JObject { ["action"] = operation, ["query"] = "fixture" };
+                if (operation == "search_packages")
+                {
+                    var malformed = new JObject { ["action"] = operation, ["query"] = new JArray(123) };
+                    Assert.AreEqual("'query' must be a string.", (string)JObject.FromObject(ManagePackages.HandleCommand(malformed))["error"]);
+                    Assert.Zero(calls);
+                }
+                var writer = PackageQueryJobStore.SessionWriter;
+                PackageQueryJobStore.SessionWriter = _ => { };
+                Assert.IsFalse((bool)JObject.FromObject(ManagePackages.HandleCommand(request))["success"]);
+                Assert.Zero(calls);
+                PackageQueryJobStore.SessionWriter = writer;
+                var response = JObject.FromObject(ManagePackages.HandleCommand(request));
+                Assert.IsTrue(reserved);
+                Assert.AreEqual("unknown", (string)response["data"]["status"]);
+                Assert.IsTrue(ManagePackages.QueryRecoveryRequired);
+                Assert.IsFalse(ManagePackages.MutationRecoveryRequired);
+                Assert.IsFalse((bool)JObject.FromObject(ManagePackages.HandleCommand(request))["success"]);
+                Reload();
+                var status = JObject.FromObject(ManagePackages.HandleCommand(new JObject { ["action"] = "status", ["job_id"] = response["data"]["job_id"] }));
+                Assert.IsTrue(JToken.DeepEquals(response["data"], status["data"]));
+                Assert.AreEqual(1, calls);
+            }
+            finally
+            {
+                ManagePackages.ListInvoker = oldList;
+                ManagePackages.SearchInvoker = oldSearch;
+                typeof(ManagePackages).GetField("LostQueryOwner", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, false);
+                SessionState.EraseBool(key);
+            }
         }
 
         [TestCase("list_packages")]
