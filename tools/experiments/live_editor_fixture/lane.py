@@ -167,6 +167,23 @@ def request(lane: Path, op: str, task="", language="", seed=0, timeout=120):
         try:
             reply = json.loads((control / "response.json").read_bytes())
             if reply["id"] == rid:
+                evidence = lane.parent / "registry-evidence.json"
+                if task == "installed_package" and reply.get("ok") and evidence.is_file():
+                    observed = reply["state"]["targetPackage"]
+                    registered = json.loads(evidence.read_bytes())
+                    entry = registered["packages"][observed["name"]]
+                    if (
+                        observed["source"] != "Registry"
+                        or observed["registry"] != registered["installedRegistry"]
+                        or any(
+                            observed[k] != entry[k]
+                            for k in ("name", "version", "displayName", "description")
+                        )
+                    ):
+                        raise RuntimeError(
+                            "Native installed record differs from the offline registry evidence"
+                        )
+                    reply["state"]["registryRecord"] = entry
                 return reply
         except (FileNotFoundError, PermissionError):
             pass
@@ -262,9 +279,11 @@ def shared():
     compile_dll("LaneHost")
 
 
-def launch(index):
+def launch(index, *, registry=None):
     if index not in range(4):
         raise ValueError("Lane index must be 0 through 3")
+    if registry is not None and registry != "https://packages.unity.com":
+        raise ValueError("Expected the official Unity registry for this replay")
     lane = real_child(WORK / f"lane-{index}")
     if lane.exists():
         lane_marker(lane)
@@ -318,6 +337,11 @@ def launch(index):
         encoding="utf-8",
     )
     shutil.copy2(WORK / "dependencies/manifest.json", project / "Packages/manifest.json")
+    if registry:
+        shutil.copy2(
+            require_file(WORK / "dependencies/packages-lock.json", "the offline registry setup"),
+            real_child(project / "Packages/packages-lock.json"),
+        )
     shutil.copy2(WORK / "bin/LaneHost.dll", project / "Assets/Editor/LaneHost.dll")
     for asset in ["tone.wav", "tone.ogg"]:
         shutil.copy2(WORK / "dependencies" / asset, control / asset)
@@ -331,6 +355,16 @@ def launch(index):
         UPM_ENABLE_OFFLINE_MODE="true",
     )
     env.pop("UNITY_MCP_ALLOW_BATCH", None)
+    if registry:
+        # UPM can read its official local cache. Any network fallback must stay on loopback.
+        env.update(
+            UPM_NPM_REGISTRY=registry,
+            UPM_CACHE_ROOT=str(real_child(WORK / "upm-cache")),
+            HTTP_PROXY="http://127.0.0.1:9",
+            HTTPS_PROXY="http://127.0.0.1:9",
+            ALL_PROXY="http://127.0.0.1:9",
+            NO_PROXY="localhost,127.0.0.1",
+        )
     command = [
         EDITOR / "Unity.exe",
         "-batchmode",

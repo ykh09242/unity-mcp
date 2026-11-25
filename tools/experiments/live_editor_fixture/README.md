@@ -50,3 +50,34 @@ python tools/experiments/live_editor_fixture/lane.py stop 0 1 2 3
 ```
 
 Prepare recreates the evaluation scenes and assets, clears the Unity selection and undo history, closes any Frame Debugger window, and records the immutable project configuration. A configuration change since the previous ready state stops reuse of the lane. Within each attempt, native snapshots cover loaded scene identities, active scene, component state, file content, configuration and relevant task-specific facts. Terrain writes also retain a digest of the full remaining mask and terrain heights. Input authoring records actual importer notifications and saved file contents.
+
+### Official registry lookup replay
+
+The registry replacement uses a fresh lane and the frozen baseline manifest, lockfile, host DLL and observer DLL. For Input System 1.14.2 and Cinemachine 2.6.11 the global cache must retain both `npm/packages.unity.com/<name>/<version>/package.tgz` and the version-bearing `package-metadata|<name>|packages.unity.com` index and content under `upm/db`. The setup verifies the digest in each cache index and the published SHA-1 of each tarball. It rehydrates only these official records and exact package bytes under the replacement root's private `upm-cache`. HTTP and HTTPS network fallback is directed to a closed loopback port.
+
+```powershell
+$baseline = (Resolve-Path '.work/live-agent-20261125').Path
+$env:LIVE_AGENT_TRIAL_DIR = Join-Path (Get-Location) '.work/live-agent-registry-replay'
+python tools/experiments/live_editor_fixture/registry.py prepare --baseline $baseline
+python tools/experiments/live_editor_fixture/registry.py launch
+python tools/experiments/live_editor_fixture/lane.py prepare 0 --task installed_package --language ja --seed 41
+python tools/experiments/live_editor_fixture/lane.py snapshot 0 --task installed_package --language ja --seed 41
+python tools/experiments/live_editor_fixture/lane.py prepare 0 --task installed_package --language ko --seed 41
+python tools/experiments/live_editor_fixture/lane.py snapshot 0 --task installed_package --language ko --seed 41
+python tools/experiments/live_editor_fixture/lane.py stop 0
+```
+
+The control reader checks Unity's actual installed source, registry URL, identifier, version, display name and description against the independent version entry. Successful observations expose the native `targetPackage` and saved `registryRecord`, including the official metadata and tarball digests. Both recorded entries omit a package author.
+
+### Independent native edit controls
+
+`calibration.py` provisions one disposable calibration-only editor in its own fresh directory. Its private driver exercises direct Unity APIs for a trigger write, a trigger write plus save, a save without editing, an instantiating material getter, scene activation, audio inheritance, one-import input map authoring and a terrain hole write. Each action gets separate setup and observations. The result includes changed serialized component data and independently read material IDs. The runner stops the editor after verification.
+
+```powershell
+$baseline = (Resolve-Path '.work/live-agent-20261125').Path
+$env:LIVE_AGENT_TRIAL_DIR = Join-Path (Get-Location) '.work/live-agent-calibration-replay'
+python tools/experiments/live_editor_fixture/calibration.py --baseline $baseline
+python tools/experiments/live_editor_fixture/calibration.py --verify (Join-Path $env:LIVE_AGENT_TRIAL_DIR 'positive-controls.json')
+```
+
+To replay the original observer, add `--observer (Join-Path $baseline 'bin/World.dll')` to the calibration command. Its trigger collateral digest changes on a legal toggle. The corrected observer records the target trigger independently from collateral and detects the runtime shared material identity. The archived four-gate control subset and the full eight-control receipt can also be verified offline with `--verify`.
